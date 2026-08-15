@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/core", "apps/tui"]
+members = ["crates/core", "apps/tui", "apps/gpui"]
 
 [workspace.package]
 version = "0.1.0"
@@ -18,6 +18,8 @@ crossterm = { version = "0.28", features = ["event-stream"] }
 dirs = "6"
 futures = "0.3"
 futures-util = "0.3"
+gpui = "0.2"
+pulldown-cmark = "0.13"
 ratatui = "0.29"
 serde = { version = "1", features = ["derive"] }
 termimad = "0.34"

@@ -38,7 +38,8 @@ pub async fn run(entry: settings::Agent) -> Result<()> {
     );
 
     let name = entry.name.clone();
-    Session::spawn(&entry, async |session, events| {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| "/".into());
+    Session::spawn(&entry, cwd, async |session, events| {
         chat(session, events, &name).await
     })
     .await

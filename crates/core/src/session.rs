@@ -58,10 +58,10 @@ pub struct Session {
 }
 
 impl Session {
-    /// Spawn `entry` over stdio, initialize, open a session, and run `f`
-    /// with it. Returns when `f` does; the agent process dies with the
-    /// connection.
-    pub async fn spawn<T, F>(entry: &settings::Agent, f: F) -> Result<T>
+    /// Spawn `entry` over stdio, initialize, open a session rooted at `cwd`,
+    /// and run `f` with it. Returns when `f` does; the agent process dies
+    /// with the connection.
+    pub async fn spawn<T, F>(entry: &settings::Agent, cwd: PathBuf, f: F) -> Result<T>
     where
         F: AsyncFnOnce(Session, Events) -> Result<T>,
     {
@@ -128,7 +128,7 @@ impl Session {
                 agent_client_protocol::on_receive_dispatch!(),
             )
             .connect_with(debuggable(AcpAgent::new(config)), async |conn| {
-                Ok(Self::open(conn, tx, events, f).await)
+                Ok(Self::open(conn, tx, events, cwd, f).await)
             })
             .await
             .map_err(|e| anyhow!("ACP connection failed: {e}"))?
@@ -138,6 +138,7 @@ impl Session {
         conn: ConnectionTo<Agent>,
         tx: mpsc::UnboundedSender<Event>,
         events: Events,
+        cwd: PathBuf,
         f: F,
     ) -> Result<T>
     where
@@ -155,7 +156,6 @@ impl Session {
             .await
             .map_err(|e| anyhow!("initialize failed: {e}"))?;
 
-        let cwd = std::env::current_dir().unwrap_or_else(|_| "/".into());
         let response = conn
             .send_request(NewSessionRequest::new(cwd.clone()))
             .block_task()
@@ -197,6 +197,14 @@ impl Session {
             .send_notification(CancelNotification::new(self.session_id.clone()))
     }
 }
+
+// A GPUI (or any multi-threaded) frontend holds `Session` in its UI state
+// and moves `Event` — responder included — across executor threads.
+const _: () = {
+    const fn assert_send<T: Send>() {}
+    assert_send::<Session>();
+    assert_send::<Event>();
+};
 
 /// One-line rendering of a JSON-RPC error (`Display` dumps a JSON blob).
 pub fn error_text(e: &agent_client_protocol::Error) -> String {
