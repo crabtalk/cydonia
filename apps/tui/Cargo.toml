@@ -1,0 +1,20 @@
+[package]
+name = "cydonia"
+description = "TUI client for ACP agents"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "../../README.md"
+
+[dependencies]
+cydonia-core.workspace = true
+
+# crates.io
+anyhow.workspace = true
+crossterm.workspace = true
+dirs.workspace = true
+futures-util.workspace = true
+ratatui.workspace = true
+termimad.workspace = true
+tokio.workspace = true

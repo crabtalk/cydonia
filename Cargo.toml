@@ -1,0 +1,25 @@
+[workspace]
+resolver = "3"
+members = ["crates/core", "apps/tui"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/crabtalk/cydonia"
+
+[workspace.dependencies]
+cydonia-core = { path = "crates/core" }
+
+# crates.io
+agent-client-protocol = "2.0"
+anyhow = "1"
+crossterm = { version = "0.28", features = ["event-stream"] }
+dirs = "6"
+futures = "0.3"
+futures-util = "0.3"
+ratatui = "0.29"
+serde = { version = "1", features = ["derive"] }
+termimad = "0.34"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+toml = "0.8"
