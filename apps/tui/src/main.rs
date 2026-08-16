@@ -4,6 +4,7 @@ mod app;
 mod chat;
 mod input;
 mod install;
+mod mcp;
 mod select;
 mod tui;
 

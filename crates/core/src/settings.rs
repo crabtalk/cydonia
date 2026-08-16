@@ -25,15 +25,49 @@ pub struct Agent {
     pub mcp_servers: Vec<McpServer>,
 }
 
-/// One MCP server the agent should connect to: `command args...` over stdio.
+/// One MCP server offered to agents: either a local `command args...`
+/// over stdio, or a remote `url` (which needs the agent to support HTTP
+/// MCP). Managed through the `/mcp` picker — not written by hand.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpServer {
     pub name: String,
-    pub command: String,
-    #[serde(default)]
+    #[serde(default = "enabled_by_default")]
+    pub enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub args: Vec<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub env: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// The MCP registry id this came from, when it came from there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+}
+
+const fn enabled_by_default() -> bool {
+    true
+}
+
+impl McpServer {
+    pub fn is_remote(&self) -> bool {
+        self.command.is_none() && self.url.is_some()
+    }
+
+    /// What the picker shows under the name.
+    pub fn detail(&self) -> String {
+        match (&self.command, &self.url) {
+            (Some(command), _) => {
+                let name = command.rsplit('/').next().unwrap_or(command);
+                format!("{name} {}", self.args.join(" "))
+                    .trim_end()
+                    .to_owned()
+            }
+            (None, Some(url)) => url.clone(),
+            _ => String::new(),
+        }
+    }
 }
 
 impl Default for Settings {
@@ -142,6 +176,45 @@ pub fn remember_session(agent: &str, cwd: &std::path::Path, session_id: &str) {
     if let Ok(body) = toml::to_string_pretty(&store) {
         let _ = std::fs::write(path, body);
     }
+}
+
+// ── MCP server store ─────────────────────────────────────────────
+//
+// App-managed, like the session store: written by the `/mcp` picker,
+// never authored by hand.
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct McpStore {
+    #[serde(default)]
+    servers: Vec<McpServer>,
+}
+
+fn mcp_path() -> Option<PathBuf> {
+    dir().ok().map(|d| d.join("mcp.toml"))
+}
+
+/// Every MCP server the user has added, enabled or not.
+pub fn mcp_servers() -> Vec<McpServer> {
+    mcp_path()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|s| toml::from_str::<McpStore>(&s).ok())
+        .map(|store| store.servers)
+        .unwrap_or_default()
+}
+
+pub fn save_mcp_servers(servers: &[McpServer]) -> Result<()> {
+    let path = mcp_path().context("no config directory")?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let store = McpStore {
+        servers: servers.to_vec(),
+    };
+    let body = format!(
+        "# managed by cydonia's /mcp picker\n\n{}",
+        toml::to_string_pretty(&store)?
+    );
+    std::fs::write(&path, body).with_context(|| format!("writing {}", path.display()))
 }
 
 /// Load settings, generating the default file on first run.

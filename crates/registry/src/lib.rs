@@ -9,6 +9,8 @@
 //! Deliberately standalone: no dependency on the rest of cydonia, so
 //! any ACP client can use it.
 
+pub mod mcp;
+
 use anyhow::{Context, Result, anyhow, bail};
 use serde::Deserialize;
 use std::{
@@ -209,23 +211,45 @@ fn package_name(spec: &str) -> &str {
 
 /// Install `agent` under `data_dir`, streaming installer output to
 /// `on_line`. Replaces any previous install of the same agent.
-pub fn install(data_dir: &Path, agent: &Agent, mut on_line: impl FnMut(&str)) -> Result<Installed> {
+pub fn install(data_dir: &Path, agent: &Agent, on_line: impl FnMut(&str)) -> Result<Installed> {
     let Distribution::Npm { package, args } = &agent.distribution else {
         bail!("{} can't be installed by cydonia yet", agent.name);
     };
+    let dir = agent_dir(data_dir, &agent.id);
+    let command = install_npm(&dir, package, on_line)?;
+
+    let record = Installed {
+        id: agent.id.clone(),
+        version: agent.version.clone(),
+        command,
+        args: args.clone(),
+    };
+    std::fs::write(
+        record_file(data_dir, &agent.id),
+        serde_json::to_string_pretty(&record)?,
+    )
+    .context("recording the installation")?;
+    Ok(record)
+}
+
+/// Install one npm package into `dir` (replacing whatever was there),
+/// streaming installer output to `on_line`. Returns the executable path.
+pub(crate) fn install_npm(
+    dir: &Path,
+    package: &str,
+    mut on_line: impl FnMut(&str),
+) -> Result<String> {
     if which("npm").is_none() {
         bail!("npm was not found on PATH — install Node.js to add agents");
     }
-
-    let dir = agent_dir(data_dir, &agent.id);
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
+    let _ = std::fs::remove_dir_all(dir);
+    std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
 
     on_line(&format!("npm install {package}"));
     let mut child = Command::new("npm")
         .arg("install")
         .arg("--prefix")
-        .arg(&dir)
+        .arg(dir)
         .args(["--no-fund", "--no-audit", "--loglevel", "http"])
         .arg(package)
         .stdin(Stdio::null())
@@ -271,20 +295,9 @@ pub fn install(data_dir: &Path, agent: &Agent, mut on_line: impl FnMut(&str)) ->
     if !status.success() {
         bail!("npm install failed ({status})");
     }
-
-    let record = Installed {
-        id: agent.id.clone(),
-        version: agent.version.clone(),
-        command: binary_path(&dir, package)?,
-        args: args.clone(),
-    };
-    std::fs::write(
-        record_file(data_dir, &agent.id),
-        serde_json::to_string_pretty(&record)?,
-    )
-    .context("recording the installation")?;
-    on_line(&format!("installed {} {}", agent.name, agent.version));
-    Ok(record)
+    let command = binary_path(dir, package)?;
+    on_line("installed");
+    Ok(command)
 }
 
 /// The executable npm linked for `package`, read from the installed

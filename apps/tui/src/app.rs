@@ -3,6 +3,7 @@
 use crate::{
     chat::{ChatBuffer, ChatEntry, PlanRow, PlanStatus, S_DIM, ToolStatus},
     input::{History, InputAction, InputState},
+    mcp::{McpAction, McpEvent, McpPicker},
     tui,
 };
 use anyhow::Result;
@@ -117,6 +118,7 @@ async fn chat(session: Session, events: Events, agent_name: &str) -> Result<()> 
             .agent_capabilities
             .prompt_capabilities
             .embedded_context,
+        mcp: None,
     };
     app.buffer.push(ChatEntry::Text(app.header.clone()));
     if session.loaded {
@@ -182,6 +184,8 @@ struct App {
     /// Whether the agent accepts embedded resources in prompts
     /// (`PromptCapabilities.embedded_context`).
     embed_context: bool,
+    /// The `/mcp` modal, when open.
+    mcp: Option<McpPicker>,
 }
 
 struct Usage {
@@ -206,6 +210,10 @@ async fn event_loop(
     mut events: Events,
 ) -> Result<()> {
     let mut keys = EventStream::new();
+    // Registry search and installs run off the loop; results come back
+    // here so a slow network never blocks a frame.
+    let (mcp_tx, mut mcp_rx) = tokio::sync::mpsc::unbounded_channel::<McpEvent>();
+    let data_dir = settings::data_dir().unwrap_or_else(|_| ".".into());
     // Frame scheduling: sources *request* a frame; only the deadline
     // branch draws. N requests inside one interval coalesce into one
     // draw, clamped to MIN_FRAME_INTERVAL since the last one. Idle
@@ -238,7 +246,34 @@ async fn event_loop(
             event = keys.next() => {
                 match event {
                     Some(Ok(Event::Key(key))) => {
-                        if handle_key(key, app, session)? {
+                        if let Some(picker) = app.mcp.as_mut() {
+                            match picker.handle_key(key) {
+                                McpAction::None => {}
+                                McpAction::Close => {
+                                    let dirty = picker.dirty();
+                                    app.mcp = None;
+                                    if dirty {
+                                        push_notice(app, "mcp changes apply to the next session");
+                                    }
+                                }
+                                McpAction::Notice(notice) => push_notice(app, &notice),
+                                McpAction::Search(query) => {
+                                    let tx = mcp_tx.clone();
+                                    tokio::task::spawn_blocking(move || {
+                                        let found = cydonia_registry::mcp::search(&query)
+                                            .map_err(|e| format!("{e:#}"));
+                                        let _ = tx.send(McpEvent::Found(found));
+                                    });
+                                }
+                                McpAction::Add(server) => {
+                                    let (tx, dir) = (mcp_tx.clone(), data_dir.clone());
+                                    tokio::task::spawn_blocking(move || {
+                                        let added = crate::mcp::install(&dir, &server);
+                                        let _ = tx.send(McpEvent::Added(added));
+                                    });
+                                }
+                            }
+                        } else if handle_key(key, app, session)? {
                             return Ok(());
                         }
                     }
@@ -246,6 +281,16 @@ async fn event_loop(
                     Some(Ok(Event::Resize(_, _))) => {}
                     Some(Err(_)) | None => return Ok(()),
                     _ => {}
+                }
+                request_frame(&mut next_frame, last_draw);
+            }
+
+            // Branch 3: MCP registry work finishing.
+            Some(event) = mcp_rx.recv() => {
+                if let Some(picker) = app.mcp.as_mut()
+                    && let Some(notice) = picker.apply(event)
+                {
+                    push_notice(app, &notice);
                 }
                 request_frame(&mut next_frame, last_draw);
             }
@@ -365,6 +410,7 @@ fn handle_key(key: KeyEvent, app: &mut App, session: &Session) -> Result<bool> {
                 _ if content == "/config" || content.starts_with("/config ") => {
                     handle_config_command(app, session, &content);
                 }
+                "/mcp" => app.mcp = Some(McpPicker::open()),
                 _ => {
                     // The echo keeps the collapsed placeholder; the
                     // agent gets the real pasted text.
@@ -1064,6 +1110,7 @@ fn push_help(app: &mut App) {
         "  /clear — clear the transcript",
         "  /mode  — list or switch session modes",
         "  /config — list or set config options (model etc.)",
+        "  /mcp   — add and toggle MCP servers",
         "  /exit  — quit (also Ctrl+D)",
         "  Ctrl+C — cancel the current turn",
         "  Shift+Enter — newline · PageUp/PageDown — scroll",
@@ -1133,6 +1180,9 @@ fn draw(frame: &mut ratatui::Frame, app: &mut App) {
 
     if let Some(ref prompt) = app.permission {
         draw_permission(frame, prompt);
+    }
+    if let Some(ref picker) = app.mcp {
+        picker.draw(frame);
     }
 }
 

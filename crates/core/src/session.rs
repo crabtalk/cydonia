@@ -17,8 +17,8 @@ use agent_client_protocol::schema::{
     v1::{
         AuthenticateRequest, CancelNotification, ClientCapabilities, ContentBlock, EnvVariable,
         FileSystemCapabilities, InitializeRequest, InitializeResponse, LoadSessionRequest,
-        McpServer, McpServerStdio, NewSessionRequest, NewSessionResponse, PromptRequest,
-        ReadTextFileRequest, ReadTextFileResponse, RequestPermissionRequest,
+        McpServer, McpServerHttp, McpServerStdio, NewSessionRequest, NewSessionResponse,
+        PromptRequest, ReadTextFileRequest, ReadTextFileResponse, RequestPermissionRequest,
         RequestPermissionResponse, SessionConfigOptionValue, SessionId, SessionNotification,
         SessionUpdate, SetSessionConfigOptionRequest, SetSessionModeRequest, StopReason,
         WriteTextFileRequest, WriteTextFileResponse,
@@ -113,20 +113,10 @@ impl Session {
             config = config.env(key, value);
         }
 
-        let mcp_servers: Vec<McpServer> = entry
-            .mcp_servers
-            .iter()
-            .map(|server| {
-                let mut stdio = McpServerStdio::new(server.name.clone(), server.command.clone());
-                stdio.args = server.args.clone();
-                stdio.env = server
-                    .env
-                    .iter()
-                    .map(|(name, value)| EnvVariable::new(name.clone(), value.clone()))
-                    .collect();
-                McpServer::Stdio(stdio)
-            })
-            .collect();
+        // The agent's own list is legacy config; the store is what the
+        // `/mcp` picker manages. Both are offered, store first.
+        let mut configured = settings::mcp_servers();
+        configured.extend(entry.mcp_servers.iter().cloned());
 
         let (tx, events) = mpsc::unbounded::<Event>();
         let notify_tx = tx.clone();
@@ -183,7 +173,7 @@ impl Session {
                 agent_client_protocol::on_receive_dispatch!(),
             )
             .connect_with(debuggable(AcpAgent::new(config)), async |conn| {
-                Ok(Self::open(conn, tx, events, launch, mcp_servers, f).await)
+                Ok(Self::open(conn, tx, events, launch, configured, f).await)
             })
             .await
             .map_err(|e| anyhow!("ACP connection failed: {e}"))?
@@ -194,7 +184,7 @@ impl Session {
         tx: mpsc::UnboundedSender<Event>,
         events: Events,
         launch: Launch,
-        mcp_servers: Vec<McpServer>,
+        configured: Vec<settings::McpServer>,
         f: F,
     ) -> Result<T>
     where
@@ -212,6 +202,10 @@ impl Session {
             .block_task()
             .await
             .map_err(|e| anyhow!("initialize failed: {e}"))?;
+
+        // Only now are the agent's MCP capabilities known, so remote
+        // servers can be dropped for agents that can't reach them.
+        let mcp_servers = acp_mcp_servers(&configured, &init);
 
         let mut loaded = false;
         let mut response = None;
@@ -343,6 +337,37 @@ const _: () = {
     assert_send::<Session>();
     assert_send::<Event>();
 };
+
+/// The enabled servers an agent can actually reach, in ACP's shape.
+/// Remote servers are dropped for agents that don't advertise HTTP MCP
+/// rather than being sent and failing.
+fn acp_mcp_servers(
+    configured: &[settings::McpServer],
+    init: &InitializeResponse,
+) -> Vec<McpServer> {
+    let http = init.agent_capabilities.mcp_capabilities.http;
+    configured
+        .iter()
+        .filter(|server| server.enabled)
+        .filter_map(|server| match (&server.command, &server.url) {
+            (Some(command), _) => {
+                let mut stdio = McpServerStdio::new(server.name.clone(), command.clone());
+                stdio.args = server.args.clone();
+                stdio.env = server
+                    .env
+                    .iter()
+                    .map(|(name, value)| EnvVariable::new(name.clone(), value.clone()))
+                    .collect();
+                Some(McpServer::Stdio(stdio))
+            }
+            (None, Some(url)) if http => Some(McpServer::Http(McpServerHttp::new(
+                server.name.clone(),
+                url.clone(),
+            ))),
+            _ => None,
+        })
+        .collect()
+}
 
 /// Try each advertised auth method in order. Non-interactive methods
 /// (API keys read from the agent's env) fail fast when unset;
