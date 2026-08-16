@@ -4,14 +4,13 @@
 //! *talks to* is fixed when cydonia starts, so switching means
 //! relaunching — the picker says so rather than pretending otherwise.
 
+use crate::tui;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use cydonia_core::settings;
 use cydonia_registry::{Agent, Installed};
 use ratatui::{
-    layout::Rect,
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph},
 };
 use std::path::Path;
 
@@ -172,19 +171,11 @@ impl AgentPicker {
     }
 
     pub fn draw(&self, frame: &mut ratatui::Frame) {
-        let area = frame.area();
-        let width = area.width.saturating_sub(8).min(76);
-        let height = area.height.saturating_sub(4).min(20);
-        let rect = Rect::new(
-            area.width.saturating_sub(width) / 2,
-            area.height.saturating_sub(height) / 2,
-            width,
-            height,
-        );
-        let inner = width.saturating_sub(4) as usize;
-        let body = height.saturating_sub(4) as usize;
+        let rect = tui::centered(frame.area(), 76, 20);
+        let inner = rect.width.saturating_sub(4) as usize;
+        let body = rect.height.saturating_sub(4) as usize;
 
-        let mut lines = if self.unavailable {
+        let lines = if self.unavailable {
             vec![Line::from(Span::styled(
                 "registry unavailable — check your connection and restart",
                 Style::new().add_modifier(Modifier::DIM),
@@ -192,28 +183,17 @@ impl AgentPicker {
         } else {
             self.rows_lines(inner, body)
         };
-
-        lines.push(Line::raw(""));
-        lines.push(Line::from(Span::styled(
-            if self.busy {
-                "working..."
-            } else {
-                "↑/↓ move · space install/remove · u update · Esc close"
-            },
-            Style::new().add_modifier(Modifier::DIM),
-        )));
-
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(crate::tui::border_focused())
-            .title(" agents ");
-        frame.render_widget(Clear, rect);
-        frame.render_widget(Paragraph::new(lines).block(block), rect);
+        let hint = if self.busy {
+            "working..."
+        } else {
+            "↑/↓ move · space install/remove · u update · Esc close"
+        };
+        tui::modal(frame, rect, " agents ", lines, hint);
     }
 
     fn rows_lines(&self, inner: usize, body: usize) -> Vec<Line<'static>> {
         let visible = body.saturating_sub(1).max(1);
-        let scroll = self.selected.saturating_sub(visible.saturating_sub(1));
+        let scroll = tui::window(self.selected, visible);
         self.rows
             .iter()
             .enumerate()
@@ -242,45 +222,8 @@ impl AgentPicker {
                     }
                     Row::Configured { name, detail } => (format!("(-) {name}"), detail.clone()),
                 };
-                row_line(&label, i == self.selected, &detail, inner)
+                tui::row(&label, &detail, i == self.selected, inner)
             })
             .collect()
     }
-}
-
-fn row_line(label: &str, selected: bool, detail: &str, inner: usize) -> Line<'static> {
-    let (marker, style) = if selected {
-        (
-            "> ",
-            Style::new()
-                .fg(Color::Rgb(215, 119, 87))
-                .add_modifier(Modifier::BOLD),
-        )
-    } else {
-        ("  ", Style::new().fg(Color::Gray))
-    };
-    let mut spans = vec![
-        Span::styled(marker, style),
-        Span::styled(label.to_owned(), style),
-    ];
-    if !detail.is_empty() {
-        let used = 2 + label.chars().count();
-        let room = inner.saturating_sub(used + 3);
-        if room >= 10 {
-            let detail: String = if detail.chars().count() > room {
-                detail
-                    .chars()
-                    .take(room.saturating_sub(3))
-                    .collect::<String>()
-                    + "..."
-            } else {
-                detail.to_owned()
-            };
-            spans.push(Span::styled(
-                format!(" — {detail}"),
-                Style::new().add_modifier(Modifier::DIM),
-            ));
-        }
-    }
-    Line::from(spans)
 }

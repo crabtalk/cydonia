@@ -4,12 +4,6 @@ use crate::tui;
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyModifiers};
 use cydonia_core::settings;
-use ratatui::{
-    layout::Rect,
-    style::{Color, Modifier, Style},
-    text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
-};
 
 /// What a picked row does.
 pub enum Source {
@@ -119,11 +113,11 @@ fn draw(frame: &mut ratatui::Frame, state: &State) {
     let area = frame.area();
     // Leave room for the border, the hint, and its blank line.
     let visible = (area.height.saturating_sub(6) as usize).clamp(1, state.rows.len());
-    // Window follows the selection: it sits still until the selection
-    // would leave the bottom, then trails it one row at a time.
-    let scroll = state.selected.saturating_sub(visible.saturating_sub(1));
+    let scroll = tui::window(state.selected, visible);
 
-    let width = state
+    // Unlike the other modals this one sizes itself to its content —
+    // the launcher is short and should not span the terminal.
+    let widest = state
         .rows
         .iter()
         .map(|row| {
@@ -131,49 +125,25 @@ fn draw(frame: &mut ratatui::Frame, state: &State) {
         })
         .max()
         .unwrap_or(0)
-        .clamp(40, 96) as u16
-        + 6;
-    let width = width.min(area.width);
-    let height = (visible as u16 + 4).min(area.height);
-    let rect = Rect::new(
-        area.width.saturating_sub(width) / 2,
-        area.height.saturating_sub(height) / 2,
-        width,
-        height,
-    );
+        .clamp(40, 96) as u16;
+    let rect = tui::centered(area, widest + 6, visible as u16 + 4);
+    let inner = rect.width.saturating_sub(4) as usize;
 
-    let inner = width.saturating_sub(4) as usize;
-    let mut lines = Vec::new();
-    for (i, row) in state.rows.iter().enumerate().skip(scroll).take(visible) {
-        let (marker, style) = if i == state.selected {
-            (
-                "> ",
-                Style::new()
-                    .fg(Color::Rgb(215, 119, 87))
-                    .add_modifier(Modifier::BOLD),
+    let lines = state
+        .rows
+        .iter()
+        .enumerate()
+        .skip(scroll)
+        .take(visible)
+        .map(|(i, row)| {
+            tui::row(
+                &row.label,
+                row.detail.as_deref().unwrap_or_default(),
+                i == state.selected,
+                inner,
             )
-        } else {
-            ("  ", Style::new().fg(Color::DarkGray))
-        };
-        let mut spans = vec![
-            Span::styled(marker, style),
-            Span::styled(row.label.clone(), style),
-        ];
-        // Details are a nicety: only shown when the row leaves space.
-        if let Some(detail) = &row.detail {
-            let used = 2 + row.label.chars().count();
-            let room = inner.saturating_sub(used + 3);
-            if room >= 12 {
-                let detail: String = detail.chars().take(room).collect();
-                spans.push(Span::styled(
-                    format!(" — {detail}"),
-                    Style::new().add_modifier(Modifier::DIM),
-                ));
-            }
-        }
-        lines.push(Line::from(spans));
-    }
-    lines.push(Line::raw(""));
+        })
+        .collect();
 
     let more = state.rows.len().saturating_sub(visible);
     let hint = if more > 0 {
@@ -181,14 +151,5 @@ fn draw(frame: &mut ratatui::Frame, state: &State) {
     } else {
         state.hint.to_owned()
     };
-    lines.push(Line::from(Span::styled(
-        hint,
-        Style::new().add_modifier(Modifier::DIM),
-    )));
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(tui::border_focused())
-        .title(state.title);
-    frame.render_widget(Paragraph::new(lines).block(block), rect);
+    tui::modal(frame, rect, state.title, lines, &hint);
 }

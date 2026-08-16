@@ -6,10 +6,8 @@ use anyhow::Result;
 use crossterm::event::{self, Event};
 use cydonia_registry::{Agent, Installed};
 use ratatui::{
-    layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
 };
 use std::path::Path;
 
@@ -49,55 +47,43 @@ pub fn run(agent: &Agent, data_dir: &Path) -> Result<Option<Installed>> {
 }
 
 fn draw(frame: &mut ratatui::Frame, agent: &Agent, lines: &[String], error: Option<&str>) {
-    let area = frame.area();
-    let width = area.width.saturating_sub(4).min(100);
-    let height = area.height.saturating_sub(4).min(24);
-    let rect = Rect::new(
-        area.width.saturating_sub(width) / 2,
-        area.height.saturating_sub(height) / 2,
-        width,
-        height,
-    );
+    let rect = tui::centered(frame.area(), 100, 24);
+    let inner = rect.width.saturating_sub(4) as usize;
+    let body = rect.height.saturating_sub(5) as usize;
 
-    let body = height.saturating_sub(4) as usize;
+    // The tail of the installer's output, oldest first.
     let mut rows: Vec<Line> = lines
         .iter()
         .rev()
         .take(body)
         .rev()
         .map(|line| {
-            let text: String = line
-                .chars()
-                .take(width.saturating_sub(4) as usize)
-                .collect();
-            Line::from(Span::styled(text, Style::new().add_modifier(Modifier::DIM)))
+            Line::from(Span::styled(
+                tui::truncate(line, inner),
+                Style::new().add_modifier(Modifier::DIM),
+            ))
         })
         .collect();
 
     rows.push(Line::raw(""));
     rows.push(match error {
-        Some(error) => {
-            let text: String = format!("failed: {error}")
-                .chars()
-                .take(width.saturating_sub(4) as usize)
-                .collect();
-            Line::from(Span::styled(text, Style::new().fg(Color::Indexed(204))))
-        }
-        None => Line::from(Span::styled(
-            "installing…",
-            Style::new().fg(Color::Rgb(215, 119, 87)),
+        Some(error) => Line::from(Span::styled(
+            tui::truncate(&format!("failed: {error}"), inner),
+            Style::new().fg(Color::Indexed(204)),
         )),
+        None => Line::from(Span::styled("installing...", Style::new().fg(tui::ACCENT))),
     });
-    if error.is_some() {
-        rows.push(Line::from(Span::styled(
-            "press any key to go back",
-            Style::new().add_modifier(Modifier::DIM),
-        )));
-    }
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(tui::border_focused())
-        .title(format!(" installing {} {} ", agent.name, agent.version));
-    frame.render_widget(Paragraph::new(rows).block(block), rect);
+    let hint = if error.is_some() {
+        "press any key to go back"
+    } else {
+        ""
+    };
+    tui::modal(
+        frame,
+        rect,
+        &format!(" installing {} {} ", agent.name, agent.version),
+        rows,
+        hint,
+    );
 }

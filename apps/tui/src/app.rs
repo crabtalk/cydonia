@@ -31,7 +31,7 @@ use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph},
+    widgets::Paragraph,
 };
 use std::{collections::VecDeque, time::Duration};
 use tokio::time::{Instant, sleep_until};
@@ -1304,43 +1304,19 @@ fn draw_chat(frame: &mut ratatui::Frame, area: Rect, app: &mut App) {
 }
 
 fn draw_permission(frame: &mut ratatui::Frame, prompt: &PermissionPrompt) {
-    let area = frame.area();
-    let height = (prompt.options.len() as u16 + 4).min(area.height);
-    let width = area.width.saturating_sub(8).min(70);
-    let rect = Rect::new(
-        area.width.saturating_sub(width) / 2,
-        area.height.saturating_sub(height) / 2,
-        width,
-        height,
-    );
-
-    let mut lines = Vec::new();
-    for (i, (_, name)) in prompt.options.iter().enumerate() {
-        let (marker, style) = if i == prompt.selected {
-            (
-                "> ",
-                Style::new()
-                    .fg(Color::Rgb(215, 119, 87))
-                    .add_modifier(Modifier::BOLD),
-            )
-        } else {
-            ("  ", Style::new().fg(Color::DarkGray))
-        };
-        lines.push(Line::from(vec![
-            Span::styled(marker, style),
-            Span::styled(name.clone(), style),
-        ]));
-    }
-    lines.push(Line::raw(""));
-    lines.push(Line::from(Span::styled(
+    let rect = tui::centered(frame.area(), 70, prompt.options.len() as u16 + 4);
+    let inner = rect.width.saturating_sub(4) as usize;
+    let lines = prompt
+        .options
+        .iter()
+        .enumerate()
+        .map(|(i, (_, name))| tui::row(name, "", i == prompt.selected, inner))
+        .collect();
+    tui::modal(
+        frame,
+        rect,
+        &format!(" {} ", prompt.title),
+        lines,
         "↑/↓ move · Enter select · Ctrl+C cancel turn",
-        Style::new().add_modifier(Modifier::DIM),
-    )));
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(tui::border_focused())
-        .title(format!(" {} ", prompt.title));
-    frame.render_widget(Clear, rect);
-    frame.render_widget(Paragraph::new(lines).block(block), rect);
+    );
 }

@@ -9,7 +9,10 @@ use crossterm::{
 use ratatui::{
     Terminal,
     backend::CrosstermBackend,
-    style::{Color, Style},
+    layout::Rect,
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
+    widgets::{Block, Borders, Clear, Paragraph},
 };
 use std::io::Stdout;
 
@@ -137,5 +140,87 @@ pub fn handle_text_input(code: KeyCode, buf: &mut String, cursor: &mut usize) {
 
 /// Border style for a focused panel (brand orange).
 pub fn border_focused() -> Style {
-    Style::default().fg(Color::Rgb(215, 119, 87))
+    Style::default().fg(ACCENT)
+}
+
+// ── Modal screens ────────────────────────────────────────────────
+//
+// The picker, the agent and MCP screens, the permission prompt and the
+// installer are all the same thing: a centred box holding a scrolling
+// list and a hint. These are the parts they share.
+
+/// The accent used for the selected row and other highlights.
+pub const ACCENT: Color = Color::Rgb(215, 119, 87);
+
+/// A centred box of at most `width` × `height`, clamped to `area`.
+pub fn centered(area: Rect, width: u16, height: u16) -> Rect {
+    let width = width.min(area.width);
+    let height = height.min(area.height);
+    Rect::new(
+        area.width.saturating_sub(width) / 2,
+        area.height.saturating_sub(height) / 2,
+        width,
+        height,
+    )
+}
+
+/// Truncate to `max` characters, the ellipsis counted within it.
+pub fn truncate(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_owned();
+    }
+    text.chars().take(max.saturating_sub(3)).collect::<String>() + "..."
+}
+
+/// The first visible index that keeps `selected` inside a window of
+/// `visible` rows: still until the selection would leave the bottom,
+/// then trailing it one row at a time.
+pub fn window(selected: usize, visible: usize) -> usize {
+    selected.saturating_sub(visible.saturating_sub(1))
+}
+
+/// One list row — `> label — detail` — with the detail dimmed, and
+/// dropped entirely when the row leaves no room for it.
+pub fn row(label: &str, detail: &str, selected: bool, inner: usize) -> Line<'static> {
+    let (marker, style) = if selected {
+        ("> ", Style::new().fg(ACCENT).add_modifier(Modifier::BOLD))
+    } else {
+        ("  ", Style::new().fg(Color::Gray))
+    };
+    let mut spans = vec![
+        Span::styled(marker, style),
+        Span::styled(label.to_owned(), style),
+    ];
+    if !detail.is_empty() {
+        let room = inner.saturating_sub(2 + label.chars().count() + 3);
+        if room >= 10 {
+            spans.push(Span::styled(
+                format!(" — {}", truncate(detail, room)),
+                Style::new().add_modifier(Modifier::DIM),
+            ));
+        }
+    }
+    Line::from(spans)
+}
+
+/// Draw a bordered modal over whatever is beneath it: `lines`, a blank,
+/// then the dim `hint`.
+pub fn modal(
+    frame: &mut ratatui::Frame,
+    rect: Rect,
+    title: &str,
+    mut lines: Vec<Line<'static>>,
+    hint: &str,
+) {
+    lines.push(Line::raw(""));
+    lines.push(Line::from(Span::styled(
+        hint.to_owned(),
+        Style::new().add_modifier(Modifier::DIM),
+    )));
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(border_focused())
+        .title(title.to_owned());
+    frame.render_widget(Clear, rect);
+    frame.render_widget(Paragraph::new(lines).block(block), rect);
 }

@@ -3,14 +3,13 @@
 //! ACP fixes a session's MCP servers at `session/new`, so changes here
 //! apply to the next session rather than the running one.
 
+use crate::tui;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use cydonia_core::settings::{self, McpServer};
 use cydonia_registry::mcp;
 use ratatui::{
-    layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph},
 };
 
 /// Results of background work, delivered into the event loop.
@@ -225,17 +224,9 @@ impl McpPicker {
     }
 
     pub fn draw(&self, frame: &mut ratatui::Frame) {
-        let area = frame.area();
-        let width = area.width.saturating_sub(8).min(76);
-        let height = area.height.saturating_sub(4).min(20);
-        let rect = Rect::new(
-            area.width.saturating_sub(width) / 2,
-            area.height.saturating_sub(height) / 2,
-            width,
-            height,
-        );
-        let inner = width.saturating_sub(4) as usize;
-        let body = height.saturating_sub(4) as usize;
+        let rect = tui::centered(frame.area(), 76, 20);
+        let inner = rect.width.saturating_sub(4) as usize;
+        let body = rect.height.saturating_sub(4) as usize;
 
         let (title, lines) = match &self.mode {
             Mode::List => (" mcp servers ".to_owned(), self.list_lines(inner, body)),
@@ -250,24 +241,11 @@ impl McpPicker {
                 search_lines(results, *selected, *busy, error.as_deref(), inner, body),
             ),
         };
-
         let hint = match self.mode {
             Mode::List => "↑/↓ move · space toggle · d remove · Esc close",
             Mode::Search { .. } => "type to filter · Tab search · Enter add · Esc back",
         };
-        let mut lines = lines;
-        lines.push(Line::raw(""));
-        lines.push(Line::from(Span::styled(
-            hint,
-            Style::new().add_modifier(Modifier::DIM),
-        )));
-
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(crate::tui::border_focused())
-            .title(title);
-        frame.render_widget(Clear, rect);
-        frame.render_widget(Paragraph::new(lines).block(block), rect);
+        tui::modal(frame, rect, &title, lines, hint);
     }
 
     fn list_lines(&self, inner: usize, body: usize) -> Vec<Line<'static>> {
@@ -278,26 +256,26 @@ impl McpPicker {
                     Style::new().add_modifier(Modifier::DIM),
                 )),
                 Line::raw(""),
-                row_line("+ add from the registry", true, None, inner),
+                tui::row("+ add from the registry", "", true, inner),
             ];
         }
-        let scroll = self.selected.saturating_sub(body.saturating_sub(2));
+        let scroll = tui::window(self.selected, body.saturating_sub(1));
         let mut lines = Vec::new();
         for (i, server) in self.servers.iter().enumerate().skip(scroll).take(body - 1) {
             let mark = if server.enabled { "[x] " } else { "[ ] " };
             let label = format!("{mark}{}", server.name);
-            lines.push(row_line(
+            lines.push(tui::row(
                 &label,
+                &server.detail(),
                 i == self.selected,
-                Some(&server.detail()),
                 inner,
             ));
         }
         if self.selected >= self.servers.len() || self.servers.len() < body {
-            lines.push(row_line(
+            lines.push(tui::row(
                 "+ add from the registry",
+                "",
                 self.selected >= self.servers.len(),
-                None,
                 inner,
             ));
         }
@@ -315,7 +293,7 @@ fn search_lines(
 ) -> Vec<Line<'static>> {
     if let Some(error) = error {
         return vec![Line::from(Span::styled(
-            truncate(error, inner),
+            tui::truncate(error, inner),
             Style::new().fg(Color::Indexed(204)),
         ))];
     }
@@ -331,7 +309,7 @@ fn search_lines(
             Style::new().add_modifier(Modifier::DIM),
         ))];
     }
-    let scroll = selected.saturating_sub(body.saturating_sub(2));
+    let scroll = tui::window(selected, body.saturating_sub(1));
     results
         .iter()
         .enumerate()
@@ -345,44 +323,9 @@ fn search_lines(
             } else {
                 format!("unsupported — {}", server.description)
             };
-            row_line(&label, i == selected, Some(&detail), inner)
+            tui::row(&label, &detail, i == selected, inner)
         })
         .collect()
-}
-
-fn row_line(label: &str, selected: bool, detail: Option<&str>, inner: usize) -> Line<'static> {
-    let (marker, style) = if selected {
-        (
-            "> ",
-            Style::new()
-                .fg(Color::Rgb(215, 119, 87))
-                .add_modifier(Modifier::BOLD),
-        )
-    } else {
-        ("  ", Style::new().fg(Color::Gray))
-    };
-    let mut spans = vec![
-        Span::styled(marker, style),
-        Span::styled(label.to_owned(), style),
-    ];
-    if let Some(detail) = detail.filter(|d| !d.is_empty()) {
-        let used = 2 + label.chars().count();
-        let room = inner.saturating_sub(used + 3);
-        if room >= 10 {
-            spans.push(Span::styled(
-                format!(" — {}", truncate(detail, room)),
-                Style::new().add_modifier(Modifier::DIM),
-            ));
-        }
-    }
-    Line::from(spans)
-}
-
-fn truncate(text: &str, max: usize) -> String {
-    if text.chars().count() <= max {
-        return text.to_owned();
-    }
-    text.chars().take(max.saturating_sub(3)).collect::<String>() + "..."
 }
 
 /// Turn a registry entry into a stored server, installing if needed.
