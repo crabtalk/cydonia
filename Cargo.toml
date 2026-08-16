@@ -15,6 +15,7 @@ cydonia-core = { path = "crates/core" }
 agent-client-protocol = "2.0"
 anyhow = "1"
 crossterm = { version = "0.28", features = ["event-stream"] }
+diffy = "0.4"
 dirs = "6"
 futures = "0.3"
 futures-util = "0.3"

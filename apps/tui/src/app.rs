@@ -68,6 +68,18 @@ async fn chat(session: Session, events: Events, agent_name: &str) -> Result<()> 
         history.load(path);
     }
 
+    let (modes, current_mode) = match &session.response.modes {
+        Some(state) => (
+            state
+                .available_modes
+                .iter()
+                .map(|m| (m.id.to_string(), m.name.clone()))
+                .collect(),
+            Some(state.current_mode_id.to_string()),
+        ),
+        None => (Vec::new(), None),
+    };
+
     let mut app = App {
         buffer: ChatBuffer::new(),
         input: InputState::new(history, Vec::new()),
@@ -85,6 +97,9 @@ async fn chat(session: Session, events: Events, agent_name: &str) -> Result<()> 
         paste_seq: 0,
         quit_hint: None,
         last_title: String::new(),
+        modes,
+        current_mode,
+        usage: None,
     };
     app.buffer.push(ChatEntry::Text(app.header.clone()));
 
@@ -134,6 +149,18 @@ struct App {
     quit_hint: Option<Instant>,
     /// Last terminal title written (dedupes OSC writes).
     last_title: String,
+    /// Session modes advertised at `session/new`: `(id, name)`.
+    modes: Vec<(String, String)>,
+    /// Current mode id (updated by `/mode` and `CurrentModeUpdate`).
+    current_mode: Option<String>,
+    /// Latest context/cost figures from `UsageUpdate`.
+    usage: Option<Usage>,
+}
+
+struct Usage {
+    used: u64,
+    size: u64,
+    cost: Option<(f64, String)>,
 }
 
 struct PermissionPrompt {
@@ -312,6 +339,9 @@ fn handle_key(key: KeyEvent, app: &mut App, session: &Session) -> Result<bool> {
                     app.buffer.push(ChatEntry::Text(app.header.clone()));
                 }
                 "/help" => push_help(app),
+                _ if content == "/mode" || content.starts_with("/mode ") => {
+                    handle_mode_command(app, session, &content);
+                }
                 _ => {
                     // The echo keeps the collapsed placeholder; the
                     // agent gets the real pasted text.
@@ -335,6 +365,57 @@ fn handle_key(key: KeyEvent, app: &mut App, session: &Session) -> Result<bool> {
         }
     }
     Ok(false)
+}
+
+/// `/mode` lists the session modes; `/mode <name>` switches (matched
+/// by id or name, case-insensitive).
+fn handle_mode_command(app: &mut App, session: &Session, content: &str) {
+    if app.modes.is_empty() {
+        push_notice(app, "this agent has no session modes");
+        return;
+    }
+    let list = |app: &App| {
+        app.modes
+            .iter()
+            .map(|(id, name)| {
+                if app.current_mode.as_deref() == Some(id) {
+                    format!("{name}*")
+                } else {
+                    name.clone()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+
+    let arg = content.strip_prefix("/mode").unwrap_or_default().trim();
+    if arg.is_empty() {
+        let modes = list(app);
+        push_notice(app, &format!("modes: {modes}"));
+        return;
+    }
+    let wanted = arg.to_lowercase();
+    let Some((id, name)) = app
+        .modes
+        .iter()
+        .find(|(id, name)| id.to_lowercase() == wanted || name.to_lowercase() == wanted)
+        .cloned()
+    else {
+        let modes = list(app);
+        push_error(app, &format!("unknown mode {arg:?} — available: {modes}"));
+        return;
+    };
+    match session.set_mode(&id) {
+        Ok(()) => {
+            // Optimistic; a CurrentModeUpdate from the agent overrides.
+            app.current_mode = Some(id);
+            push_notice(app, &format!("mode → {name}"));
+        }
+        Err(e) => push_error(
+            app,
+            &format!("set mode failed: {}", session::error_text(&e)),
+        ),
+    }
 }
 
 /// Bracketed paste: newline-normalize, collapse large pastes to a
@@ -513,6 +594,16 @@ fn handle_update(update: SessionUpdate, app: &mut App) {
             MaybeUndefined::Null => app.chat_title.clear(),
             MaybeUndefined::Undefined => {}
         },
+        SessionUpdate::CurrentModeUpdate(update) => {
+            app.current_mode = Some(update.current_mode_id.to_string());
+        }
+        SessionUpdate::UsageUpdate(update) => {
+            app.usage = Some(Usage {
+                used: update.used,
+                size: update.size,
+                cost: update.cost.map(|c| (c.amount, c.currency)),
+            });
+        }
         SessionUpdate::AvailableCommandsUpdate(cmds) => {
             app.input.extra_commands = cmds
                 .available_commands
@@ -551,16 +642,27 @@ fn apply_tool_status(app: &mut App, id: &str, status: ToolCallStatus) {
 }
 
 fn push_tool_content(app: &mut App, id: &str, content: &[ToolCallContent], failed: bool) {
-    let text: String = content
-        .iter()
-        .map(|c| match c {
-            ToolCallContent::Content(inner) => content_text(&inner.content),
-            ToolCallContent::Diff(diff) => format!("edited {}", diff.path.display()),
-            ToolCallContent::Terminal(_) => "[terminal]".to_owned(),
-            _ => "[content]".to_owned(),
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
+    let mut text: Vec<String> = Vec::new();
+    for item in content {
+        match item {
+            ToolCallContent::Content(inner) => text.push(content_text(&inner.content)),
+            ToolCallContent::Diff(diff) => {
+                if !text.is_empty() {
+                    app.buffer
+                        .push_tool_result(id, &std::mem::take(&mut text).join("\n"), failed);
+                }
+                app.buffer.push_tool_diff(
+                    id,
+                    &diff.path.display().to_string(),
+                    diff.old_text.as_deref().unwrap_or(""),
+                    &diff.new_text,
+                );
+            }
+            ToolCallContent::Terminal(_) => text.push("[terminal]".to_owned()),
+            _ => text.push("[content]".to_owned()),
+        }
+    }
+    let text = text.join("\n");
     if !text.is_empty() {
         app.buffer.push_tool_result(id, &text, failed);
     }
@@ -673,6 +775,7 @@ fn push_notice(app: &mut App, message: &str) {
 fn push_help(app: &mut App) {
     let lines = [
         "  /clear — clear the transcript",
+        "  /mode  — list or switch session modes",
         "  /exit  — quit (also Ctrl+D)",
         "  Ctrl+C — cancel the current turn",
         "  Shift+Enter — newline · PageUp/PageDown — scroll",
@@ -732,12 +835,44 @@ fn draw(frame: &mut ratatui::Frame, app: &mut App) {
             chunks[1],
         );
     }
-    app.input
-        .render(frame, chunks[chunks.len() - 1], &app.agent, &app.chat_title);
+    app.input.render(
+        frame,
+        chunks[chunks.len() - 1],
+        &app.agent,
+        &app.chat_title,
+        &status_line(app),
+    );
 
     if let Some(ref prompt) = app.permission {
         draw_permission(frame, prompt);
     }
+}
+
+/// Mode · context% · cost, shown on the input's bottom border.
+fn status_line(app: &App) -> String {
+    let mut parts = Vec::new();
+    if let Some(id) = &app.current_mode {
+        let name = app
+            .modes
+            .iter()
+            .find(|(mid, _)| mid == id)
+            .map(|(_, name)| name.as_str())
+            .unwrap_or(id);
+        parts.push(name.to_owned());
+    }
+    if let Some(usage) = &app.usage {
+        if let Some(pct) = usage.used.saturating_mul(100).checked_div(usage.size) {
+            parts.push(format!("{pct}%"));
+        }
+        if let Some((amount, currency)) = &usage.cost {
+            if currency == "USD" {
+                parts.push(format!("${amount:.2}"));
+            } else {
+                parts.push(format!("{amount:.2} {currency}"));
+            }
+        }
+    }
+    parts.join(" · ")
 }
 
 fn draw_chat(frame: &mut ratatui::Frame, area: Rect, app: &mut App) {

@@ -202,6 +202,15 @@ pub enum ChatEntry {
         output: String,
         failed: bool,
     },
+    /// A file diff attached to the tool call `id`. Lines are tagged
+    /// `+`/`-`/` ` (and `@` for hunk separators), computed once at push.
+    ToolDiff {
+        id: String,
+        path: String,
+        added: usize,
+        removed: usize,
+        lines: Vec<(char, String)>,
+    },
     /// The agent's plan checklist.
     Plan(Vec<PlanRow>),
     /// Blank separator line.
@@ -387,10 +396,56 @@ impl ChatBuffer {
     /// after any results already attached to it. Falls back to
     /// appending at the end if the marker is gone (e.g. after /clear).
     pub fn push_tool_result(&mut self, id: &str, output: &str, failed: bool) {
-        let entry = ChatEntry::ToolResult {
-            id: id.to_owned(),
-            output: output.to_owned(),
-            failed,
+        self.attach_to_tool(
+            id,
+            ChatEntry::ToolResult {
+                id: id.to_owned(),
+                output: output.to_owned(),
+                failed,
+            },
+        );
+    }
+
+    /// Attach a diff under the marker with the given call id.
+    pub fn push_tool_diff(&mut self, id: &str, path: &str, old: &str, new: &str) {
+        let patch = diffy::create_patch(old, new);
+        let mut lines = Vec::new();
+        let (mut added, mut removed) = (0usize, 0usize);
+        for hunk in patch.hunks() {
+            if !lines.is_empty() {
+                lines.push(('@', String::new()));
+            }
+            for line in hunk.lines() {
+                match line {
+                    diffy::Line::Insert(s) => {
+                        added += 1;
+                        lines.push(('+', s.trim_end().to_owned()));
+                    }
+                    diffy::Line::Delete(s) => {
+                        removed += 1;
+                        lines.push(('-', s.trim_end().to_owned()));
+                    }
+                    diffy::Line::Context(s) => lines.push((' ', s.trim_end().to_owned())),
+                }
+            }
+        }
+        self.attach_to_tool(
+            id,
+            ChatEntry::ToolDiff {
+                id: id.to_owned(),
+                path: path.to_owned(),
+                added,
+                removed,
+                lines,
+            },
+        );
+    }
+
+    fn attach_to_tool(&mut self, id: &str, entry: ChatEntry) {
+        let attached = |e: &ChatEntry| {
+            matches!(e,
+                ChatEntry::ToolResult { id: rid, .. } | ChatEntry::ToolDiff { id: rid, .. }
+                    if rid == id)
         };
         let marker = self
             .entries
@@ -399,8 +454,7 @@ impl ChatBuffer {
         match marker {
             Some(pos) => {
                 let mut at = pos + 1;
-                while matches!(self.entries.get(at), Some(ChatEntry::ToolResult { id: rid, .. }) if rid == id)
-                {
+                while self.entries.get(at).is_some_and(attached) {
                     at += 1;
                 }
                 self.entries.insert(at, entry);
@@ -502,6 +556,15 @@ impl ChatBuffer {
                 ChatEntry::ToolResult { output, failed, .. } => {
                     out.extend(tool_result_lines(output, *failed, width));
                 }
+                ChatEntry::ToolDiff {
+                    path,
+                    added,
+                    removed,
+                    lines,
+                    ..
+                } => {
+                    out.extend(tool_diff_lines(path, *added, *removed, lines, width));
+                }
                 ChatEntry::Plan(rows) => {
                     for row in rows {
                         let (mark, mark_style, text_style) = match row.status {
@@ -580,6 +643,50 @@ fn tool_result_lines(output: &str, failed: bool, width: usize) -> Vec<Line<'stat
     }
     lines.push(Line::raw(""));
     lines
+}
+
+const DIFF_MAX_LINES: usize = 10;
+
+/// `⎿ path +a −d` header plus coloured diff lines under the same
+/// line/char budgets as tool results.
+fn tool_diff_lines(
+    path: &str,
+    added: usize,
+    removed: usize,
+    lines: &[(char, String)],
+    width: usize,
+) -> Vec<Line<'static>> {
+    let budget = width.saturating_sub(TOOL_PAD.len() + 4).max(20);
+    // ASCII signs only: `−` (U+2212) is ambiguous-width and drifts
+    // terminal cells against ratatui's column math.
+    let mut out = vec![Line::from(vec![
+        Span::raw(TOOL_PAD.to_string()),
+        Span::styled("⎿ ", S_SUBTLE),
+        Span::styled(truncate_chars(path, budget), S_DIM),
+        Span::styled(format!(" +{added}"), Style::new().fg(GREEN)),
+        Span::styled(format!(" -{removed}"), Style::new().fg(RED)),
+    ])];
+    for (sign, text) in lines.iter().take(DIFF_MAX_LINES) {
+        let (glyph, style) = match sign {
+            '+' => ("+ ", Style::new().fg(GREEN)),
+            '-' => ("- ", Style::new().fg(RED)),
+            '@' => ("~ ", S_SUBTLE),
+            _ => ("  ", S_DIM),
+        };
+        out.push(Line::from(vec![
+            Span::raw(format!("{TOOL_PAD}  ")),
+            Span::styled(glyph, style),
+            Span::styled(truncate_chars(text, budget), style),
+        ]));
+    }
+    if lines.len() > DIFF_MAX_LINES {
+        out.push(Line::from(vec![
+            Span::raw(format!("{TOOL_PAD}  ")),
+            Span::styled(format!("… +{} lines", lines.len() - DIFF_MAX_LINES), S_DIM),
+        ]));
+    }
+    out.push(Line::raw(""));
+    out
 }
 
 fn truncate_chars(line: &str, max: usize) -> String {

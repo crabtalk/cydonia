@@ -13,6 +13,7 @@ cydonia-core.workspace = true
 # crates.io
 anyhow.workspace = true
 crossterm.workspace = true
+diffy.workspace = true
 dirs.workspace = true
 futures-util.workspace = true
 ratatui.workspace = true

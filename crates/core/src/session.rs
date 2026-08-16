@@ -18,8 +18,8 @@ use agent_client_protocol::schema::{
         CancelNotification, ClientCapabilities, FileSystemCapabilities, InitializeRequest,
         InitializeResponse, NewSessionRequest, NewSessionResponse, PromptRequest,
         ReadTextFileRequest, ReadTextFileResponse, RequestPermissionRequest,
-        RequestPermissionResponse, SessionId, SessionNotification, SessionUpdate, StopReason,
-        WriteTextFileRequest, WriteTextFileResponse,
+        RequestPermissionResponse, SessionId, SessionNotification, SessionUpdate,
+        SetSessionModeRequest, StopReason, WriteTextFileRequest, WriteTextFileResponse,
     },
 };
 use agent_client_protocol::{
@@ -195,6 +195,18 @@ impl Session {
     pub fn cancel(&self) -> Result<(), agent_client_protocol::Error> {
         self.conn
             .send_notification(CancelNotification::new(self.session_id.clone()))
+    }
+
+    /// Switch the session mode (`session/set_mode`). Fire-and-forget:
+    /// frontends validate the id against `response.modes` up front, and
+    /// the agent's `CurrentModeUpdate` is the confirmation.
+    pub fn set_mode(&self, mode_id: &str) -> Result<(), agent_client_protocol::Error> {
+        self.conn
+            .send_request(SetSessionModeRequest::new(
+                self.session_id.clone(),
+                mode_id.to_owned(),
+            ))
+            .on_receiving_result(move |_| async { Ok(()) })
     }
 }
 

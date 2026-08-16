@@ -12,7 +12,7 @@ use ratatui::{
 const MAX_DROPDOWN_VISIBLE: usize = 5;
 
 /// Built-in slash commands, for autocompletion.
-pub const COMMANDS: &[&str] = &["/clear", "/exit", "/help"];
+pub const COMMANDS: &[&str] = &["/clear", "/exit", "/help", "/mode"];
 
 /// Collect autocompletion candidates for the typed prefix: matching built-in
 /// `/command` names plus agent-provided command names.
@@ -490,6 +490,7 @@ impl InputState {
         area: ratatui::layout::Rect,
         agent: &str,
         title: &str,
+        status: &str,
     ) {
         let mut block = Block::default()
             .borders(Borders::ALL)
@@ -498,6 +499,14 @@ impl InputState {
                 Line::from(format!(" {agent} > "))
                     .style(RStyle::default().fg(RColor::Rgb(215, 119, 87))),
             );
+
+        if !status.is_empty() {
+            block = block.title_bottom(
+                Line::from(format!(" {status} "))
+                    .style(RStyle::default().fg(RColor::Rgb(136, 136, 136)))
+                    .alignment(Alignment::Right),
+            );
+        }
 
         if !title.is_empty() {
             block = block.title_top(
