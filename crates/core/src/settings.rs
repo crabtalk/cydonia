@@ -20,6 +20,54 @@ pub struct Agent {
     pub args: Vec<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub env: BTreeMap<String, String>,
+    /// MCP servers handed to the agent at `session/new` (stdio transport).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mcp_servers: Vec<McpServer>,
+}
+
+/// One MCP server offered to agents: either a local `command args...`
+/// over stdio, or a remote `url` (which needs the agent to support HTTP
+/// MCP). Managed through the `/mcp` picker — not written by hand.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpServer {
+    pub name: String,
+    #[serde(default = "enabled_by_default")]
+    pub enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub env: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// The MCP registry id this came from, when it came from there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+}
+
+const fn enabled_by_default() -> bool {
+    true
+}
+
+impl McpServer {
+    pub fn is_remote(&self) -> bool {
+        self.command.is_none() && self.url.is_some()
+    }
+
+    /// What the picker shows under the name.
+    pub fn detail(&self) -> String {
+        match (&self.command, &self.url) {
+            (Some(command), _) => {
+                let name = command.rsplit('/').next().unwrap_or(command);
+                format!("{name} {}", self.args.join(" "))
+                    .trim_end()
+                    .to_owned()
+            }
+            (None, Some(url)) => url.clone(),
+            _ => String::new(),
+        }
+    }
 }
 
 impl Default for Settings {
@@ -29,6 +77,7 @@ impl Default for Settings {
             command: "npx".into(),
             args: vec!["-y".into(), pkg.into()],
             env: BTreeMap::new(),
+            mcp_servers: Vec::new(),
         };
         Self {
             agents: vec![
@@ -56,6 +105,116 @@ pub fn dir() -> Result<PathBuf> {
 
 pub fn history_path() -> Option<PathBuf> {
     dir().ok().map(|d| d.join("history"))
+}
+
+/// Where installed agents live: `$XDG_DATA_HOME/cydonia`, defaulting to
+/// `~/.local/share/cydonia`. Separate from config — this is machine
+/// state, not something to edit or sync.
+pub fn data_dir() -> Result<PathBuf> {
+    if let Ok(xdg) = std::env::var("XDG_DATA_HOME")
+        && !xdg.is_empty()
+    {
+        return Ok(PathBuf::from(xdg).join("cydonia"));
+    }
+    Ok(dirs::home_dir()
+        .context("no home directory on this system")?
+        .join(".local")
+        .join("share")
+        .join("cydonia"))
+}
+
+// ── Last-session store ───────────────────────────────────────────
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct SessionStore {
+    #[serde(default)]
+    sessions: Vec<StoredSession>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct StoredSession {
+    agent: String,
+    cwd: PathBuf,
+    session_id: String,
+}
+
+fn sessions_path() -> Option<PathBuf> {
+    dir().ok().map(|d| d.join("sessions.toml"))
+}
+
+fn load_sessions() -> SessionStore {
+    sessions_path()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|s| toml::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+/// The last session id opened for `agent` in `cwd`, if any.
+pub fn last_session(agent: &str, cwd: &std::path::Path) -> Option<String> {
+    load_sessions()
+        .sessions
+        .into_iter()
+        .find(|s| s.agent == agent && s.cwd == cwd)
+        .map(|s| s.session_id)
+}
+
+/// Remember `session_id` as the latest for `agent` in `cwd`.
+pub fn remember_session(agent: &str, cwd: &std::path::Path, session_id: &str) {
+    let mut store = load_sessions();
+    store
+        .sessions
+        .retain(|s| !(s.agent == agent && s.cwd == cwd));
+    store.sessions.push(StoredSession {
+        agent: agent.to_owned(),
+        cwd: cwd.to_owned(),
+        session_id: session_id.to_owned(),
+    });
+    let Some(path) = sessions_path() else { return };
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(body) = toml::to_string_pretty(&store) {
+        let _ = std::fs::write(path, body);
+    }
+}
+
+// ── MCP server store ─────────────────────────────────────────────
+//
+// App-managed, like the session store: written by the `/mcp` picker,
+// never authored by hand.
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct McpStore {
+    #[serde(default)]
+    servers: Vec<McpServer>,
+}
+
+fn mcp_path() -> Option<PathBuf> {
+    dir().ok().map(|d| d.join("mcp.toml"))
+}
+
+/// Every MCP server the user has added, enabled or not.
+pub fn mcp_servers() -> Vec<McpServer> {
+    mcp_path()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|s| toml::from_str::<McpStore>(&s).ok())
+        .map(|store| store.servers)
+        .unwrap_or_default()
+}
+
+pub fn save_mcp_servers(servers: &[McpServer]) -> Result<()> {
+    let path = mcp_path().context("no config directory")?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let store = McpStore {
+        servers: servers.to_vec(),
+    };
+    let body = format!(
+        "# managed by cydonia's /mcp picker\n\n{}",
+        toml::to_string_pretty(&store)?
+    );
+    std::fs::write(&path, body).with_context(|| format!("writing {}", path.display()))
 }
 
 /// Load settings, generating the default file on first run.

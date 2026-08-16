@@ -1,0 +1,10 @@
+[book]
+title = "Cydonia"
+description = "A terminal client for ACP agents"
+authors = ["clearloop"]
+language = "en"
+src = "src"
+
+[output.html]
+git-repository-url = "https://github.com/crabtalk/cydonia"
+edit-url-template = "https://github.com/crabtalk/cydonia/edit/main/docs/{path}"

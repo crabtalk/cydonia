@@ -1,0 +1,13 @@
+[package]
+name = "cydonia-registry"
+description = "ACP agent registry catalog and installer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+serde = { workspace = true }
+serde_json.workspace = true
+ureq.workspace = true

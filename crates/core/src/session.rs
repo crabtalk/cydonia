@@ -15,10 +15,12 @@ use crate::settings;
 use agent_client_protocol::schema::{
     ProtocolVersion,
     v1::{
-        CancelNotification, ClientCapabilities, FileSystemCapabilities, InitializeRequest,
-        InitializeResponse, NewSessionRequest, NewSessionResponse, PromptRequest,
-        ReadTextFileRequest, ReadTextFileResponse, RequestPermissionRequest,
-        RequestPermissionResponse, SessionId, SessionNotification, SessionUpdate, StopReason,
+        AuthenticateRequest, CancelNotification, ClientCapabilities, ContentBlock, EnvVariable,
+        FileSystemCapabilities, InitializeRequest, InitializeResponse, LoadSessionRequest,
+        McpServer, McpServerHttp, McpServerStdio, NewSessionRequest, NewSessionResponse,
+        PromptRequest, ReadTextFileRequest, ReadTextFileResponse, RequestPermissionRequest,
+        RequestPermissionResponse, SessionConfigOptionValue, SessionId, SessionNotification,
+        SessionUpdate, SetSessionConfigOptionRequest, SetSessionModeRequest, StopReason,
         WriteTextFileRequest, WriteTextFileResponse,
     },
 };
@@ -55,13 +57,51 @@ pub struct Session {
     pub init: InitializeResponse,
     pub response: NewSessionResponse,
     pub cwd: PathBuf,
+    /// True when an existing session was loaded (history replayed as
+    /// queued [`Event::Update`]s) instead of a fresh one created.
+    pub loaded: bool,
+}
+
+/// Progress reporter for the steps before the frontend is up.
+pub type StatusFn = Box<dyn Fn(&str) + Send + Sync>;
+
+/// How to open a session.
+#[derive(Default)]
+pub struct Launch {
+    /// The session's working directory.
+    pub cwd: PathBuf,
+    /// A session to load instead of starting fresh.
+    pub previous: Option<String>,
+    /// Progress for the steps before the frontend is up — notably
+    /// authentication, which can block on a browser sign-in.
+    pub status: Option<StatusFn>,
+}
+
+impl Launch {
+    pub fn new(cwd: PathBuf) -> Self {
+        Self {
+            cwd,
+            ..Default::default()
+        }
+    }
+
+    fn say(&self, message: &str) {
+        if let Some(status) = &self.status {
+            status(message);
+        }
+    }
 }
 
 impl Session {
     /// Spawn `entry` over stdio, initialize, open a session, and run `f`
     /// with it. Returns when `f` does; the agent process dies with the
     /// connection.
-    pub async fn spawn<T, F>(entry: &settings::Agent, f: F) -> Result<T>
+    ///
+    /// With [`Launch::previous`] set and the agent capable,
+    /// `session/load` replays that session's history instead of
+    /// starting fresh; a failed load (stale id, agent restart) falls
+    /// back to a new session.
+    pub async fn spawn<T, F>(entry: &settings::Agent, launch: Launch, f: F) -> Result<T>
     where
         F: AsyncFnOnce(Session, Events) -> Result<T>,
     {
@@ -72,6 +112,11 @@ impl Session {
         for (key, value) in &entry.env {
             config = config.env(key, value);
         }
+
+        // The agent's own list is legacy config; the store is what the
+        // `/mcp` picker manages. Both are offered, store first.
+        let mut configured = settings::mcp_servers();
+        configured.extend(entry.mcp_servers.iter().cloned());
 
         let (tx, events) = mpsc::unbounded::<Event>();
         let notify_tx = tx.clone();
@@ -128,7 +173,7 @@ impl Session {
                 agent_client_protocol::on_receive_dispatch!(),
             )
             .connect_with(debuggable(AcpAgent::new(config)), async |conn| {
-                Ok(Self::open(conn, tx, events, f).await)
+                Ok(Self::open(conn, tx, events, launch, configured, f).await)
             })
             .await
             .map_err(|e| anyhow!("ACP connection failed: {e}"))?
@@ -138,11 +183,14 @@ impl Session {
         conn: ConnectionTo<Agent>,
         tx: mpsc::UnboundedSender<Event>,
         events: Events,
+        launch: Launch,
+        configured: Vec<settings::McpServer>,
         f: F,
     ) -> Result<T>
     where
         F: AsyncFnOnce(Session, Events) -> Result<T>,
     {
+        let cwd = launch.cwd.clone();
         let init = conn
             .send_request(
                 InitializeRequest::new(ProtocolVersion::V1).client_capabilities(
@@ -155,12 +203,56 @@ impl Session {
             .await
             .map_err(|e| anyhow!("initialize failed: {e}"))?;
 
-        let cwd = std::env::current_dir().unwrap_or_else(|_| "/".into());
-        let response = conn
-            .send_request(NewSessionRequest::new(cwd.clone()))
-            .block_task()
-            .await
-            .map_err(|e| anyhow!("session/new failed: {e}"))?;
+        // Only now are the agent's MCP capabilities known, so remote
+        // servers can be dropped for agents that can't reach them.
+        let mcp_servers = acp_mcp_servers(&configured, &init);
+
+        let mut loaded = false;
+        let mut response = None;
+        if let Some(id) = launch
+            .previous
+            .clone()
+            .filter(|_| init.agent_capabilities.load_session)
+        {
+            let load = || {
+                LoadSessionRequest::new(id.clone(), cwd.clone()).mcp_servers(mcp_servers.clone())
+            };
+            let result = match conn.send_request(load()).block_task().await {
+                Err(e) if e.code == agent_client_protocol::Error::auth_required().code => {
+                    authenticate(&conn, &init, &launch).await?;
+                    conn.send_request(load()).block_task().await
+                }
+                other => other,
+            };
+            // A failed load (stale id, agent state gone) falls through
+            // to a fresh session rather than failing the launch.
+            if let Ok(load_response) = result {
+                let mut restored = NewSessionResponse::new(id);
+                restored.modes = load_response.modes;
+                restored.config_options = load_response.config_options;
+                response = Some(restored);
+                loaded = true;
+            }
+        }
+
+        let response = match response {
+            Some(response) => response,
+            None => {
+                let new_session =
+                    || NewSessionRequest::new(cwd.clone()).mcp_servers(mcp_servers.clone());
+                match conn.send_request(new_session()).block_task().await {
+                    Ok(response) => response,
+                    Err(e) if e.code == agent_client_protocol::Error::auth_required().code => {
+                        authenticate(&conn, &init, &launch).await?;
+                        conn.send_request(new_session())
+                            .block_task()
+                            .await
+                            .map_err(|e| anyhow!("session/new failed after authentication: {e}"))?
+                    }
+                    Err(e) => return Err(anyhow!("session/new failed: {e}")),
+                }
+            }
+        };
 
         f(
             Session {
@@ -170,6 +262,7 @@ impl Session {
                 init,
                 response,
                 cwd,
+                loaded,
             },
             events,
         )
@@ -178,7 +271,16 @@ impl Session {
 
     /// Send a prompt turn. Its result arrives as [`Event::TurnDone`].
     pub fn prompt(&self, content: &str) -> Result<(), agent_client_protocol::Error> {
-        let request = PromptRequest::new(self.session_id.clone(), vec![content.to_owned().into()]);
+        self.prompt_blocks(vec![content.to_owned().into()])
+    }
+
+    /// Send a prompt turn with explicit content blocks (text plus
+    /// embedded resources). Same result path as [`Self::prompt`].
+    pub fn prompt_blocks(
+        &self,
+        blocks: Vec<ContentBlock>,
+    ) -> Result<(), agent_client_protocol::Error> {
+        let request = PromptRequest::new(self.session_id.clone(), blocks);
         let tx = self.tx.clone();
         self.conn
             .send_request(request)
@@ -196,6 +298,109 @@ impl Session {
         self.conn
             .send_notification(CancelNotification::new(self.session_id.clone()))
     }
+
+    /// Switch the session mode (`session/set_mode`). Fire-and-forget:
+    /// frontends validate the id against `response.modes` up front, and
+    /// the agent's `CurrentModeUpdate` is the confirmation.
+    pub fn set_mode(&self, mode_id: &str) -> Result<(), agent_client_protocol::Error> {
+        self.conn
+            .send_request(SetSessionModeRequest::new(
+                self.session_id.clone(),
+                mode_id.to_owned(),
+            ))
+            .on_receiving_result(move |_| async { Ok(()) })
+    }
+
+    /// Set a session config option (`session/set_config_option`).
+    /// Fire-and-forget like [`Self::set_mode`]: frontends validate
+    /// against `response.config_options`, and the agent's
+    /// `ConfigOptionUpdate` is the confirmation.
+    pub fn set_config_option(
+        &self,
+        config_id: &str,
+        value: SessionConfigOptionValue,
+    ) -> Result<(), agent_client_protocol::Error> {
+        self.conn
+            .send_request(SetSessionConfigOptionRequest::new(
+                self.session_id.clone(),
+                config_id.to_owned(),
+                value,
+            ))
+            .on_receiving_result(move |_| async { Ok(()) })
+    }
+}
+
+// A GPUI (or any multi-threaded) frontend holds `Session` in its UI state
+// and moves `Event` — responder included — across executor threads.
+const _: () = {
+    const fn assert_send<T: Send>() {}
+    assert_send::<Session>();
+    assert_send::<Event>();
+};
+
+/// The enabled servers an agent can actually reach, in ACP's shape.
+/// Remote servers are dropped for agents that don't advertise HTTP MCP
+/// rather than being sent and failing.
+fn acp_mcp_servers(
+    configured: &[settings::McpServer],
+    init: &InitializeResponse,
+) -> Vec<McpServer> {
+    let http = init.agent_capabilities.mcp_capabilities.http;
+    configured
+        .iter()
+        .filter(|server| server.enabled)
+        .filter_map(|server| match (&server.command, &server.url) {
+            (Some(command), _) => {
+                let mut stdio = McpServerStdio::new(server.name.clone(), command.clone());
+                stdio.args = server.args.clone();
+                stdio.env = server
+                    .env
+                    .iter()
+                    .map(|(name, value)| EnvVariable::new(name.clone(), value.clone()))
+                    .collect();
+                Some(McpServer::Stdio(stdio))
+            }
+            (None, Some(url)) if http => Some(McpServer::Http(McpServerHttp::new(
+                server.name.clone(),
+                url.clone(),
+            ))),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Try each advertised auth method in order. Non-interactive methods
+/// (API keys read from the agent's env) fail fast when unset;
+/// interactive ones (OAuth) block until the user completes the flow in
+/// the browser the agent opens.
+async fn authenticate(
+    conn: &ConnectionTo<Agent>,
+    init: &InitializeResponse,
+    launch: &Launch,
+) -> Result<()> {
+    if init.auth_methods.is_empty() {
+        return Err(anyhow!(
+            "authentication required, but the agent advertises no auth methods"
+        ));
+    }
+    let mut failures = Vec::new();
+    for method in &init.auth_methods {
+        // Interactive methods (OAuth) block here until the user
+        // finishes signing in, so say so rather than looking hung.
+        launch.say(&format!(
+            "authenticating — {} (finish any sign-in your browser opens)",
+            method.name()
+        ));
+        match conn
+            .send_request(AuthenticateRequest::new(method.id().clone()))
+            .block_task()
+            .await
+        {
+            Ok(_) => return Ok(()),
+            Err(e) => failures.push(format!("{}: {}", method.name(), error_text(&e))),
+        }
+    }
+    Err(anyhow!("authentication failed — {}", failures.join("; ")))
 }
 
 /// One-line rendering of a JSON-RPC error (`Display` dumps a JSON blob).

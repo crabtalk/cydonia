@@ -1,0 +1,18 @@
+[package]
+name = "cydonia-gpui"
+description = "GPUI client for ACP agents"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "../../README.md"
+
+[dependencies]
+cydonia-core.workspace = true
+
+# crates.io
+anyhow.workspace = true
+dirs.workspace = true
+futures.workspace = true
+gpui.workspace = true
+pulldown-cmark.workspace = true
