@@ -58,9 +58,17 @@ Set `CYDONIA_DEBUG=/tmp/acp.log` to capture the raw JSON-RPC wire.
 | Crate | Purpose |
 | --- | --- |
 | `crates/core` | settings + the ACP session (executor-neutral, no UI deps) |
+| `crates/registry` | the ACP and MCP registries, and the installer for both |
 | `apps/tui` | the terminal frontend (ratatui) |
+| `apps/gpui` | the desktop frontend (GPUI), on the same core |
 
-A GPUI frontend is planned on top of the same core.
+## Docs
+
+`docs/` is an [mdBook](https://rust-lang.github.io/mdBook/) covering commands, agents, MCP servers, and — worth reading before relying on it — the [limitations](docs/src/limitations.md).
+
+```sh
+mdbook serve docs --open
+```
 
 ## License
 
