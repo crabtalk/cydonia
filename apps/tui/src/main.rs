@@ -3,7 +3,6 @@
 mod app;
 mod chat;
 mod input;
-mod render;
 mod select;
 mod tui;
 

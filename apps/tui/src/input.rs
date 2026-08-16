@@ -166,6 +166,19 @@ impl InputBuffer {
         self.cursor = (row + 1, 0);
     }
 
+    fn insert_str(&mut self, text: &str) {
+        for ch in text.chars() {
+            if ch == '\n' {
+                self.insert_newline();
+            } else {
+                let (row, col) = self.cursor;
+                let byte_pos = tui::char_to_byte(&self.lines[row], col);
+                self.lines[row].insert(byte_pos, ch);
+                self.cursor.1 += 1;
+            }
+        }
+    }
+
     fn handle_key(&mut self, code: event::KeyCode) {
         let (row, col) = self.cursor;
         match code {
@@ -322,6 +335,11 @@ impl InputState {
     /// Height of the input widget (content lines + 2 for borders).
     pub fn height(&self) -> u16 {
         self.buf.lines.len() as u16 + 2
+    }
+
+    /// Insert text at the cursor (newlines split lines).
+    pub fn insert_text(&mut self, text: &str) {
+        self.buf.insert_str(text);
     }
 
     fn open_dropdown(&mut self) {
