@@ -62,20 +62,46 @@ pub struct Session {
     pub loaded: bool,
 }
 
+/// Progress reporter for the steps before the frontend is up.
+pub type StatusFn = Box<dyn Fn(&str) + Send + Sync>;
+
+/// How to open a session.
+#[derive(Default)]
+pub struct Launch {
+    /// The session's working directory.
+    pub cwd: PathBuf,
+    /// A session to load instead of starting fresh.
+    pub previous: Option<String>,
+    /// Progress for the steps before the frontend is up — notably
+    /// authentication, which can block on a browser sign-in.
+    pub status: Option<StatusFn>,
+}
+
+impl Launch {
+    pub fn new(cwd: PathBuf) -> Self {
+        Self {
+            cwd,
+            ..Default::default()
+        }
+    }
+
+    fn say(&self, message: &str) {
+        if let Some(status) = &self.status {
+            status(message);
+        }
+    }
+}
+
 impl Session {
-    /// Spawn `entry` over stdio, initialize, open a session rooted at `cwd`,
-    /// and run `f` with it. Returns when `f` does; the agent process dies
-    /// with the connection.
+    /// Spawn `entry` over stdio, initialize, open a session, and run `f`
+    /// with it. Returns when `f` does; the agent process dies with the
+    /// connection.
     ///
-    /// With `previous` set and the agent capable, `session/load` replays
-    /// that session's history instead of starting fresh; a failed load
-    /// (stale id, agent restart) falls back to a new session.
-    pub async fn spawn<T, F>(
-        entry: &settings::Agent,
-        cwd: PathBuf,
-        previous: Option<String>,
-        f: F,
-    ) -> Result<T>
+    /// With [`Launch::previous`] set and the agent capable,
+    /// `session/load` replays that session's history instead of
+    /// starting fresh; a failed load (stale id, agent restart) falls
+    /// back to a new session.
+    pub async fn spawn<T, F>(entry: &settings::Agent, launch: Launch, f: F) -> Result<T>
     where
         F: AsyncFnOnce(Session, Events) -> Result<T>,
     {
@@ -157,7 +183,7 @@ impl Session {
                 agent_client_protocol::on_receive_dispatch!(),
             )
             .connect_with(debuggable(AcpAgent::new(config)), async |conn| {
-                Ok(Self::open(conn, tx, events, cwd, mcp_servers, previous, f).await)
+                Ok(Self::open(conn, tx, events, launch, mcp_servers, f).await)
             })
             .await
             .map_err(|e| anyhow!("ACP connection failed: {e}"))?
@@ -167,14 +193,14 @@ impl Session {
         conn: ConnectionTo<Agent>,
         tx: mpsc::UnboundedSender<Event>,
         events: Events,
-        cwd: PathBuf,
+        launch: Launch,
         mcp_servers: Vec<McpServer>,
-        previous: Option<String>,
         f: F,
     ) -> Result<T>
     where
         F: AsyncFnOnce(Session, Events) -> Result<T>,
     {
+        let cwd = launch.cwd.clone();
         let init = conn
             .send_request(
                 InitializeRequest::new(ProtocolVersion::V1).client_capabilities(
@@ -189,13 +215,17 @@ impl Session {
 
         let mut loaded = false;
         let mut response = None;
-        if let Some(id) = previous.filter(|_| init.agent_capabilities.load_session) {
+        if let Some(id) = launch
+            .previous
+            .clone()
+            .filter(|_| init.agent_capabilities.load_session)
+        {
             let load = || {
                 LoadSessionRequest::new(id.clone(), cwd.clone()).mcp_servers(mcp_servers.clone())
             };
             let result = match conn.send_request(load()).block_task().await {
                 Err(e) if e.code == agent_client_protocol::Error::auth_required().code => {
-                    authenticate(&conn, &init).await?;
+                    authenticate(&conn, &init, &launch).await?;
                     conn.send_request(load()).block_task().await
                 }
                 other => other,
@@ -219,7 +249,7 @@ impl Session {
                 match conn.send_request(new_session()).block_task().await {
                     Ok(response) => response,
                     Err(e) if e.code == agent_client_protocol::Error::auth_required().code => {
-                        authenticate(&conn, &init).await?;
+                        authenticate(&conn, &init, &launch).await?;
                         conn.send_request(new_session())
                             .block_task()
                             .await
@@ -318,7 +348,11 @@ const _: () = {
 /// (API keys read from the agent's env) fail fast when unset;
 /// interactive ones (OAuth) block until the user completes the flow in
 /// the browser the agent opens.
-async fn authenticate(conn: &ConnectionTo<Agent>, init: &InitializeResponse) -> Result<()> {
+async fn authenticate(
+    conn: &ConnectionTo<Agent>,
+    init: &InitializeResponse,
+    launch: &Launch,
+) -> Result<()> {
     if init.auth_methods.is_empty() {
         return Err(anyhow!(
             "authentication required, but the agent advertises no auth methods"
@@ -326,6 +360,12 @@ async fn authenticate(conn: &ConnectionTo<Agent>, init: &InitializeResponse) -> 
     }
     let mut failures = Vec::new();
     for method in &init.auth_methods {
+        // Interactive methods (OAuth) block here until the user
+        // finishes signing in, so say so rather than looking hung.
+        launch.say(&format!(
+            "authenticating — {} (finish any sign-in your browser opens)",
+            method.name()
+        ));
         match conn
             .send_request(AuthenticateRequest::new(method.id().clone()))
             .block_task()

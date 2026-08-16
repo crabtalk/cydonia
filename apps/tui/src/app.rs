@@ -58,8 +58,12 @@ pub async fn run(entry: settings::Agent, previous: Option<String>) -> Result<()>
     );
 
     let name = entry.name.clone();
-    let cwd = std::env::current_dir().unwrap_or_else(|_| "/".into());
-    Session::spawn(&entry, cwd, previous, async |session, events| {
+    let launch = session::Launch {
+        cwd: std::env::current_dir().unwrap_or_else(|_| "/".into()),
+        previous,
+        status: Some(Box::new(|message| println!("⏺ {message}"))),
+    };
+    Session::spawn(&entry, launch, async |session, events| {
         chat(session, events, &name).await
     })
     .await

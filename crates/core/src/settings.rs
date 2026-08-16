@@ -73,6 +73,22 @@ pub fn history_path() -> Option<PathBuf> {
     dir().ok().map(|d| d.join("history"))
 }
 
+/// Where installed agents live: `$XDG_DATA_HOME/cydonia`, defaulting to
+/// `~/.local/share/cydonia`. Separate from config — this is machine
+/// state, not something to edit or sync.
+pub fn data_dir() -> Result<PathBuf> {
+    if let Ok(xdg) = std::env::var("XDG_DATA_HOME")
+        && !xdg.is_empty()
+    {
+        return Ok(PathBuf::from(xdg).join("cydonia"));
+    }
+    Ok(dirs::home_dir()
+        .context("no home directory on this system")?
+        .join(".local")
+        .join("share")
+        .join("cydonia"))
+}
+
 // ── Last-session store ───────────────────────────────────────────
 
 #[derive(Debug, Default, Serialize, Deserialize)]

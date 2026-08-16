@@ -9,6 +9,7 @@ readme = "../../README.md"
 
 [dependencies]
 cydonia-core.workspace = true
+cydonia-registry.workspace = true
 
 # crates.io
 anyhow.workspace = true

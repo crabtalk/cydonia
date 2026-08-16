@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/core", "apps/tui", "apps/gpui"]
+members = ["crates/core", "crates/registry", "apps/tui", "apps/gpui"]
 
 [workspace.package]
 version = "0.1.0"
@@ -10,6 +10,7 @@ repository = "https://github.com/crabtalk/cydonia"
 
 [workspace.dependencies]
 cydonia-core = { path = "crates/core" }
+cydonia-registry = { path = "crates/registry" }
 
 # crates.io
 agent-client-protocol = "2.0"
@@ -23,6 +24,8 @@ gpui = "0.2"
 pulldown-cmark = "0.13"
 ratatui = "0.29"
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 termimad = "0.34"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
 toml = "0.8"
+ureq = { version = "3", features = ["json"] }

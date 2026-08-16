@@ -101,7 +101,8 @@ impl ChatSession {
 
         let spawn_entry = entry.clone();
         let conn = cx.background_executor().spawn(async move {
-            Session::spawn(&spawn_entry, cwd, None, async |session, events| {
+            let launch = session::Launch::new(cwd);
+            Session::spawn(&spawn_entry, launch, async |session, events| {
                 let _ = ready_tx.send((session, events));
                 let _ = shutdown_rx.await;
                 Ok(())
