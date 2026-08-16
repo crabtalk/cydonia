@@ -1,11 +1,13 @@
 //! Full-screen chat over one ACP session.
 
 use crate::{
+    agents::{AgentAction, AgentEvent, AgentPicker},
     chat::{ChatBuffer, ChatEntry, PlanRow, PlanStatus, S_DIM, ToolStatus},
     input::{History, InputAction, InputState},
     mcp::{McpAction, McpEvent, McpPicker},
     tui,
 };
+
 use anyhow::Result;
 use crossterm::{
     event::{Event, EventStream, KeyCode, KeyEvent, KeyModifiers},
@@ -33,6 +35,12 @@ use ratatui::{
 };
 use std::{collections::VecDeque, time::Duration};
 use tokio::time::{Instant, sleep_until};
+
+/// Work finishing off the event loop, for whichever modal asked for it.
+enum Background {
+    Mcp(McpEvent),
+    Agent(AgentEvent),
+}
 
 /// Frame-rate ceiling: coalesced frame requests never draw more often
 /// than this (codex's TARGET_FRAME_INTERVAL).
@@ -119,6 +127,8 @@ async fn chat(session: Session, events: Events, agent_name: &str) -> Result<()> 
             .prompt_capabilities
             .embedded_context,
         mcp: None,
+        agents: None,
+        settings: settings::load().unwrap_or_else(|_| settings::Settings { agents: Vec::new() }),
     };
     app.buffer.push(ChatEntry::Text(app.header.clone()));
     if session.loaded {
@@ -186,6 +196,10 @@ struct App {
     embed_context: bool,
     /// The `/mcp` modal, when open.
     mcp: Option<McpPicker>,
+    /// The `/agents` modal, when open.
+    agents: Option<AgentPicker>,
+    /// Agents from settings.toml, for the `/agents` listing.
+    settings: settings::Settings,
 }
 
 struct Usage {
@@ -212,7 +226,7 @@ async fn event_loop(
     let mut keys = EventStream::new();
     // Registry search and installs run off the loop; results come back
     // here so a slow network never blocks a frame.
-    let (mcp_tx, mut mcp_rx) = tokio::sync::mpsc::unbounded_channel::<McpEvent>();
+    let (bg_tx, mut bg_rx) = tokio::sync::mpsc::unbounded_channel::<Background>();
     let data_dir = settings::data_dir().unwrap_or_else(|_| ".".into());
     // Frame scheduling: sources *request* a frame; only the deadline
     // branch draws. N requests inside one interval coalesce into one
@@ -258,18 +272,55 @@ async fn event_loop(
                                 }
                                 McpAction::Notice(notice) => push_notice(app, &notice),
                                 McpAction::Search(query) => {
-                                    let tx = mcp_tx.clone();
+                                    let tx = bg_tx.clone();
                                     tokio::task::spawn_blocking(move || {
                                         let found = cydonia_registry::mcp::search(&query)
                                             .map_err(|e| format!("{e:#}"));
-                                        let _ = tx.send(McpEvent::Found(found));
+                                        let _ = tx.send(Background::Mcp(McpEvent::Found(found)));
                                     });
                                 }
                                 McpAction::Add(server) => {
-                                    let (tx, dir) = (mcp_tx.clone(), data_dir.clone());
+                                    let (tx, dir) = (bg_tx.clone(), data_dir.clone());
                                     tokio::task::spawn_blocking(move || {
                                         let added = crate::mcp::install(&dir, &server);
-                                        let _ = tx.send(McpEvent::Added(added));
+                                        let _ = tx.send(Background::Mcp(McpEvent::Added(added)));
+                                    });
+                                }
+                            }
+                        } else if let Some(picker) = app.agents.as_mut() {
+                            match picker.handle_key(key) {
+                                AgentAction::None => {}
+                                AgentAction::Close => {
+                                    let dirty = picker.dirty();
+                                    app.agents = None;
+                                    if dirty {
+                                        push_notice(app, "restart cydonia to use a new agent");
+                                    }
+                                }
+                                AgentAction::Notice(notice) => push_notice(app, &notice),
+                                AgentAction::Install(agent) => {
+                                    let (tx, dir) = (bg_tx.clone(), data_dir.clone());
+                                    tokio::task::spawn_blocking(move || {
+                                        let result = cydonia_registry::install(&dir, &agent, |_| {})
+                                            .map(|installed| {
+                                                format!(
+                                                    "installed {} {}",
+                                                    agent.name, installed.version
+                                                )
+                                            })
+                                            .map_err(|e| format!("{e:#}"));
+                                        let _ =
+                                            tx.send(Background::Agent(AgentEvent::Changed(result)));
+                                    });
+                                }
+                                AgentAction::Remove(id, name) => {
+                                    let (tx, dir) = (bg_tx.clone(), data_dir.clone());
+                                    tokio::task::spawn_blocking(move || {
+                                        let result = cydonia_registry::remove(&dir, &id)
+                                            .map(|()| format!("removed {name}"))
+                                            .map_err(|e| format!("{e:#}"));
+                                        let _ =
+                                            tx.send(Background::Agent(AgentEvent::Changed(result)));
                                     });
                                 }
                             }
@@ -285,11 +336,18 @@ async fn event_loop(
                 request_frame(&mut next_frame, last_draw);
             }
 
-            // Branch 3: MCP registry work finishing.
-            Some(event) = mcp_rx.recv() => {
-                if let Some(picker) = app.mcp.as_mut()
-                    && let Some(notice) = picker.apply(event)
-                {
+            // Branch 3: registry work finishing.
+            Some(event) = bg_rx.recv() => {
+                let notice = match event {
+                    Background::Mcp(event) => {
+                        app.mcp.as_mut().and_then(|picker| picker.apply(event))
+                    }
+                    Background::Agent(event) => app
+                        .agents
+                        .as_mut()
+                        .and_then(|picker| picker.apply(event, &data_dir)),
+                };
+                if let Some(notice) = notice {
                     push_notice(app, &notice);
                 }
                 request_frame(&mut next_frame, last_draw);
@@ -411,6 +469,10 @@ fn handle_key(key: KeyEvent, app: &mut App, session: &Session) -> Result<bool> {
                     handle_config_command(app, session, &content);
                 }
                 "/mcp" => app.mcp = Some(McpPicker::open()),
+                "/agents" => {
+                    let dir = settings::data_dir().unwrap_or_else(|_| ".".into());
+                    app.agents = Some(AgentPicker::open(&app.settings, &dir));
+                }
                 _ => {
                     // The echo keeps the collapsed placeholder; the
                     // agent gets the real pasted text.
@@ -1111,6 +1173,7 @@ fn push_help(app: &mut App) {
         "  /mode  — list or switch session modes",
         "  /config — list or set config options (model etc.)",
         "  /mcp   — add and toggle MCP servers",
+        "  /agents — install or remove ACP agents",
         "  /exit  — quit (also Ctrl+D)",
         "  Ctrl+C — cancel the current turn",
         "  Shift+Enter — newline · PageUp/PageDown — scroll",
@@ -1182,6 +1245,9 @@ fn draw(frame: &mut ratatui::Frame, app: &mut App) {
         draw_permission(frame, prompt);
     }
     if let Some(ref picker) = app.mcp {
+        picker.draw(frame);
+    }
+    if let Some(ref picker) = app.agents {
         picker.draw(frame);
     }
 }

@@ -1,5 +1,6 @@
 //! Cydonia — TUI client for ACP agents.
 
+mod agents;
 mod app;
 mod chat;
 mod input;

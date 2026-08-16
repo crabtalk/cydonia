@@ -12,7 +12,9 @@ use ratatui::{
 const MAX_DROPDOWN_VISIBLE: usize = 5;
 
 /// Built-in slash commands, for autocompletion.
-pub const COMMANDS: &[&str] = &["/clear", "/config", "/exit", "/help", "/mcp", "/mode"];
+pub const COMMANDS: &[&str] = &[
+    "/agents", "/clear", "/config", "/exit", "/help", "/mcp", "/mode",
+];
 
 /// Collect autocompletion candidates for the typed prefix: matching built-in
 /// `/command` names plus agent-provided command names.

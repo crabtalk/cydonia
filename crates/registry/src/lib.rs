@@ -200,6 +200,15 @@ pub fn installed(data_dir: &Path, id: &str) -> Option<Installed> {
     Path::new(&record.command).exists().then_some(record)
 }
 
+/// Delete an installed agent. Succeeds whether or not it was there.
+pub fn remove(data_dir: &Path, id: &str) -> Result<()> {
+    let dir = agent_dir(data_dir, id);
+    if dir.exists() {
+        std::fs::remove_dir_all(&dir).with_context(|| format!("removing {}", dir.display()))?;
+    }
+    Ok(())
+}
+
 /// The package name in a spec like `@scope/name@1.2.3` (the version
 /// separator is the last `@` that isn't the scope's leading one).
 fn package_name(spec: &str) -> &str {
