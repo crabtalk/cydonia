@@ -15,11 +15,12 @@ use crate::settings;
 use agent_client_protocol::schema::{
     ProtocolVersion,
     v1::{
-        CancelNotification, ClientCapabilities, FileSystemCapabilities, InitializeRequest,
-        InitializeResponse, NewSessionRequest, NewSessionResponse, PromptRequest,
-        ReadTextFileRequest, ReadTextFileResponse, RequestPermissionRequest,
-        RequestPermissionResponse, SessionId, SessionNotification, SessionUpdate,
-        SetSessionModeRequest, StopReason, WriteTextFileRequest, WriteTextFileResponse,
+        AuthenticateRequest, CancelNotification, ClientCapabilities, FileSystemCapabilities,
+        InitializeRequest, InitializeResponse, NewSessionRequest, NewSessionResponse,
+        PromptRequest, ReadTextFileRequest, ReadTextFileResponse, RequestPermissionRequest,
+        RequestPermissionResponse, SessionConfigOptionValue, SessionId, SessionNotification,
+        SessionUpdate, SetSessionConfigOptionRequest, SetSessionModeRequest, StopReason,
+        WriteTextFileRequest, WriteTextFileResponse,
     },
 };
 use agent_client_protocol::{
@@ -156,11 +157,21 @@ impl Session {
             .await
             .map_err(|e| anyhow!("initialize failed: {e}"))?;
 
-        let response = conn
+        let response = match conn
             .send_request(NewSessionRequest::new(cwd.clone()))
             .block_task()
             .await
-            .map_err(|e| anyhow!("session/new failed: {e}"))?;
+        {
+            Ok(response) => response,
+            Err(e) if e.code == agent_client_protocol::Error::auth_required().code => {
+                authenticate(&conn, &init).await?;
+                conn.send_request(NewSessionRequest::new(cwd.clone()))
+                    .block_task()
+                    .await
+                    .map_err(|e| anyhow!("session/new failed after authentication: {e}"))?
+            }
+            Err(e) => return Err(anyhow!("session/new failed: {e}")),
+        };
 
         f(
             Session {
@@ -208,6 +219,24 @@ impl Session {
             ))
             .on_receiving_result(move |_| async { Ok(()) })
     }
+
+    /// Set a session config option (`session/set_config_option`).
+    /// Fire-and-forget like [`Self::set_mode`]: frontends validate
+    /// against `response.config_options`, and the agent's
+    /// `ConfigOptionUpdate` is the confirmation.
+    pub fn set_config_option(
+        &self,
+        config_id: &str,
+        value: SessionConfigOptionValue,
+    ) -> Result<(), agent_client_protocol::Error> {
+        self.conn
+            .send_request(SetSessionConfigOptionRequest::new(
+                self.session_id.clone(),
+                config_id.to_owned(),
+                value,
+            ))
+            .on_receiving_result(move |_| async { Ok(()) })
+    }
 }
 
 // A GPUI (or any multi-threaded) frontend holds `Session` in its UI state
@@ -217,6 +246,30 @@ const _: () = {
     assert_send::<Session>();
     assert_send::<Event>();
 };
+
+/// Try each advertised auth method in order. Non-interactive methods
+/// (API keys read from the agent's env) fail fast when unset;
+/// interactive ones (OAuth) block until the user completes the flow in
+/// the browser the agent opens.
+async fn authenticate(conn: &ConnectionTo<Agent>, init: &InitializeResponse) -> Result<()> {
+    if init.auth_methods.is_empty() {
+        return Err(anyhow!(
+            "authentication required, but the agent advertises no auth methods"
+        ));
+    }
+    let mut failures = Vec::new();
+    for method in &init.auth_methods {
+        match conn
+            .send_request(AuthenticateRequest::new(method.id().clone()))
+            .block_task()
+            .await
+        {
+            Ok(_) => return Ok(()),
+            Err(e) => failures.push(format!("{}: {}", method.name(), error_text(&e))),
+        }
+    }
+    Err(anyhow!("authentication failed — {}", failures.join("; ")))
+}
 
 /// One-line rendering of a JSON-RPC error (`Display` dumps a JSON blob).
 pub fn error_text(e: &agent_client_protocol::Error) -> String {

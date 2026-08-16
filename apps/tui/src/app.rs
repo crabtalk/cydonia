@@ -16,7 +16,9 @@ use cydonia_core::acp::schema::MaybeUndefined;
 use cydonia_core::acp::schema::v1::{
     ContentBlock, InitializeResponse, NewSessionResponse, PlanEntryStatus,
     RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
-    SelectedPermissionOutcome, SessionUpdate, StopReason, ToolCallContent, ToolCallStatus,
+    SelectedPermissionOutcome, SessionConfigKind, SessionConfigOption, SessionConfigOptionValue,
+    SessionConfigSelect, SessionConfigSelectOption, SessionConfigSelectOptions, SessionUpdate,
+    StopReason, ToolCallContent, ToolCallStatus,
 };
 use cydonia_core::session::{self, Events, Session};
 use cydonia_core::settings;
@@ -100,6 +102,7 @@ async fn chat(session: Session, events: Events, agent_name: &str) -> Result<()> 
         modes,
         current_mode,
         usage: None,
+        config: session.response.config_options.clone().unwrap_or_default(),
     };
     app.buffer.push(ChatEntry::Text(app.header.clone()));
 
@@ -155,6 +158,9 @@ struct App {
     current_mode: Option<String>,
     /// Latest context/cost figures from `UsageUpdate`.
     usage: Option<Usage>,
+    /// Session config options (model etc.), replaced wholesale by
+    /// `ConfigOptionUpdate` snapshots.
+    config: Vec<SessionConfigOption>,
 }
 
 struct Usage {
@@ -342,6 +348,9 @@ fn handle_key(key: KeyEvent, app: &mut App, session: &Session) -> Result<bool> {
                 _ if content == "/mode" || content.starts_with("/mode ") => {
                     handle_mode_command(app, session, &content);
                 }
+                _ if content == "/config" || content.starts_with("/config ") => {
+                    handle_config_command(app, session, &content);
+                }
                 _ => {
                     // The echo keeps the collapsed placeholder; the
                     // agent gets the real pasted text.
@@ -415,6 +424,146 @@ fn handle_mode_command(app: &mut App, session: &Session, content: &str) {
             app,
             &format!("set mode failed: {}", session::error_text(&e)),
         ),
+    }
+}
+
+/// Flatten grouped select choices into one list.
+fn config_choices(select: &SessionConfigSelect) -> Vec<&SessionConfigSelectOption> {
+    match &select.options {
+        SessionConfigSelectOptions::Ungrouped(options) => options.iter().collect(),
+        SessionConfigSelectOptions::Grouped(groups) => {
+            groups.iter().flat_map(|g| g.options.iter()).collect()
+        }
+        _ => Vec::new(),
+    }
+}
+
+fn describe_config(option: &SessionConfigOption) -> String {
+    match &option.kind {
+        SessionConfigKind::Select(select) => {
+            let choices = config_choices(select);
+            let current = choices
+                .iter()
+                .find(|c| c.value == select.current_value)
+                .map(|c| c.name.as_str())
+                .unwrap_or("?");
+            let names: Vec<&str> = choices.iter().map(|c| c.name.as_str()).collect();
+            format!("{}: {} ({})", option.name, current, names.join(", "))
+        }
+        SessionConfigKind::Boolean(b) => {
+            let state = if b.current_value { "on" } else { "off" };
+            format!("{}: {} (on, off)", option.name, state)
+        }
+        _ => format!("{}: (unsupported kind)", option.name),
+    }
+}
+
+/// `/config` lists the session config options; `/config <option> <value>`
+/// sets one (matched by id or name, case-insensitive).
+fn handle_config_command(app: &mut App, session: &Session, content: &str) {
+    if app.config.is_empty() {
+        push_notice(app, "this agent has no config options");
+        return;
+    }
+    let arg = content
+        .strip_prefix("/config")
+        .unwrap_or_default()
+        .trim()
+        .to_owned();
+    if arg.is_empty() {
+        let lines: Vec<String> = app.config.iter().map(describe_config).collect();
+        for line in lines {
+            push_notice(app, &line);
+        }
+        return;
+    }
+
+    // Option names may contain spaces, so match "<option> <value>" by
+    // prefix rather than splitting on the first space.
+    let lower = arg.to_lowercase();
+    let mut target: Option<(usize, String)> = None;
+    'outer: for (ix, option) in app.config.iter().enumerate() {
+        for key in [
+            option.id.to_string().to_lowercase(),
+            option.name.to_lowercase(),
+        ] {
+            if lower == key {
+                target = Some((ix, String::new()));
+                break 'outer;
+            }
+            if let Some(rest) = lower.strip_prefix(&format!("{key} ")) {
+                target = Some((ix, rest.trim().to_owned()));
+                break 'outer;
+            }
+        }
+    }
+    let Some((ix, value)) = target else {
+        push_error(app, &format!("unknown config option {arg:?} — try /config"));
+        return;
+    };
+    if value.is_empty() {
+        let line = describe_config(&app.config[ix]);
+        push_notice(app, &line);
+        return;
+    }
+
+    let option = &app.config[ix];
+    let id = option.id.to_string();
+    let option_name = option.name.clone();
+    match &option.kind {
+        SessionConfigKind::Select(select) => {
+            let Some((choice_value, choice_name)) = config_choices(select)
+                .into_iter()
+                .find(|c| {
+                    c.value.to_string().to_lowercase() == value || c.name.to_lowercase() == value
+                })
+                .map(|c| (c.value.clone(), c.name.clone()))
+            else {
+                let line = describe_config(&app.config[ix]);
+                push_error(app, &format!("unknown value {value:?} — {line}"));
+                return;
+            };
+            match session.set_config_option(
+                &id,
+                SessionConfigOptionValue::value_id(choice_value.clone()),
+            ) {
+                Ok(()) => {
+                    // Optimistic; a ConfigOptionUpdate overrides.
+                    if let SessionConfigKind::Select(select) = &mut app.config[ix].kind {
+                        select.current_value = choice_value;
+                    }
+                    push_notice(app, &format!("{option_name} → {choice_name}"));
+                }
+                Err(e) => push_error(
+                    app,
+                    &format!("set config failed: {}", session::error_text(&e)),
+                ),
+            }
+        }
+        SessionConfigKind::Boolean(_) => {
+            let parsed = match value.as_str() {
+                "on" | "true" | "yes" => true,
+                "off" | "false" | "no" => false,
+                _ => {
+                    push_error(app, &format!("expected on/off, got {value:?}"));
+                    return;
+                }
+            };
+            match session.set_config_option(&id, SessionConfigOptionValue::boolean(parsed)) {
+                Ok(()) => {
+                    if let SessionConfigKind::Boolean(b) = &mut app.config[ix].kind {
+                        b.current_value = parsed;
+                    }
+                    let state = if parsed { "on" } else { "off" };
+                    push_notice(app, &format!("{option_name} → {state}"));
+                }
+                Err(e) => push_error(
+                    app,
+                    &format!("set config failed: {}", session::error_text(&e)),
+                ),
+            }
+        }
+        _ => push_error(app, &format!("{option_name}: unsupported option kind")),
     }
 }
 
@@ -597,6 +746,9 @@ fn handle_update(update: SessionUpdate, app: &mut App) {
         SessionUpdate::CurrentModeUpdate(update) => {
             app.current_mode = Some(update.current_mode_id.to_string());
         }
+        SessionUpdate::ConfigOptionUpdate(update) => {
+            app.config = update.config_options;
+        }
         SessionUpdate::UsageUpdate(update) => {
             app.usage = Some(Usage {
                 used: update.used,
@@ -776,6 +928,7 @@ fn push_help(app: &mut App) {
     let lines = [
         "  /clear — clear the transcript",
         "  /mode  — list or switch session modes",
+        "  /config — list or set config options (model etc.)",
         "  /exit  — quit (also Ctrl+D)",
         "  Ctrl+C — cancel the current turn",
         "  Shift+Enter — newline · PageUp/PageDown — scroll",

@@ -12,7 +12,7 @@ use ratatui::{
 const MAX_DROPDOWN_VISIBLE: usize = 5;
 
 /// Built-in slash commands, for autocompletion.
-pub const COMMANDS: &[&str] = &["/clear", "/exit", "/help", "/mode"];
+pub const COMMANDS: &[&str] = &["/clear", "/config", "/exit", "/help", "/mode"];
 
 /// Collect autocompletion candidates for the typed prefix: matching built-in
 /// `/command` names plus agent-provided command names.
@@ -445,7 +445,8 @@ impl InputState {
                 self.close_dropdown();
             }
             event::KeyCode::Char(' ') => {
-                // Accept current prefix as typed.
+                // Accept current prefix as typed — the space included.
+                self.buf.handle_key(event::KeyCode::Char(' '));
                 self.close_dropdown();
             }
             event::KeyCode::Backspace => {
