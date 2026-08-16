@@ -20,6 +20,20 @@ pub struct Agent {
     pub args: Vec<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub env: BTreeMap<String, String>,
+    /// MCP servers handed to the agent at `session/new` (stdio transport).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mcp_servers: Vec<McpServer>,
+}
+
+/// One MCP server the agent should connect to: `command args...` over stdio.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpServer {
+    pub name: String,
+    pub command: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub env: BTreeMap<String, String>,
 }
 
 impl Default for Settings {
@@ -29,6 +43,7 @@ impl Default for Settings {
             command: "npx".into(),
             args: vec!["-y".into(), pkg.into()],
             env: BTreeMap::new(),
+            mcp_servers: Vec::new(),
         };
         Self {
             agents: vec![
@@ -56,6 +71,61 @@ pub fn dir() -> Result<PathBuf> {
 
 pub fn history_path() -> Option<PathBuf> {
     dir().ok().map(|d| d.join("history"))
+}
+
+// ── Last-session store ───────────────────────────────────────────
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct SessionStore {
+    #[serde(default)]
+    sessions: Vec<StoredSession>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct StoredSession {
+    agent: String,
+    cwd: PathBuf,
+    session_id: String,
+}
+
+fn sessions_path() -> Option<PathBuf> {
+    dir().ok().map(|d| d.join("sessions.toml"))
+}
+
+fn load_sessions() -> SessionStore {
+    sessions_path()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|s| toml::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+/// The last session id opened for `agent` in `cwd`, if any.
+pub fn last_session(agent: &str, cwd: &std::path::Path) -> Option<String> {
+    load_sessions()
+        .sessions
+        .into_iter()
+        .find(|s| s.agent == agent && s.cwd == cwd)
+        .map(|s| s.session_id)
+}
+
+/// Remember `session_id` as the latest for `agent` in `cwd`.
+pub fn remember_session(agent: &str, cwd: &std::path::Path, session_id: &str) {
+    let mut store = load_sessions();
+    store
+        .sessions
+        .retain(|s| !(s.agent == agent && s.cwd == cwd));
+    store.sessions.push(StoredSession {
+        agent: agent.to_owned(),
+        cwd: cwd.to_owned(),
+        session_id: session_id.to_owned(),
+    });
+    let Some(path) = sessions_path() else { return };
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(body) = toml::to_string_pretty(&store) {
+        let _ = std::fs::write(path, body);
+    }
 }
 
 /// Load settings, generating the default file on first run.

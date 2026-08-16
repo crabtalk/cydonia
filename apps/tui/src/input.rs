@@ -39,6 +39,30 @@ fn collect_candidates(line: &str, pos: usize, extra_commands: &[String]) -> Vec<
     candidates
 }
 
+/// Rank workspace files against a mention prefix: file-name prefix
+/// matches first, then path substring matches, capped for the popup.
+fn file_candidates(files: &[String], prefix: &str) -> Vec<String> {
+    const MAX_FILE_CANDIDATES: usize = 20;
+    let needle = prefix.to_lowercase();
+    let mut starts = Vec::new();
+    let mut contains = Vec::new();
+    for file in files {
+        let lower = file.to_lowercase();
+        let file_name = lower.rsplit('/').next().unwrap_or(&lower);
+        if needle.is_empty() || file_name.starts_with(&needle) {
+            starts.push(file.clone());
+        } else if lower.contains(&needle) {
+            contains.push(file.clone());
+        }
+        if starts.len() >= MAX_FILE_CANDIDATES {
+            break;
+        }
+    }
+    starts.extend(contains);
+    starts.truncate(MAX_FILE_CANDIDATES);
+    starts
+}
+
 /// Command history backed by a Vec.
 pub struct History {
     entries: Vec<String>,
@@ -217,6 +241,33 @@ impl InputBuffer {
         }
     }
 
+    /// The whitespace-delimited word ending at the cursor on the
+    /// current line: `(start_col, word)` in char columns.
+    fn word_before_cursor(&self) -> (usize, String) {
+        let (row, col) = self.cursor;
+        let chars: Vec<char> = self.lines[row].chars().collect();
+        let mut start = col.min(chars.len());
+        while start > 0 && !chars[start - 1].is_whitespace() {
+            start -= 1;
+        }
+        (start, chars[start..col.min(chars.len())].iter().collect())
+    }
+
+    /// Replace chars `start..cursor` on the cursor line and move the
+    /// cursor to the end of the replacement.
+    fn replace_before_cursor(&mut self, start: usize, replacement: &str) {
+        let (row, col) = self.cursor;
+        let line = &self.lines[row];
+        let start_byte = tui::char_to_byte(line, start);
+        let end_byte = tui::char_to_byte(line, col);
+        let mut new_line = String::new();
+        new_line.push_str(&line[..start_byte]);
+        new_line.push_str(replacement);
+        new_line.push_str(&line[end_byte..]);
+        self.lines[row] = new_line;
+        self.cursor.1 = start + replacement.chars().count();
+    }
+
     fn move_up(&mut self) {
         if self.cursor.0 > 0 {
             self.cursor.0 -= 1;
@@ -236,7 +287,16 @@ impl InputBuffer {
 
 // ── Dropdown ─────────────────────────────────────────────────────
 
+/// What the dropdown completes: `/commands` (whole first line) or
+/// `@file` mentions (the word at the cursor).
+#[derive(Clone, Copy, PartialEq)]
+enum DropdownKind {
+    Command,
+    File,
+}
+
 struct DropdownState {
+    kind: DropdownKind,
     candidates: Vec<String>,
     selected: usize,
     scroll: usize,
@@ -245,9 +305,17 @@ struct DropdownState {
 impl DropdownState {
     fn new(candidates: Vec<String>) -> Self {
         Self {
+            kind: DropdownKind::Command,
             candidates,
             selected: 0,
             scroll: 0,
+        }
+    }
+
+    fn files(candidates: Vec<String>) -> Self {
+        Self {
+            kind: DropdownKind::File,
+            ..Self::new(candidates)
         }
     }
 
@@ -320,6 +388,8 @@ pub struct InputState {
     dropdown: Option<DropdownState>,
     /// Cached skill names for tab completion (fetched from daemon at REPL init).
     pub extra_commands: Vec<String>,
+    /// Workspace files for `@` mention completion.
+    files: Vec<String>,
 }
 
 impl InputState {
@@ -329,7 +399,12 @@ impl InputState {
             history,
             dropdown: None,
             extra_commands,
+            files: Vec::new(),
         }
+    }
+
+    pub fn set_files(&mut self, files: Vec<String>) {
+        self.files = files;
     }
 
     /// Height of the input widget (content lines + 2 for borders).
@@ -347,6 +422,46 @@ impl InputState {
         let candidates = collect_candidates(&line, line.len(), &self.extra_commands);
         if !candidates.is_empty() {
             self.dropdown = Some(DropdownState::new(candidates));
+        }
+    }
+
+    fn open_file_dropdown(&mut self) {
+        let (_, word) = self.buf.word_before_cursor();
+        let prefix = word.strip_prefix('@').unwrap_or(&word);
+        let candidates = file_candidates(&self.files, prefix);
+        if !candidates.is_empty() {
+            self.dropdown = Some(DropdownState::files(candidates));
+        }
+    }
+
+    /// Re-filter the open dropdown after an edit; closes it when
+    /// nothing matches any more.
+    fn refilter_dropdown(&mut self) {
+        let Some(dd) = &self.dropdown else { return };
+        let candidates = match dd.kind {
+            DropdownKind::Command => {
+                let line = self.buf.first_line().to_string();
+                if self.buf.is_empty() || !line.starts_with('/') {
+                    self.close_dropdown();
+                    return;
+                }
+                collect_candidates(&line, line.len(), &self.extra_commands)
+            }
+            DropdownKind::File => {
+                let (_, word) = self.buf.word_before_cursor();
+                let Some(prefix) = word.strip_prefix('@') else {
+                    self.close_dropdown();
+                    return;
+                };
+                file_candidates(&self.files, prefix)
+            }
+        };
+        if candidates.is_empty() {
+            self.close_dropdown();
+        } else if let Some(dd) = &mut self.dropdown {
+            dd.candidates = candidates;
+            dd.selected = dd.selected.min(dd.candidates.len().saturating_sub(1));
+            dd.scroll = dd.scroll.min(dd.candidates.len().saturating_sub(1));
         }
     }
 
@@ -404,11 +519,18 @@ impl InputState {
             event::KeyCode::Tab => {
                 if self.buf.first_line().starts_with('/') {
                     self.open_dropdown();
+                } else if self.buf.word_before_cursor().1.starts_with('@') {
+                    self.open_file_dropdown();
                 }
             }
             event::KeyCode::Char('/') if self.buf.is_empty() => {
                 self.buf.handle_key(event::KeyCode::Char('/'));
                 self.open_dropdown();
+            }
+            event::KeyCode::Char('@') => {
+                self.buf.handle_key(event::KeyCode::Char('@'));
+                self.history.reset_cursor();
+                self.open_file_dropdown();
             }
             code => {
                 let old_len = self.buf.content().len();
@@ -437,7 +559,17 @@ impl InputState {
                 if let Some(dd) = &self.dropdown
                     && let Some(selected) = dd.current()
                 {
-                    self.buf = InputBuffer::from_str(&format!("{selected} "));
+                    let selected = selected.to_owned();
+                    match dd.kind {
+                        DropdownKind::Command => {
+                            self.buf = InputBuffer::from_str(&format!("{selected} "));
+                        }
+                        DropdownKind::File => {
+                            let (start, _) = self.buf.word_before_cursor();
+                            self.buf
+                                .replace_before_cursor(start, &format!("@{selected} "));
+                        }
+                    }
                 }
                 self.close_dropdown();
             }
@@ -451,33 +583,11 @@ impl InputState {
             }
             event::KeyCode::Backspace => {
                 self.buf.handle_key(event::KeyCode::Backspace);
-                if self.buf.is_empty() || !self.buf.first_line().starts_with('/') {
-                    self.close_dropdown();
-                } else {
-                    // Re-filter candidates.
-                    let line = self.buf.first_line().to_string();
-                    let candidates = collect_candidates(&line, line.len(), &self.extra_commands);
-                    if candidates.is_empty() {
-                        self.close_dropdown();
-                    } else if let Some(dd) = &mut self.dropdown {
-                        dd.candidates = candidates;
-                        dd.selected = dd.selected.min(dd.candidates.len().saturating_sub(1));
-                        dd.scroll = dd.scroll.min(dd.candidates.len().saturating_sub(1));
-                    }
-                }
+                self.refilter_dropdown();
             }
             event::KeyCode::Char(ch) => {
                 self.buf.handle_key(event::KeyCode::Char(ch));
-                // Re-filter candidates.
-                let line = self.buf.first_line().to_string();
-                let candidates = collect_candidates(&line, line.len(), &self.extra_commands);
-                if candidates.is_empty() {
-                    self.close_dropdown();
-                } else if let Some(dd) = &mut self.dropdown {
-                    dd.candidates = candidates;
-                    dd.selected = dd.selected.min(dd.candidates.len().saturating_sub(1));
-                    dd.scroll = dd.scroll.min(dd.candidates.len().saturating_sub(1));
-                }
+                self.refilter_dropdown();
             }
             _ => {}
         }

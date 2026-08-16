@@ -15,9 +15,10 @@ use crate::settings;
 use agent_client_protocol::schema::{
     ProtocolVersion,
     v1::{
-        AuthenticateRequest, CancelNotification, ClientCapabilities, FileSystemCapabilities,
-        InitializeRequest, InitializeResponse, NewSessionRequest, NewSessionResponse,
-        PromptRequest, ReadTextFileRequest, ReadTextFileResponse, RequestPermissionRequest,
+        AuthenticateRequest, CancelNotification, ClientCapabilities, ContentBlock, EnvVariable,
+        FileSystemCapabilities, InitializeRequest, InitializeResponse, LoadSessionRequest,
+        McpServer, McpServerStdio, NewSessionRequest, NewSessionResponse, PromptRequest,
+        ReadTextFileRequest, ReadTextFileResponse, RequestPermissionRequest,
         RequestPermissionResponse, SessionConfigOptionValue, SessionId, SessionNotification,
         SessionUpdate, SetSessionConfigOptionRequest, SetSessionModeRequest, StopReason,
         WriteTextFileRequest, WriteTextFileResponse,
@@ -56,13 +57,25 @@ pub struct Session {
     pub init: InitializeResponse,
     pub response: NewSessionResponse,
     pub cwd: PathBuf,
+    /// True when an existing session was loaded (history replayed as
+    /// queued [`Event::Update`]s) instead of a fresh one created.
+    pub loaded: bool,
 }
 
 impl Session {
     /// Spawn `entry` over stdio, initialize, open a session rooted at `cwd`,
     /// and run `f` with it. Returns when `f` does; the agent process dies
     /// with the connection.
-    pub async fn spawn<T, F>(entry: &settings::Agent, cwd: PathBuf, f: F) -> Result<T>
+    ///
+    /// With `previous` set and the agent capable, `session/load` replays
+    /// that session's history instead of starting fresh; a failed load
+    /// (stale id, agent restart) falls back to a new session.
+    pub async fn spawn<T, F>(
+        entry: &settings::Agent,
+        cwd: PathBuf,
+        previous: Option<String>,
+        f: F,
+    ) -> Result<T>
     where
         F: AsyncFnOnce(Session, Events) -> Result<T>,
     {
@@ -73,6 +86,21 @@ impl Session {
         for (key, value) in &entry.env {
             config = config.env(key, value);
         }
+
+        let mcp_servers: Vec<McpServer> = entry
+            .mcp_servers
+            .iter()
+            .map(|server| {
+                let mut stdio = McpServerStdio::new(server.name.clone(), server.command.clone());
+                stdio.args = server.args.clone();
+                stdio.env = server
+                    .env
+                    .iter()
+                    .map(|(name, value)| EnvVariable::new(name.clone(), value.clone()))
+                    .collect();
+                McpServer::Stdio(stdio)
+            })
+            .collect();
 
         let (tx, events) = mpsc::unbounded::<Event>();
         let notify_tx = tx.clone();
@@ -129,7 +157,7 @@ impl Session {
                 agent_client_protocol::on_receive_dispatch!(),
             )
             .connect_with(debuggable(AcpAgent::new(config)), async |conn| {
-                Ok(Self::open(conn, tx, events, cwd, f).await)
+                Ok(Self::open(conn, tx, events, cwd, mcp_servers, previous, f).await)
             })
             .await
             .map_err(|e| anyhow!("ACP connection failed: {e}"))?
@@ -140,6 +168,8 @@ impl Session {
         tx: mpsc::UnboundedSender<Event>,
         events: Events,
         cwd: PathBuf,
+        mcp_servers: Vec<McpServer>,
+        previous: Option<String>,
         f: F,
     ) -> Result<T>
     where
@@ -157,20 +187,47 @@ impl Session {
             .await
             .map_err(|e| anyhow!("initialize failed: {e}"))?;
 
-        let response = match conn
-            .send_request(NewSessionRequest::new(cwd.clone()))
-            .block_task()
-            .await
-        {
-            Ok(response) => response,
-            Err(e) if e.code == agent_client_protocol::Error::auth_required().code => {
-                authenticate(&conn, &init).await?;
-                conn.send_request(NewSessionRequest::new(cwd.clone()))
-                    .block_task()
-                    .await
-                    .map_err(|e| anyhow!("session/new failed after authentication: {e}"))?
+        let mut loaded = false;
+        let mut response = None;
+        if let Some(id) = previous.filter(|_| init.agent_capabilities.load_session) {
+            let load = || {
+                LoadSessionRequest::new(id.clone(), cwd.clone()).mcp_servers(mcp_servers.clone())
+            };
+            let result = match conn.send_request(load()).block_task().await {
+                Err(e) if e.code == agent_client_protocol::Error::auth_required().code => {
+                    authenticate(&conn, &init).await?;
+                    conn.send_request(load()).block_task().await
+                }
+                other => other,
+            };
+            // A failed load (stale id, agent state gone) falls through
+            // to a fresh session rather than failing the launch.
+            if let Ok(load_response) = result {
+                let mut restored = NewSessionResponse::new(id);
+                restored.modes = load_response.modes;
+                restored.config_options = load_response.config_options;
+                response = Some(restored);
+                loaded = true;
             }
-            Err(e) => return Err(anyhow!("session/new failed: {e}")),
+        }
+
+        let response = match response {
+            Some(response) => response,
+            None => {
+                let new_session =
+                    || NewSessionRequest::new(cwd.clone()).mcp_servers(mcp_servers.clone());
+                match conn.send_request(new_session()).block_task().await {
+                    Ok(response) => response,
+                    Err(e) if e.code == agent_client_protocol::Error::auth_required().code => {
+                        authenticate(&conn, &init).await?;
+                        conn.send_request(new_session())
+                            .block_task()
+                            .await
+                            .map_err(|e| anyhow!("session/new failed after authentication: {e}"))?
+                    }
+                    Err(e) => return Err(anyhow!("session/new failed: {e}")),
+                }
+            }
         };
 
         f(
@@ -181,6 +238,7 @@ impl Session {
                 init,
                 response,
                 cwd,
+                loaded,
             },
             events,
         )
@@ -189,7 +247,16 @@ impl Session {
 
     /// Send a prompt turn. Its result arrives as [`Event::TurnDone`].
     pub fn prompt(&self, content: &str) -> Result<(), agent_client_protocol::Error> {
-        let request = PromptRequest::new(self.session_id.clone(), vec![content.to_owned().into()]);
+        self.prompt_blocks(vec![content.to_owned().into()])
+    }
+
+    /// Send a prompt turn with explicit content blocks (text plus
+    /// embedded resources). Same result path as [`Self::prompt`].
+    pub fn prompt_blocks(
+        &self,
+        blocks: Vec<ContentBlock>,
+    ) -> Result<(), agent_client_protocol::Error> {
+        let request = PromptRequest::new(self.session_id.clone(), blocks);
         let tx = self.tx.clone();
         self.conn
             .send_request(request)

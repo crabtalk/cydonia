@@ -11,21 +11,30 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
 };
 
+/// One selectable launch: an agent, optionally continuing a previous
+/// session.
+#[derive(Clone)]
+pub struct Choice {
+    pub label: String,
+    pub agent: settings::Agent,
+    pub previous: Option<String>,
+}
+
 struct State<'a> {
-    agents: &'a [settings::Agent],
+    choices: &'a [Choice],
     selected: usize,
     chosen: bool,
 }
 
-/// Let the user pick an agent. Returns `None` if they quit instead.
-pub fn pick(agents: &[settings::Agent]) -> Result<Option<settings::Agent>> {
-    if agents.is_empty() {
+/// Let the user pick a launch. Returns `None` if they quit instead.
+pub fn pick(choices: &[Choice]) -> Result<Option<Choice>> {
+    if choices.is_empty() {
         anyhow::bail!("no agents in settings.toml");
     }
     let state = tui::run_app_with_state(
         || {
             Ok(State {
-                agents,
+                choices,
                 selected: 0,
                 chosen: false,
             })
@@ -37,7 +46,7 @@ pub fn pick(agents: &[settings::Agent]) -> Result<Option<settings::Agent>> {
                     state.selected = state.selected.saturating_sub(1);
                 }
                 KeyCode::Down | KeyCode::Char('j') => {
-                    state.selected = (state.selected + 1).min(state.agents.len() - 1);
+                    state.selected = (state.selected + 1).min(state.choices.len() - 1);
                 }
                 KeyCode::Enter => {
                     state.chosen = true;
@@ -52,13 +61,19 @@ pub fn pick(agents: &[settings::Agent]) -> Result<Option<settings::Agent>> {
             Ok(None)
         },
     )?;
-    Ok(state.chosen.then(|| state.agents[state.selected].clone()))
+    Ok(state.chosen.then(|| state.choices[state.selected].clone()))
 }
 
 fn draw(frame: &mut ratatui::Frame, state: &State) {
     let area = frame.area();
-    let height = (state.agents.len() as u16 + 4).min(area.height);
-    let width = 44.min(area.width);
+    let height = (state.choices.len() as u16 + 4).min(area.height);
+    let longest = state
+        .choices
+        .iter()
+        .map(|c| c.label.chars().count() as u16)
+        .max()
+        .unwrap_or(0);
+    let width = (longest + 8).max(44).min(area.width);
     let rect = Rect::new(
         area.width.saturating_sub(width) / 2,
         area.height.saturating_sub(height) / 2,
@@ -67,7 +82,7 @@ fn draw(frame: &mut ratatui::Frame, state: &State) {
     );
 
     let mut lines = Vec::new();
-    for (i, agent) in state.agents.iter().enumerate() {
+    for (i, choice) in state.choices.iter().enumerate() {
         let (marker, style) = if i == state.selected {
             (
                 "> ",
@@ -80,7 +95,7 @@ fn draw(frame: &mut ratatui::Frame, state: &State) {
         };
         lines.push(Line::from(vec![
             Span::styled(marker, style),
-            Span::styled(agent.name.clone(), style),
+            Span::styled(choice.label.clone(), style),
         ]));
     }
     lines.push(Line::raw(""));

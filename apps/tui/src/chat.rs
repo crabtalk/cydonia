@@ -177,8 +177,11 @@ fn render_block(source: &str, width: usize) -> Vec<Line<'static>> {
 /// One logical chunk in the chat output.
 #[derive(Debug)]
 pub enum ChatEntry {
-    /// Pre-styled lines (header box, user echo, notices) — width-independent.
+    /// Pre-styled lines (header box, notices) — width-independent.
     Text(Vec<Line<'static>>),
+    /// A user message: the local echo of a submit, or replayed
+    /// `UserMessageChunk`s from `session/load`.
+    User { text: String, done: bool },
     /// Agent prose, rendered from markdown source at display time.
     Markdown(MarkdownCell),
     /// Thinking / reasoning text. While streaming it renders as one
@@ -189,12 +192,16 @@ pub enum ChatEntry {
         done: bool,
         started: std::time::Instant,
     },
-    /// Tool call marker (`⏺ Title`), keyed by the ACP tool call id so
-    /// status updates land on the right marker.
+    /// Tool call marker (`⏺ $ Title`), keyed by the ACP tool call id so
+    /// status updates land on the right marker. `glyph` is an ASCII
+    /// tool-kind hint,
+    /// `locations` render as `└ path:line` follow-along lines.
     ToolMarker {
         id: String,
         label: String,
         status: ToolStatus,
+        glyph: &'static str,
+        locations: Vec<String>,
     },
     /// Tool result output (`⎿ ...`) attached to the tool call `id`.
     ToolResult {
@@ -265,10 +272,38 @@ impl ChatBuffer {
                     cell.done = true;
                     cell.revealed = cell.source.len();
                 }
-                ChatEntry::Thinking { done, .. } => *done = true,
+                ChatEntry::Thinking { done, .. } | ChatEntry::User { done, .. } => *done = true,
                 _ => {}
             }
         }
+    }
+
+    /// The local echo of a submitted message.
+    pub fn push_user(&mut self, text: &str) {
+        self.seal();
+        self.separate();
+        self.entries.push(ChatEntry::User {
+            text: sanitize(text),
+            done: true,
+        });
+    }
+
+    /// A replayed `UserMessageChunk` (history from `session/load`).
+    pub fn push_user_chunk(&mut self, chunk: &str) {
+        if chunk.is_empty() {
+            return;
+        }
+        let chunk = sanitize(chunk);
+        if let Some(ChatEntry::User { text, done: false }) = self.entries.last_mut() {
+            text.push_str(&chunk);
+            return;
+        }
+        self.seal();
+        self.separate();
+        self.entries.push(ChatEntry::User {
+            text: chunk,
+            done: false,
+        });
     }
 
     /// Advance the reveal of the open markdown cell by one line — or by
@@ -316,6 +351,7 @@ impl ChatBuffer {
         if chunk.is_empty() {
             return;
         }
+        let chunk = &sanitize(chunk);
         self.waiting = false;
         if let Some(ChatEntry::Thinking { done, .. }) = self.entries.last_mut() {
             *done = true;
@@ -336,6 +372,7 @@ impl ChatBuffer {
         if chunk.is_empty() {
             return;
         }
+        let chunk = &sanitize(chunk);
         self.waiting = false;
         if let Some(ChatEntry::Thinking {
             text, done: false, ..
@@ -353,7 +390,7 @@ impl ChatBuffer {
     }
 
     /// Start a tool call marker. `label` is the agent-provided title.
-    pub fn push_tool_call(&mut self, id: &str, label: String) {
+    pub fn push_tool_call(&mut self, id: &str, label: String, glyph: &'static str) {
         self.waiting = false;
         self.seal();
         self.separate();
@@ -361,7 +398,39 @@ impl ChatBuffer {
             id: id.to_owned(),
             label,
             status: ToolStatus::Running,
+            glyph,
+            locations: Vec::new(),
         });
+    }
+
+    /// Update the kind glyph of the tool marker with the given call id.
+    pub fn set_tool_glyph(&mut self, id: &str, glyph: &'static str) {
+        for entry in self.entries.iter_mut().rev() {
+            if let ChatEntry::ToolMarker {
+                id: mid, glyph: g, ..
+            } = entry
+                && mid == id
+            {
+                *g = glyph;
+                return;
+            }
+        }
+    }
+
+    /// Replace the follow-along locations of the marker with the given id.
+    pub fn set_tool_locations(&mut self, id: &str, locations: Vec<String>) {
+        for entry in self.entries.iter_mut().rev() {
+            if let ChatEntry::ToolMarker {
+                id: mid,
+                locations: l,
+                ..
+            } = entry
+                && mid == id
+            {
+                *l = locations;
+                return;
+            }
+        }
     }
 
     /// Set the status of the tool marker with the given call id.
@@ -400,7 +469,7 @@ impl ChatBuffer {
             id,
             ChatEntry::ToolResult {
                 id: id.to_owned(),
-                output: output.to_owned(),
+                output: sanitize(output),
                 failed,
             },
         );
@@ -408,7 +477,8 @@ impl ChatBuffer {
 
     /// Attach a diff under the marker with the given call id.
     pub fn push_tool_diff(&mut self, id: &str, path: &str, old: &str, new: &str) {
-        let patch = diffy::create_patch(old, new);
+        let (old, new) = (sanitize(old), sanitize(new));
+        let patch = diffy::create_patch(&old, &new);
         let mut lines = Vec::new();
         let (mut added, mut removed) = (0usize, 0usize);
         for hunk in patch.hunks() {
@@ -512,6 +582,13 @@ impl ChatBuffer {
         for entry in &mut self.entries {
             match entry {
                 ChatEntry::Text(lines) => out.extend(lines.iter().cloned()),
+                ChatEntry::User { text, .. } => {
+                    let style = Style::new().bg(Color::Indexed(236));
+                    out.extend(
+                        text.lines()
+                            .map(|l| Line::from(Span::styled(format!(" {l} "), style))),
+                    );
+                }
                 ChatEntry::Markdown(cell) => out.extend(cell.lines(width)),
                 ChatEntry::Thinking {
                     text,
@@ -533,25 +610,40 @@ impl ChatBuffer {
                             .unwrap_or("thinking");
                         let secs = started.elapsed().as_secs();
                         out.push(Line::from(vec![
-                            Span::styled("✳ ", S_DIM),
+                            Span::styled("* ", S_DIM),
                             Span::styled(truncate_chars(latest, width.saturating_sub(12)), style),
-                            Span::styled(format!(" · {secs}s"), S_DIM),
+                            Span::styled(format!(" ({secs}s)"), S_DIM),
                         ]));
                     }
                 }
-                ChatEntry::ToolMarker { label, status, .. } => {
+                ChatEntry::ToolMarker {
+                    label,
+                    status,
+                    glyph,
+                    locations,
+                    ..
+                } => {
                     let marker = match status {
                         ToolStatus::Running => Span::styled(spinner(frame), S_DIM),
                         ToolStatus::Success => Span::styled("⏺ ", Style::new().fg(GREEN)),
                         ToolStatus::Failure => Span::styled("⏺ ", Style::new().fg(RED)),
                     };
-                    out.push(Line::from(vec![
-                        marker,
-                        Span::styled(
-                            label.clone(),
-                            Style::new().add_modifier(Modifier::BOLD | Modifier::DIM),
-                        ),
-                    ]));
+                    let mut spans = vec![marker];
+                    if !glyph.is_empty() {
+                        spans.push(Span::styled(format!("{glyph} "), S_SUBTLE));
+                    }
+                    spans.push(Span::styled(
+                        label.clone(),
+                        Style::new().add_modifier(Modifier::BOLD | Modifier::DIM),
+                    ));
+                    out.push(Line::from(spans));
+                    for location in locations {
+                        out.push(Line::from(vec![
+                            Span::raw("  "),
+                            Span::styled("└ ", S_SUBTLE),
+                            Span::styled(truncate_chars(location, width.saturating_sub(6)), S_DIM),
+                        ]));
+                    }
                 }
                 ChatEntry::ToolResult { output, failed, .. } => {
                     out.extend(tool_result_lines(output, *failed, width));
@@ -637,7 +729,7 @@ fn tool_result_lines(output: &str, failed: bool, width: usize) -> Vec<Line<'stat
         if total > shown.len() {
             lines.push(Line::from(vec![
                 Span::raw(format!("{TOOL_PAD}  ")),
-                Span::styled(format!("… +{} lines", total - shown.len()), S_DIM),
+                Span::styled(format!("... +{} lines", total - shown.len()), S_DIM),
             ]));
         }
     }
@@ -657,8 +749,7 @@ fn tool_diff_lines(
     width: usize,
 ) -> Vec<Line<'static>> {
     let budget = width.saturating_sub(TOOL_PAD.len() + 4).max(20);
-    // ASCII signs only: `−` (U+2212) is ambiguous-width and drifts
-    // terminal cells against ratatui's column math.
+    // ASCII signs — they survive every terminal font and width table.
     let mut out = vec![Line::from(vec![
         Span::raw(TOOL_PAD.to_string()),
         Span::styled("⎿ ", S_SUBTLE),
@@ -682,10 +773,33 @@ fn tool_diff_lines(
     if lines.len() > DIFF_MAX_LINES {
         out.push(Line::from(vec![
             Span::raw(format!("{TOOL_PAD}  ")),
-            Span::styled(format!("… +{} lines", lines.len() - DIFF_MAX_LINES), S_DIM),
+            Span::styled(
+                format!("... +{} lines", lines.len() - DIFF_MAX_LINES),
+                S_DIM,
+            ),
         ]));
     }
     out.push(Line::raw(""));
+    out
+}
+
+/// Terminal cells can't hold control characters: a literal tab advances
+/// the cursor to the next tab stop while ratatui's width math counts
+/// zero, desyncing every cell to its right (the classic Read-tool
+/// `line\tcontent` corruption). Expand tabs, drop other controls.
+fn sanitize(text: &str) -> String {
+    if !text.chars().any(|c| c.is_control() && c != '\n') {
+        return text.to_owned();
+    }
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '\t' => out.push_str("    "),
+            '\n' => out.push('\n'),
+            c if c.is_control() => {}
+            c => out.push(c),
+        }
+    }
     out
 }
 
@@ -693,8 +807,8 @@ fn truncate_chars(line: &str, max: usize) -> String {
     if line.chars().count() <= max {
         return line.to_owned();
     }
-    let cut: String = line.chars().take(max.saturating_sub(1)).collect();
-    format!("{cut}…")
+    let cut: String = line.chars().take(max.saturating_sub(3)).collect();
+    format!("{cut}...")
 }
 
 /// Braille spinner frame, trailing space included so it drops in where a

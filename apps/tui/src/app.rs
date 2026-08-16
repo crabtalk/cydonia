@@ -14,11 +14,12 @@ use crossterm::{
 use cydonia_core::acp::Responder;
 use cydonia_core::acp::schema::MaybeUndefined;
 use cydonia_core::acp::schema::v1::{
-    ContentBlock, InitializeResponse, NewSessionResponse, PlanEntryStatus,
-    RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
-    SelectedPermissionOutcome, SessionConfigKind, SessionConfigOption, SessionConfigOptionValue,
-    SessionConfigSelect, SessionConfigSelectOption, SessionConfigSelectOptions, SessionUpdate,
-    StopReason, ToolCallContent, ToolCallStatus,
+    ContentBlock, EmbeddedResource, EmbeddedResourceResource, InitializeResponse,
+    NewSessionResponse, PlanEntryStatus, RequestPermissionOutcome, RequestPermissionRequest,
+    RequestPermissionResponse, SelectedPermissionOutcome, SessionConfigKind, SessionConfigOption,
+    SessionConfigOptionValue, SessionConfigSelect, SessionConfigSelectOption,
+    SessionConfigSelectOptions, SessionUpdate, StopReason, TextResourceContents, ToolCallContent,
+    ToolCallLocation, ToolCallStatus, ToolKind,
 };
 use cydonia_core::session::{self, Events, Session};
 use cydonia_core::settings;
@@ -45,8 +46,9 @@ const QUIT_HINT_TTL: Duration = Duration::from_secs(5);
 /// Terminal-title length cap.
 const MAX_TITLE_CHARS: usize = 240;
 
-/// Spawn the agent, run the chat, tear down.
-pub async fn run(entry: settings::Agent) -> Result<()> {
+/// Spawn the agent, run the chat, tear down. `previous` loads that
+/// session's history instead of starting fresh.
+pub async fn run(entry: settings::Agent, previous: Option<String>) -> Result<()> {
     // The selector has left the alternate screen and the chat only enters
     // it once the session is up. Say what's happening in between — a first
     // npx run downloads the adapter and looks like a hang otherwise.
@@ -57,7 +59,7 @@ pub async fn run(entry: settings::Agent) -> Result<()> {
 
     let name = entry.name.clone();
     let cwd = std::env::current_dir().unwrap_or_else(|_| "/".into());
-    Session::spawn(&entry, cwd, async |session, events| {
+    Session::spawn(&entry, cwd, previous, async |session, events| {
         chat(session, events, &name).await
     })
     .await
@@ -82,9 +84,12 @@ async fn chat(session: Session, events: Events, agent_name: &str) -> Result<()> 
         None => (Vec::new(), None),
     };
 
+    let mut input = InputState::new(history, Vec::new());
+    input.set_files(workspace_files(&session.cwd));
+
     let mut app = App {
         buffer: ChatBuffer::new(),
-        input: InputState::new(history, Vec::new()),
+        input,
         scroll: usize::MAX,
         last_scroll_top: 0,
         last_max_scroll: 0,
@@ -103,8 +108,17 @@ async fn chat(session: Session, events: Events, agent_name: &str) -> Result<()> 
         current_mode,
         usage: None,
         config: session.response.config_options.clone().unwrap_or_default(),
+        embed_context: session
+            .init
+            .agent_capabilities
+            .prompt_capabilities
+            .embedded_context,
     };
     app.buffer.push(ChatEntry::Text(app.header.clone()));
+    if session.loaded {
+        push_notice(&mut app, "continuing previous session");
+    }
+    settings::remember_session(agent_name, &session.cwd, &session.session_id.to_string());
 
     let mut terminal = tui::setup()?;
     let result = event_loop(&mut terminal, &mut app, &session, events).await;
@@ -161,6 +175,9 @@ struct App {
     /// Session config options (model etc.), replaced wholesale by
     /// `ConfigOptionUpdate` snapshots.
     config: Vec<SessionConfigOption>,
+    /// Whether the agent accepts embedded resources in prompts
+    /// (`PromptCapabilities.embedded_context`).
+    embed_context: bool,
 }
 
 struct Usage {
@@ -328,14 +345,7 @@ fn handle_key(key: KeyEvent, app: &mut App, session: &Session) -> Result<bool> {
             if content.is_empty() {
                 return Ok(false);
             }
-            app.buffer.push(ChatEntry::Text(vec![
-                Line::raw(""),
-                Line::from(Span::styled(
-                    format!(" {content} "),
-                    Style::new().bg(Color::Indexed(236)),
-                )),
-                Line::raw(""),
-            ]));
+            app.buffer.push_user(&content);
             app.scroll = usize::MAX;
 
             match content.as_str() {
@@ -633,12 +643,74 @@ fn send_or_queue(app: &mut App, session: &Session, content: String) {
 }
 
 fn send_prompt(app: &mut App, session: &Session, content: &str) {
-    match session.prompt(content) {
+    let (blocks, attached) = mention_blocks(content, &session.cwd, app.embed_context);
+    match session.prompt_blocks(blocks) {
         Ok(()) => {
             app.streaming = true;
             app.buffer.start_waiting();
+            for path in attached {
+                push_notice(app, &format!("attached {path}"));
+            }
         }
         Err(e) => push_error(app, &format!("prompt failed: {e}")),
+    }
+}
+
+/// Cap on a single `@`-mentioned file embedded into a prompt.
+const MENTION_MAX_BYTES: u64 = 128 * 1024;
+
+/// The prompt's content blocks: the text first, then one embedded
+/// resource per readable `@path` mention (deduped). Returns the block
+/// list and the paths that were attached.
+fn mention_blocks(
+    content: &str,
+    cwd: &std::path::Path,
+    enabled: bool,
+) -> (Vec<ContentBlock>, Vec<String>) {
+    let mut blocks: Vec<ContentBlock> = vec![content.to_owned().into()];
+    let mut attached = Vec::new();
+    if !enabled {
+        return (blocks, attached);
+    }
+    for token in content.split_whitespace() {
+        let Some(path_str) = token.strip_prefix('@') else {
+            continue;
+        };
+        let path_str = path_str.trim_end_matches([',', '.', ';', ':', ')', '?', '!', '"', '\'']);
+        if path_str.is_empty() || attached.iter().any(|p| p == path_str) {
+            continue;
+        }
+        let path = cwd.join(path_str);
+        let small =
+            std::fs::metadata(&path).is_ok_and(|m| m.is_file() && m.len() <= MENTION_MAX_BYTES);
+        if !small {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let uri = format!("file://{}", path.display());
+        blocks.push(ContentBlock::Resource(EmbeddedResource::new(
+            EmbeddedResourceResource::TextResourceContents(TextResourceContents::new(text, uri)),
+        )));
+        attached.push(path_str.to_owned());
+    }
+    (blocks, attached)
+}
+
+/// Workspace file list for `@` completion — git-tracked files, or
+/// nothing outside a repo (no walker needed for the common case).
+fn workspace_files(cwd: &std::path::Path) -> Vec<String> {
+    let output = std::process::Command::new("git")
+        .arg("ls-files")
+        .current_dir(cwd)
+        .output();
+    match output {
+        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .map(str::to_owned)
+            .collect(),
+        _ => Vec::new(),
     }
 }
 
@@ -714,9 +786,13 @@ fn handle_update(update: SessionUpdate, app: &mut App) {
             app.buffer.push_thinking(&content_text(&chunk.content));
         }
         SessionUpdate::ToolCall(call) => {
-            app.buffer
-                .push_tool_call(&call.tool_call_id.to_string(), call.title);
             let id = call.tool_call_id.to_string();
+            app.buffer
+                .push_tool_call(&id, call.title, kind_glyph(call.kind));
+            if !call.locations.is_empty() {
+                app.buffer
+                    .set_tool_locations(&id, format_locations(&call.locations));
+            }
             apply_tool_status(app, &id, call.status);
             push_tool_content(
                 app,
@@ -729,6 +805,13 @@ fn handle_update(update: SessionUpdate, app: &mut App) {
             let id = update.tool_call_id.to_string();
             if let Some(title) = update.fields.title {
                 app.buffer.set_tool_label(&id, title);
+            }
+            if let Some(kind) = update.fields.kind {
+                app.buffer.set_tool_glyph(&id, kind_glyph(kind));
+            }
+            if let Some(locations) = update.fields.locations {
+                app.buffer
+                    .set_tool_locations(&id, format_locations(&locations));
             }
             let failed = update.fields.status == Some(ToolCallStatus::Failed);
             if let Some(content) = update.fields.content {
@@ -778,10 +861,48 @@ fn handle_update(update: SessionUpdate, app: &mut App) {
                 .collect();
             app.buffer.set_plan(rows);
         }
-        // We echo the user's message locally.
-        SessionUpdate::UserMessageChunk(_) => {}
+        // Live turns are echoed locally at submit; chunks only arrive
+        // here as replayed history from `session/load`.
+        SessionUpdate::UserMessageChunk(chunk) => {
+            app.buffer.push_user_chunk(&content_text(&chunk.content));
+        }
         _ => {}
     }
+}
+
+/// ASCII hints for the tool kind, shown after the status marker.
+fn kind_glyph(kind: ToolKind) -> &'static str {
+    match kind {
+        ToolKind::Read => "<",
+        ToolKind::Edit => ">",
+        ToolKind::Delete => "x",
+        ToolKind::Move => "=",
+        ToolKind::Search => "*",
+        ToolKind::Execute => "$",
+        ToolKind::Think => "~",
+        ToolKind::Fetch => "%",
+        ToolKind::SwitchMode => "@",
+        _ => "",
+    }
+}
+
+/// `path:line` strings, with the cwd prefix stripped for brevity.
+fn format_locations(locations: &[ToolCallLocation]) -> Vec<String> {
+    let cwd = std::env::current_dir().unwrap_or_default();
+    locations
+        .iter()
+        .map(|location| {
+            let path = location
+                .path
+                .strip_prefix(&cwd)
+                .unwrap_or(&location.path)
+                .display();
+            match location.line {
+                Some(line) => format!("{path}:{line}"),
+                None => path.to_string(),
+            }
+        })
+        .collect()
 }
 
 fn apply_tool_status(app: &mut App, id: &str, status: ToolCallStatus) {
@@ -823,6 +944,16 @@ fn push_tool_content(app: &mut App, id: &str, content: &[ToolCallContent], faile
 fn content_text(block: &ContentBlock) -> String {
     match block {
         ContentBlock::Text(text) => text.text.clone(),
+        ContentBlock::Resource(resource) => match &resource.resource {
+            EmbeddedResourceResource::TextResourceContents(text) => {
+                format!("[resource: {}]", text.uri)
+            }
+            EmbeddedResourceResource::BlobResourceContents(blob) => {
+                format!("[resource: {}]", blob.uri)
+            }
+            _ => "[resource]".to_owned(),
+        },
+        ContentBlock::ResourceLink(link) => format!("[{}]({})", link.name, link.uri),
         _ => "[non-text content]".to_owned(),
     }
 }
