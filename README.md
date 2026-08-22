@@ -60,7 +60,9 @@ Set `CYDONIA_DEBUG=/tmp/acp.log` to capture the raw JSON-RPC wire.
 | `crates/core` | settings + the ACP session (executor-neutral, no UI deps) |
 | `crates/registry` | the ACP and MCP registries, and the installer for both |
 | `apps/tui` | the terminal frontend (ratatui) |
-| `apps/gpui` | the desktop frontend (GPUI), on the same core |
+| `apps/gui` | the desktop frontend (GPUI), on the same core |
+
+`apps/gui` paints with [bezel](https://github.com/crabtalk/bezel) and needs a sibling `../bezel` checkout to build — a path dependency while the two move together.
 
 ## Docs
 
