@@ -274,7 +274,7 @@ async fn event_loop(
                                 McpAction::Search(query) => {
                                     let tx = bg_tx.clone();
                                     tokio::task::spawn_blocking(move || {
-                                        let found = cydonia_registry::mcp::search(&query)
+                                        let found = cacp_agents::mcp::search(&query)
                                             .map_err(|e| format!("{e:#}"));
                                         let _ = tx.send(Background::Mcp(McpEvent::Found(found)));
                                     });
@@ -301,7 +301,8 @@ async fn event_loop(
                                 AgentAction::Install(agent) => {
                                     let (tx, dir) = (bg_tx.clone(), data_dir.clone());
                                     tokio::task::spawn_blocking(move || {
-                                        let result = cydonia_registry::install(&dir, &agent, |_| {})
+                                        let result = agent
+                                            .install(&dir, |_| {})
                                             .map(|installed| {
                                                 format!(
                                                     "installed {} {}",
@@ -316,7 +317,7 @@ async fn event_loop(
                                 AgentAction::Remove(id, name) => {
                                     let (tx, dir) = (bg_tx.clone(), data_dir.clone());
                                     tokio::task::spawn_blocking(move || {
-                                        let result = cydonia_registry::remove(&dir, &id)
+                                        let result = cacp_agents::Installed::remove(&dir, &id)
                                             .map(|()| format!("removed {name}"))
                                             .map_err(|e| format!("{e:#}"));
                                         let _ =

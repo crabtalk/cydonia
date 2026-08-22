@@ -38,7 +38,7 @@ pub fn pick(choices: &[Choice]) -> Result<Option<usize>> {
 }
 
 /// Browse installable registry agents. `None` means the user backed out.
-pub fn browse(agents: &[cydonia_registry::Agent]) -> Result<Option<usize>> {
+pub fn browse(agents: &[cacp_agents::Agent]) -> Result<Option<usize>> {
     let rows: Vec<Row> = agents
         .iter()
         .map(|agent| Row {

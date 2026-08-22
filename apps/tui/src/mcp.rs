@@ -4,9 +4,9 @@
 //! apply to the next session rather than the running one.
 
 use crate::tui;
+use cacp_agents::mcp;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use cydonia_core::settings::{self, McpServer};
-use cydonia_registry::mcp;
 use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span},
@@ -330,7 +330,9 @@ fn search_lines(
 
 /// Turn a registry entry into a stored server, installing if needed.
 pub fn install(data_dir: &std::path::Path, server: &mcp::Server) -> Result<McpServer, String> {
-    let command = mcp::install(data_dir, server, |_| {}).map_err(|e| format!("{e:#}"))?;
+    let command = server
+        .install(data_dir, |_| {})
+        .map_err(|e| format!("{e:#}"))?;
     Ok(McpServer {
         name: server.name.clone(),
         enabled: true,

@@ -10,6 +10,7 @@ mod select;
 mod tui;
 
 use anyhow::Result;
+use cacp_agents::{Installed, Registry, registry};
 use cydonia_core::settings;
 use select::{Choice, Source};
 use std::collections::BTreeMap;
@@ -22,7 +23,7 @@ async fn main() -> Result<()> {
     let data_dir = settings::data_dir()?;
     // The catalog is a convenience: without it (offline, first run)
     // configured agents still launch.
-    let catalog = cydonia_registry::catalog(&data_dir);
+    let catalog = registry::catalog(&data_dir);
 
     loop {
         let choices = choices(&settings, &catalog, &data_dir, &cwd);
@@ -40,8 +41,7 @@ async fn main() -> Result<()> {
                     .agents
                     .iter()
                     .filter(|agent| {
-                        agent.installable()
-                            && cydonia_registry::installed(&data_dir, &agent.id).is_none()
+                        agent.installable() && Installed::find(&data_dir, &agent.id).is_none()
                     })
                     .cloned()
                     .collect();
@@ -63,7 +63,7 @@ async fn main() -> Result<()> {
 /// each with a resume row when a session exists, then the browser.
 fn choices(
     settings: &settings::Settings,
-    catalog: &Option<cydonia_registry::Registry>,
+    catalog: &Option<Registry>,
     data_dir: &Path,
     cwd: &Path,
 ) -> Vec<Choice> {
@@ -75,7 +75,7 @@ fn choices(
 
     if let Some(registry) = catalog {
         for agent in &registry.agents {
-            let Some(installed) = cydonia_registry::installed(data_dir, &agent.id) else {
+            let Some(installed) = Installed::find(data_dir, &agent.id) else {
                 continue;
             };
             let detail = (installed.version != agent.version)
@@ -118,7 +118,7 @@ fn choices(
     choices
 }
 
-fn agent_from(name: &str, installed: &cydonia_registry::Installed) -> settings::Agent {
+fn agent_from(name: &str, installed: &Installed) -> settings::Agent {
     settings::Agent {
         name: name.to_owned(),
         command: installed.command.clone(),

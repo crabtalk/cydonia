@@ -5,9 +5,9 @@
 //! relaunching — the picker says so rather than pretending otherwise.
 
 use crate::tui;
+use cacp_agents::{Agent, Installed, registry};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use cydonia_core::settings;
-use cydonia_registry::{Agent, Installed};
 use ratatui::{
     style::{Modifier, Style},
     text::{Line, Span},
@@ -60,7 +60,7 @@ impl AgentPicker {
     pub fn open(settings: &settings::Settings, data_dir: &Path) -> Self {
         // The cached catalog only: opening a modal must never block on
         // the network. The launcher already refreshed it at startup.
-        let catalog = cydonia_registry::cached(data_dir);
+        let catalog = registry::cached(data_dir);
         let unavailable = catalog.is_none();
         let mut rows: Vec<Row> = catalog
             .map(|registry| {
@@ -69,7 +69,7 @@ impl AgentPicker {
                     .into_iter()
                     .filter(|agent| agent.installable())
                     .map(|agent| {
-                        let installed = cydonia_registry::installed(data_dir, &agent.id);
+                        let installed = Installed::find(data_dir, &agent.id);
                         Row::Registry(Box::new(RegistryRow { agent, installed }))
                     })
                     .collect()
@@ -158,7 +158,7 @@ impl AgentPicker {
         self.busy = false;
         for row in &mut self.rows {
             if let Row::Registry(row) = row {
-                row.installed = cydonia_registry::installed(data_dir, &row.agent.id);
+                row.installed = Installed::find(data_dir, &row.agent.id);
             }
         }
         match result {

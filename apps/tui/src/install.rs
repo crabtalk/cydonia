@@ -3,8 +3,8 @@
 
 use crate::tui;
 use anyhow::Result;
+use cacp_agents::{Agent, Installed};
 use crossterm::event::{self, Event};
-use cydonia_registry::{Agent, Installed};
 use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span},
@@ -21,7 +21,7 @@ pub fn run(agent: &Agent, data_dir: &Path) -> Result<Option<Installed>> {
     let result = {
         let terminal = &mut terminal;
         let lines = &mut lines;
-        cydonia_registry::install(data_dir, agent, |line| {
+        agent.install(data_dir, |line| {
             lines.push(line.to_owned());
             let _ = terminal.draw(|frame| draw(frame, agent, lines, None));
         })
