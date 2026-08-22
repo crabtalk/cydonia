@@ -7,16 +7,16 @@
 //! drains the core event channel in coalesced batches with a 120ms frame
 //! floor while streaming — one notify per frame, not per chunk.
 
-use crate::app::Cydonia;
+use crate::{app::Cydonia, transcript};
 use cydonia_core::{
     acp::{
         Responder,
         schema::{
             MaybeUndefined,
             v1::{
-                ContentBlock, PlanEntryStatus, RequestPermissionOutcome, RequestPermissionRequest,
-                RequestPermissionResponse, SelectedPermissionOutcome, SessionUpdate, StopReason,
-                ToolCallContent, ToolCallStatus,
+                ContentBlock, PermissionOptionKind, PlanEntryStatus, RequestPermissionOutcome,
+                RequestPermissionRequest, RequestPermissionResponse, SelectedPermissionOutcome,
+                SessionUpdate, StopReason, ToolCallContent, ToolCallStatus, ToolKind,
             },
         },
     },
@@ -24,7 +24,7 @@ use cydonia_core::{
     settings,
 };
 use futures::{FutureExt, StreamExt, channel::oneshot};
-use gpui::{Context, ListAlignment, ListState, Task, px};
+use gpui::{Context, Task};
 use std::{collections::VecDeque, path::PathBuf, time::Duration};
 
 const STREAM_FRAME: Duration = Duration::from_millis(120);
@@ -52,17 +52,30 @@ pub enum ChatItem {
     },
     Tool {
         id: String,
+        kind: ToolKind,
         label: String,
         status: ToolStatus,
         output: String,
     },
-    Notice(String),
+    /// Something the session has to say for itself: a stop reason, or a
+    /// failure. `failed` picks which strip it paints as.
+    Notice {
+        text: String,
+        failed: bool,
+    },
+}
+
+/// One way to answer a permission request. `kind` is what decides how the
+/// button paints — allow and reject must not look alike.
+pub struct Choice {
+    pub id: String,
+    pub name: String,
+    pub kind: PermissionOptionKind,
 }
 
 pub struct PermissionPrompt {
     pub title: String,
-    /// `(option_id, name)` pairs.
-    pub options: Vec<(String, String)>,
+    pub options: Vec<Choice>,
     responder: Responder<RequestPermissionResponse>,
 }
 
@@ -78,13 +91,7 @@ pub struct ChatSession {
     pub streaming: bool,
     pub lost: bool,
     pub queue: VecDeque<String>,
-    pub list: ListState,
-    /// The user scrolled away from the pinned bottom.
-    pub scrolled: bool,
-    /// Items currently reflected in `list`.
-    listed: usize,
-    /// Lowest item index mutated since the last `sync_list`.
-    dirty_from: Option<usize>,
+    pub transcript: transcript::State,
     _shutdown: oneshot::Sender<()>,
     _pump: Task<()>,
 }
@@ -122,7 +129,7 @@ impl ChatSession {
                     let _ = this.update(cx, |app, cx| {
                         app.with_session(id, cx, |chat| {
                             chat.lost = true;
-                            chat.notice(&format!("connection failed: {error}"));
+                            chat.notice(true, &format!("connection failed: {error}"));
                         });
                     });
                     return;
@@ -171,16 +178,9 @@ impl ChatSession {
                     chat.lost = true;
                     chat.streaming = false;
                     chat.fail_running_tools();
-                    chat.notice("agent connection lost");
+                    chat.notice(true, "agent connection lost");
                 });
             });
-        });
-
-        let list = ListState::new(0, ListAlignment::Bottom, px(512.));
-        let weak = cx.entity().downgrade();
-        list.set_scroll_handler(move |event, _, cx| {
-            let scrolled = event.is_scrolled;
-            let _ = weak.update(cx, |app, cx| app.set_scrolled(id, scrolled, cx));
         });
 
         Self {
@@ -195,29 +195,10 @@ impl ChatSession {
             streaming: false,
             lost: false,
             queue: VecDeque::new(),
-            list,
-            scrolled: false,
-            listed: 0,
-            dirty_from: None,
+            transcript: transcript::State::default(),
             _shutdown: shutdown_tx,
             _pump: pump,
         }
-    }
-
-    /// Reflect item mutations into the list: one splice covering
-    /// everything from the lowest touched index (remeasure) through the
-    /// appended tail. A pinned-bottom list stays pinned across splices.
-    pub fn sync_list(&mut self) {
-        let len = self.items.len();
-        let from = self.dirty_from.take().unwrap_or(len).min(self.listed);
-        if from < self.listed || len != self.listed {
-            self.list.splice(from..self.listed, len - from);
-            self.listed = len;
-        }
-    }
-
-    fn touch(&mut self, ix: usize) {
-        self.dirty_from = Some(self.dirty_from.map_or(ix, |d| d.min(ix)));
     }
 
     /// Send now, or queue when a turn is in flight.
@@ -231,16 +212,15 @@ impl ChatSession {
 
     fn prompt(&mut self, content: String) {
         let Some(session) = &self.session else {
-            self.notice("not connected yet");
+            self.notice(false, "not connected yet");
             return;
         };
         match session.prompt(&content) {
             Ok(()) => {
                 self.items.push(ChatItem::User(content));
-                self.touch(self.items.len() - 1);
                 self.streaming = true;
             }
-            Err(e) => self.notice(&format!("prompt failed: {}", session::error_text(&e))),
+            Err(e) => self.notice(true, &format!("prompt failed: {}", session::error_text(&e))),
         }
     }
 
@@ -255,7 +235,7 @@ impl ChatSession {
         if let Some(session) = &self.session
             && let Err(e) = session.cancel()
         {
-            self.notice(&format!("cancel failed: {}", session::error_text(&e)));
+            self.notice(true, &format!("cancel failed: {}", session::error_text(&e)));
         }
     }
 
@@ -279,15 +259,17 @@ impl ChatSession {
                     Ok(StopReason::EndTurn) => {}
                     Ok(StopReason::Cancelled) => {
                         self.fail_running_tools();
-                        self.notice("cancelled");
+                        self.notice(false, "cancelled");
                     }
-                    Ok(StopReason::Refusal) => self.notice("the agent refused to continue"),
-                    Ok(StopReason::MaxTokens) => self.notice("stopped: max tokens"),
-                    Ok(StopReason::MaxTurnRequests) => self.notice("stopped: max turn requests"),
-                    Ok(other) => self.notice(&format!("stopped: {other:?}")),
+                    Ok(StopReason::Refusal) => self.notice(false, "the agent refused to continue"),
+                    Ok(StopReason::MaxTokens) => self.notice(false, "stopped: max tokens"),
+                    Ok(StopReason::MaxTurnRequests) => {
+                        self.notice(false, "stopped: max turn requests")
+                    }
+                    Ok(other) => self.notice(false, &format!("stopped: {other:?}")),
                     Err(e) => {
                         self.fail_running_tools();
-                        self.notice(&format!("turn failed: {}", session::error_text(&e)));
+                        self.notice(true, &format!("turn failed: {}", session::error_text(&e)));
                     }
                 }
                 if let Some(next) = self.queue.pop_front() {
@@ -307,7 +289,6 @@ impl ChatSession {
                 } else {
                     self.items.push(ChatItem::Agent(text));
                 }
-                self.touch(self.items.len() - 1);
             }
             SessionUpdate::AgentThoughtChunk(chunk) => {
                 let text = content_text(&chunk.content);
@@ -320,17 +301,16 @@ impl ChatSession {
                 } else {
                     self.items.push(ChatItem::Thinking { text, done: false });
                 }
-                self.touch(self.items.len() - 1);
             }
             SessionUpdate::ToolCall(call) => {
                 self.finish_thinking();
                 self.items.push(ChatItem::Tool {
                     id: call.tool_call_id.to_string(),
+                    kind: call.kind,
                     label: call.title,
                     status: tool_status(call.status),
                     output: tool_content_text(&call.content),
                 });
-                self.touch(self.items.len() - 1);
             }
             SessionUpdate::ToolCallUpdate(update) => {
                 let id = update.tool_call_id.to_string();
@@ -340,6 +320,7 @@ impl ChatSession {
                     return;
                 };
                 let ChatItem::Tool {
+                    kind,
                     label,
                     status,
                     output,
@@ -350,6 +331,9 @@ impl ChatSession {
                 };
                 if let Some(title) = update.fields.title {
                     *label = title;
+                }
+                if let Some(new_kind) = update.fields.kind {
+                    *kind = new_kind;
                 }
                 if let Some(content) = update.fields.content {
                     let text = tool_content_text(&content);
@@ -363,7 +347,6 @@ impl ChatSession {
                 if let Some(new_status) = update.fields.status {
                     *status = tool_status(new_status);
                 }
-                self.touch(ix);
             }
             SessionUpdate::SessionInfoUpdate(info) => match info.title {
                 MaybeUndefined::Value(title) => self.title = title,
@@ -403,10 +386,14 @@ impl ChatSession {
         request: RequestPermissionRequest,
         responder: Responder<RequestPermissionResponse>,
     ) {
-        let options: Vec<(String, String)> = request
+        let options: Vec<Choice> = request
             .options
             .into_iter()
-            .map(|opt| (opt.option_id.to_string(), opt.name))
+            .map(|opt| Choice {
+                id: opt.option_id.to_string(),
+                name: opt.name,
+                kind: opt.kind,
+            })
             .collect();
         if options.is_empty() {
             let _ = responder.respond(RequestPermissionResponse::new(
@@ -434,28 +421,25 @@ impl ChatSession {
         });
     }
 
-    fn notice(&mut self, text: &str) {
-        self.items.push(ChatItem::Notice(text.to_owned()));
-        self.touch(self.items.len() - 1);
+    fn notice(&mut self, failed: bool, text: &str) {
+        self.items.push(ChatItem::Notice {
+            text: text.to_owned(),
+            failed,
+        });
     }
 
     fn finish_thinking(&mut self) {
-        let last = self.items.len().saturating_sub(1);
-        if let Some(ChatItem::Thinking { done, .. }) = self.items.last_mut()
-            && !*done
-        {
+        if let Some(ChatItem::Thinking { done, .. }) = self.items.last_mut() {
             *done = true;
-            self.touch(last);
         }
     }
 
     fn fail_running_tools(&mut self) {
-        for ix in 0..self.items.len() {
-            if let ChatItem::Tool { status, .. } = &mut self.items[ix]
+        for item in &mut self.items {
+            if let ChatItem::Tool { status, .. } = item
                 && *status == ToolStatus::Running
             {
                 *status = ToolStatus::Failure;
-                self.touch(ix);
             }
         }
     }

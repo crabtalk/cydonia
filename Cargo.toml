@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/core", "crates/registry", "apps/tui", "apps/gpui"]
+members = ["crates/core", "crates/registry", "apps/tui", "apps/gui"]
 
 [workspace.package]
 version = "0.1.0"
@@ -20,8 +20,6 @@ diffy = "0.4"
 dirs = "6"
 futures = "0.3"
 futures-util = "0.3"
-gpui = "0.2"
-pulldown-cmark = "0.13"
 ratatui = "0.29"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -29,3 +27,18 @@ termimad = "0.34"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
 toml = "0.8"
 ureq = { version = "3", features = ["json"] }
+
+# bezel — the component library the GUI is built on. A sibling checkout while
+# both move together; `markdown` and `syntax` are peers the facade never
+# carries, so a consumer that wants tree-sitter names it here.
+bezel = { path = "../bezel/crates/bezel" }
+markdown = { path = "../bezel/crates/markdown" }
+syntax = { path = "../bezel/crates/syntax" }
+
+# The same gpui bezel is built against, down to the rev. A crates.io gpui
+# beside it is a second type universe — a window that paints shapes but no
+# text, one text system holding the fonts while the other draws the frame.
+gpui = { git = "https://github.com/crabtalk/zed", rev = "cf1b90ec8cfda974a50b0c9eaebfdab28d7f0423", version = "0.2.2" }
+gpui_platform = { git = "https://github.com/crabtalk/zed", rev = "cf1b90ec8cfda974a50b0c9eaebfdab28d7f0423", features = [
+    "font-kit",
+] }

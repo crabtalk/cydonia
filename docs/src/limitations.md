@@ -48,6 +48,6 @@ Two things cannot change while a session is running.
 - Code blocks are not syntax-highlighted.
 - Transcript history lives in memory. Restarting relies on the agent replaying it through `session/load`.
 
-## The GPUI app
+## The desktop app
 
-`apps/gpui` is a working desktop frontend on the same core — streaming, tool cards, permissions, multi-session — but it trails the terminal client. It does not yet have session modes, usage, diffs, config options, mentions, resume, `/mcp`, or `/agents`. Those belong in shared components rather than being written twice.
+`apps/gui` is a working desktop frontend on the same core — streaming, tool cards, permissions, multi-session — but it trails the terminal client. It does not yet have session modes, usage, diffs, config options, mentions, resume, `/mcp`, or `/agents`. Those belong in shared components rather than being written twice.
