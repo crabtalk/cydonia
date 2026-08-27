@@ -29,10 +29,16 @@ gpui_platform = { version = "0.3.4", package = "bezel-gpui-platform", features =
     "font-kit",
 ] }
 
+# cacp — our ACP implementation. A sibling checkout while both move together.
+cacp = { path = "../cacp/crates/cacp", default-features = false, features = [
+    "client",
+] }
+
 # crates.io
-agent-client-protocol = "2.0"
 anyhow = "1"
 dirs = "6"
-futures = "0.3"
 serde = { version = "1", features = ["derive"] }
+# cacp spawns its read and write loops with `tokio::spawn`, so the connection
+# needs a runtime of its own — gpui's executor is smol's.
+tokio = { version = "1", features = ["process", "rt-multi-thread", "sync"] }
 toml = "0.8"

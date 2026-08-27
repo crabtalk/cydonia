@@ -1,30 +1,23 @@
 //! One live agent session bridged into the UI.
 //!
-//! The connection future runs on the background executor; the scoped
-//! `Session::spawn` closure hands `(Session, Events)` to the UI over a
-//! oneshot and then parks on a shutdown signal, so dropping `ChatSession`
-//! tears the connection (and the agent process) down. A foreground pump
-//! drains the ACP event channel in coalesced batches with a 120ms frame
-//! floor while streaming — one notify per frame, not per chunk.
+//! The connection opens on the ACP runtime and the `Session` it yields is
+//! held here, so dropping `ChatSession` tears the connection (and the agent
+//! process) down. A foreground pump drains the ACP event channel in coalesced
+//! batches with a 120ms frame floor while streaming — one notify per frame,
+//! not per chunk.
 
 use crate::{
-    acp::{self, Event, Events, Session},
+    acp::{self, Event, Reply, Session},
     app::Cydonia,
     settings, transcript,
 };
-use agent_client_protocol::{
-    Responder,
-    schema::{
-        MaybeUndefined,
-        v1::{
-            ContentBlock, PermissionOptionKind, PlanEntryStatus, RequestPermissionOutcome,
-            RequestPermissionRequest, RequestPermissionResponse, SelectedPermissionOutcome,
-            SessionUpdate, StopReason, ToolCallContent, ToolCallStatus, ToolKind,
-        },
-    },
-};
+use anyhow::anyhow;
 use bezel::motion::Painter;
-use futures::{FutureExt, StreamExt, channel::oneshot};
+use cacp::schema::{
+    ContentBlock, MaybeUndefined, PermissionOptionKind, PlanEntryStatus, RequestPermissionRequest,
+    RequestPermissionResponse, SessionUpdate, StopReason, ToolCallContent, ToolCallStatus,
+    ToolKind,
+};
 use gpui::{Context, Task};
 use std::{collections::VecDeque, path::PathBuf, time::Duration};
 
@@ -77,7 +70,7 @@ pub struct Choice {
 pub struct PermissionPrompt {
     pub title: String,
     pub options: Vec<Choice>,
-    responder: Responder<RequestPermissionResponse>,
+    reply: Reply<RequestPermissionResponse>,
 }
 
 pub struct ChatSession {
@@ -93,7 +86,6 @@ pub struct ChatSession {
     pub lost: bool,
     pub queue: VecDeque<String>,
     pub transcript: transcript::State,
-    _shutdown: oneshot::Sender<()>,
     _pump: Task<()>,
 }
 
@@ -104,33 +96,21 @@ impl ChatSession {
         cwd: PathBuf,
         cx: &mut Context<Cydonia>,
     ) -> Self {
-        let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
-        let (ready_tx, ready_rx) = oneshot::channel::<(Session, Events)>();
-
         let spawn_entry = entry.clone();
-        let conn = cx.background_executor().spawn(async move {
-            let launch = acp::Launch::new(cwd);
-            Session::spawn(&spawn_entry, launch, async |session, events| {
-                let _ = ready_tx.send((session, events));
-                let _ = shutdown_rx.await;
-                Ok(())
-            })
-            .await
-        });
+        let conn = acp::runtime()
+            .spawn(async move { Session::spawn(&spawn_entry, acp::Launch::new(cwd)).await });
 
         let pump = cx.spawn(async move |this, cx| {
-            let mut conn = conn.fuse();
-            let (session, mut events) = match ready_rx.await {
+            let opened = conn
+                .await
+                .unwrap_or_else(|e| Err(anyhow!("the connection task panicked: {e}")));
+            let (session, mut events) = match opened {
                 Ok(pair) => pair,
-                Err(_) => {
-                    let error = match conn.await {
-                        Ok(()) => "agent exited before the session opened".to_owned(),
-                        Err(e) => format!("{e:#}"),
-                    };
+                Err(e) => {
                     let _ = this.update(cx, |app, cx| {
                         app.with_session(id, cx, |chat| {
                             chat.lost = true;
-                            chat.notice(true, &format!("connection failed: {error}"));
+                            chat.notice(true, &format!("connection failed: {e:#}"));
                         });
                     });
                     return;
@@ -147,14 +127,7 @@ impl ChatSession {
                 return;
             }
 
-            loop {
-                let event = futures::select! {
-                    event = events.next() => match event {
-                        Some(event) => event,
-                        None => break,
-                    },
-                    _ = conn => break,
-                };
+            while let Some(event) = events.recv().await {
                 let mut batch = vec![event];
                 while let Ok(event) = events.try_recv() {
                     batch.push(event);
@@ -173,15 +146,6 @@ impl ChatSession {
                     Err(_) => return,
                 }
             }
-
-            let _ = this.update(cx, |app, cx| {
-                app.with_session(id, cx, |chat| {
-                    chat.lost = true;
-                    chat.streaming = false;
-                    chat.fail_running_tools();
-                    chat.notice(true, "agent connection lost");
-                });
-            });
         });
 
         Self {
@@ -197,7 +161,6 @@ impl ChatSession {
             lost: false,
             queue: VecDeque::new(),
             transcript: transcript::State::new(Painter::of(cx)),
-            _shutdown: shutdown_tx,
             _pump: pump,
         }
     }
@@ -216,22 +179,16 @@ impl ChatSession {
             self.notice(false, "not connected yet");
             return;
         };
-        match session.prompt(&content) {
-            Ok(()) => {
-                self.items.push(ChatItem::User(content));
-                self.streaming = true;
-            }
-            Err(e) => self.notice(true, &format!("prompt failed: {}", acp::error_text(&e))),
-        }
+        session.prompt(&content);
+        self.items.push(ChatItem::User(content));
+        self.streaming = true;
     }
 
     /// Cancel the in-flight turn. A pending permission request MUST be
     /// answered `Cancelled` per spec before `session/cancel` goes out.
     pub fn cancel(&mut self) {
         if let Some(prompt) = self.permission.take() {
-            let _ = prompt.responder.respond(RequestPermissionResponse::new(
-                RequestPermissionOutcome::Cancelled,
-            ));
+            prompt.reply.send(RequestPermissionResponse::cancelled());
         }
         if let Some(session) = &self.session
             && let Err(e) = session.cancel()
@@ -243,16 +200,16 @@ impl ChatSession {
     /// Answer the pending permission prompt with the chosen option id.
     pub fn respond_permission(&mut self, option_id: String) {
         if let Some(prompt) = self.permission.take() {
-            let _ = prompt.responder.respond(RequestPermissionResponse::new(
-                RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(option_id)),
-            ));
+            prompt
+                .reply
+                .send(RequestPermissionResponse::selected(option_id));
         }
     }
 
     fn apply(&mut self, event: Event) {
         match event {
             Event::Update(update) => self.apply_update(update),
-            Event::Permission(request, responder) => self.open_permission(request, responder),
+            Event::Permission(request, reply) => self.open_permission(request, reply),
             Event::TurnDone(result) => {
                 self.finish_thinking();
                 self.streaming = false;
@@ -276,6 +233,12 @@ impl ChatSession {
                 if let Some(next) = self.queue.pop_front() {
                     self.prompt(next);
                 }
+            }
+            Event::Closed => {
+                self.lost = true;
+                self.streaming = false;
+                self.fail_running_tools();
+                self.notice(true, "agent connection lost");
             }
         }
     }
@@ -385,7 +348,7 @@ impl ChatSession {
     fn open_permission(
         &mut self,
         request: RequestPermissionRequest,
-        responder: Responder<RequestPermissionResponse>,
+        reply: Reply<RequestPermissionResponse>,
     ) {
         let options: Vec<Choice> = request
             .options
@@ -397,17 +360,13 @@ impl ChatSession {
             })
             .collect();
         if options.is_empty() {
-            let _ = responder.respond(RequestPermissionResponse::new(
-                RequestPermissionOutcome::Cancelled,
-            ));
+            reply.send(RequestPermissionResponse::cancelled());
             return;
         }
         // A replaced prompt must still be answered — an unanswered
-        // responder hangs the agent.
+        // reply hangs the agent.
         if let Some(previous) = self.permission.take() {
-            let _ = previous.responder.respond(RequestPermissionResponse::new(
-                RequestPermissionOutcome::Cancelled,
-            ));
+            previous.reply.send(RequestPermissionResponse::cancelled());
         }
         let title = request
             .tool_call
@@ -418,7 +377,7 @@ impl ChatSession {
         self.permission = Some(PermissionPrompt {
             title,
             options,
-            responder,
+            reply,
         });
     }
 
@@ -458,9 +417,9 @@ fn tool_content_text(content: &[ToolCallContent]) -> String {
     content
         .iter()
         .map(|c| match c {
-            ToolCallContent::Content(inner) => content_text(&inner.content),
+            ToolCallContent::Content { content } => content_text(content),
             ToolCallContent::Diff(diff) => format!("edited {}", diff.path.display()),
-            ToolCallContent::Terminal(_) => "[terminal]".to_owned(),
+            ToolCallContent::Terminal { .. } => "[terminal]".to_owned(),
             _ => "[content]".to_owned(),
         })
         .collect::<Vec<_>>()

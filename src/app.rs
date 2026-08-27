@@ -5,7 +5,6 @@ use crate::{
     session::{ChatSession, PlanStatus},
     settings::{self, Settings},
 };
-use agent_client_protocol::schema::v1::PermissionOptionKind;
 use bezel::{
     gpui::{
         App, Axis, Context, DragMoveEvent, Empty, Entity, FocusHandle, Focusable as _, FontWeight,
@@ -18,13 +17,36 @@ use bezel::{
         widgets::{ButtonStyle, Buttons, Content, Layout, Scaffolding, SplitDrag},
     },
 };
+use cacp::schema::PermissionOptionKind;
 use gpui::actions;
 
 actions!(cydonia, [NewSession]);
 
-const SIDEBAR_DEFAULT: f32 = 240.;
+const SIDEBAR_DEFAULT: f32 = 200.;
 const SIDEBAR_MIN: f32 = 180.;
 const SIDEBAR_MAX: f32 = 420.;
+
+/// Where the traffic lights sit in from the window's left edge — the
+/// gallery's rail grid, which the sidebar's own 16pt padding does not share.
+const RAIL_PAD: f32 = 20.;
+
+/// Padding inside the content card. Read with the sidebar width it gives the
+/// nav its offset, so the title sits over the transcript rather than the edge.
+const CARD_PAD: f32 = 24.;
+
+/// Padding inside one nav item, subtracted back out of the strip so the title
+/// starts on the card's grid rather than its hit box.
+const NAV_ITEM_PAD: f32 = 4.;
+
+/// macOS traffic light diameter — AppKit owns the buttons and reports their
+/// frame, so nothing here can derive it. Measured on macOS 26.
+const TRAFFIC_LIGHT_SIZE: f32 = 14.;
+
+/// Where the traffic lights go, for `TitlebarOptions::traffic_light_position`:
+/// the sidebar's grid across, the nav strip's centre down. macOS sizes the
+/// button container to `height + 2y`, so this `y` is what makes it the strip.
+pub const TRAFFIC_LIGHT_X: f32 = RAIL_PAD;
+pub const TRAFFIC_LIGHT_Y: f32 = (Theme::HEADER_HEIGHT - TRAFFIC_LIGHT_SIZE) / 2.;
 
 pub fn init(cx: &mut App) {
     cx.bind_keys([KeyBinding::new("cmd-n", NewSession, None)]);
@@ -242,6 +264,73 @@ impl Cydonia {
             }))
     }
 
+    /// The strip across the top: the traffic lights sit in its left gutter, the
+    /// active session names it, and the turn's controls ride the far edge.
+    fn nav(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let theme = Theme::of(cx).clone();
+        let chat = self.active_session();
+        let title = chat.map(|chat| {
+            if chat.title.is_empty() {
+                chat.entry.name.clone()
+            } else {
+                chat.title.clone()
+            }
+        });
+        let streaming = chat.is_some_and(|chat| chat.streaming);
+        let id = chat.map(|chat| chat.id);
+
+        div()
+            .flex_none()
+            .h(px(Theme::HEADER_HEIGHT))
+            .pl(px(self.sidebar_width + CARD_PAD - NAV_ITEM_PAD))
+            .pr(px(CARD_PAD))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(8.))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .p(px(NAV_ITEM_PAD))
+                    .text_size(px(13.))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(theme.text)
+                    .truncate()
+                    .child(title.unwrap_or_default()),
+            )
+            .when_some(id.filter(|_| streaming), |nav, id| {
+                nav.child(
+                    div()
+                        .id("nav-cancel")
+                        .p(px(NAV_ITEM_PAD))
+                        .cursor_pointer()
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.with_session(id, cx, ChatSession::cancel);
+                        }))
+                        .child(
+                            icons::icon(icons::STOP)
+                                .size(px(15.))
+                                .text_color(theme.text_muted),
+                        ),
+                )
+            })
+            .child(
+                div()
+                    .id("nav-new-session")
+                    .p(px(NAV_ITEM_PAD))
+                    .cursor_pointer()
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.new_session_action(&NewSession, window, cx);
+                    }))
+                    .child(
+                        icons::icon(icons::PEN_NEW_SQUARE)
+                            .size(px(15.))
+                            .text_color(theme.text_muted),
+                    ),
+            )
+    }
+
     fn sidebar(&self, cx: &Context<Self>) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
         div()
@@ -249,7 +338,6 @@ impl Cydonia {
             .w(px(self.sidebar_width))
             .h_full()
             .bg(theme.glass())
-            .pt(px(Theme::TITLEBAR_HEIGHT))
             .flex()
             .flex_col()
             .child(
@@ -334,8 +422,14 @@ impl Cydonia {
             .h_full()
             .flex()
             .flex_col()
-            .bg(theme.bg)
-            .pt(px(Theme::TITLEBAR_HEIGHT))
+            // Runs off the window's right and bottom edges, so the only corner
+            // that floats is the one that gets rounded.
+            .rounded_tl(px(Theme::panel_radius()))
+            .bg(theme.surface)
+            .border_t_1()
+            .border_l_1()
+            .border_color(theme.border)
+            .overflow_hidden()
             .child(body)
             .child(
                 div().flex_none().flex().justify_center().child(
@@ -456,7 +550,7 @@ impl Render for Cydonia {
         div()
             .size_full()
             .flex()
-            .flex_row()
+            .flex_col()
             .bg(theme.bg)
             .font_family(theme.font_sans.clone())
             .text_color(theme.text)
@@ -486,13 +580,21 @@ impl Render for Cydonia {
                     cx.notify();
                 }),
             )
-            .child(self.sidebar(cx))
+            .child(self.nav(cx))
             .child(
-                theme
-                    .split_handle(Axis::Horizontal, self.dragging)
-                    .id("sidebar-split")
-                    .on_drag(SplitDrag, |_, _, _, cx| cx.new(|_| Empty)),
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .flex_row()
+                    .child(self.sidebar(cx))
+                    .child(
+                        theme
+                            .split_handle(Axis::Horizontal, self.dragging)
+                            .id("sidebar-split")
+                            .on_drag(SplitDrag, |_, _, _, cx| cx.new(|_| Empty)),
+                    )
+                    .child(self.chat(window, cx)),
             )
-            .child(self.chat(window, cx))
     }
 }

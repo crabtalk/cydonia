@@ -1,58 +1,77 @@
 //! One ACP session over a spawned agent subprocess.
 //!
-//! Wraps the SDK's connection setup and the traps we hit wiring it:
-//! - All agent-side events flow through ONE channel. The producers run
-//!   sequentially on the SDK's dispatch task, so a single channel preserves
-//!   the exact wire order (a turn's final updates arrive before its result —
-//!   separate channels lose that).
-//! - The prompt response hook never returns an error: a hook error tears the
-//!   whole connection down, and an agent is allowed to fail a single turn.
-//! - Unhandled session-scoped requests must be declined explicitly. The
-//!   role's default parks them waiting for an `ActiveSession` handler we
-//!   never register — the agent hangs.
+//! Two things here are load-bearing:
+//! - All agent-side events flow through ONE channel. cacp's read loop awaits
+//!   each notification before it reads the next frame, so a single channel
+//!   preserves the exact wire order (a turn's final updates arrive before its
+//!   result — separate channels lose that).
+//! - The connection runs on its own tokio runtime. cacp spawns its read and
+//!   write loops with `tokio::spawn`, and gpui's executor is smol's.
 
 use crate::settings;
-use agent_client_protocol::{
-    AcpAgent, AcpAgentConfig, Agent, Client, ConnectionTo, Dispatch, Handled, Responder,
+use anyhow::{Result, anyhow};
+use cacp::{
+    AgentConn, Client, Direction, Error, Tap,
     schema::{
-        ProtocolVersion,
-        v1::{
-            AuthenticateRequest, CancelNotification, ClientCapabilities, ContentBlock, EnvVariable,
-            FileSystemCapabilities, InitializeRequest, InitializeResponse, LoadSessionRequest,
-            McpServer, McpServerHttp, McpServerStdio, NewSessionRequest, NewSessionResponse,
-            PromptRequest, ReadTextFileRequest, ReadTextFileResponse, RequestPermissionRequest,
-            RequestPermissionResponse, SessionConfigOptionValue, SessionId, SessionNotification,
-            SessionUpdate, SetSessionConfigOptionRequest, SetSessionModeRequest, StopReason,
-            WriteTextFileRequest, WriteTextFileResponse,
-        },
+        AuthenticateRequest, CancelNotification, ClientCapabilities, ContentBlock, EnvVariable,
+        FileSystemCapabilities, InitializeRequest, InitializeResponse, LoadSessionRequest,
+        McpServer, McpServerHttp, McpServerStdio, NewSessionRequest, NewSessionResponse,
+        PromptRequest, ReadTextFileRequest, ReadTextFileResponse, RequestPermissionRequest,
+        RequestPermissionResponse, SessionConfigOptionValue, SessionId, SessionNotification,
+        SessionUpdate, SetSessionConfigOptionRequest, SetSessionModeRequest, StopReason,
+        WriteTextFileRequest, WriteTextFileResponse,
     },
 };
-use anyhow::{Result, anyhow};
-use futures::channel::mpsc;
-use std::path::PathBuf;
+use std::{
+    path::PathBuf,
+    sync::{Arc, OnceLock},
+};
+use tokio::{
+    process::{Child, Command},
+    runtime::Runtime,
+    sync::{mpsc, oneshot},
+};
+
+/// The runtime every connection runs on, started on first use.
+pub fn runtime() -> &'static Runtime {
+    static RUNTIME: OnceLock<Runtime> = OnceLock::new();
+    RUNTIME.get_or_init(|| Runtime::new().expect("failed to start the tokio runtime"))
+}
 
 /// Everything the agent side feeds into the frontend, in wire order.
 pub enum Event {
     Update(SessionUpdate),
-    /// The agent asks the user to authorize a tool call. The responder must
-    /// be answered exactly once (`Cancelled` if the turn is cancelled).
-    Permission(
-        RequestPermissionRequest,
-        Responder<RequestPermissionResponse>,
-    ),
+    /// The agent asks the user to authorize a tool call.
+    Permission(RequestPermissionRequest, Reply<RequestPermissionResponse>),
     /// The prompt turn settled: its stop reason, or the agent's error.
-    TurnDone(Result<StopReason, agent_client_protocol::Error>),
+    TurnDone(Result<StopReason, Error>),
+    /// The agent's read loop ended — the process died or closed its stdout.
+    /// Last in wire order, so any final updates land before the frontend
+    /// gives the session up.
+    Closed,
 }
 
-/// The frontend's receiving end. Handed to the `spawn` closure separately
-/// from [`Session`] so an event loop can poll it while the session handle
-/// stays borrowable for `prompt`/`cancel`.
+/// The frontend's receiving end, handed back beside the [`Session`] so an
+/// event loop can poll it while the session handle stays borrowable for
+/// `prompt`/`cancel`.
 pub type Events = mpsc::UnboundedReceiver<Event>;
 
-/// A live session: the connection and its identity.
+/// The answer half of a request the frontend has to make. Dropping it
+/// declines the request rather than hanging the agent.
+pub struct Reply<T>(oneshot::Sender<Result<T, Error>>);
+
+impl<T> Reply<T> {
+    pub fn send(self, value: T) {
+        let _ = self.0.send(Ok(value));
+    }
+}
+
+/// A live session: the connection, its identity, and the agent process.
 pub struct Session {
-    conn: ConnectionTo<Agent>,
+    conn: AgentConn,
     tx: mpsc::UnboundedSender<Event>,
+    /// Dropping this kills the agent.
+    _child: Child,
     pub session_id: SessionId,
     pub init: InitializeResponse,
     pub response: NewSessionResponse,
@@ -93,115 +112,48 @@ impl Launch {
 }
 
 impl Session {
-    /// Spawn `entry` over stdio, initialize, open a session, and run `f`
-    /// with it. Returns when `f` does; the agent process dies with the
-    /// connection.
+    /// Spawn `entry` over stdio, initialize, and open a session. The agent
+    /// dies with the returned [`Session`].
     ///
-    /// With [`Launch::previous`] set and the agent capable,
-    /// `session/load` replays that session's history instead of
-    /// starting fresh; a failed load (stale id, agent restart) falls
-    /// back to a new session.
-    pub async fn spawn<T, F>(entry: &settings::Agent, launch: Launch, f: F) -> Result<T>
-    where
-        F: AsyncFnOnce(Session, Events) -> Result<T>,
-    {
-        let mut config = AcpAgentConfig::new(&entry.command);
-        for arg in &entry.args {
-            config = config.arg(arg);
-        }
-        for (key, value) in &entry.env {
-            config = config.env(key, value);
-        }
+    /// With [`Launch::previous`] set and the agent capable, `session/load`
+    /// replays that session's history instead of starting fresh; a failed
+    /// load (stale id, agent restart) falls back to a new session.
+    pub async fn spawn(entry: &settings::Agent, launch: Launch) -> Result<(Self, Events)> {
+        let mut command = Command::new(&entry.command);
+        command.args(&entry.args).envs(&entry.env);
 
         // The agent's own list is legacy config; the store is what the
         // `/mcp` picker manages. Both are offered, store first.
         let mut configured = settings::mcp_servers();
         configured.extend(entry.mcp_servers.iter().cloned());
 
-        let (tx, events) = mpsc::unbounded::<Event>();
-        let notify_tx = tx.clone();
-        let permission_tx = tx.clone();
+        let (tx, events) = mpsc::unbounded_channel();
+        let (conn, child) = cacp::spawn(&mut command, Arc::new(Frontend(tx.clone())), debug_tap())
+            .map_err(|e| anyhow!("failed to start {}: {}", entry.command, error_text(&e)))?;
 
-        Client
-            .builder()
-            .on_receive_notification(
-                async move |notification: SessionNotification, _cx| {
-                    let _ = notify_tx.unbounded_send(Event::Update(notification.update));
-                    Ok(())
-                },
-                agent_client_protocol::on_receive_notification!(),
-            )
-            .on_receive_request(
-                async move |request: RequestPermissionRequest, responder, _conn| {
-                    let _ = permission_tx.unbounded_send(Event::Permission(request, responder));
-                    Ok(())
-                },
-                agent_client_protocol::on_receive_request!(),
-            )
-            .on_receive_request(
-                async move |request: ReadTextFileRequest, responder, _conn| {
-                    responder.respond_with_result(read_text_file(&request))
-                },
-                agent_client_protocol::on_receive_request!(),
-            )
-            .on_receive_request(
-                async move |request: WriteTextFileRequest, responder, _conn| {
-                    responder.respond_with_result(
-                        std::fs::write(&request.path, &request.content)
-                            .map(|()| WriteTextFileResponse::new())
-                            .map_err(|e| io_error(&request.path, &e)),
-                    )
-                },
-                agent_client_protocol::on_receive_request!(),
-            )
-            // Catch-all AFTER the typed handlers: decline what we don't
-            // serve (terminal/*, elicitation) instead of letting it park.
-            .on_receive_dispatch(
-                async move |dispatch: Dispatch, _conn| match dispatch {
-                    Dispatch::Request(request, responder) => {
-                        let method = request.method().to_owned();
-                        responder.respond_with_error(
-                            agent_client_protocol::Error::method_not_found().data(method),
-                        )?;
-                        Ok(Handled::Yes)
-                    }
-                    other => Ok(Handled::No {
-                        message: other,
-                        retry: false,
-                    }),
-                },
-                agent_client_protocol::on_receive_dispatch!(),
-            )
-            .connect_with(debuggable(AcpAgent::new(config)), async |conn| {
-                Ok(Self::open(conn, tx, events, launch, configured, f).await)
-            })
-            .await
-            .map_err(|e| anyhow!("ACP connection failed: {e}"))?
+        let session = Self::open(conn, child, tx, launch, configured).await?;
+        Ok((session, events))
     }
 
-    async fn open<T, F>(
-        conn: ConnectionTo<Agent>,
+    async fn open(
+        conn: AgentConn,
+        child: Child,
         tx: mpsc::UnboundedSender<Event>,
-        events: Events,
         launch: Launch,
         configured: Vec<settings::McpServer>,
-        f: F,
-    ) -> Result<T>
-    where
-        F: AsyncFnOnce(Session, Events) -> Result<T>,
-    {
+    ) -> Result<Self> {
         let cwd = launch.cwd.clone();
         let init = conn
-            .send_request(
-                InitializeRequest::new(ProtocolVersion::V1).client_capabilities(
-                    ClientCapabilities::new().fs(FileSystemCapabilities::new()
-                        .read_text_file(true)
-                        .write_text_file(true)),
-                ),
-            )
-            .block_task()
+            .initialize(InitializeRequest::new(ClientCapabilities {
+                fs: FileSystemCapabilities {
+                    read_text_file: true,
+                    write_text_file: true,
+                    meta: None,
+                },
+                ..Default::default()
+            }))
             .await
-            .map_err(|e| anyhow!("initialize failed: {e}"))?;
+            .map_err(|e| anyhow!("initialize failed: {}", error_text(&e)))?;
 
         // Only now are the agent's MCP capabilities known, so remote
         // servers can be dropped for agents that can't reach them.
@@ -214,23 +166,26 @@ impl Session {
             .clone()
             .filter(|_| init.agent_capabilities.load_session)
         {
-            let load = || {
-                LoadSessionRequest::new(id.clone(), cwd.clone()).mcp_servers(mcp_servers.clone())
+            let load = || LoadSessionRequest {
+                mcp_servers: mcp_servers.clone(),
+                ..LoadSessionRequest::new(id.clone(), cwd.clone())
             };
-            let result = match conn.send_request(load()).block_task().await {
-                Err(e) if e.code == agent_client_protocol::Error::auth_required().code => {
+            let result = match conn.load_session(load()).await {
+                Err(e) if e.is_auth_required() => {
                     authenticate(&conn, &init, &launch).await?;
-                    conn.send_request(load()).block_task().await
+                    conn.load_session(load()).await
                 }
                 other => other,
             };
             // A failed load (stale id, agent state gone) falls through
             // to a fresh session rather than failing the launch.
             if let Ok(load_response) = result {
-                let mut restored = NewSessionResponse::new(id);
-                restored.modes = load_response.modes;
-                restored.config_options = load_response.config_options;
-                response = Some(restored);
+                response = Some(NewSessionResponse {
+                    session_id: id.clone().into(),
+                    modes: load_response.modes,
+                    config_options: load_response.config_options,
+                    meta: None,
+                });
                 loaded = true;
             }
         }
@@ -238,100 +193,145 @@ impl Session {
         let response = match response {
             Some(response) => response,
             None => {
-                let new_session =
-                    || NewSessionRequest::new(cwd.clone()).mcp_servers(mcp_servers.clone());
-                match conn.send_request(new_session()).block_task().await {
+                let new_session = || NewSessionRequest {
+                    mcp_servers: mcp_servers.clone(),
+                    ..NewSessionRequest::new(cwd.clone())
+                };
+                match conn.new_session(new_session()).await {
                     Ok(response) => response,
-                    Err(e) if e.code == agent_client_protocol::Error::auth_required().code => {
+                    Err(e) if e.is_auth_required() => {
                         authenticate(&conn, &init, &launch).await?;
-                        conn.send_request(new_session())
-                            .block_task()
-                            .await
-                            .map_err(|e| anyhow!("session/new failed after authentication: {e}"))?
+                        conn.new_session(new_session()).await.map_err(|e| {
+                            anyhow!(
+                                "session/new failed after authentication: {}",
+                                error_text(&e)
+                            )
+                        })?
                     }
-                    Err(e) => return Err(anyhow!("session/new failed: {e}")),
+                    Err(e) => return Err(anyhow!("session/new failed: {}", error_text(&e))),
                 }
             }
         };
 
-        f(
-            Session {
-                conn,
-                tx,
-                session_id: response.session_id.clone(),
-                init,
-                response,
-                cwd,
-                loaded,
-            },
-            events,
-        )
-        .await
+        Ok(Self {
+            conn,
+            tx,
+            _child: child,
+            session_id: response.session_id.clone(),
+            init,
+            response,
+            cwd,
+            loaded,
+        })
     }
 
-    /// Send a prompt turn. Its result arrives as [`Event::TurnDone`].
-    pub fn prompt(&self, content: &str) -> Result<(), agent_client_protocol::Error> {
-        self.prompt_blocks(vec![content.to_owned().into()])
+    /// Send a prompt turn. Its result arrives as [`Event::TurnDone`] —
+    /// including a failure to send it at all.
+    pub fn prompt(&self, content: &str) {
+        self.prompt_blocks(vec![content.to_owned().into()]);
     }
 
     /// Send a prompt turn with explicit content blocks (text plus
     /// embedded resources). Same result path as [`Self::prompt`].
-    pub fn prompt_blocks(
-        &self,
-        blocks: Vec<ContentBlock>,
-    ) -> Result<(), agent_client_protocol::Error> {
+    pub fn prompt_blocks(&self, blocks: Vec<ContentBlock>) {
         let request = PromptRequest::new(self.session_id.clone(), blocks);
+        let conn = self.conn.clone();
         let tx = self.tx.clone();
-        self.conn
-            .send_request(request)
-            .on_receiving_result(move |result| {
-                let _ =
-                    tx.unbounded_send(Event::TurnDone(result.map(|response| response.stop_reason)));
-                async { Ok(()) }
-            })
+        runtime().spawn(async move {
+            let done = conn
+                .prompt(request)
+                .await
+                .map(|response| response.stop_reason);
+            let _ = tx.send(Event::TurnDone(done));
+        });
     }
 
     /// Cancel the in-flight turn (`session/cancel`). The turn still ends
-    /// with a [`Event::TurnDone`] carrying `StopReason::Cancelled`. Pending
-    /// permission responders are the frontend's to answer `Cancelled`.
-    pub fn cancel(&self) -> Result<(), agent_client_protocol::Error> {
-        self.conn
-            .send_notification(CancelNotification::new(self.session_id.clone()))
+    /// with an [`Event::TurnDone`] carrying `StopReason::Cancelled`. Pending
+    /// permission replies are the frontend's to answer `Cancelled`.
+    pub fn cancel(&self) -> Result<(), Error> {
+        self.conn.cancel(CancelNotification {
+            session_id: self.session_id.clone(),
+            meta: None,
+        })
     }
 
     /// Switch the session mode (`session/set_mode`). Fire-and-forget:
     /// frontends validate the id against `response.modes` up front, and
     /// the agent's `CurrentModeUpdate` is the confirmation.
-    pub fn set_mode(&self, mode_id: &str) -> Result<(), agent_client_protocol::Error> {
-        self.conn
-            .send_request(SetSessionModeRequest::new(
-                self.session_id.clone(),
-                mode_id.to_owned(),
-            ))
-            .on_receiving_result(move |_| async { Ok(()) })
+    pub fn set_mode(&self, mode_id: &str) {
+        let request = SetSessionModeRequest {
+            session_id: self.session_id.clone(),
+            mode_id: mode_id.into(),
+            meta: None,
+        };
+        let conn = self.conn.clone();
+        runtime().spawn(async move { conn.set_session_mode(request).await });
     }
 
     /// Set a session config option (`session/set_config_option`).
     /// Fire-and-forget like [`Self::set_mode`]: frontends validate
     /// against `response.config_options`, and the agent's
     /// `ConfigOptionUpdate` is the confirmation.
-    pub fn set_config_option(
+    pub fn set_config_option(&self, config_id: &str, value: SessionConfigOptionValue) {
+        let request = SetSessionConfigOptionRequest {
+            session_id: self.session_id.clone(),
+            config_id: config_id.into(),
+            value,
+            meta: None,
+        };
+        let conn = self.conn.clone();
+        runtime().spawn(async move { conn.set_session_config_option(request).await });
+    }
+}
+
+/// Serves what the agent asks of us: file access answered here, anything
+/// the user has to see queued for the frontend.
+struct Frontend(mpsc::UnboundedSender<Event>);
+
+impl Client for Frontend {
+    async fn session_update(&self, notification: SessionNotification) {
+        let _ = self.0.send(Event::Update(notification.update));
+    }
+
+    async fn request_permission(
         &self,
-        config_id: &str,
-        value: SessionConfigOptionValue,
-    ) -> Result<(), agent_client_protocol::Error> {
-        self.conn
-            .send_request(SetSessionConfigOptionRequest::new(
-                self.session_id.clone(),
-                config_id.to_owned(),
-                value,
-            ))
-            .on_receiving_result(move |_| async { Ok(()) })
+        request: RequestPermissionRequest,
+    ) -> Result<RequestPermissionResponse, Error> {
+        let (tx, rx) = oneshot::channel();
+        self.0
+            .send(Event::Permission(request, Reply(tx)))
+            .map_err(|_| Error::internal_error().data("the frontend is gone"))?;
+        rx.await.unwrap_or_else(|_| Err(Error::method_not_found()))
+    }
+
+    async fn read_text_file(
+        &self,
+        request: ReadTextFileRequest,
+    ) -> Result<ReadTextFileResponse, Error> {
+        read_text_file(&request)
+    }
+
+    async fn write_text_file(
+        &self,
+        request: WriteTextFileRequest,
+    ) -> Result<WriteTextFileResponse, Error> {
+        std::fs::write(&request.path, &request.content)
+            .map(|()| WriteTextFileResponse::default())
+            .map_err(|e| io_error(&request.path, &e))
+    }
+}
+
+/// cacp drops the client when its read loop ends, which is the only notice
+/// the frontend gets that the agent is gone.
+impl Drop for Frontend {
+    fn drop(&mut self) {
+        let _ = self.0.send(Event::Closed);
     }
 }
 
 // A GPUI (or any multi-threaded) frontend holds `Session` in its UI state
-// and moves `Event` — responder included — across executor threads.
+// and moves `Event` — reply included — across executor threads.
 const _: () = {
     const fn assert_send<T: Send>() {}
     assert_send::<Session>();
@@ -350,20 +350,27 @@ fn acp_mcp_servers(
         .iter()
         .filter(|server| server.enabled)
         .filter_map(|server| match (&server.command, &server.url) {
-            (Some(command), _) => {
-                let mut stdio = McpServerStdio::new(server.name.clone(), command.clone());
-                stdio.args = server.args.clone();
-                stdio.env = server
+            (Some(command), _) => Some(McpServer::Stdio(McpServerStdio {
+                name: server.name.clone(),
+                command: command.into(),
+                args: server.args.clone(),
+                env: server
                     .env
                     .iter()
-                    .map(|(name, value)| EnvVariable::new(name.clone(), value.clone()))
-                    .collect();
-                Some(McpServer::Stdio(stdio))
-            }
-            (None, Some(url)) if http => Some(McpServer::Http(McpServerHttp::new(
-                server.name.clone(),
-                url.clone(),
-            ))),
+                    .map(|(name, value)| EnvVariable {
+                        name: name.clone(),
+                        value: value.clone(),
+                        meta: None,
+                    })
+                    .collect(),
+                meta: None,
+            })),
+            (None, Some(url)) if http => Some(McpServer::Http(McpServerHttp {
+                name: server.name.clone(),
+                url: url.clone(),
+                headers: Vec::new(),
+                meta: None,
+            })),
             _ => None,
         })
         .collect()
@@ -373,11 +380,7 @@ fn acp_mcp_servers(
 /// (API keys read from the agent's env) fail fast when unset;
 /// interactive ones (OAuth) block until the user completes the flow in
 /// the browser the agent opens.
-async fn authenticate(
-    conn: &ConnectionTo<Agent>,
-    init: &InitializeResponse,
-    launch: &Launch,
-) -> Result<()> {
+async fn authenticate(conn: &AgentConn, init: &InitializeResponse, launch: &Launch) -> Result<()> {
     if init.auth_methods.is_empty() {
         return Err(anyhow!(
             "authentication required, but the agent advertises no auth methods"
@@ -391,11 +394,11 @@ async fn authenticate(
             "authenticating — {} (finish any sign-in your browser opens)",
             method.name()
         ));
-        match conn
-            .send_request(AuthenticateRequest::new(method.id().clone()))
-            .block_task()
-            .await
-        {
+        let request = AuthenticateRequest {
+            method_id: method.id().clone(),
+            meta: None,
+        };
+        match conn.authenticate(request).await {
             Ok(_) => return Ok(()),
             Err(e) => failures.push(format!("{}: {}", method.name(), error_text(&e))),
         }
@@ -404,7 +407,7 @@ async fn authenticate(
 }
 
 /// One-line rendering of a JSON-RPC error (`Display` dumps a JSON blob).
-pub fn error_text(e: &agent_client_protocol::Error) -> String {
+pub fn error_text(e: &Error) -> String {
     match &e.data {
         Some(data) => {
             let detail = data
@@ -418,9 +421,7 @@ pub fn error_text(e: &agent_client_protocol::Error) -> String {
 }
 
 /// Serve `fs/read_text_file`: whole file, or 1-based `line` + `limit` window.
-fn read_text_file(
-    request: &ReadTextFileRequest,
-) -> Result<ReadTextFileResponse, agent_client_protocol::Error> {
+fn read_text_file(request: &ReadTextFileRequest) -> Result<ReadTextFileResponse, Error> {
     let content =
         std::fs::read_to_string(&request.path).map_err(|e| io_error(&request.path, &e))?;
     let content = match (request.line, request.limit) {
@@ -436,19 +437,20 @@ fn read_text_file(
                 .join("\n")
         }
     };
-    Ok(ReadTextFileResponse::new(content))
+    Ok(ReadTextFileResponse {
+        content,
+        meta: None,
+    })
 }
 
-fn io_error(path: &std::path::Path, e: &std::io::Error) -> agent_client_protocol::Error {
-    agent_client_protocol::Error::internal_error().data(format!("{}: {e}", path.display()))
+fn io_error(path: &std::path::Path, e: &std::io::Error) -> Error {
+    Error::internal_error().data(format!("{}: {e}", path.display()))
 }
 
 /// With `CYDONIA_DEBUG=<path>` set, append every JSON-RPC line to that file.
-fn debuggable(agent: AcpAgent) -> AcpAgent {
-    let Ok(path) = std::env::var("CYDONIA_DEBUG") else {
-        return agent;
-    };
-    agent.with_debug(move |line, direction| {
+fn debug_tap() -> Option<Tap> {
+    let path = std::env::var("CYDONIA_DEBUG").ok()?;
+    Some(Arc::new(move |direction: Direction, line: &str| {
         use std::io::Write;
         if let Ok(mut f) = std::fs::OpenOptions::new()
             .create(true)
@@ -457,5 +459,5 @@ fn debuggable(agent: AcpAgent) -> AcpAgent {
         {
             let _ = writeln!(f, "{direction:?}: {line}");
         }
-    })
+    }))
 }

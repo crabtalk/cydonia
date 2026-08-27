@@ -38,10 +38,15 @@ fn main() -> Result<()> {
             cx.open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    // No strip of its own: the traffic lights sit in the nav,
+                    // so the window owes no titlebar above it.
                     titlebar: Some(TitlebarOptions {
-                        title: Some("cydonia".into()),
-                        appears_transparent: cfg!(target_os = "macos"),
-                        traffic_light_position: Some(point(px(14.), px(14.))),
+                        appears_transparent: true,
+                        traffic_light_position: Some(point(
+                            px(app::TRAFFIC_LIGHT_X),
+                            px(app::TRAFFIC_LIGHT_Y),
+                        )),
+                        ..Default::default()
                     }),
                     // Glass needs a blurred window background to blur into.
                     window_background: Theme::of(cx).window_background_appearance(),

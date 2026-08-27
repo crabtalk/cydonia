@@ -9,7 +9,6 @@ use crate::{
     app::Cydonia,
     session::{ChatItem, ChatSession, ToolStatus},
 };
-use agent_client_protocol::schema::v1::ToolKind;
 use bezel::{
     gpui::{AnyElement, Context, ScrollHandle, SharedString, Window, div, prelude::*, px},
     motion::Painter,
@@ -20,6 +19,7 @@ use bezel::{
         widgets::{self, Layout, Status, Takeover},
     },
 };
+use cacp::schema::ToolKind;
 use std::{
     collections::{HashMap, HashSet},
     ops::Range,
