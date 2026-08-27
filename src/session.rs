@@ -4,25 +4,26 @@
 //! `Session::spawn` closure hands `(Session, Events)` to the UI over a
 //! oneshot and then parks on a shutdown signal, so dropping `ChatSession`
 //! tears the connection (and the agent process) down. A foreground pump
-//! drains the core event channel in coalesced batches with a 120ms frame
+//! drains the ACP event channel in coalesced batches with a 120ms frame
 //! floor while streaming — one notify per frame, not per chunk.
 
-use crate::{app::Cydonia, transcript};
-use cydonia_core::{
-    acp::{
-        Responder,
-        schema::{
-            MaybeUndefined,
-            v1::{
-                ContentBlock, PermissionOptionKind, PlanEntryStatus, RequestPermissionOutcome,
-                RequestPermissionRequest, RequestPermissionResponse, SelectedPermissionOutcome,
-                SessionUpdate, StopReason, ToolCallContent, ToolCallStatus, ToolKind,
-            },
+use crate::{
+    acp::{self, Event, Events, Session},
+    app::Cydonia,
+    settings, transcript,
+};
+use agent_client_protocol::{
+    Responder,
+    schema::{
+        MaybeUndefined,
+        v1::{
+            ContentBlock, PermissionOptionKind, PlanEntryStatus, RequestPermissionOutcome,
+            RequestPermissionRequest, RequestPermissionResponse, SelectedPermissionOutcome,
+            SessionUpdate, StopReason, ToolCallContent, ToolCallStatus, ToolKind,
         },
     },
-    session::{self, Event, Events, Session},
-    settings,
 };
+use bezel::motion::Painter;
 use futures::{FutureExt, StreamExt, channel::oneshot};
 use gpui::{Context, Task};
 use std::{collections::VecDeque, path::PathBuf, time::Duration};
@@ -108,7 +109,7 @@ impl ChatSession {
 
         let spawn_entry = entry.clone();
         let conn = cx.background_executor().spawn(async move {
-            let launch = session::Launch::new(cwd);
+            let launch = acp::Launch::new(cwd);
             Session::spawn(&spawn_entry, launch, async |session, events| {
                 let _ = ready_tx.send((session, events));
                 let _ = shutdown_rx.await;
@@ -195,7 +196,7 @@ impl ChatSession {
             streaming: false,
             lost: false,
             queue: VecDeque::new(),
-            transcript: transcript::State::default(),
+            transcript: transcript::State::new(Painter::of(cx)),
             _shutdown: shutdown_tx,
             _pump: pump,
         }
@@ -220,7 +221,7 @@ impl ChatSession {
                 self.items.push(ChatItem::User(content));
                 self.streaming = true;
             }
-            Err(e) => self.notice(true, &format!("prompt failed: {}", session::error_text(&e))),
+            Err(e) => self.notice(true, &format!("prompt failed: {}", acp::error_text(&e))),
         }
     }
 
@@ -235,7 +236,7 @@ impl ChatSession {
         if let Some(session) = &self.session
             && let Err(e) = session.cancel()
         {
-            self.notice(true, &format!("cancel failed: {}", session::error_text(&e)));
+            self.notice(true, &format!("cancel failed: {}", acp::error_text(&e)));
         }
     }
 
@@ -269,7 +270,7 @@ impl ChatSession {
                     Ok(other) => self.notice(false, &format!("stopped: {other:?}")),
                     Err(e) => {
                         self.fail_running_tools();
-                        self.notice(true, &format!("turn failed: {}", session::error_text(&e)));
+                        self.notice(true, &format!("turn failed: {}", acp::error_text(&e)));
                     }
                 }
                 if let Some(next) = self.queue.pop_front() {

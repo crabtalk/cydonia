@@ -12,20 +12,20 @@
 //!   never register — the agent hangs.
 
 use crate::settings;
-use agent_client_protocol::schema::{
-    ProtocolVersion,
-    v1::{
-        AuthenticateRequest, CancelNotification, ClientCapabilities, ContentBlock, EnvVariable,
-        FileSystemCapabilities, InitializeRequest, InitializeResponse, LoadSessionRequest,
-        McpServer, McpServerHttp, McpServerStdio, NewSessionRequest, NewSessionResponse,
-        PromptRequest, ReadTextFileRequest, ReadTextFileResponse, RequestPermissionRequest,
-        RequestPermissionResponse, SessionConfigOptionValue, SessionId, SessionNotification,
-        SessionUpdate, SetSessionConfigOptionRequest, SetSessionModeRequest, StopReason,
-        WriteTextFileRequest, WriteTextFileResponse,
-    },
-};
 use agent_client_protocol::{
     AcpAgent, AcpAgentConfig, Agent, Client, ConnectionTo, Dispatch, Handled, Responder,
+    schema::{
+        ProtocolVersion,
+        v1::{
+            AuthenticateRequest, CancelNotification, ClientCapabilities, ContentBlock, EnvVariable,
+            FileSystemCapabilities, InitializeRequest, InitializeResponse, LoadSessionRequest,
+            McpServer, McpServerHttp, McpServerStdio, NewSessionRequest, NewSessionResponse,
+            PromptRequest, ReadTextFileRequest, ReadTextFileResponse, RequestPermissionRequest,
+            RequestPermissionResponse, SessionConfigOptionValue, SessionId, SessionNotification,
+            SessionUpdate, SetSessionConfigOptionRequest, SetSessionModeRequest, StopReason,
+            WriteTextFileRequest, WriteTextFileResponse,
+        },
+    },
 };
 use anyhow::{Result, anyhow};
 use futures::channel::mpsc;

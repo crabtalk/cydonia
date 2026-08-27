@@ -9,8 +9,10 @@ use crate::{
     app::Cydonia,
     session::{ChatItem, ChatSession, ToolStatus},
 };
+use agent_client_protocol::schema::v1::ToolKind;
 use bezel::{
     gpui::{AnyElement, Context, ScrollHandle, SharedString, Window, div, prelude::*, px},
+    motion::Painter,
     theme::Theme,
     ui::{
         icons, loaders,
@@ -18,7 +20,6 @@ use bezel::{
         widgets::{self, Layout, Status, Takeover},
     },
 };
-use cydonia_core::acp::schema::v1::ToolKind;
 use std::{
     collections::{HashMap, HashSet},
     ops::Range,
@@ -38,12 +39,12 @@ pub struct State {
     output: HashSet<usize>,
 }
 
-impl Default for State {
-    fn default() -> Self {
+impl State {
+    pub fn new(painter: Painter) -> Self {
         Self {
             scroll: ScrollHandle::new(),
             follow: FollowState::new(),
-            bar: ScrollbarState::new(),
+            bar: ScrollbarState::new(painter),
             work: HashMap::new(),
             output: HashSet::new(),
         }
@@ -197,7 +198,7 @@ impl Cydonia {
                     .max_w(px(440.))
                     .px(px(14.))
                     .py(px(9.))
-                    .rounded(px(Theme::SURFACE_RADIUS))
+                    .rounded(px(Theme::surface_radius()))
                     .bg(theme.surface_raised)
                     .text_size(px(13.5))
                     .text_color(theme.text)
@@ -254,7 +255,7 @@ impl Cydonia {
             .gap(px(6.))
             .px(px(4.))
             .py(px(5.))
-            .rounded(px(Theme::CONTROL_RADIUS))
+            .rounded(px(Theme::control_radius()))
             .cursor_pointer()
             .hover(widgets::collapsible_header_hover)
             .on_click(cx.listener(move |this, _, _, cx| {
@@ -295,7 +296,7 @@ impl Cydonia {
                 let start = ix;
                 out.push(
                     div()
-                        .rounded(px(Theme::PANEL_RADIUS))
+                        .rounded(px(Theme::panel_radius()))
                         .border_1()
                         .border_color(theme.border)
                         .overflow_hidden()
@@ -390,7 +391,7 @@ impl Cydonia {
     /// The turn in flight, while it has produced nothing to show yet.
     fn working(&self, chat: &ChatSession, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
-        let view = cx.entity_id();
+        let view = Painter::of(cx);
         div()
             .flex()
             .flex_row()

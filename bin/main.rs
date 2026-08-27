@@ -1,7 +1,4 @@
-mod app;
-mod composer;
-mod session;
-mod transcript;
+//! Cydonia — desktop client for ACP agents.
 
 use anyhow::Result;
 use bezel::{
@@ -12,7 +9,7 @@ use bezel::{
     theme::{Theme, appearance},
     ui::{self, focus, icons, input},
 };
-use cydonia_core::settings;
+use cydonia::{app, composer, settings};
 use gpui::actions;
 
 actions!(cydonia, [Quit]);

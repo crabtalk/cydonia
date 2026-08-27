@@ -3,21 +3,20 @@
 use crate::{
     composer::{Composer, ComposerEvent},
     session::{ChatSession, PlanStatus},
+    settings::{self, Settings},
 };
+use agent_client_protocol::schema::v1::PermissionOptionKind;
 use bezel::{
     gpui::{
         App, Axis, Context, DragMoveEvent, Empty, Entity, FocusHandle, Focusable as _, FontWeight,
-        KeyBinding, MouseButton, Render, SharedString, Window, div, prelude::*, px,
+        KeyBinding, MouseButton, Render, Window, div, prelude::*, px,
     },
+    motion::{Fade, Painter},
     theme::Theme,
     ui::{
         icons, widgets,
         widgets::{ButtonStyle, Buttons, Content, Layout, Scaffolding, SplitDrag},
     },
-};
-use cydonia_core::{
-    acp::schema::v1::PermissionOptionKind,
-    settings::{self, Settings},
 };
 use gpui::actions;
 
@@ -199,7 +198,7 @@ impl Cydonia {
             .mx(px(8.))
             .px(px(8.))
             .py(px(6.))
-            .rounded(px(Theme::CONTROL_RADIUS))
+            .rounded(px(Theme::control_radius()))
             .flex()
             .flex_row()
             .items_center()
@@ -227,7 +226,7 @@ impl Cydonia {
                     .flex_none()
                     .invisible()
                     .group_hover("session-row", |el| el.visible())
-                    .rounded(px(Theme::CONTROL_RADIUS))
+                    .rounded(px(Theme::control_radius()))
                     .p(px(2.))
                     .child(
                         icons::icon(icons::CLOSE)
@@ -289,7 +288,7 @@ impl Cydonia {
                                 .id(("new-session", ix))
                                 .px(px(8.))
                                 .py(px(4.))
-                                .rounded(px(Theme::CONTROL_RADIUS))
+                                .rounded(px(Theme::control_radius()))
                                 .flex()
                                 .flex_row()
                                 .items_center()
@@ -395,6 +394,7 @@ impl Cydonia {
         let chat = self.active_session()?;
         let prompt = chat.permission.as_ref()?;
         let id = chat.id;
+        let painter = Painter::of(cx);
         Some(
             theme
                 .group_box()
@@ -417,7 +417,7 @@ impl Cydonia {
                             | PermissionOptionKind::RejectAlways => ButtonStyle::Destructive,
                             _ => ButtonStyle::Ghost,
                         };
-                        let fade = SharedString::from(format!("permission-{id}-{ix}"));
+                        let fade = Fade::new(painter, format!("permission-{id}-{ix}"));
                         let option_id = option.id.clone();
                         theme
                             .button(option.name.clone(), style, Some(fade))

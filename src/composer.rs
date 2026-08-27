@@ -6,6 +6,7 @@ use bezel::{
         AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, KeyBinding, Render,
         SharedString, Window, div, point, prelude::*, px,
     },
+    motion::{Fade, Painter},
     theme::{self, Theme},
     ui::{
         icons,
@@ -182,6 +183,7 @@ impl Composer {
     fn picker(&self, theme: &Theme, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         let slash = self.command?;
         let anchor = self.field.read(cx).offset_bounds(slash, window)?;
+        let painter = Painter::of(cx);
         let rows: Vec<AnyElement> = self
             .filter
             .filtered()
@@ -191,7 +193,7 @@ impl Composer {
                 popover::menu_row(
                     theme,
                     Some(position) == self.filter.active(),
-                    format!("command-{item}"),
+                    Fade::new(painter, format!("command-{item}")),
                 )
                 .id(SharedString::from(format!("command-{item}")))
                 .on_click(cx.listener(move |composer, _, _, cx| composer.accept(item, cx)))
@@ -275,7 +277,7 @@ impl Composer {
             .on_action(cx.listener(Self::command_dismiss))
             .child(
                 div()
-                    .rounded(px(Theme::SURFACE_RADIUS))
+                    .rounded(px(Theme::surface_radius()))
                     .border_1()
                     .border_color(theme.border)
                     .bg(theme.card_glass_bg())
