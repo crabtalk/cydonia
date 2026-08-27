@@ -8,13 +8,16 @@ use crate::{
 use bezel::{
     gpui::{
         App, Axis, Context, DragMoveEvent, Empty, Entity, FocusHandle, Focusable as _, FontWeight,
-        KeyBinding, MouseButton, Render, Window, div, prelude::*, px,
+        KeyBinding, Render, Window, div, prelude::*, px,
     },
     motion::{Fade, Painter},
     theme::Theme,
     ui::{
         icons, widgets,
-        widgets::{ButtonStyle, Buttons, Content, Layout, Scaffolding, SplitDrag},
+        widgets::{
+            ButtonStyle, Buttons, Content, Layout, SPLIT_HANDLE_HIT, Scaffolding, SplitDrag,
+            SplitStyle,
+        },
     },
 };
 use cacp::schema::PermissionOptionKind;
@@ -58,7 +61,6 @@ pub struct Cydonia {
     active: Option<u64>,
     next_id: u64,
     sidebar_width: f32,
-    dragging: bool,
     composer: Entity<Composer>,
 }
 
@@ -80,7 +82,6 @@ impl Cydonia {
             active: None,
             next_id: 0,
             sidebar_width: SIDEBAR_DEFAULT,
-            dragging: false,
             composer,
         };
         if let Some(entry) = this.settings.agents.first().cloned() {
@@ -560,41 +561,30 @@ impl Render for Cydonia {
                 cx.listener(|this, event: &DragMoveEvent<SplitDrag>, _, cx| {
                     this.sidebar_width =
                         f32::from(event.event.position.x).clamp(SIDEBAR_MIN, SIDEBAR_MAX);
-                    this.dragging = true;
-                    cx.notify();
-                }),
-            )
-            // Both, because the release can land anywhere: a divider left lit
-            // reads as still grabbed.
-            .on_mouse_up(
-                MouseButton::Left,
-                cx.listener(|this, _, _, cx| {
-                    this.dragging = false;
-                    cx.notify();
-                }),
-            )
-            .on_mouse_up_out(
-                MouseButton::Left,
-                cx.listener(|this, _, _, cx| {
-                    this.dragging = false;
                     cx.notify();
                 }),
             )
             .child(self.nav(cx))
             .child(
                 div()
+                    .relative()
                     .flex_1()
                     .min_h_0()
                     .flex()
                     .flex_row()
                     .child(self.sidebar(cx))
+                    .child(self.chat(window, cx))
+                    // Rides over the card's border: a column in flow would
+                    // open a seam between the rail and the card.
                     .child(
                         theme
-                            .split_handle(Axis::Horizontal, self.dragging)
+                            .split_handle(Axis::Horizontal, SplitStyle::Ghost)
                             .id("sidebar-split")
+                            .absolute()
+                            .top_0()
+                            .left(px(self.sidebar_width - SPLIT_HANDLE_HIT / 2.))
                             .on_drag(SplitDrag, |_, _, _, cx| cx.new(|_| Empty)),
-                    )
-                    .child(self.chat(window, cx)),
+                    ),
             )
     }
 }
