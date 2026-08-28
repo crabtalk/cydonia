@@ -1,4 +1,4 @@
-//! Root view: the project tabs, the sessions rail, and the chat column.
+//! Root view: the projects rail, and the chat column beside it.
 
 use crate::{
     composer::{Composer, ComposerEvent},
@@ -36,26 +36,17 @@ const SIDEBAR_MAX: f32 = 420.;
 /// gallery's rail grid, which the sidebar's own 16pt padding does not share.
 const RAIL_PAD: f32 = 20.;
 
-/// Padding inside the content card. Read with the sidebar width it gives the
-/// nav its offset, so the tabs sit over the transcript rather than the edge.
-const CARD_PAD: f32 = 24.;
-
-/// Padding inside one nav item, subtracted back out of the strip so the tabs
-/// start on the card's grid rather than their hit box.
-const NAV_ITEM_PAD: f32 = 4.;
-
-/// Clearance under the tab row. `Layout::tab` hangs its active underline 2px
-/// below the tab, and the content card is a later sibling that would paint
-/// over anything reaching past the nav's own height.
-const TAB_UNDERLINE_CLEARANCE: f32 = 3.;
+/// How far the content card floats in from the window's edges. The rail runs
+/// to the floor behind it, so the frost reads as one shell under the card.
+const SHELL_INSET: f32 = 8.;
 
 /// macOS traffic light diameter — AppKit owns the buttons and reports their
 /// frame, so nothing here can derive it. Measured on macOS 26.
 const TRAFFIC_LIGHT_SIZE: f32 = 14.;
 
 /// Where the traffic lights go, for `TitlebarOptions::traffic_light_position`:
-/// the sidebar's grid across, the nav strip's centre down. macOS sizes the
-/// button container to `height + 2y`, so this `y` is what makes it the strip.
+/// the rail's grid across, and down by half the band the rail reserves for
+/// them. macOS sizes the button container to `height + 2y`.
 pub const TRAFFIC_LIGHT_X: f32 = RAIL_PAD;
 pub const TRAFFIC_LIGHT_Y: f32 = (Theme::HEADER_HEIGHT - TRAFFIC_LIGHT_SIZE) / 2.;
 
@@ -234,22 +225,31 @@ impl Cydonia {
         cx.notify();
     }
 
+    /// Every project's sessions are on show, so picking one brings its project
+    /// forward with it.
     pub fn select_session(&mut self, id: u64, cx: &mut Context<Self>) {
-        let Some(project) = self.active.map(|ix| &mut self.projects[ix]) else {
+        let Some(ix) = self.project_of(id) else {
             return;
         };
-        if project.session(id).is_none() || project.active == Some(id) {
-            return;
+        self.projects[ix].active = Some(id);
+        if self.active != Some(ix) {
+            self.active = Some(ix);
+            project::save(&self.projects, self.active);
         }
-        project.active = Some(id);
         self.sync_composer(cx);
         cx.notify();
+    }
+
+    fn project_of(&self, id: u64) -> Option<usize> {
+        self.projects
+            .iter()
+            .position(|project| project.session(id).is_some())
     }
 
     /// Drop the session: the shutdown sender goes with it and the agent
     /// process dies.
     pub fn close_session(&mut self, id: u64, cx: &mut Context<Self>) {
-        let Some(project) = self.active.map(|ix| &mut self.projects[ix]) else {
+        let Some(project) = self.project_of(id).map(|ix| &mut self.projects[ix]) else {
             return;
         };
         project.sessions.retain(|chat| chat.id != id);
@@ -353,7 +353,8 @@ impl Cydonia {
         div()
             .id(("session", id))
             .group("session-row")
-            .mx(px(8.))
+            .ml(px(18.))
+            .mr(px(8.))
             .px(px(8.))
             .py(px(6.))
             .rounded(px(Theme::control_radius()))
@@ -401,172 +402,159 @@ impl Cydonia {
             }))
     }
 
-    /// The strip across the top: the traffic lights sit in its left gutter and
-    /// the project tabs run along the card's edge, with the turn's controls on
-    /// the far side.
-    fn nav(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
-        let theme = Theme::of(cx).clone();
-        let chat = self.active_session();
-        let streaming = chat.is_some_and(|chat| chat.streaming);
-        let id = chat.map(|chat| chat.id);
-
-        div()
-            .flex_none()
-            .h(px(Theme::HEADER_HEIGHT))
-            .pl(px(self.sidebar_width + CARD_PAD - NAV_ITEM_PAD))
-            .pr(px(CARD_PAD))
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(8.))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .h_full()
-                    .pb(px(TAB_UNDERLINE_CLEARANCE))
-                    .flex()
-                    .flex_row()
-                    .items_end()
-                    .gap(px(2.))
-                    .children(
-                        self.projects
-                            .iter()
-                            .enumerate()
-                            .map(|(ix, project)| self.tab(ix, project, cx)),
-                    )
-                    .child(
-                        div()
-                            .id("open-project")
-                            .flex_none()
-                            .mb(px(6.))
-                            .p(px(NAV_ITEM_PAD))
-                            .rounded(px(Theme::control_radius()))
-                            .cursor_pointer()
-                            .hover(|el| el.bg(theme.glass_hover()))
-                            .tooltip(|window, cx| {
-                                Tooltip::with_keystroke("Open folder", "⌘O", window, cx)
-                            })
-                            .child(
-                                icons::icon(icons::PLUS)
-                                    .size(px(13.))
-                                    .text_color(theme.text_faint),
-                            )
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.open_project_action(&OpenProject, window, cx);
-                            })),
-                    ),
-            )
-            .when_some(id.filter(|_| streaming), |nav, id| {
-                nav.child(
-                    div()
-                        .id("nav-cancel")
-                        .p(px(NAV_ITEM_PAD))
-                        .cursor_pointer()
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.with_session(id, cx, ChatSession::cancel);
-                        }))
-                        .child(
-                            icons::icon(icons::STOP)
-                                .size(px(15.))
-                                .text_color(theme.text_muted),
-                        ),
-                )
-            })
-            .when(self.active.is_some(), |nav| {
-                nav.child(
-                    div()
-                        .id("nav-new-session")
-                        .p(px(NAV_ITEM_PAD))
-                        .cursor_pointer()
-                        .tooltip(|window, cx| {
-                            Tooltip::with_keystroke("New session", "⌘N", window, cx)
-                        })
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.new_session_action(&NewSession, window, cx);
-                        }))
-                        .child(
-                            icons::icon(icons::PEN_NEW_SQUARE)
-                                .size(px(15.))
-                                .text_color(theme.text_muted),
-                        ),
-                )
-            })
-    }
-
-    /// One project tab, named by its directory and titled by its full path —
-    /// two checkouts sharing a basename are otherwise the same tab twice.
-    fn tab(&self, ix: usize, project: &Project, cx: &Context<Self>) -> impl IntoElement + use<> {
+    /// One project in the rail: a heading that selects it, with its sessions
+    /// under it. Every project shows its own, so the rail is the whole map.
+    fn project_section(
+        &self,
+        ix: usize,
+        project: &Project,
+        cx: &Context<Self>,
+    ) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
         let active = self.active == Some(ix);
         let path = project.path.display().to_string();
-        theme
-            .tab(project.name(), active)
-            .id(("project", ix))
-            .group("project-tab")
-            .flex_none()
+        div()
             .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(6.))
-            .tooltip(move |window, cx| Tooltip::text(path.clone(), window, cx))
+            .flex_col()
+            .gap(px(2.))
             .child(
                 div()
-                    .id(("close-project", ix))
-                    .flex_none()
-                    .invisible()
-                    .group_hover("project-tab", |el| el.visible())
+                    .id(("project", ix))
+                    .group("project-head")
+                    .mx(px(8.))
+                    .px(px(8.))
+                    .py(px(4.))
                     .rounded(px(Theme::control_radius()))
-                    .p(px(2.))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(6.))
+                    .cursor_pointer()
+                    .hover(|el| el.bg(theme.glass_hover()))
+                    .tooltip(move |window, cx| Tooltip::text(path.clone(), window, cx))
                     .child(
-                        icons::icon(icons::CLOSE)
-                            .size(px(11.))
-                            .text_color(theme.text_faint),
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_size(px(11.))
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(if active { theme.text } else { theme.text_faint })
+                            .child(project.name()),
                     )
-                    // Without this the tab's own click runs next and selects
-                    // whichever project just slid into the closed one's index.
+                    .child(
+                        div()
+                            .id(("new-session", ix))
+                            .flex_none()
+                            .invisible()
+                            .group_hover("project-head", |el| el.visible())
+                            .rounded(px(Theme::control_radius()))
+                            .p(px(2.))
+                            .child(
+                                icons::icon(icons::PEN_NEW_SQUARE)
+                                    .size(px(12.))
+                                    .text_color(theme.text_faint),
+                            )
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                cx.stop_propagation();
+                                this.select_project(ix, cx);
+                                this.new_session_action(&NewSession, window, cx);
+                            })),
+                    )
+                    .child(
+                        div()
+                            .id(("close-project", ix))
+                            .flex_none()
+                            .invisible()
+                            .group_hover("project-head", |el| el.visible())
+                            .rounded(px(Theme::control_radius()))
+                            .p(px(2.))
+                            .child(
+                                icons::icon(icons::CLOSE)
+                                    .size(px(11.))
+                                    .text_color(theme.text_faint),
+                            )
+                            // Without this the heading's own click runs next
+                            // and selects whichever project slid into the
+                            // closed one's index.
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                cx.stop_propagation();
+                                this.close_project(ix, cx);
+                            })),
+                    )
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        cx.stop_propagation();
-                        this.close_project(ix, cx);
+                        this.select_project(ix, cx);
                     })),
             )
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.select_project(ix, cx);
-            }))
+            .children(
+                project
+                    .sessions
+                    .iter()
+                    .map(|chat| self.session_row(chat, cx)),
+            )
     }
 
     fn sidebar(&self, cx: &Context<Self>) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
-        let sessions = self
-            .active_project()
-            .map(|project| project.sessions.as_slice())
-            .unwrap_or_default();
         div()
             .flex_none()
             .w(px(self.sidebar_width))
             .h_full()
-            .bg(theme.glass())
+            // No fill of its own: the root already paints the frost, and a
+            // second coat of the same tint reads darker than the shell it
+            // is supposed to be part of.
+            //
+            // The traffic lights float over the rail now that no header strip
+            // holds them, so the first row starts below their band.
+            .pt(px(Theme::HEADER_HEIGHT))
             .flex()
             .flex_col()
             .child(
                 div()
-                    .px(px(16.))
-                    .pb(px(4.))
-                    .text_size(px(11.))
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(theme.text_faint)
-                    .child("SESSIONS"),
-            )
-            .child(
-                div()
-                    .id("session-list")
+                    .id("project-list")
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()
                     .flex()
                     .flex_col()
-                    .gap(px(2.))
-                    .children(sessions.iter().map(|chat| self.session_row(chat, cx))),
+                    .gap(px(12.))
+                    .children(
+                        self.projects
+                            .iter()
+                            .enumerate()
+                            .map(|(ix, project)| self.project_section(ix, project, cx)),
+                    ),
+            )
+            .child(
+                div()
+                    .id("open-project")
+                    .flex_none()
+                    .mx(px(8.))
+                    .mb(px(8.))
+                    .px(px(8.))
+                    .py(px(6.))
+                    .rounded(px(Theme::control_radius()))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(8.))
+                    .cursor_pointer()
+                    .hover(|el| el.bg(theme.glass_hover()))
+                    .tooltip(|window, cx| Tooltip::with_keystroke("Open folder", "⌘O", window, cx))
+                    .child(
+                        icons::icon(icons::PLUS)
+                            .size(px(12.))
+                            .text_color(theme.text_faint),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(13.))
+                            .text_color(theme.text_muted)
+                            .child("New project"),
+                    )
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.open_project_action(&OpenProject, window, cx);
+                    })),
             )
     }
 
@@ -589,15 +577,15 @@ impl Cydonia {
         div()
             .flex_1()
             .min_w_0()
-            .h_full()
+            .mt(px(SHELL_INSET))
+            .ml(px(SHELL_INSET))
+            .mr(px(SHELL_INSET))
+            .mb(px(SHELL_INSET))
             .flex()
             .flex_col()
-            // Runs off the window's right and bottom edges, so the only corner
-            // that floats is the one that gets rounded.
-            .rounded_tl(px(Theme::panel_radius()))
+            .rounded(px(Theme::panel_radius()))
             .bg(theme.surface)
-            .border_t_1()
-            .border_l_1()
+            .border_1()
             .border_color(theme.border)
             .overflow_hidden()
             .child(body)
@@ -748,9 +736,10 @@ impl Render for Cydonia {
         let theme = Theme::of(cx).clone();
         div()
             .size_full()
+            .relative()
             .flex()
-            .flex_col()
-            .bg(theme.bg)
+            .flex_row()
+            .bg(theme.window_bg())
             .font_family(theme.font_sans.clone())
             .text_color(theme.text)
             .text_size(px(14.))
@@ -763,27 +752,18 @@ impl Render for Cydonia {
                     cx.notify();
                 }),
             )
-            .child(self.nav(cx))
+            .child(self.sidebar(cx))
+            .child(self.chat(window, cx))
+            // Rides in the gap between the rail and the card rather than
+            // sitting in flow, so neither pane has to give up a column.
             .child(
-                div()
-                    .relative()
-                    .flex_1()
-                    .min_h_0()
-                    .flex()
-                    .flex_row()
-                    .child(self.sidebar(cx))
-                    .child(self.chat(window, cx))
-                    // Rides over the card's border: a column in flow would
-                    // open a seam between the rail and the card.
-                    .child(
-                        theme
-                            .split_handle(Axis::Horizontal, SplitStyle::Ghost)
-                            .id("sidebar-split")
-                            .absolute()
-                            .top_0()
-                            .left(px(self.sidebar_width - SPLIT_HANDLE_HIT / 2.))
-                            .on_drag(SplitDrag, |_, _, _, cx| cx.new(|_| Empty)),
-                    ),
+                theme
+                    .split_handle(Axis::Horizontal, SplitStyle::Ghost)
+                    .id("sidebar-split")
+                    .absolute()
+                    .top_0()
+                    .left(px(self.sidebar_width - SPLIT_HANDLE_HIT / 2.))
+                    .on_drag(SplitDrag, |_, _, _, cx| cx.new(|_| Empty)),
             )
     }
 }
