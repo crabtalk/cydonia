@@ -12,6 +12,7 @@ use bezel::{
         icons,
         input::{self, Shape, TextField},
         popover,
+        widgets::{ButtonStyle, Buttons},
     },
 };
 use gpui::actions;
@@ -41,6 +42,8 @@ pub fn init(cx: &mut App) {
 pub enum ComposerEvent {
     Submit(String),
     Cancel,
+    /// Talk to this agent instead — an index into the configured agents.
+    Agent(usize),
 }
 
 pub struct Composer {
@@ -53,6 +56,10 @@ pub struct Composer {
     filter: popover::Filter,
     /// Whether a turn is in flight — what the button does when pressed.
     streaming: bool,
+    /// The configured agents, and which one the session runs on.
+    agents: Vec<SharedString>,
+    agent: Option<usize>,
+    menu: bool,
 }
 
 impl EventEmitter<ComposerEvent> for Composer {}
@@ -72,6 +79,9 @@ impl Composer {
             command: None,
             filter: popover::Filter::new(Vec::new()),
             streaming: false,
+            agents: Vec::new(),
+            agent: None,
+            menu: false,
         }
     }
 
@@ -99,6 +109,23 @@ impl Composer {
             self.streaming = streaming;
             cx.notify();
         }
+    }
+
+    /// The agents on offer, and the one the session is talking to.
+    pub fn set_agents(
+        &mut self,
+        agents: &[String],
+        current: Option<usize>,
+        cx: &mut Context<Self>,
+    ) {
+        let agents: Vec<SharedString> = agents.iter().map(SharedString::from).collect();
+        if self.agents == agents && self.agent == current {
+            return;
+        }
+        self.agents = agents;
+        self.agent = current;
+        self.menu = false;
+        cx.notify();
     }
 
     pub fn is_empty(&self, cx: &App) -> bool {
@@ -168,10 +195,13 @@ impl Composer {
         cx.notify();
     }
 
-    /// Escape backs out of whatever is happening: the picker first, and the
-    /// turn in flight once there is no picker left to close.
+    /// Escape backs out of whatever is happening, outermost first: the agent
+    /// menu, then the command picker, and the turn in flight once there is
+    /// nothing left to close.
     fn command_dismiss(&mut self, _: &CommandDismiss, _: &mut Window, cx: &mut Context<Self>) {
-        if self.command.take().is_none() {
+        if self.menu {
+            self.menu = false;
+        } else if self.command.take().is_none() {
             cx.emit(ComposerEvent::Cancel);
         }
         cx.notify();
@@ -210,6 +240,87 @@ impl Composer {
             popover::popover_card(theme)
                 .w(px(280.))
                 .child(div().flex().flex_col().children(rows))
+                .into_any_element(),
+            None,
+        ))
+    }
+
+    /// The agent the session runs on, as a chip that opens the rest. Picking
+    /// one is the app's call to act on — an ACP session is bound to the
+    /// process serving it, so the composer only reports the choice.
+    fn chip(&self, theme: &Theme, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let name = self.agent.and_then(|ix| self.agents.get(ix))?.clone();
+        let painter = Painter::of(cx);
+        Some(
+            div()
+                .relative()
+                .flex_none()
+                .child(
+                    theme
+                        .button(
+                            name,
+                            ButtonStyle::Ghost,
+                            Some(Fade::new(painter, "composer-agent")),
+                        )
+                        .id("composer-agent")
+                        .px(px(8.))
+                        .py(px(3.))
+                        .text_size(px(12.))
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(4.))
+                        .child(
+                            icons::icon(icons::ALT_ARROW_DOWN)
+                                .size(px(10.))
+                                .text_color(theme.text_faint),
+                        )
+                        .on_click(cx.listener(|composer, _, _, cx| {
+                            composer.menu = !composer.menu;
+                            cx.notify();
+                        })),
+                )
+                .children(self.agent_menu(theme, cx))
+                .into_any_element(),
+        )
+    }
+
+    /// Opens upward from the chip: `anchored_menu_above` pins to the trigger's
+    /// top-left, which is why the chip carries the `relative`.
+    fn agent_menu(&self, theme: &Theme, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if !self.menu {
+            return None;
+        }
+        let painter = Painter::of(cx);
+        let rows: Vec<AnyElement> = self
+            .agents
+            .iter()
+            .enumerate()
+            .map(|(ix, name)| {
+                popover::menu_row(
+                    theme,
+                    Some(ix) == self.agent,
+                    Fade::new(painter, format!("agent-{ix}")),
+                )
+                .id(("agent", ix))
+                .child(name.clone())
+                .on_click(cx.listener(move |composer, _, _, cx| {
+                    composer.menu = false;
+                    cx.emit(ComposerEvent::Agent(ix));
+                    cx.notify();
+                }))
+                .into_any_element()
+            })
+            .collect();
+        Some(popover::anchored_menu_above(
+            "composer-agents",
+            popover::popover_card(theme)
+                .w(px(220.))
+                .child(div().flex().flex_col().children(rows))
+                .on_mouse_down_out(cx.listener(|composer, _, _, cx| {
+                    composer.menu = false;
+                    cx.notify();
+                }))
                 .into_any_element(),
             None,
         ))
@@ -294,13 +405,26 @@ impl Composer {
                             .flex_row()
                             .items_center()
                             .justify_between()
-                            .px(px(6.))
+                            .gap(px(8.))
+                            .pl(px(2.))
+                            .pr(px(6.))
                             .child(
                                 div()
-                                    .text_size(px(11.5))
-                                    .font_family(theme.font_mono.clone())
-                                    .text_color(theme.text_faint)
-                                    .child(hint),
+                                    .flex()
+                                    .flex_row()
+                                    .items_center()
+                                    .min_w_0()
+                                    .gap(px(6.))
+                                    .children(self.chip(&theme, cx))
+                                    .child(
+                                        div()
+                                            .min_w_0()
+                                            .truncate()
+                                            .text_size(px(11.5))
+                                            .font_family(theme.font_mono.clone())
+                                            .text_color(theme.text_faint)
+                                            .child(hint),
+                                    ),
                             )
                             .child(self.button(&theme, cx)),
                     ),

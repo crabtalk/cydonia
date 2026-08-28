@@ -14,9 +14,9 @@ path = "bin/main.rs"
 [dependencies]
 # bezel — the component library the GUI is built on. Published as `bezel-*`;
 # the keys here are what the source imports.
-bezel = "0.1.2"
-markdown = { version = "0.1.2", package = "bezel-markdown" }
-syntax = { version = "0.1.2", package = "bezel-syntax" }
+bezel = "0.1.3"
+markdown = { version = "0.1.3", package = "bezel-markdown" }
+syntax = { version = "0.1.3", package = "bezel-syntax" }
 
 # The same gpui bezel is built against. A stock crates.io gpui beside it is a
 # second type universe — a window that paints shapes but no text, one text
@@ -24,8 +24,8 @@ syntax = { version = "0.1.2", package = "bezel-syntax" }
 #
 # `actions!` expands to literal `gpui::` paths, so the crate name has to be in
 # scope even where every type is reached through the facade.
-gpui = { version = "0.3.4", package = "bezel-gpui" }
-gpui_platform = { version = "0.3.4", package = "bezel-gpui-platform", features = [
+gpui = { version = "0.3.5", package = "bezel-gpui" }
+gpui_platform = { version = "0.3.5", package = "bezel-gpui-platform", features = [
     "font-kit",
 ] }
 
