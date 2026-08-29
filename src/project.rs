@@ -1,20 +1,25 @@
-//! A project: a directory, and the sessions running in it.
+//! A project: a directory, the sessions running in it, and its board.
 //!
 //! The path is the whole identity — it is what every session in the project
 //! is spawned with as its `cwd`, and what [`crate::state`] persists.
 
-use crate::session::ChatSession;
+use crate::{
+    board::{self, Board},
+    session::ChatSession,
+};
 use std::path::PathBuf;
 
 pub struct Project {
     pub path: PathBuf,
     pub sessions: Vec<ChatSession>,
     pub active: Option<u64>,
+    pub board: Board,
 }
 
 impl Project {
     pub fn new(path: PathBuf) -> Self {
         Self {
+            board: board::load(&path),
             path,
             sessions: Vec::new(),
             active: None,

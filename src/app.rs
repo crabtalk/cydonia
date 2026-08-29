@@ -1,6 +1,7 @@
 //! Root view: the projects rail, and the chat column beside it.
 
 use crate::{
+    board::{self, Editing},
     composer::{Composer, ComposerEvent},
     project::Project,
     session::{ChatSession, PlanStatus},
@@ -18,6 +19,7 @@ use bezel::{
     theme::{Theme, appearance::AppearanceMode},
     ui::{
         icons,
+        input::TextField,
         tooltip::Tooltip,
         widgets::{
             self, ButtonStyle, Buttons, Content, Layout, SPLIT_HANDLE_HIT, Scaffolding, SplitDrag,
@@ -64,13 +66,18 @@ pub fn init(cx: &mut App) {
 
 pub struct Cydonia {
     pub settings: Settings,
-    projects: Vec<Project>,
-    active: Option<usize>,
+    pub(crate) projects: Vec<Project>,
+    pub(crate) active: Option<usize>,
     next_id: u64,
     sidebar_width: f32,
     composer: Entity<Composer>,
     appearance: AppearanceMode,
     settings_window: Option<WindowHandle<SettingsWindow>>,
+    /// Which pane the content card shows. A property of the window, not of a
+    /// project — switching projects must not teleport you to the other pane.
+    pub(crate) board_open: bool,
+    pub(crate) editing: Option<Editing>,
+    pub(crate) card_field: Entity<TextField>,
 }
 
 impl Cydonia {
@@ -86,6 +93,7 @@ impl Cydonia {
         )
         .detach();
 
+        let card_field = board::field(cx);
         let projects: Vec<Project> = state.projects.into_iter().map(Project::new).collect();
         let active = (!projects.is_empty()).then_some(state.active);
         let mut this = Self {
@@ -97,6 +105,9 @@ impl Cydonia {
             composer,
             appearance: state.appearance,
             settings_window: None,
+            board_open: false,
+            editing: None,
+            card_field,
         };
         this.open_first_session(cx);
         this.sync_composer(cx);
@@ -124,18 +135,22 @@ impl Cydonia {
     /// swapping one out from under a transcript.
     fn pick_agent(&mut self, ix: usize, cx: &mut Context<Self>) {
         if let Some(entry) = self.settings.agents.get(ix).cloned() {
-            self.new_session(entry, cx);
+            self.new_session(entry, None, cx);
         }
     }
 
     fn new_session_action(&mut self, _: &NewSession, _: &mut Window, cx: &mut Context<Self>) {
-        let entry = self
-            .active_session()
-            .map(|chat| chat.entry.clone())
-            .or_else(|| self.settings.agents.first().cloned());
-        if let Some(entry) = entry {
-            self.new_session(entry, cx);
+        if let Some(entry) = self.preferred_agent() {
+            self.new_session(entry, None, cx);
         }
+    }
+
+    /// Which agent an unasked-for session runs on: whoever the project is
+    /// already talking to, else the first one configured.
+    pub(crate) fn preferred_agent(&self) -> Option<settings::Agent> {
+        self.active_session()
+            .map(|chat| chat.entry.clone())
+            .or_else(|| self.settings.agents.first().cloned())
     }
 
     /// The settings window's choice. bezel repaints on `set_mode`; the state
@@ -193,6 +208,7 @@ impl Cydonia {
         if ix >= self.projects.len() {
             return;
         }
+        self.commit_edit(cx);
         self.active = Some(ix);
         self.open_first_session(cx);
         self.sync_composer(cx);
@@ -206,6 +222,7 @@ impl Cydonia {
         if ix >= self.projects.len() {
             return;
         }
+        self.commit_edit(cx);
         self.projects.remove(ix);
         self.active = self.active.and_then(|active| {
             let next = if active > ix { active - 1 } else { active };
@@ -227,28 +244,34 @@ impl Cydonia {
             return;
         }
         if let Some(entry) = self.settings.agents.first().cloned() {
-            self.new_session(entry, cx);
+            self.new_session(entry, None, cx);
         }
     }
 
-    fn active_project(&self) -> Option<&Project> {
+    pub(crate) fn active_project(&self) -> Option<&Project> {
         self.active.and_then(|ix| self.projects.get(ix))
     }
 
     // ── sessions ─────────────────────────────────────────────────────
 
-    pub fn new_session(&mut self, entry: settings::Agent, cx: &mut Context<Self>) {
-        let Some(ix) = self.active else {
-            return;
-        };
+    /// Open a session in the active project. `seed` is its first prompt, sent
+    /// as soon as the agent is up — what a dispatched card rides in on.
+    pub fn new_session(
+        &mut self,
+        entry: settings::Agent,
+        seed: Option<String>,
+        cx: &mut Context<Self>,
+    ) -> Option<u64> {
+        let ix = self.active?;
         let id = self.next_id;
         self.next_id += 1;
-        let chat = ChatSession::connect(id, entry, self.projects[ix].path.clone(), cx);
+        let chat = ChatSession::connect(id, entry, self.projects[ix].path.clone(), seed, cx);
         let project = &mut self.projects[ix];
         project.sessions.push(chat);
         project.active = Some(id);
         self.sync_composer(cx);
         cx.notify();
+        Some(id)
     }
 
     /// Every project's sessions are on show, so picking one brings its project
@@ -341,6 +364,11 @@ impl Cydonia {
     /// The session opened. Temporary dev hook: `CYDONIA_TEST_PROMPT` sends
     /// a prompt right away so streaming can be verified without a composer.
     pub fn session_connected(&mut self, id: u64, cx: &mut Context<Self>) {
+        self.with_session(id, cx, |chat| {
+            if let Some(seed) = chat.seed.take() {
+                chat.send(seed);
+            }
+        });
         if let Ok(prompt) = std::env::var("CYDONIA_TEST_PROMPT") {
             self.with_session(id, cx, |chat| chat.send(prompt));
         }
@@ -613,26 +641,30 @@ impl Cydonia {
     fn chat(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
         let open = self.active_project().is_some();
-        let body = match self.active_session() {
-            Some(chat) => self.transcript(chat, window, cx),
-            None if open => theme
-                .empty_state(
-                    icons::CHAT_ROUND_LINE,
-                    "No session",
-                    "⌘N to start one in this project.",
-                )
-                .flex_1()
-                .into_any_element(),
-            None => self.no_project(cx),
+        let body = if !open {
+            self.no_project(cx)
+        } else if self.board_open {
+            self.board(cx)
+        } else {
+            match self.active_session() {
+                Some(chat) => self.transcript(chat, window, cx),
+                None => theme
+                    .empty_state(
+                        icons::CHAT_ROUND_LINE,
+                        "No session",
+                        "⌘N to start one in this project.",
+                    )
+                    .flex_1()
+                    .into_any_element(),
+            }
         };
 
-        div()
+        let card = div()
             .flex_1()
-            .min_w_0()
+            .min_h_0()
             .mt(px(SHELL_INSET))
             .ml(px(SHELL_INSET))
             .mr(px(SHELL_INSET))
-            .mb(px(SHELL_INSET))
             .flex()
             .flex_col()
             .rounded(px(Theme::panel_radius()))
@@ -658,7 +690,65 @@ impl Cydonia {
                             .child(self.composer.clone()),
                     ),
                 )
-            })
+            });
+
+        div()
+            .flex_1()
+            .min_w_0()
+            .flex()
+            .flex_col()
+            .child(card)
+            .when(open, |column| column.child(self.pane_switch(cx)))
+    }
+
+    /// The shell strip under the content card: on the frost, not on the card.
+    /// What it holds is about the pane you are in rather than anything inside
+    /// it, so it sits outside the surface it switches.
+    ///
+    /// One button, labelled with where it goes — with two panes, a segmented
+    /// track spends a permanent slot restating the one you are already
+    /// looking at.
+    fn pane_switch(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let theme = Theme::of(cx).clone();
+        let board = self.board_open;
+        let (glyph, label) = if board {
+            (icons::CHAT_ROUND_LINE, "Chat")
+        } else {
+            (icons::LIST, "Board")
+        };
+        div()
+            .flex_none()
+            .py(px(SHELL_INSET))
+            .px(px(SHELL_INSET + 6.))
+            .flex()
+            .flex_row()
+            .items_center()
+            .justify_end()
+            .child(
+                div()
+                    .id("pane-switch")
+                    .px(px(8.))
+                    .py(px(4.))
+                    .rounded(px(Theme::control_radius()))
+                    .cursor_pointer()
+                    .hover(|el| el.bg(theme.glass_hover()))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(6.))
+                    .child(
+                        icons::icon(glyph)
+                            .size(px(13.))
+                            .text_color(theme.text_faint),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(12.5))
+                            .text_color(theme.text_muted)
+                            .child(label),
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| this.show_board(!board, cx))),
+            )
     }
 
     /// Nothing is open, so there is nowhere to send a prompt — the only thing

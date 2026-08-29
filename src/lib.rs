@@ -2,6 +2,7 @@
 
 pub mod acp;
 pub mod app;
+pub mod board;
 pub mod composer;
 pub mod project;
 pub mod session;

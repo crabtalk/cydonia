@@ -9,7 +9,7 @@ use bezel::{
     theme::{Theme, appearance},
     ui::{self, focus, icons, input},
 };
-use cydonia::{app, composer, settings, state};
+use cydonia::{app, board, composer, settings, state};
 use gpui::actions;
 
 actions!(cydonia, [Quit]);
@@ -32,6 +32,7 @@ fn main() -> Result<()> {
             input::init(cx);
             focus::init(cx);
             composer::init(cx);
+            board::init(cx);
             app::init(cx);
             set_menus(cx);
 

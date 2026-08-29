@@ -85,6 +85,9 @@ pub struct ChatSession {
     pub streaming: bool,
     pub lost: bool,
     pub queue: VecDeque<String>,
+    /// A prompt to send the moment the session is up — the card that opened
+    /// it. Taken by [`crate::app::Cydonia::session_connected`], never resent.
+    pub seed: Option<String>,
     pub transcript: transcript::State,
     _pump: Task<()>,
 }
@@ -94,6 +97,7 @@ impl ChatSession {
         id: u64,
         entry: settings::Agent,
         cwd: PathBuf,
+        seed: Option<String>,
         cx: &mut Context<Cydonia>,
     ) -> Self {
         let spawn_entry = entry.clone();
@@ -160,6 +164,7 @@ impl ChatSession {
             streaming: false,
             lost: false,
             queue: VecDeque::new(),
+            seed,
             transcript: transcript::State::new(Painter::of(cx)),
             _pump: pump,
         }
