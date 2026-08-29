@@ -4,7 +4,7 @@
 use bezel::{
     gpui::{
         AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, KeyBinding, Render,
-        SharedString, Window, div, point, prelude::*, px,
+        SharedString, Window, div, point, prelude::*, px, svg,
     },
     motion::{Fade, Painter},
     theme::{self, Theme},
@@ -12,7 +12,6 @@ use bezel::{
         icons,
         input::{self, Shape, TextField},
         popover,
-        widgets::{ButtonStyle, Buttons},
     },
 };
 use gpui::actions;
@@ -39,6 +38,14 @@ pub fn init(cx: &mut App) {
     ]);
 }
 
+/// One agent on offer: what to call it, and the registry's mark for it when
+/// the catalog knows it.
+#[derive(Clone, PartialEq)]
+pub struct Agent {
+    pub name: SharedString,
+    pub icon: Option<SharedString>,
+}
+
 pub enum ComposerEvent {
     Submit(String),
     Cancel,
@@ -57,7 +64,7 @@ pub struct Composer {
     /// Whether a turn is in flight — what the button does when pressed.
     streaming: bool,
     /// The configured agents, and which one the session runs on.
-    agents: Vec<SharedString>,
+    agents: Vec<Agent>,
     agent: Option<usize>,
     menu: bool,
 }
@@ -112,17 +119,11 @@ impl Composer {
     }
 
     /// The agents on offer, and the one the session is talking to.
-    pub fn set_agents(
-        &mut self,
-        agents: &[String],
-        current: Option<usize>,
-        cx: &mut Context<Self>,
-    ) {
-        let agents: Vec<SharedString> = agents.iter().map(SharedString::from).collect();
+    pub fn set_agents(&mut self, agents: &[Agent], current: Option<usize>, cx: &mut Context<Self>) {
         if self.agents == agents && self.agent == current {
             return;
         }
-        self.agents = agents;
+        self.agents = agents.to_vec();
         self.agent = current;
         self.menu = false;
         cx.notify();
@@ -248,28 +249,38 @@ impl Composer {
     /// The agent the session runs on, as a chip that opens the rest. Picking
     /// one is the app's call to act on — an ACP session is bound to the
     /// process serving it, so the composer only reports the choice.
+    ///
+    /// Hand-rolled rather than `theme.button`: that helper emits its label as
+    /// the first child and the mark has to lead the name, which an empty label
+    /// would only buy at the cost of the row's gap.
     fn chip(&self, theme: &Theme, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let name = self.agent.and_then(|ix| self.agents.get(ix))?.clone();
-        let painter = Painter::of(cx);
+        let agent = self.agent.and_then(|ix| self.agents.get(ix))?.clone();
         Some(
             div()
                 .relative()
                 .flex_none()
                 .child(
-                    theme
-                        .button(
-                            name,
-                            ButtonStyle::Ghost,
-                            Some(Fade::new(painter, "composer-agent")),
-                        )
+                    div()
                         .id("composer-agent")
                         .px(px(8.))
                         .py(px(3.))
+                        .rounded(px(Theme::control_radius()))
                         .text_size(px(12.))
+                        .text_color(theme.text_muted)
+                        .cursor_pointer()
+                        .hover(|el| el.bg(theme.glass_hover()))
                         .flex()
                         .flex_row()
                         .items_center()
                         .gap(px(4.))
+                        .children(agent.icon.map(|path| {
+                            svg()
+                                .path(path)
+                                .size(px(13.))
+                                .flex_none()
+                                .text_color(theme.text_muted)
+                        }))
+                        .child(agent.name)
                         .child(
                             icons::icon(icons::ALT_ARROW_DOWN)
                                 .size(px(10.))
@@ -296,14 +307,31 @@ impl Composer {
             .agents
             .iter()
             .enumerate()
-            .map(|(ix, name)| {
+            .map(|(ix, agent)| {
                 popover::menu_row(
                     theme,
                     Some(ix) == self.agent,
                     Fade::new(painter, format!("agent-{ix}")),
                 )
                 .id(("agent", ix))
-                .child(name.clone())
+                // A slot, not just the mark: an agent the catalog doesn't
+                // publish would otherwise pull its label left of the rest.
+                .child(
+                    div()
+                        .flex_none()
+                        .size(px(13.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .children(agent.icon.clone().map(|path| {
+                            svg()
+                                .path(path)
+                                .size(px(13.))
+                                .flex_none()
+                                .text_color(theme.text_muted)
+                        })),
+                )
+                .child(agent.name.clone())
                 .on_click(cx.listener(move |composer, _, _, cx| {
                     composer.menu = false;
                     cx.emit(ComposerEvent::Agent(ix));

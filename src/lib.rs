@@ -1,7 +1,9 @@
 //! Cydonia — a desktop client for ACP agents.
 
 pub mod acp;
+pub mod agents;
 pub mod app;
+pub mod assets;
 pub mod board;
 pub mod composer;
 pub mod project;

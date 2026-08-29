@@ -1,8 +1,9 @@
 //! Root view: the projects rail, and the chat column beside it.
 
 use crate::{
+    agents,
     board::{self, Editing},
-    composer::{Composer, ComposerEvent},
+    composer::{self, Composer, ComposerEvent},
     project::Project,
     session::{ChatSession, PlanStatus},
     settings::{self, Settings},
@@ -12,8 +13,8 @@ use crate::{
 use bezel::{
     gpui::{
         AnyElement, App, Axis, Context, DragMoveEvent, Empty, Entity, FocusHandle, Focusable as _,
-        FontWeight, KeyBinding, PathPromptOptions, Render, Window, WindowHandle, div, prelude::*,
-        px,
+        FontWeight, KeyBinding, PathPromptOptions, Render, SharedString, Window, WindowHandle, div,
+        prelude::*, px, svg,
     },
     motion::{Fade, Painter},
     theme::{Theme, appearance::AppearanceMode},
@@ -29,7 +30,7 @@ use bezel::{
 };
 use cacp::schema::PermissionOptionKind;
 use gpui::actions;
-use std::path::PathBuf;
+use std::{collections::HashMap, path::PathBuf};
 
 actions!(cydonia, [NewSession, OpenProject, OpenSettings]);
 
@@ -78,6 +79,9 @@ pub struct Cydonia {
     pub(crate) board_open: bool,
     pub(crate) editing: Option<Editing>,
     pub(crate) card_field: Entity<TextField>,
+    /// The registry's mark for each configured agent, by name. Empty until the
+    /// catalog lands, and stays empty offline.
+    agent_icons: HashMap<String, SharedString>,
 }
 
 impl Cydonia {
@@ -108,10 +112,36 @@ impl Cydonia {
             board_open: false,
             editing: None,
             card_field,
+            agent_icons: HashMap::new(),
         };
         this.open_first_session(cx);
         this.sync_composer(cx);
+        this.load_agent_icons(cx);
         this
+    }
+
+    /// Fetch the catalog and keep each configured agent's icon. Off the UI
+    /// thread — the registry is a blocking fetch on a cold cache — and a
+    /// failure just leaves the map empty.
+    fn load_agent_icons(&mut self, cx: &mut Context<Self>) {
+        let configured = self.settings.agents.clone();
+        cx.spawn(async move |this, cx| {
+            let icons = cx
+                .background_executor()
+                .spawn(async move { agents::icons(&configured) })
+                .await;
+            let _ = this.update(cx, |app, cx| {
+                app.agent_icons = icons;
+                app.sync_composer(cx);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// The registry's mark for whatever this session runs on.
+    fn agent_icon(&self, name: &str) -> Option<SharedString> {
+        self.agent_icons.get(name).cloned()
     }
 
     pub fn composer_focus_handle(&self, cx: &App) -> FocusHandle {
@@ -339,11 +369,14 @@ impl Cydonia {
     /// name, its commands, whether a turn is in flight, and the agents it can
     /// be swapped for.
     fn sync_composer(&mut self, cx: &mut Context<Self>) {
-        let agents: Vec<String> = self
+        let agents: Vec<composer::Agent> = self
             .settings
             .agents
             .iter()
-            .map(|entry| entry.name.clone())
+            .map(|entry| composer::Agent {
+                name: entry.name.clone().into(),
+                icon: self.agent_icon(&entry.name),
+            })
             .collect();
         let chat = self.active_session();
         let placeholder = chat.map_or_else(
@@ -352,7 +385,11 @@ impl Cydonia {
         );
         let commands = chat.map(|chat| chat.commands.clone()).unwrap_or_default();
         let streaming = chat.is_some_and(|chat| chat.streaming);
-        let current = chat.and_then(|chat| agents.iter().position(|name| *name == chat.entry.name));
+        let current = chat.and_then(|chat| {
+            agents
+                .iter()
+                .position(|agent| agent.name == chat.entry.name)
+        });
         self.composer.update(cx, |composer, cx| {
             composer.set_placeholder(&placeholder, cx);
             composer.set_commands(&commands, cx);
@@ -419,7 +456,35 @@ impl Cydonia {
             .cursor_pointer()
             .when(selected, |el| el.bg(theme.glass_hover()))
             .hover(|el| el.bg(theme.glass_hover()))
-            .child(widgets::status_dot(tone))
+            // The agent's own mark where the catalog has one. The dot stays
+            // the answer for an agent the registry doesn't publish — a local
+            // binary, or a first run with no catalog yet.
+            //
+            // The mark takes the label's colour, not the session's: every icon
+            // the registry publishes is a `currentColor` glyph, so tinting is
+            // the only colour it will ever have, and reading it as status
+            // would make the agent's identity change with its state.
+            .child(
+                div()
+                    .flex_none()
+                    .size(px(14.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(match self.agent_icon(&chat.entry.name) {
+                        Some(path) => svg()
+                            .path(path)
+                            .size(px(14.))
+                            .flex_none()
+                            .text_color(if selected {
+                                theme.text
+                            } else {
+                                theme.text_muted
+                            })
+                            .into_any_element(),
+                        None => widgets::status_dot(tone).into_any_element(),
+                    }),
+            )
             .child(
                 div()
                     .flex_1()

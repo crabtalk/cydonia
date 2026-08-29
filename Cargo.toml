@@ -33,6 +33,7 @@ gpui_platform = { version = "0.3.6", package = "bezel-gpui-platform", features =
 cacp = { path = "../cacp/crates/cacp", default-features = false, features = [
     "client",
 ] }
+cacp-agents = { path = "../cacp/crates/agents" }
 
 # crates.io
 anyhow = "1"
@@ -42,3 +43,6 @@ serde = { version = "1", features = ["derive"] }
 # needs a runtime of its own — gpui's executor is smol's.
 tokio = { version = "1", features = ["process", "rt-multi-thread", "sync"] }
 toml = "0.8"
+# Downloads the registry's agent icons. The same client cacp-agents fetches
+# the catalog with, so this adds no second HTTP stack.
+ureq = "3"

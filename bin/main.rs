@@ -7,9 +7,9 @@ use bezel::{
         point, px, size,
     },
     theme::{Theme, appearance},
-    ui::{self, focus, icons, input},
+    ui::{self, focus, input},
 };
-use cydonia::{app, board, composer, settings, state};
+use cydonia::{app, assets, board, composer, settings, state};
 use gpui::actions;
 
 actions!(cydonia, [Quit]);
@@ -18,7 +18,7 @@ fn main() -> Result<()> {
     let settings = settings::load()?;
     let state = state::restore();
     gpui_platform::application()
-        .with_assets(icons::Assets)
+        .with_assets(assets::Assets)
         .run(move |cx: &mut App| {
             if let Err(err) = ui::register_fonts(cx) {
                 eprintln!("font registration failed: {err:?}");
