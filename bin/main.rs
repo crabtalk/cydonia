@@ -9,20 +9,21 @@ use bezel::{
     theme::{Theme, appearance},
     ui::{self, focus, icons, input},
 };
-use cydonia::{app, composer, settings};
+use cydonia::{app, composer, settings, state};
 use gpui::actions;
 
 actions!(cydonia, [Quit]);
 
 fn main() -> Result<()> {
     let settings = settings::load()?;
+    let state = state::restore();
     gpui_platform::application()
         .with_assets(icons::Assets)
         .run(move |cx: &mut App| {
             if let Err(err) = ui::register_fonts(cx) {
                 eprintln!("font registration failed: {err:?}");
             }
-            appearance::init(appearance::AppearanceMode::System, cx);
+            appearance::init(state.appearance, cx);
             markdown::set_highlighter(
                 cx,
                 |language, code| syntax::highlight(code, language),
@@ -56,7 +57,7 @@ fn main() -> Result<()> {
                 },
                 |window, cx| {
                     appearance::observe_window(window, cx).detach();
-                    let app = cx.new(|cx| app::Cydonia::new(settings, cx));
+                    let app = cx.new(|cx| app::Cydonia::new(settings, state, cx));
                     let focus = app.read(cx).composer_focus_handle(cx);
                     window.focus(&focus, cx);
                     app

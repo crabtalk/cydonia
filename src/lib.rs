@@ -6,4 +6,6 @@ pub mod composer;
 pub mod project;
 pub mod session;
 pub mod settings;
+pub mod settings_window;
+pub mod state;
 pub mod transcript;

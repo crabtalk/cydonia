@@ -2,17 +2,20 @@
 
 use crate::{
     composer::{Composer, ComposerEvent},
-    project::{self, Project},
+    project::Project,
     session::{ChatSession, PlanStatus},
     settings::{self, Settings},
+    settings_window::{self, SettingsWindow},
+    state::{self, State},
 };
 use bezel::{
     gpui::{
         AnyElement, App, Axis, Context, DragMoveEvent, Empty, Entity, FocusHandle, Focusable as _,
-        FontWeight, KeyBinding, PathPromptOptions, Render, Window, div, prelude::*, px,
+        FontWeight, KeyBinding, PathPromptOptions, Render, Window, WindowHandle, div, prelude::*,
+        px,
     },
     motion::{Fade, Painter},
-    theme::Theme,
+    theme::{Theme, appearance::AppearanceMode},
     ui::{
         icons,
         tooltip::Tooltip,
@@ -26,7 +29,7 @@ use cacp::schema::PermissionOptionKind;
 use gpui::actions;
 use std::path::PathBuf;
 
-actions!(cydonia, [NewSession, OpenProject]);
+actions!(cydonia, [NewSession, OpenProject, OpenSettings]);
 
 const SIDEBAR_DEFAULT: f32 = 200.;
 const SIDEBAR_MIN: f32 = 180.;
@@ -54,6 +57,8 @@ pub fn init(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("cmd-n", NewSession, None),
         KeyBinding::new("cmd-o", OpenProject, None),
+        // What macOS binds Preferences to in every other app.
+        KeyBinding::new("cmd-,", OpenSettings, None),
     ]);
 }
 
@@ -64,10 +69,12 @@ pub struct Cydonia {
     next_id: u64,
     sidebar_width: f32,
     composer: Entity<Composer>,
+    appearance: AppearanceMode,
+    settings_window: Option<WindowHandle<SettingsWindow>>,
 }
 
 impl Cydonia {
-    pub fn new(settings: Settings, cx: &mut Context<Self>) -> Self {
+    pub fn new(settings: Settings, state: State, cx: &mut Context<Self>) -> Self {
         let composer = cx.new(Composer::new);
         cx.subscribe(
             &composer,
@@ -79,7 +86,6 @@ impl Cydonia {
         )
         .detach();
 
-        let state = project::restore();
         let projects: Vec<Project> = state.projects.into_iter().map(Project::new).collect();
         let active = (!projects.is_empty()).then_some(state.active);
         let mut this = Self {
@@ -89,6 +95,8 @@ impl Cydonia {
             next_id: 0,
             sidebar_width: SIDEBAR_DEFAULT,
             composer,
+            appearance: state.appearance,
+            settings_window: None,
         };
         this.open_first_session(cx);
         this.sync_composer(cx);
@@ -128,6 +136,24 @@ impl Cydonia {
         if let Some(entry) = entry {
             self.new_session(entry, cx);
         }
+    }
+
+    /// The settings window's choice. bezel repaints on `set_mode`; the state
+    /// file is what makes it survive a relaunch.
+    pub fn set_appearance(&mut self, mode: AppearanceMode, cx: &mut Context<Self>) {
+        self.appearance = mode;
+        bezel::theme::appearance::set_mode(mode, cx);
+        state::save(&self.projects, self.active, mode);
+        cx.notify();
+    }
+
+    fn open_settings_action(&mut self, _: &OpenSettings, _: &mut Window, cx: &mut Context<Self>) {
+        self.open_settings(cx);
+    }
+
+    fn open_settings(&mut self, cx: &mut Context<Self>) {
+        let app = cx.entity();
+        self.settings_window = settings_window::open(app, self.settings_window, cx);
     }
 
     // ── projects ─────────────────────────────────────────────────────
@@ -170,7 +196,7 @@ impl Cydonia {
         self.active = Some(ix);
         self.open_first_session(cx);
         self.sync_composer(cx);
-        project::save(&self.projects, self.active);
+        state::save(&self.projects, self.active, self.appearance);
         cx.notify();
     }
 
@@ -187,7 +213,7 @@ impl Cydonia {
         });
         self.open_first_session(cx);
         self.sync_composer(cx);
-        project::save(&self.projects, self.active);
+        state::save(&self.projects, self.active, self.appearance);
         cx.notify();
     }
 
@@ -234,7 +260,7 @@ impl Cydonia {
         self.projects[ix].active = Some(id);
         if self.active != Some(ix) {
             self.active = Some(ix);
-            project::save(&self.projects, self.active);
+            state::save(&self.projects, self.active, self.appearance);
         }
         self.sync_composer(cx);
         cx.notify();
@@ -504,11 +530,40 @@ impl Cydonia {
             // second coat of the same tint reads darker than the shell it
             // is supposed to be part of.
             //
-            // The traffic lights float over the rail now that no header strip
-            // holds them, so the first row starts below their band.
-            .pt(px(Theme::HEADER_HEIGHT))
             .flex()
             .flex_col()
+            // The traffic lights float over the rail now that no header strip
+            // holds them; the band they sit in carries the one action that is
+            // not about a project you already have.
+            .child(
+                div()
+                    .flex_none()
+                    .h(px(Theme::HEADER_HEIGHT))
+                    .pr(px(8.))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .justify_end()
+                    .child(
+                        div()
+                            .id("open-project")
+                            .p(px(4.))
+                            .rounded(px(Theme::control_radius()))
+                            .cursor_pointer()
+                            .hover(|el| el.bg(theme.glass_hover()))
+                            .tooltip(|window, cx| {
+                                Tooltip::with_keystroke("New project", "⌘O", window, cx)
+                            })
+                            .child(
+                                icons::icon(icons::PLUS)
+                                    .size(px(14.))
+                                    .text_color(theme.text_faint),
+                            )
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.open_project_action(&OpenProject, window, cx);
+                            })),
+                    ),
+            )
             .child(
                 div()
                     .id("project-list")
@@ -527,7 +582,7 @@ impl Cydonia {
             )
             .child(
                 div()
-                    .id("open-project")
+                    .id("settings")
                     .flex_none()
                     .mx(px(8.))
                     .mb(px(8.))
@@ -540,21 +595,18 @@ impl Cydonia {
                     .gap(px(8.))
                     .cursor_pointer()
                     .hover(|el| el.bg(theme.glass_hover()))
-                    .tooltip(|window, cx| Tooltip::with_keystroke("Open folder", "⌘O", window, cx))
                     .child(
-                        icons::icon(icons::PLUS)
-                            .size(px(12.))
+                        icons::icon(icons::SETTINGS_MINIMALISTIC)
+                            .size(px(13.))
                             .text_color(theme.text_faint),
                     )
                     .child(
                         div()
                             .text_size(px(13.))
                             .text_color(theme.text_muted)
-                            .child("New project"),
+                            .child("Settings"),
                     )
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.open_project_action(&OpenProject, window, cx);
-                    })),
+                    .on_click(cx.listener(|this, _, _, cx| this.open_settings(cx))),
             )
     }
 
@@ -745,6 +797,7 @@ impl Render for Cydonia {
             .text_size(px(14.))
             .on_action(cx.listener(Self::new_session_action))
             .on_action(cx.listener(Self::open_project_action))
+            .on_action(cx.listener(Self::open_settings_action))
             .on_drag_move(
                 cx.listener(|this, event: &DragMoveEvent<SplitDrag>, _, cx| {
                     this.sidebar_width =

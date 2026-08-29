@@ -24,8 +24,8 @@ syntax = { version = "0.1.3", package = "bezel-syntax" }
 #
 # `actions!` expands to literal `gpui::` paths, so the crate name has to be in
 # scope even where every type is reached through the facade.
-gpui = { version = "0.3.5", package = "bezel-gpui" }
-gpui_platform = { version = "0.3.5", package = "bezel-gpui-platform", features = [
+gpui = { version = "0.3.6", package = "bezel-gpui" }
+gpui_platform = { version = "0.3.6", package = "bezel-gpui-platform", features = [
     "font-kit",
 ] }
 
@@ -42,14 +42,3 @@ serde = { version = "1", features = ["derive"] }
 # needs a runtime of its own — gpui's executor is smol's.
 tokio = { version = "1", features = ["process", "rt-multi-thread", "sync"] }
 toml = "0.8"
-
-# Every bezel crate in the graph, together: patching only the facade would
-# leave `bezel-markdown` on a registry `bezel-ui` beside the local one.
-[patch.crates-io]
-bezel = { path = "../bezel/crates/bezel" }
-bezel-agent = { path = "../bezel/crates/agent" }
-bezel-markdown = { path = "../bezel/crates/markdown" }
-bezel-motion = { path = "../bezel/crates/motion" }
-bezel-syntax = { path = "../bezel/crates/syntax" }
-bezel-theme = { path = "../bezel/crates/theme" }
-bezel-ui = { path = "../bezel/crates/ui" }
