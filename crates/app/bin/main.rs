@@ -36,6 +36,7 @@ fn main() -> Result<()> {
             input::init(cx);
             focus::init(cx);
             composer::init(cx);
+            editor::init(cx);
             board::init(cx);
             root::init(cx);
             set_menus(cx);

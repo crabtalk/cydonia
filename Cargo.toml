@@ -7,3 +7,16 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/crabtalk/cydonia"
+
+# bezel is being fixed in a worktree beside this checkout. Every bezel-* crate
+# in the graph has to come from there together: two copies of the token system
+# is a second type universe, and the window paints shapes but no text.
+[patch.crates-io]
+bezel = { path = "../bezel-editor-fix/crates/bezel" }
+bezel-agent = { path = "../bezel-editor-fix/crates/agent" }
+bezel-editor = { path = "../bezel-editor-fix/crates/editor" }
+bezel-markdown = { path = "../bezel-editor-fix/crates/markdown" }
+bezel-motion = { path = "../bezel-editor-fix/crates/motion" }
+bezel-syntax = { path = "../bezel-editor-fix/crates/syntax" }
+bezel-theme = { path = "../bezel-editor-fix/crates/theme" }
+bezel-ui = { path = "../bezel-editor-fix/crates/ui" }

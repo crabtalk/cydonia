@@ -1,9 +1,11 @@
-//! A project: a directory, the sessions running in it, and its board.
+//! A project: a directory, the sessions running in it, its board and its
+//! articles.
 //!
 //! The path is the whole identity — it is what every session in the project
 //! is spawned with as its `cwd`, and what [`crate::model::state`] persists.
 
 use crate::model::{
+    article::{self, Article},
     board::{self, Board},
     session::ChatSession,
 };
@@ -14,15 +16,20 @@ pub struct Project {
     pub sessions: Vec<ChatSession>,
     pub active: Option<u64>,
     pub board: Board,
+    pub articles: Vec<Article>,
+    /// Which article the article pane shows.
+    pub article: Option<usize>,
 }
 
 impl Project {
     pub fn new(path: PathBuf) -> Self {
         Self {
             board: board::load(&path),
+            articles: article::list(&path),
             path,
             sessions: Vec::new(),
             active: None,
+            article: None,
         }
     }
 

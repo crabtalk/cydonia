@@ -5,7 +5,7 @@ use crate::{
         board::{self, Card, Column, Spot},
         session::ChatSession,
     },
-    view::root::Cydonia,
+    view::root::{Cydonia, Pane},
 };
 use bezel::{
     gpui::{
@@ -62,16 +62,16 @@ pub enum Editing {
 impl Cydonia {
     // ── mutations ────────────────────────────────────────────────
 
-    pub fn show_board(&mut self, open: bool, cx: &mut Context<Self>) {
-        self.commit_edit(cx);
-        self.board_open = open;
+    pub fn show_pane(&mut self, pane: Pane, cx: &mut Context<Self>) {
+        self.commit(cx);
+        self.pane = pane;
         cx.notify();
     }
 
     /// Point the field at `at`, filing whatever was already open first — so
     /// clicking straight from one card to another never drops an edit.
     fn edit(&mut self, at: Editing, window: &mut Window, cx: &mut Context<Self>) {
-        self.commit_edit(cx);
+        self.commit(cx);
         let text = match at {
             Editing::New(_) => String::new(),
             Editing::Card(spot) => self
@@ -89,9 +89,15 @@ impl Cydonia {
         cx.notify();
     }
 
-    /// Write the field back where it came from. An empty card is not a card:
-    /// committing nothing drops it rather than leaving a blank on the board.
-    pub(crate) fn commit_edit(&mut self, cx: &mut Context<Self>) {
+    /// File whatever is open before leaving it: the card being written, and the
+    /// name the article being written has settled on. Every way out of a pane
+    /// goes through here.
+    ///
+    /// An empty card is not a card — committing nothing drops it rather than
+    /// leaving a blank on the board.
+    pub(crate) fn commit(&mut self, cx: &mut Context<Self>) {
+        self.workspace
+            .update(cx, |workspace, cx| workspace.rename_article(cx));
         let Some(at) = self.editing.take() else {
             return;
         };
@@ -123,7 +129,7 @@ impl Cydonia {
     }
 
     fn commit_card(&mut self, _: &CommitCard, _: &mut Window, cx: &mut Context<Self>) {
-        self.commit_edit(cx);
+        self.commit(cx);
         cx.notify();
     }
 
@@ -136,7 +142,7 @@ impl Cydonia {
 
     /// Carry a card one column over, its session with it.
     fn move_card(&mut self, at: Spot, delta: isize, cx: &mut Context<Self>) {
-        self.commit_edit(cx);
+        self.commit(cx);
         self.workspace.update(cx, |workspace, cx| {
             let Some(board) = workspace.active_board_mut() else {
                 return;
@@ -157,7 +163,7 @@ impl Cydonia {
     }
 
     fn delete_card(&mut self, at: Spot, cx: &mut Context<Self>) {
-        self.commit_edit(cx);
+        self.commit(cx);
         self.workspace.update(cx, |workspace, cx| {
             if let Some(board) = workspace.active_board_mut() {
                 board.take(at);
@@ -176,7 +182,7 @@ impl Cydonia {
     /// behind the first. The board stays up: the card goes live where you are
     /// looking, and clicking it is what follows the work into the transcript.
     fn dispatch_card(&mut self, at: Spot, cx: &mut Context<Self>) {
-        self.commit_edit(cx);
+        self.commit(cx);
         self.workspace.update(cx, |workspace, cx| {
             let text = workspace
                 .active_project()
@@ -399,7 +405,7 @@ impl Cydonia {
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         cx.stop_propagation();
                                         this.select_session(id, cx);
-                                        this.show_board(false, cx);
+                                        this.show_pane(Pane::Chat, cx);
                                     })),
                                 None => self.card_action("run", at, icons::PLAY, cx).on_click(
                                     cx.listener(move |this, _, _, cx| {

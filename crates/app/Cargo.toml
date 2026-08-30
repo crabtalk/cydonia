@@ -15,6 +15,7 @@ path = "bin/main.rs"
 # bezel — the component library the GUI is built on. Published as `bezel-*`;
 # the keys here are what the source imports.
 bezel = "0.1.3"
+editor = { version = "0.1.3", package = "bezel-editor" }
 markdown = { version = "0.1.3", package = "bezel-markdown" }
 syntax = { version = "0.1.3", package = "bezel-syntax" }
 
@@ -24,8 +25,8 @@ syntax = { version = "0.1.3", package = "bezel-syntax" }
 #
 # `actions!` expands to literal `gpui::` paths, so the crate name has to be in
 # scope even where every type is reached through the facade.
-gpui = { version = "0.3.6", package = "bezel-gpui" }
-gpui_platform = { version = "0.3.6", package = "bezel-gpui-platform", features = [
+gpui = { version = "0.3.7", package = "bezel-gpui" }
+gpui_platform = { version = "0.3.7", package = "bezel-gpui-platform", features = [
     "font-kit",
 ] }
 

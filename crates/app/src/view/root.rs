@@ -69,6 +69,15 @@ pub fn init(cx: &mut App) {
     ]);
 }
 
+/// Which pane the content card shows. A property of the window, not of a
+/// project — switching projects must not teleport you to another pane.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pane {
+    Chat,
+    Board,
+    Article,
+}
+
 /// The root view. It owns no app state — only the chrome's own: how wide the
 /// rail is, which pane is showing, and whichever card is being written.
 pub struct Cydonia {
@@ -76,9 +85,7 @@ pub struct Cydonia {
     sidebar_width: f32,
     composer: Entity<Composer>,
     settings_window: Option<WindowHandle<SettingsWindow>>,
-    /// Which pane the content card shows. A property of the window, not of a
-    /// project — switching projects must not teleport you to the other pane.
-    pub(crate) board_open: bool,
+    pub(crate) pane: Pane,
     pub(crate) editing: Option<Editing>,
     pub(crate) card_field: Entity<TextField>,
 }
@@ -109,7 +116,7 @@ impl Cydonia {
             sidebar_width: SIDEBAR_DEFAULT,
             composer,
             settings_window: None,
-            board_open: false,
+            pane: Pane::Chat,
             editing: None,
             card_field,
         };
@@ -161,13 +168,13 @@ impl Cydonia {
     /// Leaving a project is the moment a half-written card has to be filed:
     /// the spot it points at belongs to the board being navigated away from.
     pub(crate) fn select_project(&mut self, ix: usize, cx: &mut Context<Self>) {
-        self.commit_edit(cx);
+        self.commit(cx);
         self.workspace
             .update(cx, |workspace, cx| workspace.select_project(ix, cx));
     }
 
     pub(crate) fn close_project(&mut self, ix: usize, cx: &mut Context<Self>) {
-        self.commit_edit(cx);
+        self.commit(cx);
         self.workspace
             .update(cx, |workspace, cx| workspace.close_project(ix, cx));
     }
@@ -356,7 +363,6 @@ impl Cydonia {
     ) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
         let active = self.workspace.read(cx).active == Some(ix);
-        let path = project.path.display().to_string();
         div()
             .flex()
             .flex_col()
@@ -375,7 +381,6 @@ impl Cydonia {
                     .gap(px(6.))
                     .cursor_pointer()
                     .hover(|el| el.bg(theme.glass_hover()))
-                    .tooltip(move |window, cx| Tooltip::text(path.clone(), window, cx))
                     .child(
                         div()
                             .flex_1()
@@ -385,6 +390,24 @@ impl Cydonia {
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(if active { theme.text } else { theme.text_faint })
                             .child(project.name()),
+                    )
+                    .child(
+                        div()
+                            .id(("new-article", ix))
+                            .flex_none()
+                            .invisible()
+                            .group_hover("project-head", |el| el.visible())
+                            .rounded(px(Theme::control_radius()))
+                            .p(px(2.))
+                            .child(
+                                icons::icon(icons::DOCUMENT_ADD)
+                                    .size(px(12.))
+                                    .text_color(theme.text_faint),
+                            )
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                cx.stop_propagation();
+                                this.new_article(ix, window, cx);
+                            })),
                     )
                     .child(
                         div()
@@ -435,6 +458,13 @@ impl Cydonia {
                     .sessions
                     .iter()
                     .map(|chat| self.session_row(chat, cx)),
+            )
+            .children(
+                project
+                    .articles
+                    .iter()
+                    .enumerate()
+                    .map(|(n, article)| self.article_row(ix, n, article.title(), cx)),
             )
     }
 
@@ -520,30 +550,41 @@ impl Cydonia {
             )
     }
 
+    /// The session in front, or the invitation to open one.
+    fn conversation(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        match self.workspace.read(cx).active_id() {
+            Some(id) => self
+                .workspace
+                .update(cx, |workspace, cx| match workspace.session(id) {
+                    Some(chat) => transcript::render(chat, window, cx),
+                    None => div().flex_1().into_any_element(),
+                }),
+            None => Theme::of(cx)
+                .empty_state(
+                    icons::CHAT_ROUND_LINE,
+                    "No session",
+                    "⌘N to start one in this project.",
+                )
+                .flex_1()
+                .into_any_element(),
+        }
+    }
+
     fn chat(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
         let open = self.workspace.read(cx).active_project().is_some();
         let body = if !open {
             self.no_project(cx)
-        } else if self.board_open {
-            self.board(cx)
         } else {
-            match self.workspace.read(cx).active_id() {
-                Some(id) => {
-                    self.workspace
-                        .update(cx, |workspace, cx| match workspace.session(id) {
-                            Some(chat) => transcript::render(chat, window, cx),
-                            None => div().flex_1().into_any_element(),
-                        })
-                }
-                None => theme
-                    .empty_state(
-                        icons::CHAT_ROUND_LINE,
-                        "No session",
-                        "⌘N to start one in this project.",
-                    )
-                    .flex_1()
-                    .into_any_element(),
+            match self.pane {
+                Pane::Chat => self.conversation(window, cx),
+                Pane::Board => self.board(cx),
+                // Nothing to show when the article it pointed at has just
+                // been deleted, and the conversation is where you were.
+                Pane::Article => match self.article(cx) {
+                    Some(article) => article,
+                    None => self.conversation(window, cx),
+                },
             }
         };
 
@@ -598,11 +639,9 @@ impl Cydonia {
     /// looking at.
     fn pane_switch(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
-        let board = self.board_open;
-        let (glyph, label) = if board {
-            (icons::CHAT_ROUND_LINE, "Chat")
-        } else {
-            (icons::LIST, "Board")
+        let (glyph, label, to) = match self.pane {
+            Pane::Board => (icons::CHAT_ROUND_LINE, "Chat", Pane::Chat),
+            Pane::Chat | Pane::Article => (icons::LIST, "Board", Pane::Board),
         };
         div()
             .flex_none()
@@ -628,7 +667,7 @@ impl Cydonia {
                             .text_color(theme.text_muted)
                             .child(label),
                     )
-                    .on_click(cx.listener(move |this, _, _, cx| this.show_board(!board, cx))),
+                    .on_click(cx.listener(move |this, _, _, cx| this.show_pane(to, cx))),
             )
     }
 

@@ -11,6 +11,7 @@
 use crate::{
     agents,
     model::{
+        article::{self, Article},
         board::Board,
         project::Project,
         session::ChatSession,
@@ -19,7 +20,7 @@ use crate::{
     },
 };
 use bezel::{gpui::SharedString, theme::appearance::AppearanceMode};
-use gpui::Context;
+use gpui::{Context, EntityId};
 use std::{collections::HashMap, path::PathBuf};
 
 pub struct Workspace {
@@ -268,5 +269,87 @@ impl Workspace {
 
     pub fn active_id(&self) -> Option<u64> {
         self.active_project().and_then(|project| project.active)
+    }
+
+    // ── articles ─────────────────────────────────────────────────────
+
+    /// A fresh document in the active project, opened as it lands — an empty
+    /// article has nothing to look at but the caret.
+    pub fn new_article(&mut self, cx: &mut Context<Self>) -> Option<usize> {
+        let project = self.active?;
+        let article = article::create(&self.projects[project].path)?;
+        self.projects[project].articles.push(article);
+        let ix = self.projects[project].articles.len() - 1;
+        self.open_article(project, ix, cx);
+        Some(ix)
+    }
+
+    /// Every project's articles are on show, so picking one brings its project
+    /// forward with it.
+    pub fn open_article(&mut self, project: usize, ix: usize, cx: &mut Context<Self>) {
+        let Some(article) = self
+            .projects
+            .get_mut(project)
+            .and_then(|open| open.articles.get_mut(ix))
+        else {
+            return;
+        };
+        article.open(cx);
+        self.projects[project].article = Some(ix);
+        if self.active != Some(project) {
+            self.active = Some(project);
+            self.save();
+        }
+        cx.notify();
+    }
+
+    /// Drop the article: the file goes with it.
+    pub fn delete_article(&mut self, project: usize, ix: usize, cx: &mut Context<Self>) {
+        let Some(project) = self.projects.get_mut(project) else {
+            return;
+        };
+        if ix >= project.articles.len() {
+            return;
+        }
+        project.articles.remove(ix).remove();
+        project.article = project
+            .article
+            .filter(|open| *open != ix)
+            .map(|open| if open > ix { open - 1 } else { open });
+        cx.notify();
+    }
+
+    /// Settle the open article's name — see [`Article::rename`]. Called on the
+    /// way out of an article, which is the moment its title is finished.
+    pub fn rename_article(&mut self, cx: &mut Context<Self>) {
+        let Some(project) = self.active.and_then(|at| self.projects.get_mut(at)) else {
+            return;
+        };
+        let Some(article) = project.article.and_then(|ix| project.articles.get_mut(ix)) else {
+            return;
+        };
+        article.rename();
+        cx.notify();
+    }
+
+    pub fn active_article(&self) -> Option<&Article> {
+        let project = self.active_project()?;
+        project.articles.get(project.article?)
+    }
+
+    /// The editor changed. Found by the entity rather than by a path, because
+    /// a document that has just been given a title has moved.
+    pub fn write_article(&mut self, editor: EntityId, source: String) {
+        let found = self.projects.iter_mut().find_map(|project| {
+            project.articles.iter_mut().find(|article| {
+                article
+                    .editor
+                    .as_ref()
+                    .is_some_and(|open| open.entity_id() == editor)
+            })
+        });
+        if let Some(article) = found {
+            article.write(source);
+        }
     }
 }
