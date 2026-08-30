@@ -3,8 +3,8 @@
 
 use bezel::{
     gpui::{
-        AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, KeyBinding, Render,
-        SharedString, Window, div, point, prelude::*, px, svg,
+        self, AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, KeyBinding,
+        Render, SharedString, Window, actions, div, point, prelude::*, px, svg,
     },
     motion::{Fade, Painter},
     theme::{self, Theme},
@@ -14,7 +14,6 @@ use bezel::{
         popover,
     },
 };
-use gpui::actions;
 
 actions!(
     cydonia_composer,

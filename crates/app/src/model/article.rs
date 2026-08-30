@@ -9,8 +9,8 @@
 //! because by then something may have been pointed at it.
 
 use crate::model::workspace::Workspace;
+use bezel::gpui::{AppContext as _, Context, Entity, ScrollHandle};
 use editor::Editor;
-use gpui::{AppContext as _, Context, Entity, ScrollHandle};
 use std::path::{Path, PathBuf};
 
 /// What a document is called before it says.

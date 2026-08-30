@@ -12,13 +12,15 @@ use crate::{
     view::transcript,
 };
 use anyhow::anyhow;
-use bezel::motion::Painter;
+use bezel::{
+    gpui::{Context, Task},
+    motion::Painter,
+};
 use cacp::schema::{
     ContentBlock, MaybeUndefined, PermissionOptionKind, PlanEntryStatus, RequestPermissionRequest,
     RequestPermissionResponse, SessionUpdate, StopReason, ToolCallContent, ToolCallStatus,
     ToolKind,
 };
-use gpui::{Context, Task};
 use std::{collections::VecDeque, path::PathBuf, time::Duration};
 
 const STREAM_FRAME: Duration = Duration::from_millis(120);

@@ -3,9 +3,10 @@
 use anyhow::Result;
 use bezel::{
     gpui::{
-        App, AppContext as _, Bounds, Menu, MenuItem, TitlebarOptions, WindowBounds, WindowOptions,
-        point, px, size,
+        self, App, AppContext as _, Bounds, Menu, MenuItem, TitlebarOptions, WindowBounds,
+        WindowOptions, actions, point, px, size,
     },
+    gpui_platform,
     theme::{Theme, appearance},
     ui::{self, focus, input},
 };
@@ -14,7 +15,6 @@ use cydonia::{
     model::{settings, state},
     view::{board, composer, root},
 };
-use gpui::actions;
 
 actions!(cydonia, [Quit]);
 

@@ -9,8 +9,8 @@ use crate::{
 };
 use bezel::{
     gpui::{
-        AnyElement, App, Context, Div, Entity, Focusable as _, FontWeight, KeyBinding,
-        SharedString, Stateful, Window, div, prelude::*, px,
+        self, AnyElement, App, Context, Div, Entity, Focusable as _, FontWeight, KeyBinding,
+        SharedString, Stateful, Window, actions, div, prelude::*, px,
     },
     theme::Theme,
     ui::{
@@ -19,7 +19,6 @@ use bezel::{
         widgets,
     },
 };
-use gpui::actions;
 
 actions!(cydonia_board, [CommitCard, DismissCard]);
 

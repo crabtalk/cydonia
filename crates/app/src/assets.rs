@@ -5,8 +5,10 @@
 //! read rather than a table — there is nothing to keep in sync.
 
 use anyhow::Result;
-use bezel::{gpui::SharedString, ui::icons};
-use gpui::AssetSource;
+use bezel::{
+    gpui::{AssetSource, SharedString},
+    ui::icons,
+};
 use std::borrow::Cow;
 
 pub struct Assets;

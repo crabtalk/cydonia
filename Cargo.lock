@@ -556,6 +556,7 @@ version = "0.1.3"
 dependencies = [
  "bezel-agent",
  "bezel-gpui",
+ "bezel-gpui-platform",
  "bezel-motion",
  "bezel-theme",
  "bezel-ui",
@@ -1852,8 +1853,6 @@ dependencies = [
  "anyhow",
  "bezel",
  "bezel-editor",
- "bezel-gpui",
- "bezel-gpui-platform",
  "bezel-markdown",
  "bezel-syntax",
  "cacp",
@@ -1872,7 +1871,6 @@ name = "cydonia-ui"
 version = "0.1.0"
 dependencies = [
  "bezel",
- "bezel-gpui",
 ]
 
 [[package]]

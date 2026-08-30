@@ -19,8 +19,10 @@ use crate::{
         state::{self, State},
     },
 };
-use bezel::{gpui::SharedString, theme::appearance::AppearanceMode};
-use gpui::{Context, EntityId};
+use bezel::{
+    gpui::{Context, EntityId, SharedString},
+    theme::appearance::AppearanceMode,
+};
 use std::{collections::HashMap, path::PathBuf};
 
 pub struct Workspace {

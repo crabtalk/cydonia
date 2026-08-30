@@ -1,4 +1,4 @@
-# bezel: two editor fixes waiting to land
+# bezel: three changes waiting to land
 
 Status: written and verified in a worktree, **uncommitted**. Cydonia is wired to
 it by a temporary `[patch.crates-io]` so the article pane works now, without
@@ -7,9 +7,10 @@ waiting on a crates.io release.
 Worktree: `~/code/bezel-editor-fix`, branch `fix/editor-empty-doc-and-handle`,
 cut from `dev` at `054dfad`. `~/code/bezel` itself is untouched — it was busy.
 
-## The fixes
+## The changes
 
-Both surfaced building cydonia's article pane, and both are bezel's, not ours.
+The first two surfaced building cydonia's article pane, and both are bezel's
+rather than ours.
 
 **An empty document had nowhere to put a caret.** `markdown::parse("")` returns a
 `Doc` with no blocks, which is correct for the model and unusable as an editing
@@ -29,24 +30,32 @@ better to place the handle against. New `BlockLayouts::first_row` in
 handle centres on that. Body text (22pt line) was ~2pt out and read as fine; an H1
 (27pt) was ~4.5pt out, and an H1 is the first line of every article.
 
+**The facade did not carry `gpui_platform`.** gpui core knows no platform —
+`Application` can only be built `with_platform` — so the crate that opens a
+window sat outside the one dependency, and every app declared a second version
+string that had to stay in lockstep with the re-exported gpui. `crates/bezel`
+now re-exports it under a `platform` feature, off by default, which is what a
+wasm consumer reaching for the browser's backend and a library consumer opening
+no window turn off. `ARCHITECTURE.md` changed with it: the paragraph that read
+"a gate would have hidden that behind a default" was the case against carrying
+`syntax`, and still is, but it no longer describes the facade's whole position.
+
 `cargo test -p bezel-editor -p bezel-markdown`: 73 passed.
 
 ## What cydonia carries meanwhile
 
-- Root `Cargo.toml` has a `[patch.crates-io]` block pointing all eight bezel-*
-  crates at the worktree. All of them, not just `bezel-editor`: a partial patch
-  puts two copies of the token system in the graph.
-- `crates/app/Cargo.toml` moved `gpui` and `gpui_platform` from `0.3.6` to
-  `0.3.7`, because bezel's tree needs `bezel-gpui ^0.3.7`. The whole platform
-  stack has to move together — a lock with `bezel-gpui` at 0.3.7 and
-  `bezel-gpui-macos` at 0.3.6 does not compile.
+Only the patch: the root `Cargo.toml` has a `[patch.crates-io]` block pointing
+all eight bezel-* crates at the worktree. All of them, not just `bezel-editor` —
+a partial patch puts two copies of the token system in the graph.
+
+Nothing else. `bezel = { features = ["platform"] }` is what a released 0.1.4
+will want anyway, and no gpui version is named here at all now that both the
+toolkit and the platform arrive through the facade.
 
 ## To make it durable
 
 1. Commit the worktree, merge `fix/editor-empty-doc-and-handle` into bezel's `dev`.
 2. Publish bezel `0.1.4`.
-3. Here: drop the `[patch.crates-io]` block, bump the four `0.1.3` deps in
-   `crates/app/Cargo.toml` (`bezel`, `editor`, `markdown`, `syntax`) to `0.1.4`,
-   and delete this file.
-
-The gpui `0.3.7` bump stays — it is what bezel 0.1.4 will want anyway.
+3. Here: drop the `[patch.crates-io]` block, bump the four `0.1.3` deps in the
+   root `Cargo.toml` (`bezel`, `editor`, `markdown`, `syntax`) to `0.1.4`, and
+   delete this file.

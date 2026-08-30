@@ -17,9 +17,9 @@ use crate::{
 };
 use bezel::{
     gpui::{
-        AnyElement, App, Axis, Context, DragMoveEvent, Empty, Entity, FocusHandle, Focusable as _,
-        FontWeight, KeyBinding, PathPromptOptions, Render, Window, WindowHandle, div, prelude::*,
-        px, svg,
+        self, AnyElement, App, Axis, Context, DragMoveEvent, Empty, Entity, FocusHandle,
+        Focusable as _, FontWeight, KeyBinding, PathPromptOptions, Render, Window, WindowHandle,
+        actions, div, prelude::*, px, svg,
     },
     motion::{Fade, Painter},
     theme::Theme,
@@ -34,7 +34,6 @@ use bezel::{
     },
 };
 use cacp::schema::PermissionOptionKind;
-use gpui::actions;
 
 actions!(cydonia, [NewSession, OpenProject, OpenSettings]);
 
