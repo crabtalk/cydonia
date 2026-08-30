@@ -10,6 +10,7 @@
 
 use crate::{
     agents,
+    data::{ColType, Column, Data, Table},
     model::{
         archive,
         article::{self, Article},
@@ -25,6 +26,9 @@ use bezel::{
     theme::appearance::AppearanceMode,
 };
 use std::{collections::HashMap, path::PathBuf};
+
+/// What a table is called before it is named.
+const UNTITLED: &str = "Untitled";
 
 pub struct Workspace {
     pub settings: Settings,
@@ -388,6 +392,88 @@ impl Workspace {
     pub fn active_article(&self) -> Option<&Article> {
         let project = self.active_project()?;
         project.articles.get(project.article?)
+    }
+
+    // ── tables ───────────────────────────────────────────────────────
+
+    /// A fresh table in the active project, opened as it lands.
+    ///
+    /// One text column, because the store will not make a table without one
+    /// and a column you can rename is a better start than a dialog asking for
+    /// the shape before anything exists to shape.
+    pub fn new_table(&mut self, cx: &mut Context<Self>) -> Option<usize> {
+        let at = self.active?;
+        let project = self.projects.get_mut(at)?;
+        // The one place a store is created: making a table is the moment the
+        // project has something to keep in one.
+        if project.data.is_none() {
+            project.data = Data::open(&project.path).ok();
+        }
+        let mut name = UNTITLED.to_owned();
+        for n in 2.. {
+            if !project.tables.iter().any(|table| table.name == name) {
+                break;
+            }
+            name = format!("{UNTITLED} {n}");
+        }
+        let column = Column {
+            name: "Name".to_owned(),
+            kind: ColType::Text,
+        };
+        let key = project
+            .data
+            .as_mut()?
+            .create(&name, None, &[column], None)
+            .ok()?
+            .key;
+        project.reload_tables();
+        // Found by key rather than taken as the last row: the list is ordered,
+        // so a new table lands wherever its name sorts.
+        let ix = project.tables.iter().position(|table| table.key == key)?;
+        self.open_table(at, ix, cx);
+        Some(ix)
+    }
+
+    /// Every project's tables are on show, so picking one brings its project
+    /// forward with it.
+    pub fn open_table(&mut self, project: usize, ix: usize, cx: &mut Context<Self>) {
+        let Some(open) = self.projects.get_mut(project) else {
+            return;
+        };
+        if ix >= open.tables.len() {
+            return;
+        }
+        open.table = Some(ix);
+        open.reload_page();
+        if self.active != Some(project) {
+            self.active = Some(project);
+            self.save();
+        }
+        cx.notify();
+    }
+
+    /// Drop the table: its rows go with it.
+    pub fn delete_table(&mut self, project: usize, ix: usize, cx: &mut Context<Self>) {
+        let Some(open) = self.projects.get_mut(project) else {
+            return;
+        };
+        let Some(key) = open.tables.get(ix).map(|table| table.key.clone()) else {
+            return;
+        };
+        if let Some(data) = open.data.as_mut() {
+            let _ = data.remove(&key);
+        }
+        open.table = open
+            .table
+            .filter(|shown| *shown != ix)
+            .map(|shown| if shown > ix { shown - 1 } else { shown });
+        open.reload_tables();
+        cx.notify();
+    }
+
+    pub fn active_table(&self) -> Option<&Table> {
+        let project = self.active_project()?;
+        project.tables.get(project.table?)
     }
 
     /// The editor changed. Found by the entity rather than by a path, because

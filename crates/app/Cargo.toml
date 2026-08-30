@@ -19,6 +19,7 @@ cacp-agents.workspace = true
 dirs.workspace = true
 editor.workspace = true
 markdown.workspace = true
+rusqlite.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 syntax.workspace = true

@@ -27,6 +27,9 @@ ui = { path = "crates/ui", package = "cydonia-ui" }
 # crates.io
 anyhow = "1"
 dirs = "6"
+# The project database. `bundled` compiles SQLite in: the store is a file we
+# hand to the user, so it cannot depend on whichever sqlite3 a machine ships.
+rusqlite = { version = "0.40", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 # An archived transcript is an array of tagged enum variants, which is the one
 # shape `toml` cannot round-trip.

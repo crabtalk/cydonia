@@ -107,6 +107,7 @@ pub enum Pane {
     Chat,
     Board,
     Article,
+    Table,
 }
 
 /// What the rail needs of a session to draw its row, read out of the model
@@ -656,6 +657,12 @@ impl Cydonia {
             .enumerate()
             .map(|(n, article)| (n, article.title()))
             .collect();
+        let tables: Vec<(usize, String)> = project
+            .tables
+            .iter()
+            .enumerate()
+            .map(|(n, table)| (n, table.name.clone()))
+            .collect();
 
         div()
             .flex()
@@ -720,6 +727,11 @@ impl Cydonia {
                             self.article_row(ix, n, title, cx).into_any_element()
                         }),
                     )
+                    .children(
+                        tables
+                            .into_iter()
+                            .map(|(n, name)| self.table_row(ix, n, name, cx).into_any_element()),
+                    )
             })
             .into_any_element()
     }
@@ -756,6 +768,13 @@ impl Cydonia {
                 "New article",
                 cx,
                 move |this, window, cx| this.new_article(ix, window, cx),
+            ),
+            self.menu_row(
+                format!("add-table-{ix}"),
+                icons::WIDGET,
+                "New table",
+                cx,
+                move |this, _, cx| this.new_table(ix, cx),
             ),
         ];
         Some(popover::anchored_menu_below(
@@ -918,6 +937,7 @@ impl Cydonia {
     pub(crate) fn showing(&self, cx: &App) -> Pane {
         match self.pane {
             Pane::Article if self.workspace.read(cx).active_article().is_none() => Pane::Chat,
+            Pane::Table if self.workspace.read(cx).active_table().is_none() => Pane::Chat,
             pane => pane,
         }
     }
@@ -940,6 +960,10 @@ impl Cydonia {
                 Pane::Board => self.board(cx),
                 Pane::Article => match self.article(cx) {
                     Some(article) => article,
+                    None => self.conversation(window, cx),
+                },
+                Pane::Table => match self.table(cx) {
+                    Some(table) => table,
                     None => self.conversation(window, cx),
                 },
             }
@@ -1003,7 +1027,7 @@ impl Cydonia {
         let theme = Theme::of(cx).clone();
         let (glyph, label, to) = match self.pane {
             Pane::Board => (icons::CHAT_ROUND_LINE, "Chat", Pane::Chat),
-            Pane::Chat | Pane::Article => (icons::LIST, "Board", Pane::Board),
+            Pane::Chat | Pane::Article | Pane::Table => (icons::LIST, "Board", Pane::Board),
         };
         div()
             .flex_none()

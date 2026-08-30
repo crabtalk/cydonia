@@ -8,7 +8,7 @@
 //! its name from its title the first time it is left; after that it stays put,
 //! because by then something may have been pointed at it.
 
-use crate::model::workspace::Workspace;
+use crate::model::{project, workspace::Workspace};
 use bezel::gpui::{AppContext as _, Context, Entity, ScrollHandle};
 use editor::Editor;
 use std::path::{Path, PathBuf};
@@ -100,13 +100,9 @@ impl Article {
     }
 }
 
-pub fn dir(project: &Path) -> PathBuf {
-    project.join(".cydonia")
-}
-
 /// This project's articles, or none for a project that has never had one.
 pub fn list(project: &Path) -> Vec<Article> {
-    let Ok(entries) = std::fs::read_dir(dir(project)) else {
+    let Ok(entries) = std::fs::read_dir(project::dir(project)) else {
         return Vec::new();
     };
     let mut paths: Vec<PathBuf> = entries
@@ -119,8 +115,7 @@ pub fn list(project: &Path) -> Vec<Article> {
 }
 
 pub fn create(project: &Path) -> Option<Article> {
-    let dir = dir(project);
-    std::fs::create_dir_all(&dir).ok()?;
+    let dir = project::init(project).ok()?;
     let mut path = dir.join(format!("{UNTITLED}.md"));
     for n in 2.. {
         if !path.exists() {

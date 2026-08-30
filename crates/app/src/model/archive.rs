@@ -8,7 +8,7 @@
 //! nothing across one; a reloaded transcript is given a fresh one like any
 //! other session.
 
-use crate::model::session::ChatItem;
+use crate::model::{project, session::ChatItem};
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
@@ -35,8 +35,10 @@ impl Archived {
     }
 }
 
+const SESSIONS: &str = "sessions";
+
 fn dir(project: &Path) -> PathBuf {
-    project.join(".cydonia").join("sessions")
+    project::dir(project).join(SESSIONS)
 }
 
 /// Every archived session in the project with the file it came from, oldest
@@ -61,7 +63,7 @@ pub fn list(project: &Path) -> Vec<(PathBuf, Archived)> {
 /// File it, and say where. The name is the timestamp the list is ordered by,
 /// with a counter for the second one to land inside the same second.
 pub fn write(project: &Path, archived: &Archived) -> Option<PathBuf> {
-    let dir = dir(project);
+    let dir = project::init(project).ok()?.join(SESSIONS);
     std::fs::create_dir_all(&dir).ok()?;
     let mut path = dir.join(format!("{}.json", archived.updated));
     for n in 2.. {
