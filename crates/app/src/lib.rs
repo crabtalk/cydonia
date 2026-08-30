@@ -3,5 +3,6 @@
 pub mod acp;
 pub mod agents;
 pub mod assets;
+pub mod mcp;
 pub mod model;
 pub mod view;

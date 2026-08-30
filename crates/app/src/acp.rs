@@ -8,7 +8,7 @@
 //! - The connection runs on its own tokio runtime. cacp spawns its read and
 //!   write loops with `tokio::spawn`, and gpui's executor is smol's.
 
-use crate::model::settings;
+use crate::{mcp, model::settings};
 use anyhow::{Result, anyhow};
 use cacp::{
     AgentConn, Client, Direction, Error, Tap,
@@ -122,10 +122,7 @@ impl Session {
         let mut command = Command::new(&entry.command);
         command.args(&entry.args).envs(&entry.env);
 
-        // The agent's own list is legacy config; the store is what the
-        // `/mcp` picker manages. Both are offered, store first.
-        let mut configured = settings::mcp_servers();
-        configured.extend(entry.mcp_servers.iter().cloned());
+        let configured = mcp::servers();
 
         let (tx, events) = mpsc::unbounded_channel();
         let (conn, child) = cacp::spawn(&mut command, Arc::new(Frontend(tx.clone())), debug_tap())
@@ -140,7 +137,7 @@ impl Session {
         child: Child,
         tx: mpsc::UnboundedSender<Event>,
         launch: Launch,
-        configured: Vec<settings::McpServer>,
+        configured: Vec<mcp::McpServer>,
     ) -> Result<Self> {
         let cwd = launch.cwd.clone();
         let init = conn
@@ -341,10 +338,7 @@ const _: () = {
 /// The enabled servers an agent can actually reach, in ACP's shape.
 /// Remote servers are dropped for agents that don't advertise HTTP MCP
 /// rather than being sent and failing.
-fn acp_mcp_servers(
-    configured: &[settings::McpServer],
-    init: &InitializeResponse,
-) -> Vec<McpServer> {
+fn acp_mcp_servers(configured: &[mcp::McpServer], init: &InitializeResponse) -> Vec<McpServer> {
     let http = init.agent_capabilities.mcp_capabilities.http;
     configured
         .iter()

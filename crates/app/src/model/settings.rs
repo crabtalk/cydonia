@@ -24,34 +24,6 @@ pub struct Agent {
     pub args: Vec<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub env: BTreeMap<String, String>,
-    /// MCP servers handed to the agent at `session/new` (stdio transport).
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub mcp_servers: Vec<McpServer>,
-}
-
-/// One MCP server offered to agents: either a local `command args...`
-/// over stdio, or a remote `url` (which needs the agent to support HTTP
-/// MCP).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct McpServer {
-    pub name: String,
-    #[serde(default = "enabled_by_default")]
-    pub enabled: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub command: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub args: Vec<String>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub env: BTreeMap<String, String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub url: Option<String>,
-    /// The MCP registry id this came from, when it came from there.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub id: Option<String>,
-}
-
-const fn enabled_by_default() -> bool {
-    true
 }
 
 impl Default for Settings {
@@ -62,7 +34,6 @@ impl Default for Settings {
             command: "npx".into(),
             args: vec!["-y".into(), pkg.into()],
             env: BTreeMap::new(),
-            mcp_servers: Vec::new(),
         };
         Self {
             agents: vec![
@@ -102,27 +73,6 @@ pub fn dir() -> Result<PathBuf> {
         .context("no home directory on this system")?
         .join(".config")
         .join("cydonia"))
-}
-
-// ── MCP server store ─────────────────────────────────────────────
-
-#[derive(Debug, Default, Serialize, Deserialize)]
-struct McpStore {
-    #[serde(default)]
-    servers: Vec<McpServer>,
-}
-
-fn mcp_path() -> Option<PathBuf> {
-    dir().ok().map(|d| d.join("mcp.toml"))
-}
-
-/// Every MCP server the user has added, enabled or not.
-pub fn mcp_servers() -> Vec<McpServer> {
-    mcp_path()
-        .and_then(|p| std::fs::read_to_string(p).ok())
-        .and_then(|s| toml::from_str::<McpStore>(&s).ok())
-        .map(|store| store.servers)
-        .unwrap_or_default()
 }
 
 pub fn load() -> Result<Settings> {

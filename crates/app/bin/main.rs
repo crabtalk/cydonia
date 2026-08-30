@@ -13,7 +13,7 @@ use bezel::{
 use cydonia::{
     assets,
     model::{settings, state},
-    view::{board, composer, root},
+    view::{board, composer, root, settings_window},
 };
 
 actions!(cydonia, [Quit]);
@@ -39,6 +39,7 @@ fn main() -> Result<()> {
             editor::init(cx);
             board::init(cx);
             root::init(cx);
+            settings_window::init(cx);
             set_menus(cx);
 
             let bounds = Bounds::centered(None, size(px(1100.), px(760.)), cx);

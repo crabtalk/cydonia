@@ -169,7 +169,6 @@ pub fn install(agent: &registry::Agent) -> anyhow::Result<()> {
         command: installed.command,
         args: installed.args,
         env: installed.env,
-        mcp_servers: Vec::new(),
     };
     let package = match &agent.distribution {
         Distribution::Npm { package, .. } => Some(cacp_agents::package_name(package)),
