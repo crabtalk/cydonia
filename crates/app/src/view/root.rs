@@ -2,7 +2,6 @@
 
 use crate::{
     model::{
-        project::Project,
         session::{ChatSession, PlanStatus},
         settings::Settings,
         state::State,
@@ -17,18 +16,19 @@ use crate::{
 };
 use bezel::{
     gpui::{
-        self, AnyElement, App, Axis, Context, DragMoveEvent, Empty, Entity, FocusHandle,
-        Focusable as _, FontWeight, KeyBinding, PathPromptOptions, Render, Window, WindowHandle,
-        actions, div, prelude::*, px, svg,
+        self, AnyElement, App, Axis, Context, Div, DragMoveEvent, Empty, Entity, FocusHandle,
+        Focusable as _, FontWeight, KeyBinding, PathPromptOptions, Render, SharedString, Window,
+        WindowHandle, actions, div, prelude::*, px, svg,
     },
     motion::{Fade, Painter},
     theme::Theme,
     ui::{
         icons,
         input::TextField,
+        loaders,
         tooltip::Tooltip,
         widgets::{
-            self, ButtonStyle, Buttons, Content, Layout, SPLIT_HANDLE_HIT, Scaffolding, SplitDrag,
+            ButtonStyle, Buttons, Content, Layout, SPLIT_HANDLE_HIT, Scaffolding, SplitDrag,
             SplitStyle,
         },
     },
@@ -59,6 +59,18 @@ const TRAFFIC_LIGHT_SIZE: f32 = 14.;
 pub const TRAFFIC_LIGHT_X: f32 = RAIL_PAD;
 pub const TRAFFIC_LIGHT_Y: f32 = (Theme::HEADER_HEIGHT - TRAFFIC_LIGHT_SIZE) / 2.;
 
+/// Between the lights' centres, as AppKit lays them out. Measured on macOS 26.
+const TRAFFIC_LIGHT_SPACING: f32 = 23.;
+
+/// Where the head band's own controls start: clear of the three lights AppKit
+/// puts down from [`TRAFFIC_LIGHT_X`], plus the rail's gutter. bezel's own
+/// inset is for lights left where AppKit wanted them, which these are not.
+const RAIL_HEAD_INSET: f32 = if cfg!(target_os = "macos") {
+    TRAFFIC_LIGHT_X + 2. * TRAFFIC_LIGHT_SPACING + TRAFFIC_LIGHT_SIZE + 6.
+} else {
+    8.
+};
+
 pub fn init(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("cmd-n", NewSession, None),
@@ -77,10 +89,21 @@ pub enum Pane {
     Article,
 }
 
+/// What the rail needs of a session to draw its row, read out of the model
+/// before the row is built: a turn in flight puts a thinking orb in the mark's
+/// place, and the orb leases the frame clock, which wants the app mutably.
+struct SessionRow {
+    id: u64,
+    label: String,
+    icon: Option<SharedString>,
+    streaming: bool,
+}
+
 /// The root view. It owns no app state — only the chrome's own: how wide the
 /// rail is, which pane is showing, and whichever card is being written.
 pub struct Cydonia {
     pub(crate) workspace: Entity<Workspace>,
+    sidebar_open: bool,
     sidebar_width: f32,
     composer: Entity<Composer>,
     settings_window: Option<WindowHandle<SettingsWindow>>,
@@ -112,6 +135,7 @@ impl Cydonia {
 
         let mut this = Self {
             workspace,
+            sidebar_open: true,
             sidebar_width: SIDEBAR_DEFAULT,
             composer,
             settings_window: None,
@@ -151,12 +175,14 @@ impl Cydonia {
     fn pick_agent(&mut self, ix: usize, cx: &mut Context<Self>) {
         let entry = self.workspace.read(cx).settings.agents.get(ix).cloned();
         if let Some(entry) = entry {
+            self.show_pane(Pane::Chat, cx);
             self.workspace
                 .update(cx, |workspace, cx| workspace.new_session(entry, None, cx));
         }
     }
 
     fn new_session_action(&mut self, _: &NewSession, _: &mut Window, cx: &mut Context<Self>) {
+        self.show_pane(Pane::Chat, cx);
         self.workspace.update(cx, |workspace, cx| {
             if let Some(entry) = workspace.preferred_agent() {
                 workspace.new_session(entry, None, cx);
@@ -179,6 +205,7 @@ impl Cydonia {
     }
 
     pub(crate) fn select_session(&mut self, id: u64, cx: &mut Context<Self>) {
+        self.show_pane(Pane::Chat, cx);
         self.workspace
             .update(cx, |workspace, cx| workspace.select_session(id, cx));
     }
@@ -190,6 +217,11 @@ impl Cydonia {
 
     fn open_settings_action(&mut self, _: &OpenSettings, _: &mut Window, cx: &mut Context<Self>) {
         self.open_settings(cx);
+    }
+
+    fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
+        self.sidebar_open = !self.sidebar_open;
+        cx.notify();
     }
 
     fn open_settings(&mut self, cx: &mut Context<Self>) {
@@ -253,23 +285,42 @@ impl Cydonia {
 
     // ── chrome ───────────────────────────────────────────────────────
 
-    fn session_row(&self, chat: &ChatSession, cx: &Context<Self>) -> impl IntoElement + use<> {
+    fn session_row(&self, row: SessionRow, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
-        let id = chat.id;
-        let selected = self.workspace.read(cx).active_id() == Some(id);
-        let label = if chat.title.is_empty() {
-            chat.entry.name.clone()
+        let painter = Painter::of(cx);
+        let id = row.id;
+        let selected =
+            self.showing(cx) == Pane::Chat && self.workspace.read(cx).active_id() == Some(id);
+        let tint = if selected {
+            theme.text
         } else {
-            chat.title.clone()
+            theme.text_muted
         };
-        let tone = if chat.lost {
-            theme.danger
-        } else if chat.streaming {
-            theme.accent
-        } else if chat.session.is_some() {
-            theme.success
+        // The agent's own mark, in the label's colour rather than any of its
+        // own: every icon the registry publishes is a `currentColor` glyph, so
+        // tinting is the only colour it will ever have. While a turn is in
+        // flight the orb stands in its place — the same one the transcript
+        // works under.
+        let mark = if row.streaming {
+            loaders::orb(
+                loaders::Orb::Cluster,
+                SharedString::from(format!("session-orb-{id}")),
+                14.,
+                &theme,
+                painter,
+                cx,
+            )
+            .into_any_element()
         } else {
-            theme.text_faint
+            match row.icon {
+                Some(path) => svg()
+                    .path(path)
+                    .size(px(14.))
+                    .flex_none()
+                    .text_color(tint)
+                    .into_any_element(),
+                None => Empty.into_any_element(),
+            }
         };
 
         div()
@@ -287,14 +338,6 @@ impl Cydonia {
             .cursor_pointer()
             .when(selected, |el| el.bg(theme.glass_hover()))
             .hover(|el| el.bg(theme.glass_hover()))
-            // The agent's own mark where the catalog has one. The dot stays
-            // the answer for an agent the registry doesn't publish — a local
-            // binary, or a first run with no catalog yet.
-            //
-            // The mark takes the label's colour, not the session's: every icon
-            // the registry publishes is a `currentColor` glyph, so tinting is
-            // the only colour it will ever have, and reading it as status
-            // would make the agent's identity change with its state.
             .child(
                 div()
                     .flex_none()
@@ -302,19 +345,7 @@ impl Cydonia {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .child(match self.workspace.read(cx).agent_icon(&chat.entry.name) {
-                        Some(path) => svg()
-                            .path(path)
-                            .size(px(14.))
-                            .flex_none()
-                            .text_color(if selected {
-                                theme.text
-                            } else {
-                                theme.text_muted
-                            })
-                            .into_any_element(),
-                        None => widgets::status_dot(tone).into_any_element(),
-                    }),
+                    .child(mark),
             )
             .child(
                 div()
@@ -322,12 +353,8 @@ impl Cydonia {
                     .min_w_0()
                     .truncate()
                     .text_size(px(13.))
-                    .text_color(if selected {
-                        theme.text
-                    } else {
-                        theme.text_muted
-                    })
-                    .child(label),
+                    .text_color(tint)
+                    .child(row.label),
             )
             .child(
                 div()
@@ -350,18 +377,39 @@ impl Cydonia {
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.select_session(id, cx);
             }))
+            .into_any_element()
     }
 
     /// One project in the rail: a heading that selects it, with its sessions
     /// under it. Every project shows its own, so the rail is the whole map.
-    fn project_section(
-        &self,
-        ix: usize,
-        project: &Project,
-        cx: &Context<Self>,
-    ) -> impl IntoElement + use<> {
+    fn project_section(&self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
-        let active = self.workspace.read(cx).active == Some(ix);
+        let workspace = self.workspace.read(cx);
+        let Some(project) = workspace.projects.get(ix) else {
+            return Empty.into_any_element();
+        };
+        let active = workspace.active == Some(ix);
+        let name = project.name();
+        let sessions: Vec<SessionRow> = project
+            .sessions
+            .iter()
+            .map(|chat| SessionRow {
+                id: chat.id,
+                label: if chat.title.is_empty() {
+                    chat.entry.name.clone()
+                } else {
+                    chat.title.clone()
+                },
+                icon: workspace.agent_icon(&chat.entry.name),
+                streaming: chat.streaming,
+            })
+            .collect();
+        let articles: Vec<(usize, String)> = project
+            .articles
+            .iter()
+            .enumerate()
+            .map(|(n, article)| (n, article.title()))
+            .collect();
         div()
             .flex()
             .flex_col()
@@ -388,7 +436,7 @@ impl Cydonia {
                             .text_size(px(11.))
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(if active { theme.text } else { theme.text_faint })
-                            .child(project.name()),
+                            .child(name),
                     )
                     .child(
                         div()
@@ -452,31 +500,57 @@ impl Cydonia {
                         this.select_project(ix, cx);
                     })),
             )
+            .children(sessions.into_iter().map(|row| self.session_row(row, cx)))
             .children(
-                project
-                    .sessions
-                    .iter()
-                    .map(|chat| self.session_row(chat, cx)),
+                articles
+                    .into_iter()
+                    .map(|(n, title)| self.article_row(ix, n, title, cx).into_any_element()),
             )
-            .children(
-                project
-                    .articles
-                    .iter()
-                    .enumerate()
-                    .map(|(n, article)| self.article_row(ix, n, article.title(), cx)),
+            .into_any_element()
+    }
+
+    /// The band the traffic lights float in. It belongs to whichever column
+    /// runs along the window's left edge — the rail while it is open, the
+    /// content column once it is not — so the toggle keeps its place across
+    /// the collapse.
+    fn rail_head(&self, window: &Window, cx: &mut Context<Self>) -> Div {
+        let theme = Theme::of(cx).clone();
+        let label = if self.sidebar_open {
+            "Hide sidebar"
+        } else {
+            "Show sidebar"
+        };
+        div()
+            .flex_none()
+            .h(px(Theme::HEADER_HEIGHT))
+            // Full screen takes the lights away, and the room they needed
+            // would be left as a hole.
+            .pl(px(if window.is_fullscreen() {
+                8.
+            } else {
+                RAIL_HEAD_INSET
+            }))
+            .pr(px(8.))
+            .flex()
+            .flex_row()
+            .items_center()
+            .child(
+                ui::ghost(&theme, "toggle-sidebar")
+                    .p(px(4.))
+                    .tooltip(move |window, cx| Tooltip::text(label, window, cx))
+                    .child(
+                        icons::icon(icons::SIDEBAR_MINIMALISTIC_LEFT)
+                            .size(px(14.))
+                            .text_color(theme.text_faint),
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| this.toggle_sidebar(cx))),
             )
     }
 
-    fn sidebar(&self, cx: &Context<Self>) -> impl IntoElement + use<> {
+    fn sidebar(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
-        let sections: Vec<AnyElement> = self
-            .workspace
-            .read(cx)
-            .projects
-            .iter()
-            .enumerate()
-            .map(|(ix, project)| self.project_section(ix, project, cx).into_any_element())
-            .collect();
+        let count = self.workspace.read(cx).projects.len();
+        let sections: Vec<AnyElement> = (0..count).map(|ix| self.project_section(ix, cx)).collect();
         div()
             .flex_none()
             .w(px(self.sidebar_width))
@@ -487,33 +561,24 @@ impl Cydonia {
             //
             .flex()
             .flex_col()
-            // The traffic lights float over the rail now that no header strip
-            // holds them; the band they sit in carries the one action that is
-            // not about a project you already have.
+            // The head band carries the one action that is not about a
+            // project you already have, out at the rail's trailing edge.
             .child(
-                div()
-                    .flex_none()
-                    .h(px(Theme::HEADER_HEIGHT))
-                    .pr(px(8.))
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .justify_end()
-                    .child(
-                        ui::ghost(&theme, "open-project")
-                            .p(px(4.))
-                            .tooltip(|window, cx| {
-                                Tooltip::with_keystroke("New project", "⌘O", window, cx)
-                            })
-                            .child(
-                                icons::icon(icons::PLUS)
-                                    .size(px(14.))
-                                    .text_color(theme.text_faint),
-                            )
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.open_project_action(&OpenProject, window, cx);
-                            })),
-                    ),
+                self.rail_head(window, cx).child(div().flex_1()).child(
+                    ui::ghost(&theme, "open-project")
+                        .p(px(4.))
+                        .tooltip(|window, cx| {
+                            Tooltip::with_keystroke("New project", "⌘O", window, cx)
+                        })
+                        .child(
+                            icons::icon(icons::PLUS)
+                                .size(px(14.))
+                                .text_color(theme.text_faint),
+                        )
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.open_project_action(&OpenProject, window, cx);
+                        })),
+                ),
             )
             .child(
                 div()
@@ -569,17 +634,27 @@ impl Cydonia {
         }
     }
 
+    /// Which pane is on screen, as against [`Self::pane`], which is the one
+    /// asked for. They part when the article it points at is gone — deleted,
+    /// or in a project that has none open — and the conversation stands in.
+    /// The rail reads this, not the request: a row lit for a pane nobody can
+    /// see is the second selection the eye finds.
+    pub(crate) fn showing(&self, cx: &App) -> Pane {
+        match self.pane {
+            Pane::Article if self.workspace.read(cx).active_article().is_none() => Pane::Chat,
+            pane => pane,
+        }
+    }
+
     fn chat(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
         let open = self.workspace.read(cx).active_project().is_some();
         let body = if !open {
             self.no_project(cx)
         } else {
-            match self.pane {
+            match self.showing(cx) {
                 Pane::Chat => self.conversation(window, cx),
                 Pane::Board => self.board(cx),
-                // Nothing to show when the article it pointed at has just
-                // been deleted, and the conversation is where you were.
                 Pane::Article => match self.article(cx) {
                     Some(article) => article,
                     None => self.conversation(window, cx),
@@ -590,7 +665,9 @@ impl Cydonia {
         let card = div()
             .flex_1()
             .min_h_0()
-            .mt(px(SHELL_INSET))
+            // With the rail gone the head band above it already clears the
+            // traffic lights, and a margin on top of that doubles the air.
+            .mt(px(if self.sidebar_open { SHELL_INSET } else { 0. }))
             .ml(px(SHELL_INSET))
             .mr(px(SHELL_INSET))
             .flex()
@@ -625,6 +702,9 @@ impl Cydonia {
             .min_w_0()
             .flex()
             .flex_col()
+            .when(!self.sidebar_open, |column| {
+                column.child(self.rail_head(window, cx))
+            })
             .child(card)
             .when(open, |column| column.child(self.pane_switch(cx)))
     }
@@ -816,18 +896,22 @@ impl Render for Cydonia {
                     cx.notify();
                 }),
             )
-            .child(self.sidebar(cx))
+            .when(self.sidebar_open, |root| {
+                root.child(self.sidebar(window, cx))
+            })
             .child(self.chat(window, cx))
             // Rides in the gap between the rail and the card rather than
             // sitting in flow, so neither pane has to give up a column.
-            .child(
-                theme
-                    .split_handle(Axis::Horizontal, SplitStyle::Ghost)
-                    .id("sidebar-split")
-                    .absolute()
-                    .top_0()
-                    .left(px(self.sidebar_width - SPLIT_HANDLE_HIT / 2.))
-                    .on_drag(SplitDrag, |_, _, _, cx| cx.new(|_| Empty)),
-            )
+            .when(self.sidebar_open, |root| {
+                root.child(
+                    theme
+                        .split_handle(Axis::Horizontal, SplitStyle::Ghost)
+                        .id("sidebar-split")
+                        .absolute()
+                        .top_0()
+                        .left(px(self.sidebar_width - SPLIT_HANDLE_HIT / 2.))
+                        .on_drag(SplitDrag, |_, _, _, cx| cx.new(|_| Empty)),
+                )
+            })
     }
 }

@@ -2,7 +2,7 @@
 
 use crate::{
     model::{
-        board::{self, Card, Column, Spot},
+        board::{self, Card, Spot},
         session::ChatSession,
     },
     view::root::{Cydonia, Pane},
@@ -12,11 +12,12 @@ use bezel::{
         self, AnyElement, App, Context, Div, Entity, Focusable as _, FontWeight, KeyBinding,
         SharedString, Stateful, Window, actions, div, prelude::*, px,
     },
+    motion::Painter,
     theme::Theme,
     ui::{
         icons,
         input::{self, Shape, TextField},
-        widgets,
+        loaders,
     },
 };
 
@@ -212,14 +213,12 @@ impl Cydonia {
 
     /// The lanes. Same frame as [`Cydonia::transcript`]: the body of the
     /// content card, with the composer stack still pinned under it.
-    pub fn board(&self, cx: &Context<Self>) -> AnyElement {
+    pub fn board(&self, cx: &mut Context<Self>) -> AnyElement {
         let Some(project) = self.workspace.read(cx).active_project() else {
             return div().flex_1().into_any_element();
         };
-        let mut columns: Vec<AnyElement> = Vec::new();
-        for (ix, column) in project.board.columns.iter().enumerate() {
-            columns.push(self.column(ix, column, cx));
-        }
+        let count = project.board.columns.len();
+        let columns: Vec<AnyElement> = (0..count).map(|ix| self.column(ix, cx)).collect();
         div()
             .flex_1()
             .min_h_0()
@@ -240,12 +239,20 @@ impl Cydonia {
             .into_any_element()
     }
 
-    fn column(&self, ix: usize, column: &Column, cx: &Context<Self>) -> AnyElement {
+    fn column(&self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
-        let mut cards: Vec<AnyElement> = Vec::new();
-        for (n, card) in column.cards.iter().enumerate() {
-            cards.push(self.card(Spot::new(ix, n), card, cx));
-        }
+        let Some((name, count)) = self
+            .workspace
+            .read(cx)
+            .active_project()
+            .and_then(|project| project.board.columns.get(ix))
+            .map(|column| (column.name.clone(), column.cards.len()))
+        else {
+            return div().into_any_element();
+        };
+        let mut cards: Vec<AnyElement> = (0..count)
+            .map(|n| self.card(Spot::new(ix, n), cx))
+            .collect();
         if self.editing == Some(Editing::New(ix)) {
             cards.push(self.card_editor(cx));
         }
@@ -270,13 +277,9 @@ impl Cydonia {
                         div()
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(theme.text_muted)
-                            .child(column.name.clone()),
+                            .child(name),
                     )
-                    .child(
-                        div()
-                            .text_color(theme.text_faint)
-                            .child(column.cards.len().to_string()),
-                    ),
+                    .child(div().text_color(theme.text_faint).child(count.to_string())),
             )
             .child(
                 div()
@@ -320,25 +323,36 @@ impl Cydonia {
             .into_any_element()
     }
 
-    fn card(&self, at: Spot, card: &Card, cx: &Context<Self>) -> AnyElement {
+    fn card(&self, at: Spot, cx: &mut Context<Self>) -> AnyElement {
         if self.editing == Some(Editing::Card(at)) {
             return self.card_editor(cx);
         }
         let theme = Theme::of(cx).clone();
+        let painter = Painter::of(cx);
+        let Some(card) = self
+            .workspace
+            .read(cx)
+            .active_project()
+            .and_then(|project| project.board.card(at))
+        else {
+            return div().into_any_element();
+        };
+        let text = card.text.clone();
         let chat = self.card_session(card, cx);
         let live = chat.map(|chat| chat.id);
         // The same reading as the rail's session row: the card and the row are
         // reporting the same process.
-        let running = chat.map(|chat| {
-            if chat.lost {
-                theme.danger
-            } else if chat.streaming {
-                theme.accent
-            } else if chat.session.is_some() {
-                theme.success
-            } else {
-                theme.text_faint
-            }
+        let running = chat.is_some_and(|chat| chat.streaming);
+        let orb = running.then(|| {
+            loaders::orb(
+                loaders::Orb::Cluster,
+                SharedString::from(format!("card-orb-{}-{}", at.column, at.card)),
+                12.,
+                &theme,
+                painter,
+                cx,
+            )
+            .into_any_element()
         });
         div()
             .id(SharedString::from(format!(
@@ -363,7 +377,7 @@ impl Cydonia {
                     .overflow_hidden()
                     .text_size(px(12.5))
                     .text_color(theme.text)
-                    .child(card.text.clone()),
+                    .child(text),
             )
             .child(
                 div()
@@ -371,10 +385,10 @@ impl Cydonia {
                     .flex_row()
                     .items_center()
                     .gap(px(2.))
-                    // The dot stays on show — a card's run is what you look at
-                    // the board to see, and hiding it until hover would mean
+                    // On show, not behind a hover — a card's run is what you
+                    // look at the board to see, and hiding it would mean
                     // hunting for the one that is working.
-                    .children(running.map(widgets::status_dot))
+                    .children(orb)
                     .child(div().flex_1())
                     .child(
                         div()
