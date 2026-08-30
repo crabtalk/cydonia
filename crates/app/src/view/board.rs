@@ -1,13 +1,12 @@
-//! A project's board: columns of task cards, and the file that outlives them.
-//!
-//! Machine-written like [`crate::state`] — one file holding every project's
-//! board, keyed by the path that owns it.
-//!
-//! Cards nest inside their column, so a `Vec` position *is* the order and a
-//! move is a remove and an insert. A flat list with an ordinal only earns its
-//! keep where several views group the same cards differently.
+//! The board pane: lanes of cards, and the one field that writes them.
 
-use crate::{app::Cydonia, project::Project, session::ChatSession, settings};
+use crate::{
+    model::{
+        board::{self, Card, Column, Spot},
+        session::ChatSession,
+    },
+    view::root::Cydonia,
+};
 use bezel::{
     gpui::{
         AnyElement, App, Context, Div, Entity, Focusable as _, FontWeight, KeyBinding,
@@ -21,128 +20,6 @@ use bezel::{
     },
 };
 use gpui::actions;
-use serde::{Deserialize, Serialize};
-use std::{
-    collections::BTreeMap,
-    path::{Path, PathBuf},
-};
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Board {
-    #[serde(default)]
-    pub columns: Vec<Column>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Column {
-    pub name: String,
-    #[serde(default)]
-    pub cards: Vec<Card>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Card {
-    pub text: String,
-    /// The session this card was dispatched to, this run. Session ids are
-    /// minted per launch and nothing resumes across one, so it never persists.
-    #[serde(skip)]
-    pub session: Option<u64>,
-}
-
-impl Default for Board {
-    fn default() -> Self {
-        Self {
-            columns: ["Todo", "Doing", "Done"].map(Column::new).into(),
-        }
-    }
-}
-
-impl Board {
-    pub fn column(&self, ix: usize) -> Option<&Column> {
-        self.columns.get(ix)
-    }
-
-    pub fn card(&self, at: Spot) -> Option<&Card> {
-        self.column(at.column)?.cards.get(at.card)
-    }
-
-    pub fn card_mut(&mut self, at: Spot) -> Option<&mut Card> {
-        self.columns.get_mut(at.column)?.cards.get_mut(at.card)
-    }
-
-    /// Lift a card out, for a caller about to put it back somewhere else.
-    pub fn take(&mut self, at: Spot) -> Option<Card> {
-        let column = self.columns.get_mut(at.column)?;
-        (at.card < column.cards.len()).then(|| column.cards.remove(at.card))
-    }
-}
-
-impl Column {
-    fn new(name: &str) -> Self {
-        Self {
-            name: name.to_owned(),
-            cards: Vec::new(),
-        }
-    }
-}
-
-impl Card {
-    pub fn new(text: String) -> Self {
-        Self {
-            text,
-            session: None,
-        }
-    }
-}
-
-/// Where a card sits: its column, and its place in that column.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Spot {
-    pub column: usize,
-    pub card: usize,
-}
-
-impl Spot {
-    pub fn new(column: usize, card: usize) -> Self {
-        Self { column, card }
-    }
-}
-
-fn path() -> Option<PathBuf> {
-    settings::dir().ok().map(|dir| dir.join("boards.toml"))
-}
-
-fn stored() -> BTreeMap<PathBuf, Board> {
-    path()
-        .and_then(|path| std::fs::read_to_string(path).ok())
-        .and_then(|body| toml::from_str(&body).ok())
-        .unwrap_or_default()
-}
-
-/// This project's board, or a fresh one for a project that has never had one.
-pub fn load(project: &Path) -> Board {
-    stored().remove(project).unwrap_or_default()
-}
-
-/// Best effort, and a merge: the file also holds boards for projects that are
-/// not open, and closing a tab must not erase its work.
-pub fn save(projects: &[Project]) {
-    let Some(path) = path() else {
-        return;
-    };
-    let mut boards = stored();
-    for project in projects {
-        boards.insert(project.path.clone(), project.board.clone());
-    }
-    if let Ok(body) = toml::to_string_pretty(&boards)
-        && let Some(dir) = path.parent()
-    {
-        let _ = std::fs::create_dir_all(dir);
-        let _ = std::fs::write(&path, body);
-    }
-}
-
-// ── the view ─────────────────────────────────────────────────────
 
 actions!(cydonia_board, [CommitCard, DismissCard]);
 
@@ -191,11 +68,6 @@ impl Cydonia {
         cx.notify();
     }
 
-    fn active_board_mut(&mut self) -> Option<&mut Board> {
-        let ix = self.active?;
-        Some(&mut self.projects.get_mut(ix)?.board)
-    }
-
     /// Point the field at `at`, filing whatever was already open first — so
     /// clicking straight from one card to another never drops an edit.
     fn edit(&mut self, at: Editing, window: &mut Window, cx: &mut Context<Self>) {
@@ -203,6 +75,8 @@ impl Cydonia {
         let text = match at {
             Editing::New(_) => String::new(),
             Editing::Card(spot) => self
+                .workspace
+                .read(cx)
                 .active_project()
                 .and_then(|project| project.board.card(spot))
                 .map(|card| card.text.clone())
@@ -223,26 +97,29 @@ impl Cydonia {
         };
         let text = self.card_field.read(cx).content().trim().to_owned();
         self.card_field.update(cx, |field, cx| field.clear(cx));
-        let Some(board) = self.active_board_mut() else {
-            return;
-        };
-        match at {
-            Editing::New(ix) => {
-                if !text.is_empty()
-                    && let Some(column) = board.columns.get_mut(ix)
-                {
-                    column.cards.push(Card::new(text));
+        self.workspace.update(cx, |workspace, cx| {
+            let Some(board) = workspace.active_board_mut() else {
+                return;
+            };
+            match at {
+                Editing::New(ix) => {
+                    if !text.is_empty()
+                        && let Some(column) = board.columns.get_mut(ix)
+                    {
+                        column.cards.push(Card::new(text));
+                    }
+                }
+                Editing::Card(spot) => {
+                    if text.is_empty() {
+                        board.take(spot);
+                    } else if let Some(card) = board.card_mut(spot) {
+                        card.text = text;
+                    }
                 }
             }
-            Editing::Card(spot) => {
-                if text.is_empty() {
-                    board.take(spot);
-                } else if let Some(card) = board.card_mut(spot) {
-                    card.text = text;
-                }
-            }
-        }
-        save(&self.projects);
+            board::save(&workspace.projects);
+            cx.notify();
+        });
     }
 
     fn commit_card(&mut self, _: &CommitCard, _: &mut Window, cx: &mut Context<Self>) {
@@ -260,28 +137,34 @@ impl Cydonia {
     /// Carry a card one column over, its session with it.
     fn move_card(&mut self, at: Spot, delta: isize, cx: &mut Context<Self>) {
         self.commit_edit(cx);
-        let Some(board) = self.active_board_mut() else {
-            return;
-        };
-        let Some(to) = at.column.checked_add_signed(delta) else {
-            return;
-        };
-        if to >= board.columns.len() {
-            return;
-        }
-        if let Some(card) = board.take(at) {
-            board.columns[to].cards.push(card);
-        }
-        save(&self.projects);
+        self.workspace.update(cx, |workspace, cx| {
+            let Some(board) = workspace.active_board_mut() else {
+                return;
+            };
+            let Some(to) = at.column.checked_add_signed(delta) else {
+                return;
+            };
+            if to >= board.columns.len() {
+                return;
+            }
+            if let Some(card) = board.take(at) {
+                board.columns[to].cards.push(card);
+            }
+            board::save(&workspace.projects);
+            cx.notify();
+        });
         cx.notify();
     }
 
     fn delete_card(&mut self, at: Spot, cx: &mut Context<Self>) {
         self.commit_edit(cx);
-        if let Some(board) = self.active_board_mut() {
-            board.take(at);
-        }
-        save(&self.projects);
+        self.workspace.update(cx, |workspace, cx| {
+            if let Some(board) = workspace.active_board_mut() {
+                board.take(at);
+            }
+            board::save(&workspace.projects);
+            cx.notify();
+        });
         cx.notify();
     }
 
@@ -294,32 +177,38 @@ impl Cydonia {
     /// looking, and clicking it is what follows the work into the transcript.
     fn dispatch_card(&mut self, at: Spot, cx: &mut Context<Self>) {
         self.commit_edit(cx);
-        let text = self
-            .active_project()
-            .and_then(|project| project.board.card(at))
-            .map(|card| card.text.clone());
-        let (Some(text), Some(entry)) = (text, self.preferred_agent()) else {
-            return;
-        };
-        let id = self.new_session(entry, Some(text), cx);
-        if let Some(card) = self.active_board_mut().and_then(|board| board.card_mut(at)) {
-            card.session = id;
-        }
+        self.workspace.update(cx, |workspace, cx| {
+            let text = workspace
+                .active_project()
+                .and_then(|project| project.board.card(at))
+                .map(|card| card.text.clone());
+            let (Some(text), Some(entry)) = (text, workspace.preferred_agent()) else {
+                return;
+            };
+            let id = workspace.new_session(entry, Some(text), cx);
+            if let Some(card) = workspace
+                .active_board_mut()
+                .and_then(|board| board.card_mut(at))
+            {
+                card.session = id;
+            }
+        });
         cx.notify();
     }
 
     /// The session a card was dispatched to, while it is still open — a card
     /// whose session has been closed is a card you can run again.
-    fn card_session(&self, card: &Card) -> Option<&ChatSession> {
-        card.session.and_then(|id| self.session(id))
+    fn card_session<'a>(&self, card: &Card, cx: &'a App) -> Option<&'a ChatSession> {
+        card.session
+            .and_then(|id| self.workspace.read(cx).session(id))
     }
 
     // ── chrome ───────────────────────────────────────────────────
 
     /// The lanes. Same frame as [`Cydonia::transcript`]: the body of the
     /// content card, with the composer stack still pinned under it.
-    pub fn board(&self, cx: &mut Context<Self>) -> AnyElement {
-        let Some(project) = self.active_project() else {
+    pub fn board(&self, cx: &Context<Self>) -> AnyElement {
+        let Some(project) = self.workspace.read(cx).active_project() else {
             return div().flex_1().into_any_element();
         };
         let mut columns: Vec<AnyElement> = Vec::new();
@@ -346,7 +235,7 @@ impl Cydonia {
             .into_any_element()
     }
 
-    fn column(&self, ix: usize, column: &Column, cx: &mut Context<Self>) -> AnyElement {
+    fn column(&self, ix: usize, column: &Column, cx: &Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let mut cards: Vec<AnyElement> = Vec::new();
         for (n, card) in column.cards.iter().enumerate() {
@@ -426,12 +315,12 @@ impl Cydonia {
             .into_any_element()
     }
 
-    fn card(&self, at: Spot, card: &Card, cx: &mut Context<Self>) -> AnyElement {
+    fn card(&self, at: Spot, card: &Card, cx: &Context<Self>) -> AnyElement {
         if self.editing == Some(Editing::Card(at)) {
             return self.card_editor(cx);
         }
         let theme = Theme::of(cx).clone();
-        let chat = self.card_session(card);
+        let chat = self.card_session(card, cx);
         let live = chat.map(|chat| chat.id);
         // The same reading as the rail's session row: the card and the row are
         // reporting the same process.
@@ -497,7 +386,7 @@ impl Cydonia {
                                         this.move_card(at, -1, cx);
                                     }))
                             }))
-                            .children((!self.last_column(at)).then(|| {
+                            .children((!self.last_column(at, cx)).then(|| {
                                 self.card_action("right", at, icons::ALT_ARROW_RIGHT, cx)
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         cx.stop_propagation();
@@ -543,29 +432,27 @@ impl Cydonia {
         cx: &Context<Self>,
     ) -> Stateful<Div> {
         let theme = Theme::of(cx).clone();
-        div()
-            .id(SharedString::from(format!(
-                "card-{name}-{}-{}",
-                at.column, at.card
-            )))
-            .p(px(3.))
-            .rounded(px(Theme::control_radius()))
-            .cursor_pointer()
-            .hover(|el| el.bg(theme.glass_hover()))
-            .child(
-                icons::icon(glyph)
-                    .size(px(12.))
-                    .text_color(theme.text_faint),
-            )
+        ui::ghost(
+            &theme,
+            SharedString::from(format!("card-{name}-{}-{}", at.column, at.card)),
+        )
+        .p(px(3.))
+        .child(
+            icons::icon(glyph)
+                .size(px(12.))
+                .text_color(theme.text_faint),
+        )
     }
 
     /// Whether `at` sits in the rightmost column — nowhere further to carry it.
-    fn last_column(&self, at: Spot) -> bool {
-        self.active_project()
+    fn last_column(&self, at: Spot, cx: &App) -> bool {
+        self.workspace
+            .read(cx)
+            .active_project()
             .is_none_or(|project| at.column + 1 >= project.board.columns.len())
     }
 
-    fn card_editor(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn card_editor(&self, cx: &Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         div()
             .flex_none()

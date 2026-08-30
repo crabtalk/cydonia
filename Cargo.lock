@@ -1874,11 +1874,20 @@ dependencies = [
  "bezel-syntax",
  "cacp",
  "cacp-agents",
+ "cydonia-ui",
  "dirs 6.0.0",
  "serde",
  "tokio",
  "toml 0.8.23",
  "ureq",
+]
+
+[[package]]
+name = "cydonia-ui"
+version = "0.1.0"
+dependencies = [
+ "bezel",
+ "bezel-gpui",
 ]
 
 [[package]]

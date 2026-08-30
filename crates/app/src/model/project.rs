@@ -1,9 +1,9 @@
 //! A project: a directory, the sessions running in it, and its board.
 //!
 //! The path is the whole identity — it is what every session in the project
-//! is spawned with as its `cwd`, and what [`crate::state`] persists.
+//! is spawned with as its `cwd`, and what [`crate::model::state`] persists.
 
-use crate::{
+use crate::model::{
     board::{self, Board},
     session::ChatSession,
 };

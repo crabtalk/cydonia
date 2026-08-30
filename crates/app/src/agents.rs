@@ -15,7 +15,7 @@
 //! whatever `text_color` the row already sets — the same path every other icon
 //! in the app takes.
 
-use crate::settings;
+use crate::model::settings;
 use bezel::gpui::SharedString;
 use cacp_agents::{Distribution, registry};
 use std::{

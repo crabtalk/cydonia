@@ -9,7 +9,11 @@ use bezel::{
     theme::{Theme, appearance},
     ui::{self, focus, input},
 };
-use cydonia::{app, assets, board, composer, settings, state};
+use cydonia::{
+    assets,
+    model::{settings, state},
+    view::{board, composer, root},
+};
 use gpui::actions;
 
 actions!(cydonia, [Quit]);
@@ -33,7 +37,7 @@ fn main() -> Result<()> {
             focus::init(cx);
             composer::init(cx);
             board::init(cx);
-            app::init(cx);
+            root::init(cx);
             set_menus(cx);
 
             let bounds = Bounds::centered(None, size(px(1100.), px(760.)), cx);
@@ -45,8 +49,8 @@ fn main() -> Result<()> {
                     titlebar: Some(TitlebarOptions {
                         appears_transparent: true,
                         traffic_light_position: Some(point(
-                            px(app::TRAFFIC_LIGHT_X),
-                            px(app::TRAFFIC_LIGHT_Y),
+                            px(root::TRAFFIC_LIGHT_X),
+                            px(root::TRAFFIC_LIGHT_Y),
                         )),
                         ..Default::default()
                     }),
@@ -58,7 +62,7 @@ fn main() -> Result<()> {
                 },
                 |window, cx| {
                     appearance::observe_window(window, cx).detach();
-                    let app = cx.new(|cx| app::Cydonia::new(settings, state, cx));
+                    let app = cx.new(|cx| root::Cydonia::new(settings, state, cx));
                     let focus = app.read(cx).composer_focus_handle(cx);
                     window.focus(&focus, cx);
                     app

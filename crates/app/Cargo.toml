@@ -1,0 +1,49 @@
+[package]
+name = "cydonia"
+description = "Desktop client for ACP agents"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "../../README.md"
+
+[[bin]]
+name = "cydonia"
+path = "bin/main.rs"
+
+[dependencies]
+# bezel — the component library the GUI is built on. Published as `bezel-*`;
+# the keys here are what the source imports.
+bezel = "0.1.3"
+markdown = { version = "0.1.3", package = "bezel-markdown" }
+syntax = { version = "0.1.3", package = "bezel-syntax" }
+
+# The same gpui bezel is built against. A stock crates.io gpui beside it is a
+# second type universe — a window that paints shapes but no text, one text
+# system holding the fonts while the other draws the frame.
+#
+# `actions!` expands to literal `gpui::` paths, so the crate name has to be in
+# scope even where every type is reached through the facade.
+gpui = { version = "0.3.6", package = "bezel-gpui" }
+gpui_platform = { version = "0.3.6", package = "bezel-gpui-platform", features = [
+    "font-kit",
+] }
+
+# cacp — our ACP implementation. A sibling checkout while both move together.
+cacp = { path = "../../../cacp/crates/cacp", default-features = false, features = [
+    "client",
+] }
+cacp-agents = { path = "../../../cacp/crates/agents" }
+ui = { path = "../ui", package = "cydonia-ui" }
+
+# crates.io
+anyhow = "1"
+dirs = "6"
+serde = { version = "1", features = ["derive"] }
+# cacp spawns its read and write loops with `tokio::spawn`, so the connection
+# needs a runtime of its own — gpui's executor is smol's.
+tokio = { version = "1", features = ["process", "rt-multi-thread", "sync"] }
+toml = "0.8"
+# Downloads the registry's agent icons. The same client cacp-agents fetches
+# the catalog with, so this adds no second HTTP stack.
+ureq = "3"

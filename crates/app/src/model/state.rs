@@ -4,7 +4,7 @@
 //! Machine-written, unlike `settings.toml` — nothing here is worth hand
 //! editing, and rewriting it must never cost a user their own comments.
 
-use crate::{project::Project, settings};
+use crate::model::{project::Project, settings};
 use bezel::theme::appearance::AppearanceMode;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;

@@ -5,7 +5,10 @@
 //! is content, not chrome — a translucent panel would put the app you just
 //! navigated away from directly behind the form you are filling in.
 
-use crate::app::{Cydonia, TRAFFIC_LIGHT_X, TRAFFIC_LIGHT_Y};
+use crate::{
+    model::workspace::Workspace,
+    view::root::{TRAFFIC_LIGHT_X, TRAFFIC_LIGHT_Y},
+};
 use bezel::{
     gpui::{
         App, Bounds, Context, Entity, Render, TitlebarOptions, Window, WindowBackgroundAppearance,
@@ -38,13 +41,13 @@ const MODES: [AppearanceMode; 3] = [
 ];
 
 pub struct SettingsWindow {
-    app: Entity<Cydonia>,
+    workspace: Entity<Workspace>,
 }
 
 /// Open the window, or bring the open one forward — a second settings window
 /// would be two views of one preference.
 pub fn open(
-    app: Entity<Cydonia>,
+    workspace: Entity<Workspace>,
     existing: Option<WindowHandle<SettingsWindow>>,
     cx: &mut App,
 ) -> Option<WindowHandle<SettingsWindow>> {
@@ -71,7 +74,7 @@ pub fn open(
         },
         |window, cx| {
             appearance::observe_window(window, cx).detach();
-            cx.new(|_| SettingsWindow { app })
+            cx.new(|_| SettingsWindow { workspace })
         },
     )
     .ok()
@@ -160,7 +163,8 @@ impl SettingsWindow {
                             })
                             .child(mode.label())
                             .on_click(cx.listener(move |this, _, _, cx| {
-                                this.app.update(cx, |app, cx| app.set_appearance(mode, cx));
+                                this.workspace
+                                    .update(cx, |workspace, cx| workspace.set_appearance(mode, cx));
                                 cx.notify();
                             }))
                     })),
