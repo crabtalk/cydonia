@@ -44,6 +44,9 @@ serde = { version = "1", features = ["derive"] }
 # needs a runtime of its own — gpui's executor is smol's.
 tokio = { version = "1", features = ["process", "rt-multi-thread", "sync"] }
 toml = "0.8"
+# Installing an agent edits settings.toml in place. `toml` would round-trip
+# it through a value tree and drop every comment the file was written with.
+toml_edit = "0.22"
 # Downloads the registry's agent icons. The same client cacp-agents fetches
 # the catalog with, so this adds no second HTTP stack.
 ureq = "3"

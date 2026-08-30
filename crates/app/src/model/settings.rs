@@ -15,6 +15,10 @@ pub struct Settings {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Agent {
     pub name: String,
+    /// The registry agent this was installed from, when it came from there.
+    /// A hand-written entry has none, and is never touched by the installer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
     pub command: String,
     #[serde(default)]
     pub args: Vec<String>,
@@ -54,6 +58,7 @@ impl Default for Settings {
     fn default() -> Self {
         let npx = |name: &str, pkg: &str| Agent {
             name: name.into(),
+            id: None,
             command: "npx".into(),
             args: vec!["-y".into(), pkg.into()],
             env: BTreeMap::new(),
@@ -66,6 +71,22 @@ impl Default for Settings {
             ],
         }
     }
+}
+
+/// Where installed agents are put — `$XDG_DATA_HOME/cydonia`, defaulting to
+/// `~/.local/share/cydonia`. Programs, not preferences, so they do not belong
+/// beside the files a person edits.
+pub fn data_dir() -> Result<PathBuf> {
+    if let Ok(xdg) = std::env::var("XDG_DATA_HOME")
+        && !xdg.is_empty()
+    {
+        return Ok(PathBuf::from(xdg).join("cydonia"));
+    }
+    Ok(dirs::home_dir()
+        .context("no home directory on this system")?
+        .join(".local")
+        .join("share")
+        .join("cydonia"))
 }
 
 /// Cydonia's config directory: `$XDG_CONFIG_HOME/cydonia`, defaulting to
@@ -119,4 +140,131 @@ pub fn load() -> Result<Settings> {
     }
     let content = std::fs::read_to_string(&path)?;
     toml::from_str(&content).with_context(|| format!("invalid settings: {}", path.display()))
+}
+
+/// Put `agent` in the file, replacing whichever entry already launches it.
+///
+/// `supersedes` is the npm package the agent is published as, which is how an
+/// install claims the hand-written `@latest` entry that shipped as a default
+/// instead of sitting next to it. A replaced entry keeps its own `name`: the
+/// person who wrote it chose that, and only the command underneath has moved.
+///
+/// Edited in place with `toml_edit` rather than re-serialised: this file is
+/// meant to be opened and changed by hand, and a round trip through a value
+/// tree would silently delete every comment in it.
+pub fn put_agent(agent: &Agent, supersedes: Option<&str>) -> Result<()> {
+    let path = dir()?.join("settings.toml");
+    let body = std::fs::read_to_string(&path).unwrap_or_default();
+    let mut doc: toml_edit::DocumentMut =
+        body.parse().context("settings.toml is not valid toml")?;
+
+    let agents = doc["agents"].or_insert(toml_edit::Item::ArrayOfTables(
+        toml_edit::ArrayOfTables::new(),
+    ));
+    let Some(agents) = agents.as_array_of_tables_mut() else {
+        anyhow::bail!("`agents` in settings.toml is not a list of tables");
+    };
+    let existing = agents
+        .iter()
+        .position(|table| claims(table, agent, supersedes));
+    let name = existing
+        .and_then(|ix| agents.get(ix))
+        .and_then(|table| table.get("name"))
+        .and_then(|n| n.as_str())
+        .unwrap_or(&agent.name)
+        .to_owned();
+    // Whatever preceded the entry — the file's header, a note the user left
+    // above it — is trivia hanging off the table, and replacing the table
+    // throws it away unless it is carried across by hand.
+    let decor = existing
+        .and_then(|ix| agents.get(ix))
+        .map(|table| table.decor().clone());
+
+    let mut entry = toml_edit::Table::new();
+    entry["name"] = toml_edit::value(name);
+    if let Some(id) = &agent.id {
+        entry["id"] = toml_edit::value(id.clone());
+    }
+    entry["command"] = toml_edit::value(agent.command.clone());
+    let mut args = toml_edit::Array::new();
+    for arg in &agent.args {
+        args.push(arg.as_str());
+    }
+    entry["args"] = toml_edit::value(args);
+    if !agent.env.is_empty() {
+        let mut env = toml_edit::InlineTable::new();
+        for (key, value) in &agent.env {
+            env.insert(key, value.as_str().into());
+        }
+        entry["env"] = toml_edit::value(env);
+    }
+
+    match existing {
+        Some(ix) => {
+            if let Some(decor) = decor {
+                *entry.decor_mut() = decor;
+            }
+            *agents.get_mut(ix).expect("position is in range") = entry;
+        }
+        None => agents.push(entry),
+    }
+    std::fs::write(&path, doc.to_string())?;
+    Ok(())
+}
+
+/// Drop the entry installed from registry agent `id`.
+pub fn remove_agent(id: &str) -> Result<()> {
+    let path = dir()?.join("settings.toml");
+    let body = std::fs::read_to_string(&path).unwrap_or_default();
+    let mut doc: toml_edit::DocumentMut =
+        body.parse().context("settings.toml is not valid toml")?;
+    let Some(agents) = doc
+        .get_mut("agents")
+        .and_then(|a| a.as_array_of_tables_mut())
+    else {
+        return Ok(());
+    };
+    let Some(ix) = agents
+        .iter()
+        .position(|table| table.get("id").and_then(|i| i.as_str()) == Some(id))
+    else {
+        return Ok(());
+    };
+    // The file's header hangs off whichever entry comes first. If that is the
+    // one being dropped, the header has to move down onto its successor or it
+    // leaves with it.
+    let prefix = agents
+        .get(ix)
+        .and_then(|table| table.decor().prefix().cloned());
+    agents.remove(ix);
+    if ix == 0
+        && let Some(prefix) = prefix
+    {
+        match agents.get_mut(0) {
+            Some(first) => first.decor_mut().set_prefix(prefix),
+            None => doc.as_table_mut().decor_mut().set_prefix(prefix),
+        }
+    }
+    std::fs::write(&path, doc.to_string())?;
+    Ok(())
+}
+
+/// Whether an existing entry is the one this install replaces: the same
+/// registry agent, or a launcher for the same npm package.
+fn claims(table: &toml_edit::Table, agent: &Agent, supersedes: Option<&str>) -> bool {
+    let field = |key| table.get(key).and_then(|v| v.as_str());
+    if agent.id.is_some() && field("id") == agent.id.as_deref() {
+        return true;
+    }
+    let Some(package) = supersedes else {
+        return false;
+    };
+    table
+        .get("args")
+        .and_then(|args| args.as_array())
+        .is_some_and(|args| {
+            args.iter()
+                .filter_map(|v| v.as_str())
+                .any(|arg| cacp_agents::package_name(arg) == package)
+        })
 }

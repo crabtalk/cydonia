@@ -89,6 +89,16 @@ impl Workspace {
             .or_else(|| self.settings.agents.first().cloned())
     }
 
+    /// Re-read `settings.toml`. Installing an agent writes that file, and
+    /// reading it back is what keeps this list identical to it — cheaper than
+    /// a second copy of the rule for which entry an install replaces.
+    pub fn reload_settings(&mut self, cx: &mut Context<Self>) {
+        if let Ok(settings) = settings::load() {
+            self.settings = settings;
+        }
+        cx.notify();
+    }
+
     /// The settings window's choice. bezel repaints on `set_mode`; the state
     /// file is what makes it survive a relaunch.
     pub fn set_appearance(&mut self, mode: AppearanceMode, cx: &mut Context<Self>) {
