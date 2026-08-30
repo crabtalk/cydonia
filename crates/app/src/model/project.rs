@@ -19,6 +19,8 @@ pub struct Project {
     pub articles: Vec<Article>,
     /// Which article the article pane shows.
     pub article: Option<usize>,
+    /// Whether the rail shows what is under this project's heading.
+    pub expanded: bool,
 }
 
 impl Project {
@@ -30,6 +32,7 @@ impl Project {
             sessions: Vec::new(),
             active: None,
             article: None,
+            expanded: true,
         }
     }
 
@@ -52,5 +55,12 @@ impl Project {
 
     pub fn active_session(&self) -> Option<&ChatSession> {
         self.active.and_then(|id| self.session(id))
+    }
+
+    /// Live sessions and archived ones, in that order — an archive is history
+    /// and belongs under the work still going on.
+    pub fn ordered(&self) -> impl Iterator<Item = &ChatSession> {
+        let live = self.sessions.iter().filter(|chat| chat.archive.is_none());
+        live.chain(self.sessions.iter().filter(|chat| chat.archive.is_some()))
     }
 }

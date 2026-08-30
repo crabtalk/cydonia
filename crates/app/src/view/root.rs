@@ -7,6 +7,7 @@ use crate::{
         state::State,
         workspace::Workspace,
     },
+    utils,
     view::{
         board::{self, Editing},
         composer::{self, Composer, ComposerEvent},
@@ -17,15 +18,15 @@ use crate::{
 use bezel::{
     gpui::{
         self, AnyElement, App, Axis, Context, Div, DragMoveEvent, Empty, Entity, FocusHandle,
-        Focusable as _, FontWeight, KeyBinding, PathPromptOptions, Render, SharedString, Window,
-        WindowHandle, actions, div, prelude::*, px, svg,
+        Focusable as _, FontWeight, KeyBinding, MouseButton, PathPromptOptions, Render,
+        SharedString, Stateful, Task, Window, WindowHandle, actions, div, prelude::*, px, svg,
     },
     motion::{Fade, Painter},
     theme::Theme,
     ui::{
         icons,
         input::TextField,
-        loaders,
+        loaders, popover,
         tooltip::Tooltip,
         widgets::{
             ButtonStyle, Buttons, Content, Layout, SPLIT_HANDLE_HIT, Scaffolding, SplitDrag,
@@ -34,8 +35,25 @@ use bezel::{
     },
 };
 use cacp::schema::PermissionOptionKind;
+use std::time::{Duration, SystemTime};
 
-actions!(cydonia, [NewSession, OpenProject, OpenSettings]);
+actions!(
+    cydonia,
+    [
+        NewSession,
+        OpenProject,
+        OpenSettings,
+        CommitName,
+        DismissName
+    ]
+);
+
+/// How often the rail redraws for its relative times. A minute, because that
+/// is the finest thing [`utils::ago`] says.
+const TICK: Duration = Duration::from_secs(60);
+
+/// Claimed on the rename field so `enter` files the name and `escape` drops it.
+const RENAME_CONTEXT: &str = "CydoniaSessionName";
 
 const SIDEBAR_DEFAULT: f32 = 200.;
 const SIDEBAR_MIN: f32 = 180.;
@@ -77,6 +95,8 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-o", OpenProject, None),
         // What macOS binds Preferences to in every other app.
         KeyBinding::new("cmd-,", OpenSettings, None),
+        KeyBinding::new("enter", CommitName, Some(RENAME_CONTEXT)),
+        KeyBinding::new("escape", DismissName, Some(RENAME_CONTEXT)),
     ]);
 }
 
@@ -97,6 +117,20 @@ struct SessionRow {
     label: String,
     icon: Option<SharedString>,
     streaming: bool,
+    updated: SystemTime,
+    archived: bool,
+}
+
+/// Which menu is open. One field rather than a flag each, so opening one
+/// closes the rest by construction.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Menu {
+    /// The `+` on a project heading: what to start here.
+    Add(usize),
+    /// The `···` on a project heading: what to do to the project.
+    Project(usize),
+    /// The `···` on a session row.
+    Session(u64),
 }
 
 /// The root view. It owns no app state — only the chrome's own: how wide the
@@ -110,6 +144,13 @@ pub struct Cydonia {
     pub(crate) pane: Pane,
     pub(crate) editing: Option<Editing>,
     pub(crate) card_field: Entity<TextField>,
+    menu: Option<Menu>,
+    /// The session whose name is being typed, and the field it is typed in.
+    renaming: Option<u64>,
+    name_field: Entity<TextField>,
+    /// Redraws the rail once a minute so the relative times on it stay true
+    /// with nobody touching the window. One timer, not one per row.
+    _tick: Task<()>,
 }
 
 impl Cydonia {
@@ -126,6 +167,20 @@ impl Cydonia {
         .detach();
 
         let card_field = board::field(cx);
+        let name_field = cx.new(|cx| {
+            TextField::new(cx)
+                .with_frame(false)
+                .with_key_context(RENAME_CONTEXT)
+                .with_placeholder("name this session…")
+        });
+        let tick = cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(TICK).await;
+                if this.update(cx, |_, cx| cx.notify()).is_err() {
+                    return;
+                }
+            }
+        });
         let workspace = cx.new(|cx| Workspace::new(settings, state, cx));
         // The model is the only thing that says a session appeared or a turn
         // ended; the composer's placeholder, commands and busy state are all
@@ -142,6 +197,10 @@ impl Cydonia {
             pane: Pane::Chat,
             editing: None,
             card_field,
+            menu: None,
+            renaming: None,
+            name_field,
+            _tick: tick,
         };
         this.sync_composer(cx);
         this
@@ -285,6 +344,86 @@ impl Cydonia {
 
     // ── chrome ───────────────────────────────────────────────────────
 
+    // ── menus ────────────────────────────────────────────────────────
+
+    fn toggle_menu(&mut self, menu: Menu, cx: &mut Context<Self>) {
+        self.menu = (self.menu != Some(menu)).then_some(menu);
+        cx.notify();
+    }
+
+    /// A `···` or `+` that opens `menu`, revealed on the row's hover.
+    fn menu_button(
+        &self,
+        id: impl Into<gpui::ElementId>,
+        group: &'static str,
+        mark: impl IntoElement,
+        menu: Menu,
+        cx: &Context<Self>,
+    ) -> Stateful<Div> {
+        div()
+            .id(id.into())
+            .flex_none()
+            .relative()
+            // An open menu keeps its trigger on show — by then the pointer is
+            // over the menu, not the row that opened it.
+            .when(self.menu != Some(menu), |el| {
+                el.invisible().group_hover(group, |el| el.visible())
+            })
+            .rounded(px(Theme::control_radius()))
+            .p(px(3.))
+            .cursor_pointer()
+            .child(mark)
+            .on_click(cx.listener(move |this, _, _, cx| {
+                cx.stop_propagation();
+                this.toggle_menu(menu, cx);
+            }))
+    }
+
+    /// The card every rail menu hangs in, dismissed by a press outside it.
+    fn menu_card(&self, rows: Vec<AnyElement>, cx: &mut Context<Self>) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        popover::popover_card(&theme)
+            .w(px(170.))
+            .child(div().flex().flex_col().children(rows))
+            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                this.menu = None;
+                cx.notify();
+            }))
+            .into_any_element()
+    }
+
+    fn menu_row(
+        &self,
+        key: impl Into<SharedString>,
+        glyph: &'static str,
+        label: &'static str,
+        cx: &mut Context<Self>,
+        act: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
+    ) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        let painter = Painter::of(cx);
+        let key = key.into();
+        popover::menu_row(&theme, false, Fade::new(painter, key.clone()))
+            .id(key)
+            .child(
+                icons::icon(glyph)
+                    .size(px(13.))
+                    .flex_none()
+                    .text_color(theme.text_faint),
+            )
+            .child(label)
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.menu = None;
+                act(this, window, cx);
+                cx.notify();
+            }))
+            .into_any_element()
+    }
+
+    // ── the rail ─────────────────────────────────────────────────────
+
+    /// One session: its mark and name, with when it last had something to say
+    /// under them.
     fn session_row(&self, row: SessionRow, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let painter = Painter::of(cx);
@@ -323,56 +462,95 @@ impl Cydonia {
             }
         };
 
+        let naming = self.renaming == Some(id);
+        let label: AnyElement = if naming {
+            // The field carries its own press: `TextField` does not focus
+            // itself, and a press that reached the row would select the
+            // session out from under the name being typed.
+            div()
+                .flex_1()
+                .min_w_0()
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _, window, cx| {
+                        cx.stop_propagation();
+                        window.focus(&this.name_field.read(cx).focus_handle(cx), cx);
+                    }),
+                )
+                // Pressing anywhere else is finishing, not abandoning — the
+                // name typed is the name meant. `escape` is what discards.
+                .on_mouse_down_out(cx.listener(|this, _, window, cx| {
+                    this.commit_name(&CommitName, window, cx);
+                }))
+                .child(self.name_field.clone())
+                .into_any_element()
+        } else {
+            div()
+                .flex_1()
+                .min_w_0()
+                .truncate()
+                .text_size(px(13.))
+                // What the field pins itself to. Left to gpui's default the
+                // label's line box is φ×13, and renaming would resize the row
+                // under the name being typed.
+                .line_height(px(18.))
+                .text_color(tint)
+                .child(row.label)
+                .into_any_element()
+        };
+
         div()
             .id(("session", id))
             .group("session-row")
             .ml(px(18.))
             .mr(px(8.))
             .px(px(8.))
-            .py(px(6.))
+            .py(px(5.))
             .rounded(px(Theme::control_radius()))
             .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(8.))
+            .flex_col()
+            .gap(px(1.))
             .cursor_pointer()
             .when(selected, |el| el.bg(theme.glass_hover()))
             .hover(|el| el.bg(theme.glass_hover()))
             .child(
                 div()
-                    .flex_none()
-                    .size(px(14.))
                     .flex()
+                    .flex_row()
                     .items_center()
-                    .justify_center()
-                    .child(mark),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .truncate()
-                    .text_size(px(13.))
-                    .text_color(tint)
-                    .child(row.label),
-            )
-            .child(
-                div()
-                    .id(("close", id))
-                    .flex_none()
-                    .invisible()
-                    .group_hover("session-row", |el| el.visible())
-                    .rounded(px(Theme::control_radius()))
-                    .p(px(2.))
+                    .gap(px(8.))
                     .child(
-                        icons::icon(icons::CLOSE)
-                            .size(px(12.))
-                            .text_color(theme.text_faint),
+                        div()
+                            .flex_none()
+                            .size(px(14.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(mark),
                     )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        cx.stop_propagation();
-                        this.close_session(id, cx);
-                    })),
+                    .child(label)
+                    .child(
+                        self.menu_button(
+                            ("session-menu", id),
+                            "session-row",
+                            ui::dots(&theme),
+                            Menu::Session(id),
+                            cx,
+                        )
+                        .children(self.session_menu(id, row.archived, cx)),
+                    ),
+            )
+            // The second line is indented past the mark so the two read as one
+            // block rather than a list of times.
+            .child(
+                div()
+                    .ml(px(22.))
+                    .text_size(px(11.))
+                    .text_color(theme.text_faint)
+                    .child(match row.archived {
+                        true => format!("archived · {}", utils::ago(row.updated)),
+                        false => utils::ago(row.updated),
+                    }),
             )
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.select_session(id, cx);
@@ -380,8 +558,78 @@ impl Cydonia {
             .into_any_element()
     }
 
-    /// One project in the rail: a heading that selects it, with its sessions
-    /// under it. Every project shows its own, so the rail is the whole map.
+    fn session_menu(&self, id: u64, archived: bool, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if self.menu != Some(Menu::Session(id)) {
+            return None;
+        }
+        let mut rows = vec![self.menu_row(
+            format!("rename-{id}"),
+            icons::PEN_NEW_SQUARE,
+            "Rename",
+            cx,
+            move |this, window, cx| this.start_rename(id, window, cx),
+        )];
+        if !archived {
+            rows.push(self.menu_row(
+                format!("archive-{id}"),
+                icons::ARCHIVE_MINIMALISTIC,
+                "Archive",
+                cx,
+                move |this, _, cx| {
+                    this.workspace
+                        .update(cx, |workspace, cx| workspace.archive_session(id, cx));
+                },
+            ));
+        }
+        rows.push(self.menu_row(
+            format!("close-{id}"),
+            icons::TRASH_BIN_MINIMALISTIC,
+            // An archived session has a file behind it, and closing it takes
+            // that with the row.
+            if archived { "Delete" } else { "Close" },
+            cx,
+            move |this, _, cx| this.close_session(id, cx),
+        ));
+        Some(popover::anchored_menu_below(
+            SharedString::from(format!("session-menu-{id}")),
+            self.menu_card(rows, cx),
+            None,
+        ))
+    }
+
+    // ── renaming ─────────────────────────────────────────────────────
+
+    fn start_rename(&mut self, id: u64, window: &mut Window, cx: &mut Context<Self>) {
+        let label = self
+            .workspace
+            .read(cx)
+            .session(id)
+            .map(ChatSession::label)
+            .unwrap_or_default();
+        self.name_field
+            .update(cx, |field, cx| field.set_content(label, cx));
+        self.renaming = Some(id);
+        window.focus(&self.name_field.read(cx).focus_handle(cx), cx);
+        cx.notify();
+    }
+
+    fn commit_name(&mut self, _: &CommitName, _: &mut Window, cx: &mut Context<Self>) {
+        let Some(id) = self.renaming.take() else {
+            return;
+        };
+        let name = self.name_field.read(cx).content().to_string();
+        self.workspace
+            .update(cx, |workspace, cx| workspace.rename_session(id, name, cx));
+        cx.notify();
+    }
+
+    fn dismiss_name(&mut self, _: &DismissName, _: &mut Window, cx: &mut Context<Self>) {
+        self.renaming = None;
+        cx.notify();
+    }
+
+    /// One project in the rail: a heading that folds, and everything in the
+    /// project under it.
     fn project_section(&self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let workspace = self.workspace.read(cx);
@@ -389,19 +637,17 @@ impl Cydonia {
             return Empty.into_any_element();
         };
         let active = workspace.active == Some(ix);
+        let expanded = project.expanded;
         let name = project.name();
         let sessions: Vec<SessionRow> = project
-            .sessions
-            .iter()
+            .ordered()
             .map(|chat| SessionRow {
                 id: chat.id,
-                label: if chat.title.is_empty() {
-                    chat.entry.name.clone()
-                } else {
-                    chat.title.clone()
-                },
+                label: chat.label(),
                 icon: workspace.agent_icon(&chat.entry.name),
                 streaming: chat.streaming,
+                updated: chat.updated,
+                archived: chat.archive.is_some(),
             })
             .collect();
         let articles: Vec<(usize, String)> = project
@@ -410,6 +656,7 @@ impl Cydonia {
             .enumerate()
             .map(|(n, article)| (n, article.title()))
             .collect();
+
         div()
             .flex()
             .flex_col()
@@ -419,15 +666,16 @@ impl Cydonia {
                     .id(("project", ix))
                     .group("project-head")
                     .mx(px(8.))
-                    .px(px(8.))
+                    .px(px(6.))
                     .py(px(4.))
                     .rounded(px(Theme::control_radius()))
                     .flex()
                     .flex_row()
                     .items_center()
-                    .gap(px(6.))
+                    .gap(px(4.))
                     .cursor_pointer()
                     .hover(|el| el.bg(theme.glass_hover()))
+                    .child(theme.disclosure(expanded))
                     .child(
                         div()
                             .flex_1()
@@ -439,74 +687,102 @@ impl Cydonia {
                             .child(name),
                     )
                     .child(
-                        div()
-                            .id(("new-article", ix))
-                            .flex_none()
-                            .invisible()
-                            .group_hover("project-head", |el| el.visible())
-                            .rounded(px(Theme::control_radius()))
-                            .p(px(2.))
-                            .child(
-                                icons::icon(icons::DOCUMENT_ADD)
-                                    .size(px(12.))
-                                    .text_color(theme.text_faint),
-                            )
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                cx.stop_propagation();
-                                this.new_article(ix, window, cx);
-                            })),
+                        self.menu_button(
+                            ("project-add", ix),
+                            "project-head",
+                            icons::icon(icons::PLUS)
+                                .size(px(12.))
+                                .text_color(theme.text_faint),
+                            Menu::Add(ix),
+                            cx,
+                        )
+                        .children(self.add_menu(ix, cx)),
                     )
                     .child(
-                        div()
-                            .id(("new-session", ix))
-                            .flex_none()
-                            .invisible()
-                            .group_hover("project-head", |el| el.visible())
-                            .rounded(px(Theme::control_radius()))
-                            .p(px(2.))
-                            .child(
-                                icons::icon(icons::PEN_NEW_SQUARE)
-                                    .size(px(12.))
-                                    .text_color(theme.text_faint),
-                            )
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                cx.stop_propagation();
-                                this.select_project(ix, cx);
-                                this.new_session_action(&NewSession, window, cx);
-                            })),
+                        self.menu_button(
+                            ("project-more", ix),
+                            "project-head",
+                            ui::dots(&theme),
+                            Menu::Project(ix),
+                            cx,
+                        )
+                        .children(self.project_menu(ix, cx)),
                     )
-                    .child(
-                        div()
-                            .id(("close-project", ix))
-                            .flex_none()
-                            .invisible()
-                            .group_hover("project-head", |el| el.visible())
-                            .rounded(px(Theme::control_radius()))
-                            .p(px(2.))
-                            .child(
-                                icons::icon(icons::CLOSE)
-                                    .size(px(11.))
-                                    .text_color(theme.text_faint),
-                            )
-                            // Without this the heading's own click runs next
-                            // and selects whichever project slid into the
-                            // closed one's index.
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                cx.stop_propagation();
-                                this.close_project(ix, cx);
-                            })),
+                    // The heading is the fold. Selecting the project is what
+                    // opening something inside it already does.
+                    .on_click(cx.listener(move |this, _, _, cx| this.toggle_project(ix, cx))),
+            )
+            .when(expanded, |section| {
+                section
+                    .children(sessions.into_iter().map(|row| self.session_row(row, cx)))
+                    .children(
+                        articles.into_iter().map(|(n, title)| {
+                            self.article_row(ix, n, title, cx).into_any_element()
+                        }),
                     )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.select_project(ix, cx);
-                    })),
-            )
-            .children(sessions.into_iter().map(|row| self.session_row(row, cx)))
-            .children(
-                articles
-                    .into_iter()
-                    .map(|(n, title)| self.article_row(ix, n, title, cx).into_any_element()),
-            )
+            })
             .into_any_element()
+    }
+
+    fn toggle_project(&mut self, ix: usize, cx: &mut Context<Self>) {
+        self.commit(cx);
+        self.workspace.update(cx, |workspace, cx| {
+            if let Some(project) = workspace.projects.get_mut(ix) {
+                project.expanded = !project.expanded;
+            }
+            cx.notify();
+        });
+    }
+
+    /// What the `+` starts here. Session first: it is what the rail is for.
+    fn add_menu(&self, ix: usize, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if self.menu != Some(Menu::Add(ix)) {
+            return None;
+        }
+        let rows = vec![
+            self.menu_row(
+                format!("add-session-{ix}"),
+                icons::CHAT_ROUND_LINE,
+                "New session",
+                cx,
+                move |this, window, cx| {
+                    this.select_project(ix, cx);
+                    this.new_session_action(&NewSession, window, cx);
+                },
+            ),
+            self.menu_row(
+                format!("add-article-{ix}"),
+                icons::DOCUMENT_ADD,
+                "New article",
+                cx,
+                move |this, window, cx| this.new_article(ix, window, cx),
+            ),
+        ];
+        Some(popover::anchored_menu_below(
+            SharedString::from(format!("add-menu-{ix}")),
+            self.menu_card(rows, cx),
+            None,
+        ))
+    }
+
+    /// What the `···` does to the project. Removing closes the tab — the
+    /// directory and everything in it stays where it is.
+    fn project_menu(&self, ix: usize, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if self.menu != Some(Menu::Project(ix)) {
+            return None;
+        }
+        let rows = vec![self.menu_row(
+            format!("remove-project-{ix}"),
+            icons::TRASH_BIN_MINIMALISTIC,
+            "Remove project",
+            cx,
+            move |this, _, cx| this.close_project(ix, cx),
+        )];
+        Some(popover::anchored_menu_below(
+            SharedString::from(format!("project-menu-{ix}")),
+            self.menu_card(rows, cx),
+            None,
+        ))
     }
 
     /// The band the traffic lights float in. It belongs to whichever column
@@ -649,6 +925,13 @@ impl Cydonia {
     fn chat(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
         let open = self.workspace.read(cx).active_project().is_some();
+        // Nothing to send to: archiving closed the connection, so the composer
+        // stack would be a prompt box wired to a dead process.
+        let live = !self
+            .workspace
+            .read(cx)
+            .active_session()
+            .is_some_and(|chat| chat.archive.is_some());
         let body = if !open {
             self.no_project(cx)
         } else {
@@ -678,7 +961,7 @@ impl Cydonia {
             .border_color(theme.border)
             .overflow_hidden()
             .child(body)
-            .when(open, |card| {
+            .when(open && live, |card| {
                 card.child(
                     div().flex_none().flex().justify_center().child(
                         div()
@@ -889,6 +1172,8 @@ impl Render for Cydonia {
             .on_action(cx.listener(Self::new_session_action))
             .on_action(cx.listener(Self::open_project_action))
             .on_action(cx.listener(Self::open_settings_action))
+            .on_action(cx.listener(Self::commit_name))
+            .on_action(cx.listener(Self::dismiss_name))
             .on_drag_move(
                 cx.listener(|this, event: &DragMoveEvent<SplitDrag>, _, cx| {
                     this.sidebar_width =

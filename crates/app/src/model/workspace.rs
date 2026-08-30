@@ -11,6 +11,7 @@
 use crate::{
     agents,
     model::{
+        archive,
         article::{self, Article},
         board::Board,
         project::Project,
@@ -42,6 +43,7 @@ impl Workspace {
     pub fn new(settings: Settings, state: State, cx: &mut Context<Self>) -> Self {
         let projects: Vec<Project> = state.projects.into_iter().map(Project::new).collect();
         let active = (!projects.is_empty()).then_some(state.active);
+        let restore: Vec<usize> = (0..projects.len()).collect();
         let mut this = Self {
             settings,
             projects,
@@ -50,6 +52,9 @@ impl Workspace {
             next_id: 0,
             agent_icons: HashMap::new(),
         };
+        for ix in restore {
+            this.restore_archived(ix, cx);
+        }
         this.open_first_session(cx);
         this.load_agent_icons(cx);
         this
@@ -119,7 +124,9 @@ impl Workspace {
             Some(ix) => ix,
             None => {
                 self.projects.push(Project::new(path));
-                self.projects.len() - 1
+                let ix = self.projects.len() - 1;
+                self.restore_archived(ix, cx);
+                ix
             }
         };
         self.select_project(ix, cx);
@@ -217,10 +224,54 @@ impl Workspace {
 
     /// Drop the session: the shutdown sender goes with it and the agent
     /// process dies.
+    /// Read the project's filed transcripts back, minting an id for each —
+    /// ids mean nothing across a launch, so a reloaded one is as new as any.
+    fn restore_archived(&mut self, ix: usize, cx: &mut Context<Self>) {
+        let path = self.projects[ix].path.clone();
+        for (file, record) in archive::list(&path) {
+            let id = self.next_id;
+            self.next_id += 1;
+            let chat = ChatSession::from_archive(id, file, record, cx);
+            self.projects[ix].sessions.push(chat);
+        }
+    }
+
+    /// File the transcript, then close the connection behind it. The row stays
+    /// where it was, readable — an archive you cannot open is a delete.
+    pub fn archive_session(&mut self, id: u64, cx: &mut Context<Self>) {
+        let Some(ix) = self.project_of(id) else {
+            return;
+        };
+        let path = self.projects[ix].path.clone();
+        let Some(chat) = self.projects[ix].session_mut(id) else {
+            return;
+        };
+        if chat.archive.is_some() {
+            return;
+        }
+        let Some(file) = archive::write(&path, &chat.to_archive()) else {
+            return;
+        };
+        chat.close(file);
+        cx.notify();
+    }
+
+    pub fn rename_session(&mut self, id: u64, name: String, cx: &mut Context<Self>) {
+        self.with_session(id, cx, |chat| {
+            let name = name.trim();
+            chat.name = (!name.is_empty()).then(|| name.to_owned());
+        });
+    }
+
     pub fn close_session(&mut self, id: u64, cx: &mut Context<Self>) {
         let Some(project) = self.project_of(id).map(|ix| &mut self.projects[ix]) else {
             return;
         };
+        // Closing an archived session is what deletes it: leaving the file
+        // would put the row back on the next launch.
+        if let Some(file) = project.session(id).and_then(|chat| chat.archive.as_ref()) {
+            archive::remove(file);
+        }
         project.sessions.retain(|chat| chat.id != id);
         if project.active == Some(id) {
             project.active = project.sessions.last().map(|chat| chat.id);

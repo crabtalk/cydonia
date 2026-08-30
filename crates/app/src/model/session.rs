@@ -8,7 +8,7 @@
 
 use crate::{
     acp::{self, Event, Reply, Session},
-    model::{settings, workspace::Workspace},
+    model::{archive::Archived, settings, workspace::Workspace},
     view::transcript,
 };
 use anyhow::anyhow;
@@ -21,24 +21,30 @@ use cacp::schema::{
     RequestPermissionResponse, SessionUpdate, StopReason, ToolCallContent, ToolCallStatus,
     ToolKind,
 };
-use std::{collections::VecDeque, path::PathBuf, time::Duration};
+use serde::{Deserialize, Serialize};
+use std::{
+    collections::VecDeque,
+    path::PathBuf,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 const STREAM_FRAME: Duration = Duration::from_millis(120);
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum ToolStatus {
     Running,
     Success,
     Failure,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum PlanStatus {
     Pending,
     Active,
     Done,
 }
 
+#[derive(Clone, Serialize, Deserialize)]
 pub enum ChatItem {
     User(String),
     Agent(String),
@@ -83,7 +89,17 @@ pub struct ChatSession {
     pub plan: Vec<(String, PlanStatus)>,
     pub permission: Option<PermissionPrompt>,
     pub commands: Vec<String>,
+    /// The agent's own name for the session, from `SessionInfoUpdate`.
     pub title: String,
+    /// The name you typed, which the agent never overwrites. Two fields rather
+    /// than one and a flag: whose name it is *is* the state.
+    pub name: Option<String>,
+    /// When the session last had something to say. Wall clock, not `Instant`,
+    /// because an archived one has to carry it into the file.
+    pub updated: SystemTime,
+    /// The file this session was filed to, which is also *whether* it was: an
+    /// archived session is a closed one with somewhere to be read back from.
+    pub archive: Option<PathBuf>,
     pub streaming: bool,
     pub lost: bool,
     pub queue: VecDeque<String>,
@@ -143,6 +159,7 @@ impl ChatSession {
                         for event in batch {
                             chat.apply(event);
                         }
+                        chat.updated = SystemTime::now();
                     });
                     workspace.session(id).is_some_and(|chat| chat.streaming)
                 });
@@ -163,12 +180,85 @@ impl ChatSession {
             permission: None,
             commands: Vec::new(),
             title: String::new(),
+            name: None,
+            updated: SystemTime::now(),
+            archive: None,
             streaming: false,
             lost: false,
             queue: VecDeque::new(),
             seed,
             transcript: transcript::State::new(Painter::of(cx)),
             _pump: pump,
+        }
+    }
+
+    /// A transcript read back from disk: everything a row and the transcript
+    /// pane need, and nothing that could talk to an agent.
+    pub fn from_archive(
+        id: u64,
+        path: PathBuf,
+        record: Archived,
+        cx: &mut Context<Workspace>,
+    ) -> Self {
+        let updated = record.at();
+        Self {
+            id,
+            entry: settings::Agent {
+                name: record.agent,
+                id: None,
+                command: String::new(),
+                args: Vec::new(),
+                env: Default::default(),
+            },
+            session: None,
+            items: record.items,
+            plan: Vec::new(),
+            permission: None,
+            commands: Vec::new(),
+            title: record.title,
+            name: record.name,
+            updated,
+            archive: Some(path),
+            streaming: false,
+            lost: false,
+            queue: VecDeque::new(),
+            seed: None,
+            transcript: transcript::State::new(Painter::of(cx)),
+            _pump: Task::ready(()),
+        }
+    }
+
+    pub fn to_archive(&self) -> Archived {
+        Archived {
+            agent: self.entry.name.clone(),
+            title: self.title.clone(),
+            name: self.name.clone(),
+            updated: self
+                .updated
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            items: self.items.clone(),
+        }
+    }
+
+    /// Close the connection and keep the transcript. Dropping `session` is
+    /// what tears the agent process down; the pump has nothing left to pump.
+    pub fn close(&mut self, path: PathBuf) {
+        self.session = None;
+        self._pump = Task::ready(());
+        self.streaming = false;
+        self.queue.clear();
+        self.archive = Some(path);
+    }
+
+    /// What to call this session: your name, else the agent's, else the
+    /// agent's own name.
+    pub fn label(&self) -> String {
+        match (&self.name, self.title.is_empty()) {
+            (Some(name), _) => name.clone(),
+            (None, false) => self.title.clone(),
+            (None, true) => self.entry.name.clone(),
         }
     }
 
@@ -188,6 +278,7 @@ impl ChatSession {
         };
         session.prompt(&content);
         self.items.push(ChatItem::User(content));
+        self.updated = SystemTime::now();
         self.streaming = true;
     }
 

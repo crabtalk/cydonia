@@ -5,4 +5,5 @@ pub mod agents;
 pub mod assets;
 pub mod mcp;
 pub mod model;
+pub mod utils;
 pub mod view;

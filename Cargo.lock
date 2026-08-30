@@ -1860,6 +1860,7 @@ dependencies = [
  "cydonia-ui",
  "dirs 6.0.0",
  "serde",
+ "serde_json",
  "tokio",
  "toml 0.8.23",
  "toml_edit 0.22.27",

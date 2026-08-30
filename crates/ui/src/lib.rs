@@ -9,6 +9,20 @@ use bezel::{
     theme::Theme,
 };
 
+/// The `···` that opens a row's menu.
+///
+/// Three divs rather than an asset: bezel's Solar set has no dots glyph, and a
+/// mark this simple is not worth a file — `status_dot` is drawn the same way.
+pub fn dots(theme: &Theme) -> Div {
+    let tone = theme.text_faint;
+    div()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(2.))
+        .children((0..3).map(move |_| div().size(px(3.)).rounded_full().bg(tone)))
+}
+
 /// A quiet control: a row of glyph and label that shows a wash on hover and
 /// nothing at rest.
 ///

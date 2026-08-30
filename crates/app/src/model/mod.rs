@@ -2,6 +2,7 @@
 //! the boards and articles beside them, and the files all of that is restored
 //! from.
 
+pub mod archive;
 pub mod article;
 pub mod board;
 pub mod project;
