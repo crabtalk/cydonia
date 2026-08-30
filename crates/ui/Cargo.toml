@@ -1,0 +1,10 @@
+[package]
+name = "cydonia-ui"
+description = "Widgets cydonia grew that bezel has not got yet"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bezel.workspace = true

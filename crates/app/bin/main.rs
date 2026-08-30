@@ -3,26 +3,31 @@
 use anyhow::Result;
 use bezel::{
     gpui::{
-        App, AppContext as _, Bounds, Menu, MenuItem, TitlebarOptions, WindowBounds, WindowOptions,
-        point, px, size,
+        self, App, AppContext as _, Bounds, Menu, MenuItem, TitlebarOptions, WindowBounds,
+        WindowOptions, actions, point, px, size,
     },
+    gpui_platform,
     theme::{Theme, appearance},
-    ui::{self, focus, icons, input},
+    ui::{self, focus, input},
 };
-use cydonia::{app, composer, settings};
-use gpui::actions;
+use cydonia::{
+    assets,
+    model::{settings, state},
+    view::{board, composer, root},
+};
 
 actions!(cydonia, [Quit]);
 
 fn main() -> Result<()> {
     let settings = settings::load()?;
+    let state = state::restore();
     gpui_platform::application()
-        .with_assets(icons::Assets)
+        .with_assets(assets::Assets)
         .run(move |cx: &mut App| {
             if let Err(err) = ui::register_fonts(cx) {
                 eprintln!("font registration failed: {err:?}");
             }
-            appearance::init(appearance::AppearanceMode::System, cx);
+            appearance::init(state.appearance, cx);
             markdown::set_highlighter(
                 cx,
                 |language, code| syntax::highlight(code, language),
@@ -31,7 +36,9 @@ fn main() -> Result<()> {
             input::init(cx);
             focus::init(cx);
             composer::init(cx);
-            app::init(cx);
+            editor::init(cx);
+            board::init(cx);
+            root::init(cx);
             set_menus(cx);
 
             let bounds = Bounds::centered(None, size(px(1100.), px(760.)), cx);
@@ -43,8 +50,8 @@ fn main() -> Result<()> {
                     titlebar: Some(TitlebarOptions {
                         appears_transparent: true,
                         traffic_light_position: Some(point(
-                            px(app::TRAFFIC_LIGHT_X),
-                            px(app::TRAFFIC_LIGHT_Y),
+                            px(root::TRAFFIC_LIGHT_X),
+                            px(root::TRAFFIC_LIGHT_Y),
                         )),
                         ..Default::default()
                     }),
@@ -56,7 +63,7 @@ fn main() -> Result<()> {
                 },
                 |window, cx| {
                     appearance::observe_window(window, cx).detach();
-                    let app = cx.new(|cx| app::Cydonia::new(settings, cx));
+                    let app = cx.new(|cx| root::Cydonia::new(settings, state, cx));
                     let focus = app.read(cx).composer_focus_handle(cx);
                     window.focus(&focus, cx);
                     app

@@ -1,38 +1,28 @@
-[package]
-name = "cydonia"
-description = "Desktop client for ACP agents"
+[workspace]
+members = ["crates/*"]
+resolver = "3"
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/crabtalk/cydonia"
-readme = "README.md"
 
-[[bin]]
-name = "cydonia"
-path = "bin/main.rs"
-
-[dependencies]
+[workspace.dependencies]
 # bezel — the component library the GUI is built on. Published as `bezel-*`;
-# the keys here are what the source imports.
-bezel = "0.1.3"
+# the keys here are what the source imports. `platform` carries gpui_platform,
+# which opens the window: gpui core knows no platform of its own.
+bezel = { version = "0.1.3", features = ["platform"] }
+editor = { version = "0.1.3", package = "bezel-editor" }
 markdown = { version = "0.1.3", package = "bezel-markdown" }
 syntax = { version = "0.1.3", package = "bezel-syntax" }
-
-# The same gpui bezel is built against. A stock crates.io gpui beside it is a
-# second type universe — a window that paints shapes but no text, one text
-# system holding the fonts while the other draws the frame.
-#
-# `actions!` expands to literal `gpui::` paths, so the crate name has to be in
-# scope even where every type is reached through the facade.
-gpui = { version = "0.3.5", package = "bezel-gpui" }
-gpui_platform = { version = "0.3.5", package = "bezel-gpui-platform", features = [
-    "font-kit",
-] }
 
 # cacp — our ACP implementation. A sibling checkout while both move together.
 cacp = { path = "../cacp/crates/cacp", default-features = false, features = [
     "client",
 ] }
+cacp-agents = { path = "../cacp/crates/agents" }
+ui = { path = "crates/ui", package = "cydonia-ui" }
 
 # crates.io
 anyhow = "1"
@@ -42,14 +32,22 @@ serde = { version = "1", features = ["derive"] }
 # needs a runtime of its own — gpui's executor is smol's.
 tokio = { version = "1", features = ["process", "rt-multi-thread", "sync"] }
 toml = "0.8"
+# Installing an agent edits settings.toml in place. `toml` would round-trip
+# it through a value tree and drop every comment the file was written with.
+toml_edit = "0.22"
+# Downloads the registry's agent icons. The same client cacp-agents fetches
+# the catalog with, so this adds no second HTTP stack.
+ureq = "3"
 
-# Every bezel crate in the graph, together: patching only the facade would
-# leave `bezel-markdown` on a registry `bezel-ui` beside the local one.
+# bezel is being fixed in a worktree beside this checkout. Every bezel-* crate
+# in the graph has to come from there together: two copies of the token system
+# is a second type universe, and the window paints shapes but no text.
 [patch.crates-io]
-bezel = { path = "../bezel/crates/bezel" }
-bezel-agent = { path = "../bezel/crates/agent" }
-bezel-markdown = { path = "../bezel/crates/markdown" }
-bezel-motion = { path = "../bezel/crates/motion" }
-bezel-syntax = { path = "../bezel/crates/syntax" }
-bezel-theme = { path = "../bezel/crates/theme" }
-bezel-ui = { path = "../bezel/crates/ui" }
+bezel = { path = "../bezel-editor-fix/crates/bezel" }
+bezel-agent = { path = "../bezel-editor-fix/crates/agent" }
+bezel-editor = { path = "../bezel-editor-fix/crates/editor" }
+bezel-markdown = { path = "../bezel-editor-fix/crates/markdown" }
+bezel-motion = { path = "../bezel-editor-fix/crates/motion" }
+bezel-syntax = { path = "../bezel-editor-fix/crates/syntax" }
+bezel-theme = { path = "../bezel-editor-fix/crates/theme" }
+bezel-ui = { path = "../bezel-editor-fix/crates/ui" }

@@ -8,17 +8,19 @@
 
 use crate::{
     acp::{self, Event, Reply, Session},
-    app::Cydonia,
-    settings, transcript,
+    model::{settings, workspace::Workspace},
+    view::transcript,
 };
 use anyhow::anyhow;
-use bezel::motion::Painter;
+use bezel::{
+    gpui::{Context, Task},
+    motion::Painter,
+};
 use cacp::schema::{
     ContentBlock, MaybeUndefined, PermissionOptionKind, PlanEntryStatus, RequestPermissionRequest,
     RequestPermissionResponse, SessionUpdate, StopReason, ToolCallContent, ToolCallStatus,
     ToolKind,
 };
-use gpui::{Context, Task};
 use std::{collections::VecDeque, path::PathBuf, time::Duration};
 
 const STREAM_FRAME: Duration = Duration::from_millis(120);
@@ -85,6 +87,9 @@ pub struct ChatSession {
     pub streaming: bool,
     pub lost: bool,
     pub queue: VecDeque<String>,
+    /// A prompt to send the moment the session is up — the card that opened
+    /// it. Taken by [`crate::view::root::Cydonia::session_connected`], never resent.
+    pub seed: Option<String>,
     pub transcript: transcript::State,
     _pump: Task<()>,
 }
@@ -94,7 +99,8 @@ impl ChatSession {
         id: u64,
         entry: settings::Agent,
         cwd: PathBuf,
-        cx: &mut Context<Cydonia>,
+        seed: Option<String>,
+        cx: &mut Context<Workspace>,
     ) -> Self {
         let spawn_entry = entry.clone();
         let conn = acp::runtime()
@@ -107,8 +113,8 @@ impl ChatSession {
             let (session, mut events) = match opened {
                 Ok(pair) => pair,
                 Err(e) => {
-                    let _ = this.update(cx, |app, cx| {
-                        app.with_session(id, cx, |chat| {
+                    let _ = this.update(cx, |workspace, cx| {
+                        workspace.with_session(id, cx, |chat| {
                             chat.lost = true;
                             chat.notice(true, &format!("connection failed: {e:#}"));
                         });
@@ -118,9 +124,9 @@ impl ChatSession {
             };
 
             if this
-                .update(cx, |app, cx| {
-                    app.with_session(id, cx, |chat| chat.session = Some(session));
-                    app.session_connected(id, cx);
+                .update(cx, |workspace, cx| {
+                    workspace.with_session(id, cx, |chat| chat.session = Some(session));
+                    workspace.session_connected(id, cx);
                 })
                 .is_err()
             {
@@ -132,13 +138,13 @@ impl ChatSession {
                 while let Ok(event) = events.try_recv() {
                     batch.push(event);
                 }
-                let streaming = this.update(cx, |app, cx| {
-                    app.with_session(id, cx, |chat| {
+                let streaming = this.update(cx, |workspace, cx| {
+                    workspace.with_session(id, cx, |chat| {
                         for event in batch {
                             chat.apply(event);
                         }
                     });
-                    app.session(id).is_some_and(|chat| chat.streaming)
+                    workspace.session(id).is_some_and(|chat| chat.streaming)
                 });
                 match streaming {
                     Ok(true) => cx.background_executor().timer(STREAM_FRAME).await,
@@ -160,6 +166,7 @@ impl ChatSession {
             streaming: false,
             lost: false,
             queue: VecDeque::new(),
+            seed,
             transcript: transcript::State::new(Painter::of(cx)),
             _pump: pump,
         }

@@ -1,20 +1,31 @@
 //! Root view: the projects rail, and the chat column beside it.
 
 use crate::{
-    composer::{Composer, ComposerEvent},
-    project::{self, Project},
-    session::{ChatSession, PlanStatus},
-    settings::{self, Settings},
+    model::{
+        project::Project,
+        session::{ChatSession, PlanStatus},
+        settings::Settings,
+        state::State,
+        workspace::Workspace,
+    },
+    view::{
+        board::{self, Editing},
+        composer::{self, Composer, ComposerEvent},
+        settings_window::{self, SettingsWindow},
+        transcript,
+    },
 };
 use bezel::{
     gpui::{
-        AnyElement, App, Axis, Context, DragMoveEvent, Empty, Entity, FocusHandle, Focusable as _,
-        FontWeight, KeyBinding, PathPromptOptions, Render, Window, div, prelude::*, px,
+        self, AnyElement, App, Axis, Context, DragMoveEvent, Empty, Entity, FocusHandle,
+        Focusable as _, FontWeight, KeyBinding, PathPromptOptions, Render, Window, WindowHandle,
+        actions, div, prelude::*, px, svg,
     },
     motion::{Fade, Painter},
     theme::Theme,
     ui::{
         icons,
+        input::TextField,
         tooltip::Tooltip,
         widgets::{
             self, ButtonStyle, Buttons, Content, Layout, SPLIT_HANDLE_HIT, Scaffolding, SplitDrag,
@@ -23,10 +34,8 @@ use bezel::{
     },
 };
 use cacp::schema::PermissionOptionKind;
-use gpui::actions;
-use std::path::PathBuf;
 
-actions!(cydonia, [NewSession, OpenProject]);
+actions!(cydonia, [NewSession, OpenProject, OpenSettings]);
 
 const SIDEBAR_DEFAULT: f32 = 200.;
 const SIDEBAR_MIN: f32 = 180.;
@@ -54,20 +63,34 @@ pub fn init(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("cmd-n", NewSession, None),
         KeyBinding::new("cmd-o", OpenProject, None),
+        // What macOS binds Preferences to in every other app.
+        KeyBinding::new("cmd-,", OpenSettings, None),
     ]);
 }
 
+/// Which pane the content card shows. A property of the window, not of a
+/// project — switching projects must not teleport you to another pane.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pane {
+    Chat,
+    Board,
+    Article,
+}
+
+/// The root view. It owns no app state — only the chrome's own: how wide the
+/// rail is, which pane is showing, and whichever card is being written.
 pub struct Cydonia {
-    pub settings: Settings,
-    projects: Vec<Project>,
-    active: Option<usize>,
-    next_id: u64,
+    pub(crate) workspace: Entity<Workspace>,
     sidebar_width: f32,
     composer: Entity<Composer>,
+    settings_window: Option<WindowHandle<SettingsWindow>>,
+    pub(crate) pane: Pane,
+    pub(crate) editing: Option<Editing>,
+    pub(crate) card_field: Entity<TextField>,
 }
 
 impl Cydonia {
-    pub fn new(settings: Settings, cx: &mut Context<Self>) -> Self {
+    pub fn new(settings: Settings, state: State, cx: &mut Context<Self>) -> Self {
         let composer = cx.new(Composer::new);
         cx.subscribe(
             &composer,
@@ -79,18 +102,23 @@ impl Cydonia {
         )
         .detach();
 
-        let state = project::restore();
-        let projects: Vec<Project> = state.projects.into_iter().map(Project::new).collect();
-        let active = (!projects.is_empty()).then_some(state.active);
+        let card_field = board::field(cx);
+        let workspace = cx.new(|cx| Workspace::new(settings, state, cx));
+        // The model is the only thing that says a session appeared or a turn
+        // ended; the composer's placeholder, commands and busy state are all
+        // read back from it rather than pushed by whoever caused the change.
+        cx.observe(&workspace, |this, _, cx| this.sync_composer(cx))
+            .detach();
+
         let mut this = Self {
-            settings,
-            projects,
-            active,
-            next_id: 0,
+            workspace,
             sidebar_width: SIDEBAR_DEFAULT,
             composer,
+            settings_window: None,
+            pane: Pane::Chat,
+            editing: None,
+            card_field,
         };
-        this.open_first_session(cx);
         this.sync_composer(cx);
         this
     }
@@ -99,38 +127,75 @@ impl Cydonia {
         self.composer.focus_handle(cx)
     }
 
+    /// Run `f` on the active session. Every composer action is this shape:
+    /// the view knows which session is in front, the model owns it.
+    fn with_active(&mut self, cx: &mut Context<Self>, f: impl FnOnce(&mut ChatSession)) {
+        let Some(id) = self.workspace.read(cx).active_id() else {
+            return;
+        };
+        self.workspace
+            .update(cx, |workspace, cx| workspace.with_session(id, cx, f));
+    }
+
     fn submit(&mut self, text: String, cx: &mut Context<Self>) {
-        if let Some(id) = self.active_id() {
-            self.with_session(id, cx, |chat| chat.send(text));
-        }
+        self.with_active(cx, |chat| chat.send(text));
     }
 
     fn cancel_turn(&mut self, cx: &mut Context<Self>) {
-        if let Some(id) = self.active_id() {
-            self.with_session(id, cx, |chat| chat.cancel());
-        }
+        self.with_active(cx, |chat| chat.cancel());
     }
 
     /// The composer's agent chip. An ACP session is bound to the process that
     /// serves it, so picking another agent opens a session rather than
     /// swapping one out from under a transcript.
     fn pick_agent(&mut self, ix: usize, cx: &mut Context<Self>) {
-        if let Some(entry) = self.settings.agents.get(ix).cloned() {
-            self.new_session(entry, cx);
+        let entry = self.workspace.read(cx).settings.agents.get(ix).cloned();
+        if let Some(entry) = entry {
+            self.workspace
+                .update(cx, |workspace, cx| workspace.new_session(entry, None, cx));
         }
     }
 
     fn new_session_action(&mut self, _: &NewSession, _: &mut Window, cx: &mut Context<Self>) {
-        let entry = self
-            .active_session()
-            .map(|chat| chat.entry.clone())
-            .or_else(|| self.settings.agents.first().cloned());
-        if let Some(entry) = entry {
-            self.new_session(entry, cx);
-        }
+        self.workspace.update(cx, |workspace, cx| {
+            if let Some(entry) = workspace.preferred_agent() {
+                workspace.new_session(entry, None, cx);
+            }
+        });
     }
 
-    // ── projects ─────────────────────────────────────────────────────
+    /// Leaving a project is the moment a half-written card has to be filed:
+    /// the spot it points at belongs to the board being navigated away from.
+    pub(crate) fn select_project(&mut self, ix: usize, cx: &mut Context<Self>) {
+        self.commit(cx);
+        self.workspace
+            .update(cx, |workspace, cx| workspace.select_project(ix, cx));
+    }
+
+    pub(crate) fn close_project(&mut self, ix: usize, cx: &mut Context<Self>) {
+        self.commit(cx);
+        self.workspace
+            .update(cx, |workspace, cx| workspace.close_project(ix, cx));
+    }
+
+    pub(crate) fn select_session(&mut self, id: u64, cx: &mut Context<Self>) {
+        self.workspace
+            .update(cx, |workspace, cx| workspace.select_session(id, cx));
+    }
+
+    pub(crate) fn close_session(&mut self, id: u64, cx: &mut Context<Self>) {
+        self.workspace
+            .update(cx, |workspace, cx| workspace.close_session(id, cx));
+    }
+
+    fn open_settings_action(&mut self, _: &OpenSettings, _: &mut Window, cx: &mut Context<Self>) {
+        self.open_settings(cx);
+    }
+
+    fn open_settings(&mut self, cx: &mut Context<Self>) {
+        let workspace = self.workspace.clone();
+        self.settings_window = settings_window::open(workspace, self.settings_window, cx);
+    }
 
     fn open_project_action(&mut self, _: &OpenProject, _: &mut Window, cx: &mut Context<Self>) {
         let picked = cx.prompt_for_paths(PathPromptOptions {
@@ -146,164 +211,38 @@ impl Cydonia {
             let Some(path) = paths.into_iter().next() else {
                 return;
             };
-            let _ = this.update(cx, |app, cx| app.open_project(path, cx));
+            let _ = this.update(cx, |this, cx| {
+                this.workspace
+                    .update(cx, |workspace, cx| workspace.open_project(path, cx));
+            });
         })
         .detach();
-    }
-
-    pub fn open_project(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        let open = self.projects.iter().position(|p| p.path == path);
-        let ix = match open {
-            Some(ix) => ix,
-            None => {
-                self.projects.push(Project::new(path));
-                self.projects.len() - 1
-            }
-        };
-        self.select_project(ix, cx);
-    }
-
-    pub fn select_project(&mut self, ix: usize, cx: &mut Context<Self>) {
-        if ix >= self.projects.len() {
-            return;
-        }
-        self.active = Some(ix);
-        self.open_first_session(cx);
-        self.sync_composer(cx);
-        project::save(&self.projects, self.active);
-        cx.notify();
-    }
-
-    /// Drop the project: its sessions go with it, and each session's shutdown
-    /// sender goes with that — the agent processes die here.
-    pub fn close_project(&mut self, ix: usize, cx: &mut Context<Self>) {
-        if ix >= self.projects.len() {
-            return;
-        }
-        self.projects.remove(ix);
-        self.active = self.active.and_then(|active| {
-            let next = if active > ix { active - 1 } else { active };
-            (!self.projects.is_empty()).then(|| next.min(self.projects.len() - 1))
-        });
-        self.open_first_session(cx);
-        self.sync_composer(cx);
-        project::save(&self.projects, self.active);
-        cx.notify();
-    }
-
-    /// A project talks to an agent the moment it is looked at: the tab in
-    /// front opens its first session, and the tabs behind it spawn nothing.
-    fn open_first_session(&mut self, cx: &mut Context<Self>) {
-        if self
-            .active_project()
-            .is_none_or(|project| !project.sessions.is_empty())
-        {
-            return;
-        }
-        if let Some(entry) = self.settings.agents.first().cloned() {
-            self.new_session(entry, cx);
-        }
-    }
-
-    fn active_project(&self) -> Option<&Project> {
-        self.active.and_then(|ix| self.projects.get(ix))
-    }
-
-    // ── sessions ─────────────────────────────────────────────────────
-
-    pub fn new_session(&mut self, entry: settings::Agent, cx: &mut Context<Self>) {
-        let Some(ix) = self.active else {
-            return;
-        };
-        let id = self.next_id;
-        self.next_id += 1;
-        let chat = ChatSession::connect(id, entry, self.projects[ix].path.clone(), cx);
-        let project = &mut self.projects[ix];
-        project.sessions.push(chat);
-        project.active = Some(id);
-        self.sync_composer(cx);
-        cx.notify();
-    }
-
-    /// Every project's sessions are on show, so picking one brings its project
-    /// forward with it.
-    pub fn select_session(&mut self, id: u64, cx: &mut Context<Self>) {
-        let Some(ix) = self.project_of(id) else {
-            return;
-        };
-        self.projects[ix].active = Some(id);
-        if self.active != Some(ix) {
-            self.active = Some(ix);
-            project::save(&self.projects, self.active);
-        }
-        self.sync_composer(cx);
-        cx.notify();
-    }
-
-    fn project_of(&self, id: u64) -> Option<usize> {
-        self.projects
-            .iter()
-            .position(|project| project.session(id).is_some())
-    }
-
-    /// Drop the session: the shutdown sender goes with it and the agent
-    /// process dies.
-    pub fn close_session(&mut self, id: u64, cx: &mut Context<Self>) {
-        let Some(project) = self.project_of(id).map(|ix| &mut self.projects[ix]) else {
-            return;
-        };
-        project.sessions.retain(|chat| chat.id != id);
-        if project.active == Some(id) {
-            project.active = project.sessions.last().map(|chat| chat.id);
-            self.sync_composer(cx);
-        }
-        cx.notify();
-    }
-
-    /// Any session, in whichever project holds it — the pump that feeds a
-    /// session knows only its id, and must not care which tab it sits behind.
-    pub fn session(&self, id: u64) -> Option<&ChatSession> {
-        self.projects.iter().find_map(|project| project.session(id))
-    }
-
-    /// Run `f` on the session (when it still exists) and repaint.
-    pub fn with_session(
-        &mut self,
-        id: u64,
-        cx: &mut Context<Self>,
-        f: impl FnOnce(&mut ChatSession),
-    ) {
-        let found = self
-            .projects
-            .iter_mut()
-            .find_map(|project| project.session_mut(id));
-        if let Some(chat) = found {
-            f(chat);
-            if self.active_id() == Some(id) {
-                self.sync_composer(cx);
-            }
-            cx.notify();
-        }
     }
 
     /// What the composer needs from the session it is pointed at: the agent's
     /// name, its commands, whether a turn is in flight, and the agents it can
     /// be swapped for.
     fn sync_composer(&mut self, cx: &mut Context<Self>) {
-        let agents: Vec<String> = self
+        let workspace = self.workspace.read(cx);
+        let agents: Vec<composer::Agent> = workspace
             .settings
             .agents
             .iter()
-            .map(|entry| entry.name.clone())
+            .map(|entry| composer::Agent {
+                name: entry.name.clone().into(),
+                icon: workspace.agent_icon(&entry.name),
+            })
             .collect();
-        let chat = self.active_session();
+        let chat = workspace.active_session();
         let placeholder = chat.map_or_else(
             || "message the agent…".to_owned(),
             |chat| format!("message {}…", chat.entry.name),
         );
         let commands = chat.map(|chat| chat.commands.clone()).unwrap_or_default();
         let streaming = chat.is_some_and(|chat| chat.streaming);
-        let current = chat.and_then(|chat| agents.iter().position(|name| *name == chat.entry.name));
+        let current = chat
+            .map(|chat| chat.entry.name.clone())
+            .and_then(|name| agents.iter().position(|agent| agent.name == name));
         self.composer.update(cx, |composer, cx| {
             composer.set_placeholder(&placeholder, cx);
             composer.set_commands(&commands, cx);
@@ -312,29 +251,12 @@ impl Cydonia {
         });
     }
 
-    /// The session opened. Temporary dev hook: `CYDONIA_TEST_PROMPT` sends
-    /// a prompt right away so streaming can be verified without a composer.
-    pub fn session_connected(&mut self, id: u64, cx: &mut Context<Self>) {
-        if let Ok(prompt) = std::env::var("CYDONIA_TEST_PROMPT") {
-            self.with_session(id, cx, |chat| chat.send(prompt));
-        }
-        cx.notify();
-    }
-
-    fn active_session(&self) -> Option<&ChatSession> {
-        self.active_project().and_then(Project::active_session)
-    }
-
-    fn active_id(&self) -> Option<u64> {
-        self.active_project().and_then(|project| project.active)
-    }
-
     // ── chrome ───────────────────────────────────────────────────────
 
     fn session_row(&self, chat: &ChatSession, cx: &Context<Self>) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
         let id = chat.id;
-        let selected = self.active_id() == Some(id);
+        let selected = self.workspace.read(cx).active_id() == Some(id);
         let label = if chat.title.is_empty() {
             chat.entry.name.clone()
         } else {
@@ -365,7 +287,35 @@ impl Cydonia {
             .cursor_pointer()
             .when(selected, |el| el.bg(theme.glass_hover()))
             .hover(|el| el.bg(theme.glass_hover()))
-            .child(widgets::status_dot(tone))
+            // The agent's own mark where the catalog has one. The dot stays
+            // the answer for an agent the registry doesn't publish — a local
+            // binary, or a first run with no catalog yet.
+            //
+            // The mark takes the label's colour, not the session's: every icon
+            // the registry publishes is a `currentColor` glyph, so tinting is
+            // the only colour it will ever have, and reading it as status
+            // would make the agent's identity change with its state.
+            .child(
+                div()
+                    .flex_none()
+                    .size(px(14.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(match self.workspace.read(cx).agent_icon(&chat.entry.name) {
+                        Some(path) => svg()
+                            .path(path)
+                            .size(px(14.))
+                            .flex_none()
+                            .text_color(if selected {
+                                theme.text
+                            } else {
+                                theme.text_muted
+                            })
+                            .into_any_element(),
+                        None => widgets::status_dot(tone).into_any_element(),
+                    }),
+            )
             .child(
                 div()
                     .flex_1()
@@ -411,8 +361,7 @@ impl Cydonia {
         cx: &Context<Self>,
     ) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
-        let active = self.active == Some(ix);
-        let path = project.path.display().to_string();
+        let active = self.workspace.read(cx).active == Some(ix);
         div()
             .flex()
             .flex_col()
@@ -431,7 +380,6 @@ impl Cydonia {
                     .gap(px(6.))
                     .cursor_pointer()
                     .hover(|el| el.bg(theme.glass_hover()))
-                    .tooltip(move |window, cx| Tooltip::text(path.clone(), window, cx))
                     .child(
                         div()
                             .flex_1()
@@ -441,6 +389,24 @@ impl Cydonia {
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(if active { theme.text } else { theme.text_faint })
                             .child(project.name()),
+                    )
+                    .child(
+                        div()
+                            .id(("new-article", ix))
+                            .flex_none()
+                            .invisible()
+                            .group_hover("project-head", |el| el.visible())
+                            .rounded(px(Theme::control_radius()))
+                            .p(px(2.))
+                            .child(
+                                icons::icon(icons::DOCUMENT_ADD)
+                                    .size(px(12.))
+                                    .text_color(theme.text_faint),
+                            )
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                cx.stop_propagation();
+                                this.new_article(ix, window, cx);
+                            })),
                     )
                     .child(
                         div()
@@ -492,10 +458,25 @@ impl Cydonia {
                     .iter()
                     .map(|chat| self.session_row(chat, cx)),
             )
+            .children(
+                project
+                    .articles
+                    .iter()
+                    .enumerate()
+                    .map(|(n, article)| self.article_row(ix, n, article.title(), cx)),
+            )
     }
 
     fn sidebar(&self, cx: &Context<Self>) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
+        let sections: Vec<AnyElement> = self
+            .workspace
+            .read(cx)
+            .projects
+            .iter()
+            .enumerate()
+            .map(|(ix, project)| self.project_section(ix, project, cx).into_any_element())
+            .collect();
         div()
             .flex_none()
             .w(px(self.sidebar_width))
@@ -504,11 +485,36 @@ impl Cydonia {
             // second coat of the same tint reads darker than the shell it
             // is supposed to be part of.
             //
-            // The traffic lights float over the rail now that no header strip
-            // holds them, so the first row starts below their band.
-            .pt(px(Theme::HEADER_HEIGHT))
             .flex()
             .flex_col()
+            // The traffic lights float over the rail now that no header strip
+            // holds them; the band they sit in carries the one action that is
+            // not about a project you already have.
+            .child(
+                div()
+                    .flex_none()
+                    .h(px(Theme::HEADER_HEIGHT))
+                    .pr(px(8.))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .justify_end()
+                    .child(
+                        ui::ghost(&theme, "open-project")
+                            .p(px(4.))
+                            .tooltip(|window, cx| {
+                                Tooltip::with_keystroke("New project", "⌘O", window, cx)
+                            })
+                            .child(
+                                icons::icon(icons::PLUS)
+                                    .size(px(14.))
+                                    .text_color(theme.text_faint),
+                            )
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.open_project_action(&OpenProject, window, cx);
+                            })),
+                    ),
+            )
             .child(
                 div()
                     .id("project-list")
@@ -518,52 +524,41 @@ impl Cydonia {
                     .flex()
                     .flex_col()
                     .gap(px(12.))
-                    .children(
-                        self.projects
-                            .iter()
-                            .enumerate()
-                            .map(|(ix, project)| self.project_section(ix, project, cx)),
-                    ),
+                    .children(sections),
             )
             .child(
-                div()
-                    .id("open-project")
+                ui::ghost(&theme, "settings")
                     .flex_none()
                     .mx(px(8.))
                     .mb(px(8.))
                     .px(px(8.))
                     .py(px(6.))
-                    .rounded(px(Theme::control_radius()))
-                    .flex()
-                    .flex_row()
-                    .items_center()
                     .gap(px(8.))
-                    .cursor_pointer()
-                    .hover(|el| el.bg(theme.glass_hover()))
-                    .tooltip(|window, cx| Tooltip::with_keystroke("Open folder", "⌘O", window, cx))
                     .child(
-                        icons::icon(icons::PLUS)
-                            .size(px(12.))
+                        icons::icon(icons::SETTINGS_MINIMALISTIC)
+                            .size(px(13.))
                             .text_color(theme.text_faint),
                     )
                     .child(
                         div()
                             .text_size(px(13.))
                             .text_color(theme.text_muted)
-                            .child("New project"),
+                            .child("Settings"),
                     )
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.open_project_action(&OpenProject, window, cx);
-                    })),
+                    .on_click(cx.listener(|this, _, _, cx| this.open_settings(cx))),
             )
     }
 
-    fn chat(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
-        let theme = Theme::of(cx).clone();
-        let open = self.active_project().is_some();
-        let body = match self.active_session() {
-            Some(chat) => self.transcript(chat, window, cx),
-            None if open => theme
+    /// The session in front, or the invitation to open one.
+    fn conversation(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        match self.workspace.read(cx).active_id() {
+            Some(id) => self
+                .workspace
+                .update(cx, |workspace, cx| match workspace.session(id) {
+                    Some(chat) => transcript::render(chat, window, cx),
+                    None => div().flex_1().into_any_element(),
+                }),
+            None => Theme::of(cx)
                 .empty_state(
                     icons::CHAT_ROUND_LINE,
                     "No session",
@@ -571,16 +566,33 @@ impl Cydonia {
                 )
                 .flex_1()
                 .into_any_element(),
-            None => self.no_project(cx),
+        }
+    }
+
+    fn chat(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let theme = Theme::of(cx).clone();
+        let open = self.workspace.read(cx).active_project().is_some();
+        let body = if !open {
+            self.no_project(cx)
+        } else {
+            match self.pane {
+                Pane::Chat => self.conversation(window, cx),
+                Pane::Board => self.board(cx),
+                // Nothing to show when the article it pointed at has just
+                // been deleted, and the conversation is where you were.
+                Pane::Article => match self.article(cx) {
+                    Some(article) => article,
+                    None => self.conversation(window, cx),
+                },
+            }
         };
 
-        div()
+        let card = div()
             .flex_1()
-            .min_w_0()
+            .min_h_0()
             .mt(px(SHELL_INSET))
             .ml(px(SHELL_INSET))
             .mr(px(SHELL_INSET))
-            .mb(px(SHELL_INSET))
             .flex()
             .flex_col()
             .rounded(px(Theme::panel_radius()))
@@ -606,7 +618,56 @@ impl Cydonia {
                             .child(self.composer.clone()),
                     ),
                 )
-            })
+            });
+
+        div()
+            .flex_1()
+            .min_w_0()
+            .flex()
+            .flex_col()
+            .child(card)
+            .when(open, |column| column.child(self.pane_switch(cx)))
+    }
+
+    /// The shell strip under the content card: on the frost, not on the card.
+    /// What it holds is about the pane you are in rather than anything inside
+    /// it, so it sits outside the surface it switches.
+    ///
+    /// One button, labelled with where it goes — with two panes, a segmented
+    /// track spends a permanent slot restating the one you are already
+    /// looking at.
+    fn pane_switch(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let theme = Theme::of(cx).clone();
+        let (glyph, label, to) = match self.pane {
+            Pane::Board => (icons::CHAT_ROUND_LINE, "Chat", Pane::Chat),
+            Pane::Chat | Pane::Article => (icons::LIST, "Board", Pane::Board),
+        };
+        div()
+            .flex_none()
+            .py(px(SHELL_INSET))
+            .px(px(SHELL_INSET + 6.))
+            .flex()
+            .flex_row()
+            .items_center()
+            .justify_end()
+            .child(
+                ui::ghost(&theme, "pane-switch")
+                    .px(px(8.))
+                    .py(px(4.))
+                    .gap(px(6.))
+                    .child(
+                        icons::icon(glyph)
+                            .size(px(13.))
+                            .text_color(theme.text_faint),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(12.5))
+                            .text_color(theme.text_muted)
+                            .child(label),
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| this.show_pane(to, cx))),
+            )
     }
 
     /// Nothing is open, so there is nowhere to send a prompt — the only thing
@@ -639,7 +700,7 @@ impl Cydonia {
     /// The agent's plan, while it still has something left to do.
     fn plan(&self, cx: &Context<Self>) -> Option<impl IntoElement + use<>> {
         let theme = Theme::of(cx).clone();
-        let chat = self.active_session()?;
+        let chat = self.workspace.read(cx).active_session()?;
         if chat.plan.is_empty() || chat.plan.iter().all(|(_, s)| *s == PlanStatus::Done) {
             return None;
         }
@@ -672,7 +733,7 @@ impl Cydonia {
     /// The agent's tool-authorization request, one button per option.
     fn permission(&self, cx: &Context<Self>) -> Option<impl IntoElement + use<>> {
         let theme = Theme::of(cx).clone();
-        let chat = self.active_session()?;
+        let chat = self.workspace.read(cx).active_session()?;
         let prompt = chat.permission.as_ref()?;
         let id = chat.id;
         let painter = Painter::of(cx);
@@ -705,8 +766,10 @@ impl Cydonia {
                             .id(("permission", ix))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 let option_id = option_id.clone();
-                                this.with_session(id, cx, |chat| {
-                                    chat.respond_permission(option_id);
+                                this.workspace.update(cx, |workspace, cx| {
+                                    workspace.with_session(id, cx, |chat| {
+                                        chat.respond_permission(option_id);
+                                    });
                                 });
                             }))
                     }),
@@ -717,7 +780,7 @@ impl Cydonia {
     /// Prompts waiting for the in-flight turn.
     fn queue(&self, cx: &Context<Self>) -> Option<impl IntoElement + use<>> {
         let theme = Theme::of(cx).clone();
-        let chat = self.active_session()?;
+        let chat = self.workspace.read(cx).active_session()?;
         if chat.queue.is_empty() {
             return None;
         }
@@ -745,6 +808,7 @@ impl Render for Cydonia {
             .text_size(px(14.))
             .on_action(cx.listener(Self::new_session_action))
             .on_action(cx.listener(Self::open_project_action))
+            .on_action(cx.listener(Self::open_settings_action))
             .on_drag_move(
                 cx.listener(|this, event: &DragMoveEvent<SplitDrag>, _, cx| {
                     this.sidebar_width =
