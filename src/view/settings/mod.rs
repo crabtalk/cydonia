@@ -56,7 +56,7 @@ pub fn init(cx: &mut App) {
 
 /// Which section the sidebar has selected.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Section {
+pub enum Section {
     Appearance,
     Agents,
     // After Agents: a server is something an agent reaches, so it reads in the
@@ -110,11 +110,15 @@ pub struct SettingsWindow {
 pub fn open(
     workspace: Entity<Workspace>,
     existing: Option<WindowHandle<SettingsWindow>>,
+    section: Section,
     cx: &mut App,
 ) -> Option<WindowHandle<SettingsWindow>> {
     if let Some(handle) = existing
         && handle
-            .update(cx, |_, window, _| window.activate_window())
+            .update(cx, |this, window, cx| {
+                this.show(section, cx);
+                window.activate_window();
+            })
             .is_ok()
     {
         return Some(handle);
@@ -145,7 +149,7 @@ pub fn open(
                 };
                 let mut this = SettingsWindow {
                     workspace,
-                    section: Section::Appearance,
+                    section,
                     listings: None,
                     busy: HashSet::new(),
                     error: None,
@@ -166,6 +170,19 @@ pub fn open(
 }
 
 impl SettingsWindow {
+    /// What is on this machine can change while the window sits open —
+    /// another install, a directory removed by hand — so the section's list is
+    /// re-read on the way in rather than trusted from whenever it was opened.
+    fn show(&mut self, section: Section, cx: &mut Context<Self>) {
+        self.section = section;
+        match section {
+            Section::Agents => self.load(cx),
+            Section::Mcp => self.reload(),
+            Section::Appearance => {}
+        }
+        cx.notify();
+    }
+
     fn sidebar(&self, cx: &Context<Self>) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
         let painter = Painter::of(cx);
@@ -192,22 +209,7 @@ impl SettingsWindow {
                         Fade::new(painter, format!("section-{ix}")),
                     )
                     .id(("section", ix))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.section = section;
-                        // What is on this machine can change while the window
-                        // sits open — another install, a directory removed by
-                        // hand — so the list is re-read on the way in rather
-                        // than trusted from whenever the window was opened.
-                        match section {
-                            // What is on this machine can change while the
-                            // window sits open — another install, a directory
-                            // removed by hand.
-                            Section::Agents => this.load(cx),
-                            Section::Mcp => this.reload(),
-                            Section::Appearance => {}
-                        }
-                        cx.notify();
-                    }))
+                    .on_click(cx.listener(move |this, _, _, cx| this.show(section, cx)))
             }))
     }
 }

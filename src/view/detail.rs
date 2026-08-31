@@ -18,6 +18,18 @@ use bezel::{
     },
 };
 use cacp::schema::PermissionOptionKind;
+use std::path::Path;
+
+/// A path as it is shown: `~` for a home directory nobody needs spelled out.
+fn shown_path(path: &Path) -> String {
+    let full = path.display().to_string();
+    dirs::home_dir()
+        .and_then(|home| {
+            full.strip_prefix(home.to_str()?)
+                .map(|rest| format!("~{rest}"))
+        })
+        .unwrap_or(full)
+}
 
 impl Cydonia {
     pub fn composer_focus_handle(&self, cx: &App) -> FocusHandle {
@@ -100,10 +112,11 @@ impl Cydonia {
             .read(cx)
             .active_session()
             .is_some_and(|chat| chat.archive.is_some());
+        let showing = self.showing(cx);
         let body = if !open {
             self.no_project(cx)
         } else {
-            match self.showing(cx) {
+            match showing {
                 Pane::Chat => self.conversation(window, cx),
                 Pane::Board => self.board(cx),
                 Pane::Article => match self.article(cx) {
@@ -137,7 +150,7 @@ impl Cydonia {
             .border_color(theme.border)
             .overflow_hidden()
             .child(body)
-            .when(open && live, |card| {
+            .when(open && live && showing == Pane::Chat, |card| {
                 card.child(
                     div().flex_none().flex().justify_center().child(
                         div()
@@ -170,22 +183,36 @@ impl Cydonia {
 
     /// The session in front, or the invitation to open one.
     fn conversation(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        match self.workspace.read(cx).active_id() {
-            Some(id) => self
-                .workspace
-                .update(cx, |workspace, cx| match workspace.session(id) {
-                    Some(chat) => transcript::render(chat, window, cx),
-                    None => div().flex_1().into_any_element(),
-                }),
-            None => Theme::of(cx)
+        let theme = Theme::of(cx).clone();
+        let workspace = self.workspace.read(cx);
+        let Some(chat) = workspace.active_session() else {
+            return theme
                 .empty_state(
                     icons::CHAT_ROUND_LINE,
                     "No session",
                     "⌘N to start one in this project.",
                 )
                 .flex_1()
-                .into_any_element(),
+                .into_any_element();
+        };
+        // Nothing has been said yet, so what the session has to show for
+        // itself is the directory the agent was started in.
+        if chat.items.is_empty() {
+            let cwd = workspace
+                .active_project()
+                .map(|project| shown_path(&project.path))
+                .unwrap_or_default();
+            return theme
+                .empty_state(icons::FOLDER, cwd, format!("{} runs here", chat.entry.name))
+                .flex_1()
+                .into_any_element();
         }
+        let id = chat.id;
+        self.workspace
+            .update(cx, |workspace, cx| match workspace.session(id) {
+                Some(chat) => transcript::render(chat, window, cx),
+                None => div().flex_1().into_any_element(),
+            })
     }
 
     /// The agent's plan, while it still has something left to do.

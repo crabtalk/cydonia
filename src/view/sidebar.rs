@@ -7,6 +7,7 @@ use crate::{
     view::{
         component::menu::Menu,
         root::{self, CommitName, Cydonia, DismissName, NewSession, OpenProject, Pane},
+        settings::Section,
     },
 };
 use bezel::{
@@ -127,7 +128,9 @@ impl Cydonia {
                             .text_color(theme.text_muted)
                             .child("Settings"),
                     )
-                    .on_click(cx.listener(|this, _, _, cx| this.open_settings(cx))),
+                    .on_click(
+                        cx.listener(|this, _, _, cx| this.open_settings(Section::Appearance, cx)),
+                    ),
             )
     }
 

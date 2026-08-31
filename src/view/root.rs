@@ -9,7 +9,7 @@ use crate::{
             composer::{Composer, ComposerEvent},
             menu::Menu,
         },
-        settings::{self, SettingsWindow},
+        settings::{self, Section, SettingsWindow},
         table,
     },
 };
@@ -135,6 +135,7 @@ impl Cydonia {
                 ComposerEvent::Submit(text) => this.submit(text.clone(), cx),
                 ComposerEvent::Cancel => this.cancel_turn(cx),
                 ComposerEvent::Agent(ix) => this.pick_agent(*ix, cx),
+                ComposerEvent::Install => this.open_settings(Section::Agents, cx),
             },
         )
         .detach();
@@ -213,7 +214,7 @@ impl Cydonia {
     }
 
     fn open_settings_action(&mut self, _: &OpenSettings, _: &mut Window, cx: &mut Context<Self>) {
-        self.open_settings(cx);
+        self.open_settings(Section::Appearance, cx);
     }
 
     pub(crate) fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
@@ -221,9 +222,9 @@ impl Cydonia {
         cx.notify();
     }
 
-    pub(crate) fn open_settings(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn open_settings(&mut self, section: Section, cx: &mut Context<Self>) {
         let workspace = self.workspace.clone();
-        self.settings_window = settings::open(workspace, self.settings_window, cx);
+        self.settings_window = settings::open(workspace, self.settings_window, section, cx);
     }
 
     pub(crate) fn open_project_action(

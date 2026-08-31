@@ -51,6 +51,8 @@ pub enum ComposerEvent {
     Cancel,
     /// Talk to this agent instead — an index into the configured agents.
     Agent(usize),
+    /// Nothing here to pick: open settings where agents are installed.
+    Install,
 }
 
 pub struct Composer {
@@ -334,11 +336,39 @@ impl Composer {
                 .into_any_element()
             })
             .collect();
+        let install = popover::menu_row(theme, false, Some(Fade::new(painter, "agent-install")))
+            .id("agent-install")
+            .child(
+                div()
+                    .flex_none()
+                    .size(px(13.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        icons::icon(icons::DOWNLOAD)
+                            .size(px(13.))
+                            .text_color(theme.text_muted),
+                    ),
+            )
+            .child("Install an agent…")
+            .on_click(cx.listener(|composer, _, _, cx| {
+                composer.menu = false;
+                cx.emit(ComposerEvent::Install);
+                cx.notify();
+            }));
         Some(popover::anchored_menu_above(
             "composer-agents",
             popover::popover_card(theme)
                 .w(px(220.))
-                .child(div().flex().flex_col().children(rows))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .children(rows)
+                        .child(popover::divider())
+                        .child(install),
+                )
                 .on_mouse_down_out(cx.listener(|composer, _, _, cx| {
                     composer.menu = false;
                     cx.notify();
