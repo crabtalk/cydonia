@@ -19,6 +19,7 @@ use bezel::{
     theme::{TextStyle, Theme, Typeset},
     ui::{
         icons, loaders, popover,
+        surface::Surfaced as _,
         tooltip::Tooltip,
         widgets::{Buttons, Layout},
     },
@@ -65,6 +66,13 @@ pub(crate) fn row(
         .when(selected, |el| el.bg(theme.glass_hover()))
         .hover(|el| el.bg(theme.glass_hover()))
 }
+
+/// The plate's own inset around the control it holds.
+const CLUSTER_PAD: f32 = 2.;
+
+/// The floating cluster's height, half of which is the pill's radius: a ghost
+/// button's box — a 14pt glyph in 4pt of padding — inside that inset.
+const CLUSTER_HEIGHT: f32 = 14. + 2. * 4. + 2. * CLUSTER_PAD;
 
 /// A row's name. The line height is what the field pins itself to: left to
 /// gpui's default the label's box is φ×13, and renaming would resize the row
@@ -127,7 +135,7 @@ impl Cydonia {
                                 this.open_project_action(&OpenProject, window, cx);
                             })),
                     )
-                    .child(self.fold_toggle(cx)),
+                    .child(self.fold_toggle(theme.text_faint, cx)),
             )
             .child(
                 div()
@@ -166,31 +174,45 @@ impl Cydonia {
             )
     }
 
-    /// The band the traffic lights float in once the sidebar is folded away:
-    /// the content header takes over the window's left edge, and the toggle
-    /// comes with it, leading the row the lights are padded clear of.
-    pub(crate) fn toolbar(&self, window: &Window, cx: &mut Context<Self>) -> Div {
+    /// The fold toggle once the sidebar is away, as a glass pill over the
+    /// content. Out of flow and hugging the one control it holds: a band would
+    /// take a row off every pane to carry a single button, and the column under
+    /// it is what the button is for. Only the fold — adding a project acts on
+    /// the list you are looking at, and with the list gone it is chrome for
+    /// somewhere you are not. Its tone is the strong one, because the plate
+    /// floats over whatever the pane shows, which can be a picture we did not
+    /// choose.
+    pub(crate) fn fold_cluster(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+        let theme = Theme::of(cx).clone();
         div()
-            .flex_none()
-            .h(px(root::HEADER_HEIGHT))
+            .absolute()
+            .top(px((root::HEADER_HEIGHT - CLUSTER_HEIGHT) / 2.))
             // Full screen takes the lights away, and the room they needed
             // would be left as a hole.
-            .pl(px(if window.is_fullscreen() {
+            .left(px(if window.is_fullscreen() {
                 root::HEADER_INSET
             } else {
                 root::TOOLBAR_INSET
             }))
-            .pr(px(8.))
+            .h(px(CLUSTER_HEIGHT))
+            .p(px(CLUSTER_PAD))
+            .rounded(px(CLUSTER_HEIGHT / 2.))
             .flex()
             .flex_row()
             .items_center()
-            .child(self.fold_toggle(cx))
+            .child(self.fold_toggle(theme.text, cx))
+            // The same glass bezel's own floating bar mounts on. Its
+            // `control_bar` is the shipped container, and it refuses this case
+            // on purpose: a fixed 56pt tall, and sized by its caller rather
+            // than by what it holds.
+            .surface(&theme, theme.popover_surface)
+            .into_any_element()
     }
 
     /// The control that folds the sidebar away and brings it back. It belongs
     /// to whichever column runs along the window's left edge, so it changes
-    /// strip across the collapse.
-    fn fold_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    /// strip across the collapse — and takes that strip's tone with it.
+    fn fold_toggle(&self, tint: Hsla, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
         let label = if self.sidebar_open {
             "Hide sidebar"
@@ -204,7 +226,7 @@ impl Cydonia {
             .child(
                 icons::icon(icons::SIDEBAR_MINIMALISTIC_LEFT)
                     .size(px(14.))
-                    .text_color(theme.text_faint),
+                    .text_color(tint),
             )
             .on_click(cx.listener(|this, _, _, cx| this.toggle_sidebar(cx)))
     }

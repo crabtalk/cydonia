@@ -70,15 +70,6 @@ pub(crate) const CONTENT_FROST: Frost = Frost::UltraThick;
 /// draws without crowding them.
 pub(crate) const HEADER_HEIGHT: f32 = 36.;
 
-/// The header's material where a pane puts something behind it — SwiftUI's
-/// `.ultraThinMaterial`, the rung of the frost scale a bar over content takes.
-pub(crate) const HEADER_FROST: Frost = Frost::UltraThin;
-
-/// What a pane's scroll reserves at the top. The header floats over the column
-/// rather than sitting above it, so the room it needs is padding inside the
-/// scroll — which is what lets content slide under it instead of stopping at it.
-pub(crate) const SCREEN_INSET: f32 = HEADER_HEIGHT + 8.;
-
 /// A column's fill: the app's own tint at one thickness on the frost scale, or
 /// the opaque panel where the platform promises no blur to cover. The scale's
 /// tone is a neutral scrim and carries no appearance — tinting it is what makes

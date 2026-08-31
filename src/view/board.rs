@@ -5,7 +5,7 @@ use crate::{
         board::{Card, Spot},
         session::ChatSession,
     },
-    view::root::{self, Cydonia, Pane},
+    view::root::{Cydonia, Pane},
 };
 use bezel::{
     gpui::{
@@ -258,8 +258,7 @@ impl Cydonia {
                     .flex_row()
                     .gap(px(10.))
                     .px(px(16.))
-                    .pt(px(root::SCREEN_INSET))
-                    .pb(px(16.))
+                    .py(px(16.))
                     .children(columns),
             )
             .into_any_element()

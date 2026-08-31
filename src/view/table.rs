@@ -7,7 +7,7 @@ use crate::{
     data::ColType,
     view::{
         component::menu::Menu,
-        root::{self, Cydonia, Pane},
+        root::{Cydonia, Pane},
         sidebar,
     },
 };
@@ -238,7 +238,7 @@ impl Cydonia {
         let head = div()
             .flex_none()
             .px(px(24.))
-            .pt(px(root::SCREEN_INSET))
+            .pt(px(20.))
             .pb(px(12.))
             .flex()
             .flex_row()
