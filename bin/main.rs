@@ -13,7 +13,7 @@ use bezel::{
 use cydonia::{
     assets,
     model::{settings, state},
-    view::{board, component::composer, root, settings as settings_view, table},
+    view::{article, board, component::composer, root, settings as settings_view, table},
 };
 
 actions!(cydonia, [Quit]);
@@ -37,6 +37,7 @@ fn main() -> Result<()> {
             focus::init(cx);
             composer::init(cx);
             editor::init(cx);
+            article::init(cx);
             board::init(cx);
             table::init(cx);
             root::init(cx);

@@ -90,15 +90,12 @@ impl Cydonia {
         cx.notify();
     }
 
-    /// File whatever is open before leaving it: the card being written, and the
-    /// name the article being written has settled on. Every way out of a pane
-    /// goes through here.
+    /// File whatever is open before leaving it. Every way out of a pane goes
+    /// through here.
     ///
     /// An empty card is not a card — committing nothing drops it rather than
     /// leaving a blank on the board.
     pub(crate) fn commit(&mut self, cx: &mut Context<Self>) {
-        self.workspace
-            .update(cx, |workspace, cx| workspace.rename_article(cx));
         self.commit_cell(cx);
         let Some(at) = self.editing.take() else {
             return;

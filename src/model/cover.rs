@@ -1,5 +1,4 @@
-//! An article's cover: a picture in `.cydonia/` named after the document it
-//! sits above.
+//! An article's cover: a picture named after the document it sits above.
 //!
 //! The file being there is the whole of the state. Nothing records that an
 //! article has a cover, so the listing cannot disagree with the screen, and a
@@ -16,8 +15,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// What separates a document's stem from its cover's seed.
-const MARK: &str = ".cover-";
+/// What a cover's name begins with. The article's own directory says which
+/// document it belongs to, so this only has to tell it from the content and
+/// the properties beside it.
+const MARK: &str = "cover-";
 
 /// How many pictures there are to land on.
 const SEEDS: u64 = 1_000_000;
@@ -100,27 +101,22 @@ const PAPER: [(&str, &str); 8] = [
 /// on the first line of the article.
 const ANCHORS: [(f64, f64); 2] = [(0., 0.), (1., 0.)];
 
-/// The cover among these files that belongs to this document, if one does.
-pub fn of<'a>(files: &'a [PathBuf], article: &Path) -> Option<&'a PathBuf> {
-    let prefix = format!("{}{MARK}", article.file_stem()?.to_str()?);
-    files.iter().find(|path| {
-        path.file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| name.starts_with(&prefix))
-    })
+/// The cover in this article's directory, if it has been given one.
+pub fn of(article: &Path) -> Option<PathBuf> {
+    std::fs::read_dir(article.parent()?)
+        .ok()?
+        .flatten()
+        .map(|entry| entry.path())
+        .find(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with(MARK))
+        })
 }
 
 /// Where this document's next cover goes.
 pub fn path(article: &Path, seed: u64, ext: &str) -> Option<PathBuf> {
-    let stem = article.file_stem()?.to_str()?;
-    Some(article.with_file_name(format!("{stem}{MARK}{seed}.{ext}")))
-}
-
-/// The same cover, named for a document that has just moved.
-pub fn renamed(cover: &Path, article: &Path) -> Option<PathBuf> {
-    let stem = article.file_stem()?.to_str()?;
-    let (_, tail) = cover.file_name()?.to_str()?.split_once(MARK)?;
-    Some(cover.with_file_name(format!("{stem}{MARK}{tail}")))
+    Some(article.with_file_name(format!("{MARK}{seed}.{ext}")))
 }
 
 /// The seed to cut the next one from: the document's own path the first time,

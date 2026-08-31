@@ -381,19 +381,6 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Settle the open article's name — see [`Article::rename`]. Called on the
-    /// way out of an article, which is the moment its title is finished.
-    pub fn rename_article(&mut self, cx: &mut Context<Self>) {
-        let Some(project) = self.active.and_then(|at| self.projects.get_mut(at)) else {
-            return;
-        };
-        let Some(article) = project.article.and_then(|ix| project.articles.get_mut(ix)) else {
-            return;
-        };
-        article.rename();
-        cx.notify();
-    }
-
     pub fn active_article(&self) -> Option<&Article> {
         let project = self.active_project()?;
         project.articles.get(project.article?)
@@ -626,19 +613,23 @@ impl Workspace {
         project.tables.get(project.table?)
     }
 
-    /// The editor changed. Found by the entity rather than by a path, because
-    /// a document that has just been given a title has moved.
-    pub fn write_article(&mut self, editor: EntityId, source: String) {
+    /// The title or the content changed. Found by the entity because an article
+    /// has two surfaces and either can be the one that moved.
+    pub fn write_article(&mut self, changed: EntityId, cx: &mut Context<Self>) {
         let found = self.projects.iter_mut().find_map(|project| {
             project.articles.iter_mut().find(|article| {
                 article
-                    .editor
+                    .field
                     .as_ref()
-                    .is_some_and(|open| open.entity_id() == editor)
+                    .is_some_and(|field| field.entity_id() == changed)
+                    || article
+                        .editor
+                        .as_ref()
+                        .is_some_and(|editor| editor.entity_id() == changed)
             })
         });
-        if let Some(article) = found {
-            article.write(source);
+        if found.is_some_and(|article| article.write(cx)) {
+            cx.notify();
         }
     }
 }

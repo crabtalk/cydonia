@@ -1,18 +1,33 @@
 //! The article pane: one document, and the sidebar row that opens it.
 
-use crate::view::{
-    root::{self as root, Cydonia, Pane},
-    sidebar,
+use crate::{
+    model::article,
+    view::{
+        root::{self as root, Cydonia, Pane},
+        sidebar,
+    },
 };
 use bezel::{
     gpui::{
-        AnyElement, Context, CursorStyle, Focusable as _, ObjectFit, PathPromptOptions,
-        SharedString, Window, div, img, point, prelude::*, px,
+        self, AnyElement, App, Context, CursorStyle, Entity, Focusable as _, KeyBinding, ObjectFit,
+        PathPromptOptions, SharedString, Window, actions, div, img, point, prelude::*, px,
     },
     theme::Theme,
-    ui::icons,
+    ui::{icons, input::TextField},
 };
 use std::path::PathBuf;
+
+actions!(cydonia_article, [LeaveTitle]);
+
+/// `enter` and `down` in the title move to the content. Bound on the field's
+/// own context, which is the only thing deep enough to beat the field itself.
+pub fn init(cx: &mut App) {
+    let ctx = Some(article::TITLE_CONTEXT);
+    cx.bind_keys([
+        KeyBinding::new("enter", LeaveTitle, ctx),
+        KeyBinding::new("down", LeaveTitle, ctx),
+    ]);
+}
 
 /// The column the document is set in, matching the transcript's.
 const CONTENT_MAX_WIDTH: f32 = 720.;
@@ -27,6 +42,12 @@ const COVER_HEIGHT: f32 = CONTENT_MAX_WIDTH / 2.5;
 /// the height of the empty band standing in. Either way the title never starts
 /// flush against the top of the card.
 const HEADROOM: f32 = COVER_HEIGHT / 2.;
+
+/// The column's own inset, and what the title adds to it: the editor holds its
+/// text that far inside its box so a block's drag handle has somewhere to sit,
+/// and the title takes the same measure to line up with the first paragraph.
+const COLUMN_INSET: f32 = 24.;
+const TITLE_INSET: f32 = COLUMN_INSET + editor::HANDLE_GUTTER;
 
 impl Cydonia {
     // ── mutations ────────────────────────────────────────────────
@@ -72,20 +93,38 @@ impl Cydonia {
             .update(cx, |workspace, cx| workspace.open_article(project, ix, cx));
         self.pane = Pane::Article;
 
-        let (editor, scroll) = {
+        let (field, editor, scroll, unnamed) = {
             let article = self.workspace.read(cx).active_article();
             (
+                article.and_then(|article| article.field.clone()),
                 article.and_then(|article| article.editor.clone()),
                 article.map(|article| article.scroll.clone()),
+                article.is_some_and(|article| article.title.is_empty()),
             )
         };
         if let Some(scroll) = scroll.filter(|_| settle) {
             scroll.set_offset(point(px(0.), px(-HEADROOM)));
         }
+        // A page with no name is asking to be given one; a named one is asking
+        // to be written in.
+        match (unnamed, field, editor) {
+            (true, Some(field), _) => window.focus(&field.focus_handle(cx), cx),
+            (_, _, Some(editor)) => window.focus(&editor.focus_handle(cx), cx),
+            _ => {}
+        }
+        cx.notify();
+    }
+
+    /// Out of the title and into the document under it.
+    fn leave_title(&mut self, _: &LeaveTitle, window: &mut Window, cx: &mut Context<Self>) {
+        let editor = self
+            .workspace
+            .read(cx)
+            .active_article()
+            .and_then(|article| article.editor.clone());
         if let Some(editor) = editor {
             window.focus(&editor.focus_handle(cx), cx);
         }
-        cx.notify();
     }
 
     /// Cut the open article a new cover. Adding the first one comes through
@@ -139,11 +178,13 @@ impl Cydonia {
     /// card, with the composer stack still pinned under it.
     pub(crate) fn article(&self, cx: &Context<Self>) -> Option<AnyElement> {
         let article = self.workspace.read(cx).active_article()?;
+        let field = article.field.clone()?;
         let editor = article.editor.clone()?;
         let cover = article.cover.clone();
         Some(
             div()
                 .id("article")
+                .on_action(cx.listener(Self::leave_title))
                 .flex_1()
                 .min_h_0()
                 .w_full()
@@ -151,7 +192,7 @@ impl Cydonia {
                 .track_scroll(&article.scroll)
                 .flex()
                 .flex_col()
-                .child(self.cover_band(cover, cx))
+                .child(self.header(cover, field, cx))
                 // Its own height, not the box's share of one: a long document
                 // overflows and scrolls instead of being squashed and clipped,
                 // and `min_h_full` is what leaves the band something to scroll
@@ -173,7 +214,7 @@ impl Cydonia {
                             div()
                                 .w_full()
                                 .max_w(px(CONTENT_MAX_WIDTH))
-                                .px(px(24.))
+                                .px(px(COLUMN_INSET))
                                 .py(px(20.))
                                 .flex()
                                 .cursor(CursorStyle::IBeam)
@@ -182,6 +223,34 @@ impl Cydonia {
                 )
                 .into_any_element(),
         )
+    }
+
+    /// The page's furniture: its picture, and the name under it. Both belong to
+    /// the page rather than to the document, so neither is anything the editor
+    /// below knows about.
+    fn header(
+        &self,
+        cover: Option<PathBuf>,
+        field: Entity<TextField>,
+        cx: &Context<Self>,
+    ) -> impl IntoElement + use<> {
+        div()
+            .w_full()
+            .flex_none()
+            .flex()
+            .flex_col()
+            .child(self.cover_band(cover, cx))
+            .child(
+                div().w_full().flex().justify_center().child(
+                    div()
+                        .w_full()
+                        .max_w(px(CONTENT_MAX_WIDTH))
+                        .pl(px(TITLE_INSET))
+                        .pr(px(COLUMN_INSET))
+                        .pt(px(20.))
+                        .child(field),
+                ),
+            )
     }
 
     /// What sits above the first line — the cover, or the room one would take.

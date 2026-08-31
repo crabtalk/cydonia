@@ -7,6 +7,7 @@ pub mod article;
 pub mod board;
 pub mod cover;
 pub mod project;
+pub mod properties;
 pub mod session;
 pub mod settings;
 pub mod state;

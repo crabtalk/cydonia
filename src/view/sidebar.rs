@@ -199,7 +199,7 @@ impl Cydonia {
             .articles
             .iter()
             .enumerate()
-            .map(|(n, article)| (n, article.title()))
+            .map(|(n, article)| (n, article.label().to_owned()))
             .collect();
         let tables: Vec<(usize, String)> = project
             .tables
