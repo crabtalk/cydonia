@@ -313,7 +313,7 @@ impl Composer {
             .map(|(ix, agent)| {
                 popover::menu_row(
                     theme,
-                    Some(ix) == self.agent,
+                    false,
                     Some(Fade::new(painter, format!("agent-{ix}"))),
                 )
                 .id(("agent", ix))
@@ -334,7 +334,13 @@ impl Composer {
                                 .text_color(theme.text_muted)
                         })),
                 )
-                .child(agent.name.clone())
+                .child(div().flex_1().min_w_0().child(agent.name.clone()))
+                .children((Some(ix) == self.agent).then(|| {
+                    icons::icon(icons::CHECK)
+                        .size(px(13.))
+                        .flex_none()
+                        .text_color(theme.text)
+                }))
                 .on_click(cx.listener(move |composer, _, _, cx| {
                     composer.menu = false;
                     cx.emit(ComposerEvent::Agent(ix));
@@ -368,14 +374,7 @@ impl Composer {
             "composer-agents",
             popover::popover_card(theme)
                 .w(px(220.))
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .children(rows)
-                        .child(popover::divider())
-                        .child(install),
-                )
+                .child(div().flex().flex_col().children(rows).child(install))
                 .on_mouse_down_out(cx.listener(|composer, _, _, cx| {
                     composer.menu = false;
                     cx.notify();
