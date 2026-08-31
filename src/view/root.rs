@@ -16,11 +16,11 @@ use crate::{
 };
 use bezel::{
     gpui::{
-        self, AnyElement, App, Axis, Context, DragMoveEvent, Empty, Entity, KeyBinding,
+        self, AnyElement, App, Axis, Context, DragMoveEvent, Empty, Entity, Hsla, KeyBinding,
         PathPromptOptions, Render, Window, WindowHandle, actions, div, prelude::*, px,
     },
     motion::{Fade, Painter},
-    theme::{TextStyle, Theme, Typeset},
+    theme::{Frost, TextStyle, Theme, Typeset},
     ui::{
         icons,
         input::TextField,
@@ -60,9 +60,26 @@ pub(crate) const SIDEBAR_GUTTER: f32 = 8.;
 /// the sidebar has one left edge instead of one per kind of row.
 pub(crate) const ROW_INDENT: f32 = SIDEBAR_PAD - SIDEBAR_GUTTER;
 
-/// How far the content card floats in from the window's edges. The sidebar runs
-/// to the floor behind it, so the frost reads as one shell under the card.
-pub(crate) const SHELL_INSET: f32 = 8.;
+/// How deep each column's frost sits. One blur under the whole window, so a
+/// column's depth is how much of it the column covers: the sidebar lets more of
+/// the desktop through than the panel you read in.
+pub(crate) const SIDEBAR_FROST: Frost = Frost::Thick;
+pub(crate) const CONTENT_FROST: Frost = Frost::UltraThick;
+
+/// A column's fill: the app's own tint at one thickness on the frost scale, or
+/// the opaque panel where the platform promises no blur to cover. The scale's
+/// tone is a neutral scrim and carries no appearance — tinting it is what makes
+/// dark glass dark.
+pub(crate) fn frost(theme: &Theme, thickness: Frost) -> Hsla {
+    if theme.is_glass() {
+        Hsla {
+            a: thickness.opacity(),
+            ..theme.glass()
+        }
+    } else {
+        theme.bg
+    }
+}
 
 /// macOS traffic light diameter — AppKit owns the buttons and reports their
 /// frame, so nothing here can derive it. Measured on macOS 26.
@@ -97,7 +114,7 @@ pub fn init(cx: &mut App) {
     ]);
 }
 
-/// Which pane the content card shows. A property of the window, not of a
+/// Which pane the detail column shows. A property of the window, not of a
 /// project — switching projects must not teleport you to another pane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pane {
@@ -305,7 +322,6 @@ impl Render for Cydonia {
             .relative()
             .flex()
             .flex_row()
-            .bg(theme.window_bg())
             .font_family(theme.font_sans.clone())
             .text_color(theme.text)
             .text_style(TextStyle::Body)
@@ -327,8 +343,8 @@ impl Render for Cydonia {
                 root.child(self.sidebar(window, cx))
             })
             .child(self.detail(window, cx))
-            // Rides in the gap between the sidebar and the card rather than
-            // sitting in flow, so neither pane has to give up a column.
+            // Rides on the seam between the sidebar and the detail column
+            // rather than sitting in flow, so neither gives up a column.
             .when(self.sidebar_open, |root| {
                 root.child(
                     theme

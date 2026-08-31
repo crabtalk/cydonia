@@ -94,10 +94,7 @@ impl Cydonia {
             .flex_none()
             .w(px(self.sidebar_width))
             .h_full()
-            // No fill of its own: the root already paints the frost, and a
-            // second coat of the same tint reads darker than the shell it
-            // is supposed to be part of.
-            //
+            .bg(root::frost(&theme, root::SIDEBAR_FROST))
             .flex()
             .flex_col()
             // The toolbar carries the one action that is not about a

@@ -130,28 +130,15 @@ impl Cydonia {
             }
         };
 
-        let card = div()
+        let content = div()
             .flex_1()
             .min_h_0()
-            // With the sidebar gone the toolbar above it already clears the
-            // traffic lights, and a margin on top of that doubles the air.
-            .mt(px(if self.sidebar_open {
-                root::SHELL_INSET
-            } else {
-                0.
-            }))
-            .ml(px(root::SHELL_INSET))
-            .mr(px(root::SHELL_INSET))
             .flex()
             .flex_col()
-            .rounded(px(Theme::panel_radius()))
-            .bg(theme.surface)
-            .border_1()
-            .border_color(theme.border)
             .overflow_hidden()
             .child(body)
-            .when(open && live && showing == Pane::Chat, |card| {
-                card.child(
+            .when(open && live && showing == Pane::Chat, |content| {
+                content.child(
                     div().flex_none().flex().justify_center().child(
                         div()
                             .w_full()
@@ -172,12 +159,13 @@ impl Cydonia {
         div()
             .flex_1()
             .min_w_0()
+            .bg(root::frost(&theme, root::CONTENT_FROST))
             .flex()
             .flex_col()
             .when(!self.sidebar_open, |column| {
                 column.child(self.toolbar(window, cx))
             })
-            .child(card)
+            .child(content)
     }
 
     /// The session in front, or the invitation to open one.
