@@ -7,13 +7,13 @@ use bezel::{
         WindowOptions, actions, point, px, size,
     },
     gpui_platform,
-    theme::{Theme, appearance},
+    theme::{self, Theme, Tint, appearance},
     ui::{self, focus, input},
 };
 use cydonia::{
     assets,
-    model::{settings, state},
-    view::{board, component::composer, root, settings as settings_view, table},
+    model::{settings, state, workspace},
+    view::{article, board, component::composer, root, settings as settings_view, table},
 };
 
 actions!(cydonia, [Quit]);
@@ -28,6 +28,11 @@ fn main() -> Result<()> {
                 eprintln!("font registration failed: {err:?}");
             }
             appearance::init(state.appearance, cx);
+            // Before the window is opened: it reads its background appearance
+            // on the way up, and frost is what decides that.
+            workspace::apply_transparency(state.reduce_transparency, cx);
+            workspace::apply_tint(Tint::new(state.hue, state.chroma), cx);
+            theme::set_base_text_size(state.text_size, cx);
             markdown::set_highlighter(
                 cx,
                 |language, code| syntax::highlight(code, language),
@@ -37,6 +42,7 @@ fn main() -> Result<()> {
             focus::init(cx);
             composer::init(cx);
             editor::init(cx);
+            article::init(cx);
             board::init(cx);
             table::init(cx);
             root::init(cx);
@@ -59,7 +65,7 @@ fn main() -> Result<()> {
                     }),
                     // Glass needs a blurred window background to blur into.
                     window_background: Theme::of(cx).window_background_appearance(),
-                    window_min_size: Some(size(px(900.), px(600.))),
+                    window_min_size: Some(size(px(600.), px(320.))),
                     app_id: Some("cydonia".into()),
                     ..Default::default()
                 },

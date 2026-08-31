@@ -8,25 +8,28 @@ use crate::{
         component::{
             composer::{Composer, ComposerEvent},
             menu::Menu,
+            meter,
         },
-        settings::{self, SettingsWindow},
+        settings::{self, Section, SettingsWindow},
+        sidebar::Renaming,
         table,
     },
 };
 use bezel::{
     gpui::{
-        self, AnyElement, App, Axis, Context, DragMoveEvent, Empty, Entity, KeyBinding,
-        PathPromptOptions, Render, Task, Window, WindowHandle, actions, div, prelude::*, px,
+        self, AnyElement, App, Axis, Context, DragMoveEvent, Empty, Entity, Hsla, KeyBinding,
+        PathPromptOptions, Render, Window, WindowHandle, actions, div, prelude::*, px,
     },
     motion::{Fade, Painter},
-    theme::Theme,
+    theme::{Frost, TextStyle, Theme, Typeset},
     ui::{
+        floating::Floating,
         icons,
         input::TextField,
+        stats::Stats,
         widgets::{ButtonStyle, Buttons, Content, Layout, SPLIT_HANDLE_HIT, SplitDrag, SplitStyle},
     },
 };
-use std::time::Duration;
 
 actions!(
     cydonia,
@@ -39,10 +42,6 @@ actions!(
     ]
 );
 
-/// How often the sidebar redraws for its relative times. A minute, because that
-/// is the finest thing [`utils::ago`] says.
-const TICK: Duration = Duration::from_secs(60);
-
 /// Claimed on the rename field so `enter` files the name and `escape` drops it.
 const RENAME_CONTEXT: &str = "CydoniaSessionName";
 
@@ -50,53 +49,88 @@ const SIDEBAR_WIDTH: f32 = 200.;
 const SIDEBAR_WIDTH_MIN: f32 = 180.;
 const SIDEBAR_WIDTH_MAX: f32 = 420.;
 
-/// Where the traffic lights sit in from the window's left edge — the
-/// gallery's grid, which the sidebar container's own 16pt padding does not
-/// share.
-const SIDEBAR_PAD: f32 = 20.;
-
 /// The sidebar's gutter: a row's outer margin, and the padding inside it.
 pub(crate) const SIDEBAR_GUTTER: f32 = 8.;
 
-/// What a row in the sidebar reads at. bezel's theme carries font families and a
-/// spacing scale but no type scale, so this is cydonia's own.
-pub(crate) const SIDEBAR_TEXT: f32 = 13.;
+/// How deep each column's frost sits. Nothing paints beneath them, so these are
+/// absolute and independent: the sidebar is chrome and holds no long-form text,
+/// the panel is the column whose text has to win against the desktop.
+const SIDEBAR_FROST: Frost = Frost::Thick;
+const CONTENT_FROST: Frost = Frost::UltraThick;
 
-/// What a project's section row reads at — the tier the content card names its
-/// own subject at. Weight and colour alone left the heading level with the rows
-/// it heads, which states no hierarchy at all.
-pub(crate) const SIDEBAR_HEADING: f32 = 15.;
+/// The header strip's height, measured off `../desktop`: between Cursor's 34
+/// and Notion's 36, and tall enough to hold the 14px traffic lights macOS 26
+/// draws without crowding them.
+pub(crate) const HEADER_HEIGHT: f32 = 36.;
 
-/// How far a row under a project heading is indented. Stated as the gap it has
-/// to leave rather than as a measure of its own: with the gutter added back,
-/// a row's text starts on [`SIDEBAR_PAD`], where the toolbar's controls do, so
-/// the sidebar has one left edge instead of one per kind of row.
-pub(crate) const ROW_INDENT: f32 = SIDEBAR_PAD - SIDEBAR_GUTTER;
+/// The pill at rest, and the agent mark beside it. Half of it is the stadium's
+/// radius.
+pub(crate) fn composer_height() -> f32 {
+    composer_disc() + 2. * COMPOSER_INSET
+}
 
-/// How far the content card floats in from the window's edges. The sidebar runs
-/// to the floor behind it, so the frost reads as one shell under the card.
-pub(crate) const SHELL_INSET: f32 = 8.;
+/// The room the pill keeps around its content — the same 6 the height counts
+/// above and below the line box.
+pub(crate) const COMPOSER_INSET: f32 = 6.;
+
+/// The send disc, filling the pill inside that inset, which lands it on the
+/// line box it sits beside — the field's own box, so the two stay one height
+/// wherever the text-size setting puts it.
+pub(crate) fn composer_disc() -> f32 {
+    TextStyle::Body.painted_line_height()
+}
+
+/// How far the floating composer stands off the column's bottom edge.
+pub(crate) const COMPOSER_BOTTOM: f32 = 20.;
+
+/// The sidebar's fill. Opaque, it takes the chrome tone: the light palette's
+/// `surface` is the grey the content plane's white sits inside, and falling
+/// back to the panel would leave the two columns one flat sheet.
+pub(crate) fn sidebar_bg(theme: &Theme) -> Hsla {
+    frost(theme, SIDEBAR_FROST).unwrap_or(theme.surface)
+}
+
+/// The content column's fill.
+pub(crate) fn content_bg(theme: &Theme) -> Hsla {
+    frost(theme, CONTENT_FROST).unwrap_or(theme.bg)
+}
+
+/// A column's own tint at one thickness on the frost scale, or nothing where
+/// the window shows no desktop to sit over. The scale's tone is a neutral scrim
+/// and carries no appearance — tinting it is what makes dark glass dark.
+fn frost(theme: &Theme, thickness: Frost) -> Option<Hsla> {
+    theme.glass_window().then(|| Hsla {
+        a: thickness.opacity(),
+        ..theme.glass()
+    })
+}
 
 /// macOS traffic light diameter — AppKit owns the buttons and reports their
 /// frame, so nothing here can derive it. Measured on macOS 26.
 const TRAFFIC_LIGHT_SIZE: f32 = 14.;
 
 /// Where the traffic lights go, for `TitlebarOptions::traffic_light_position`:
-/// the sidebar's grid across, and down by half the band the sidebar reserves for
-/// them. macOS sizes the button container to `height + 2y`.
-pub const TRAFFIC_LIGHT_X: f32 = SIDEBAR_PAD;
-pub const TRAFFIC_LIGHT_Y: f32 = (Theme::HEADER_HEIGHT - TRAFFIC_LIGHT_SIZE) / 2.;
+/// AppKit's own inset across, which is where every other window on the desktop
+/// shows them, and down by half the band the header reserves for them. macOS
+/// sizes the button container to `height + 2y`.
+pub const TRAFFIC_LIGHT_X: f32 = 12.;
+pub const TRAFFIC_LIGHT_Y: f32 = (HEADER_HEIGHT - TRAFFIC_LIGHT_SIZE) / 2.;
 
 /// Between the lights' centres, as AppKit lays them out. Measured on macOS 26.
 const TRAFFIC_LIGHT_SPACING: f32 = 23.;
 
+/// The gap the header keeps at the window's edges, and between the lights and
+/// the first control it puts past them.
+pub(crate) const HEADER_INSET: f32 = 16.;
+
 /// Where the toolbar's own controls start: clear of the three lights AppKit
-/// puts down from [`TRAFFIC_LIGHT_X`], plus the sidebar's gutter. bezel's own
-/// inset is for lights left where AppKit wanted them, which these are not.
+/// puts down from [`TRAFFIC_LIGHT_X`], plus the gutter that clears them and the
+/// strip's own inset, so the first control stands off the lights by the same
+/// measure it keeps from every other edge.
 pub(crate) const TOOLBAR_INSET: f32 = if cfg!(target_os = "macos") {
-    TRAFFIC_LIGHT_X + 2. * TRAFFIC_LIGHT_SPACING + TRAFFIC_LIGHT_SIZE + 6.
+    TRAFFIC_LIGHT_X + 2. * TRAFFIC_LIGHT_SPACING + TRAFFIC_LIGHT_SIZE + 6. + HEADER_INSET
 } else {
-    8.
+    HEADER_INSET
 };
 
 pub fn init(cx: &mut App) {
@@ -110,7 +144,7 @@ pub fn init(cx: &mut App) {
     ]);
 }
 
-/// Which pane the content card shows. A property of the window, not of a
+/// Which pane the detail column shows. A property of the window, not of a
 /// project — switching projects must not teleport you to another pane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pane {
@@ -135,12 +169,11 @@ pub struct Cydonia {
     pub(crate) cell: Option<table::Cell>,
     pub(crate) cell_field: Entity<TextField>,
     pub(crate) menu: Option<Menu>,
-    /// The session whose name is being typed, and the field it is typed in.
-    pub(crate) renaming: Option<u64>,
+    /// What the name field is attached to, and the field itself.
+    pub(crate) renaming: Option<Renaming>,
     pub(crate) name_field: Entity<TextField>,
-    /// Redraws the sidebar once a minute so the relative times on it stay true
-    /// with nobody touching the window. One timer, not one per row.
-    _tick: Task<()>,
+    meter: Entity<Stats>,
+    meter_at: Floating,
 }
 
 impl Cydonia {
@@ -152,6 +185,7 @@ impl Cydonia {
                 ComposerEvent::Submit(text) => this.submit(text.clone(), cx),
                 ComposerEvent::Cancel => this.cancel_turn(cx),
                 ComposerEvent::Agent(ix) => this.pick_agent(*ix, cx),
+                ComposerEvent::Install => this.open_settings(Section::Agents, cx),
             },
         )
         .detach();
@@ -164,14 +198,6 @@ impl Cydonia {
                 .with_key_context(RENAME_CONTEXT)
                 .with_placeholder("name this session…")
         });
-        let tick = cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor().timer(TICK).await;
-                if this.update(cx, |_, cx| cx.notify()).is_err() {
-                    return;
-                }
-            }
-        });
         let workspace = cx.new(|cx| Workspace::new(settings, state, cx));
         // The model is the only thing that says a session appeared or a turn
         // ended; the composer's placeholder, commands and busy state are all
@@ -180,6 +206,8 @@ impl Cydonia {
             .detach();
 
         let mut this = Self {
+            meter: cx.new(Stats::new),
+            meter_at: Floating::new(Painter::of(cx)),
             workspace,
             sidebar_open: true,
             sidebar_width: SIDEBAR_WIDTH,
@@ -193,7 +221,6 @@ impl Cydonia {
             menu: None,
             renaming: None,
             name_field,
-            _tick: tick,
         };
         this.sync_composer(cx);
         this
@@ -239,7 +266,7 @@ impl Cydonia {
     }
 
     fn open_settings_action(&mut self, _: &OpenSettings, _: &mut Window, cx: &mut Context<Self>) {
-        self.open_settings(cx);
+        self.open_settings(Section::Appearance, cx);
     }
 
     pub(crate) fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
@@ -247,9 +274,9 @@ impl Cydonia {
         cx.notify();
     }
 
-    pub(crate) fn open_settings(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn open_settings(&mut self, section: Section, cx: &mut Context<Self>) {
         let workspace = self.workspace.clone();
-        self.settings_window = settings::open(workspace, self.settings_window, cx);
+        self.settings_window = settings::open(workspace, self.settings_window, section, cx);
     }
 
     pub(crate) fn open_project_action(
@@ -286,52 +313,11 @@ impl Cydonia {
     /// see is the second selection the eye finds.
     pub(crate) fn showing(&self, cx: &App) -> Pane {
         match self.pane {
+            Pane::Board if self.workspace.read(cx).active_board().is_none() => Pane::Chat,
             Pane::Article if self.workspace.read(cx).active_article().is_none() => Pane::Chat,
             Pane::Table if self.workspace.read(cx).active_table().is_none() => Pane::Chat,
             pane => pane,
         }
-    }
-
-    /// The shell strip under the content card: on the frost, not on the card.
-    /// What it holds is about the pane you are in rather than anything inside
-    /// it, so it sits outside the surface it switches.
-    ///
-    /// One button, labelled with where it goes — with two panes, a segmented
-    /// track spends a permanent slot restating the one you are already
-    /// looking at.
-    pub(crate) fn pane_switch(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
-        let theme = Theme::of(cx).clone();
-        let (glyph, label, to) = match self.pane {
-            Pane::Board => (icons::CHAT_ROUND_LINE, "Chat", Pane::Chat),
-            Pane::Chat | Pane::Article | Pane::Table => (icons::LIST, "Board", Pane::Board),
-        };
-        div()
-            .flex_none()
-            .py(px(SHELL_INSET))
-            .px(px(SHELL_INSET + 6.))
-            .flex()
-            .flex_row()
-            .items_center()
-            .justify_end()
-            .child(
-                theme
-                    .ghost("pane-switch")
-                    .px(px(8.))
-                    .py(px(4.))
-                    .gap(px(6.))
-                    .child(
-                        icons::icon(glyph)
-                            .size(px(13.))
-                            .text_color(theme.text_faint),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(12.5))
-                            .text_color(theme.text_muted)
-                            .child(label),
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| this.show_pane(to, cx))),
-            )
     }
 
     /// Nothing is open, so there is nowhere to send a prompt — the only thing
@@ -370,10 +356,9 @@ impl Render for Cydonia {
             .relative()
             .flex()
             .flex_row()
-            .bg(theme.window_bg())
             .font_family(theme.font_sans.clone())
             .text_color(theme.text)
-            .text_size(px(14.))
+            .text_style(TextStyle::Body)
             .on_action(cx.listener(Self::new_session_action))
             .on_action(cx.listener(Self::commit_cell_action))
             .on_action(cx.listener(Self::dismiss_cell))
@@ -388,12 +373,10 @@ impl Render for Cydonia {
                     cx.notify();
                 }),
             )
-            .when(self.sidebar_open, |root| {
-                root.child(self.sidebar(window, cx))
-            })
+            .when(self.sidebar_open, |root| root.child(self.sidebar(cx)))
             .child(self.detail(window, cx))
-            // Rides in the gap between the sidebar and the card rather than
-            // sitting in flow, so neither pane has to give up a column.
+            // Rides on the seam between the sidebar and the detail column
+            // rather than sitting in flow, so neither gives up a column.
             .when(self.sidebar_open, |root| {
                 root.child(
                     theme
@@ -405,5 +388,11 @@ impl Render for Cydonia {
                         .on_drag(SplitDrag, |_, _, _, cx| cx.new(|_| Empty)),
                 )
             })
+            .children(
+                self.workspace
+                    .read(cx)
+                    .meter
+                    .then(|| meter::panel("app-meter", &self.meter_at, &self.meter, window)),
+            )
     }
 }

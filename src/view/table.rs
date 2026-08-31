@@ -6,8 +6,8 @@
 use crate::{
     data::ColType,
     view::{
-        component::menu::Menu,
-        root::{self as root, Cydonia, Pane},
+        component::menu::{self, Menu},
+        root::{Cydonia, Pane},
         sidebar,
     },
 };
@@ -16,11 +16,11 @@ use bezel::{
         self, AnyElement, App, Context, Div, Entity, Focusable as _, KeyBinding, SharedString,
         Window, actions, div, prelude::*, px,
     },
-    motion::{Fade, Painter},
-    theme::Theme,
+    theme::{TextStyle, Theme, Typeset},
     ui::{
         icons,
         input::{Shape, TextField},
+        menu::Item,
         popover, table,
         widgets::Buttons,
     },
@@ -33,12 +33,10 @@ actions!(cydonia_table, [CommitCell, DismissCell]);
 /// newline in every other field.
 const KEY_CONTEXT: &str = "CydoniaCell";
 
-/// The line box every cell keeps, focused or not, and the size its text is
-/// set in. Both are what `TextField` renders at and cannot be told otherwise,
-/// so a cell that sized itself to its own text would grow the row the moment
-/// you clicked into it.
+/// The line box every cell keeps, focused or not. It is what `TextField`
+/// renders at and cannot be told otherwise, so a cell that sized itself to its
+/// own text would grow the row the moment you clicked into it.
 const LINE: f32 = 18.;
-const CELL_TEXT: f32 = 13.;
 
 /// The column the row actions sit in — the trash on a row, the `+` on the
 /// header. Declared with the data columns so both halves line up.
@@ -254,7 +252,7 @@ impl Cydonia {
                 false => div()
                     .id("table-name")
                     .cursor_pointer()
-                    .text_size(px(15.))
+                    .text_style(TextStyle::Title3)
                     .text_color(theme.text)
                     .child(name)
                     .on_click(cx.listener(|this, _, window, cx| {
@@ -264,7 +262,7 @@ impl Cydonia {
             })
             .child(
                 div()
-                    .text_size(px(11.))
+                    .text_style(TextStyle::Subheadline)
                     .text_color(theme.text_faint)
                     // The table's own count, not the window's — a pane that
                     // stops at its limit without saying so reads as the end.
@@ -336,7 +334,7 @@ impl Cydonia {
                                 )
                                 .child(
                                     div()
-                                        .text_size(px(12.5))
+                                        .text_style(TextStyle::Callout)
                                         .text_color(theme.text_muted)
                                         .child("New row"),
                                 )
@@ -407,51 +405,26 @@ impl Cydonia {
         if self.menu != Some(Menu::Column(ix)) {
             return None;
         }
-        let theme = Theme::of(cx).clone();
-        let painter = Painter::of(cx);
-        let mut rows: Vec<AnyElement> = ColType::ALL
+        let mut rows: Vec<_> = ColType::ALL
             .iter()
             .map(|declared| {
                 let declared = *declared;
-                let key = SharedString::from(format!("type-{ix}-{}", declared.name()));
-                let current = declared == kind;
-                // Never `active`: that paints a standing wash *and* drops the
-                // hover listener, so the type the column already has reads as
-                // the row the pointer is on. The tick says which one it is.
-                popover::menu_row(&theme, false, Some(Fade::new(painter, key.clone())))
-                    .id(key)
-                    .child(
-                        icons::icon(glyph(declared))
-                            .size(px(13.))
-                            .flex_none()
-                            .text_color(theme.text_faint),
-                    )
-                    .child(div().flex_1().child(declared.name()))
-                    .when(current, |row| {
-                        row.child(
-                            icons::icon(icons::CHECK)
-                                .size(px(13.))
-                                .flex_none()
-                                .text_color(theme.text_muted),
-                        )
-                    })
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.menu = None;
-                        this.retype_column(ix, declared, cx);
-                    }))
-                    .into_any_element()
+                menu::row(
+                    Item::action(declared.name())
+                        .with_icon(glyph(declared))
+                        .checked(declared == kind),
+                    move |this, _, cx| this.retype_column(ix, declared, cx),
+                )
             })
             .collect();
-        rows.push(self.menu_row(
-            format!("delete-column-{ix}"),
-            icons::TRASH_BIN_MINIMALISTIC,
-            "Delete column",
-            cx,
+        rows.push(menu::row(
+            Item::action("Delete column").with_icon(icons::TRASH_BIN_MINIMALISTIC),
             move |this, _, cx| this.delete_column(ix, cx),
         ));
+        let id = SharedString::from(format!("column-menu-{ix}"));
         Some(popover::anchored_menu_below(
-            SharedString::from(format!("column-menu-{ix}")),
-            self.menu_card(rows, cx),
+            id.clone(),
+            self.menu_card(id, rows, cx),
             None,
         ))
     }
@@ -473,7 +446,7 @@ impl Cydonia {
             .w_full()
             .truncate()
             .cursor_pointer()
-            .text_size(px(CELL_TEXT))
+            .text_style(TextStyle::Body)
             .line_height(px(LINE))
             .text_color(theme.text)
             .child(held.map(text).unwrap_or_default())
@@ -484,14 +457,12 @@ impl Cydonia {
     }
 
     fn row_actions(&self, rowid: i64, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
-        div()
-            .id(SharedString::from(format!("delete-row-{rowid}")))
+        theme
+            .ghost(SharedString::from(format!("delete-row-{rowid}")))
             .flex_none()
             .invisible()
             .group_hover("grid-row", |el| el.visible())
-            .rounded(px(Theme::control_radius()))
             .p(px(3.))
-            .cursor_pointer()
             .child(
                 icons::icon(icons::TRASH_BIN_MINIMALISTIC)
                     .size(px(12.))
@@ -548,17 +519,16 @@ impl Cydonia {
                 .flex_1()
                 .min_w_0()
                 .truncate()
-                .text_size(px(root::SIDEBAR_TEXT))
+                .text_style(TextStyle::Body)
                 .text_color(tone)
                 .child(name),
         )
         .child(
-            div()
-                .id(("delete-table", ix))
+            theme
+                .ghost(("delete-table", ix))
                 .flex_none()
                 .invisible()
                 .group_hover("table-row", |el| el.visible())
-                .rounded(px(Theme::control_radius()))
                 .p(px(2.))
                 .child(
                     icons::icon(icons::TRASH_BIN_MINIMALISTIC)

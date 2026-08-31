@@ -4,12 +4,13 @@
 //! Machine-written, unlike `settings.toml` — nothing here is worth hand
 //! editing, and rewriting it must never cost a user their own comments.
 
-use crate::model::{project::Project, settings};
-use bezel::theme::appearance::AppearanceMode;
+use crate::model::settings;
+use bezel::theme::{TextStyle, appearance::AppearanceMode};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(default)]
 pub struct State {
     #[serde(default)]
     pub projects: Vec<PathBuf>,
@@ -17,6 +18,37 @@ pub struct State {
     pub active: usize,
     #[serde(default)]
     pub appearance: AppearanceMode,
+    /// Whether the frost is off — bezel paints opaque surfaces instead.
+    #[serde(default)]
+    pub reduce_transparency: bool,
+    /// The body size the type ladder is scaled against, in points.
+    pub text_size: f32,
+    /// The greys' oklch hue in degrees, and how much of it they carry. Zero
+    /// chroma is the shipped neutral, whatever the hue says.
+    pub hue: f32,
+    pub chroma: f32,
+}
+
+/// What the body size may be set to, in points: the ladder's smallest measured
+/// role to Title3's, so bezel's fixed chrome heights hold at either end. Read
+/// on the way in as well as by the control, because a size out of range paints
+/// an interface nobody can read the settings window to fix.
+pub const TEXT_SIZE: (f32, f32) = (11., 17.);
+
+/// Hand-written because a zeroed `text_size` is a font nobody can read, and a
+/// missing state file resolves every field through here.
+impl Default for State {
+    fn default() -> Self {
+        Self {
+            projects: Vec::new(),
+            active: 0,
+            appearance: AppearanceMode::default(),
+            reduce_transparency: false,
+            text_size: TextStyle::Body.size(),
+            hue: 0.,
+            chroma: 0.,
+        }
+    }
 }
 
 fn path() -> Option<PathBuf> {
@@ -44,24 +76,20 @@ pub fn restore() -> State {
         projects,
         active,
         appearance: stored.appearance,
+        reduce_transparency: stored.reduce_transparency,
+        text_size: stored.text_size.clamp(TEXT_SIZE.0, TEXT_SIZE.1),
+        hue: stored.hue,
+        chroma: stored.chroma,
     }
 }
 
 /// Best effort: a state file that cannot be written is not worth failing a
 /// click over.
-pub fn save(projects: &[Project], active: Option<usize>, appearance: AppearanceMode) {
+pub fn save(state: &State) {
     let Some(path) = path() else {
         return;
     };
-    let state = State {
-        projects: projects
-            .iter()
-            .map(|project| project.path.clone())
-            .collect(),
-        active: active.unwrap_or_default(),
-        appearance,
-    };
-    if let Ok(body) = toml::to_string_pretty(&state)
+    if let Ok(body) = toml::to_string_pretty(state)
         && let Some(dir) = path.parent()
     {
         let _ = std::fs::create_dir_all(dir);

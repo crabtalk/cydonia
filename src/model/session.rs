@@ -1,21 +1,27 @@
-//! One live agent session bridged into the UI.
+//! One agent session bridged into the UI.
 //!
 //! The connection opens on the ACP runtime and the `Session` it yields is
 //! held here, so dropping `ChatSession` tears the connection (and the agent
 //! process) down. A foreground pump drains the ACP event channel in coalesced
 //! batches with a 120ms frame floor while streaming — one notify per frame,
 //! not per chunk.
+//!
+//! A session outlives its connection. [`ChatSession::flush`] writes the
+//! transcript whenever a turn settles, and the agent's own session id goes
+//! with it, so a relaunch reads the session back and `session/load` can pick
+//! the conversation up where it stopped.
 
 use crate::{
-    agent::acp::{self, Event, Reply, Session},
-    model::{archive::Archived, settings, workspace::Workspace},
+    agent::acp::{self, Event, Launch, Reply, Session},
+    model::{
+        record::{self, Record},
+        settings,
+        workspace::Workspace,
+    },
     view::component::transcript,
 };
 use anyhow::anyhow;
-use bezel::{
-    gpui::{Context, Task},
-    motion::Painter,
-};
+use bezel::gpui::{Context, Task};
 use cacp::schema::{
     ContentBlock, MaybeUndefined, PermissionOptionKind, PlanEntryStatus, RequestPermissionRequest,
     RequestPermissionResponse, SessionUpdate, StopReason, ToolCallContent, ToolCallStatus,
@@ -75,6 +81,16 @@ pub struct Choice {
     pub kind: PermissionOptionKind,
 }
 
+/// Whether the session can talk to an agent right now.
+pub enum Connection {
+    /// No agent process: read back from disk, archived, or given up on.
+    Idle,
+    Connecting,
+    Live(Box<Session>),
+    /// The agent went away on its own — a crash, or a closed stdout.
+    Lost,
+}
+
 pub struct PermissionPrompt {
     pub title: String,
     pub options: Vec<Choice>,
@@ -84,7 +100,10 @@ pub struct PermissionPrompt {
 pub struct ChatSession {
     pub id: u64,
     pub entry: settings::Agent,
-    pub session: Option<Session>,
+    /// The directory the agent runs in, which is the project's. Kept here so
+    /// a session can reconnect and file itself without asking the workspace.
+    pub cwd: PathBuf,
+    pub connection: Connection,
     pub items: Vec<ChatItem>,
     pub plan: Vec<(String, PlanStatus)>,
     pub permission: Option<PermissionPrompt>,
@@ -95,22 +114,25 @@ pub struct ChatSession {
     /// than one and a flag: whose name it is *is* the state.
     pub name: Option<String>,
     /// When the session last had something to say. Wall clock, not `Instant`,
-    /// because an archived one has to carry it into the file.
+    /// because the file has to carry it across a launch.
     pub updated: SystemTime,
-    /// The file this session was filed to, which is also *whether* it was: an
-    /// archived session is a closed one with somewhere to be read back from.
-    pub archive: Option<PathBuf>,
+    /// The agent's own id for this session — what `session/load` resumes.
+    pub agent_session: Option<String>,
+    /// Where the session is written, once it has anything to write.
+    pub file: Option<PathBuf>,
+    /// Whether the user archived it. Typing into it clears this.
+    pub closed: bool,
     pub streaming: bool,
-    pub lost: bool,
+    /// Prompts waiting for an agent to send them to: what was typed while a
+    /// turn was in flight, and what a dispatched card opened the session with.
     pub queue: VecDeque<String>,
-    /// A prompt to send the moment the session is up — the card that opened
-    /// it. Taken by [`crate::view::root::Cydonia::session_connected`], never resent.
-    pub seed: Option<String>,
     pub transcript: transcript::State,
     _pump: Task<()>,
 }
 
 impl ChatSession {
+    /// Open a session on `entry`. `seed` is its first prompt, sent as soon as
+    /// the agent is up — what a dispatched card rides in on.
     pub fn connect(
         id: u64,
         entry: settings::Agent,
@@ -118,63 +140,12 @@ impl ChatSession {
         seed: Option<String>,
         cx: &mut Context<Workspace>,
     ) -> Self {
-        let spawn_entry = entry.clone();
-        let conn = acp::runtime()
-            .spawn(async move { Session::spawn(&spawn_entry, acp::Launch::new(cwd)).await });
-
-        let pump = cx.spawn(async move |this, cx| {
-            let opened = conn
-                .await
-                .unwrap_or_else(|e| Err(anyhow!("the connection task panicked: {e}")));
-            let (session, mut events) = match opened {
-                Ok(pair) => pair,
-                Err(e) => {
-                    let _ = this.update(cx, |workspace, cx| {
-                        workspace.with_session(id, cx, |chat| {
-                            chat.lost = true;
-                            chat.notice(true, &format!("connection failed: {e:#}"));
-                        });
-                    });
-                    return;
-                }
-            };
-
-            if this
-                .update(cx, |workspace, cx| {
-                    workspace.with_session(id, cx, |chat| chat.session = Some(session));
-                    workspace.session_connected(id, cx);
-                })
-                .is_err()
-            {
-                return;
-            }
-
-            while let Some(event) = events.recv().await {
-                let mut batch = vec![event];
-                while let Ok(event) = events.try_recv() {
-                    batch.push(event);
-                }
-                let streaming = this.update(cx, |workspace, cx| {
-                    workspace.with_session(id, cx, |chat| {
-                        for event in batch {
-                            chat.apply(event);
-                        }
-                        chat.updated = SystemTime::now();
-                    });
-                    workspace.session(id).is_some_and(|chat| chat.streaming)
-                });
-                match streaming {
-                    Ok(true) => cx.background_executor().timer(STREAM_FRAME).await,
-                    Ok(false) => {}
-                    Err(_) => return,
-                }
-            }
-        });
-
+        let pump = pump(id, &entry, cwd.clone(), None, cx);
         Self {
             id,
             entry,
-            session: None,
+            cwd,
+            connection: Connection::Connecting,
             items: Vec::new(),
             plan: Vec::new(),
             permission: None,
@@ -182,35 +153,31 @@ impl ChatSession {
             title: String::new(),
             name: None,
             updated: SystemTime::now(),
-            archive: None,
+            agent_session: None,
+            file: None,
+            closed: false,
             streaming: false,
-            lost: false,
-            queue: VecDeque::new(),
-            seed,
-            transcript: transcript::State::new(Painter::of(cx)),
+            queue: seed.into_iter().collect(),
+            transcript: transcript::State::default(),
             _pump: pump,
         }
     }
 
-    /// A transcript read back from disk: everything a row and the transcript
-    /// pane need, and nothing that could talk to an agent.
-    pub fn from_archive(
+    /// A session read back from disk. It starts idle — a launch must not spawn
+    /// an agent per session — and reconnects when something is sent to it.
+    pub fn restore(
         id: u64,
-        path: PathBuf,
-        record: Archived,
-        cx: &mut Context<Workspace>,
+        file: PathBuf,
+        cwd: PathBuf,
+        entry: settings::Agent,
+        record: Record,
     ) -> Self {
         let updated = record.at();
         Self {
             id,
-            entry: settings::Agent {
-                name: record.agent,
-                id: None,
-                command: String::new(),
-                args: Vec::new(),
-                env: Default::default(),
-            },
-            session: None,
+            entry,
+            cwd,
+            connection: Connection::Idle,
             items: record.items,
             plan: Vec::new(),
             permission: None,
@@ -218,19 +185,20 @@ impl ChatSession {
             title: record.title,
             name: record.name,
             updated,
-            archive: Some(path),
+            agent_session: record.session,
+            file: Some(file),
+            closed: record.closed,
             streaming: false,
-            lost: false,
             queue: VecDeque::new(),
-            seed: None,
-            transcript: transcript::State::new(Painter::of(cx)),
+            transcript: transcript::State::default(),
             _pump: Task::ready(()),
         }
     }
 
-    pub fn to_archive(&self) -> Archived {
-        Archived {
+    fn to_record(&self) -> Record {
+        Record {
             agent: self.entry.name.clone(),
+            session: self.agent_session.clone(),
             title: self.title.clone(),
             name: self.name.clone(),
             updated: self
@@ -238,18 +206,64 @@ impl ChatSession {
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs(),
+            closed: self.closed,
             items: self.items.clone(),
         }
     }
 
-    /// Close the connection and keep the transcript. Dropping `session` is
-    /// what tears the agent process down; the pump has nothing left to pump.
-    pub fn close(&mut self, path: PathBuf) {
-        self.session = None;
+    /// Write the session out. The file is minted on the first write and not
+    /// before — opening a project must not put a `.cydonia/` in it.
+    pub fn flush(&mut self) {
+        if self.items.is_empty() {
+            return;
+        }
+        if self.file.is_none() {
+            self.file = record::create(&self.cwd);
+        }
+        if let Some(file) = &self.file {
+            record::write(file, &self.to_record());
+        }
+    }
+
+    /// Point the session at an agent again, replaying the conversation the
+    /// agent still holds when it supports `session/load`.
+    pub fn resume(&mut self, cx: &mut Context<Workspace>) {
+        self._pump = pump(
+            self.id,
+            &self.entry,
+            self.cwd.clone(),
+            self.agent_session.clone(),
+            cx,
+        );
+        self.connection = Connection::Connecting;
+        self.closed = false;
+    }
+
+    /// Close the connection and keep the transcript. Dropping the [`Session`]
+    /// is what tears the agent process down.
+    pub fn close(&mut self) {
+        self.connection = Connection::Idle;
         self._pump = Task::ready(());
         self.streaming = false;
+        self.closed = true;
         self.queue.clear();
-        self.archive = Some(path);
+        self.flush();
+    }
+
+    pub fn live(&self) -> bool {
+        matches!(self.connection, Connection::Live(_))
+    }
+
+    /// Whether sending to it would start an agent: it is not talking to one,
+    /// and one is not already on the way.
+    pub fn idle(&self) -> bool {
+        matches!(self.connection, Connection::Idle | Connection::Lost)
+    }
+
+    /// A session whose agent is no longer in `settings.toml` reads back but
+    /// cannot reconnect — there is no command left to spawn.
+    pub fn resumable(&self) -> bool {
+        !self.entry.command.is_empty()
     }
 
     /// What to call this session: your name, else the agent's, else the
@@ -262,24 +276,38 @@ impl ChatSession {
         }
     }
 
-    /// Send now, or queue when a turn is in flight.
+    /// Send now, or queue it for whenever there is an agent to send it to —
+    /// a turn in flight, or a connection still being made.
     pub fn send(&mut self, content: String) {
-        if self.streaming {
+        if self.streaming || !self.live() {
             self.queue.push_back(content);
         } else {
             self.prompt(content);
         }
     }
 
+    /// Send the next queued prompt, if there is one and nothing is in flight.
+    pub fn drain(&mut self) {
+        if self.streaming {
+            return;
+        }
+        if let Some(next) = self.queue.pop_front() {
+            self.prompt(next);
+        }
+    }
+
     fn prompt(&mut self, content: String) {
-        let Some(session) = &self.session else {
-            self.notice(false, "not connected yet");
+        let Connection::Live(session) = &self.connection else {
+            self.queue.push_front(content);
             return;
         };
         session.prompt(&content);
         self.items.push(ChatItem::User(content));
         self.updated = SystemTime::now();
         self.streaming = true;
+        // Before the answer, not just after it: what you said is not the
+        // agent's to lose if the turn never finishes.
+        self.flush();
     }
 
     /// Cancel the in-flight turn. A pending permission request MUST be
@@ -288,7 +316,7 @@ impl ChatSession {
         if let Some(prompt) = self.permission.take() {
             prompt.reply.send(RequestPermissionResponse::cancelled());
         }
-        if let Some(session) = &self.session
+        if let Connection::Live(session) = &self.connection
             && let Err(e) = session.cancel()
         {
             self.notice(true, &format!("cancel failed: {}", acp::error_text(&e)));
@@ -305,6 +333,7 @@ impl ChatSession {
     }
 
     fn apply(&mut self, event: Event) {
+        self.updated = SystemTime::now();
         match event {
             Event::Update(update) => self.apply_update(update),
             Event::Permission(request, reply) => self.open_permission(request, reply),
@@ -328,15 +357,15 @@ impl ChatSession {
                         self.notice(true, &format!("turn failed: {}", acp::error_text(&e)));
                     }
                 }
-                if let Some(next) = self.queue.pop_front() {
-                    self.prompt(next);
-                }
+                self.flush();
+                self.drain();
             }
             Event::Closed => {
-                self.lost = true;
+                self.connection = Connection::Lost;
                 self.streaming = false;
                 self.fail_running_tools();
                 self.notice(true, "agent connection lost");
+                self.flush();
             }
         }
     }
@@ -529,4 +558,80 @@ fn content_text(block: &ContentBlock) -> String {
         ContentBlock::Text(text) => text.text.clone(),
         _ => "[non-text content]".to_owned(),
     }
+}
+
+/// Drain the ACP event channel into the session, for as long as there is one.
+///
+/// `previous` is the agent's own session id: with it set and the agent
+/// capable, the conversation is loaded rather than started over, so the turn
+/// that follows carries everything said before it.
+fn pump(
+    id: u64,
+    entry: &settings::Agent,
+    cwd: PathBuf,
+    previous: Option<String>,
+    cx: &mut Context<Workspace>,
+) -> Task<()> {
+    let entry = entry.clone();
+    let conn = acp::runtime().spawn(async move {
+        Session::spawn(
+            &entry,
+            Launch {
+                previous,
+                ..Launch::new(cwd)
+            },
+        )
+        .await
+    });
+
+    cx.spawn(async move |this, cx| {
+        let opened = conn
+            .await
+            .unwrap_or_else(|e| Err(anyhow!("the connection task panicked: {e}")));
+        let (session, mut events) = match opened {
+            Ok(pair) => pair,
+            Err(e) => {
+                let _ = this.update(cx, |workspace, cx| {
+                    workspace.with_session(id, cx, |chat| {
+                        chat.connection = Connection::Lost;
+                        chat.notice(true, &format!("connection failed: {e:#}"));
+                    });
+                });
+                return;
+            }
+        };
+
+        if this
+            .update(cx, |workspace, cx| {
+                workspace.with_session(id, cx, |chat| {
+                    chat.agent_session = Some(session.session_id.to_string());
+                    chat.connection = Connection::Live(Box::new(session));
+                });
+                workspace.session_connected(id, cx);
+            })
+            .is_err()
+        {
+            return;
+        }
+
+        while let Some(event) = events.recv().await {
+            let mut batch = vec![event];
+            while let Ok(event) = events.try_recv() {
+                batch.push(event);
+            }
+            let streaming = this.update(cx, |workspace, cx| {
+                workspace.with_session(id, cx, |chat| {
+                    for event in batch {
+                        chat.apply(event);
+                    }
+                });
+                workspace.session(id).is_some_and(|chat| chat.streaming)
+            });
+            match streaming {
+                Ok(true) => cx.background_executor().timer(STREAM_FRAME).await,
+                Ok(false) => {}
+                Err(_) => return,
+            }
+        }
+    })
 }

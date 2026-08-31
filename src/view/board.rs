@@ -2,7 +2,7 @@
 
 use crate::{
     model::{
-        board::{self, Card, Spot},
+        board::{Card, Spot},
         session::ChatSession,
     },
     view::root::{Cydonia, Pane},
@@ -13,7 +13,7 @@ use bezel::{
         SharedString, Stateful, Window, actions, div, prelude::*, px,
     },
     motion::Painter,
-    theme::Theme,
+    theme::{TextStyle, Theme, Typeset},
     ui::{
         icons,
         input::{self, Shape, TextField},
@@ -69,6 +69,31 @@ impl Cydonia {
         cx.notify();
     }
 
+    pub(crate) fn new_board(&mut self, project: usize, cx: &mut Context<Self>) {
+        self.select_project(project, cx);
+        let ix = self
+            .workspace
+            .update(cx, |workspace, cx| workspace.new_board(cx));
+        if let Some(ix) = ix {
+            self.open_board(project, ix, cx);
+        }
+    }
+
+    pub(crate) fn open_board(&mut self, project: usize, ix: usize, cx: &mut Context<Self>) {
+        self.commit(cx);
+        self.workspace
+            .update(cx, |workspace, cx| workspace.open_board(project, ix, cx));
+        self.pane = Pane::Board;
+        cx.notify();
+    }
+
+    pub(crate) fn delete_board(&mut self, project: usize, ix: usize, cx: &mut Context<Self>) {
+        self.workspace.update(cx, |workspace, cx| {
+            workspace.delete_board(project, ix, cx);
+        });
+        cx.notify();
+    }
+
     /// Point the field at `at`, filing whatever was already open first — so
     /// clicking straight from one card to another never drops an edit.
     fn edit(&mut self, at: Editing, window: &mut Window, cx: &mut Context<Self>) {
@@ -78,8 +103,8 @@ impl Cydonia {
             Editing::Card(spot) => self
                 .workspace
                 .read(cx)
-                .active_project()
-                .and_then(|project| project.board.card(spot))
+                .active_board()
+                .and_then(|board| board.card(spot))
                 .map(|card| card.text.clone())
                 .unwrap_or_default(),
         };
@@ -90,15 +115,12 @@ impl Cydonia {
         cx.notify();
     }
 
-    /// File whatever is open before leaving it: the card being written, and the
-    /// name the article being written has settled on. Every way out of a pane
-    /// goes through here.
+    /// File whatever is open before leaving it. Every way out of a pane goes
+    /// through here.
     ///
     /// An empty card is not a card — committing nothing drops it rather than
     /// leaving a blank on the board.
     pub(crate) fn commit(&mut self, cx: &mut Context<Self>) {
-        self.workspace
-            .update(cx, |workspace, cx| workspace.rename_article(cx));
         self.commit_cell(cx);
         let Some(at) = self.editing.take() else {
             return;
@@ -125,7 +147,7 @@ impl Cydonia {
                     }
                 }
             }
-            board::save(&workspace.projects);
+            board.save();
             cx.notify();
         });
     }
@@ -158,7 +180,7 @@ impl Cydonia {
             if let Some(card) = board.take(at) {
                 board.columns[to].cards.push(card);
             }
-            board::save(&workspace.projects);
+            board.save();
             cx.notify();
         });
         cx.notify();
@@ -167,10 +189,11 @@ impl Cydonia {
     fn delete_card(&mut self, at: Spot, cx: &mut Context<Self>) {
         self.commit(cx);
         self.workspace.update(cx, |workspace, cx| {
-            if let Some(board) = workspace.active_board_mut() {
-                board.take(at);
-            }
-            board::save(&workspace.projects);
+            let Some(board) = workspace.active_board_mut() else {
+                return;
+            };
+            board.take(at);
+            board.save();
             cx.notify();
         });
         cx.notify();
@@ -187,8 +210,8 @@ impl Cydonia {
         self.commit(cx);
         self.workspace.update(cx, |workspace, cx| {
             let text = workspace
-                .active_project()
-                .and_then(|project| project.board.card(at))
+                .active_board()
+                .and_then(|board| board.card(at))
                 .map(|card| card.text.clone());
             let (Some(text), Some(entry)) = (text, workspace.preferred_agent()) else {
                 return;
@@ -216,10 +239,10 @@ impl Cydonia {
     /// The lanes. Same frame as [`Cydonia::transcript`]: the body of the
     /// content card, with the composer stack still pinned under it.
     pub fn board(&self, cx: &mut Context<Self>) -> AnyElement {
-        let Some(project) = self.workspace.read(cx).active_project() else {
+        let Some(board) = self.workspace.read(cx).active_board() else {
             return div().flex_1().into_any_element();
         };
-        let count = project.board.columns.len();
+        let count = board.columns.len();
         let columns: Vec<AnyElement> = (0..count).map(|ix| self.column(ix, cx)).collect();
         div()
             .flex_1()
@@ -246,8 +269,8 @@ impl Cydonia {
         let Some((name, count)) = self
             .workspace
             .read(cx)
-            .active_project()
-            .and_then(|project| project.board.columns.get(ix))
+            .active_board()
+            .and_then(|board| board.columns.get(ix))
             .map(|column| (column.name.clone(), column.cards.len()))
         else {
             return div().into_any_element();
@@ -274,7 +297,7 @@ impl Cydonia {
                     .flex_row()
                     .items_center()
                     .gap(px(6.))
-                    .text_size(px(11.))
+                    .text_style(TextStyle::Subheadline)
                     .child(
                         div()
                             .font_weight(FontWeight::MEDIUM)
@@ -294,17 +317,11 @@ impl Cydonia {
                     .gap(px(8.))
                     .children(cards)
                     .child(
-                        div()
-                            .id(("add-card", ix))
+                        theme
+                            .ghost(("add-card", ix))
                             .flex_none()
                             .px(px(8.))
                             .py(px(6.))
-                            .rounded(px(Theme::control_radius()))
-                            .cursor_pointer()
-                            .hover(|el| el.bg(theme.glass_hover()))
-                            .flex()
-                            .flex_row()
-                            .items_center()
                             .gap(px(6.))
                             .child(
                                 icons::icon(icons::PLUS)
@@ -313,7 +330,7 @@ impl Cydonia {
                             )
                             .child(
                                 div()
-                                    .text_size(px(12.5))
+                                    .text_style(TextStyle::Callout)
                                     .text_color(theme.text_faint)
                                     .child("Add a card"),
                             )
@@ -334,8 +351,8 @@ impl Cydonia {
         let Some(card) = self
             .workspace
             .read(cx)
-            .active_project()
-            .and_then(|project| project.board.card(at))
+            .active_board()
+            .and_then(|board| board.card(at))
         else {
             return div().into_any_element();
         };
@@ -377,7 +394,7 @@ impl Cydonia {
                 div()
                     .max_h(px(140.))
                     .overflow_hidden()
-                    .text_size(px(12.5))
+                    .text_style(TextStyle::Callout)
                     .text_color(theme.text)
                     .child(text),
             )
@@ -470,8 +487,8 @@ impl Cydonia {
     fn last_column(&self, at: Spot, cx: &App) -> bool {
         self.workspace
             .read(cx)
-            .active_project()
-            .is_none_or(|project| at.column + 1 >= project.board.columns.len())
+            .active_board()
+            .is_none_or(|board| at.column + 1 >= board.columns.len())
     }
 
     fn card_editor(&self, cx: &Context<Self>) -> AnyElement {
@@ -489,7 +506,7 @@ impl Cydonia {
             .child(self.card_field.clone())
             .child(
                 div()
-                    .text_size(px(11.))
+                    .text_style(TextStyle::Subheadline)
                     .font_family(theme.font_mono.clone())
                     .text_color(theme.text_faint)
                     .child("enter file · esc cancel"),

@@ -3,4 +3,5 @@
 
 pub mod composer;
 pub mod menu;
+pub mod meter;
 pub mod transcript;

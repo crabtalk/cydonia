@@ -8,7 +8,7 @@
 use crate::{
     agent::{Listing, mcp::McpServer},
     model::workspace::Workspace,
-    view::root::{TRAFFIC_LIGHT_X, TRAFFIC_LIGHT_Y},
+    view::root::{HEADER_HEIGHT, TRAFFIC_LIGHT_X, TRAFFIC_LIGHT_Y},
 };
 use bezel::{
     gpui::{
@@ -17,7 +17,7 @@ use bezel::{
         div, point, prelude::*, px, size,
     },
     motion::{Fade, Painter},
-    theme::{Theme, appearance},
+    theme::{TextStyle, Theme, Typeset, appearance},
     ui::{
         icons,
         input::TextField,
@@ -28,13 +28,20 @@ use cacp_agents::mcp as registry;
 use std::collections::HashSet;
 
 mod agents;
+mod dev;
 mod mcp;
 mod theme;
+mod typography;
 
 /// The section sidebar. The reference's 18rem is read against a 120rem panel;
 /// against this window it would take a third of the width, so it matches the
 /// main window's sidebar instead.
 const SIDEBAR_WIDTH: f32 = 200.;
+
+/// The gap between a group and the label of the next one, and between a label
+/// and the box under it.
+pub(super) const GROUP_GAP: f32 = 20.;
+pub(super) const LABEL_GAP: f32 = 8.;
 
 /// The reading column's cap, `--container-content`. The body is centred in
 /// whatever the window gives it, up to this.
@@ -56,22 +63,24 @@ pub fn init(cx: &mut App) {
 
 /// Which section the sidebar has selected.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Section {
+pub enum Section {
     Appearance,
     Agents,
     // After Agents: a server is something an agent reaches, so it reads in the
     // order it is set up.
     Mcp,
+    Dev,
 }
 
 impl Section {
-    const ALL: [Self; 3] = [Self::Appearance, Self::Agents, Self::Mcp];
+    const ALL: [Self; 4] = [Self::Appearance, Self::Agents, Self::Mcp, Self::Dev];
 
     fn title(self) -> &'static str {
         match self {
             Self::Appearance => "Appearance",
             Self::Agents => "Agents",
             Self::Mcp => "MCP servers",
+            Self::Dev => "Dev",
         }
     }
 
@@ -80,6 +89,7 @@ impl Section {
             Self::Appearance => icons::SUN,
             Self::Agents => icons::WIDGET,
             Self::Mcp => icons::LINK,
+            Self::Dev => icons::CPU,
         }
     }
 }
@@ -110,11 +120,15 @@ pub struct SettingsWindow {
 pub fn open(
     workspace: Entity<Workspace>,
     existing: Option<WindowHandle<SettingsWindow>>,
+    section: Section,
     cx: &mut App,
 ) -> Option<WindowHandle<SettingsWindow>> {
     if let Some(handle) = existing
         && handle
-            .update(cx, |_, window, _| window.activate_window())
+            .update(cx, |this, window, cx| {
+                this.show(section, cx);
+                window.activate_window();
+            })
             .is_ok()
     {
         return Some(handle);
@@ -145,7 +159,7 @@ pub fn open(
                 };
                 let mut this = SettingsWindow {
                     workspace,
-                    section: Section::Appearance,
+                    section,
                     listings: None,
                     busy: HashSet::new(),
                     error: None,
@@ -166,6 +180,19 @@ pub fn open(
 }
 
 impl SettingsWindow {
+    /// What is on this machine can change while the window sits open —
+    /// another install, a directory removed by hand — so the section's list is
+    /// re-read on the way in rather than trusted from whenever it was opened.
+    fn show(&mut self, section: Section, cx: &mut Context<Self>) {
+        self.section = section;
+        match section {
+            Section::Agents => self.load(cx),
+            Section::Mcp => self.reload(),
+            Section::Appearance | Section::Dev => {}
+        }
+        cx.notify();
+    }
+
     fn sidebar(&self, cx: &Context<Self>) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
         let painter = Painter::of(cx);
@@ -182,7 +209,7 @@ impl SettingsWindow {
             .pb(px(8.))
             // Clears the traffic lights, which have no strip of their own.
             // Set after the shorthand — `p` writes every side.
-            .pt(px(Theme::HEADER_HEIGHT))
+            .pt(px(HEADER_HEIGHT))
             .children(Section::ALL.into_iter().enumerate().map(|(ix, section)| {
                 theme
                     .nav_row(
@@ -192,22 +219,7 @@ impl SettingsWindow {
                         Fade::new(painter, format!("section-{ix}")),
                     )
                     .id(("section", ix))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.section = section;
-                        // What is on this machine can change while the window
-                        // sits open — another install, a directory removed by
-                        // hand — so the list is re-read on the way in rather
-                        // than trusted from whenever the window was opened.
-                        match section {
-                            // What is on this machine can change while the
-                            // window sits open — another install, a directory
-                            // removed by hand.
-                            Section::Agents => this.load(cx),
-                            Section::Mcp => this.reload(),
-                            Section::Appearance => {}
-                        }
-                        cx.notify();
-                    }))
+                    .on_click(cx.listener(move |this, _, _, cx| this.show(section, cx)))
             }))
     }
 }
@@ -217,6 +229,7 @@ impl Render for SettingsWindow {
         let theme = Theme::of(cx).clone();
         div()
             .size_full()
+            .relative()
             .flex()
             .flex_row()
             .on_action(cx.listener(Self::search_mcp))
@@ -224,7 +237,7 @@ impl Render for SettingsWindow {
             .bg(theme.bg)
             .font_family(theme.font_sans.clone())
             .text_color(theme.text)
-            .text_size(px(14.))
+            .text_style(TextStyle::Body)
             .child(self.sidebar(cx))
             .child(
                 div()
@@ -246,12 +259,10 @@ impl Render for SettingsWindow {
                             .flex_col()
                             .child(theme.page_header(self.section.title(), None))
                             .child(match self.section {
-                                Section::Appearance => theme
-                                    .group_box()
-                                    .child(self.theme_row(cx))
-                                    .into_any_element(),
+                                Section::Appearance => self.appearance_body(cx),
                                 Section::Agents => self.agents_body(cx),
                                 Section::Mcp => self.mcp_body(cx),
+                                Section::Dev => self.dev_body(cx),
                             }),
                     ),
             )

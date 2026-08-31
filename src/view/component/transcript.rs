@@ -5,18 +5,21 @@
 //! tool call or thought; everything before it is interim.** That one rule is
 //! what stops a model's thinking-out-loud being presented as its reply.
 
-use crate::model::{
-    session::{ChatItem, ChatSession, ToolStatus},
-    workspace::Workspace,
+use crate::{
+    model::{
+        session::{ChatItem, ChatSession, ToolStatus},
+        workspace::Workspace,
+    },
+    view::root,
 };
 use bezel::{
     gpui::{AnyElement, Context, ScrollHandle, SharedString, Window, div, prelude::*, px},
     motion::Painter,
-    theme::Theme,
+    theme::{TextStyle, Theme, Typeset},
     ui::{
         icons, loaders,
-        scroll::{self, FollowState, ScrollbarState},
-        widgets::{self, Layout, Status, Takeover},
+        scroll::{self, FollowState},
+        widgets::{Layout, Status, Takeover},
     },
 };
 use cacp::schema::ToolKind;
@@ -27,28 +30,20 @@ use std::{
 
 const CONTENT_MAX_WIDTH: f32 = 720.;
 
+/// The transcript's breathing room at either end. The bottom carries the
+/// floating composer on top of it, so the last message scrolls clear of it.
+const PAD: f32 = 28.;
+
 /// Where a session's scrollback sits and which of its zones are open — view
 /// state, per session, so switching back finds the transcript as it was left.
+#[derive(Default)]
 pub struct State {
     scroll: ScrollHandle,
     follow: FollowState,
-    bar: ScrollbarState,
     /// Keyed by the turn's first item index.
     work: HashMap<usize, Takeover>,
     /// Tool items whose output is showing, by item index.
     output: HashSet<usize>,
-}
-
-impl State {
-    pub fn new(painter: Painter) -> Self {
-        Self {
-            scroll: ScrollHandle::new(),
-            follow: FollowState::new(),
-            bar: ScrollbarState::new(painter),
-            work: HashMap::new(),
-            output: HashSet::new(),
-        }
-    }
 }
 
 /// A question and the answer it drew.
@@ -126,6 +121,7 @@ pub fn render(chat: &ChatSession, window: &mut Window, cx: &mut Context<Workspac
     div()
         .flex_1()
         .min_h_0()
+        .relative()
         .flex()
         .justify_center()
         .child(
@@ -134,30 +130,35 @@ pub fn render(chat: &ChatSession, window: &mut Window, cx: &mut Context<Workspac
                 .w_full()
                 .max_w(px(CONTENT_MAX_WIDTH))
                 .child(
+                    // The turns are the scroll container's own children, not a
+                    // column inside it: `scroll::rail` addresses what gpui
+                    // indexes, and a wrapper would leave it one item to point at.
                     div()
                         .id(("transcript", id))
                         .size_full()
                         .overflow_y_scroll()
                         .track_scroll(&chat.transcript.scroll)
-                        .child(
-                            div()
-                                .px(px(24.))
-                                .py(px(28.))
-                                .flex()
-                                .flex_col()
-                                .children(zones),
-                        ),
+                        .px(px(24.))
+                        .pt(px(PAD))
+                        .pb(px(PAD + root::composer_height() + root::COMPOSER_BOTTOM))
+                        .flex()
+                        .flex_col()
+                        .children(zones),
                 )
                 .child(scroll::follow(
                     &chat.transcript.scroll,
                     &chat.transcript.follow,
-                ))
-                .child(scroll::scrollbar(
-                    SharedString::from(format!("transcript-bar-{id}")),
-                    &chat.transcript.scroll,
-                    &chat.transcript.bar,
                 )),
         )
+        .child(scroll::rail(
+            SharedString::from(format!("transcript-rail-{id}")),
+            &chat.transcript.scroll,
+            turns.len(),
+            // The column is centred in the pane and the pane runs to the
+            // window's right edge, so what is clear after the text is what is
+            // clear beside it.
+            window.viewport_size().width - chat.transcript.scroll.bounds().right(),
+        ))
         .into_any_element()
 }
 
@@ -195,7 +196,7 @@ fn zone(
                 .py(px(9.))
                 .rounded(px(Theme::surface_radius()))
                 .bg(theme.surface_raised)
-                .text_size(px(13.5))
+                .text_style(TextStyle::Body)
                 .text_color(theme.text)
                 .child(text.clone()),
         );
@@ -251,7 +252,7 @@ fn work_header(
         .py(px(5.))
         .rounded(px(Theme::control_radius()))
         .cursor_pointer()
-        .hover(widgets::collapsible_header_hover)
+        .hover(|el| el.bg(theme.element_hover))
         .on_click(cx.listener(move |this, _, _, cx| {
             this.with_session(id, cx, |chat| {
                 let running = chat.streaming;
@@ -265,7 +266,7 @@ fn work_header(
         .child(theme.disclosure(open))
         .child(
             div()
-                .text_size(px(12.5))
+                .text_style(TextStyle::Callout)
                 .text_color(theme.text_muted)
                 .child(label),
         )
@@ -300,7 +301,7 @@ fn work(chat: &ChatSession, body: Range<usize>, cx: &mut Context<Workspace>) -> 
                         .flex_row()
                         .items_start()
                         .gap(px(6.))
-                        .text_size(px(12.5))
+                        .text_style(TextStyle::Callout)
                         .text_color(theme.text_muted.opacity(0.7))
                         .child(
                             icons::icon(icons::CPU)
@@ -310,7 +311,7 @@ fn work(chat: &ChatSession, body: Range<usize>, cx: &mut Context<Workspace>) -> 
                         .child(text.clone())
                         .into_any_element(),
                     ChatItem::Agent(text) => div()
-                        .text_size(px(12.5))
+                        .text_style(TextStyle::Callout)
                         .text_color(theme.text_muted)
                         .child(text.clone())
                         .into_any_element(),
@@ -353,7 +354,7 @@ fn tool(chat: &ChatSession, ix: usize, first: bool, cx: &mut Context<Workspace>)
                     failed,
                     (!output.is_empty()).then_some(open),
                 )
-                .hover(widgets::step_row_hover)
+                .hover(|el| el.bg(theme.element_hover))
                 .id(("tool", ix))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.with_session(id, cx, |chat| {
@@ -389,7 +390,7 @@ fn working(chat: &ChatSession, cx: &mut Context<Workspace>) -> AnyElement {
         ))
         .child(
             div()
-                .text_size(px(12.5))
+                .text_style(TextStyle::Callout)
                 .text_color(theme.text_faint)
                 .child("working…"),
         )

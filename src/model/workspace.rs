@@ -12,20 +12,23 @@ use crate::{
     agent,
     data::{ColType, Column, Data, Edit, Page, Table},
     model::{
-        archive,
         article::{self, Article},
-        board::Board,
+        board::{self, Board},
         project::Project,
+        record,
         session::ChatSession,
         settings::{self, Settings},
         state::{self, State},
     },
 };
 use bezel::{
-    gpui::{Context, EntityId, SharedString},
-    theme::appearance::AppearanceMode,
+    gpui::{App, Context, EntityId, SharedString},
+    theme::{self, Brand, Theme, Tint, appearance::AppearanceMode},
 };
-use std::{collections::HashMap, path::PathBuf};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
 
 /// What a table is called before it is named.
 const UNTITLED: &str = "Untitled";
@@ -38,9 +41,17 @@ pub struct Workspace {
     pub projects: Vec<Project>,
     pub active: Option<usize>,
     pub appearance: AppearanceMode,
+    pub reduce_transparency: bool,
     /// Session ids are minted here and never reused, so a card's link to the
     /// session it opened stays unambiguous for the life of the process.
     next_id: u64,
+    /// The body size the type ladder is scaled against, in points.
+    pub text_size: f32,
+    /// The hue the greys carry, and how much of it.
+    pub tint: Tint,
+    /// Whether the window is showing the frame meter. Runtime only — a switch
+    /// you left on is not a preference worth restoring.
+    pub meter: bool,
     /// The registry's mark for each configured agent, by name. Empty until the
     /// catalog lands, and stays empty offline.
     agent_icons: HashMap<String, SharedString>,
@@ -56,19 +67,39 @@ impl Workspace {
             projects,
             active,
             appearance: state.appearance,
+            reduce_transparency: state.reduce_transparency,
+            text_size: state.text_size,
+            tint: Tint::new(state.hue, state.chroma),
+            meter: false,
             next_id: 0,
             agent_icons: HashMap::new(),
         };
         for ix in restore {
-            this.restore_archived(ix, cx);
+            this.restore_sessions(ix);
         }
         this.open_first_session(cx);
         this.load_agent_icons(cx);
+        // Temporary dev hook: `CYDONIA_TEST_PROMPT` sends a prompt on launch
+        // so a turn can be verified without a composer. Here rather than on
+        // connect, which a resume would fire again.
+        if let Ok(prompt) = std::env::var("CYDONIA_TEST_PROMPT")
+            && let Some(id) = this.active_id()
+        {
+            this.send(id, prompt, cx);
+        }
         this
     }
 
     fn save(&self) {
-        state::save(&self.projects, self.active, self.appearance);
+        state::save(&State {
+            projects: self.projects.iter().map(|p| p.path.clone()).collect(),
+            active: self.active.unwrap_or_default(),
+            appearance: self.appearance,
+            reduce_transparency: self.reduce_transparency,
+            text_size: self.text_size,
+            hue: self.tint.hue,
+            chroma: self.tint.chroma,
+        });
     }
 
     // ── agents ───────────────────────────────────────────────────────
@@ -123,6 +154,28 @@ impl Workspace {
         cx.notify();
     }
 
+    /// The same window's other choice.
+    pub fn set_reduce_transparency(&mut self, reduce: bool, cx: &mut Context<Self>) {
+        self.reduce_transparency = reduce;
+        apply_transparency(reduce, cx);
+        self.save();
+        cx.notify();
+    }
+
+    pub fn set_text_size(&mut self, points: f32, cx: &mut Context<Self>) {
+        self.text_size = points;
+        theme::set_base_text_size(points, cx);
+        self.save();
+        cx.notify();
+    }
+
+    pub fn set_tint(&mut self, tint: Tint, cx: &mut Context<Self>) {
+        self.tint = tint;
+        apply_tint(tint, cx);
+        self.save();
+        cx.notify();
+    }
+
     // ── projects ─────────────────────────────────────────────────────
 
     pub fn open_project(&mut self, path: PathBuf, cx: &mut Context<Self>) {
@@ -132,7 +185,7 @@ impl Workspace {
             None => {
                 self.projects.push(Project::new(path));
                 let ix = self.projects.len() - 1;
-                self.restore_archived(ix, cx);
+                self.restore_sessions(ix);
                 ix
             }
         };
@@ -167,11 +220,20 @@ impl Workspace {
 
     /// A project talks to an agent the moment it is looked at: the tab in
     /// front opens its first session, and the tabs behind it spawn nothing.
+    ///
+    /// A project with sessions read back from disk shows its most recent one
+    /// rather than opening a second beside it — nothing there is connected
+    /// until something is sent to it.
     fn open_first_session(&mut self, cx: &mut Context<Self>) {
-        if self
-            .active_project()
-            .is_none_or(|project| !project.sessions.is_empty())
-        {
+        let Some(project) = self.active.and_then(|ix| self.projects.get_mut(ix)) else {
+            return;
+        };
+        if project.active.is_some() {
+            return;
+        }
+        if let Some(id) = project.sessions.last().map(|chat| chat.id) {
+            project.active = Some(id);
+            cx.notify();
             return;
         }
         if let Some(entry) = self.settings.agents.first().cloned() {
@@ -183,9 +245,9 @@ impl Workspace {
         self.active.and_then(|ix| self.projects.get(ix))
     }
 
-    pub fn active_board_mut(&mut self) -> Option<&mut Board> {
+    pub fn active_project_mut(&mut self) -> Option<&mut Project> {
         let ix = self.active?;
-        Some(&mut self.projects.get_mut(ix)?.board)
+        self.projects.get_mut(ix)
     }
 
     // ── sessions ─────────────────────────────────────────────────────
@@ -229,44 +291,61 @@ impl Workspace {
             .position(|project| project.session(id).is_some())
     }
 
-    /// Drop the session: the shutdown sender goes with it and the agent
-    /// process dies.
-    /// Read the project's filed transcripts back, minting an id for each —
-    /// ids mean nothing across a launch, so a reloaded one is as new as any.
-    fn restore_archived(&mut self, ix: usize, cx: &mut Context<Self>) {
+    /// Read the project's filed sessions back, minting an id for each — ids
+    /// mean nothing across a launch, so a reloaded one is as new as any. The
+    /// agent is resolved by name; a session whose agent has since left
+    /// `settings.toml` comes back readable but cannot reconnect.
+    fn restore_sessions(&mut self, ix: usize) {
         let path = self.projects[ix].path.clone();
-        for (file, record) in archive::list(&path) {
+        for (file, stored) in record::list(&path) {
             let id = self.next_id;
             self.next_id += 1;
-            let chat = ChatSession::from_archive(id, file, record, cx);
+            let entry = self
+                .settings
+                .agents
+                .iter()
+                .find(|agent| agent.name == stored.agent)
+                .cloned()
+                .unwrap_or_else(|| settings::Agent {
+                    name: stored.agent.clone(),
+                    id: None,
+                    command: String::new(),
+                    args: Vec::new(),
+                    env: Default::default(),
+                });
+            let chat = ChatSession::restore(id, file, path.clone(), entry, stored);
             self.projects[ix].sessions.push(chat);
         }
     }
 
-    /// File the transcript, then close the connection behind it. The row stays
-    /// where it was, readable — an archive you cannot open is a delete.
-    pub fn archive_session(&mut self, id: u64, cx: &mut Context<Self>) {
-        let Some(ix) = self.project_of(id) else {
+    /// Send to a session, starting an agent for it when it has none — typing
+    /// into a session read back from disk is what picks it up again.
+    pub fn send(&mut self, id: u64, content: String, cx: &mut Context<Self>) {
+        let found = self
+            .projects
+            .iter_mut()
+            .find_map(|project| project.session_mut(id));
+        let Some(chat) = found else {
             return;
         };
-        let path = self.projects[ix].path.clone();
-        let Some(chat) = self.projects[ix].session_mut(id) else {
-            return;
-        };
-        if chat.archive.is_some() {
-            return;
+        if chat.idle() && chat.resumable() {
+            chat.resume(cx);
         }
-        let Some(file) = archive::write(&path, &chat.to_archive()) else {
-            return;
-        };
-        chat.close(file);
+        chat.send(content);
         cx.notify();
+    }
+
+    /// Close the connection and keep the transcript. The row stays where it
+    /// was, readable, and typing into it opens an agent again.
+    pub fn archive_session(&mut self, id: u64, cx: &mut Context<Self>) {
+        self.with_session(id, cx, |chat| chat.close());
     }
 
     pub fn rename_session(&mut self, id: u64, name: String, cx: &mut Context<Self>) {
         self.with_session(id, cx, |chat| {
             let name = name.trim();
             chat.name = (!name.is_empty()).then(|| name.to_owned());
+            chat.flush();
         });
     }
 
@@ -274,10 +353,10 @@ impl Workspace {
         let Some(project) = self.project_of(id).map(|ix| &mut self.projects[ix]) else {
             return;
         };
-        // Closing an archived session is what deletes it: leaving the file
-        // would put the row back on the next launch.
-        if let Some(file) = project.session(id).and_then(|chat| chat.archive.as_ref()) {
-            archive::remove(file);
+        // Closing a session is what deletes it: leaving the file would put
+        // the row back on the next launch.
+        if let Some(file) = project.session(id).and_then(|chat| chat.file.as_ref()) {
+            record::remove(file);
         }
         project.sessions.retain(|chat| chat.id != id);
         if project.active == Some(id) {
@@ -309,17 +388,14 @@ impl Workspace {
         }
     }
 
-    /// The session opened. Temporary dev hook: `CYDONIA_TEST_PROMPT` sends
-    /// a prompt right away so streaming can be verified without a composer.
+    /// The session reached an agent: send it whatever was typed while it had
+    /// none, and write the agent's own id down so a later launch can load the
+    /// conversation back.
     pub fn session_connected(&mut self, id: u64, cx: &mut Context<Self>) {
         self.with_session(id, cx, |chat| {
-            if let Some(seed) = chat.seed.take() {
-                chat.send(seed);
-            }
+            chat.drain();
+            chat.flush();
         });
-        if let Ok(prompt) = std::env::var("CYDONIA_TEST_PROMPT") {
-            self.with_session(id, cx, |chat| chat.send(prompt));
-        }
         cx.notify();
     }
 
@@ -329,6 +405,80 @@ impl Workspace {
 
     pub fn active_id(&self) -> Option<u64> {
         self.active_project().and_then(|project| project.active)
+    }
+
+    // ── boards ───────────────────────────────────────────────────────
+
+    /// A fresh board in the active project, opened as it lands.
+    pub fn new_board(&mut self, cx: &mut Context<Self>) -> Option<usize> {
+        let project = self.active?;
+        let board = board::create(&self.projects[project].path)?;
+        self.projects[project].boards.push(board);
+        let ix = self.projects[project].boards.len() - 1;
+        self.open_board(project, ix, cx);
+        Some(ix)
+    }
+
+    /// Every project's boards are on show, so picking one brings its project
+    /// forward with it.
+    pub fn open_board(&mut self, project: usize, ix: usize, cx: &mut Context<Self>) {
+        let Some(open) = self.projects.get_mut(project) else {
+            return;
+        };
+        if ix >= open.boards.len() {
+            return;
+        }
+        open.board = Some(ix);
+        if self.active != Some(project) {
+            self.active = Some(project);
+            self.save();
+        }
+        cx.notify();
+    }
+
+    /// Drop the board: the file goes with it.
+    pub fn delete_board(&mut self, project: usize, ix: usize, cx: &mut Context<Self>) {
+        let Some(project) = self.projects.get_mut(project) else {
+            return;
+        };
+        if ix >= project.boards.len() {
+            return;
+        }
+        project.boards.remove(ix).remove();
+        project.board = project
+            .board
+            .filter(|open| *open != ix)
+            .map(|open| if open > ix { open - 1 } else { open });
+        cx.notify();
+    }
+
+    pub fn rename_board(
+        &mut self,
+        project: usize,
+        ix: usize,
+        name: String,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(board) = self
+            .projects
+            .get_mut(project)
+            .and_then(|open| open.boards.get_mut(ix))
+        else {
+            return;
+        };
+        board.name = name.trim().to_owned();
+        board.save();
+        cx.notify();
+    }
+
+    pub fn active_board(&self) -> Option<&Board> {
+        let project = self.active_project()?;
+        project.boards.get(project.board?)
+    }
+
+    pub fn active_board_mut(&mut self) -> Option<&mut Board> {
+        let project = self.projects.get_mut(self.active?)?;
+        project.boards.get_mut(project.board?)
     }
 
     // ── articles ─────────────────────────────────────────────────────
@@ -379,22 +529,31 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Settle the open article's name — see [`Article::rename`]. Called on the
-    /// way out of an article, which is the moment its title is finished.
-    pub fn rename_article(&mut self, cx: &mut Context<Self>) {
-        let Some(project) = self.active.and_then(|at| self.projects.get_mut(at)) else {
-            return;
-        };
-        let Some(article) = project.article.and_then(|ix| project.articles.get_mut(ix)) else {
-            return;
-        };
-        article.rename();
-        cx.notify();
-    }
-
     pub fn active_article(&self) -> Option<&Article> {
         let project = self.active_project()?;
         project.articles.get(project.article?)
+    }
+
+    /// Put a cover on the open article, or take it off — see
+    /// [`Article::set_cover`].
+    pub fn set_cover(&mut self, source: Option<&Path>, cx: &mut Context<Self>) {
+        if let Some(article) = self.article_mut() {
+            article.set_cover(source);
+            cx.notify();
+        }
+    }
+
+    /// Cut the open article a new cover — see [`Article::shuffle_cover`].
+    pub fn shuffle_cover(&mut self, cx: &mut Context<Self>) {
+        if let Some(article) = self.article_mut() {
+            article.shuffle_cover();
+            cx.notify();
+        }
+    }
+
+    fn article_mut(&mut self) -> Option<&mut Article> {
+        let project = self.projects.get_mut(self.active?)?;
+        project.articles.get_mut(project.article?)
     }
 
     // ── tables ───────────────────────────────────────────────────────
@@ -602,19 +761,47 @@ impl Workspace {
         project.tables.get(project.table?)
     }
 
-    /// The editor changed. Found by the entity rather than by a path, because
-    /// a document that has just been given a title has moved.
-    pub fn write_article(&mut self, editor: EntityId, source: String) {
+    /// The title or the content changed. Found by the entity because an article
+    /// has two surfaces and either can be the one that moved.
+    pub fn write_article(&mut self, changed: EntityId, cx: &mut Context<Self>) {
         let found = self.projects.iter_mut().find_map(|project| {
             project.articles.iter_mut().find(|article| {
                 article
-                    .editor
+                    .field
                     .as_ref()
-                    .is_some_and(|open| open.entity_id() == editor)
+                    .is_some_and(|field| field.entity_id() == changed)
+                    || article
+                        .editor
+                        .as_ref()
+                        .is_some_and(|editor| editor.entity_id() == changed)
             })
         });
-        if let Some(article) = found {
-            article.write(source);
+        if found.is_some_and(|article| article.write(cx)) {
+            cx.notify();
         }
     }
+}
+
+/// Point bezel's frost alpha at the preference. Free rather than a method
+/// because the window reads its background appearance while it is being opened,
+/// which is before there is a workspace to ask.
+pub fn apply_tint(tint: Tint, cx: &mut App) {
+    theme::set_brand(
+        Brand {
+            tint,
+            ..theme::brand(cx)
+        },
+        cx,
+    );
+}
+
+pub fn apply_transparency(reduce: bool, cx: &mut App) {
+    let glass = if reduce { 1.0 } else { Theme::GLASS_ALPHA };
+    theme::set_brand(
+        Brand {
+            glass,
+            ..theme::brand(cx)
+        },
+        cx,
+    );
 }

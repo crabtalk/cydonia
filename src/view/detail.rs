@@ -11,13 +11,25 @@ use crate::{
 use bezel::{
     gpui::{AnyElement, App, Context, FocusHandle, Focusable as _, Window, div, prelude::*, px},
     motion::{Fade, Painter},
-    theme::Theme,
+    theme::{TextStyle, Theme, Typeset},
     ui::{
         icons,
         widgets::{ButtonStyle, Buttons, Content, Scaffolding},
     },
 };
 use cacp::schema::PermissionOptionKind;
+use std::path::Path;
+
+/// A path as it is shown: `~` for a home directory nobody needs spelled out.
+fn shown_path(path: &Path) -> String {
+    let full = path.display().to_string();
+    dirs::home_dir()
+        .and_then(|home| {
+            full.strip_prefix(home.to_str()?)
+                .map(|rest| format!("~{rest}"))
+        })
+        .unwrap_or(full)
+}
 
 impl Cydonia {
     pub fn composer_focus_handle(&self, cx: &App) -> FocusHandle {
@@ -35,7 +47,11 @@ impl Cydonia {
     }
 
     pub(crate) fn submit(&mut self, text: String, cx: &mut Context<Self>) {
-        self.with_active(cx, |chat| chat.send(text));
+        let Some(id) = self.workspace.read(cx).active_id() else {
+            return;
+        };
+        self.workspace
+            .update(cx, |workspace, cx| workspace.send(id, text, cx));
     }
 
     pub(crate) fn cancel_turn(&mut self, cx: &mut Context<Self>) {
@@ -93,17 +109,18 @@ impl Cydonia {
     ) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
         let open = self.workspace.read(cx).active_project().is_some();
-        // Nothing to send to: archiving closed the connection, so the composer
-        // stack would be a prompt box wired to a dead process.
-        let live = !self
+        // Nothing to send to: the session's agent is gone from settings.toml,
+        // so there is nothing left to reconnect it to.
+        let live = self
             .workspace
             .read(cx)
             .active_session()
-            .is_some_and(|chat| chat.archive.is_some());
+            .is_none_or(ChatSession::resumable);
+        let showing = self.showing(cx);
         let body = if !open {
             self.no_project(cx)
         } else {
-            match self.showing(cx) {
+            match showing {
                 Pane::Chat => self.conversation(window, cx),
                 Pane::Board => self.board(cx),
                 Pane::Article => match self.article(cx) {
@@ -117,75 +134,87 @@ impl Cydonia {
             }
         };
 
-        let card = div()
+        let content = div()
             .flex_1()
             .min_h_0()
-            // With the sidebar gone the toolbar above it already clears the
-            // traffic lights, and a margin on top of that doubles the air.
-            .mt(px(if self.sidebar_open {
-                root::SHELL_INSET
-            } else {
-                0.
-            }))
-            .ml(px(root::SHELL_INSET))
-            .mr(px(root::SHELL_INSET))
             .flex()
             .flex_col()
-            .rounded(px(Theme::panel_radius()))
-            .bg(theme.surface)
-            .border_1()
-            .border_color(theme.border)
             .overflow_hidden()
-            .child(body)
-            .when(open && live, |card| {
-                card.child(
-                    div().flex_none().flex().justify_center().child(
-                        div()
-                            .w_full()
-                            .max_w(px(720.))
-                            .px(px(24.))
-                            .pb(px(20.))
-                            .flex()
-                            .flex_col()
-                            .gap(px(8.))
-                            .children(self.plan(cx))
-                            .children(self.permission(cx))
-                            .children(self.queue(cx))
-                            .child(self.composer.clone()),
-                    ),
-                )
-            });
+            .child(body);
 
         div()
             .flex_1()
             .min_w_0()
+            .relative()
+            .bg(root::content_bg(&theme))
             .flex()
             .flex_col()
-            .when(!self.sidebar_open, |column| {
-                column.child(self.toolbar(window, cx))
+            .child(content)
+            // Out of flow so the transcript runs under it: the composer's glass
+            // has something to bend only where the messages reach its edge.
+            .when(open && live && showing == Pane::Chat, |column| {
+                column.child(
+                    div()
+                        .absolute()
+                        .bottom(px(root::COMPOSER_BOTTOM))
+                        .left_0()
+                        .right_0()
+                        .flex()
+                        .justify_center()
+                        .child(
+                            div()
+                                .w_full()
+                                .max_w(px(720.))
+                                .px(px(24.))
+                                .flex()
+                                .flex_col()
+                                .gap(px(8.))
+                                .children(self.plan(cx))
+                                .children(self.permission(cx))
+                                .children(self.queue(cx))
+                                .child(self.composer.clone()),
+                        ),
+                )
             })
-            .child(card)
-            .when(open, |column| column.child(self.pane_switch(cx)))
+            // Out of flow, so folding the sidebar away costs the pane nothing:
+            // the controls float on the column rather than taking a row off it.
+            .when(!self.sidebar_open, |column| {
+                column.child(self.fold_cluster(window, cx))
+            })
     }
 
     /// The session in front, or the invitation to open one.
     fn conversation(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        match self.workspace.read(cx).active_id() {
-            Some(id) => self
-                .workspace
-                .update(cx, |workspace, cx| match workspace.session(id) {
-                    Some(chat) => transcript::render(chat, window, cx),
-                    None => div().flex_1().into_any_element(),
-                }),
-            None => Theme::of(cx)
+        let theme = Theme::of(cx).clone();
+        let workspace = self.workspace.read(cx);
+        let Some(chat) = workspace.active_session() else {
+            return theme
                 .empty_state(
                     icons::CHAT_ROUND_LINE,
                     "No session",
                     "⌘N to start one in this project.",
                 )
                 .flex_1()
-                .into_any_element(),
+                .into_any_element();
+        };
+        // Nothing has been said yet, so what the session has to show for
+        // itself is the directory the agent was started in.
+        if chat.items.is_empty() {
+            let cwd = workspace
+                .active_project()
+                .map(|project| shown_path(&project.path))
+                .unwrap_or_default();
+            return theme
+                .empty_state(icons::FOLDER, cwd, format!("{} runs here", chat.entry.name))
+                .flex_1()
+                .into_any_element();
         }
+        let id = chat.id;
+        self.workspace
+            .update(cx, |workspace, cx| match workspace.session(id) {
+                Some(chat) => transcript::render(chat, window, cx),
+                None => div().flex_1().into_any_element(),
+            })
     }
 
     /// The agent's plan, while it still has something left to do.
@@ -202,7 +231,7 @@ impl Cydonia {
                 .px(px(12.))
                 .py(px(8.))
                 .gap(px(4.))
-                .text_size(px(12.))
+                .text_style(TextStyle::Callout)
                 .children(chat.plan.iter().map(|(text, status)| {
                     let (icon, tone) = match status {
                         PlanStatus::Done => (icons::CHECK, theme.success),
@@ -238,7 +267,7 @@ impl Cydonia {
                 .gap(px(10.))
                 .child(
                     div()
-                        .text_size(px(13.))
+                        .text_style(TextStyle::Body)
                         .text_color(theme.text)
                         .child(prompt.title.clone()),
                 )

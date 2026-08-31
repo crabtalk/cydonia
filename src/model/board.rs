@@ -1,21 +1,39 @@
-//! A project's board: columns of task cards, and the file that outlives them.
+//! A project's boards: columns of task cards, and the files that outlive them.
 //!
-//! Machine-written like [`crate::model::state`] — one file holding every
-//! project's board, keyed by the path that owns it.
+//! Machine-written like [`crate::model::state`], and kept in the project's own
+//! `.cydonia/` — a board is the project's work, so it travels with the
+//! directory rather than living under a path in the config dir that a rename
+//! would orphan.
+//!
+//! One file per board, named for the millisecond it was made. An id rather
+//! than the name: the name is a property, and a file named after it would be a
+//! second copy of it that a refused rename could leave disagreeing.
 //!
 //! Cards nest inside their column, so a `Vec` position *is* the order and a
 //! move is a remove and an insert. A flat list with an ordinal only earns its
 //! keep where several views group the same cards differently.
 
-use crate::model::{project::Project, settings};
+use crate::model::project;
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::BTreeMap,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
+
+/// Where a project's boards live, and what the one board a project used to be
+/// allowed was called.
+const DIR: &str = "boards";
+const FILE: &str = "board.toml";
+
+/// What a board is called before it is named, and what one whose name has been
+/// taken off is shown as.
+const NAMED: &str = "Board";
+pub const UNNAMED: &str = "Untitled";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Board {
+    /// The file this board is, which is where [`Board::save`] writes it back.
+    #[serde(skip)]
+    pub path: PathBuf,
+    #[serde(default)]
+    pub name: String,
     #[serde(default)]
     pub columns: Vec<Column>,
 }
@@ -36,15 +54,24 @@ pub struct Card {
     pub session: Option<u64>,
 }
 
-impl Default for Board {
-    fn default() -> Self {
+impl Board {
+    /// The lanes every board starts with.
+    fn new(path: PathBuf, name: &str) -> Self {
         Self {
+            path,
+            name: name.to_owned(),
             columns: ["Todo", "Doing", "Done"].map(Column::new).into(),
         }
     }
-}
 
-impl Board {
+    /// The sidebar's label.
+    pub fn label(&self) -> &str {
+        match self.name.is_empty() {
+            true => UNNAMED,
+            false => &self.name,
+        }
+    }
+
     pub fn column(&self, ix: usize) -> Option<&Column> {
         self.columns.get(ix)
     }
@@ -61,6 +88,18 @@ impl Board {
     pub fn take(&mut self, at: Spot) -> Option<Card> {
         let column = self.columns.get_mut(at.column)?;
         (at.card < column.cards.len()).then(|| column.cards.remove(at.card))
+    }
+
+    /// Best effort: a board that cannot be written is not worth failing a
+    /// click over.
+    pub fn save(&self) {
+        if let Ok(body) = toml::to_string_pretty(self) {
+            let _ = std::fs::write(&self.path, body);
+        }
+    }
+
+    pub fn remove(&self) {
+        let _ = std::fs::remove_file(&self.path);
     }
 }
 
@@ -95,36 +134,60 @@ impl Spot {
     }
 }
 
-fn path() -> Option<PathBuf> {
-    settings::dir().ok().map(|dir| dir.join("boards.toml"))
+/// This project's boards, oldest first — the file names are stamps, so sorting
+/// them is sorting by age.
+pub fn list(project: &Path) -> Vec<Board> {
+    let dir = project::dir(project);
+    migrate(&dir);
+    let Ok(entries) = std::fs::read_dir(dir.join(DIR)) else {
+        return Vec::new();
+    };
+    let mut paths: Vec<PathBuf> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "toml"))
+        .collect();
+    paths.sort();
+    paths.into_iter().filter_map(read).collect()
 }
 
-fn stored() -> BTreeMap<PathBuf, Board> {
-    path()
-        .and_then(|path| std::fs::read_to_string(path).ok())
-        .and_then(|body| toml::from_str(&body).ok())
-        .unwrap_or_default()
+pub fn create(project: &Path) -> Option<Board> {
+    let dir = project::init(project).ok()?.join(DIR);
+    std::fs::create_dir_all(&dir).ok()?;
+    let board = Board::new(free(&dir, project::stamp()), NAMED);
+    board.save();
+    Some(board)
 }
 
-/// This project's board, or a fresh one for a project that has never had one.
-pub fn load(project: &Path) -> Board {
-    stored().remove(project).unwrap_or_default()
+fn read(path: PathBuf) -> Option<Board> {
+    let body = std::fs::read_to_string(&path).ok()?;
+    let mut board: Board = toml::from_str(&body).ok()?;
+    board.path = path;
+    Some(board)
 }
 
-/// Best effort, and a merge: the file also holds boards for projects that are
-/// not open, and closing a tab must not erase its work.
-pub fn save(projects: &[Project]) {
-    let Some(path) = path() else {
+/// This millisecond's file, or the first after it that is not taken. Two boards
+/// made inside one millisecond is the only way that happens.
+fn free(dir: &Path, stamp: u128) -> PathBuf {
+    (stamp..)
+        .map(|stamp| dir.join(format!("{stamp}.toml")))
+        .find(|board| !board.exists())
+        .unwrap_or_else(|| dir.join(format!("{stamp}.toml")))
+}
+
+/// A project used to have one board, in `.cydonia/board.toml`. Give it the
+/// directory and the name the rest are made with, and it is the first of many.
+fn migrate(dir: &Path) {
+    let old = dir.join(FILE);
+    let Some(mut board) = read(old.clone()) else {
         return;
     };
-    let mut boards = stored();
-    for project in projects {
-        boards.insert(project.path.clone(), project.board.clone());
+    let to = dir.join(DIR);
+    if std::fs::create_dir_all(&to).is_err() {
+        return;
     }
-    if let Ok(body) = toml::to_string_pretty(&boards)
-        && let Some(dir) = path.parent()
-    {
-        let _ = std::fs::create_dir_all(dir);
-        let _ = std::fs::write(&path, body);
-    }
+    board.path = free(&to, project::stamp());
+    board.name = NAMED.to_owned();
+    board.save();
+    let _ = std::fs::remove_file(old);
 }
