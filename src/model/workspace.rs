@@ -14,6 +14,7 @@ use crate::{
     model::{
         archive,
         article::{self, Article},
+        board::{self, Board},
         project::Project,
         session::ChatSession,
         settings::{self, Settings},
@@ -331,6 +332,80 @@ impl Workspace {
 
     pub fn active_id(&self) -> Option<u64> {
         self.active_project().and_then(|project| project.active)
+    }
+
+    // ── boards ───────────────────────────────────────────────────────
+
+    /// A fresh board in the active project, opened as it lands.
+    pub fn new_board(&mut self, cx: &mut Context<Self>) -> Option<usize> {
+        let project = self.active?;
+        let board = board::create(&self.projects[project].path)?;
+        self.projects[project].boards.push(board);
+        let ix = self.projects[project].boards.len() - 1;
+        self.open_board(project, ix, cx);
+        Some(ix)
+    }
+
+    /// Every project's boards are on show, so picking one brings its project
+    /// forward with it.
+    pub fn open_board(&mut self, project: usize, ix: usize, cx: &mut Context<Self>) {
+        let Some(open) = self.projects.get_mut(project) else {
+            return;
+        };
+        if ix >= open.boards.len() {
+            return;
+        }
+        open.board = Some(ix);
+        if self.active != Some(project) {
+            self.active = Some(project);
+            self.save();
+        }
+        cx.notify();
+    }
+
+    /// Drop the board: the file goes with it.
+    pub fn delete_board(&mut self, project: usize, ix: usize, cx: &mut Context<Self>) {
+        let Some(project) = self.projects.get_mut(project) else {
+            return;
+        };
+        if ix >= project.boards.len() {
+            return;
+        }
+        project.boards.remove(ix).remove();
+        project.board = project
+            .board
+            .filter(|open| *open != ix)
+            .map(|open| if open > ix { open - 1 } else { open });
+        cx.notify();
+    }
+
+    pub fn rename_board(
+        &mut self,
+        project: usize,
+        ix: usize,
+        name: String,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(board) = self
+            .projects
+            .get_mut(project)
+            .and_then(|open| open.boards.get_mut(ix))
+        else {
+            return;
+        };
+        board.name = name.trim().to_owned();
+        board.save();
+        cx.notify();
+    }
+
+    pub fn active_board(&self) -> Option<&Board> {
+        let project = self.active_project()?;
+        project.boards.get(project.board?)
+    }
+
+    pub fn active_board_mut(&mut self) -> Option<&mut Board> {
+        let project = self.projects.get_mut(self.active?)?;
+        project.boards.get_mut(project.board?)
     }
 
     // ── articles ─────────────────────────────────────────────────────

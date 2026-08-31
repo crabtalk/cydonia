@@ -20,7 +20,7 @@ use editor::Editor;
 use markdown::Typography;
 use std::{
     path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
+    time::UNIX_EPOCH,
 };
 
 /// What articles were called before they were named for their age, and what an
@@ -219,7 +219,7 @@ pub fn list(project: &Path) -> Vec<Article> {
 
 pub fn create(project: &Path) -> Option<Article> {
     let dir = project::init(project).ok()?.join(DIR);
-    let article = free(&dir, now());
+    let article = free(&dir, project::stamp());
     std::fs::create_dir_all(&article).ok()?;
     let path = article.join(CONTENT);
     std::fs::write(&path, "").ok()?;
@@ -235,15 +235,6 @@ fn free(dir: &Path, stamp: u128) -> PathBuf {
         .unwrap_or_else(|| dir.join(stamp.to_string()))
 }
 
-/// Now, in milliseconds. Sorting these is sorting by age, which is the order
-/// [`list`] hands articles back in.
-fn now() -> u128 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|since| since.as_millis())
-        .unwrap_or_default()
-}
-
 /// When this file was last written, for an article being given the id it should
 /// have been made with.
 fn written(path: &Path) -> u128 {
@@ -251,7 +242,7 @@ fn written(path: &Path) -> u128 {
         .and_then(|meta| meta.modified())
         .ok()
         .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
-        .map_or_else(now, |since| since.as_millis())
+        .map_or_else(project::stamp, |since| since.as_millis())
 }
 
 /// Articles used to sit loose in `.cydonia/` as `foo.md` beside `foo.cover-N.svg`,

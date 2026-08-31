@@ -10,6 +10,7 @@ use crate::{
             menu::Menu,
         },
         settings::{self, Section, SettingsWindow},
+        sidebar::Renaming,
         table,
     },
 };
@@ -121,8 +122,8 @@ pub struct Cydonia {
     pub(crate) cell: Option<table::Cell>,
     pub(crate) cell_field: Entity<TextField>,
     pub(crate) menu: Option<Menu>,
-    /// The session whose name is being typed, and the field it is typed in.
-    pub(crate) renaming: Option<u64>,
+    /// What the name field is attached to, and the field itself.
+    pub(crate) renaming: Option<Renaming>,
     pub(crate) name_field: Entity<TextField>,
 }
 
@@ -261,52 +262,11 @@ impl Cydonia {
     /// see is the second selection the eye finds.
     pub(crate) fn showing(&self, cx: &App) -> Pane {
         match self.pane {
+            Pane::Board if self.workspace.read(cx).active_board().is_none() => Pane::Chat,
             Pane::Article if self.workspace.read(cx).active_article().is_none() => Pane::Chat,
             Pane::Table if self.workspace.read(cx).active_table().is_none() => Pane::Chat,
             pane => pane,
         }
-    }
-
-    /// The shell strip under the content card: on the frost, not on the card.
-    /// What it holds is about the pane you are in rather than anything inside
-    /// it, so it sits outside the surface it switches.
-    ///
-    /// One button, labelled with where it goes — with two panes, a segmented
-    /// track spends a permanent slot restating the one you are already
-    /// looking at.
-    pub(crate) fn pane_switch(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
-        let theme = Theme::of(cx).clone();
-        let (glyph, label, to) = match self.pane {
-            Pane::Board => (icons::CHAT_ROUND_LINE, "Chat", Pane::Chat),
-            Pane::Chat | Pane::Article | Pane::Table => (icons::LIST, "Board", Pane::Board),
-        };
-        div()
-            .flex_none()
-            .py(px(SHELL_INSET))
-            .px(px(SHELL_INSET + 6.))
-            .flex()
-            .flex_row()
-            .items_center()
-            .justify_end()
-            .child(
-                theme
-                    .ghost("pane-switch")
-                    .px(px(8.))
-                    .py(px(4.))
-                    .gap(px(6.))
-                    .child(
-                        icons::icon(glyph)
-                            .size(px(13.))
-                            .text_color(theme.text_faint),
-                    )
-                    .child(
-                        div()
-                            .text_style(TextStyle::Callout)
-                            .text_color(theme.text_muted)
-                            .child(label),
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| this.show_pane(to, cx))),
-            )
     }
 
     /// Nothing is open, so there is nowhere to send a prompt — the only thing

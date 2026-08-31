@@ -1,4 +1,4 @@
-//! A project: a directory, the sessions running in it, its board and its
+//! A project: a directory, the sessions running in it, its boards and its
 //! articles.
 //!
 //! The path is the whole identity — it is what every session in the project
@@ -12,7 +12,10 @@ use crate::{
         session::ChatSession,
     },
 };
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 /// Everything cydonia holds for a project lives here: its articles, its
 /// archived sessions, and its database.
@@ -26,7 +29,9 @@ pub struct Project {
     pub path: PathBuf,
     pub sessions: Vec<ChatSession>,
     pub active: Option<u64>,
-    pub board: Board,
+    pub boards: Vec<Board>,
+    /// Which board the board pane shows.
+    pub board: Option<usize>,
     pub articles: Vec<Article>,
     /// Which article the article pane shows.
     pub article: Option<usize>,
@@ -46,12 +51,13 @@ pub struct Project {
 impl Project {
     pub fn new(path: PathBuf) -> Self {
         let mut this = Self {
-            board: board::load(&path),
+            boards: board::list(&path),
             articles: article::list(&path),
             data: Data::attach(&path),
             path,
             sessions: Vec::new(),
             active: None,
+            board: None,
             article: None,
             tables: Vec::new(),
             table: None,
@@ -127,6 +133,15 @@ impl Project {
         let live = self.sessions.iter().filter(|chat| chat.archive.is_none());
         live.chain(self.sessions.iter().filter(|chat| chat.archive.is_some()))
     }
+}
+
+/// Now, in milliseconds — the id an article or a board is made with. Sorting
+/// these is sorting by age, which is the order they are listed back in.
+pub fn stamp() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|since| since.as_millis())
+        .unwrap_or_default()
 }
 
 pub fn dir(project: &Path) -> PathBuf {

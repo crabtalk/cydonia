@@ -69,6 +69,31 @@ impl Cydonia {
         cx.notify();
     }
 
+    pub(crate) fn new_board(&mut self, project: usize, cx: &mut Context<Self>) {
+        self.select_project(project, cx);
+        let ix = self
+            .workspace
+            .update(cx, |workspace, cx| workspace.new_board(cx));
+        if let Some(ix) = ix {
+            self.open_board(project, ix, cx);
+        }
+    }
+
+    pub(crate) fn open_board(&mut self, project: usize, ix: usize, cx: &mut Context<Self>) {
+        self.commit(cx);
+        self.workspace
+            .update(cx, |workspace, cx| workspace.open_board(project, ix, cx));
+        self.pane = Pane::Board;
+        cx.notify();
+    }
+
+    pub(crate) fn delete_board(&mut self, project: usize, ix: usize, cx: &mut Context<Self>) {
+        self.workspace.update(cx, |workspace, cx| {
+            workspace.delete_board(project, ix, cx);
+        });
+        cx.notify();
+    }
+
     /// Point the field at `at`, filing whatever was already open first — so
     /// clicking straight from one card to another never drops an edit.
     fn edit(&mut self, at: Editing, window: &mut Window, cx: &mut Context<Self>) {
@@ -78,8 +103,8 @@ impl Cydonia {
             Editing::Card(spot) => self
                 .workspace
                 .read(cx)
-                .active_project()
-                .and_then(|project| project.board.card(spot))
+                .active_board()
+                .and_then(|board| board.card(spot))
                 .map(|card| card.text.clone())
                 .unwrap_or_default(),
         };
@@ -103,10 +128,9 @@ impl Cydonia {
         let text = self.card_field.read(cx).content().trim().to_owned();
         self.card_field.update(cx, |field, cx| field.clear(cx));
         self.workspace.update(cx, |workspace, cx| {
-            let Some(project) = workspace.active_project_mut() else {
+            let Some(board) = workspace.active_board_mut() else {
                 return;
             };
-            let board = &mut project.board;
             match at {
                 Editing::New(ix) => {
                     if !text.is_empty()
@@ -123,7 +147,7 @@ impl Cydonia {
                     }
                 }
             }
-            project.board.save(&project.path);
+            board.save();
             cx.notify();
         });
     }
@@ -144,10 +168,9 @@ impl Cydonia {
     fn move_card(&mut self, at: Spot, delta: isize, cx: &mut Context<Self>) {
         self.commit(cx);
         self.workspace.update(cx, |workspace, cx| {
-            let Some(project) = workspace.active_project_mut() else {
+            let Some(board) = workspace.active_board_mut() else {
                 return;
             };
-            let board = &mut project.board;
             let Some(to) = at.column.checked_add_signed(delta) else {
                 return;
             };
@@ -157,7 +180,7 @@ impl Cydonia {
             if let Some(card) = board.take(at) {
                 board.columns[to].cards.push(card);
             }
-            project.board.save(&project.path);
+            board.save();
             cx.notify();
         });
         cx.notify();
@@ -166,11 +189,11 @@ impl Cydonia {
     fn delete_card(&mut self, at: Spot, cx: &mut Context<Self>) {
         self.commit(cx);
         self.workspace.update(cx, |workspace, cx| {
-            let Some(project) = workspace.active_project_mut() else {
+            let Some(board) = workspace.active_board_mut() else {
                 return;
             };
-            project.board.take(at);
-            project.board.save(&project.path);
+            board.take(at);
+            board.save();
             cx.notify();
         });
         cx.notify();
@@ -187,16 +210,16 @@ impl Cydonia {
         self.commit(cx);
         self.workspace.update(cx, |workspace, cx| {
             let text = workspace
-                .active_project()
-                .and_then(|project| project.board.card(at))
+                .active_board()
+                .and_then(|board| board.card(at))
                 .map(|card| card.text.clone());
             let (Some(text), Some(entry)) = (text, workspace.preferred_agent()) else {
                 return;
             };
             let id = workspace.new_session(entry, Some(text), cx);
             if let Some(card) = workspace
-                .active_project_mut()
-                .and_then(|project| project.board.card_mut(at))
+                .active_board_mut()
+                .and_then(|board| board.card_mut(at))
             {
                 card.session = id;
             }
@@ -216,10 +239,10 @@ impl Cydonia {
     /// The lanes. Same frame as [`Cydonia::transcript`]: the body of the
     /// content card, with the composer stack still pinned under it.
     pub fn board(&self, cx: &mut Context<Self>) -> AnyElement {
-        let Some(project) = self.workspace.read(cx).active_project() else {
+        let Some(board) = self.workspace.read(cx).active_board() else {
             return div().flex_1().into_any_element();
         };
-        let count = project.board.columns.len();
+        let count = board.columns.len();
         let columns: Vec<AnyElement> = (0..count).map(|ix| self.column(ix, cx)).collect();
         div()
             .flex_1()
@@ -246,8 +269,8 @@ impl Cydonia {
         let Some((name, count)) = self
             .workspace
             .read(cx)
-            .active_project()
-            .and_then(|project| project.board.columns.get(ix))
+            .active_board()
+            .and_then(|board| board.columns.get(ix))
             .map(|column| (column.name.clone(), column.cards.len()))
         else {
             return div().into_any_element();
@@ -334,8 +357,8 @@ impl Cydonia {
         let Some(card) = self
             .workspace
             .read(cx)
-            .active_project()
-            .and_then(|project| project.board.card(at))
+            .active_board()
+            .and_then(|board| board.card(at))
         else {
             return div().into_any_element();
         };
@@ -470,8 +493,8 @@ impl Cydonia {
     fn last_column(&self, at: Spot, cx: &App) -> bool {
         self.workspace
             .read(cx)
-            .active_project()
-            .is_none_or(|project| at.column + 1 >= project.board.columns.len())
+            .active_board()
+            .is_none_or(|board| at.column + 1 >= board.columns.len())
     }
 
     fn card_editor(&self, cx: &Context<Self>) -> AnyElement {

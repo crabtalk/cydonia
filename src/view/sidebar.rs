@@ -12,7 +12,7 @@ use crate::{
 };
 use bezel::{
     gpui::{
-        self, AnyElement, Context, Div, Empty, Focusable as _, FontWeight, MouseButton,
+        self, AnyElement, Context, Div, Empty, Focusable as _, FontWeight, Hsla, MouseButton,
         SharedString, Stateful, Window, div, prelude::*, px, svg,
     },
     motion::Painter,
@@ -33,6 +33,14 @@ struct SessionRow {
     icon: Option<SharedString>,
     streaming: bool,
     archived: bool,
+}
+
+/// What the sidebar's name field is attached to. One field for both, because
+/// only one row can be being named at a time.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Renaming {
+    Session(u64),
+    Board { project: usize, ix: usize },
 }
 
 /// The box every row under a project heading sits in: indented beneath the
@@ -56,6 +64,21 @@ pub(crate) fn row(
         .cursor_pointer()
         .when(selected, |el| el.bg(theme.glass_hover()))
         .hover(|el| el.bg(theme.glass_hover()))
+}
+
+/// A row's name. The line height is what the field pins itself to: left to
+/// gpui's default the label's box is φ×13, and renaming would resize the row
+/// under the name being typed.
+fn row_label(name: String, tint: Hsla) -> AnyElement {
+    div()
+        .flex_1()
+        .min_w_0()
+        .truncate()
+        .text_style(TextStyle::Body)
+        .line_height(px(18.))
+        .text_color(tint)
+        .child(name)
+        .into_any_element()
 }
 
 impl Cydonia {
@@ -194,6 +217,12 @@ impl Cydonia {
                 archived: chat.archive.is_some(),
             })
             .collect();
+        let boards: Vec<(usize, String)> = project
+            .boards
+            .iter()
+            .enumerate()
+            .map(|(n, board)| (n, board.label().to_owned()))
+            .collect();
         let articles: Vec<(usize, String)> = project
             .articles
             .iter()
@@ -282,6 +311,11 @@ impl Cydonia {
                 section
                     .children(sessions.into_iter().map(|row| self.session_row(row, cx)))
                     .children(
+                        boards
+                            .into_iter()
+                            .map(|(n, name)| self.board_row(ix, n, name, cx)),
+                    )
+                    .children(
                         articles.into_iter().map(|(n, title)| {
                             self.article_row(ix, n, title, cx).into_any_element()
                         }),
@@ -320,6 +354,13 @@ impl Cydonia {
                     this.select_project(ix, cx);
                     this.new_session_action(&NewSession, window, cx);
                 },
+            ),
+            self.menu_row(
+                format!("add-board-{ix}"),
+                icons::LIST,
+                "New board",
+                cx,
+                move |this, _, cx| this.new_board(ix, cx),
             ),
             self.menu_row(
                 format!("add-article-{ix}"),
@@ -403,41 +444,9 @@ impl Cydonia {
             }
         };
 
-        let naming = self.renaming == Some(id);
-        let label: AnyElement = if naming {
-            // The field carries its own press: `TextField` does not focus
-            // itself, and a press that reached the row would select the
-            // session out from under the name being typed.
-            div()
-                .flex_1()
-                .min_w_0()
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|this, _, window, cx| {
-                        cx.stop_propagation();
-                        window.focus(&this.name_field.read(cx).focus_handle(cx), cx);
-                    }),
-                )
-                // Pressing anywhere else is finishing, not abandoning — the
-                // name typed is the name meant. `escape` is what discards.
-                .on_mouse_down_out(cx.listener(|this, _, window, cx| {
-                    this.commit_name(&CommitName, window, cx);
-                }))
-                .child(self.name_field.clone())
-                .into_any_element()
-        } else {
-            div()
-                .flex_1()
-                .min_w_0()
-                .truncate()
-                .text_style(TextStyle::Body)
-                // What the field pins itself to. Left to gpui's default the
-                // label's line box is φ×13, and renaming would resize the row
-                // under the name being typed.
-                .line_height(px(18.))
-                .text_color(tint)
-                .child(session.label)
-                .into_any_element()
+        let label = match self.renaming == Some(Renaming::Session(id)) {
+            true => self.name_field(cx),
+            false => row_label(session.label, tint),
         };
 
         row(("session", id), "session-row", selected, &theme)
@@ -474,6 +483,95 @@ impl Cydonia {
             .into_any_element()
     }
 
+    /// One board: its mark and its name.
+    fn board_row(
+        &self,
+        project: usize,
+        ix: usize,
+        name: String,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        let workspace = self.workspace.read(cx);
+        let selected = self.showing(cx) == Pane::Board
+            && workspace.active == Some(project)
+            && workspace
+                .projects
+                .get(project)
+                .is_some_and(|open| open.board == Some(ix));
+        let tint = if selected {
+            theme.text
+        } else {
+            theme.text_muted
+        };
+        let label = match self.renaming == Some(Renaming::Board { project, ix }) {
+            true => self.name_field(cx),
+            false => row_label(name, tint),
+        };
+
+        row(
+            SharedString::from(format!("board-{project}-{ix}")),
+            "board-row",
+            selected,
+            &theme,
+        )
+        .py(px(6.))
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(8.))
+        .child(
+            icons::icon(icons::LIST)
+                .size(px(14.))
+                .flex_none()
+                .text_color(tint),
+        )
+        .child(label)
+        .child(
+            self.menu_button(
+                SharedString::from(format!("board-menu-{project}-{ix}")),
+                "board-row",
+                icons::icon(icons::MENU_DOTS)
+                    .size(px(14.))
+                    .text_color(theme.text_faint),
+                Menu::Board(project, ix),
+                cx,
+            )
+            .children(self.board_menu(project, ix, cx)),
+        )
+        .on_click(cx.listener(move |this, _, _, cx| this.open_board(project, ix, cx)))
+        .into_any_element()
+    }
+
+    fn board_menu(&self, project: usize, ix: usize, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if self.menu != Some(Menu::Board(project, ix)) {
+            return None;
+        }
+        let rows = vec![
+            self.menu_row(
+                format!("rename-board-{project}-{ix}"),
+                icons::PEN_NEW_SQUARE,
+                "Rename",
+                cx,
+                move |this, window, cx| {
+                    this.start_rename(Renaming::Board { project, ix }, window, cx);
+                },
+            ),
+            self.menu_row(
+                format!("delete-board-{project}-{ix}"),
+                icons::TRASH_BIN_MINIMALISTIC,
+                "Delete",
+                cx,
+                move |this, _, cx| this.delete_board(project, ix, cx),
+            ),
+        ];
+        Some(popover::anchored_menu_below(
+            SharedString::from(format!("board-menu-card-{project}-{ix}")),
+            self.menu_card(rows, cx),
+            None,
+        ))
+    }
+
     fn session_menu(&self, id: u64, archived: bool, cx: &mut Context<Self>) -> Option<AnyElement> {
         if self.menu != Some(Menu::Session(id)) {
             return None;
@@ -483,7 +581,7 @@ impl Cydonia {
             icons::PEN_NEW_SQUARE,
             "Rename",
             cx,
-            move |this, window, cx| this.start_rename(id, window, cx),
+            move |this, window, cx| this.start_rename(Renaming::Session(id), window, cx),
         )];
         if !archived {
             rows.push(self.menu_row(
@@ -513,27 +611,59 @@ impl Cydonia {
         ))
     }
 
-    fn start_rename(&mut self, id: u64, window: &mut Window, cx: &mut Context<Self>) {
-        let label = self
-            .workspace
-            .read(cx)
-            .session(id)
-            .map(ChatSession::label)
-            .unwrap_or_default();
+    /// The field, in the row's place. It carries its own press: `TextField`
+    /// does not focus itself, and a press that reached the row would open what
+    /// is being named out from under the name.
+    fn name_field(&self, cx: &mut Context<Self>) -> AnyElement {
+        div()
+            .flex_1()
+            .min_w_0()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, window, cx| {
+                    cx.stop_propagation();
+                    window.focus(&this.name_field.read(cx).focus_handle(cx), cx);
+                }),
+            )
+            // Pressing anywhere else is finishing, not abandoning — the name
+            // typed is the name meant. `escape` is what discards.
+            .on_mouse_down_out(cx.listener(|this, _, window, cx| {
+                this.commit_name(&CommitName, window, cx);
+            }))
+            .child(self.name_field.clone())
+            .into_any_element()
+    }
+
+    fn start_rename(&mut self, what: Renaming, window: &mut Window, cx: &mut Context<Self>) {
+        let workspace = self.workspace.read(cx);
+        let label = match what {
+            Renaming::Session(id) => workspace
+                .session(id)
+                .map(ChatSession::label)
+                .unwrap_or_default(),
+            Renaming::Board { project, ix } => workspace
+                .projects
+                .get(project)
+                .and_then(|open| open.boards.get(ix))
+                .map(|board| board.name.clone())
+                .unwrap_or_default(),
+        };
         self.name_field
             .update(cx, |field, cx| field.set_content(label, cx));
-        self.renaming = Some(id);
+        self.renaming = Some(what);
         window.focus(&self.name_field.read(cx).focus_handle(cx), cx);
         cx.notify();
     }
 
     pub(crate) fn commit_name(&mut self, _: &CommitName, _: &mut Window, cx: &mut Context<Self>) {
-        let Some(id) = self.renaming.take() else {
+        let Some(what) = self.renaming.take() else {
             return;
         };
         let name = self.name_field.read(cx).content().to_string();
-        self.workspace
-            .update(cx, |workspace, cx| workspace.rename_session(id, name, cx));
+        self.workspace.update(cx, |workspace, cx| match what {
+            Renaming::Session(id) => workspace.rename_session(id, name, cx),
+            Renaming::Board { project, ix } => workspace.rename_board(project, ix, name, cx),
+        });
         cx.notify();
     }
 

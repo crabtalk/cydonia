@@ -19,6 +19,8 @@ pub(crate) enum Menu {
     Project(usize),
     /// The `···` on a session row.
     Session(u64),
+    /// The `···` on a board row, by project and place in it.
+    Board(usize, usize),
     /// The `···` on a table's column heading.
     Column(usize),
 }

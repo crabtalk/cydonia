@@ -178,7 +178,6 @@ impl Cydonia {
                 column.child(self.toolbar(window, cx))
             })
             .child(card)
-            .when(open, |column| column.child(self.pane_switch(cx)))
     }
 
     /// The session in front, or the invitation to open one.
