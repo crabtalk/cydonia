@@ -2,5 +2,6 @@
 //! [`crate::view::root::Pane`]: these are not places you can be.
 
 pub mod composer;
+pub mod fade;
 pub mod menu;
 pub mod transcript;

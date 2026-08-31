@@ -4,21 +4,30 @@
 use crate::{
     model::session::{ChatSession, PlanStatus},
     view::{
-        component::{composer, transcript},
+        component::{composer, fade, transcript},
         root::{self, Cydonia, Pane},
     },
 };
 use bezel::{
-    gpui::{AnyElement, App, Context, FocusHandle, Focusable as _, Window, div, prelude::*, px},
+    gpui::{
+        AnyElement, App, Context, FocusHandle, Focusable as _, FontWeight, ScrollHandle, Window,
+        div, prelude::*, px,
+    },
     motion::{Fade, Painter},
-    theme::{TextStyle, Theme, Typeset},
+    theme::{SurfaceStyle, TextStyle, Theme, Typeset},
     ui::{
         icons,
+        surface::Surfaced as _,
         widgets::{ButtonStyle, Buttons, Content, Scaffolding},
     },
 };
 use cacp::schema::PermissionOptionKind;
 use std::path::Path;
+
+/// Where the header's title starts. Its own measure: the panes under it do not
+/// agree on one — the board insets 16, the table 24, and the conversation and
+/// the article are centred columns with no left edge to meet.
+const TITLE_INSET: f32 = 16.;
 
 /// A path as it is shown: `~` for a home directory nobody needs spelled out.
 fn shown_path(path: &Path) -> String {
@@ -159,13 +168,104 @@ impl Cydonia {
         div()
             .flex_1()
             .min_w_0()
+            .relative()
             .bg(root::frost(&theme, root::CONTENT_FROST))
             .flex()
             .flex_col()
-            .when(!self.sidebar_open, |column| {
-                column.child(self.toolbar(window, cx))
-            })
-            .child(content)
+            .child(fade::under(
+                root::HEADER_HEIGHT,
+                Theme::TRANSCRIPT_FADE_BAND,
+                self.pane_scroll(cx),
+                content,
+            ))
+            // Last, and out of flow: the pane's scroll starts at y=0 and
+            // reserves the header's room as padding of its own, so what you
+            // scroll passes under the header rather than stopping at it.
+            .child(self.pane_header(window, cx))
+    }
+
+    /// What the pane is showing, named. The sidebar says the same thing while
+    /// it is open, and is the only thing that does once it is not.
+    fn pane_header(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        // Folded away, this column is the one on the window's left edge, so it
+        // takes over the band the traffic lights float in — and the toggle
+        // standing in it.
+        let bar = match self.sidebar_open {
+            true => div()
+                .flex_none()
+                .h(px(root::HEADER_HEIGHT))
+                .pl(px(TITLE_INSET))
+                .pr(px(8.))
+                .flex()
+                .flex_row()
+                .items_center(),
+            false => self.toolbar(window, cx),
+        };
+        let header = div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .right_0()
+            .child(bar.gap(px(8.)).children(self.pane_title(cx).map(|title| {
+                div()
+                    .min_w_0()
+                    .truncate()
+                    .text_style(TextStyle::Callout)
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(theme.text)
+                    .child(title)
+            })));
+        match self.under_header(cx) {
+            true => header
+                .surface(&theme, SurfaceStyle::Frost(root::HEADER_FROST))
+                .into_any_element(),
+            // Nothing of its own: the fade has already taken the content away
+            // before it reaches here, and a material with nothing behind it is
+            // a second coat of the column rather than a view through it.
+            false => header.into_any_element(),
+        }
+    }
+
+    /// Whether the pane has put anything behind the header. Only the article
+    /// does: its cover runs to the top of the column, where every other pane
+    /// either reserves the room or has had its content faded out.
+    fn under_header(&self, cx: &Context<Self>) -> bool {
+        matches!(self.showing(cx), Pane::Article)
+            && self.workspace.read(cx).active_article().is_some()
+    }
+
+    /// The scroll the fade is gated on. Only the transcript: the article's
+    /// cover is one tall sprite, and a sprite crossing the ramp goes entirely
+    /// rather than by degrees, so the fade is for text and small marks. The
+    /// board scrolls across rather than up, and the table's headings sit above
+    /// its own scroll.
+    fn pane_scroll(&self, cx: &Context<Self>) -> Option<ScrollHandle> {
+        match self.showing(cx) {
+            Pane::Chat => self
+                .workspace
+                .read(cx)
+                .active_session()
+                .map(|chat| chat.transcript.scroll.clone()),
+            Pane::Article | Pane::Board | Pane::Table => None,
+        }
+    }
+
+    /// The name of whatever is in front, as the sidebar spells it.
+    fn pane_title(&self, cx: &Context<Self>) -> Option<String> {
+        let showing = self.showing(cx);
+        let workspace = self.workspace.read(cx);
+        workspace.active_project()?;
+        match showing {
+            Pane::Chat => workspace.active_session().map(ChatSession::label),
+            Pane::Board => workspace
+                .active_board()
+                .map(|board| board.label().to_owned()),
+            Pane::Article => workspace
+                .active_article()
+                .map(|article| article.label().to_owned()),
+            Pane::Table => workspace.active_table().map(|table| table.name.clone()),
+        }
     }
 
     /// The session in front, or the invitation to open one.

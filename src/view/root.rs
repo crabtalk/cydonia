@@ -59,9 +59,9 @@ pub(crate) const SIDEBAR_GUTTER: f32 = 8.;
 /// instead of one per kind of row.
 pub(crate) const ROW_INDENT: f32 = SIDEBAR_PAD - SIDEBAR_GUTTER;
 
-/// How deep each column's frost sits. One blur under the whole window, so a
-/// column's depth is how much of it the column covers: the sidebar lets more of
-/// the desktop through than the panel you read in.
+/// How deep each column's frost sits. Nothing paints beneath them, so these are
+/// absolute and independent: the sidebar is chrome and holds no long-form text,
+/// the panel is the column whose text has to win against the desktop.
 pub(crate) const SIDEBAR_FROST: Frost = Frost::Thick;
 pub(crate) const CONTENT_FROST: Frost = Frost::UltraThick;
 
@@ -69,6 +69,10 @@ pub(crate) const CONTENT_FROST: Frost = Frost::UltraThick;
 /// and Notion's 36, and tall enough to hold the 14px traffic lights macOS 26
 /// draws without crowding them.
 pub(crate) const HEADER_HEIGHT: f32 = 36.;
+
+/// The header's material where a pane puts something behind it — SwiftUI's
+/// `.ultraThinMaterial`, the rung of the frost scale a bar over content takes.
+pub(crate) const HEADER_FROST: Frost = Frost::UltraThin;
 
 /// What a pane's scroll reserves at the top. The header floats over the column
 /// rather than sitting above it, so the room it needs is padding inside the
