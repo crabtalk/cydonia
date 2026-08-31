@@ -46,9 +46,8 @@ const SIDEBAR_WIDTH: f32 = 200.;
 const SIDEBAR_WIDTH_MIN: f32 = 180.;
 const SIDEBAR_WIDTH_MAX: f32 = 420.;
 
-/// Where the traffic lights sit in from the window's left edge — the
-/// gallery's grid, which the sidebar container's own 16pt padding does not
-/// share.
+/// The sidebar's left edge — the gallery's grid, which the sidebar container's
+/// own 16pt padding does not share.
 const SIDEBAR_PAD: f32 = 20.;
 
 /// The sidebar's gutter: a row's outer margin, and the padding inside it.
@@ -56,8 +55,8 @@ pub(crate) const SIDEBAR_GUTTER: f32 = 8.;
 
 /// How far a row under a project heading is indented. Stated as the gap it has
 /// to leave rather than as a measure of its own: with the gutter added back,
-/// a row's text starts on [`SIDEBAR_PAD`], where the toolbar's controls do, so
-/// the sidebar has one left edge instead of one per kind of row.
+/// a row's text starts on [`SIDEBAR_PAD`], so the sidebar has one left edge
+/// instead of one per kind of row.
 pub(crate) const ROW_INDENT: f32 = SIDEBAR_PAD - SIDEBAR_GUTTER;
 
 /// How deep each column's frost sits. One blur under the whole window, so a
@@ -65,6 +64,16 @@ pub(crate) const ROW_INDENT: f32 = SIDEBAR_PAD - SIDEBAR_GUTTER;
 /// the desktop through than the panel you read in.
 pub(crate) const SIDEBAR_FROST: Frost = Frost::Thick;
 pub(crate) const CONTENT_FROST: Frost = Frost::UltraThick;
+
+/// The header strip's height, measured off `../desktop`: between Cursor's 34
+/// and Notion's 36, and tall enough to hold the 14px traffic lights macOS 26
+/// draws without crowding them.
+pub(crate) const HEADER_HEIGHT: f32 = 36.;
+
+/// What a pane's scroll reserves at the top. The header floats over the column
+/// rather than sitting above it, so the room it needs is padding inside the
+/// scroll — which is what lets content slide under it instead of stopping at it.
+pub(crate) const SCREEN_INSET: f32 = HEADER_HEIGHT + 8.;
 
 /// A column's fill: the app's own tint at one thickness on the frost scale, or
 /// the opaque panel where the platform promises no blur to cover. The scale's
@@ -86,21 +95,27 @@ pub(crate) fn frost(theme: &Theme, thickness: Frost) -> Hsla {
 const TRAFFIC_LIGHT_SIZE: f32 = 14.;
 
 /// Where the traffic lights go, for `TitlebarOptions::traffic_light_position`:
-/// the sidebar's grid across, and down by half the band the sidebar reserves for
-/// them. macOS sizes the button container to `height + 2y`.
-pub const TRAFFIC_LIGHT_X: f32 = SIDEBAR_PAD;
-pub const TRAFFIC_LIGHT_Y: f32 = (Theme::HEADER_HEIGHT - TRAFFIC_LIGHT_SIZE) / 2.;
+/// AppKit's own inset across, which is where every other window on the desktop
+/// shows them, and down by half the band the header reserves for them. macOS
+/// sizes the button container to `height + 2y`.
+pub const TRAFFIC_LIGHT_X: f32 = 12.;
+pub const TRAFFIC_LIGHT_Y: f32 = (HEADER_HEIGHT - TRAFFIC_LIGHT_SIZE) / 2.;
 
 /// Between the lights' centres, as AppKit lays them out. Measured on macOS 26.
 const TRAFFIC_LIGHT_SPACING: f32 = 23.;
 
+/// The gap the header keeps at the window's edges, and between the lights and
+/// the first control it puts past them.
+pub(crate) const HEADER_INSET: f32 = 16.;
+
 /// Where the toolbar's own controls start: clear of the three lights AppKit
-/// puts down from [`TRAFFIC_LIGHT_X`], plus the sidebar's gutter. bezel's own
-/// inset is for lights left where AppKit wanted them, which these are not.
+/// puts down from [`TRAFFIC_LIGHT_X`], plus the gutter that clears them and the
+/// strip's own inset, so the first control stands off the lights by the same
+/// measure it keeps from every other edge.
 pub(crate) const TOOLBAR_INSET: f32 = if cfg!(target_os = "macos") {
-    TRAFFIC_LIGHT_X + 2. * TRAFFIC_LIGHT_SPACING + TRAFFIC_LIGHT_SIZE + 6.
+    TRAFFIC_LIGHT_X + 2. * TRAFFIC_LIGHT_SPACING + TRAFFIC_LIGHT_SIZE + 6. + HEADER_INSET
 } else {
-    8.
+    HEADER_INSET
 };
 
 pub fn init(cx: &mut App) {
@@ -339,9 +354,7 @@ impl Render for Cydonia {
                     cx.notify();
                 }),
             )
-            .when(self.sidebar_open, |root| {
-                root.child(self.sidebar(window, cx))
-            })
+            .when(self.sidebar_open, |root| root.child(self.sidebar(cx)))
             .child(self.detail(window, cx))
             // Rides on the seam between the sidebar and the detail column
             // rather than sitting in flow, so neither gives up a column.

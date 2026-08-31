@@ -8,7 +8,7 @@
 use crate::{
     agent::{Listing, mcp::McpServer},
     model::workspace::Workspace,
-    view::root::{TRAFFIC_LIGHT_X, TRAFFIC_LIGHT_Y},
+    view::root::{HEADER_HEIGHT, TRAFFIC_LIGHT_X, TRAFFIC_LIGHT_Y},
 };
 use bezel::{
     gpui::{
@@ -199,7 +199,7 @@ impl SettingsWindow {
             .pb(px(8.))
             // Clears the traffic lights, which have no strip of their own.
             // Set after the shorthand — `p` writes every side.
-            .pt(px(Theme::HEADER_HEIGHT))
+            .pt(px(HEADER_HEIGHT))
             .children(Section::ALL.into_iter().enumerate().map(|(ix, section)| {
                 theme
                     .nav_row(

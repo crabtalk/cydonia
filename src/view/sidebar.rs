@@ -82,11 +82,7 @@ fn row_label(name: String, tint: Hsla) -> AnyElement {
 }
 
 impl Cydonia {
-    pub(crate) fn sidebar(
-        &self,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement + use<> {
+    pub(crate) fn sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
         let count = self.workspace.read(cx).projects.len();
         let sections: Vec<AnyElement> = (0..count).map(|ix| self.project_section(ix, cx)).collect();
@@ -95,27 +91,43 @@ impl Cydonia {
             .w(px(self.sidebar_width))
             .h_full()
             .bg(root::frost(&theme, root::SIDEBAR_FROST))
+            // Drawn ON the column, not left as a gap between two: a bare strip
+            // between them would be raw desktop at full strength, a bright line
+            // the height of the window.
+            .border_r_1()
+            .border_color(theme.border)
             .flex()
             .flex_col()
-            // The toolbar carries the one action that is not about a
-            // project you already have, out at the sidebar's trailing edge.
+            // Both controls out at the trailing edge, the fold last: the
+            // lights float in the leading half of the strip, which is what
+            // leaves nothing there to pad them clear of.
             .child(
-                self.toolbar(window, cx).child(div().flex_1()).child(
-                    theme
-                        .ghost("open-project")
-                        .p(px(4.))
-                        .tooltip(|window, cx| {
-                            Tooltip::with_keystroke("New project", "⌘O", window, cx)
-                        })
-                        .child(
-                            icons::icon(icons::PLUS)
-                                .size(px(14.))
-                                .text_color(theme.text_faint),
-                        )
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.open_project_action(&OpenProject, window, cx);
-                        })),
-                ),
+                div()
+                    .flex_none()
+                    .h(px(root::HEADER_HEIGHT))
+                    .pr(px(8.))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .justify_end()
+                    .gap(px(4.))
+                    .child(
+                        theme
+                            .ghost("open-project")
+                            .p(px(4.))
+                            .tooltip(|window, cx| {
+                                Tooltip::with_keystroke("New project", "⌘O", window, cx)
+                            })
+                            .child(
+                                icons::icon(icons::PLUS)
+                                    .size(px(14.))
+                                    .text_color(theme.text_faint),
+                            )
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.open_project_action(&OpenProject, window, cx);
+                            })),
+                    )
+                    .child(self.fold_toggle(cx)),
             )
             .child(
                 div()
@@ -154,24 +166,17 @@ impl Cydonia {
             )
     }
 
-    /// The band the traffic lights float in. It belongs to whichever column
-    /// runs along the window's left edge — the sidebar while it is open, the
-    /// content column once it is not — so the toggle keeps its place across
-    /// the collapse.
+    /// The band the traffic lights float in once the sidebar is folded away:
+    /// the content header takes over the window's left edge, and the toggle
+    /// comes with it, leading the row the lights are padded clear of.
     pub(crate) fn toolbar(&self, window: &Window, cx: &mut Context<Self>) -> Div {
-        let theme = Theme::of(cx).clone();
-        let label = if self.sidebar_open {
-            "Hide sidebar"
-        } else {
-            "Show sidebar"
-        };
         div()
             .flex_none()
-            .h(px(Theme::HEADER_HEIGHT))
+            .h(px(root::HEADER_HEIGHT))
             // Full screen takes the lights away, and the room they needed
             // would be left as a hole.
             .pl(px(if window.is_fullscreen() {
-                8.
+                root::HEADER_INSET
             } else {
                 root::TOOLBAR_INSET
             }))
@@ -179,18 +184,29 @@ impl Cydonia {
             .flex()
             .flex_row()
             .items_center()
+            .child(self.fold_toggle(cx))
+    }
+
+    /// The control that folds the sidebar away and brings it back. It belongs
+    /// to whichever column runs along the window's left edge, so it changes
+    /// strip across the collapse.
+    fn fold_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let theme = Theme::of(cx).clone();
+        let label = if self.sidebar_open {
+            "Hide sidebar"
+        } else {
+            "Show sidebar"
+        };
+        theme
+            .ghost("toggle-sidebar")
+            .p(px(4.))
+            .tooltip(move |window, cx| Tooltip::text(label, window, cx))
             .child(
-                theme
-                    .ghost("toggle-sidebar")
-                    .p(px(4.))
-                    .tooltip(move |window, cx| Tooltip::text(label, window, cx))
-                    .child(
-                        icons::icon(icons::SIDEBAR_MINIMALISTIC_LEFT)
-                            .size(px(14.))
-                            .text_color(theme.text_faint),
-                    )
-                    .on_click(cx.listener(|this, _, _, cx| this.toggle_sidebar(cx))),
+                icons::icon(icons::SIDEBAR_MINIMALISTIC_LEFT)
+                    .size(px(14.))
+                    .text_color(theme.text_faint),
             )
+            .on_click(cx.listener(|this, _, _, cx| this.toggle_sidebar(cx)))
     }
 
     /// One project in the sidebar: a heading that folds, and everything in the
