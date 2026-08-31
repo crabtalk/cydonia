@@ -4,7 +4,6 @@
 
 use crate::{
     model::session::ChatSession,
-    utils,
     view::{
         component::menu::Menu,
         root::{self, CommitName, Cydonia, DismissName, NewSession, OpenProject, Pane},
@@ -23,8 +22,6 @@ use bezel::{
         widgets::{Buttons, Layout},
     },
 };
-use std::time::SystemTime;
-
 /// What the sidebar needs of a session to draw its row, read out of the model
 /// before the row is built: a turn in flight puts a thinking orb in the mark's
 /// place, and the orb leases the frame clock, which wants the app mutably.
@@ -33,7 +30,6 @@ struct SessionRow {
     label: String,
     icon: Option<SharedString>,
     streaming: bool,
-    updated: SystemTime,
     archived: bool,
 }
 
@@ -191,7 +187,6 @@ impl Cydonia {
                 label: chat.label(),
                 icon: workspace.agent_icon(&chat.entry.name),
                 streaming: chat.streaming,
-                updated: chat.updated,
                 archived: chat.archive.is_some(),
             })
             .collect();
@@ -350,18 +345,18 @@ impl Cydonia {
         ))
     }
 
-    /// One session: its mark and name, with when it last had something to say
-    /// under them.
+    /// One session: its mark and its name.
     fn session_row(&self, session: SessionRow, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let painter = Painter::of(cx);
         let id = session.id;
         let selected =
             self.showing(cx) == Pane::Chat && self.workspace.read(cx).active_id() == Some(id);
-        let tint = if selected {
-            theme.text
-        } else {
-            theme.text_muted
+        // An archived session reads a step back; the tint is all that says so.
+        let tint = match (selected, session.archived) {
+            (true, _) => theme.text,
+            (false, true) => theme.text_faint,
+            (false, false) => theme.text_muted,
         };
         // The agent's own mark, in the label's colour rather than any of its
         // own: every icon the registry publishes is a `currentColor` glyph, so
@@ -428,54 +423,32 @@ impl Cydonia {
         };
 
         row(("session", id), "session-row", selected, &theme)
-            .py(px(5.))
+            .py(px(6.))
             .flex()
-            .flex_col()
-            .gap(px(1.))
+            .flex_row()
+            .items_center()
+            .gap(px(8.))
             .child(
                 div()
+                    .flex_none()
+                    .size(px(14.))
                     .flex()
-                    .flex_row()
                     .items_center()
-                    .gap(px(8.))
-                    .child(
-                        div()
-                            .flex_none()
-                            .size(px(14.))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .child(mark),
-                    )
-                    .child(label)
-                    .child(
-                        self.menu_button(
-                            ("session-menu", id),
-                            "session-row",
-                            icons::icon(icons::MENU_DOTS)
-                                .size(px(14.))
-                                .text_color(theme.text_faint),
-                            Menu::Session(id),
-                            cx,
-                        )
-                        .children(self.session_menu(
-                            id,
-                            session.archived,
-                            cx,
-                        )),
-                    ),
+                    .justify_center()
+                    .child(mark),
             )
-            // The second line is indented past the mark so the two read as one
-            // block rather than a list of times.
+            .child(label)
             .child(
-                div()
-                    .ml(px(22.))
-                    .text_size(px(11.))
-                    .text_color(theme.text_faint)
-                    .child(match session.archived {
-                        true => format!("archived · {}", utils::ago(session.updated)),
-                        false => utils::ago(session.updated),
-                    }),
+                self.menu_button(
+                    ("session-menu", id),
+                    "session-row",
+                    icons::icon(icons::MENU_DOTS)
+                        .size(px(14.))
+                        .text_color(theme.text_faint),
+                    Menu::Session(id),
+                    cx,
+                )
+                .children(self.session_menu(id, session.archived, cx)),
             )
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.select_session(id, cx);

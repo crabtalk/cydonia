@@ -16,7 +16,7 @@ use crate::{
 use bezel::{
     gpui::{
         self, AnyElement, App, Axis, Context, DragMoveEvent, Empty, Entity, KeyBinding,
-        PathPromptOptions, Render, Task, Window, WindowHandle, actions, div, prelude::*, px,
+        PathPromptOptions, Render, Window, WindowHandle, actions, div, prelude::*, px,
     },
     motion::{Fade, Painter},
     theme::Theme,
@@ -26,7 +26,6 @@ use bezel::{
         widgets::{ButtonStyle, Buttons, Content, Layout, SPLIT_HANDLE_HIT, SplitDrag, SplitStyle},
     },
 };
-use std::time::Duration;
 
 actions!(
     cydonia,
@@ -38,10 +37,6 @@ actions!(
         DismissName
     ]
 );
-
-/// How often the sidebar redraws for its relative times. A minute, because that
-/// is the finest thing [`utils::ago`] says.
-const TICK: Duration = Duration::from_secs(60);
 
 /// Claimed on the rename field so `enter` files the name and `escape` drops it.
 const RENAME_CONTEXT: &str = "CydoniaSessionName";
@@ -138,9 +133,6 @@ pub struct Cydonia {
     /// The session whose name is being typed, and the field it is typed in.
     pub(crate) renaming: Option<u64>,
     pub(crate) name_field: Entity<TextField>,
-    /// Redraws the sidebar once a minute so the relative times on it stay true
-    /// with nobody touching the window. One timer, not one per row.
-    _tick: Task<()>,
 }
 
 impl Cydonia {
@@ -164,14 +156,6 @@ impl Cydonia {
                 .with_key_context(RENAME_CONTEXT)
                 .with_placeholder("name this session…")
         });
-        let tick = cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor().timer(TICK).await;
-                if this.update(cx, |_, cx| cx.notify()).is_err() {
-                    return;
-                }
-            }
-        });
         let workspace = cx.new(|cx| Workspace::new(settings, state, cx));
         // The model is the only thing that says a session appeared or a turn
         // ended; the composer's placeholder, commands and busy state are all
@@ -193,7 +177,6 @@ impl Cydonia {
             menu: None,
             renaming: None,
             name_field,
-            _tick: tick,
         };
         this.sync_composer(cx);
         this
