@@ -7,7 +7,7 @@ use crate::{
     data::ColType,
     view::{
         component::menu::Menu,
-        root::{self as root, Cydonia, Pane},
+        root::{Cydonia, Pane},
         sidebar,
     },
 };
@@ -17,7 +17,7 @@ use bezel::{
         Window, actions, div, prelude::*, px,
     },
     motion::{Fade, Painter},
-    theme::Theme,
+    theme::{TextStyle, Theme, Typeset},
     ui::{
         icons,
         input::{Shape, TextField},
@@ -33,12 +33,10 @@ actions!(cydonia_table, [CommitCell, DismissCell]);
 /// newline in every other field.
 const KEY_CONTEXT: &str = "CydoniaCell";
 
-/// The line box every cell keeps, focused or not, and the size its text is
-/// set in. Both are what `TextField` renders at and cannot be told otherwise,
-/// so a cell that sized itself to its own text would grow the row the moment
-/// you clicked into it.
+/// The line box every cell keeps, focused or not. It is what `TextField`
+/// renders at and cannot be told otherwise, so a cell that sized itself to its
+/// own text would grow the row the moment you clicked into it.
 const LINE: f32 = 18.;
-const CELL_TEXT: f32 = 13.;
 
 /// The column the row actions sit in — the trash on a row, the `+` on the
 /// header. Declared with the data columns so both halves line up.
@@ -254,7 +252,7 @@ impl Cydonia {
                 false => div()
                     .id("table-name")
                     .cursor_pointer()
-                    .text_size(px(15.))
+                    .text_style(TextStyle::Title3)
                     .text_color(theme.text)
                     .child(name)
                     .on_click(cx.listener(|this, _, window, cx| {
@@ -264,7 +262,7 @@ impl Cydonia {
             })
             .child(
                 div()
-                    .text_size(px(11.))
+                    .text_style(TextStyle::Subheadline)
                     .text_color(theme.text_faint)
                     // The table's own count, not the window's — a pane that
                     // stops at its limit without saying so reads as the end.
@@ -336,7 +334,7 @@ impl Cydonia {
                                 )
                                 .child(
                                     div()
-                                        .text_size(px(12.5))
+                                        .text_style(TextStyle::Callout)
                                         .text_color(theme.text_muted)
                                         .child("New row"),
                                 )
@@ -473,7 +471,7 @@ impl Cydonia {
             .w_full()
             .truncate()
             .cursor_pointer()
-            .text_size(px(CELL_TEXT))
+            .text_style(TextStyle::Body)
             .line_height(px(LINE))
             .text_color(theme.text)
             .child(held.map(text).unwrap_or_default())
@@ -548,7 +546,7 @@ impl Cydonia {
                 .flex_1()
                 .min_w_0()
                 .truncate()
-                .text_size(px(root::SIDEBAR_TEXT))
+                .text_style(TextStyle::Body)
                 .text_color(tone)
                 .child(name),
         )

@@ -10,7 +10,7 @@ use bezel::{
         AnyElement, Context, Div, Entity, Focusable as _, MouseButton, Window, div, prelude::*, px,
     },
     motion::{Fade, Painter},
-    theme::Theme,
+    theme::{TextStyle, Theme, Typeset},
     ui::{
         input::TextField,
         widgets::{ButtonStyle, Buttons, Content, Controls, Scaffolding, Status},
@@ -137,7 +137,7 @@ impl SettingsWindow {
                     .child(
                         div()
                             .mt(px(4.))
-                            .text_size(px(11.5))
+                            .text_style(TextStyle::Subheadline)
                             .font_family(theme.font_mono.clone())
                             .text_color(theme.text_muted)
                             .truncate()
@@ -203,7 +203,7 @@ impl SettingsWindow {
                     .child(
                         div()
                             .mt(px(4.))
-                            .text_size(px(11.5))
+                            .text_style(TextStyle::Subheadline)
                             .text_color(theme.text_muted)
                             .truncate()
                             .child(match server.description.is_empty() {
@@ -216,13 +216,13 @@ impl SettingsWindow {
             .child(match (busy, held, server.installable()) {
                 (true, _, _) => div()
                     .flex_none()
-                    .text_size(px(12.))
+                    .text_style(TextStyle::Callout)
                     .text_color(theme.text_faint)
                     .child("working…")
                     .into_any_element(),
                 (false, true, _) => div()
                     .flex_none()
-                    .text_size(px(12.))
+                    .text_style(TextStyle::Callout)
                     .text_color(theme.text_faint)
                     .child("added")
                     .into_any_element(),
@@ -239,7 +239,7 @@ impl SettingsWindow {
                 // Published, in a form that cannot be launched yet.
                 (false, false, false) => div()
                     .flex_none()
-                    .text_size(px(12.))
+                    .text_style(TextStyle::Callout)
                     .text_color(theme.text_faint)
                     .child("unavailable")
                     .into_any_element(),
@@ -257,7 +257,7 @@ impl SettingsWindow {
             true => theme.group_box().child(
                 theme.card_row(true).child(
                     div()
-                        .text_size(px(12.5))
+                        .text_style(TextStyle::Callout)
                         .text_color(theme.text_muted)
                         .child("No servers yet. Every agent is offered the ones you add here."),
                 ),
@@ -316,7 +316,7 @@ impl SettingsWindow {
                 true => search.child(
                     theme.card_row(false).child(
                         div()
-                            .text_size(px(12.5))
+                            .text_style(TextStyle::Callout)
                             .text_color(theme.text_muted)
                             .child("Nothing matched."),
                     ),

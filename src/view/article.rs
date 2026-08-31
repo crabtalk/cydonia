@@ -3,7 +3,7 @@
 use crate::{
     model::article,
     view::{
-        root::{self as root, Cydonia, Pane},
+        root::{Cydonia, Pane},
         sidebar,
     },
 };
@@ -12,7 +12,7 @@ use bezel::{
         self, AnyElement, App, Context, CursorStyle, Entity, Focusable as _, KeyBinding, ObjectFit,
         PathPromptOptions, SharedString, Window, actions, div, img, point, prelude::*, px,
     },
-    theme::Theme,
+    theme::{TextStyle, Theme, Typeset},
     ui::{icons, input::TextField},
 };
 use std::path::PathBuf;
@@ -297,7 +297,7 @@ impl Cydonia {
                 .px(px(8.))
                 .py(px(3.))
                 .rounded(px(Theme::control_radius()))
-                .text_size(px(11.5))
+                .text_style(TextStyle::Subheadline)
                 .text_color(theme.text_muted)
                 .hover(|chip| chip.bg(theme.element_hover).text_color(theme.text))
                 .child(label)
@@ -379,7 +379,7 @@ impl Cydonia {
                     .flex_1()
                     .min_w_0()
                     .truncate()
-                    .text_size(px(root::SIDEBAR_TEXT))
+                    .text_style(TextStyle::Body)
                     .text_color(if selected {
                         theme.text
                     } else {

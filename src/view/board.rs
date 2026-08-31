@@ -13,7 +13,7 @@ use bezel::{
         SharedString, Stateful, Window, actions, div, prelude::*, px,
     },
     motion::Painter,
-    theme::Theme,
+    theme::{TextStyle, Theme, Typeset},
     ui::{
         icons,
         input::{self, Shape, TextField},
@@ -274,7 +274,7 @@ impl Cydonia {
                     .flex_row()
                     .items_center()
                     .gap(px(6.))
-                    .text_size(px(11.))
+                    .text_style(TextStyle::Subheadline)
                     .child(
                         div()
                             .font_weight(FontWeight::MEDIUM)
@@ -313,7 +313,7 @@ impl Cydonia {
                             )
                             .child(
                                 div()
-                                    .text_size(px(12.5))
+                                    .text_style(TextStyle::Callout)
                                     .text_color(theme.text_faint)
                                     .child("Add a card"),
                             )
@@ -377,7 +377,7 @@ impl Cydonia {
                 div()
                     .max_h(px(140.))
                     .overflow_hidden()
-                    .text_size(px(12.5))
+                    .text_style(TextStyle::Callout)
                     .text_color(theme.text)
                     .child(text),
             )
@@ -489,7 +489,7 @@ impl Cydonia {
             .child(self.card_field.clone())
             .child(
                 div()
-                    .text_size(px(11.))
+                    .text_style(TextStyle::Subheadline)
                     .font_family(theme.font_mono.clone())
                     .text_color(theme.text_faint)
                     .child("enter file · esc cancel"),

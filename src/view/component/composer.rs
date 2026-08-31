@@ -7,7 +7,7 @@ use bezel::{
         Render, SharedString, Window, actions, div, point, prelude::*, px, svg,
     },
     motion::{Fade, Painter},
-    theme::{self, Theme},
+    theme::{self, TextStyle, Theme, Typeset},
     ui::{
         icons,
         input::{self, Shape, TextField},
@@ -264,7 +264,7 @@ impl Composer {
                         .ghost("composer-agent")
                         .px(px(8.))
                         .py(px(3.))
-                        .text_size(px(12.))
+                        .text_style(TextStyle::Callout)
                         .text_color(theme.text_muted)
                         .gap(px(4.))
                         .children(agent.icon.map(|path| {
@@ -442,7 +442,7 @@ impl Composer {
                                         div()
                                             .min_w_0()
                                             .truncate()
-                                            .text_size(px(11.5))
+                                            .text_style(TextStyle::Subheadline)
                                             .font_family(theme.font_mono.clone())
                                             .text_color(theme.text_faint)
                                             .child(hint),

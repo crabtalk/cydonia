@@ -4,7 +4,7 @@ use crate::view::settings::SettingsWindow;
 use bezel::{
     gpui::{Context, div, prelude::*, px},
     theme::{
-        Theme,
+        TextStyle, Theme, Typeset,
         appearance::{self, AppearanceMode},
     },
     ui::widgets::Scaffolding,
@@ -33,7 +33,7 @@ impl SettingsWindow {
                     .child(
                         div()
                             .mt(px(4.))
-                            .text_size(px(11.5))
+                            .text_style(TextStyle::Subheadline)
                             .text_color(theme.text_muted)
                             .child("Follow the system, or pick one."),
                     ),
@@ -57,7 +57,7 @@ impl SettingsWindow {
                             .px(px(10.))
                             .py(px(4.))
                             .rounded(px(Theme::control_radius()))
-                            .text_size(px(12.5))
+                            .text_style(TextStyle::Callout)
                             .cursor_pointer()
                             .when(selected, |el| {
                                 el.bg(theme.element_active).text_color(theme.text)

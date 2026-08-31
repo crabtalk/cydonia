@@ -19,7 +19,7 @@ use bezel::{
         PathPromptOptions, Render, Window, WindowHandle, actions, div, prelude::*, px,
     },
     motion::{Fade, Painter},
-    theme::Theme,
+    theme::{TextStyle, Theme, Typeset},
     ui::{
         icons,
         input::TextField,
@@ -52,15 +52,6 @@ const SIDEBAR_PAD: f32 = 20.;
 
 /// The sidebar's gutter: a row's outer margin, and the padding inside it.
 pub(crate) const SIDEBAR_GUTTER: f32 = 8.;
-
-/// What a row in the sidebar reads at. bezel's theme carries font families and a
-/// spacing scale but no type scale, so this is cydonia's own.
-pub(crate) const SIDEBAR_TEXT: f32 = 13.;
-
-/// What a project's section row reads at — the tier the content card names its
-/// own subject at. Weight and colour alone left the heading level with the rows
-/// it heads, which states no hierarchy at all.
-pub(crate) const SIDEBAR_HEADING: f32 = 15.;
 
 /// How far a row under a project heading is indented. Stated as the gap it has
 /// to leave rather than as a measure of its own: with the gutter added back,
@@ -309,7 +300,7 @@ impl Cydonia {
                     )
                     .child(
                         div()
-                            .text_size(px(12.5))
+                            .text_style(TextStyle::Callout)
                             .text_color(theme.text_muted)
                             .child(label),
                     )
@@ -356,7 +347,7 @@ impl Render for Cydonia {
             .bg(theme.window_bg())
             .font_family(theme.font_sans.clone())
             .text_color(theme.text)
-            .text_size(px(14.))
+            .text_style(TextStyle::Body)
             .on_action(cx.listener(Self::new_session_action))
             .on_action(cx.listener(Self::commit_cell_action))
             .on_action(cx.listener(Self::dismiss_cell))

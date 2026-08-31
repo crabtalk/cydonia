@@ -11,7 +11,7 @@ use crate::{
 use bezel::{
     gpui::{AnyElement, App, Context, FocusHandle, Focusable as _, Window, div, prelude::*, px},
     motion::{Fade, Painter},
-    theme::Theme,
+    theme::{TextStyle, Theme, Typeset},
     ui::{
         icons,
         widgets::{ButtonStyle, Buttons, Content, Scaffolding},
@@ -202,7 +202,7 @@ impl Cydonia {
                 .px(px(12.))
                 .py(px(8.))
                 .gap(px(4.))
-                .text_size(px(12.))
+                .text_style(TextStyle::Callout)
                 .children(chat.plan.iter().map(|(text, status)| {
                     let (icon, tone) = match status {
                         PlanStatus::Done => (icons::CHECK, theme.success),
@@ -238,7 +238,7 @@ impl Cydonia {
                 .gap(px(10.))
                 .child(
                     div()
-                        .text_size(px(13.))
+                        .text_style(TextStyle::Body)
                         .text_color(theme.text)
                         .child(prompt.title.clone()),
                 )

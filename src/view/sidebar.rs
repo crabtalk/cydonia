@@ -15,13 +15,14 @@ use bezel::{
         SharedString, Stateful, Window, div, prelude::*, px, svg,
     },
     motion::Painter,
-    theme::Theme,
+    theme::{TextStyle, Theme, Typeset},
     ui::{
         icons, loaders, popover,
         tooltip::Tooltip,
         widgets::{Buttons, Layout},
     },
 };
+
 /// What the sidebar needs of a session to draw its row, read out of the model
 /// before the row is built: a turn in flight puts a thinking orb in the mark's
 /// place, and the orb leases the frame clock, which wants the app mutably.
@@ -122,7 +123,7 @@ impl Cydonia {
                     )
                     .child(
                         div()
-                            .text_size(px(root::SIDEBAR_TEXT))
+                            .text_style(TextStyle::Body)
                             .text_color(theme.text_muted)
                             .child("Settings"),
                     )
@@ -227,7 +228,7 @@ impl Cydonia {
                             .flex_1()
                             .min_w_0()
                             .truncate()
-                            .text_size(px(root::SIDEBAR_HEADING))
+                            .text_style(TextStyle::Title3)
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(if active { theme.text } else { theme.text_faint })
                             .child(name),
@@ -412,7 +413,7 @@ impl Cydonia {
                 .flex_1()
                 .min_w_0()
                 .truncate()
-                .text_size(px(root::SIDEBAR_TEXT))
+                .text_style(TextStyle::Body)
                 // What the field pins itself to. Left to gpui's default the
                 // label's line box is φ×13, and renaming would resize the row
                 // under the name being typed.

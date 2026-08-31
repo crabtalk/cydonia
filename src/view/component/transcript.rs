@@ -12,7 +12,7 @@ use crate::model::{
 use bezel::{
     gpui::{AnyElement, Context, ScrollHandle, SharedString, Window, div, prelude::*, px},
     motion::Painter,
-    theme::Theme,
+    theme::{TextStyle, Theme, Typeset},
     ui::{
         icons, loaders,
         scroll::{self, FollowState, ScrollbarState},
@@ -195,7 +195,7 @@ fn zone(
                 .py(px(9.))
                 .rounded(px(Theme::surface_radius()))
                 .bg(theme.surface_raised)
-                .text_size(px(13.5))
+                .text_style(TextStyle::Body)
                 .text_color(theme.text)
                 .child(text.clone()),
         );
@@ -265,7 +265,7 @@ fn work_header(
         .child(theme.disclosure(open))
         .child(
             div()
-                .text_size(px(12.5))
+                .text_style(TextStyle::Callout)
                 .text_color(theme.text_muted)
                 .child(label),
         )
@@ -300,7 +300,7 @@ fn work(chat: &ChatSession, body: Range<usize>, cx: &mut Context<Workspace>) -> 
                         .flex_row()
                         .items_start()
                         .gap(px(6.))
-                        .text_size(px(12.5))
+                        .text_style(TextStyle::Callout)
                         .text_color(theme.text_muted.opacity(0.7))
                         .child(
                             icons::icon(icons::CPU)
@@ -310,7 +310,7 @@ fn work(chat: &ChatSession, body: Range<usize>, cx: &mut Context<Workspace>) -> 
                         .child(text.clone())
                         .into_any_element(),
                     ChatItem::Agent(text) => div()
-                        .text_size(px(12.5))
+                        .text_style(TextStyle::Callout)
                         .text_color(theme.text_muted)
                         .child(text.clone())
                         .into_any_element(),
@@ -389,7 +389,7 @@ fn working(chat: &ChatSession, cx: &mut Context<Workspace>) -> AnyElement {
         ))
         .child(
             div()
-                .text_size(px(12.5))
+                .text_style(TextStyle::Callout)
                 .text_color(theme.text_faint)
                 .child("working…"),
         )

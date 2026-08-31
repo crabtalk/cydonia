@@ -8,7 +8,7 @@ use crate::{
 use bezel::{
     gpui::{AnyElement, Context, div, prelude::*, px, svg},
     motion::{Fade, Painter},
-    theme::Theme,
+    theme::{TextStyle, Theme, Typeset},
     ui::{
         icons,
         widgets::{ButtonStyle, Buttons, Content, Scaffolding, Status},
@@ -153,7 +153,7 @@ impl SettingsWindow {
                     .child(
                         div()
                             .mt(px(4.))
-                            .text_size(px(11.5))
+                            .text_style(TextStyle::Subheadline)
                             .text_color(theme.text_muted)
                             .truncate()
                             .child(
@@ -173,7 +173,7 @@ impl SettingsWindow {
             .child(match (busy, installed, listing.agent.installable()) {
                 (true, _, _) => div()
                     .flex_none()
-                    .text_size(px(12.))
+                    .text_style(TextStyle::Callout)
                     .text_color(theme.text_faint)
                     .child("working…")
                     .into_any_element(),
@@ -200,7 +200,7 @@ impl SettingsWindow {
                 // Published, but with no build this machine can run.
                 (false, None, false) => div()
                     .flex_none()
-                    .text_size(px(12.))
+                    .text_style(TextStyle::Callout)
                     .text_color(theme.text_faint)
                     .child("unavailable")
                     .into_any_element(),
@@ -218,7 +218,7 @@ impl SettingsWindow {
                 .child(
                     theme.card_row(true).child(
                         div()
-                            .text_size(px(12.5))
+                            .text_style(TextStyle::Callout)
                             .text_color(theme.text_muted)
                             .child("Reading the agent catalogue…"),
                     ),

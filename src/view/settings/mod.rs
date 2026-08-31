@@ -17,7 +17,7 @@ use bezel::{
         div, point, prelude::*, px, size,
     },
     motion::{Fade, Painter},
-    theme::{Theme, appearance},
+    theme::{TextStyle, Theme, Typeset, appearance},
     ui::{
         icons,
         input::TextField,
@@ -224,7 +224,7 @@ impl Render for SettingsWindow {
             .bg(theme.bg)
             .font_family(theme.font_sans.clone())
             .text_color(theme.text)
-            .text_size(px(14.))
+            .text_style(TextStyle::Body)
             .child(self.sidebar(cx))
             .child(
                 div()
