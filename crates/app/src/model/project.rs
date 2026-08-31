@@ -39,7 +39,7 @@ pub struct Project {
     /// The open table's window of rows, read when it is opened rather than
     /// while it is drawn — a query per frame is a query too many.
     pub page: Option<Page>,
-    /// Whether the rail shows what is under this project's heading.
+    /// Whether the sidebar shows what is under this project's heading.
     pub expanded: bool,
 }
 

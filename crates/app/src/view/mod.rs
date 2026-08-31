@@ -4,11 +4,11 @@
 
 pub mod article;
 pub mod board;
-pub mod chat;
 pub mod composer;
+pub mod detail;
 pub mod menu;
-pub mod rail;
 pub mod root;
 pub mod settings;
+pub mod sidebar;
 pub mod table;
 pub mod transcript;

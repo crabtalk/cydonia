@@ -2,7 +2,7 @@
 
 use std::time::SystemTime;
 
-/// How long ago, at a glance. Coarse on purpose: the rail is a list, not a
+/// How long ago, at a glance. Coarse on purpose: the sidebar is a list, not a
 /// clock, and a second line that changed every second would be the loudest
 /// thing on it.
 pub fn ago(at: SystemTime) -> String {

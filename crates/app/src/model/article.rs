@@ -42,7 +42,7 @@ impl Article {
         }
     }
 
-    /// The rail's label.
+    /// The sidebar's label.
     pub fn title(&self) -> String {
         self.path
             .file_stem()

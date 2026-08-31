@@ -1,4 +1,4 @@
-//! The settings window: a rail of sections, and the active section's body
+//! The settings window: a sidebar of sections, and the active section's body
 //! centred under its title.
 //!
 //! A window rather than a sheet, and **opaque** rather than frosted. Settings
@@ -32,10 +32,10 @@ mod agents;
 mod mcp;
 mod theme;
 
-/// The section rail. The reference's 18rem is read against a 120rem panel;
+/// The section sidebar. The reference's 18rem is read against a 120rem panel;
 /// against this window it would take a third of the width, so it matches the
-/// main window's rail instead.
-const RAIL_WIDTH: f32 = 200.;
+/// main window's sidebar instead.
+const SIDEBAR_WIDTH: f32 = 200.;
 
 /// The reading column's cap, `--container-content`. The body is centred in
 /// whatever the window gives it, up to this.
@@ -55,7 +55,7 @@ pub fn init(cx: &mut App) {
     ]);
 }
 
-/// Which section the rail has selected.
+/// Which section the sidebar has selected.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Section {
     Appearance,
@@ -167,12 +167,12 @@ pub fn open(
 }
 
 impl SettingsWindow {
-    fn rail(&self, cx: &Context<Self>) -> impl IntoElement + use<> {
+    fn sidebar(&self, cx: &Context<Self>) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
         let painter = Painter::of(cx);
         div()
             .flex_none()
-            .w(px(RAIL_WIDTH))
+            .w(px(SIDEBAR_WIDTH))
             .h_full()
             .bg(theme.surface)
             .border_r_1()
@@ -226,7 +226,7 @@ impl Render for SettingsWindow {
             .font_family(theme.font_sans.clone())
             .text_color(theme.text)
             .text_size(px(14.))
-            .child(self.rail(cx))
+            .child(self.sidebar(cx))
             .child(
                 div()
                     .id("settings-body")

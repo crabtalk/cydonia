@@ -1,4 +1,4 @@
-//! The table pane: one table's rows, and the rail row that opens it.
+//! The table pane: one table's rows, and the sidebar row that opens it.
 //!
 //! Every edit runs through the one field, the way the board's cards do — a
 //! field per cell would mint an entity for every value on screen.
@@ -7,8 +7,8 @@ use crate::{
     data::ColType,
     view::{
         menu::Menu,
-        rail,
         root::{self as root, Cydonia, Pane},
+        sidebar,
     },
 };
 use bezel::{
@@ -134,7 +134,7 @@ impl Cydonia {
     /// [`Cydonia::commit`], so every way out of the pane goes through it.
     ///
     /// A heading and a title cannot be emptied — a column with no name is not
-    /// addressable and a table with none has nothing to show in the rail — so
+    /// addressable and a table with none has nothing to show in the sidebar — so
     /// an empty one is a cancel. A *cell* may be emptied: that is how a value
     /// is cleared.
     pub(crate) fn commit_cell(&mut self, cx: &mut Context<Self>) {
@@ -499,7 +499,7 @@ impl Cydonia {
             .into_any_element()
     }
 
-    /// One table in the rail, under the project that holds it.
+    /// One table in the sidebar, under the project that holds it.
     pub(crate) fn table_row(
         &self,
         project: usize,
@@ -521,7 +521,7 @@ impl Cydonia {
             theme.text_muted
         };
 
-        rail::row(
+        sidebar::row(
             SharedString::from(format!("table-{project}-{ix}")),
             "table-row",
             selected,
@@ -543,7 +543,7 @@ impl Cydonia {
                 .flex_1()
                 .min_w_0()
                 .truncate()
-                .text_size(px(root::RAIL_TEXT))
+                .text_size(px(root::SIDEBAR_TEXT))
                 .text_color(tone)
                 .child(name),
         )

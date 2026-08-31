@@ -341,7 +341,7 @@ impl Cydonia {
         let text = card.text.clone();
         let chat = self.card_session(card, cx);
         let live = chat.map(|chat| chat.id);
-        // The same reading as the rail's session row: the card and the row are
+        // The same reading as the sidebar's session row: the card and the row are
         // reporting the same process.
         let running = chat.is_some_and(|chat| chat.streaming);
         let orb = running.then(|| {

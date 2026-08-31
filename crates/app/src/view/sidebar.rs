@@ -1,4 +1,4 @@
-//! The projects rail: a folding heading per project, and every session,
+//! The projects sidebar: a folding heading per project, and every session,
 //! article and table in it. The window's grid lives in [`crate::view::root`];
 //! this draws on it.
 
@@ -21,7 +21,7 @@ use bezel::{
 };
 use std::time::SystemTime;
 
-/// What the rail needs of a session to draw its row, read out of the model
+/// What the sidebar needs of a session to draw its row, read out of the model
 /// before the row is built: a turn in flight puts a thinking orb in the mark's
 /// place, and the orb leases the frame clock, which wants the app mutably.
 struct SessionRow {
@@ -48,8 +48,8 @@ pub(crate) fn row(
         .id(id)
         .group(group)
         .ml(px(root::ROW_INDENT))
-        .mr(px(root::RAIL_GUTTER))
-        .px(px(root::RAIL_GUTTER))
+        .mr(px(root::SIDEBAR_GUTTER))
+        .px(px(root::SIDEBAR_GUTTER))
         .rounded(px(Theme::control_radius()))
         .cursor_pointer()
         .when(selected, |el| el.bg(theme.glass_hover()))
@@ -75,10 +75,10 @@ impl Cydonia {
             //
             .flex()
             .flex_col()
-            // The head band carries the one action that is not about a
-            // project you already have, out at the rail's trailing edge.
+            // The toolbar carries the one action that is not about a
+            // project you already have, out at the sidebar's trailing edge.
             .child(
-                self.rail_head(window, cx).child(div().flex_1()).child(
+                self.toolbar(window, cx).child(div().flex_1()).child(
                     ui::ghost(&theme, "open-project")
                         .p(px(4.))
                         .tooltip(|window, cx| {
@@ -120,7 +120,7 @@ impl Cydonia {
                     )
                     .child(
                         div()
-                            .text_size(px(root::RAIL_TEXT))
+                            .text_size(px(root::SIDEBAR_TEXT))
                             .text_color(theme.text_muted)
                             .child("Settings"),
                     )
@@ -129,10 +129,10 @@ impl Cydonia {
     }
 
     /// The band the traffic lights float in. It belongs to whichever column
-    /// runs along the window's left edge — the rail while it is open, the
+    /// runs along the window's left edge — the sidebar while it is open, the
     /// content column once it is not — so the toggle keeps its place across
     /// the collapse.
-    pub(crate) fn rail_head(&self, window: &Window, cx: &mut Context<Self>) -> Div {
+    pub(crate) fn toolbar(&self, window: &Window, cx: &mut Context<Self>) -> Div {
         let theme = Theme::of(cx).clone();
         let label = if self.sidebar_open {
             "Hide sidebar"
@@ -147,7 +147,7 @@ impl Cydonia {
             .pl(px(if window.is_fullscreen() {
                 8.
             } else {
-                root::RAIL_HEAD_INSET
+                root::TOOLBAR_INSET
             }))
             .pr(px(8.))
             .flex()
@@ -166,7 +166,7 @@ impl Cydonia {
             )
     }
 
-    /// One project in the rail: a heading that folds, and everything in the
+    /// One project in the sidebar: a heading that folds, and everything in the
     /// project under it.
     fn project_section(&self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
@@ -225,7 +225,7 @@ impl Cydonia {
                             .flex_1()
                             .min_w_0()
                             .truncate()
-                            .text_size(px(root::RAIL_HEADING))
+                            .text_size(px(root::SIDEBAR_HEADING))
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(if active { theme.text } else { theme.text_faint })
                             .child(name),
@@ -283,7 +283,7 @@ impl Cydonia {
         });
     }
 
-    /// What the `+` starts here. Session first: it is what the rail is for.
+    /// What the `+` starts here. Session first: it is what the sidebar is for.
     fn add_menu(&self, ix: usize, cx: &mut Context<Self>) -> Option<AnyElement> {
         if self.menu != Some(Menu::Add(ix)) {
             return None;
@@ -408,7 +408,7 @@ impl Cydonia {
                 .flex_1()
                 .min_w_0()
                 .truncate()
-                .text_size(px(root::RAIL_TEXT))
+                .text_size(px(root::SIDEBAR_TEXT))
                 // What the field pins itself to. Left to gpui's default the
                 // label's line box is φ×13, and renaming would resize the row
                 // under the name being typed.

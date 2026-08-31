@@ -1,4 +1,4 @@
-//! The `···` and `+` menus every rail row and column heading opens, and the
+//! The `···` and `+` menus every sidebar row and column heading opens, and the
 //! one field that says which of them is showing.
 
 use crate::view::root::Cydonia;
@@ -57,7 +57,7 @@ impl Cydonia {
             }))
     }
 
-    /// The card every rail menu hangs in, dismissed by a press outside it.
+    /// The card every sidebar menu hangs in, dismissed by a press outside it.
     pub(crate) fn menu_card(&self, rows: Vec<AnyElement>, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         popover::popover_card(&theme)

@@ -1,5 +1,5 @@
-//! The chat column: the transcript in front, and everything stacked under it
-//! that the turn in flight puts there — plan, permission, queue, composer.
+//! The detail column: whichever pane is showing, and everything the turn in
+//! flight stacks under it — plan, permission, queue, composer.
 
 use crate::{
     model::session::{ChatSession, PlanStatus},
@@ -87,7 +87,7 @@ impl Cydonia {
         });
     }
 
-    pub(crate) fn chat(
+    pub(crate) fn detail(
         &self,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -121,7 +121,7 @@ impl Cydonia {
         let card = div()
             .flex_1()
             .min_h_0()
-            // With the rail gone the head band above it already clears the
+            // With the sidebar gone the toolbar above it already clears the
             // traffic lights, and a margin on top of that doubles the air.
             .mt(px(if self.sidebar_open {
                 root::SHELL_INSET
@@ -163,7 +163,7 @@ impl Cydonia {
             .flex()
             .flex_col()
             .when(!self.sidebar_open, |column| {
-                column.child(self.rail_head(window, cx))
+                column.child(self.toolbar(window, cx))
             })
             .child(card)
             .when(open, |column| column.child(self.pane_switch(cx)))

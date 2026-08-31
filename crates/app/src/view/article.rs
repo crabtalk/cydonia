@@ -1,8 +1,8 @@
-//! The article pane: one document, and the rail row that opens it.
+//! The article pane: one document, and the sidebar row that opens it.
 
 use crate::view::{
-    rail,
     root::{self as root, Cydonia, Pane},
+    sidebar,
 };
 use bezel::{
     gpui::{
@@ -112,7 +112,7 @@ impl Cydonia {
         )
     }
 
-    /// One article in the rail, under the project that holds it.
+    /// One article in the sidebar, under the project that holds it.
     pub(crate) fn article_row(
         &self,
         project: usize,
@@ -130,7 +130,7 @@ impl Cydonia {
                 .is_some_and(|open| open.article == Some(ix));
         let id = SharedString::from(format!("article-{project}-{ix}"));
 
-        rail::row(id, "article-row", selected, &theme)
+        sidebar::row(id, "article-row", selected, &theme)
             .py(px(6.))
             .flex()
             .flex_row()
@@ -151,7 +151,7 @@ impl Cydonia {
                     .flex_1()
                     .min_w_0()
                     .truncate()
-                    .text_size(px(root::RAIL_TEXT))
+                    .text_size(px(root::SIDEBAR_TEXT))
                     .text_color(if selected {
                         theme.text
                     } else {
