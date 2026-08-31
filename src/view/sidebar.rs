@@ -320,12 +320,10 @@ impl Cydonia {
                         .children(self.add_menu(ix, cx)),
                     )
                     .child(
-                        div()
-                            .id(("project-fold", ix))
+                        theme
+                            .ghost(("project-fold", ix))
                             .flex_none()
-                            .rounded(px(Theme::control_radius()))
                             .p(px(3.))
-                            .cursor_pointer()
                             .invisible()
                             .group_hover("project-head", |el| el.visible())
                             .child(

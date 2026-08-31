@@ -3,9 +3,12 @@
 
 use crate::view::root::Cydonia;
 use bezel::{
-    gpui::{self, AnyElement, Context, Div, SharedString, Stateful, Window, div, prelude::*, px},
+    gpui::{self, AnyElement, Context, Div, SharedString, Stateful, Window, prelude::*, px},
     theme::Theme,
-    ui::menu::{self, Item},
+    ui::{
+        menu::{self, Item},
+        widgets::Buttons,
+    },
 };
 
 /// What a row does when it is picked.
@@ -50,8 +53,8 @@ impl Cydonia {
         menu: Menu,
         cx: &Context<Self>,
     ) -> Stateful<Div> {
-        div()
-            .id(id.into())
+        Theme::of(cx)
+            .ghost(id)
             .flex_none()
             .relative()
             // An open menu keeps its trigger on show — by then the pointer is
@@ -59,9 +62,7 @@ impl Cydonia {
             .when(self.menu != Some(menu), |el| {
                 el.invisible().group_hover(group, |el| el.visible())
             })
-            .rounded(px(Theme::control_radius()))
             .p(px(3.))
-            .cursor_pointer()
             .child(mark)
             .on_click(cx.listener(move |this, _, _, cx| {
                 cx.stop_propagation();

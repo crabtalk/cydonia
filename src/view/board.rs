@@ -317,17 +317,11 @@ impl Cydonia {
                     .gap(px(8.))
                     .children(cards)
                     .child(
-                        div()
-                            .id(("add-card", ix))
+                        theme
+                            .ghost(("add-card", ix))
                             .flex_none()
                             .px(px(8.))
                             .py(px(6.))
-                            .rounded(px(Theme::control_radius()))
-                            .cursor_pointer()
-                            .hover(|el| el.bg(theme.element_hover))
-                            .flex()
-                            .flex_row()
-                            .items_center()
                             .gap(px(6.))
                             .child(
                                 icons::icon(icons::PLUS)

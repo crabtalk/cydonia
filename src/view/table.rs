@@ -457,14 +457,12 @@ impl Cydonia {
     }
 
     fn row_actions(&self, rowid: i64, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
-        div()
-            .id(SharedString::from(format!("delete-row-{rowid}")))
+        theme
+            .ghost(SharedString::from(format!("delete-row-{rowid}")))
             .flex_none()
             .invisible()
             .group_hover("grid-row", |el| el.visible())
-            .rounded(px(Theme::control_radius()))
             .p(px(3.))
-            .cursor_pointer()
             .child(
                 icons::icon(icons::TRASH_BIN_MINIMALISTIC)
                     .size(px(12.))
@@ -526,12 +524,11 @@ impl Cydonia {
                 .child(name),
         )
         .child(
-            div()
-                .id(("delete-table", ix))
+            theme
+                .ghost(("delete-table", ix))
                 .flex_none()
                 .invisible()
                 .group_hover("table-row", |el| el.visible())
-                .rounded(px(Theme::control_radius()))
                 .p(px(2.))
                 .child(
                     icons::icon(icons::TRASH_BIN_MINIMALISTIC)
