@@ -25,7 +25,10 @@ use bezel::{
     gpui::{Context, EntityId, SharedString},
     theme::appearance::AppearanceMode,
 };
-use std::{collections::HashMap, path::PathBuf};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
 
 /// What a table is called before it is named.
 const UNTITLED: &str = "Untitled";
@@ -395,6 +398,28 @@ impl Workspace {
     pub fn active_article(&self) -> Option<&Article> {
         let project = self.active_project()?;
         project.articles.get(project.article?)
+    }
+
+    /// Put a cover on the open article, or take it off — see
+    /// [`Article::set_cover`].
+    pub fn set_cover(&mut self, source: Option<&Path>, cx: &mut Context<Self>) {
+        if let Some(article) = self.article_mut() {
+            article.set_cover(source);
+            cx.notify();
+        }
+    }
+
+    /// Cut the open article a new cover — see [`Article::shuffle_cover`].
+    pub fn shuffle_cover(&mut self, cx: &mut Context<Self>) {
+        if let Some(article) = self.article_mut() {
+            article.shuffle_cover();
+            cx.notify();
+        }
+    }
+
+    fn article_mut(&mut self) -> Option<&mut Article> {
+        let project = self.projects.get_mut(self.active?)?;
+        project.articles.get_mut(project.article?)
     }
 
     // ── tables ───────────────────────────────────────────────────────

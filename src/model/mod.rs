@@ -5,6 +5,7 @@
 pub mod archive;
 pub mod article;
 pub mod board;
+pub mod cover;
 pub mod project;
 pub mod session;
 pub mod settings;

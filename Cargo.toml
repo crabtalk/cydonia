@@ -29,6 +29,10 @@ cacp-agents = { path = "../cacp/crates/agents" }
 # crates.io
 anyhow = "1"
 dirs = "6"
+# Resizes a picked cover on the way in. Already in the graph — gpui decodes
+# every image it paints with it — so this names a crate that is compiled either
+# way rather than adding one.
+image = "0.25"
 # The project database. `bundled` compiles SQLite in: the store is a file we
 # hand to the user, so it cannot depend on whichever sqlite3 a machine ships.
 rusqlite = { version = "0.40", features = ["bundled"] }

@@ -8,7 +8,7 @@
 //! its name from its title the first time it is left; after that it stays put,
 //! because by then something may have been pointed at it.
 
-use crate::model::{project, workspace::Workspace};
+use crate::model::{cover, project, workspace::Workspace};
 use bezel::gpui::{AppContext as _, Context, Entity, ScrollHandle};
 use editor::Editor;
 use std::path::{Path, PathBuf};
@@ -21,6 +21,10 @@ const SLUG_MAX: usize = 48;
 
 pub struct Article {
     pub path: PathBuf,
+    /// The picture above the document, if it has been given one. See
+    /// [`crate::model::cover`] — this is a cache of a file's existence, and the
+    /// file is what decides.
+    pub cover: Option<PathBuf>,
     /// The editing surface, once the article has been opened. Building one for
     /// every article of every project at launch is the alternative.
     pub editor: Option<Entity<Editor>>,
@@ -33,9 +37,10 @@ pub struct Article {
 }
 
 impl Article {
-    fn new(path: PathBuf) -> Self {
+    fn new(path: PathBuf, cover: Option<PathBuf>) -> Self {
         Self {
             path,
+            cover,
             editor: None,
             scroll: ScrollHandle::new(),
             saved: String::new(),
@@ -77,6 +82,52 @@ impl Article {
 
     pub fn remove(&self) {
         let _ = std::fs::remove_file(&self.path);
+        if let Some(cover) = &self.cover {
+            let _ = std::fs::remove_file(cover);
+        }
+    }
+
+    /// Put a cover on the document, or take it off: `Some` brings that image
+    /// in, `None` removes what is there.
+    ///
+    /// An import that fails leaves the cover that is already up. The person
+    /// picked a file we could not read, and the answer to that is the picture
+    /// they had, not a blank band.
+    pub fn set_cover(&mut self, source: Option<&Path>) {
+        let Some(source) = source else {
+            self.replace_cover(None);
+            return;
+        };
+        let seed = cover::seed(&self.path, self.cover.as_deref());
+        let to = source
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(str::to_ascii_lowercase)
+            .and_then(|ext| cover::path(&self.path, seed, &ext));
+        if let Some(to) = to.filter(|to| cover::import(source, to).is_ok()) {
+            self.replace_cover(Some(to));
+        }
+    }
+
+    /// A fresh generated cover. Adding one and shuffling are the same act —
+    /// the first cover an article is given is already a throw.
+    pub fn shuffle_cover(&mut self) {
+        let seed = cover::seed(&self.path, self.cover.as_deref());
+        let Some(to) = cover::path(&self.path, seed, "svg") else {
+            return;
+        };
+        if std::fs::write(&to, cover::svg(seed)).is_ok() {
+            self.replace_cover(Some(to));
+        }
+    }
+
+    /// Take down whatever is up and put this in its place. The old file goes
+    /// with it, unless the new cover *is* the old file.
+    fn replace_cover(&mut self, next: Option<PathBuf>) {
+        let previous = std::mem::replace(&mut self.cover, next);
+        if let Some(old) = previous.filter(|old| Some(old) != self.cover.as_ref()) {
+            let _ = std::fs::remove_file(old);
+        }
     }
 
     /// Take the name the document gives itself, once. Run when the article is
@@ -97,6 +148,15 @@ impl Article {
             return;
         }
         self.path = to;
+
+        let Some(from) = self.cover.clone() else {
+            return;
+        };
+        if let Some(to) = cover::renamed(&from, &self.path)
+            && std::fs::rename(&from, &to).is_ok()
+        {
+            self.cover = Some(to);
+        }
     }
 }
 
@@ -105,13 +165,13 @@ pub fn list(project: &Path) -> Vec<Article> {
     let Ok(entries) = std::fs::read_dir(project::dir(project)) else {
         return Vec::new();
     };
-    let mut paths: Vec<PathBuf> = entries
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| path.extension().is_some_and(|ext| ext == "md"))
-        .collect();
+    let mut paths: Vec<PathBuf> = entries.flatten().map(|entry| entry.path()).collect();
     paths.sort();
-    paths.into_iter().map(Article::new).collect()
+    paths
+        .iter()
+        .filter(|path| path.extension().is_some_and(|ext| ext == "md"))
+        .map(|path| Article::new(path.clone(), cover::of(&paths, path).cloned()))
+        .collect()
 }
 
 pub fn create(project: &Path) -> Option<Article> {
@@ -124,7 +184,7 @@ pub fn create(project: &Path) -> Option<Article> {
         path = dir.join(format!("{UNTITLED}-{n}.md"));
     }
     std::fs::write(&path, "").ok()?;
-    Some(Article::new(path))
+    Some(Article::new(path, None))
 }
 
 /// A file name from the document's first line: its block marks dropped, and
