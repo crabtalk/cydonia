@@ -14,7 +14,6 @@ use crate::{
     model::{
         archive,
         article::{self, Article},
-        board::Board,
         project::Project,
         session::ChatSession,
         settings::{self, Settings},
@@ -186,9 +185,9 @@ impl Workspace {
         self.active.and_then(|ix| self.projects.get(ix))
     }
 
-    pub fn active_board_mut(&mut self) -> Option<&mut Board> {
+    pub fn active_project_mut(&mut self) -> Option<&mut Project> {
         let ix = self.active?;
-        Some(&mut self.projects.get_mut(ix)?.board)
+        self.projects.get_mut(ix)
     }
 
     // ── sessions ─────────────────────────────────────────────────────

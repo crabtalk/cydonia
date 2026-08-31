@@ -2,7 +2,7 @@
 
 use crate::{
     model::{
-        board::{self, Card, Spot},
+        board::{Card, Spot},
         session::ChatSession,
     },
     view::root::{Cydonia, Pane},
@@ -106,9 +106,10 @@ impl Cydonia {
         let text = self.card_field.read(cx).content().trim().to_owned();
         self.card_field.update(cx, |field, cx| field.clear(cx));
         self.workspace.update(cx, |workspace, cx| {
-            let Some(board) = workspace.active_board_mut() else {
+            let Some(project) = workspace.active_project_mut() else {
                 return;
             };
+            let board = &mut project.board;
             match at {
                 Editing::New(ix) => {
                     if !text.is_empty()
@@ -125,7 +126,7 @@ impl Cydonia {
                     }
                 }
             }
-            board::save(&workspace.projects);
+            project.board.save(&project.path);
             cx.notify();
         });
     }
@@ -146,9 +147,10 @@ impl Cydonia {
     fn move_card(&mut self, at: Spot, delta: isize, cx: &mut Context<Self>) {
         self.commit(cx);
         self.workspace.update(cx, |workspace, cx| {
-            let Some(board) = workspace.active_board_mut() else {
+            let Some(project) = workspace.active_project_mut() else {
                 return;
             };
+            let board = &mut project.board;
             let Some(to) = at.column.checked_add_signed(delta) else {
                 return;
             };
@@ -158,7 +160,7 @@ impl Cydonia {
             if let Some(card) = board.take(at) {
                 board.columns[to].cards.push(card);
             }
-            board::save(&workspace.projects);
+            project.board.save(&project.path);
             cx.notify();
         });
         cx.notify();
@@ -167,10 +169,11 @@ impl Cydonia {
     fn delete_card(&mut self, at: Spot, cx: &mut Context<Self>) {
         self.commit(cx);
         self.workspace.update(cx, |workspace, cx| {
-            if let Some(board) = workspace.active_board_mut() {
-                board.take(at);
-            }
-            board::save(&workspace.projects);
+            let Some(project) = workspace.active_project_mut() else {
+                return;
+            };
+            project.board.take(at);
+            project.board.save(&project.path);
             cx.notify();
         });
         cx.notify();
@@ -195,8 +198,8 @@ impl Cydonia {
             };
             let id = workspace.new_session(entry, Some(text), cx);
             if let Some(card) = workspace
-                .active_board_mut()
-                .and_then(|board| board.card_mut(at))
+                .active_project_mut()
+                .and_then(|project| project.board.card_mut(at))
             {
                 card.session = id;
             }

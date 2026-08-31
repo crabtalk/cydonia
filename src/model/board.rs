@@ -1,18 +1,19 @@
 //! A project's board: columns of task cards, and the file that outlives them.
 //!
-//! Machine-written like [`crate::model::state`] — one file holding every
-//! project's board, keyed by the path that owns it.
+//! Machine-written like [`crate::model::state`], and kept in the project's own
+//! `.cydonia/` — a board is the project's work, so it travels with the
+//! directory rather than living under a path in the config dir that a rename
+//! would orphan.
 //!
 //! Cards nest inside their column, so a `Vec` position *is* the order and a
 //! move is a remove and an insert. A flat list with an ordinal only earns its
 //! keep where several views group the same cards differently.
 
-use crate::model::{project::Project, settings};
+use crate::model::project;
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::BTreeMap,
-    path::{Path, PathBuf},
-};
+use std::path::Path;
+
+const FILE: &str = "board.toml";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Board {
@@ -62,6 +63,17 @@ impl Board {
         let column = self.columns.get_mut(at.column)?;
         (at.card < column.cards.len()).then(|| column.cards.remove(at.card))
     }
+
+    /// Best effort: a board that cannot be written is not worth failing a
+    /// click over.
+    pub fn save(&self, project: &Path) {
+        let Ok(dir) = project::init(project) else {
+            return;
+        };
+        if let Ok(body) = toml::to_string_pretty(self) {
+            let _ = std::fs::write(dir.join(FILE), body);
+        }
+    }
 }
 
 impl Column {
@@ -95,36 +107,10 @@ impl Spot {
     }
 }
 
-fn path() -> Option<PathBuf> {
-    settings::dir().ok().map(|dir| dir.join("boards.toml"))
-}
-
-fn stored() -> BTreeMap<PathBuf, Board> {
-    path()
-        .and_then(|path| std::fs::read_to_string(path).ok())
-        .and_then(|body| toml::from_str(&body).ok())
-        .unwrap_or_default()
-}
-
 /// This project's board, or a fresh one for a project that has never had one.
 pub fn load(project: &Path) -> Board {
-    stored().remove(project).unwrap_or_default()
-}
-
-/// Best effort, and a merge: the file also holds boards for projects that are
-/// not open, and closing a tab must not erase its work.
-pub fn save(projects: &[Project]) {
-    let Some(path) = path() else {
-        return;
-    };
-    let mut boards = stored();
-    for project in projects {
-        boards.insert(project.path.clone(), project.board.clone());
-    }
-    if let Ok(body) = toml::to_string_pretty(&boards)
-        && let Some(dir) = path.parent()
-    {
-        let _ = std::fs::create_dir_all(dir);
-        let _ = std::fs::write(&path, body);
-    }
+    std::fs::read_to_string(project::dir(project).join(FILE))
+        .ok()
+        .and_then(|body| toml::from_str(&body).ok())
+        .unwrap_or_default()
 }
