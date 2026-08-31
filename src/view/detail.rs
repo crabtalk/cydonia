@@ -56,7 +56,11 @@ impl Cydonia {
     }
 
     pub(crate) fn submit(&mut self, text: String, cx: &mut Context<Self>) {
-        self.with_active(cx, |chat| chat.send(text));
+        let Some(id) = self.workspace.read(cx).active_id() else {
+            return;
+        };
+        self.workspace
+            .update(cx, |workspace, cx| workspace.send(id, text, cx));
     }
 
     pub(crate) fn cancel_turn(&mut self, cx: &mut Context<Self>) {
@@ -114,13 +118,13 @@ impl Cydonia {
     ) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
         let open = self.workspace.read(cx).active_project().is_some();
-        // Nothing to send to: archiving closed the connection, so the composer
-        // stack would be a prompt box wired to a dead process.
-        let live = !self
+        // Nothing to send to: the session's agent is gone from settings.toml,
+        // so there is nothing left to reconnect it to.
+        let live = self
             .workspace
             .read(cx)
             .active_session()
-            .is_some_and(|chat| chat.archive.is_some());
+            .is_none_or(ChatSession::resumable);
         let showing = self.showing(cx);
         let body = if !open {
             self.no_project(cx)

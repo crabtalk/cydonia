@@ -124,11 +124,19 @@ impl Session {
 
         let configured = mcp::servers();
 
-        let (tx, events) = mpsc::unbounded_channel();
+        let (tx, mut events) = mpsc::unbounded_channel();
         let (conn, child) = cacp::spawn(&mut command, Arc::new(Frontend(tx.clone())), debug_tap())
             .map_err(|e| anyhow!("failed to start {}: {}", entry.command, error_text(&e)))?;
 
         let session = Self::open(conn, child, tx, launch, configured).await?;
+        // `session/load` replays the whole conversation before it answers, and
+        // the client is holding that transcript already: the replay is spent
+        // here rather than arriving as a second copy of what is on screen.
+        // Only updates can be queued at this point — nothing else is sent
+        // until we prompt.
+        if session.loaded {
+            while events.try_recv().is_ok() {}
+        }
         Ok((session, events))
     }
 

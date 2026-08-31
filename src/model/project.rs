@@ -127,11 +127,11 @@ impl Project {
         self.active.and_then(|id| self.session(id))
     }
 
-    /// Live sessions and archived ones, in that order — an archive is history
-    /// and belongs under the work still going on.
+    /// Open sessions and archived ones, in that order — an archived session
+    /// is history and belongs under the work still going on.
     pub fn ordered(&self) -> impl Iterator<Item = &ChatSession> {
-        let live = self.sessions.iter().filter(|chat| chat.archive.is_none());
-        live.chain(self.sessions.iter().filter(|chat| chat.archive.is_some()))
+        let open = self.sessions.iter().filter(|chat| !chat.closed);
+        open.chain(self.sessions.iter().filter(|chat| chat.closed))
     }
 }
 

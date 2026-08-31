@@ -227,7 +227,7 @@ impl Cydonia {
                 label: chat.label(),
                 icon: workspace.agent_icon(&chat.entry.name),
                 streaming: chat.streaming,
-                archived: chat.archive.is_some(),
+                archived: chat.closed,
             })
             .collect();
         let boards: Vec<(usize, String)> = project
@@ -611,9 +611,7 @@ impl Cydonia {
         rows.push(self.menu_row(
             format!("close-{id}"),
             icons::TRASH_BIN_MINIMALISTIC,
-            // An archived session has a file behind it, and closing it takes
-            // that with the row.
-            if archived { "Delete" } else { "Close" },
+            "Delete",
             cx,
             move |this, _, cx| this.close_session(id, cx),
         ));

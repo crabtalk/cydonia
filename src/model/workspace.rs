@@ -12,10 +12,10 @@ use crate::{
     agent,
     data::{ColType, Column, Data, Edit, Page, Table},
     model::{
-        archive,
         article::{self, Article},
         board::{self, Board},
         project::Project,
+        record,
         session::ChatSession,
         settings::{self, Settings},
         state::{self, State},
@@ -63,10 +63,18 @@ impl Workspace {
             agent_icons: HashMap::new(),
         };
         for ix in restore {
-            this.restore_archived(ix, cx);
+            this.restore_sessions(ix, cx);
         }
         this.open_first_session(cx);
         this.load_agent_icons(cx);
+        // Temporary dev hook: `CYDONIA_TEST_PROMPT` sends a prompt on launch
+        // so a turn can be verified without a composer. Here rather than on
+        // connect, which a resume would fire again.
+        if let Ok(prompt) = std::env::var("CYDONIA_TEST_PROMPT")
+            && let Some(id) = this.active_id()
+        {
+            this.send(id, prompt, cx);
+        }
         this
     }
 
@@ -135,7 +143,7 @@ impl Workspace {
             None => {
                 self.projects.push(Project::new(path));
                 let ix = self.projects.len() - 1;
-                self.restore_archived(ix, cx);
+                self.restore_sessions(ix, cx);
                 ix
             }
         };
@@ -170,11 +178,20 @@ impl Workspace {
 
     /// A project talks to an agent the moment it is looked at: the tab in
     /// front opens its first session, and the tabs behind it spawn nothing.
+    ///
+    /// A project with sessions read back from disk shows its most recent one
+    /// rather than opening a second beside it — nothing there is connected
+    /// until something is sent to it.
     fn open_first_session(&mut self, cx: &mut Context<Self>) {
-        if self
-            .active_project()
-            .is_none_or(|project| !project.sessions.is_empty())
-        {
+        let Some(project) = self.active.and_then(|ix| self.projects.get_mut(ix)) else {
+            return;
+        };
+        if project.active.is_some() {
+            return;
+        }
+        if let Some(id) = project.sessions.last().map(|chat| chat.id) {
+            project.active = Some(id);
+            cx.notify();
             return;
         }
         if let Some(entry) = self.settings.agents.first().cloned() {
@@ -232,44 +249,61 @@ impl Workspace {
             .position(|project| project.session(id).is_some())
     }
 
-    /// Drop the session: the shutdown sender goes with it and the agent
-    /// process dies.
-    /// Read the project's filed transcripts back, minting an id for each —
-    /// ids mean nothing across a launch, so a reloaded one is as new as any.
-    fn restore_archived(&mut self, ix: usize, cx: &mut Context<Self>) {
+    /// Read the project's filed sessions back, minting an id for each — ids
+    /// mean nothing across a launch, so a reloaded one is as new as any. The
+    /// agent is resolved by name; a session whose agent has since left
+    /// `settings.toml` comes back readable but cannot reconnect.
+    fn restore_sessions(&mut self, ix: usize, cx: &mut Context<Self>) {
         let path = self.projects[ix].path.clone();
-        for (file, record) in archive::list(&path) {
+        for (file, stored) in record::list(&path) {
             let id = self.next_id;
             self.next_id += 1;
-            let chat = ChatSession::from_archive(id, file, record, cx);
+            let entry = self
+                .settings
+                .agents
+                .iter()
+                .find(|agent| agent.name == stored.agent)
+                .cloned()
+                .unwrap_or_else(|| settings::Agent {
+                    name: stored.agent.clone(),
+                    id: None,
+                    command: String::new(),
+                    args: Vec::new(),
+                    env: Default::default(),
+                });
+            let chat = ChatSession::restore(id, file, path.clone(), entry, stored, cx);
             self.projects[ix].sessions.push(chat);
         }
     }
 
-    /// File the transcript, then close the connection behind it. The row stays
-    /// where it was, readable — an archive you cannot open is a delete.
-    pub fn archive_session(&mut self, id: u64, cx: &mut Context<Self>) {
-        let Some(ix) = self.project_of(id) else {
+    /// Send to a session, starting an agent for it when it has none — typing
+    /// into a session read back from disk is what picks it up again.
+    pub fn send(&mut self, id: u64, content: String, cx: &mut Context<Self>) {
+        let found = self
+            .projects
+            .iter_mut()
+            .find_map(|project| project.session_mut(id));
+        let Some(chat) = found else {
             return;
         };
-        let path = self.projects[ix].path.clone();
-        let Some(chat) = self.projects[ix].session_mut(id) else {
-            return;
-        };
-        if chat.archive.is_some() {
-            return;
+        if chat.idle() && chat.resumable() {
+            chat.resume(cx);
         }
-        let Some(file) = archive::write(&path, &chat.to_archive()) else {
-            return;
-        };
-        chat.close(file);
+        chat.send(content);
         cx.notify();
+    }
+
+    /// Close the connection and keep the transcript. The row stays where it
+    /// was, readable, and typing into it opens an agent again.
+    pub fn archive_session(&mut self, id: u64, cx: &mut Context<Self>) {
+        self.with_session(id, cx, |chat| chat.close());
     }
 
     pub fn rename_session(&mut self, id: u64, name: String, cx: &mut Context<Self>) {
         self.with_session(id, cx, |chat| {
             let name = name.trim();
             chat.name = (!name.is_empty()).then(|| name.to_owned());
+            chat.flush();
         });
     }
 
@@ -277,10 +311,10 @@ impl Workspace {
         let Some(project) = self.project_of(id).map(|ix| &mut self.projects[ix]) else {
             return;
         };
-        // Closing an archived session is what deletes it: leaving the file
-        // would put the row back on the next launch.
-        if let Some(file) = project.session(id).and_then(|chat| chat.archive.as_ref()) {
-            archive::remove(file);
+        // Closing a session is what deletes it: leaving the file would put
+        // the row back on the next launch.
+        if let Some(file) = project.session(id).and_then(|chat| chat.file.as_ref()) {
+            record::remove(file);
         }
         project.sessions.retain(|chat| chat.id != id);
         if project.active == Some(id) {
@@ -312,17 +346,14 @@ impl Workspace {
         }
     }
 
-    /// The session opened. Temporary dev hook: `CYDONIA_TEST_PROMPT` sends
-    /// a prompt right away so streaming can be verified without a composer.
+    /// The session reached an agent: send it whatever was typed while it had
+    /// none, and write the agent's own id down so a later launch can load the
+    /// conversation back.
     pub fn session_connected(&mut self, id: u64, cx: &mut Context<Self>) {
         self.with_session(id, cx, |chat| {
-            if let Some(seed) = chat.seed.take() {
-                chat.send(seed);
-            }
+            chat.drain();
+            chat.flush();
         });
-        if let Ok(prompt) = std::env::var("CYDONIA_TEST_PROMPT") {
-            self.with_session(id, cx, |chat| chat.send(prompt));
-        }
         cx.notify();
     }
 
