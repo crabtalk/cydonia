@@ -22,6 +22,7 @@ use bezel::{
         icons,
         input::{Shape, TextField},
         popover, table,
+        widgets::Buttons,
     },
 };
 use serde_json::Value;
@@ -281,7 +282,8 @@ impl Cydonia {
         headings.push(
             table::header_cell(&theme, &declared[count], None)
                 .child(
-                    ui::ghost(&theme, "add-column")
+                    theme
+                        .ghost("add-column")
                         .p(px(3.))
                         .child(
                             icons::icon(icons::PLUS)
@@ -321,7 +323,8 @@ impl Cydonia {
                         .pb(px(20.))
                         .child(body)
                         .child(
-                            ui::ghost(&theme, "add-row")
+                            theme
+                                .ghost("add-row")
                                 .mt(px(6.))
                                 .px(px(10.))
                                 .py(px(7.))
@@ -385,7 +388,9 @@ impl Cydonia {
                 self.menu_button(
                     ("column-menu", ix),
                     "grid-head",
-                    ui::dots(&theme),
+                    icons::icon(icons::MENU_DOTS)
+                        .size(px(14.))
+                        .text_color(theme.text_faint),
                     Menu::Column(ix),
                     cx,
                 )
@@ -413,7 +418,7 @@ impl Cydonia {
                 // Never `active`: that paints a standing wash *and* drops the
                 // hover listener, so the type the column already has reads as
                 // the row the pointer is on. The tick says which one it is.
-                popover::menu_row(&theme, false, Fade::new(painter, key.clone()))
+                popover::menu_row(&theme, false, Some(Fade::new(painter, key.clone())))
                     .id(key)
                     .child(
                         icons::icon(glyph(declared))

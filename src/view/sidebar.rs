@@ -17,7 +17,11 @@ use bezel::{
     },
     motion::Painter,
     theme::Theme,
-    ui::{icons, loaders, popover, tooltip::Tooltip, widgets::Layout},
+    ui::{
+        icons, loaders, popover,
+        tooltip::Tooltip,
+        widgets::{Buttons, Layout},
+    },
 };
 use std::time::SystemTime;
 
@@ -79,7 +83,8 @@ impl Cydonia {
             // project you already have, out at the sidebar's trailing edge.
             .child(
                 self.toolbar(window, cx).child(div().flex_1()).child(
-                    ui::ghost(&theme, "open-project")
+                    theme
+                        .ghost("open-project")
                         .p(px(4.))
                         .tooltip(|window, cx| {
                             Tooltip::with_keystroke("New project", "⌘O", window, cx)
@@ -106,7 +111,8 @@ impl Cydonia {
                     .children(sections),
             )
             .child(
-                ui::ghost(&theme, "settings")
+                theme
+                    .ghost("settings")
                     .flex_none()
                     .mx(px(8.))
                     .mb(px(8.))
@@ -154,7 +160,8 @@ impl Cydonia {
             .flex_row()
             .items_center()
             .child(
-                ui::ghost(&theme, "toggle-sidebar")
+                theme
+                    .ghost("toggle-sidebar")
                     .p(px(4.))
                     .tooltip(move |window, cx| Tooltip::text(label, window, cx))
                     .child(
@@ -246,7 +253,9 @@ impl Cydonia {
                         self.menu_button(
                             ("project-more", ix),
                             "project-head",
-                            ui::dots(&theme),
+                            icons::icon(icons::MENU_DOTS)
+                                .size(px(14.))
+                                .text_color(theme.text_faint),
                             Menu::Project(ix),
                             cx,
                         )
@@ -443,7 +452,9 @@ impl Cydonia {
                         self.menu_button(
                             ("session-menu", id),
                             "session-row",
-                            ui::dots(&theme),
+                            icons::icon(icons::MENU_DOTS)
+                                .size(px(14.))
+                                .text_color(theme.text_faint),
                             Menu::Session(id),
                             cx,
                         )

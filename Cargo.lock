@@ -1857,7 +1857,6 @@ dependencies = [
  "bezel-syntax",
  "cacp",
  "cacp-agents",
- "cydonia-ui",
  "dirs 6.0.0",
  "rusqlite",
  "serde",
@@ -1866,13 +1865,6 @@ dependencies = [
  "toml 0.8.23",
  "toml_edit 0.22.27",
  "ureq",
-]
-
-[[package]]
-name = "cydonia-ui"
-version = "0.1.0"
-dependencies = [
- "bezel",
 ]
 
 [[package]]

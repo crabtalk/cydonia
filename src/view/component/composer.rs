@@ -12,6 +12,7 @@ use bezel::{
         icons,
         input::{self, Shape, TextField},
         popover,
+        widgets::Buttons,
     },
 };
 
@@ -223,7 +224,7 @@ impl Composer {
                 popover::menu_row(
                     theme,
                     Some(position) == self.filter.active(),
-                    Fade::new(painter, format!("command-{item}")),
+                    Some(Fade::new(painter, format!("command-{item}"))),
                 )
                 .id(SharedString::from(format!("command-{item}")))
                 .on_click(cx.listener(move |composer, _, _, cx| composer.accept(item, cx)))
@@ -259,7 +260,8 @@ impl Composer {
                 .relative()
                 .flex_none()
                 .child(
-                    ui::ghost(theme, "composer-agent")
+                    theme
+                        .ghost("composer-agent")
                         .px(px(8.))
                         .py(px(3.))
                         .text_size(px(12.))
@@ -303,7 +305,7 @@ impl Composer {
                 popover::menu_row(
                     theme,
                     Some(ix) == self.agent,
-                    Fade::new(painter, format!("agent-{ix}")),
+                    Some(Fade::new(painter, format!("agent-{ix}"))),
                 )
                 .id(("agent", ix))
                 // A slot, not just the mark: an agent the catalog doesn't

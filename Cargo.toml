@@ -1,14 +1,17 @@
-[workspace]
-members = ["crates/*"]
-resolver = "3"
-
-[workspace.package]
+[package]
+name = "cydonia"
+description = "Desktop client for ACP agents"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/crabtalk/cydonia"
+readme = "README.md"
 
-[workspace.dependencies]
+[[bin]]
+name = "cydonia"
+path = "bin/main.rs"
+
+[dependencies]
 # bezel — the component library the GUI is built on. Published as `bezel-*`;
 # the keys here are what the source imports. `platform` carries gpui_platform,
 # which opens the window: gpui core knows no platform of its own.
@@ -22,7 +25,6 @@ cacp = { path = "../cacp/crates/cacp", default-features = false, features = [
     "client",
 ] }
 cacp-agents = { path = "../cacp/crates/agents" }
-ui = { path = "crates/ui", package = "cydonia-ui" }
 
 # crates.io
 anyhow = "1"

@@ -18,6 +18,7 @@ use bezel::{
         icons,
         input::{self, Shape, TextField},
         loaders,
+        widgets::Buttons,
     },
 };
 
@@ -452,16 +453,17 @@ impl Cydonia {
         cx: &Context<Self>,
     ) -> Stateful<Div> {
         let theme = Theme::of(cx).clone();
-        ui::ghost(
-            &theme,
-            SharedString::from(format!("card-{name}-{}-{}", at.column, at.card)),
-        )
-        .p(px(3.))
-        .child(
-            icons::icon(glyph)
-                .size(px(12.))
-                .text_color(theme.text_faint),
-        )
+        theme
+            .ghost(SharedString::from(format!(
+                "card-{name}-{}-{}",
+                at.column, at.card
+            )))
+            .p(px(3.))
+            .child(
+                icons::icon(glyph)
+                    .size(px(12.))
+                    .text_color(theme.text_faint),
+            )
     }
 
     /// Whether `at` sits in the rightmost column — nowhere further to carry it.

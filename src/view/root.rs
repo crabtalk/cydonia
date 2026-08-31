@@ -314,7 +314,8 @@ impl Cydonia {
             .items_center()
             .justify_end()
             .child(
-                ui::ghost(&theme, "pane-switch")
+                theme
+                    .ghost("pane-switch")
                     .px(px(8.))
                     .py(px(4.))
                     .gap(px(6.))

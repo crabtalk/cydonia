@@ -81,7 +81,7 @@ impl Cydonia {
         let theme = Theme::of(cx).clone();
         let painter = Painter::of(cx);
         let key = key.into();
-        popover::menu_row(&theme, false, Fade::new(painter, key.clone()))
+        popover::menu_row(&theme, false, Some(Fade::new(painter, key.clone())))
             .id(key)
             .child(
                 icons::icon(glyph)
