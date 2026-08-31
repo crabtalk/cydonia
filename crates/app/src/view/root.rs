@@ -12,7 +12,7 @@ use crate::{
         board::{self, Editing},
         composer::{self, Composer, ComposerEvent},
         settings_window::{self, SettingsWindow},
-        transcript,
+        table, transcript,
     },
 };
 use bezel::{
@@ -125,13 +125,15 @@ struct SessionRow {
 /// Which menu is open. One field rather than a flag each, so opening one
 /// closes the rest by construction.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Menu {
+pub(crate) enum Menu {
     /// The `+` on a project heading: what to start here.
     Add(usize),
     /// The `···` on a project heading: what to do to the project.
     Project(usize),
     /// The `···` on a session row.
     Session(u64),
+    /// The `···` on a table's column heading.
+    Column(usize),
 }
 
 /// The root view. It owns no app state — only the chrome's own: how wide the
@@ -145,7 +147,10 @@ pub struct Cydonia {
     pub(crate) pane: Pane,
     pub(crate) editing: Option<Editing>,
     pub(crate) card_field: Entity<TextField>,
-    menu: Option<Menu>,
+    /// What the table pane's field is attached to, and the field itself.
+    pub(crate) cell: Option<table::Cell>,
+    pub(crate) cell_field: Entity<TextField>,
+    pub(crate) menu: Option<Menu>,
     /// The session whose name is being typed, and the field it is typed in.
     renaming: Option<u64>,
     name_field: Entity<TextField>,
@@ -168,6 +173,7 @@ impl Cydonia {
         .detach();
 
         let card_field = board::field(cx);
+        let cell_field = table::field(cx);
         let name_field = cx.new(|cx| {
             TextField::new(cx)
                 .with_frame(false)
@@ -198,6 +204,8 @@ impl Cydonia {
             pane: Pane::Chat,
             editing: None,
             card_field,
+            cell: None,
+            cell_field,
             menu: None,
             renaming: None,
             name_field,
@@ -353,7 +361,7 @@ impl Cydonia {
     }
 
     /// A `···` or `+` that opens `menu`, revealed on the row's hover.
-    fn menu_button(
+    pub(crate) fn menu_button(
         &self,
         id: impl Into<gpui::ElementId>,
         group: &'static str,
@@ -381,7 +389,7 @@ impl Cydonia {
     }
 
     /// The card every rail menu hangs in, dismissed by a press outside it.
-    fn menu_card(&self, rows: Vec<AnyElement>, cx: &mut Context<Self>) -> AnyElement {
+    pub(crate) fn menu_card(&self, rows: Vec<AnyElement>, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         popover::popover_card(&theme)
             .w(px(170.))
@@ -393,7 +401,7 @@ impl Cydonia {
             .into_any_element()
     }
 
-    fn menu_row(
+    pub(crate) fn menu_row(
         &self,
         key: impl Into<SharedString>,
         glyph: &'static str,
@@ -1194,6 +1202,8 @@ impl Render for Cydonia {
             .text_color(theme.text)
             .text_size(px(14.))
             .on_action(cx.listener(Self::new_session_action))
+            .on_action(cx.listener(Self::commit_cell_action))
+            .on_action(cx.listener(Self::dismiss_cell))
             .on_action(cx.listener(Self::open_project_action))
             .on_action(cx.listener(Self::open_settings_action))
             .on_action(cx.listener(Self::commit_name))

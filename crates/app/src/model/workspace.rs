@@ -10,7 +10,7 @@
 
 use crate::{
     agents,
-    data::{ColType, Column, Data, Table},
+    data::{ColType, Column, Data, Edit, Page, Table},
     model::{
         archive,
         article::{self, Article},
@@ -29,6 +29,9 @@ use std::{collections::HashMap, path::PathBuf};
 
 /// What a table is called before it is named.
 const UNTITLED: &str = "Untitled";
+
+/// And a column.
+const COLUMN: &str = "Column";
 
 pub struct Workspace {
     pub settings: Settings,
@@ -469,6 +472,129 @@ impl Workspace {
             .map(|shown| if shown > ix { shown - 1 } else { shown });
         open.reload_tables();
         cx.notify();
+    }
+
+    /// Run `f` against the open table's store, then re-read what it did.
+    ///
+    /// Every table mutation goes through here, so none of them can forget the
+    /// reload — a grid still showing the row you just deleted is the bug this
+    /// shape makes unwritable.
+    fn with_table<T>(
+        &mut self,
+        cx: &mut Context<Self>,
+        f: impl FnOnce(&mut Data, &str) -> T,
+    ) -> Option<T> {
+        let at = self.active?;
+        let project = self.projects.get_mut(at)?;
+        let key = project
+            .table
+            .and_then(|ix| project.tables.get(ix))
+            .map(|table| table.key.clone())?;
+        let done = f(project.data.as_mut()?, &key);
+        project.reload_tables();
+        cx.notify();
+        Some(done)
+    }
+
+    /// The name of column `at`, which is what the store addresses one by.
+    fn column_name(&self, at: usize) -> Option<String> {
+        let page = self.active_page()?;
+        page.columns.get(at).map(|column| column.name.clone())
+    }
+
+    /// Write one cell. The text goes in as text whatever the column holds —
+    /// SQLite's affinity converts it on the way, so a number typed into a
+    /// number column lands as one and the same text in a text column stays put.
+    pub fn write_cell(&mut self, rowid: i64, at: usize, text: String, cx: &mut Context<Self>) {
+        let Some(column) = self.column_name(at) else {
+            return;
+        };
+        let value = match text.is_empty() {
+            true => serde_json::Value::Null,
+            false => serde_json::Value::String(text),
+        };
+        self.with_table(cx, |data, key| {
+            let _ = data.write_cells(
+                key,
+                &[Edit {
+                    rowid,
+                    column,
+                    value,
+                }],
+            );
+        });
+    }
+
+    pub fn add_row(&mut self, cx: &mut Context<Self>) -> Option<i64> {
+        self.with_table(cx, |data, key| {
+            data.add_rows(key, 1)
+                .ok()
+                .and_then(|ids| ids.first().copied())
+        })
+        .flatten()
+    }
+
+    pub fn delete_row(&mut self, rowid: i64, cx: &mut Context<Self>) {
+        self.with_table(cx, |data, key| {
+            let _ = data.delete_rows(key, &[rowid]);
+        });
+    }
+
+    /// A fresh text column, named so it does not collide with one already
+    /// there — the header is where it gets its real name.
+    pub fn add_column(&mut self, cx: &mut Context<Self>) {
+        let taken: Vec<String> = self
+            .active_page()
+            .map(|page| page.columns.iter().map(|col| col.name.clone()).collect())
+            .unwrap_or_default();
+        let mut name = COLUMN.to_owned();
+        for n in 2.. {
+            if !taken.contains(&name) {
+                break;
+            }
+            name = format!("{COLUMN} {n}");
+        }
+        self.with_table(cx, |data, key| {
+            let _ = data.write_column(key, &name, Some(ColType::Text), None);
+        });
+    }
+
+    /// Rename column `at`, retype it, or both — one call, as the store has it.
+    pub fn write_column(
+        &mut self,
+        at: usize,
+        kind: Option<ColType>,
+        rename: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(column) = self.column_name(at) else {
+            return;
+        };
+        self.with_table(cx, |data, key| {
+            let _ = data.write_column(key, &column, kind, rename.as_deref());
+        });
+    }
+
+    pub fn delete_column(&mut self, at: usize, cx: &mut Context<Self>) {
+        let Some(column) = self.column_name(at) else {
+            return;
+        };
+        self.with_table(cx, |data, key| {
+            let _ = data.drop_column(key, &column);
+        });
+    }
+
+    /// The display name only. The key stays where it is, so a query already
+    /// written against this table goes on running.
+    pub fn rename_table(&mut self, name: String, cx: &mut Context<Self>) {
+        self.with_table(cx, |data, key| {
+            let _ = data.update(key, Some(&name), None);
+        });
+    }
+
+    /// The open table's rows, as the pane last read them.
+    pub fn active_page(&self) -> Option<&Page> {
+        self.active_project()?.page.as_ref()
     }
 
     pub fn active_table(&self) -> Option<&Table> {

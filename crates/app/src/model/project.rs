@@ -65,13 +65,27 @@ impl Project {
     /// Re-read what tables exist. The store is the list — nothing here keeps a
     /// second copy of it that a failed write could leave standing.
     pub fn reload_tables(&mut self) {
+        // Held by key across the re-read, not by index: the list is ordered by
+        // name, so renaming the open table moves it and an index would leave
+        // the pane showing whichever table slid into its place.
+        let open = self
+            .table
+            .and_then(|ix| self.tables.get(ix))
+            .map(|table| table.key.clone());
         self.tables = self
             .data
             .as_ref()
             .and_then(|data| data.list().ok())
             .unwrap_or_default();
-        self.table = self.table.filter(|ix| *ix < self.tables.len());
+        self.table = match open.and_then(|key| self.position(&key)) {
+            found @ Some(_) => found,
+            None => self.table.filter(|ix| *ix < self.tables.len()),
+        };
         self.reload_page();
+    }
+
+    fn position(&self, key: &str) -> Option<usize> {
+        self.tables.iter().position(|table| table.key == key)
     }
 
     /// Read the open table's rows.

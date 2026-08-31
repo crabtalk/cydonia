@@ -98,6 +98,7 @@ impl Cydonia {
     pub(crate) fn commit(&mut self, cx: &mut Context<Self>) {
         self.workspace
             .update(cx, |workspace, cx| workspace.rename_article(cx));
+        self.commit_cell(cx);
         let Some(at) = self.editing.take() else {
             return;
         };
@@ -491,6 +492,7 @@ impl Cydonia {
                     .text_color(theme.text_faint)
                     .child("enter file · esc cancel"),
             )
+            .on_mouse_down_out(cx.listener(|this, _, _, cx| this.commit(cx)))
             .into_any_element()
     }
 }

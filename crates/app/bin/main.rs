@@ -13,7 +13,7 @@ use bezel::{
 use cydonia::{
     assets,
     model::{settings, state},
-    view::{board, composer, root, settings_window},
+    view::{board, composer, root, settings_window, table},
 };
 
 actions!(cydonia, [Quit]);
@@ -38,6 +38,7 @@ fn main() -> Result<()> {
             composer::init(cx);
             editor::init(cx);
             board::init(cx);
+            table::init(cx);
             root::init(cx);
             settings_window::init(cx);
             set_menus(cx);
