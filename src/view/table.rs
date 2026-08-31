@@ -6,7 +6,7 @@
 use crate::{
     data::ColType,
     view::{
-        component::menu::Menu,
+        component::menu::{self, Menu},
         root::{Cydonia, Pane},
         sidebar,
     },
@@ -16,11 +16,11 @@ use bezel::{
         self, AnyElement, App, Context, Div, Entity, Focusable as _, KeyBinding, SharedString,
         Window, actions, div, prelude::*, px,
     },
-    motion::{Fade, Painter},
     theme::{TextStyle, Theme, Typeset},
     ui::{
         icons,
         input::{Shape, TextField},
+        menu::Item,
         popover, table,
         widgets::Buttons,
     },
@@ -405,51 +405,26 @@ impl Cydonia {
         if self.menu != Some(Menu::Column(ix)) {
             return None;
         }
-        let theme = Theme::of(cx).clone();
-        let painter = Painter::of(cx);
-        let mut rows: Vec<AnyElement> = ColType::ALL
+        let mut rows: Vec<_> = ColType::ALL
             .iter()
             .map(|declared| {
                 let declared = *declared;
-                let key = SharedString::from(format!("type-{ix}-{}", declared.name()));
-                let current = declared == kind;
-                // Never `active`: that paints a standing wash *and* drops the
-                // hover listener, so the type the column already has reads as
-                // the row the pointer is on. The tick says which one it is.
-                popover::menu_row(&theme, false, Some(Fade::new(painter, key.clone())))
-                    .id(key)
-                    .child(
-                        icons::icon(glyph(declared))
-                            .size(px(13.))
-                            .flex_none()
-                            .text_color(theme.text_faint),
-                    )
-                    .child(div().flex_1().child(declared.name()))
-                    .when(current, |row| {
-                        row.child(
-                            icons::icon(icons::CHECK)
-                                .size(px(13.))
-                                .flex_none()
-                                .text_color(theme.text_muted),
-                        )
-                    })
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.menu = None;
-                        this.retype_column(ix, declared, cx);
-                    }))
-                    .into_any_element()
+                menu::row(
+                    Item::action(declared.name())
+                        .with_icon(glyph(declared))
+                        .checked(declared == kind),
+                    move |this, _, cx| this.retype_column(ix, declared, cx),
+                )
             })
             .collect();
-        rows.push(self.menu_row(
-            format!("delete-column-{ix}"),
-            icons::TRASH_BIN_MINIMALISTIC,
-            "Delete column",
-            cx,
+        rows.push(menu::row(
+            Item::action("Delete column").with_icon(icons::TRASH_BIN_MINIMALISTIC),
             move |this, _, cx| this.delete_column(ix, cx),
         ));
+        let id = SharedString::from(format!("column-menu-{ix}"));
         Some(popover::anchored_menu_below(
-            SharedString::from(format!("column-menu-{ix}")),
-            self.menu_card(rows, cx),
+            id.clone(),
+            self.menu_card(id, rows, cx),
             None,
         ))
     }

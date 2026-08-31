@@ -5,7 +5,7 @@
 use crate::{
     model::session::ChatSession,
     view::{
-        component::menu::Menu,
+        component::menu::{self, Menu},
         root::{self, CommitName, Cydonia, DismissName, NewSession, OpenProject, Pane},
         settings::Section,
     },
@@ -18,7 +18,9 @@ use bezel::{
     motion::Painter,
     theme::{TextStyle, Theme, Typeset},
     ui::{
-        icons, loaders, popover,
+        icons, loaders,
+        menu::Item,
+        popover,
         surface::Surfaced as _,
         tooltip::Tooltip,
         widgets::{Buttons, Layout},
@@ -382,41 +384,30 @@ impl Cydonia {
             return None;
         }
         let rows = vec![
-            self.menu_row(
-                format!("add-session-{ix}"),
-                icons::CHAT_ROUND_LINE,
-                "New session",
-                cx,
+            menu::row(
+                Item::action("New session").with_icon(icons::CHAT_ROUND_LINE),
                 move |this, window, cx| {
                     this.select_project(ix, cx);
                     this.new_session_action(&NewSession, window, cx);
                 },
             ),
-            self.menu_row(
-                format!("add-board-{ix}"),
-                icons::LIST,
-                "New board",
-                cx,
+            menu::row(
+                Item::action("New board").with_icon(icons::LIST),
                 move |this, _, cx| this.new_board(ix, cx),
             ),
-            self.menu_row(
-                format!("add-article-{ix}"),
-                icons::DOCUMENT_ADD,
-                "New article",
-                cx,
+            menu::row(
+                Item::action("New article").with_icon(icons::DOCUMENT_ADD),
                 move |this, window, cx| this.new_article(ix, window, cx),
             ),
-            self.menu_row(
-                format!("add-table-{ix}"),
-                icons::WIDGET,
-                "New table",
-                cx,
+            menu::row(
+                Item::action("New table").with_icon(icons::WIDGET),
                 move |this, _, cx| this.new_table(ix, cx),
             ),
         ];
+        let id = SharedString::from(format!("add-menu-{ix}"));
         Some(popover::anchored_menu_below(
-            SharedString::from(format!("add-menu-{ix}")),
-            self.menu_card(rows, cx),
+            id.clone(),
+            self.menu_card(id, rows, cx),
             None,
         ))
     }
@@ -427,16 +418,14 @@ impl Cydonia {
         if self.menu != Some(Menu::Project(ix)) {
             return None;
         }
-        let rows = vec![self.menu_row(
-            format!("remove-project-{ix}"),
-            icons::TRASH_BIN_MINIMALISTIC,
-            "Remove project",
-            cx,
+        let rows = vec![menu::row(
+            Item::action("Remove project").with_icon(icons::TRASH_BIN_MINIMALISTIC),
             move |this, _, cx| this.close_project(ix, cx),
         )];
+        let id = SharedString::from(format!("project-menu-{ix}"));
         Some(popover::anchored_menu_below(
-            SharedString::from(format!("project-menu-{ix}")),
-            self.menu_card(rows, cx),
+            id.clone(),
+            self.menu_card(id, rows, cx),
             None,
         ))
     }
@@ -585,26 +574,21 @@ impl Cydonia {
             return None;
         }
         let rows = vec![
-            self.menu_row(
-                format!("rename-board-{project}-{ix}"),
-                icons::PEN_NEW_SQUARE,
-                "Rename",
-                cx,
+            menu::row(
+                Item::action("Rename").with_icon(icons::PEN_NEW_SQUARE),
                 move |this, window, cx| {
                     this.start_rename(Renaming::Board { project, ix }, window, cx);
                 },
             ),
-            self.menu_row(
-                format!("delete-board-{project}-{ix}"),
-                icons::TRASH_BIN_MINIMALISTIC,
-                "Delete",
-                cx,
+            menu::row(
+                Item::action("Delete").with_icon(icons::TRASH_BIN_MINIMALISTIC),
                 move |this, _, cx| this.delete_board(project, ix, cx),
             ),
         ];
+        let id = SharedString::from(format!("board-menu-card-{project}-{ix}"));
         Some(popover::anchored_menu_below(
-            SharedString::from(format!("board-menu-card-{project}-{ix}")),
-            self.menu_card(rows, cx),
+            id.clone(),
+            self.menu_card(id, rows, cx),
             None,
         ))
     }
@@ -613,35 +597,27 @@ impl Cydonia {
         if self.menu != Some(Menu::Session(id)) {
             return None;
         }
-        let mut rows = vec![self.menu_row(
-            format!("rename-{id}"),
-            icons::PEN_NEW_SQUARE,
-            "Rename",
-            cx,
+        let mut rows = vec![menu::row(
+            Item::action("Rename").with_icon(icons::PEN_NEW_SQUARE),
             move |this, window, cx| this.start_rename(Renaming::Session(id), window, cx),
         )];
         if !archived {
-            rows.push(self.menu_row(
-                format!("archive-{id}"),
-                icons::ARCHIVE_MINIMALISTIC,
-                "Archive",
-                cx,
+            rows.push(menu::row(
+                Item::action("Archive").with_icon(icons::ARCHIVE_MINIMALISTIC),
                 move |this, _, cx| {
                     this.workspace
                         .update(cx, |workspace, cx| workspace.archive_session(id, cx));
                 },
             ));
         }
-        rows.push(self.menu_row(
-            format!("close-{id}"),
-            icons::TRASH_BIN_MINIMALISTIC,
-            "Delete",
-            cx,
+        rows.push(menu::row(
+            Item::action("Delete").with_icon(icons::TRASH_BIN_MINIMALISTIC),
             move |this, _, cx| this.close_session(id, cx),
         ));
+        let id = SharedString::from(format!("session-menu-{id}"));
         Some(popover::anchored_menu_below(
-            SharedString::from(format!("session-menu-{id}")),
-            self.menu_card(rows, cx),
+            id.clone(),
+            self.menu_card(id, rows, cx),
             None,
         ))
     }

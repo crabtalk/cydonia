@@ -7,11 +7,11 @@ use bezel::{
         self, AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, KeyBinding,
         Render, SharedString, Window, actions, div, point, prelude::*, px, svg,
     },
-    motion::{Fade, Painter},
     theme::{self, Frost, SurfaceStyle, Theme},
     ui::{
         icons,
         input::{self, Shape, TextField},
+        menu::{self, Item},
         popover,
         surface::Surfaced as _,
     },
@@ -222,34 +222,30 @@ impl Composer {
     fn picker(&self, theme: &Theme, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         let slash = self.command?;
         let anchor = self.field.read(cx).offset_bounds(slash, window)?;
-        let painter = Painter::of(cx);
-        let rows: Vec<AnyElement> = self
+        let items: Vec<Item> = self
             .filter
             .filtered()
             .iter()
-            .enumerate()
-            .map(|(position, &item)| {
-                popover::menu_row(
-                    theme,
-                    Some(position) == self.filter.active(),
-                    Some(Fade::new(painter, format!("command-{item}"))),
-                )
-                .id(SharedString::from(format!("command-{item}")))
-                .on_click(cx.listener(move |composer, _, _, cx| composer.accept(item, cx)))
-                .child(self.filter.items()[item].clone())
-                .into_any_element()
-            })
+            .map(|&item| Item::action(self.filter.items()[item].clone()))
             .collect();
-        if rows.is_empty() {
+        if items.is_empty() {
             return None;
         }
+        // The card reports the row it was on; the commands behind those rows
+        // are whatever the query left standing.
+        let filtered = self.filter.filtered().to_vec();
         Some(popover::menu_at(
             "composer-commands",
             point(anchor.left(), anchor.bottom() + px(4.)),
-            popover::popover_card(theme)
-                .w(px(280.))
-                .child(div().flex().flex_col().children(rows))
-                .into_any_element(),
+            menu::card(
+                theme,
+                "composer-commands",
+                &items,
+                self.filter.active(),
+                cx,
+                move |composer, row, _, cx| composer.accept(filtered[row], cx),
+            )
+            .into_any_element(),
             None,
         ))
     }
@@ -305,81 +301,44 @@ impl Composer {
         if !self.menu {
             return None;
         }
-        let painter = Painter::of(cx);
-        let rows: Vec<AnyElement> = self
+        let mut items: Vec<Item> = self
             .agents
             .iter()
             .enumerate()
             .map(|(ix, agent)| {
-                popover::menu_row(
-                    theme,
-                    false,
-                    Some(Fade::new(painter, format!("agent-{ix}"))),
-                )
-                .id(("agent", ix))
-                // A slot, not just the mark: an agent the catalog doesn't
-                // publish would otherwise pull its label left of the rest.
-                .child(
-                    div()
-                        .flex_none()
-                        .size(px(13.))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .children(agent.icon.clone().map(|path| {
-                            svg()
-                                .path(path)
-                                .size(px(13.))
-                                .flex_none()
-                                .text_color(theme.text_muted)
-                        })),
-                )
-                .child(div().flex_1().min_w_0().child(agent.name.clone()))
-                .children((Some(ix) == self.agent).then(|| {
-                    icons::icon(icons::CHECK)
-                        .size(px(13.))
-                        .flex_none()
-                        .text_color(theme.text)
-                }))
-                .on_click(cx.listener(move |composer, _, _, cx| {
-                    composer.menu = false;
-                    cx.emit(ComposerEvent::Agent(ix));
-                    cx.notify();
-                }))
-                .into_any_element()
+                let item = Item::action(agent.name.clone()).checked(Some(ix) == self.agent);
+                match agent.icon.clone() {
+                    Some(mark) => item.with_icon(mark),
+                    None => item,
+                }
             })
             .collect();
-        let install = popover::menu_row(theme, false, Some(Fade::new(painter, "agent-install")))
-            .id("agent-install")
-            .child(
-                div()
-                    .flex_none()
-                    .size(px(13.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(
-                        icons::icon(icons::DOWNLOAD)
-                            .size(px(13.))
-                            .text_color(theme.text_muted),
-                    ),
-            )
-            .child("Install an agent…")
-            .on_click(cx.listener(|composer, _, _, cx| {
-                composer.menu = false;
-                cx.emit(ComposerEvent::Install);
-                cx.notify();
-            }));
+        items.push(Item::action("Install an agent…").with_icon(icons::DOWNLOAD));
+        // The install row sits past the last agent, so the row it reports is an
+        // agent exactly while it is in range.
+        let agents = self.agents.len();
         Some(popover::anchored_menu_above(
             "composer-agents",
-            popover::popover_card(theme)
-                .w(px(220.))
-                .child(div().flex().flex_col().children(rows).child(install))
-                .on_mouse_down_out(cx.listener(|composer, _, _, cx| {
+            menu::card(
+                theme,
+                "composer-agents",
+                &items,
+                None,
+                cx,
+                move |composer, row, _, cx| {
                     composer.menu = false;
+                    match row < agents {
+                        true => cx.emit(ComposerEvent::Agent(row)),
+                        false => cx.emit(ComposerEvent::Install),
+                    }
                     cx.notify();
-                }))
-                .into_any_element(),
+                },
+            )
+            .on_mouse_down_out(cx.listener(|composer, _, _, cx| {
+                composer.menu = false;
+                cx.notify();
+            }))
+            .into_any_element(),
             None,
         ))
     }
