@@ -5,8 +5,10 @@ use crate::{
     model::{settings::Settings, state::State, workspace::Workspace},
     view::{
         board::{self, Editing},
-        composer::{Composer, ComposerEvent},
-        menu::Menu,
+        component::{
+            composer::{Composer, ComposerEvent},
+            menu::Menu,
+        },
         settings::{self, SettingsWindow},
         table,
     },

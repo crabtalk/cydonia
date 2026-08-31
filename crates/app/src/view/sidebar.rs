@@ -6,7 +6,7 @@ use crate::{
     model::session::ChatSession,
     utils,
     view::{
-        menu::Menu,
+        component::menu::Menu,
         root::{self, CommitName, Cydonia, DismissName, NewSession, OpenProject, Pane},
     },
 };

@@ -2,7 +2,7 @@
 //! registry does not carry, and the registry itself.
 
 use crate::{
-    mcp::{self, McpServer},
+    agent::mcp::{self, McpServer},
     view::settings::{AddMcp, SearchMcp, SettingsWindow},
 };
 use bezel::{

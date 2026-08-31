@@ -6,7 +6,7 @@
 use crate::{
     data::ColType,
     view::{
-        menu::Menu,
+        component::menu::Menu,
         root::{self as root, Cydonia, Pane},
         sidebar,
     },

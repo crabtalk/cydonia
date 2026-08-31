@@ -1,5 +1,5 @@
 //! What `svg()` and `img()` can reach by name: bezel's shipped icons, plus the
-//! agent icons [`crate::agents`] has cached.
+//! agent icons [`crate::agent`] has cached.
 //!
 //! A cached icon's asset path is its own path on disk, so the fallback is a
 //! read rather than a table — there is nothing to keep in sync.

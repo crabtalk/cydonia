@@ -8,7 +8,7 @@
 //! - The connection runs on its own tokio runtime. cacp spawns its read and
 //!   write loops with `tokio::spawn`, and gpui's executor is smol's.
 
-use crate::{mcp, model::settings};
+use crate::{agent::mcp, model::settings};
 use anyhow::{Result, anyhow};
 use cacp::{
     AgentConn, Client, Direction, Error, Tap,

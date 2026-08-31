@@ -2,7 +2,7 @@
 //! and the install or removal in flight.
 
 use crate::{
-    agents::{self, Listing},
+    agent::{self, Listing},
     view::settings::SettingsWindow,
 };
 use bezel::{
@@ -21,7 +21,7 @@ impl SettingsWindow {
         cx.spawn(async move |this, cx| {
             let listings = cx
                 .background_executor()
-                .spawn(async move { agents::listings() })
+                .spawn(async move { agent::listings() })
                 .await;
             let missing = listings.iter().any(|listing| listing.icon.is_none());
             let ok = this
@@ -38,8 +38,8 @@ impl SettingsWindow {
             let listings = cx
                 .background_executor()
                 .spawn(async move {
-                    agents::prefetch_icons();
-                    agents::listings()
+                    agent::prefetch_icons();
+                    agent::listings()
                 })
                 .await;
             let _ = this.update(cx, |this, cx| {
@@ -68,7 +68,7 @@ impl SettingsWindow {
         cx.spawn(async move |this, cx| {
             let done = cx
                 .background_executor()
-                .spawn(async move { agents::install(&agent) })
+                .spawn(async move { agent::install(&agent) })
                 .await;
             let _ = this.update(cx, |this, cx| this.settled(id, done, cx));
         })
@@ -91,7 +91,7 @@ impl SettingsWindow {
         cx.spawn(async move |this, cx| {
             let done = cx
                 .background_executor()
-                .spawn(async move { agents::remove(&id) })
+                .spawn(async move { agent::remove(&id) })
                 .await;
             let _ = this.update(cx, |this, cx| this.settled(settled, done, cx));
         })

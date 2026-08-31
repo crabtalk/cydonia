@@ -6,8 +6,7 @@
 //! navigated away from directly behind the form you are filling in.
 
 use crate::{
-    agents::Listing,
-    mcp::McpServer,
+    agent::{Listing, mcp::McpServer},
     model::workspace::Workspace,
     view::root::{TRAFFIC_LIGHT_X, TRAFFIC_LIGHT_Y},
 };

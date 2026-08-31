@@ -13,7 +13,7 @@ use bezel::{
 use cydonia::{
     assets,
     model::{settings, state},
-    view::{board, composer, root, settings as settings_view, table},
+    view::{board, component::composer, root, settings as settings_view, table},
 };
 
 actions!(cydonia, [Quit]);

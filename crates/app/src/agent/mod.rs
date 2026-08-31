@@ -1,4 +1,6 @@
-//! The registry's icon for each agent you have configured.
+//! The agents this machine can run: the catalog, what is installed of it,
+//! and each one's icon. [`acp`] speaks to a running agent; [`mcp`] is the
+//! tool servers they are all offered.
 //!
 //! Settings name a command, the catalog names a package, and the two meet at
 //! the npm package: the registry pins `…/claude-agent-acp@0.70.0` where a
@@ -22,6 +24,9 @@ use std::{
     collections::HashMap,
     path::{Path, PathBuf},
 };
+
+pub mod acp;
+pub mod mcp;
 
 /// Where the fetched catalog and the icons beside it are kept — a cache under
 /// the config directory, not among the files a person edits.

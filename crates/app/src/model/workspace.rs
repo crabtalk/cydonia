@@ -9,7 +9,7 @@
 //! why [`Workspace::save`] can take no arguments.
 
 use crate::{
-    agents,
+    agent,
     data::{ColType, Column, Data, Edit, Page, Table},
     model::{
         archive,
@@ -81,7 +81,7 @@ impl Workspace {
         cx.spawn(async move |this, cx| {
             let icons = cx
                 .background_executor()
-                .spawn(async move { agents::icons(&configured) })
+                .spawn(async move { agent::icons(&configured) })
                 .await;
             let _ = this.update(cx, |workspace, cx| {
                 workspace.agent_icons = icons;

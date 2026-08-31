@@ -7,9 +7,9 @@
 //! not per chunk.
 
 use crate::{
-    acp::{self, Event, Reply, Session},
+    agent::acp::{self, Event, Reply, Session},
     model::{archive::Archived, settings, workspace::Workspace},
-    view::transcript,
+    view::component::transcript,
 };
 use anyhow::anyhow;
 use bezel::{

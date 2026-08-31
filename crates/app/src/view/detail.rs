@@ -4,9 +4,8 @@
 use crate::{
     model::session::{ChatSession, PlanStatus},
     view::{
-        composer,
+        component::{composer, transcript},
         root::{self, Cydonia, Pane},
-        transcript,
     },
 };
 use bezel::{

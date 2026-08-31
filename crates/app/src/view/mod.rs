@@ -4,11 +4,9 @@
 
 pub mod article;
 pub mod board;
-pub mod composer;
+pub mod component;
 pub mod detail;
-pub mod menu;
 pub mod root;
 pub mod settings;
 pub mod sidebar;
 pub mod table;
-pub mod transcript;
