@@ -18,7 +18,7 @@ use bezel::{
     theme::{TextStyle, Theme, Typeset},
     ui::{
         icons, loaders,
-        scroll::{self, FollowState, ScrollbarState},
+        scroll::{self, FollowState},
         widgets::{Layout, Status, Takeover},
     },
 };
@@ -36,26 +36,14 @@ const PAD: f32 = 28.;
 
 /// Where a session's scrollback sits and which of its zones are open — view
 /// state, per session, so switching back finds the transcript as it was left.
+#[derive(Default)]
 pub struct State {
     scroll: ScrollHandle,
     follow: FollowState,
-    bar: ScrollbarState,
     /// Keyed by the turn's first item index.
     work: HashMap<usize, Takeover>,
     /// Tool items whose output is showing, by item index.
     output: HashSet<usize>,
-}
-
-impl State {
-    pub fn new(painter: Painter) -> Self {
-        Self {
-            scroll: ScrollHandle::new(),
-            follow: FollowState::new(),
-            bar: ScrollbarState::new(painter),
-            work: HashMap::new(),
-            output: HashSet::new(),
-        }
-    }
 }
 
 /// A question and the answer it drew.
@@ -133,6 +121,7 @@ pub fn render(chat: &ChatSession, window: &mut Window, cx: &mut Context<Workspac
     div()
         .flex_1()
         .min_h_0()
+        .relative()
         .flex()
         .justify_center()
         .child(
@@ -141,31 +130,35 @@ pub fn render(chat: &ChatSession, window: &mut Window, cx: &mut Context<Workspac
                 .w_full()
                 .max_w(px(CONTENT_MAX_WIDTH))
                 .child(
+                    // The turns are the scroll container's own children, not a
+                    // column inside it: `scroll::rail` addresses what gpui
+                    // indexes, and a wrapper would leave it one item to point at.
                     div()
                         .id(("transcript", id))
                         .size_full()
                         .overflow_y_scroll()
                         .track_scroll(&chat.transcript.scroll)
-                        .child(
-                            div()
-                                .px(px(24.))
-                                .pt(px(PAD))
-                                .pb(px(PAD + root::COMPOSER_HEIGHT + root::COMPOSER_BOTTOM))
-                                .flex()
-                                .flex_col()
-                                .children(zones),
-                        ),
+                        .px(px(24.))
+                        .pt(px(PAD))
+                        .pb(px(PAD + root::COMPOSER_HEIGHT + root::COMPOSER_BOTTOM))
+                        .flex()
+                        .flex_col()
+                        .children(zones),
                 )
                 .child(scroll::follow(
                     &chat.transcript.scroll,
                     &chat.transcript.follow,
-                ))
-                .child(scroll::scrollbar(
-                    SharedString::from(format!("transcript-bar-{id}")),
-                    &chat.transcript.scroll,
-                    &chat.transcript.bar,
                 )),
         )
+        .child(scroll::rail(
+            SharedString::from(format!("transcript-rail-{id}")),
+            &chat.transcript.scroll,
+            turns.len(),
+            // The column is centred in the pane and the pane runs to the
+            // window's right edge, so what is clear after the text is what is
+            // clear beside it.
+            window.viewport_size().width - chat.transcript.scroll.bounds().right(),
+        ))
         .into_any_element()
 }
 

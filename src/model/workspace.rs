@@ -75,7 +75,7 @@ impl Workspace {
             agent_icons: HashMap::new(),
         };
         for ix in restore {
-            this.restore_sessions(ix, cx);
+            this.restore_sessions(ix);
         }
         this.open_first_session(cx);
         this.load_agent_icons(cx);
@@ -185,7 +185,7 @@ impl Workspace {
             None => {
                 self.projects.push(Project::new(path));
                 let ix = self.projects.len() - 1;
-                self.restore_sessions(ix, cx);
+                self.restore_sessions(ix);
                 ix
             }
         };
@@ -295,7 +295,7 @@ impl Workspace {
     /// mean nothing across a launch, so a reloaded one is as new as any. The
     /// agent is resolved by name; a session whose agent has since left
     /// `settings.toml` comes back readable but cannot reconnect.
-    fn restore_sessions(&mut self, ix: usize, cx: &mut Context<Self>) {
+    fn restore_sessions(&mut self, ix: usize) {
         let path = self.projects[ix].path.clone();
         for (file, stored) in record::list(&path) {
             let id = self.next_id;
@@ -313,7 +313,7 @@ impl Workspace {
                     args: Vec::new(),
                     env: Default::default(),
                 });
-            let chat = ChatSession::restore(id, file, path.clone(), entry, stored, cx);
+            let chat = ChatSession::restore(id, file, path.clone(), entry, stored);
             self.projects[ix].sessions.push(chat);
         }
     }

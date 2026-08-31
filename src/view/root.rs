@@ -91,10 +91,10 @@ pub(crate) fn content_bg(theme: &Theme) -> Hsla {
 }
 
 /// A column's own tint at one thickness on the frost scale, or nothing where
-/// the window paints no blur to sit over. The scale's tone is a neutral scrim
+/// the window shows no desktop to sit over. The scale's tone is a neutral scrim
 /// and carries no appearance — tinting it is what makes dark glass dark.
 fn frost(theme: &Theme, thickness: Frost) -> Option<Hsla> {
-    theme.is_glass().then(|| Hsla {
+    theme.glass_window().then(|| Hsla {
         a: thickness.opacity(),
         ..theme.glass()
     })

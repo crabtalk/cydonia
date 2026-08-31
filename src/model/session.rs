@@ -21,10 +21,7 @@ use crate::{
     view::component::transcript,
 };
 use anyhow::anyhow;
-use bezel::{
-    gpui::{Context, Task},
-    motion::Painter,
-};
+use bezel::gpui::{Context, Task};
 use cacp::schema::{
     ContentBlock, MaybeUndefined, PermissionOptionKind, PlanEntryStatus, RequestPermissionRequest,
     RequestPermissionResponse, SessionUpdate, StopReason, ToolCallContent, ToolCallStatus,
@@ -161,7 +158,7 @@ impl ChatSession {
             closed: false,
             streaming: false,
             queue: seed.into_iter().collect(),
-            transcript: transcript::State::new(Painter::of(cx)),
+            transcript: transcript::State::default(),
             _pump: pump,
         }
     }
@@ -174,7 +171,6 @@ impl ChatSession {
         cwd: PathBuf,
         entry: settings::Agent,
         record: Record,
-        cx: &mut Context<Workspace>,
     ) -> Self {
         let updated = record.at();
         Self {
@@ -194,7 +190,7 @@ impl ChatSession {
             closed: record.closed,
             streaming: false,
             queue: VecDeque::new(),
-            transcript: transcript::State::new(Painter::of(cx)),
+            transcript: transcript::State::default(),
             _pump: Task::ready(()),
         }
     }
