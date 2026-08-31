@@ -140,34 +140,42 @@ impl Cydonia {
             .flex()
             .flex_col()
             .overflow_hidden()
-            .child(body)
-            .when(open && live && showing == Pane::Chat, |content| {
-                content.child(
-                    div().flex_none().flex().justify_center().child(
-                        div()
-                            .w_full()
-                            .max_w(px(720.))
-                            .px(px(24.))
-                            .pb(px(20.))
-                            .flex()
-                            .flex_col()
-                            .gap(px(8.))
-                            .children(self.plan(cx))
-                            .children(self.permission(cx))
-                            .children(self.queue(cx))
-                            .child(self.composer.clone()),
-                    ),
-                )
-            });
+            .child(body);
 
         div()
             .flex_1()
             .min_w_0()
             .relative()
-            .bg(root::frost(&theme, root::CONTENT_FROST))
+            .bg(root::content_bg(&theme))
             .flex()
             .flex_col()
             .child(content)
+            // Out of flow so the transcript runs under it: the composer's glass
+            // has something to bend only where the messages reach its edge.
+            .when(open && live && showing == Pane::Chat, |column| {
+                column.child(
+                    div()
+                        .absolute()
+                        .bottom(px(root::COMPOSER_BOTTOM))
+                        .left_0()
+                        .right_0()
+                        .flex()
+                        .justify_center()
+                        .child(
+                            div()
+                                .w_full()
+                                .max_w(px(720.))
+                                .px(px(24.))
+                                .flex()
+                                .flex_col()
+                                .gap(px(8.))
+                                .children(self.plan(cx))
+                                .children(self.permission(cx))
+                                .children(self.queue(cx))
+                                .child(self.composer.clone()),
+                        ),
+                )
+            })
             // Out of flow, so folding the sidebar away costs the pane nothing:
             // the controls float on the column rather than taking a row off it.
             .when(!self.sidebar_open, |column| {

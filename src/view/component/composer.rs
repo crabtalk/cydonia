@@ -1,18 +1,19 @@
 //! The composer: a growing field on a frosted card, and the agent's slash
 //! commands behind `/`.
 
+use crate::view::root;
 use bezel::{
     gpui::{
         self, AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, KeyBinding,
         Render, SharedString, Window, actions, div, point, prelude::*, px, svg,
     },
     motion::{Fade, Painter},
-    theme::{self, TextStyle, Theme, Typeset},
+    theme::{self, Frost, SurfaceStyle, Theme},
     ui::{
         icons,
         input::{self, Shape, TextField},
         popover,
-        widgets::Buttons,
+        surface::Surfaced as _,
     },
 };
 
@@ -24,6 +25,9 @@ actions!(
 /// Claimed on top of `TextField`/`TextArea`, so `enter` sends here and stays a
 /// newline in every other multi-line field.
 const KEY_CONTEXT: &str = "CydoniaComposer";
+
+/// What the pill and the agent mark are cut from.
+const SURFACE: SurfaceStyle = SurfaceStyle::Frost(Frost::Regular);
 
 pub fn init(cx: &mut App) {
     let ctx = Some(KEY_CONTEXT);
@@ -77,7 +81,9 @@ impl Composer {
     pub fn new(cx: &mut Context<Self>) -> Self {
         let field = cx.new(|cx| {
             TextField::new(cx)
-                .with_shape(Shape::Grow { min: 2, max: 12 })
+                .with_shape(Shape::Grow { min: 1, max: 12 })
+                // The pill is the field's frame.
+                .with_frame(false)
                 .with_key_context(KEY_CONTEXT)
                 .with_placeholder("message the agent…")
         });
@@ -248,45 +254,46 @@ impl Composer {
         ))
     }
 
-    /// The agent the session runs on, as a chip that opens the rest. Picking
-    /// one is the app's call to act on — an ACP session is bound to the
-    /// process serving it, so the composer only reports the choice.
-    ///
-    /// Hand-rolled rather than `theme.button`: that helper emits its label as
-    /// the first child and the mark has to lead the name, which an empty label
-    /// would only buy at the cost of the row's gap.
+    /// The agent the session runs on, as the mark that opens the rest — the
+    /// placeholder already carries its name. Picking one is the app's call to
+    /// act on: an ACP session is bound to the process serving it, so the
+    /// composer only reports the choice.
     fn chip(&self, theme: &Theme, cx: &mut Context<Self>) -> Option<AnyElement> {
         let agent = self.agent.and_then(|ix| self.agents.get(ix))?.clone();
+        let mark = px(root::COMPOSER_HEIGHT / 2.);
+        let button = div()
+            .id("composer-agent")
+            .size(px(root::COMPOSER_HEIGHT))
+            .rounded_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .cursor_pointer()
+            .hover(|button| button.bg(theme.element_hover))
+            .child(match agent.icon {
+                Some(path) => svg()
+                    .path(path)
+                    .size(mark)
+                    .flex_none()
+                    .text_color(theme.text_muted)
+                    .into_any_element(),
+                // A slot the catalog has no mark for still has to open the menu.
+                None => icons::icon(icons::WIDGET)
+                    .size(mark)
+                    .text_color(theme.text_muted)
+                    .into_any_element(),
+            })
+            .on_click(cx.listener(|composer, _, _, cx| {
+                composer.menu = !composer.menu;
+                cx.notify();
+            }));
         Some(
             div()
                 .relative()
                 .flex_none()
-                .child(
-                    theme
-                        .ghost("composer-agent")
-                        .px(px(8.))
-                        .py(px(3.))
-                        .text_style(TextStyle::Callout)
-                        .text_color(theme.text_muted)
-                        .gap(px(4.))
-                        .children(agent.icon.map(|path| {
-                            svg()
-                                .path(path)
-                                .size(px(13.))
-                                .flex_none()
-                                .text_color(theme.text_muted)
-                        }))
-                        .child(agent.name)
-                        .child(
-                            icons::icon(icons::ALT_ARROW_DOWN)
-                                .size(px(10.))
-                                .text_color(theme.text_faint),
-                        )
-                        .on_click(cx.listener(|composer, _, _, cx| {
-                            composer.menu = !composer.menu;
-                            cx.notify();
-                        })),
-                )
+                // A surface draws its whole subtree in one layer, so the menu
+                // hangs off the positioning parent beside it.
+                .child(button.surface(theme, SURFACE))
                 .children(self.agent_menu(theme, cx))
                 .into_any_element(),
         )
@@ -378,9 +385,9 @@ impl Composer {
         ))
     }
 
-    /// Send, as a 24px disc — a stop square while a turn is in flight, and
-    /// inert when there is nothing to send. Quietened rather than faded, so the
-    /// glyph stays legible and nothing invites a press.
+    /// Send, as the disc inside the pill's trailing end — a stop square while a
+    /// turn is in flight, and inert when there is nothing to send. Quietened so
+    /// the glyph stays legible and nothing invites a press.
     fn button(&self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
         let streaming = self.streaming;
         let ready = streaming || !self.is_empty(cx);
@@ -389,8 +396,10 @@ impl Composer {
         } else {
             icons::ARROW_UP
         };
+        let glyph_size = px(root::COMPOSER_DISC / 2.);
         let disc = div()
-            .size(px(24.))
+            .flex_none()
+            .size(px(root::COMPOSER_DISC))
             .rounded_full()
             .flex()
             .items_center()
@@ -399,20 +408,25 @@ impl Composer {
             disc.bg(if streaming { theme.danger } else { theme.solid })
                 .cursor_pointer()
                 .hover(|s| s.opacity(0.9))
-                .child(icons::icon(glyph).size(px(12.)).text_color(if streaming {
-                    theme.on_accent
-                } else {
-                    theme.on_solid
-                }))
+                .child(
+                    icons::icon(glyph)
+                        .size(glyph_size)
+                        .text_color(if streaming {
+                            theme.on_accent
+                        } else {
+                            theme.on_solid
+                        }),
+                )
         } else {
             disc.bg(theme::ink(0.06)).child(
                 icons::icon(glyph)
-                    .size(px(12.))
+                    .size(glyph_size)
                     .text_color(theme.text_faint),
             )
         };
         div()
             .id("composer-send")
+            .flex_none()
             .on_click(cx.listener(|composer, _, _, cx| {
                 if composer.streaming {
                     cx.emit(ComposerEvent::Cancel);
@@ -427,11 +441,7 @@ impl Composer {
     fn body(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::of(cx).clone();
         let picker = self.picker(&theme, window, cx);
-        let hint = if self.command.is_some() {
-            "↑↓ pick · enter run · esc close"
-        } else {
-            "enter send · shift-enter newline"
-        };
+        let radius = px(root::COMPOSER_HEIGHT / 2.);
 
         div()
             .on_action(cx.listener(Self::send))
@@ -440,45 +450,35 @@ impl Composer {
             .on_action(cx.listener(Self::command_dismiss))
             .child(
                 div()
-                    .rounded(px(Theme::surface_radius()))
-                    .border_1()
-                    .border_color(theme.border)
-                    .bg(theme.card_glass_bg())
-                    .px(px(4.))
-                    .pt(px(4.))
-                    .pb(px(6.))
+                    .w_full()
                     .flex()
-                    .flex_col()
-                    .gap(px(4.))
-                    .child(self.field.clone())
+                    .flex_row()
+                    // The capsule and the disc hold the last line as the field
+                    // grows up past them.
+                    .items_end()
+                    .gap(px(root::COMPOSER_INSET))
+                    .children(self.chip(&theme, cx))
                     .child(
                         div()
+                            .flex_1()
+                            .min_w_0()
+                            .rounded(radius)
+                            .p(px(root::COMPOSER_INSET))
                             .flex()
                             .flex_row()
-                            .items_center()
-                            .justify_between()
-                            .gap(px(8.))
-                            .pl(px(2.))
-                            .pr(px(6.))
+                            .items_end()
+                            .gap(px(root::COMPOSER_INSET))
                             .child(
                                 div()
-                                    .flex()
-                                    .flex_row()
-                                    .items_center()
+                                    .flex_1()
                                     .min_w_0()
-                                    .gap(px(6.))
-                                    .children(self.chip(&theme, cx))
-                                    .child(
-                                        div()
-                                            .min_w_0()
-                                            .truncate()
-                                            .text_style(TextStyle::Subheadline)
-                                            .font_family(theme.font_mono.clone())
-                                            .text_color(theme.text_faint)
-                                            .child(hint),
-                                    ),
+                                    .min_h(px(root::COMPOSER_DISC))
+                                    .flex()
+                                    .items_center()
+                                    .child(self.field.clone()),
                             )
-                            .child(self.button(&theme, cx)),
+                            .child(self.button(&theme, cx))
+                            .surface(&theme, SURFACE),
                     ),
             )
             .children(picker)

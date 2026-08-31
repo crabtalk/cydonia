@@ -7,12 +7,12 @@ use bezel::{
         WindowOptions, actions, point, px, size,
     },
     gpui_platform,
-    theme::{Theme, appearance},
+    theme::{self, Theme, Tint, appearance},
     ui::{self, focus, input},
 };
 use cydonia::{
     assets,
-    model::{settings, state},
+    model::{settings, state, workspace},
     view::{article, board, component::composer, root, settings as settings_view, table},
 };
 
@@ -28,6 +28,11 @@ fn main() -> Result<()> {
                 eprintln!("font registration failed: {err:?}");
             }
             appearance::init(state.appearance, cx);
+            // Before the window is opened: it reads its background appearance
+            // on the way up, and frost is what decides that.
+            workspace::apply_transparency(state.reduce_transparency, cx);
+            workspace::apply_tint(Tint::new(state.hue, state.chroma), cx);
+            theme::set_base_text_size(state.text_size, cx);
             markdown::set_highlighter(
                 cx,
                 |language, code| syntax::highlight(code, language),

@@ -100,7 +100,7 @@ impl Cydonia {
             .flex_none()
             .w(px(self.sidebar_width))
             .h_full()
-            .bg(root::frost(&theme, root::SIDEBAR_FROST))
+            .bg(root::sidebar_bg(&theme))
             // Drawn ON the column, not left as a gap between two: a bare strip
             // between them would be raw desktop at full strength, a bright line
             // the height of the window.

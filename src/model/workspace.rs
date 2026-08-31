@@ -22,8 +22,8 @@ use crate::{
     },
 };
 use bezel::{
-    gpui::{Context, EntityId, SharedString},
-    theme::appearance::AppearanceMode,
+    gpui::{App, Context, EntityId, SharedString},
+    theme::{self, Brand, Theme, Tint, appearance::AppearanceMode},
 };
 use std::{
     collections::HashMap,
@@ -41,9 +41,17 @@ pub struct Workspace {
     pub projects: Vec<Project>,
     pub active: Option<usize>,
     pub appearance: AppearanceMode,
+    pub reduce_transparency: bool,
     /// Session ids are minted here and never reused, so a card's link to the
     /// session it opened stays unambiguous for the life of the process.
     next_id: u64,
+    /// The body size the type ladder is scaled against, in points.
+    pub text_size: f32,
+    /// The hue the greys carry, and how much of it.
+    pub tint: Tint,
+    /// Whether the window is showing the frame meter. Runtime only — a switch
+    /// you left on is not a preference worth restoring.
+    pub meter: bool,
     /// The registry's mark for each configured agent, by name. Empty until the
     /// catalog lands, and stays empty offline.
     agent_icons: HashMap<String, SharedString>,
@@ -59,6 +67,10 @@ impl Workspace {
             projects,
             active,
             appearance: state.appearance,
+            reduce_transparency: state.reduce_transparency,
+            text_size: state.text_size,
+            tint: Tint::new(state.hue, state.chroma),
+            meter: false,
             next_id: 0,
             agent_icons: HashMap::new(),
         };
@@ -79,7 +91,15 @@ impl Workspace {
     }
 
     fn save(&self) {
-        state::save(&self.projects, self.active, self.appearance);
+        state::save(&State {
+            projects: self.projects.iter().map(|p| p.path.clone()).collect(),
+            active: self.active.unwrap_or_default(),
+            appearance: self.appearance,
+            reduce_transparency: self.reduce_transparency,
+            text_size: self.text_size,
+            hue: self.tint.hue,
+            chroma: self.tint.chroma,
+        });
     }
 
     // ── agents ───────────────────────────────────────────────────────
@@ -130,6 +150,28 @@ impl Workspace {
     pub fn set_appearance(&mut self, mode: AppearanceMode, cx: &mut Context<Self>) {
         self.appearance = mode;
         bezel::theme::appearance::set_mode(mode, cx);
+        self.save();
+        cx.notify();
+    }
+
+    /// The same window's other choice.
+    pub fn set_reduce_transparency(&mut self, reduce: bool, cx: &mut Context<Self>) {
+        self.reduce_transparency = reduce;
+        apply_transparency(reduce, cx);
+        self.save();
+        cx.notify();
+    }
+
+    pub fn set_text_size(&mut self, points: f32, cx: &mut Context<Self>) {
+        self.text_size = points;
+        theme::set_base_text_size(points, cx);
+        self.save();
+        cx.notify();
+    }
+
+    pub fn set_tint(&mut self, tint: Tint, cx: &mut Context<Self>) {
+        self.tint = tint;
+        apply_tint(tint, cx);
         self.save();
         cx.notify();
     }
@@ -738,4 +780,28 @@ impl Workspace {
             cx.notify();
         }
     }
+}
+
+/// Point bezel's frost alpha at the preference. Free rather than a method
+/// because the window reads its background appearance while it is being opened,
+/// which is before there is a workspace to ask.
+pub fn apply_tint(tint: Tint, cx: &mut App) {
+    theme::set_brand(
+        Brand {
+            tint,
+            ..theme::brand(cx)
+        },
+        cx,
+    );
+}
+
+pub fn apply_transparency(reduce: bool, cx: &mut App) {
+    let glass = if reduce { 1.0 } else { Theme::GLASS_ALPHA };
+    theme::set_brand(
+        Brand {
+            glass,
+            ..theme::brand(cx)
+        },
+        cx,
+    );
 }

@@ -28,13 +28,20 @@ use cacp_agents::mcp as registry;
 use std::collections::HashSet;
 
 mod agents;
+mod dev;
 mod mcp;
 mod theme;
+mod typography;
 
 /// The section sidebar. The reference's 18rem is read against a 120rem panel;
 /// against this window it would take a third of the width, so it matches the
 /// main window's sidebar instead.
 const SIDEBAR_WIDTH: f32 = 200.;
+
+/// The gap between a group and the label of the next one, and between a label
+/// and the box under it.
+pub(super) const GROUP_GAP: f32 = 20.;
+pub(super) const LABEL_GAP: f32 = 8.;
 
 /// The reading column's cap, `--container-content`. The body is centred in
 /// whatever the window gives it, up to this.
@@ -62,16 +69,18 @@ pub enum Section {
     // After Agents: a server is something an agent reaches, so it reads in the
     // order it is set up.
     Mcp,
+    Dev,
 }
 
 impl Section {
-    const ALL: [Self; 3] = [Self::Appearance, Self::Agents, Self::Mcp];
+    const ALL: [Self; 4] = [Self::Appearance, Self::Agents, Self::Mcp, Self::Dev];
 
     fn title(self) -> &'static str {
         match self {
             Self::Appearance => "Appearance",
             Self::Agents => "Agents",
             Self::Mcp => "MCP servers",
+            Self::Dev => "Dev",
         }
     }
 
@@ -80,6 +89,7 @@ impl Section {
             Self::Appearance => icons::SUN,
             Self::Agents => icons::WIDGET,
             Self::Mcp => icons::LINK,
+            Self::Dev => icons::CPU,
         }
     }
 }
@@ -178,7 +188,7 @@ impl SettingsWindow {
         match section {
             Section::Agents => self.load(cx),
             Section::Mcp => self.reload(),
-            Section::Appearance => {}
+            Section::Appearance | Section::Dev => {}
         }
         cx.notify();
     }
@@ -219,6 +229,7 @@ impl Render for SettingsWindow {
         let theme = Theme::of(cx).clone();
         div()
             .size_full()
+            .relative()
             .flex()
             .flex_row()
             .on_action(cx.listener(Self::search_mcp))
@@ -248,12 +259,10 @@ impl Render for SettingsWindow {
                             .flex_col()
                             .child(theme.page_header(self.section.title(), None))
                             .child(match self.section {
-                                Section::Appearance => theme
-                                    .group_box()
-                                    .child(self.theme_row(cx))
-                                    .into_any_element(),
+                                Section::Appearance => self.appearance_body(cx),
                                 Section::Agents => self.agents_body(cx),
                                 Section::Mcp => self.mcp_body(cx),
+                                Section::Dev => self.dev_body(cx),
                             }),
                     ),
             )

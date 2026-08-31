@@ -5,9 +5,12 @@
 //! tool call or thought; everything before it is interim.** That one rule is
 //! what stops a model's thinking-out-loud being presented as its reply.
 
-use crate::model::{
-    session::{ChatItem, ChatSession, ToolStatus},
-    workspace::Workspace,
+use crate::{
+    model::{
+        session::{ChatItem, ChatSession, ToolStatus},
+        workspace::Workspace,
+    },
+    view::root,
 };
 use bezel::{
     gpui::{AnyElement, Context, ScrollHandle, SharedString, Window, div, prelude::*, px},
@@ -26,6 +29,10 @@ use std::{
 };
 
 const CONTENT_MAX_WIDTH: f32 = 720.;
+
+/// The transcript's breathing room at either end. The bottom carries the
+/// floating composer on top of it, so the last message scrolls clear of it.
+const PAD: f32 = 28.;
 
 /// Where a session's scrollback sits and which of its zones are open — view
 /// state, per session, so switching back finds the transcript as it was left.
@@ -142,7 +149,8 @@ pub fn render(chat: &ChatSession, window: &mut Window, cx: &mut Context<Workspac
                         .child(
                             div()
                                 .px(px(24.))
-                                .py(px(28.))
+                                .pt(px(PAD))
+                                .pb(px(PAD + root::COMPOSER_HEIGHT + root::COMPOSER_BOTTOM))
                                 .flex()
                                 .flex_col()
                                 .children(zones),
