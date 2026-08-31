@@ -46,18 +46,8 @@ const SIDEBAR_WIDTH: f32 = 200.;
 const SIDEBAR_WIDTH_MIN: f32 = 180.;
 const SIDEBAR_WIDTH_MAX: f32 = 420.;
 
-/// The sidebar's left edge — the gallery's grid, which the sidebar container's
-/// own 16pt padding does not share.
-const SIDEBAR_PAD: f32 = 20.;
-
 /// The sidebar's gutter: a row's outer margin, and the padding inside it.
 pub(crate) const SIDEBAR_GUTTER: f32 = 8.;
-
-/// How far a row under a project heading is indented. Stated as the gap it has
-/// to leave rather than as a measure of its own: with the gutter added back,
-/// a row's text starts on [`SIDEBAR_PAD`], so the sidebar has one left edge
-/// instead of one per kind of row.
-pub(crate) const ROW_INDENT: f32 = SIDEBAR_PAD - SIDEBAR_GUTTER;
 
 /// How deep each column's frost sits. Nothing paints beneath them, so these are
 /// absolute and independent: the sidebar is chrome and holds no long-form text,

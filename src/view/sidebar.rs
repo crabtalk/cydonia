@@ -58,7 +58,7 @@ pub(crate) fn row(
     div()
         .id(id)
         .group(group)
-        .ml(px(root::ROW_INDENT))
+        .ml(px(root::SIDEBAR_GUTTER))
         .mr(px(root::SIDEBAR_GUTTER))
         .px(px(root::SIDEBAR_GUTTER))
         .rounded(px(Theme::control_radius()))
