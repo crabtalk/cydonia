@@ -140,7 +140,7 @@ pub fn render(chat: &ChatSession, window: &mut Window, cx: &mut Context<Workspac
                         .track_scroll(&chat.transcript.scroll)
                         .px(px(24.))
                         .pt(px(PAD))
-                        .pb(px(PAD + root::COMPOSER_HEIGHT + root::COMPOSER_BOTTOM))
+                        .pb(px(PAD + root::composer_height() + root::COMPOSER_BOTTOM))
                         .flex()
                         .flex_col()
                         .children(zones),

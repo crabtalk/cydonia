@@ -63,17 +63,22 @@ const CONTENT_FROST: Frost = Frost::UltraThick;
 /// draws without crowding them.
 pub(crate) const HEADER_HEIGHT: f32 = 36.;
 
-/// The pill at rest, and the agent mark beside it: what bezel gives a control
-/// holding one line of `Body`. Half of it is the stadium's radius.
-pub(crate) const COMPOSER_HEIGHT: f32 = Theme::BUTTON_HEIGHT;
+/// The pill at rest, and the agent mark beside it. Half of it is the stadium's
+/// radius.
+pub(crate) fn composer_height() -> f32 {
+    composer_disc() + 2. * COMPOSER_INSET
+}
 
 /// The room the pill keeps around its content — the same 6 the height counts
 /// above and below the line box.
 pub(crate) const COMPOSER_INSET: f32 = 6.;
 
 /// The send disc, filling the pill inside that inset, which lands it on the
-/// line box it sits beside.
-pub(crate) const COMPOSER_DISC: f32 = COMPOSER_HEIGHT - 2. * COMPOSER_INSET;
+/// line box it sits beside — the field's own box, so the two stay one height
+/// wherever the text-size setting puts it.
+pub(crate) fn composer_disc() -> f32 {
+    TextStyle::Body.painted_line_height()
+}
 
 /// How far the floating composer stands off the column's bottom edge.
 pub(crate) const COMPOSER_BOTTOM: f32 = 20.;

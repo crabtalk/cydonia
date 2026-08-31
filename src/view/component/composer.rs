@@ -1,4 +1,4 @@
-//! The composer: a growing field on a frosted card, and the agent's slash
+//! The composer: a growing field on a glass card, and the agent's slash
 //! commands behind `/`.
 
 use crate::view::root;
@@ -7,7 +7,7 @@ use bezel::{
         self, AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, KeyBinding,
         Render, SharedString, Window, actions, div, point, prelude::*, px, svg,
     },
-    theme::{self, Frost, SurfaceStyle, Theme},
+    theme::{self, Glass, SurfaceStyle, Theme},
     ui::{
         icons,
         input::{self, Shape, TextField},
@@ -27,7 +27,7 @@ actions!(
 const KEY_CONTEXT: &str = "CydoniaComposer";
 
 /// What the pill and the agent mark are cut from.
-const SURFACE: SurfaceStyle = SurfaceStyle::Frost(Frost::Regular);
+const SURFACE: SurfaceStyle = SurfaceStyle::Glass(Glass::Regular);
 
 pub fn init(cx: &mut App) {
     let ctx = Some(KEY_CONTEXT);
@@ -256,10 +256,10 @@ impl Composer {
     /// composer only reports the choice.
     fn chip(&self, theme: &Theme, cx: &mut Context<Self>) -> Option<AnyElement> {
         let agent = self.agent.and_then(|ix| self.agents.get(ix))?.clone();
-        let mark = px(root::COMPOSER_HEIGHT / 2.);
+        let mark = px(root::composer_height() / 2.);
         let button = div()
             .id("composer-agent")
-            .size(px(root::COMPOSER_HEIGHT))
+            .size(px(root::composer_height()))
             .rounded_full()
             .flex()
             .items_center()
@@ -354,10 +354,10 @@ impl Composer {
         } else {
             icons::ARROW_UP
         };
-        let glyph_size = px(root::COMPOSER_DISC / 2.);
+        let glyph_size = px(root::composer_disc() / 2.);
         let disc = div()
             .flex_none()
-            .size(px(root::COMPOSER_DISC))
+            .size(px(root::composer_disc()))
             .rounded_full()
             .flex()
             .items_center()
@@ -399,7 +399,7 @@ impl Composer {
     fn body(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::of(cx).clone();
         let picker = self.picker(&theme, window, cx);
-        let radius = px(root::COMPOSER_HEIGHT / 2.);
+        let radius = px(root::composer_height() / 2.);
 
         div()
             .on_action(cx.listener(Self::send))
@@ -430,7 +430,7 @@ impl Composer {
                                 div()
                                     .flex_1()
                                     .min_w_0()
-                                    .min_h(px(root::COMPOSER_DISC))
+                                    .min_h(px(root::composer_disc()))
                                     .flex()
                                     .items_center()
                                     .child(self.field.clone()),
