@@ -324,7 +324,7 @@ impl Cydonia {
                             .py(px(6.))
                             .rounded(px(Theme::control_radius()))
                             .cursor_pointer()
-                            .hover(|el| el.bg(theme.glass_hover()))
+                            .hover(|el| el.bg(theme.element_hover))
                             .flex()
                             .flex_row()
                             .items_center()

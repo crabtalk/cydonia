@@ -16,7 +16,7 @@ use bezel::{
     ui::{
         icons, loaders,
         scroll::{self, FollowState, ScrollbarState},
-        widgets::{self, Layout, Status, Takeover},
+        widgets::{Layout, Status, Takeover},
     },
 };
 use cacp::schema::ToolKind;
@@ -251,7 +251,7 @@ fn work_header(
         .py(px(5.))
         .rounded(px(Theme::control_radius()))
         .cursor_pointer()
-        .hover(widgets::collapsible_header_hover)
+        .hover(|el| el.bg(theme.element_hover))
         .on_click(cx.listener(move |this, _, _, cx| {
             this.with_session(id, cx, |chat| {
                 let running = chat.streaming;
@@ -353,7 +353,7 @@ fn tool(chat: &ChatSession, ix: usize, first: bool, cx: &mut Context<Workspace>)
                     failed,
                     (!output.is_empty()).then_some(open),
                 )
-                .hover(widgets::step_row_hover)
+                .hover(|el| el.bg(theme.element_hover))
                 .id(("tool", ix))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.with_session(id, cx, |chat| {

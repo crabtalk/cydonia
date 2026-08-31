@@ -63,8 +63,10 @@ pub(crate) fn row(
         .px(px(root::SIDEBAR_GUTTER))
         .rounded(px(Theme::control_radius()))
         .cursor_pointer()
-        .when(selected, |el| el.bg(theme.glass_hover()))
-        .hover(|el| el.bg(theme.glass_hover()))
+        .when(selected, |el| el.bg(theme.element_active))
+        // Only off the open row: the hover wash is the weaker rung, and
+        // painting it over the selection would dim what the pointer is on.
+        .when(!selected, |el| el.hover(|el| el.bg(theme.element_hover)))
 }
 
 /// The plate's own inset around the control it holds.

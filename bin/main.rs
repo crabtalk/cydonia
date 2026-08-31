@@ -60,7 +60,7 @@ fn main() -> Result<()> {
                     }),
                     // Glass needs a blurred window background to blur into.
                     window_background: Theme::of(cx).window_background_appearance(),
-                    window_min_size: Some(size(px(900.), px(600.))),
+                    window_min_size: Some(size(px(600.), px(320.))),
                     app_id: Some("cydonia".into()),
                     ..Default::default()
                 },
