@@ -1,6 +1,6 @@
 //! The article pane: one document, and the rail row that opens it.
 
-use crate::view::root::{Cydonia, Pane};
+use crate::view::root::{self as root, Cydonia, Pane};
 use bezel::{
     gpui::{
         AnyElement, Context, CursorStyle, Focusable as _, SharedString, Window, div, prelude::*, px,
@@ -127,21 +127,12 @@ impl Cydonia {
                 .is_some_and(|open| open.article == Some(ix));
         let id = SharedString::from(format!("article-{project}-{ix}"));
 
-        div()
-            .id(id)
-            .group("article-row")
-            .ml(px(18.))
-            .mr(px(8.))
-            .px(px(8.))
+        root::rail_row(id, "article-row", selected, &theme)
             .py(px(6.))
-            .rounded(px(Theme::control_radius()))
             .flex()
             .flex_row()
             .items_center()
             .gap(px(8.))
-            .cursor_pointer()
-            .when(selected, |el| el.bg(theme.glass_hover()))
-            .hover(|el| el.bg(theme.glass_hover()))
             .child(
                 icons::icon(icons::DOCUMENT)
                     .size(px(14.))
@@ -157,7 +148,7 @@ impl Cydonia {
                     .flex_1()
                     .min_w_0()
                     .truncate()
-                    .text_size(px(13.))
+                    .text_size(px(root::RAIL_TEXT))
                     .text_color(if selected {
                         theme.text
                     } else {

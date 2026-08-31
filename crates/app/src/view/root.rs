@@ -63,6 +63,22 @@ const SIDEBAR_MAX: f32 = 420.;
 /// gallery's rail grid, which the sidebar's own 16pt padding does not share.
 const RAIL_PAD: f32 = 20.;
 
+/// The rail's gutter: a row's outer margin, and the padding inside it.
+const RAIL_GUTTER: f32 = 8.;
+
+/// What the rail reads at. bezel's theme carries font families and a spacing
+/// scale but no type scale, so this is cydonia's own — named once because a
+/// heading that ends up smaller than the rows beneath it inverts the hierarchy
+/// it is supposed to state. Weight and colour separate a heading from its
+/// rows; size does not.
+pub(crate) const RAIL_TEXT: f32 = 13.;
+
+/// How far a row under a project heading is indented. Stated as the gap it has
+/// to leave rather than as a measure of its own: with the gutter added back,
+/// a row's text starts on [`RAIL_PAD`], where the head band's controls do, so
+/// the rail has one left edge instead of one per kind of row.
+const ROW_INDENT: f32 = RAIL_PAD - RAIL_GUTTER;
+
 /// How far the content card floats in from the window's edges. The rail runs
 /// to the floor behind it, so the frost reads as one shell under the card.
 const SHELL_INSET: f32 = 8.;
@@ -98,6 +114,29 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("enter", CommitName, Some(RENAME_CONTEXT)),
         KeyBinding::new("escape", DismissName, Some(RENAME_CONTEXT)),
     ]);
+}
+
+/// The box every row under a project heading sits in: indented beneath the
+/// heading, and carrying the wash that says which one is open.
+///
+/// Shared because the indent is a measurement three files have to agree on.
+/// Written out in each of them, it drifts.
+pub(crate) fn rail_row(
+    id: impl Into<gpui::ElementId>,
+    group: &'static str,
+    selected: bool,
+    theme: &Theme,
+) -> Stateful<Div> {
+    div()
+        .id(id)
+        .group(group)
+        .ml(px(ROW_INDENT))
+        .mr(px(RAIL_GUTTER))
+        .px(px(RAIL_GUTTER))
+        .rounded(px(Theme::control_radius()))
+        .cursor_pointer()
+        .when(selected, |el| el.bg(theme.glass_hover()))
+        .hover(|el| el.bg(theme.glass_hover()))
 }
 
 /// Which pane the content card shows. A property of the window, not of a
@@ -498,7 +537,7 @@ impl Cydonia {
                 .flex_1()
                 .min_w_0()
                 .truncate()
-                .text_size(px(13.))
+                .text_size(px(RAIL_TEXT))
                 // What the field pins itself to. Left to gpui's default the
                 // label's line box is φ×13, and renaming would resize the row
                 // under the name being typed.
@@ -508,20 +547,11 @@ impl Cydonia {
                 .into_any_element()
         };
 
-        div()
-            .id(("session", id))
-            .group("session-row")
-            .ml(px(18.))
-            .mr(px(8.))
-            .px(px(8.))
+        rail_row(("session", id), "session-row", selected, &theme)
             .py(px(5.))
-            .rounded(px(Theme::control_radius()))
             .flex()
             .flex_col()
             .gap(px(1.))
-            .cursor_pointer()
-            .when(selected, |el| el.bg(theme.glass_hover()))
-            .hover(|el| el.bg(theme.glass_hover()))
             .child(
                 div()
                     .flex()
@@ -696,7 +726,7 @@ impl Cydonia {
                             .flex_1()
                             .min_w_0()
                             .truncate()
-                            .text_size(px(11.))
+                            .text_size(px(RAIL_TEXT))
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(if active { theme.text } else { theme.text_faint })
                             .child(name),
@@ -909,7 +939,7 @@ impl Cydonia {
                     )
                     .child(
                         div()
-                            .text_size(px(13.))
+                            .text_size(px(RAIL_TEXT))
                             .text_color(theme.text_muted)
                             .child("Settings"),
                     )

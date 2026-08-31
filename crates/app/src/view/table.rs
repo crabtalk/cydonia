@@ -5,7 +5,7 @@
 
 use crate::{
     data::ColType,
-    view::root::{Cydonia, Menu, Pane},
+    view::root::{self as root, Cydonia, Menu, Pane},
 };
 use bezel::{
     gpui::{
@@ -517,57 +517,53 @@ impl Cydonia {
             theme.text_muted
         };
 
-        div()
-            .id(SharedString::from(format!("table-{project}-{ix}")))
-            .group("table-row")
-            .ml(px(18.))
-            .mr(px(8.))
-            .px(px(8.))
-            .py(px(6.))
-            .rounded(px(Theme::control_radius()))
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(8.))
-            .cursor_pointer()
-            .when(selected, |el| el.bg(theme.glass_hover()))
-            .hover(|el| el.bg(theme.glass_hover()))
-            .child(
-                icons::icon(icons::WIDGET)
-                    .size(px(14.))
-                    .flex_none()
-                    .text_color(tone),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .truncate()
-                    .text_size(px(13.))
-                    .text_color(tone)
-                    .child(name),
-            )
-            .child(
-                div()
-                    .id(("delete-table", ix))
-                    .flex_none()
-                    .invisible()
-                    .group_hover("table-row", |el| el.visible())
-                    .rounded(px(Theme::control_radius()))
-                    .p(px(2.))
-                    .child(
-                        icons::icon(icons::TRASH_BIN_MINIMALISTIC)
-                            .size(px(12.))
-                            .text_color(theme.text_faint),
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        cx.stop_propagation();
-                        this.delete_table(project, ix, cx);
-                    })),
-            )
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.open_table(project, ix, cx);
-            }))
+        root::rail_row(
+            SharedString::from(format!("table-{project}-{ix}")),
+            "table-row",
+            selected,
+            &theme,
+        )
+        .py(px(6.))
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(8.))
+        .child(
+            icons::icon(icons::WIDGET)
+                .size(px(14.))
+                .flex_none()
+                .text_color(tone),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .truncate()
+                .text_size(px(root::RAIL_TEXT))
+                .text_color(tone)
+                .child(name),
+        )
+        .child(
+            div()
+                .id(("delete-table", ix))
+                .flex_none()
+                .invisible()
+                .group_hover("table-row", |el| el.visible())
+                .rounded(px(Theme::control_radius()))
+                .p(px(2.))
+                .child(
+                    icons::icon(icons::TRASH_BIN_MINIMALISTIC)
+                        .size(px(12.))
+                        .text_color(theme.text_faint),
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.delete_table(project, ix, cx);
+                })),
+        )
+        .on_click(cx.listener(move |this, _, _, cx| {
+            this.open_table(project, ix, cx);
+        }))
     }
 }
 
