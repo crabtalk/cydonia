@@ -15,7 +15,7 @@ use bezel::{
 pub(crate) enum Menu {
     /// The `+` on a project heading: what to start here.
     Add(usize),
-    /// The `···` on a project heading: what to do to the project.
+    /// A project heading: what to do to the project.
     Project(usize),
     /// The `···` on a session row.
     Session(u64),
@@ -26,7 +26,7 @@ pub(crate) enum Menu {
 }
 
 impl Cydonia {
-    fn toggle_menu(&mut self, menu: Menu, cx: &mut Context<Self>) {
+    pub(crate) fn toggle_menu(&mut self, menu: Menu, cx: &mut Context<Self>) {
         self.menu = (self.menu != Some(menu)).then_some(menu);
         cx.notify();
     }

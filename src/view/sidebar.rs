@@ -239,7 +239,6 @@ impl Cydonia {
         let Some(project) = workspace.projects.get(ix) else {
             return Empty.into_any_element();
         };
-        let active = workspace.active == Some(ix);
         let expanded = project.expanded;
         let name = project.name();
         let sessions: Vec<SessionRow> = project
@@ -283,36 +282,25 @@ impl Cydonia {
                     .px(px(6.))
                     .py(px(4.))
                     .rounded(px(Theme::control_radius()))
+                    .relative()
                     .flex()
                     .flex_row()
                     .items_center()
                     .gap(px(4.))
                     .cursor_pointer()
-                    .hover(|el| el.bg(theme.glass_hover()))
+                    // On the head, not the label: a name's colour is fixed when
+                    // its text is laid out, and only this div is stateful enough
+                    // to carry the hover that far.
+                    .text_color(theme.text_faint)
+                    .hover(|el| el.text_color(theme.text))
                     .child(
                         div()
                             .flex_1()
                             .min_w_0()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap(px(4.))
-                            .child(
-                                div()
-                                    .min_w_0()
-                                    .truncate()
-                                    .text_style(TextStyle::Callout)
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(if active { theme.text } else { theme.text_faint })
-                                    .child(name),
-                            )
-                            .child(
-                                theme
-                                    .disclosure(expanded)
-                                    .flex_none()
-                                    .invisible()
-                                    .group_hover("project-head", |el| el.visible()),
-                            ),
+                            .truncate()
+                            .text_style(TextStyle::Callout)
+                            .font_weight(FontWeight::MEDIUM)
+                            .child(name),
                     )
                     .child(
                         self.menu_button(
@@ -320,26 +308,38 @@ impl Cydonia {
                             "project-head",
                             icons::icon(icons::PLUS)
                                 .size(px(12.))
-                                .text_color(theme.text_faint),
+                                .text_color(theme.text_faint)
+                                .group_hover("project-head", |el| el.text_color(theme.text)),
                             Menu::Add(ix),
                             cx,
                         )
                         .children(self.add_menu(ix, cx)),
                     )
                     .child(
-                        self.menu_button(
-                            ("project-more", ix),
-                            "project-head",
-                            icons::icon(icons::MENU_DOTS)
-                                .size(px(14.))
-                                .text_color(theme.text_faint),
-                            Menu::Project(ix),
-                            cx,
-                        )
-                        .children(self.project_menu(ix, cx)),
+                        div()
+                            .id(("project-fold", ix))
+                            .flex_none()
+                            .rounded(px(Theme::control_radius()))
+                            .p(px(3.))
+                            .cursor_pointer()
+                            .invisible()
+                            .group_hover("project-head", |el| el.visible())
+                            .child(
+                                theme
+                                    .disclosure(expanded)
+                                    .text_color(theme.text_faint)
+                                    .group_hover("project-head", |el| el.text_color(theme.text)),
+                            )
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                cx.stop_propagation();
+                                this.toggle_project(ix, cx);
+                            })),
                     )
-                    // The heading is the fold. Selecting the project is what
-                    // opening something inside it already does.
+                    .children(self.project_menu(ix, cx))
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(move |this, _, _, cx| this.toggle_menu(Menu::Project(ix), cx)),
+                    )
                     .on_click(cx.listener(move |this, _, _, cx| this.toggle_project(ix, cx))),
             )
             .when(expanded, |section| {
@@ -419,7 +419,7 @@ impl Cydonia {
         ))
     }
 
-    /// What the `···` does to the project. Removing closes the tab — the
+    /// What a press on the heading opens. Removing closes the tab — the
     /// directory and everything in it stays where it is.
     fn project_menu(&self, ix: usize, cx: &mut Context<Self>) -> Option<AnyElement> {
         if self.menu != Some(Menu::Project(ix)) {
