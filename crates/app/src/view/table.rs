@@ -5,7 +5,11 @@
 
 use crate::{
     data::ColType,
-    view::root::{self as root, Cydonia, Menu, Pane},
+    view::{
+        menu::Menu,
+        rail,
+        root::{self as root, Cydonia, Pane},
+    },
 };
 use bezel::{
     gpui::{
@@ -517,7 +521,7 @@ impl Cydonia {
             theme.text_muted
         };
 
-        root::rail_row(
+        rail::row(
             SharedString::from(format!("table-{project}-{ix}")),
             "table-row",
             selected,

@@ -4,8 +4,11 @@
 
 pub mod article;
 pub mod board;
+pub mod chat;
 pub mod composer;
+pub mod menu;
+pub mod rail;
 pub mod root;
-pub mod settings_window;
+pub mod settings;
 pub mod table;
 pub mod transcript;

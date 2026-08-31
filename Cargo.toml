@@ -12,10 +12,10 @@ repository = "https://github.com/crabtalk/cydonia"
 # bezel — the component library the GUI is built on. Published as `bezel-*`;
 # the keys here are what the source imports. `platform` carries gpui_platform,
 # which opens the window: gpui core knows no platform of its own.
-bezel = { version = "0.1.3", features = ["platform"] }
-editor = { version = "0.1.3", package = "bezel-editor" }
-markdown = { version = "0.1.3", package = "bezel-markdown" }
-syntax = { version = "0.1.3", package = "bezel-syntax" }
+bezel = { version = "0.1.4", features = ["platform"] }
+editor = { version = "0.1.4", package = "bezel-editor" }
+markdown = { version = "0.1.4", package = "bezel-markdown" }
+syntax = { version = "0.1.4", package = "bezel-syntax" }
 
 # cacp — our ACP implementation. A sibling checkout while both move together.
 cacp = { path = "../cacp/crates/cacp", default-features = false, features = [
@@ -49,11 +49,11 @@ ureq = "3"
 # in the graph has to come from there together: two copies of the token system
 # is a second type universe, and the window paints shapes but no text.
 [patch.crates-io]
-bezel = { path = "../bezel-editor-fix/crates/bezel" }
-bezel-agent = { path = "../bezel-editor-fix/crates/agent" }
-bezel-editor = { path = "../bezel-editor-fix/crates/editor" }
-bezel-markdown = { path = "../bezel-editor-fix/crates/markdown" }
-bezel-motion = { path = "../bezel-editor-fix/crates/motion" }
-bezel-syntax = { path = "../bezel-editor-fix/crates/syntax" }
-bezel-theme = { path = "../bezel-editor-fix/crates/theme" }
-bezel-ui = { path = "../bezel-editor-fix/crates/ui" }
+bezel = { path = "../bezel/crates/bezel" }
+bezel-agent = { path = "../bezel/crates/agent" }
+bezel-editor = { path = "../bezel/crates/editor" }
+bezel-markdown = { path = "../bezel/crates/markdown" }
+bezel-motion = { path = "../bezel/crates/motion" }
+bezel-syntax = { path = "../bezel/crates/syntax" }
+bezel-theme = { path = "../bezel/crates/theme" }
+bezel-ui = { path = "../bezel/crates/ui" }
