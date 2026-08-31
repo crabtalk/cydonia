@@ -155,7 +155,8 @@ impl SettingsWindow {
                             .mt(px(4.))
                             .text_style(TextStyle::Subheadline)
                             .text_color(theme.text_muted)
-                            .truncate()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
                             .child(
                                 listing
                                     .agent
