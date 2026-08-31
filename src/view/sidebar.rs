@@ -222,16 +222,30 @@ impl Cydonia {
                     .gap(px(4.))
                     .cursor_pointer()
                     .hover(|el| el.bg(theme.glass_hover()))
-                    .child(theme.disclosure(expanded))
                     .child(
                         div()
                             .flex_1()
                             .min_w_0()
-                            .truncate()
-                            .text_style(TextStyle::Title3)
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(if active { theme.text } else { theme.text_faint })
-                            .child(name),
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap(px(4.))
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_style(TextStyle::Callout)
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(if active { theme.text } else { theme.text_faint })
+                                    .child(name),
+                            )
+                            .child(
+                                theme
+                                    .disclosure(expanded)
+                                    .flex_none()
+                                    .invisible()
+                                    .group_hover("project-head", |el| el.visible()),
+                            ),
                     )
                     .child(
                         self.menu_button(
