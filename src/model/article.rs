@@ -88,8 +88,8 @@ impl Article {
         if self.editor.is_some() {
             return;
         }
-        // The document's own heading type, so the title reads as the heading of
-        // the page it is the heading of.
+        // The document's own heading type, so the title is set the way the page
+        // would set its own first heading.
         let h1 = Typography::of(cx).h1;
         let title = self.title.clone();
         let field = cx.new(|cx| {
@@ -100,7 +100,7 @@ impl Article {
                 .with_shape(Shape::Line)
                 .with_key_context(TITLE_CONTEXT)
                 .with_placeholder(UNNAMED)
-                .with_metrics(h1.role, h1.weight, h1.leading);
+                .with_metrics(h1);
             field.set_content(title, cx);
             field
         });

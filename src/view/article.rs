@@ -43,11 +43,12 @@ const COVER_HEIGHT: f32 = CONTENT_MAX_WIDTH / 2.5;
 /// flush against the top of the card.
 const HEADROOM: f32 = COVER_HEIGHT / 2.;
 
-/// The column's own inset, and what the title adds to it: the editor holds its
-/// text that far inside its box so a block's drag handle has somewhere to sit,
-/// and the title takes the same measure to line up with the first paragraph.
+/// The column's own inset. What the title adds to it is the editor's
+/// [`editor::Layout::text_inset`], read at paint like the theme — the editor
+/// holds its text that far inside its box so a block's drag handle has
+/// somewhere to sit, and the title takes the same measure to line up with the
+/// first paragraph.
 const COLUMN_INSET: f32 = 24.;
-const TITLE_INSET: f32 = COLUMN_INSET + editor::HANDLE_GUTTER;
 
 impl Cydonia {
     // ── mutations ────────────────────────────────────────────────
@@ -245,7 +246,7 @@ impl Cydonia {
                     div()
                         .w_full()
                         .max_w(px(CONTENT_MAX_WIDTH))
-                        .pl(px(TITLE_INSET))
+                        .pl(px(COLUMN_INSET + editor::Layout::of(cx).text_inset))
                         .pr(px(COLUMN_INSET))
                         .pt(px(20.))
                         .child(field),
