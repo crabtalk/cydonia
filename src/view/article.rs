@@ -10,7 +10,7 @@ use crate::{
 use bezel::{
     gpui::{
         self, AnyElement, App, Context, CursorStyle, Entity, Focusable as _, KeyBinding, ObjectFit,
-        PathPromptOptions, SharedString, Window, actions, div, img, point, prelude::*, px,
+        PathPromptOptions, SharedString, Window, actions, div, img, prelude::*, px,
     },
     theme::{TextStyle, Theme, Typeset},
     ui::{icons, input::TextField},
@@ -32,16 +32,10 @@ pub fn init(cx: &mut App) {
 /// The column the document is set in, matching the transcript's.
 const CONTENT_MAX_WIDTH: f32 = 720.;
 
-/// How tall the cover band is: the 5:2 a cover is cut at, taken at the column's
-/// width rather than the card's, which varies. A generated cover shows whole at
-/// that width and crops wider, the way Notion's does.
-const COVER_HEIGHT: f32 = CONTENT_MAX_WIDTH / 2.5;
-
-/// How much of the page sits above the document's first line, always. With a
-/// cover it is what an opened article is left scrolled down to; with none it is
-/// the height of the empty band standing in. Either way the title never starts
-/// flush against the top of the card.
-const HEADROOM: f32 = COVER_HEIGHT / 2.;
+/// How tall the cover band is, with a picture in it or without: half the 5:2 a
+/// cover is cut at, taken at the column's width. The picture is centred in the
+/// band, so what shows is the middle of it.
+const COVER_HEIGHT: f32 = CONTENT_MAX_WIDTH / 5.;
 
 /// The column's own inset. What the title adds to it is the editor's
 /// [`editor::Layout::text_inset`], read at paint like the theme — the editor
@@ -78,34 +72,18 @@ impl Cydonia {
         cx: &mut Context<Self>,
     ) {
         self.commit(cx);
-        // Whether this is the first look at the document, which is the only
-        // time the cover is allowed to move the page: the editor is built on
-        // the way in, so its absence is what says so. Coming back to an article
-        // keeps where you left it.
-        let settle = self
-            .workspace
-            .read(cx)
-            .projects
-            .get(project)
-            .and_then(|open| open.articles.get(ix))
-            .is_some_and(|article| article.editor.is_none() && article.cover.is_some());
-
         self.workspace
             .update(cx, |workspace, cx| workspace.open_article(project, ix, cx));
         self.pane = Pane::Article;
 
-        let (field, editor, scroll, unnamed) = {
+        let (field, editor, unnamed) = {
             let article = self.workspace.read(cx).active_article();
             (
                 article.and_then(|article| article.field.clone()),
                 article.and_then(|article| article.editor.clone()),
-                article.map(|article| article.scroll.clone()),
                 article.is_some_and(|article| article.title.is_empty()),
             )
         };
-        if let Some(scroll) = scroll.filter(|_| settle) {
-            scroll.set_offset(point(px(0.), px(-HEADROOM)));
-        }
         // A page with no name is asking to be given one; a named one is asking
         // to be written in.
         match (unnamed, field, editor) {
@@ -257,9 +235,8 @@ impl Cydonia {
     /// What sits above the first line — the cover, or the room one would take.
     ///
     /// The band is there either way, because the alternative is a title flush
-    /// against the top of the card. Without a picture it is [`HEADROOM`] of
-    /// nothing, which is also what is left of a cover once the page has
-    /// settled: the document starts in the same place whichever it is.
+    /// against the top of the card, and it is the same height either way, so
+    /// the document starts in the same place whichever it is.
     fn cover_band(&self, cover: Option<PathBuf>, cx: &Context<Self>) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
         let has_cover = cover.is_some();
@@ -268,9 +245,7 @@ impl Cydonia {
             .relative()
             .w_full()
             .flex_none()
-            .h(px(if has_cover { COVER_HEIGHT } else { HEADROOM }))
-            // Runs the card's full width, and the card's own rounding is what
-            // cuts its top corners.
+            .h(px(COVER_HEIGHT))
             .overflow_hidden()
             // Empty, it has to read as somewhere a picture goes. On the card's
             // own surface it is the same tone as the page under it, so there is
