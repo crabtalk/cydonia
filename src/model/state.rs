@@ -21,6 +21,8 @@ pub struct State {
     /// Whether the frost is off — bezel paints opaque surfaces instead.
     #[serde(default)]
     pub reduce_transparency: bool,
+    /// Whether the text caret blinks. Off holds it lit.
+    pub cursor_blink: bool,
     /// The body size the type ladder is scaled against, in points.
     pub text_size: f32,
     /// The greys' oklch hue in degrees, and how much of it they carry. Zero
@@ -44,6 +46,7 @@ impl Default for State {
             active: 0,
             appearance: AppearanceMode::default(),
             reduce_transparency: false,
+            cursor_blink: true,
             text_size: TextStyle::Body.size(),
             hue: 0.,
             chroma: 0.,
@@ -77,6 +80,7 @@ pub fn restore() -> State {
         active,
         appearance: stored.appearance,
         reduce_transparency: stored.reduce_transparency,
+        cursor_blink: stored.cursor_blink,
         text_size: stored.text_size.clamp(TEXT_SIZE.0, TEXT_SIZE.1),
         hue: stored.hue,
         chroma: stored.chroma,

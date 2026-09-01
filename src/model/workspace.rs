@@ -24,6 +24,7 @@ use crate::{
 use bezel::{
     gpui::{App, Context, EntityId, SharedString},
     theme::{self, Brand, Theme, Tint, appearance::AppearanceMode},
+    ui::input,
 };
 use std::{
     collections::HashMap,
@@ -42,6 +43,7 @@ pub struct Workspace {
     pub active: Option<usize>,
     pub appearance: AppearanceMode,
     pub reduce_transparency: bool,
+    pub cursor_blink: bool,
     /// Session ids are minted here and never reused, so a card's link to the
     /// session it opened stays unambiguous for the life of the process.
     next_id: u64,
@@ -68,6 +70,7 @@ impl Workspace {
             active,
             appearance: state.appearance,
             reduce_transparency: state.reduce_transparency,
+            cursor_blink: state.cursor_blink,
             text_size: state.text_size,
             tint: Tint::new(state.hue, state.chroma),
             meter: false,
@@ -100,6 +103,7 @@ impl Workspace {
             active: self.active.unwrap_or_default(),
             appearance: self.appearance,
             reduce_transparency: self.reduce_transparency,
+            cursor_blink: self.cursor_blink,
             text_size: self.text_size,
             hue: self.tint.hue,
             chroma: self.tint.chroma,
@@ -162,6 +166,14 @@ impl Workspace {
     pub fn set_reduce_transparency(&mut self, reduce: bool, cx: &mut Context<Self>) {
         self.reduce_transparency = reduce;
         apply_transparency(reduce, cx);
+        self.save();
+        cx.notify();
+    }
+
+    /// The caret is bezel's, so the setting is: nothing here reads it back.
+    pub fn set_cursor_blink(&mut self, blink: bool, cx: &mut Context<Self>) {
+        self.cursor_blink = blink;
+        input::set_caret_blink(blink, cx);
         self.save();
         cx.notify();
     }
@@ -795,11 +807,16 @@ pub fn apply_tint(tint: Tint, cx: &mut App) {
     );
 }
 
+/// Two answers, because bezel asks two questions: the window stops compositing
+/// translucent, and the frost over it goes opaque. Chrome keeps its layers —
+/// an opaque window carrying them is what this setting asks for, and what the
+/// system's own does not do.
 pub fn apply_transparency(reduce: bool, cx: &mut App) {
     let glass = if reduce { 1.0 } else { Theme::GLASS_ALPHA };
     theme::set_brand(
         Brand {
             glass,
+            vibrancy: !reduce,
             ..theme::brand(cx)
         },
         cx,

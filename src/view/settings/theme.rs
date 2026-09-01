@@ -30,9 +30,10 @@ const MODES: [AppearanceMode; 3] = [
 ];
 
 impl SettingsWindow {
-    /// The whole page: the mode it paints in, then the colours it mixes and
-    /// the size it reads at. Typography is a group here rather than a section
-    /// of its own — a size is a question about appearance.
+    /// The whole page: the mode it paints in, then the colours it mixes, the
+    /// size it reads at, and how the caret behaves in what it writes.
+    /// Typography is a group here rather than a section of its own — a size is
+    /// a question about appearance.
     pub(super) fn appearance_body(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         div()
@@ -42,6 +43,7 @@ impl SettingsWindow {
             .child(theme.group_box().child(self.theme_row(cx)))
             .child(self.colors_group(cx))
             .child(self.typography_group(cx))
+            .child(self.editor_group(cx))
             .into_any_element()
     }
 
@@ -122,6 +124,18 @@ impl SettingsWindow {
             .into_any_element()
     }
 
+    /// How the caret behaves — the editor's and every field's alike.
+    fn editor_group(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(settings::LABEL_GAP))
+            .child(theme.field_label("Editor"))
+            .child(theme.group_box().child(self.cursor_row(cx)))
+            .into_any_element()
+    }
+
     /// The app's own reduce-transparency switch, so the frost can go without
     /// turning the system setting on for every other app.
     pub(super) fn transparency_row(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
@@ -153,6 +167,41 @@ impl SettingsWindow {
                         this.workspace.update(cx, |workspace, cx| {
                             workspace.set_reduce_transparency(!on, cx)
                         });
+                        cx.notify();
+                    })),
+            )
+    }
+
+    /// Whether the caret blinks. bezel holds the caret, so the switch sets it
+    /// there rather than keeping a second copy of the answer.
+    pub(super) fn cursor_row(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let theme = Theme::of(cx).clone();
+        let on = self.workspace.read(cx).cursor_blink;
+        theme
+            .card_row(true)
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .child(theme.row_title("Blink the cursor"))
+                    .child(
+                        div()
+                            .mt(px(4.))
+                            .text_style(TextStyle::Subheadline)
+                            .text_color(theme.text_muted)
+                            .child("Off holds the text caret lit while it has focus."),
+                    ),
+            )
+            .child(
+                div()
+                    .id("cursor-blink")
+                    .cursor_pointer()
+                    .child(theme.toggle(on))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.workspace
+                            .update(cx, |workspace, cx| workspace.set_cursor_blink(!on, cx));
                         cx.notify();
                     })),
             )

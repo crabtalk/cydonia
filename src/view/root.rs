@@ -109,7 +109,7 @@ pub(crate) fn content_bg(theme: &Theme) -> Hsla {
 /// the window shows no desktop to sit over. The scale's tone is a neutral scrim
 /// and carries no appearance — tinting it is what makes dark glass dark.
 fn frost(theme: &Theme, thickness: Frost) -> Option<Hsla> {
-    theme.glass_window().then(|| Hsla {
+    theme.vibrancy.then(|| Hsla {
         a: thickness.opacity(),
         ..theme.glass()
     })
