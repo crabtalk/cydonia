@@ -110,9 +110,9 @@ impl Cydonia {
             .border_color(theme.border)
             .flex()
             .flex_col()
-            // Both controls out at the trailing edge, the fold last: the
-            // lights float in the leading half of the strip, which is what
-            // leaves nothing there to pad them clear of.
+            // The fold out at the trailing edge: the lights float in the
+            // leading half of the strip, which is what leaves nothing there to
+            // pad them clear of.
             .child(
                 div()
                     .flex_none()
@@ -122,23 +122,6 @@ impl Cydonia {
                     .flex_row()
                     .items_center()
                     .justify_end()
-                    .gap(px(4.))
-                    .child(
-                        theme
-                            .ghost("open-project")
-                            .p(px(4.))
-                            .tooltip(|window, cx| {
-                                Tooltip::with_keystroke("New project", "⌘O", window, cx)
-                            })
-                            .child(
-                                icons::icon(icons::PLUS)
-                                    .size(px(14.))
-                                    .text_color(theme.text_faint),
-                            )
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.open_project_action(&OpenProject, window, cx);
-                            })),
-                    )
                     .child(self.fold_toggle(theme.text_faint, cx)),
             )
             .child(
@@ -153,27 +136,51 @@ impl Cydonia {
                     .children(sections),
             )
             .child(
-                theme
-                    .ghost("settings")
+                div()
                     .flex_none()
                     .mx(px(8.))
                     .mb(px(8.))
-                    .px(px(8.))
-                    .py(px(6.))
-                    .gap(px(8.))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .justify_between()
                     .child(
-                        icons::icon(icons::SETTINGS_MINIMALISTIC)
-                            .size(px(13.))
-                            .text_color(theme.text_faint),
+                        theme
+                            .ghost("settings")
+                            .px(px(8.))
+                            .py(px(6.))
+                            .gap(px(8.))
+                            .child(
+                                icons::icon(icons::SETTINGS_MINIMALISTIC)
+                                    .size(px(13.))
+                                    .text_color(theme.text_faint),
+                            )
+                            .child(
+                                div()
+                                    .text_style(TextStyle::Body)
+                                    .text_color(theme.text_muted)
+                                    .child("Settings"),
+                            )
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.open_settings(Section::Appearance, cx)
+                            })),
                     )
                     .child(
-                        div()
-                            .text_style(TextStyle::Body)
-                            .text_color(theme.text_muted)
-                            .child("Settings"),
-                    )
-                    .on_click(
-                        cx.listener(|this, _, _, cx| this.open_settings(Section::Appearance, cx)),
+                        theme
+                            .ghost("open-project")
+                            .px(px(8.))
+                            .py(px(6.))
+                            .tooltip(|window, cx| {
+                                Tooltip::with_keystroke("New project", "⌘O", window, cx)
+                            })
+                            .child(
+                                icons::icon(icons::DOCUMENT_ADD)
+                                    .size(px(13.))
+                                    .text_color(theme.text_faint),
+                            )
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.open_project_action(&OpenProject, window, cx);
+                            })),
                     ),
             )
     }

@@ -27,6 +27,8 @@ fn main() -> Result<()> {
             if let Err(err) = ui::register_fonts(cx) {
                 eprintln!("font registration failed: {err:?}");
             }
+            // Before the first palette is installed.
+            theme::set_palette(root::palette, cx);
             appearance::init(state.appearance, cx);
             // Before the window is opened: it reads its background appearance
             // on the way up, and frost is what decides that.

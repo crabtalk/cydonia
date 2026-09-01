@@ -77,15 +77,19 @@ impl Workspace {
         for ix in restore {
             this.restore_sessions(ix);
         }
-        this.open_first_session(cx);
+        this.open_last_session(cx);
         this.load_agent_icons(cx);
         // Temporary dev hook: `CYDONIA_TEST_PROMPT` sends a prompt on launch
         // so a turn can be verified without a composer. Here rather than on
         // connect, which a resume would fire again.
-        if let Ok(prompt) = std::env::var("CYDONIA_TEST_PROMPT")
-            && let Some(id) = this.active_id()
-        {
-            this.send(id, prompt, cx);
+        if let Ok(prompt) = std::env::var("CYDONIA_TEST_PROMPT") {
+            let id = this.active_id().or_else(|| {
+                let entry = this.settings.agents.first().cloned()?;
+                this.new_session(entry, None, cx)
+            });
+            if let Some(id) = id {
+                this.send(id, prompt, cx);
+            }
         }
         this
     }
@@ -178,18 +182,22 @@ impl Workspace {
 
     // ── projects ─────────────────────────────────────────────────────
 
+    /// A project just added starts talking to an agent; one already on the
+    /// rail is only brought forward.
     pub fn open_project(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        let open = self.projects.iter().position(|p| p.path == path);
-        let ix = match open {
-            Some(ix) => ix,
-            None => {
-                self.projects.push(Project::new(path));
-                let ix = self.projects.len() - 1;
-                self.restore_sessions(ix);
-                ix
-            }
-        };
+        if let Some(ix) = self.projects.iter().position(|p| p.path == path) {
+            self.select_project(ix, cx);
+            return;
+        }
+        self.projects.push(Project::new(path));
+        let ix = self.projects.len() - 1;
+        self.restore_sessions(ix);
         self.select_project(ix, cx);
+        if self.projects[ix].sessions.is_empty()
+            && let Some(entry) = self.settings.agents.first().cloned()
+        {
+            self.new_session(entry, None, cx);
+        }
     }
 
     pub fn select_project(&mut self, ix: usize, cx: &mut Context<Self>) {
@@ -197,7 +205,7 @@ impl Workspace {
             return;
         }
         self.active = Some(ix);
-        self.open_first_session(cx);
+        self.open_last_session(cx);
         self.save();
         cx.notify();
     }
@@ -213,18 +221,14 @@ impl Workspace {
             let next = if active > ix { active - 1 } else { active };
             (!self.projects.is_empty()).then(|| next.min(self.projects.len() - 1))
         });
-        self.open_first_session(cx);
+        self.open_last_session(cx);
         self.save();
         cx.notify();
     }
 
-    /// A project talks to an agent the moment it is looked at: the tab in
-    /// front opens its first session, and the tabs behind it spawn nothing.
-    ///
-    /// A project with sessions read back from disk shows its most recent one
-    /// rather than opening a second beside it — nothing there is connected
-    /// until something is sent to it.
-    fn open_first_session(&mut self, cx: &mut Context<Self>) {
+    /// The project in front shows its most recent session; nothing there is
+    /// connected until something is sent to it.
+    fn open_last_session(&mut self, cx: &mut Context<Self>) {
         let Some(project) = self.active.and_then(|ix| self.projects.get_mut(ix)) else {
             return;
         };
@@ -234,10 +238,6 @@ impl Workspace {
         if let Some(id) = project.sessions.last().map(|chat| chat.id) {
             project.active = Some(id);
             cx.notify();
-            return;
-        }
-        if let Some(entry) = self.settings.agents.first().cloned() {
-            self.new_session(entry, None, cx);
         }
     }
 

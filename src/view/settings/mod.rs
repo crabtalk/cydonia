@@ -205,6 +205,7 @@ impl SettingsWindow {
             .border_color(theme.border)
             .flex()
             .flex_col()
+            .gap(px(2.))
             .px(px(8.))
             .pb(px(8.))
             // Clears the traffic lights, which have no strip of their own.
