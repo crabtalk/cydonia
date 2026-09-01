@@ -812,10 +812,10 @@ pub fn apply_tint(tint: Tint, cx: &mut App) {
 /// an opaque window carrying them is what this setting asks for, and what the
 /// system's own does not do.
 pub fn apply_transparency(reduce: bool, cx: &mut App) {
-    let glass = if reduce { 1.0 } else { Theme::GLASS_ALPHA };
+    let alpha = if reduce { 1.0 } else { Theme::VIBRANCY_ALPHA };
     theme::set_brand(
         Brand {
-            glass,
+            vibrancy_alpha: alpha,
             vibrancy: !reduce,
             ..theme::brand(cx)
         },

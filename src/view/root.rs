@@ -21,7 +21,7 @@ use bezel::{
         PathPromptOptions, Render, Window, WindowHandle, actions, div, prelude::*, px,
     },
     motion::{Fade, Painter},
-    theme::{Appearance, Frost, SurfaceStyle, TextStyle, Theme, Typeset},
+    theme::{Appearance, Material, SurfaceStyle, TextStyle, Theme, Typeset},
     ui::{
         floating::Floating,
         icons,
@@ -52,18 +52,18 @@ const SIDEBAR_WIDTH_MAX: f32 = 420.;
 /// The sidebar's gutter: a row's outer margin, and the padding inside it.
 pub(crate) const SIDEBAR_GUTTER: f32 = 8.;
 
-/// How deep each column's frost sits. Nothing paints beneath them, so these are
-/// absolute and independent: the sidebar is chrome and holds no long-form text,
-/// the panel is the column whose text has to win against the desktop.
-const SIDEBAR_FROST: Frost = Frost::Thick;
-const CONTENT_FROST: Frost = Frost::UltraThick;
+/// How thick each column's material sits. Nothing paints beneath them, so these
+/// are absolute and independent: the sidebar is chrome and holds no long-form
+/// text, the panel is the column whose text has to win against the desktop.
+const SIDEBAR_MATERIAL: Material = Material::Thick;
+const CONTENT_MATERIAL: Material = Material::UltraThick;
 
 /// bezel's palette with cydonia's popover surface on it. Registered as the
 /// app's builder so a light/dark switch rebuilds it — `appearance::apply`
 /// drops a palette that was only installed.
 pub fn palette(appearance: Appearance) -> Theme {
     Theme {
-        popover_surface: SurfaceStyle::Frost(Frost::Thick),
+        popover_surface: SurfaceStyle::Material(Material::Thick),
         ..Theme::for_appearance(appearance)
     }
 }
@@ -97,21 +97,22 @@ pub(crate) const COMPOSER_BOTTOM: f32 = 20.;
 /// `surface` is the grey the content plane's white sits inside, and falling
 /// back to the panel would leave the two columns one flat sheet.
 pub(crate) fn sidebar_bg(theme: &Theme) -> Hsla {
-    frost(theme, SIDEBAR_FROST).unwrap_or(theme.surface)
+    material(theme, SIDEBAR_MATERIAL).unwrap_or(theme.surface)
 }
 
 /// The content column's fill.
 pub(crate) fn content_bg(theme: &Theme) -> Hsla {
-    frost(theme, CONTENT_FROST).unwrap_or(theme.bg)
+    material(theme, CONTENT_MATERIAL).unwrap_or(theme.bg)
 }
 
-/// A column's own tint at one thickness on the frost scale, or nothing where
-/// the window shows no desktop to sit over. The scale's tone is a neutral scrim
-/// and carries no appearance — tinting it is what makes dark glass dark.
-fn frost(theme: &Theme, thickness: Frost) -> Option<Hsla> {
+/// A column's own tint at one thickness on the material ladder, or nothing
+/// where the window shows no desktop to sit over. The ladder's tone is a
+/// neutral scrim and carries no appearance — tinting it is what makes dark
+/// glass dark.
+fn material(theme: &Theme, thickness: Material) -> Option<Hsla> {
     theme.vibrancy.then(|| Hsla {
         a: thickness.opacity(),
-        ..theme.glass()
+        ..theme.vibrancy_tint()
     })
 }
 
