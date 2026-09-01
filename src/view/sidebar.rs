@@ -13,7 +13,7 @@ use crate::{
 use bezel::{
     gpui::{
         self, AnyElement, Context, Div, Empty, Focusable as _, FontWeight, Hsla, MouseButton,
-        SharedString, Stateful, Window, div, prelude::*, px, svg, uniform_list,
+        ScrollStrategy, SharedString, Stateful, Window, div, prelude::*, px, svg, uniform_list,
     },
     motion::Painter,
     theme::{TextStyle, Theme, Typeset},
@@ -42,8 +42,8 @@ struct SessionRow {
 /// One line of the sidebar. An address, not content: the label behind it is
 /// read when the row is built, which [`uniform_list`] only does for the rows on
 /// screen.
-#[derive(Clone, Copy)]
-enum Row {
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum Row {
     Project(usize),
     Session { project: usize, id: u64 },
     Board { project: usize, ix: usize },
@@ -157,6 +157,7 @@ impl Cydonia {
                         range.map(|ix| this.sidebar_row(rows[ix], cx)).collect()
                     }),
                 )
+                .track_scroll(&self.rail)
                 .flex_1()
                 .min_h_0(),
             )
@@ -345,7 +346,7 @@ impl Cydonia {
     /// Every line the sidebar shows, in order. Addresses only: a project with a
     /// thousand articles costs a thousand `Row`s here and reads a title for
     /// none of them.
-    fn rows(&self, cx: &Context<Self>) -> Vec<Row> {
+    pub(crate) fn rows(&self, cx: &Context<Self>) -> Vec<Row> {
         let workspace = self.workspace.read(cx);
         let mut rows = Vec::new();
         for (p, project) in workspace.projects.iter().enumerate() {
@@ -362,6 +363,28 @@ impl Cydonia {
             rows.extend((0..project.tables.len()).map(|ix| Row::Table { project: p, ix }));
         }
         rows
+    }
+
+    /// Open what a row points at — what a keyboard step does with its landing.
+    /// The pointer never comes through here: each row carries its own
+    /// `on_click`, which needs no [`Row`] to know what it is.
+    pub(crate) fn open_row(&mut self, row: Row, window: &mut Window, cx: &mut Context<Self>) {
+        match row {
+            Row::Project(ix) => self.select_project(ix, cx),
+            Row::Session { id, .. } => self.select_session(id, cx),
+            Row::Board { project, ix } => self.open_board(project, ix, cx),
+            Row::Article { project, ix } => self.open_article(project, ix, window, cx),
+            Row::Table { project, ix } => self.open_table(project, ix, cx),
+        }
+    }
+
+    /// Scroll the rail to a row, if it is not already on screen. `Nearest`
+    /// rather than `Top`: a step to the neighbour below should move the list by
+    /// a row, not throw the one you came from off the top of it.
+    pub(crate) fn reveal(&mut self, row: Row, cx: &Context<Self>) {
+        if let Some(ix) = self.rows(cx).iter().position(|at| *at == row) {
+            self.rail.scroll_to_item(ix, ScrollStrategy::Nearest);
+        }
     }
 
     /// One line, built when the list scrolls it into view. The box around it is

@@ -11,14 +11,15 @@ use crate::{
             meter,
         },
         settings::{self, Section, SettingsWindow},
-        sidebar::Renaming,
+        sidebar::{Renaming, Row},
         table,
     },
 };
 use bezel::{
     gpui::{
         self, AnyElement, App, Axis, Context, DragMoveEvent, Empty, Entity, Hsla, KeyBinding,
-        PathPromptOptions, Render, Window, WindowHandle, actions, div, prelude::*, px,
+        PathPromptOptions, Render, UniformListScrollHandle, Window, WindowHandle, actions, div,
+        prelude::*, px,
     },
     motion::{Fade, Painter},
     theme::{Appearance, Material, SurfaceStyle, TextStyle, Theme, Typeset},
@@ -38,7 +39,9 @@ actions!(
         OpenProject,
         OpenSettings,
         CommitName,
-        DismissName
+        DismissName,
+        NextEntry,
+        PrevEntry
     ]
 );
 
@@ -150,6 +153,11 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-o", OpenProject, None),
         // What macOS binds Preferences to in every other app.
         KeyBinding::new("cmd-,", OpenSettings, None),
+        // What a browser binds its tabs to. Global, because the point is to
+        // move between documents without taking the hand out of the editor —
+        // where `tab` itself is indent.
+        KeyBinding::new("ctrl-tab", NextEntry, None),
+        KeyBinding::new("ctrl-shift-tab", PrevEntry, None),
         KeyBinding::new("enter", CommitName, Some(RENAME_CONTEXT)),
         KeyBinding::new("escape", DismissName, Some(RENAME_CONTEXT)),
     ]);
@@ -163,6 +171,16 @@ pub enum Pane {
     Board,
     Article,
     Table,
+}
+
+/// One step from `at` through `len` entries, wrapping — a list of none has
+/// nowhere to land.
+fn stepped(at: Option<usize>, len: usize, step: isize) -> Option<usize> {
+    if len == 0 {
+        return None;
+    }
+    let at = at.unwrap_or(0) as isize;
+    Some((at + step).rem_euclid(len as isize) as usize)
 }
 
 /// The root view. It owns no app state — only the chrome's own: how wide the
@@ -185,6 +203,9 @@ pub struct Cydonia {
     pub(crate) name_field: Entity<TextField>,
     meter: Entity<Stats>,
     meter_at: Floating,
+    /// The rail's scroll. A step taken from the keyboard has to bring its
+    /// landing into view; the list does not scroll itself.
+    pub(crate) rail: UniformListScrollHandle,
 }
 
 impl Cydonia {
@@ -232,6 +253,7 @@ impl Cydonia {
             menu: None,
             renaming: None,
             name_field,
+            rail: UniformListScrollHandle::new(),
         };
         this.sync_composer(cx);
         this
@@ -249,6 +271,65 @@ impl Cydonia {
                 workspace.new_session(entry, None, cx);
             }
         });
+    }
+
+    pub(crate) fn next_entry(
+        &mut self,
+        _: &NextEntry,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.cycle_entry(1, window, cx);
+    }
+
+    pub(crate) fn prev_entry(
+        &mut self,
+        _: &PrevEntry,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.cycle_entry(-1, window, cx);
+    }
+
+    /// Step to the next entry of the kind already open, wrapping at the ends.
+    ///
+    /// Inside the project and inside the kind: an article's neighbour is
+    /// another article, because stepping from one into a board would swap the
+    /// pane under the caret for something that reads nothing like it.
+    fn cycle_entry(&mut self, step: isize, window: &mut Window, cx: &mut Context<Self>) {
+        let pane = self.showing(cx);
+        let workspace = self.workspace.read(cx);
+        let Some(project) = workspace.active else {
+            return;
+        };
+        let Some(open) = workspace.projects.get(project) else {
+            return;
+        };
+        // Held across the read, because opening one wants the app mutably.
+        let landing =
+            match pane {
+                Pane::Chat => {
+                    let ids: Vec<u64> = open.ordered().map(|chat| chat.id).collect();
+                    let at = open
+                        .active
+                        .and_then(|id| ids.iter().position(|open| *open == id));
+                    stepped(at, ids.len(), step).map(|ix| Row::Session {
+                        project,
+                        id: ids[ix],
+                    })
+                }
+                Pane::Article => stepped(open.article, open.articles.len(), step)
+                    .map(|ix| Row::Article { project, ix }),
+                Pane::Board => stepped(open.board, open.boards.len(), step)
+                    .map(|ix| Row::Board { project, ix }),
+                Pane::Table => stepped(open.table, open.tables.len(), step)
+                    .map(|ix| Row::Table { project, ix }),
+            };
+        let Some(landing) = landing else {
+            return;
+        };
+        self.open_row(landing, window, cx);
+        self.reveal(landing, cx);
     }
 
     /// Leaving a project is the moment a half-written card has to be filed:
@@ -375,6 +456,8 @@ impl Render for Cydonia {
             .on_action(cx.listener(Self::dismiss_cell))
             .on_action(cx.listener(Self::open_project_action))
             .on_action(cx.listener(Self::open_settings_action))
+            .on_action(cx.listener(Self::next_entry))
+            .on_action(cx.listener(Self::prev_entry))
             .on_action(cx.listener(Self::commit_name))
             .on_action(cx.listener(Self::dismiss_name))
             .on_drag_move(
