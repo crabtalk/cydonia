@@ -12,8 +12,13 @@ use bezel::{
         self, AnyElement, App, Context, CursorStyle, Entity, Focusable as _, KeyBinding, ObjectFit,
         PathPromptOptions, SharedString, Window, actions, div, img, prelude::*, px,
     },
-    theme::{TextStyle, Theme, Typeset},
-    ui::{icons, input::TextField},
+    motion::{Fade, Painter},
+    theme::{ControlSize, Sizing as _, TextStyle, Theme, Typeset},
+    ui::{
+        icons,
+        input::TextField,
+        widgets::{ButtonStyle, Buttons as _},
+    },
 };
 use std::path::PathBuf;
 
@@ -267,34 +272,19 @@ impl Cydonia {
     /// down the moment the mouse crossed the pane.
     fn cover_controls(&self, has_cover: bool, cx: &Context<Self>) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
+        let painter = Painter::of(cx);
         let chip = |id: &'static str, label: &'static str| {
-            div()
+            theme
+                .button(label, ButtonStyle::Ghost, Some(Fade::new(painter, id)))
+                .control_size(ControlSize::Small)
                 .id(id)
-                .px(px(8.))
-                .py(px(3.))
-                .rounded(px(Theme::control_radius()))
-                .text_style(TextStyle::Subheadline)
-                .text_color(theme.text_muted)
-                .hover(|chip| chip.bg(theme.element_hover).text_color(theme.text))
-                .child(label)
         };
 
-        div()
+        theme
+            .control_group()
             .absolute()
             .bottom(px(10.))
             .right(px(10.))
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(2.))
-            .p(px(2.))
-            .rounded(px(Theme::control_radius()))
-            // Its own plate, because what it sits on is a picture we did not
-            // choose: on the cover's own colours there is no text tone that
-            // stays legible without one.
-            .bg(theme.surface_raised)
-            .border_1()
-            .border_color(theme.border)
             .invisible()
             .group_hover("cover", |row| row.visible())
             .child(

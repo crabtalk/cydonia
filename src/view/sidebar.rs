@@ -96,7 +96,8 @@ pub(crate) fn row(
         .when(!selected, |el| el.hover(|el| el.bg(theme.element_hover)))
 }
 
-/// The plate's own inset around the control it holds.
+/// The inset [`Buttons::control_group`] holds its controls at, mirrored here
+/// because the height below is measured from it and bezel keeps it private.
 const CLUSTER_PAD: f32 = 2.;
 
 /// The floating cluster's height, half of which is the pill's radius: a ghost
@@ -221,7 +222,8 @@ impl Cydonia {
     /// choose.
     pub(crate) fn fold_cluster(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
-        div()
+        theme
+            .control_group()
             .absolute()
             .top(px((root::HEADER_HEIGHT - CLUSTER_HEIGHT) / 2.))
             // Full screen takes the lights away, and the room they needed
@@ -232,10 +234,9 @@ impl Cydonia {
                 root::TOOLBAR_INSET
             }))
             .h(px(CLUSTER_HEIGHT))
-            .p(px(CLUSTER_PAD))
+            // A pill, where the group's own corner is cut for a row of square
+            // buttons. Before the glass, which reads the corners off the box.
             .rounded(px(CLUSTER_HEIGHT / 2.))
-            .flex()
-            .flex_row()
             .items_center()
             .child(self.fold_toggle(theme.text, cx))
             // The same glass bezel's own floating bar mounts on. Its
