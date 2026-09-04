@@ -322,7 +322,12 @@ impl Cydonia {
             Pane::Article => open.article.map(|ix| Row::Article { project, ix }),
             Pane::Table => open.table.map(|ix| Row::Table { project, ix }),
         };
-        let ring = self.entries(project, cx);
+        // The divider is a line, not a landing.
+        let ring: Vec<Row> = self
+            .entries(project, cx)
+            .into_iter()
+            .filter(|row| !matches!(row, Row::Archive(_)))
+            .collect();
         let at = showing.and_then(|row| ring.iter().position(|entry| *entry == row));
         let Some(landing) = stepped(at, ring.len(), step).map(|ix| ring[ix]) else {
             return;
@@ -349,11 +354,6 @@ impl Cydonia {
         self.show_pane(Pane::Chat, cx);
         self.workspace
             .update(cx, |workspace, cx| workspace.select_session(id, cx));
-    }
-
-    pub(crate) fn close_session(&mut self, id: u64, cx: &mut Context<Self>) {
-        self.workspace
-            .update(cx, |workspace, cx| workspace.close_session(id, cx));
     }
 
     fn open_settings_action(&mut self, _: &OpenSettings, _: &mut Window, cx: &mut Context<Self>) {

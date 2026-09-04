@@ -87,13 +87,6 @@ impl Cydonia {
         cx.notify();
     }
 
-    pub(crate) fn delete_board(&mut self, project: usize, ix: usize, cx: &mut Context<Self>) {
-        self.workspace.update(cx, |workspace, cx| {
-            workspace.delete_board(project, ix, cx);
-        });
-        cx.notify();
-    }
-
     /// Point the field at `at`, filing whatever was already open first — so
     /// clicking straight from one card to another never drops an edit.
     fn edit(&mut self, at: Editing, window: &mut Window, cx: &mut Context<Self>) {

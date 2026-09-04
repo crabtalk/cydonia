@@ -39,6 +39,9 @@ pub struct Board {
     /// the sidebar orders on it.
     #[serde(skip)]
     pub touched: u128,
+    /// Put away: listed under the divider rather than gone.
+    #[serde(default)]
+    pub archived: bool,
     #[serde(default)]
     pub name: String,
     #[serde(default)]
@@ -67,6 +70,7 @@ impl Board {
         Self {
             path,
             touched: project::stamp(),
+            archived: false,
             name: name.to_owned(),
             columns: ["Todo", "Doing", "Done"].map(Column::new).into(),
         }

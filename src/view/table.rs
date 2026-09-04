@@ -8,7 +8,7 @@ use crate::{
     view::{
         component::menu::{self, Menu},
         root::{Cydonia, Pane},
-        sidebar,
+        sidebar::{self, Renaming, Row},
     },
 };
 use bezel::{
@@ -93,13 +93,6 @@ impl Cydonia {
         cx.notify();
     }
 
-    fn delete_table(&mut self, project: usize, ix: usize, cx: &mut Context<Self>) {
-        self.workspace.update(cx, |workspace, cx| {
-            workspace.delete_table(project, ix, cx);
-        });
-        cx.notify();
-    }
-
     /// Point the field at `at`, filing whatever was already open first — so
     /// clicking straight from one cell to another never drops an edit.
     fn edit_cell(&mut self, at: Cell, window: &mut Window, cx: &mut Context<Self>) {
@@ -147,7 +140,11 @@ impl Cydonia {
             Cell::Head(ix) if !text.is_empty() => {
                 workspace.write_column(ix, None, Some(text), cx);
             }
-            Cell::Name if !text.is_empty() => workspace.rename_table(text, cx),
+            Cell::Name if !text.is_empty() => {
+                if let Some(key) = workspace.active_table().map(|table| table.key.clone()) {
+                    workspace.rename_table(&key, text, cx);
+                }
+            }
             _ => {}
         });
         cx.notify();
@@ -481,7 +478,7 @@ impl Cydonia {
         project: usize,
         ix: usize,
         name: String,
-        cx: &Context<Self>,
+        cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
         let workspace = self.workspace.read(cx);
@@ -491,11 +488,15 @@ impl Cydonia {
                 .projects
                 .get(project)
                 .is_some_and(|open| open.table == Some(ix));
-        let tone = if selected {
-            theme.text
-        } else {
-            theme.text_muted
-        };
+        let entry = Row::Table { project, ix };
+        let table = workspace
+            .projects
+            .get(project)
+            .and_then(|open| open.tables.get(ix));
+        let archived = table.is_some_and(|table| table.archived);
+        let key = table.map(|table| &table.key);
+        let renaming = matches!(&self.renaming, Some(Renaming::Table(at)) if Some(at) == key);
+        let tone = sidebar::tint(selected, archived, &theme);
 
         sidebar::row(
             SharedString::from(format!("table-{project}-{ix}")),
@@ -509,31 +510,28 @@ impl Cydonia {
                 .flex_none()
                 .text_color(tone),
         )
-        .child(
-            div()
+        .child(match renaming {
+            true => self.name_field(cx),
+            false => div()
                 .flex_1()
                 .min_w_0()
                 .truncate()
                 .text_style(TextStyle::Body)
                 .text_color(tone)
-                .child(name),
-        )
+                .child(name)
+                .into_any_element(),
+        })
         .child(
-            theme
-                .ghost(("delete-table", ix))
-                .flex_none()
-                .invisible()
-                .group_hover("table-row", |el| el.visible())
-                .p(px(2.))
-                .child(
-                    icons::icon(icons::TRASH_BIN_MINIMALISTIC)
-                        .size(px(12.))
-                        .text_color(theme.text_faint),
-                )
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    cx.stop_propagation();
-                    this.delete_table(project, ix, cx);
-                })),
+            self.menu_button(
+                ("table-menu", ix),
+                "table-row",
+                icons::icon(icons::MENU_DOTS)
+                    .size(px(14.))
+                    .text_color(theme.text_faint),
+                Menu::Entry(entry),
+                cx,
+            )
+            .children(self.entry_menu(entry, archived, cx)),
         )
         .on_click(cx.listener(move |this, _, _, cx| {
             this.open_table(project, ix, cx);

@@ -3,8 +3,9 @@
 use crate::{
     model::article,
     view::{
+        component::menu::Menu,
         root::{Cydonia, Pane},
-        sidebar,
+        sidebar::{self, Renaming, Row},
     },
 };
 use bezel::{
@@ -146,13 +147,6 @@ impl Cydonia {
     fn remove_cover(&mut self, cx: &mut Context<Self>) {
         self.workspace
             .update(cx, |workspace, cx| workspace.set_cover(None, cx));
-        cx.notify();
-    }
-
-    fn delete_article(&mut self, project: usize, ix: usize, cx: &mut Context<Self>) {
-        self.workspace.update(cx, |workspace, cx| {
-            workspace.delete_article(project, ix, cx);
-        });
         cx.notify();
     }
 
@@ -312,7 +306,7 @@ impl Cydonia {
         project: usize,
         ix: usize,
         title: String,
-        cx: &Context<Self>,
+        cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
         let workspace = self.workspace.read(cx);
@@ -322,6 +316,15 @@ impl Cydonia {
                 .projects
                 .get(project)
                 .is_some_and(|open| open.article == Some(ix));
+        let entry = Row::Article { project, ix };
+        let article = workspace
+            .projects
+            .get(project)
+            .and_then(|open| open.articles.get(ix));
+        let archived = article.is_some_and(|article| article.archived);
+        let path = article.map(|article| &article.path);
+        let renaming = matches!(&self.renaming, Some(Renaming::Article(at)) if Some(at) == path);
+        let tint = sidebar::tint(selected, archived, &theme);
         let id = SharedString::from(format!("article-{project}-{ix}"));
 
         sidebar::row(id, "article-row", selected, &theme)
@@ -329,42 +332,30 @@ impl Cydonia {
                 icons::icon(icons::DOCUMENT)
                     .size(px(14.))
                     .flex_none()
-                    .text_color(if selected {
-                        theme.text
-                    } else {
-                        theme.text_muted
-                    }),
+                    .text_color(tint),
             )
-            .child(
-                div()
+            .child(match renaming {
+                true => self.name_field(cx),
+                false => div()
                     .flex_1()
                     .min_w_0()
                     .truncate()
                     .text_style(TextStyle::Body)
-                    .text_color(if selected {
-                        theme.text
-                    } else {
-                        theme.text_muted
-                    })
-                    .child(title),
-            )
+                    .text_color(tint)
+                    .child(title)
+                    .into_any_element(),
+            })
             .child(
-                div()
-                    .id(("delete-article", ix))
-                    .flex_none()
-                    .invisible()
-                    .group_hover("article-row", |el| el.visible())
-                    .rounded(px(Theme::control_radius()))
-                    .p(px(2.))
-                    .child(
-                        icons::icon(icons::TRASH_BIN_MINIMALISTIC)
-                            .size(px(12.))
-                            .text_color(theme.text_faint),
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        cx.stop_propagation();
-                        this.delete_article(project, ix, cx);
-                    })),
+                self.menu_button(
+                    ("article-menu", ix),
+                    "article-row",
+                    icons::icon(icons::MENU_DOTS)
+                        .size(px(14.))
+                        .text_color(theme.text_faint),
+                    Menu::Entry(entry),
+                    cx,
+                )
+                .children(self.entry_menu(entry, archived, cx)),
             )
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.open_article(project, ix, window, cx);

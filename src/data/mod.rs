@@ -36,6 +36,7 @@ const DDL: &str = "CREATE TABLE IF NOT EXISTS _tables (
     name       TEXT NOT NULL,
     created_at INTEGER NOT NULL,
     updated_at INTEGER,
+    archived   INTEGER,
     author     TEXT
 )";
 
@@ -113,6 +114,8 @@ pub struct Table {
     /// When it was last written in, once it has been — what the list is
     /// ordered on, with [`Table::created_at`] standing in until then.
     pub updated_at: Option<i64>,
+    /// Put away: listed under the divider rather than dropped.
+    pub archived: bool,
     /// The agent that made it, by the name `settings.toml` gives it.
     pub author: Option<String>,
 }
@@ -146,14 +149,15 @@ impl Data {
         writer.busy_timeout(BUSY)?;
         writer.execute_batch("PRAGMA journal_mode = WAL")?;
         writer.execute_batch(DDL)?;
-        // A `_tables` written before the column existed. SQLite has no ADD
-        // COLUMN IF NOT EXISTS, and the file is the only record of which shape
-        // this one is.
-        if !columns_of(&writer, "_tables")?
-            .iter()
-            .any(|col| col.name == "updated_at")
-        {
-            writer.execute_batch("ALTER TABLE _tables ADD COLUMN updated_at INTEGER")?;
+        // A `_tables` written before a column existed. SQLite has no ADD COLUMN
+        // IF NOT EXISTS, and the file is the only record of which shape this
+        // one is.
+        let held = columns_of(&writer, "_tables")?;
+        for column in ["updated_at", "archived"] {
+            if !held.iter().any(|col| col.name == column) {
+                writer
+                    .execute_batch(&format!("ALTER TABLE _tables ADD COLUMN {column} INTEGER"))?;
+            }
         }
 
         let reader = Connection::open_with_flags(
@@ -180,6 +184,16 @@ impl Data {
         self.keys()?.iter().map(|key| self.table(key)).collect()
     }
 
+    /// Put a table away, or bring it back. The rows stay exactly where they
+    /// are — this is the sidebar's business and nothing else's.
+    pub fn archive(&mut self, key: &str, archived: bool) -> Result<()> {
+        self.writer.execute(
+            "UPDATE _tables SET archived = ?2 WHERE key = ?1",
+            rusqlite::params![key, archived],
+        )?;
+        Ok(())
+    }
+
     /// Mark a table written just now — the stamp [`Data::keys`] orders on, so
     /// the one being worked in is the one on top.
     pub fn touch(&mut self, key: &str) -> Result<()> {
@@ -198,13 +212,29 @@ impl Data {
         let meta = self
             .reader
             .query_row(
-                "SELECT name, created_at, updated_at, author FROM _tables WHERE key = ?1",
+                "SELECT name, created_at, updated_at, archived, author FROM _tables \
+                 WHERE key = ?1",
                 [key],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get::<_, Option<bool>>(3)?,
+                        row.get(4)?,
+                    ))
+                },
             )
             .ok();
-        let (name, created_at, updated_at, author) =
-            meta.unwrap_or_else(|| (key.to_owned(), 0i64, None::<i64>, None::<String>));
+        let (name, created_at, updated_at, archived, author) = meta.unwrap_or_else(|| {
+            (
+                key.to_owned(),
+                0i64,
+                None::<i64>,
+                None::<bool>,
+                None::<String>,
+            )
+        });
         Ok(Table {
             columns: columns_of(&self.reader, key)?,
             rows: self.reader.query_row(
@@ -216,6 +246,7 @@ impl Data {
             name,
             created_at,
             updated_at,
+            archived: archived.unwrap_or_default(),
             author,
         })
     }

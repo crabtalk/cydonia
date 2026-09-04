@@ -46,6 +46,9 @@ pub struct Project {
     pub page: Option<Page>,
     /// Whether the sidebar shows what is under this project's heading.
     pub expanded: bool,
+    /// Whether it shows what is under the archived divider. Folded away by
+    /// default: what was put away is not what you came back for.
+    pub archive_open: bool,
 }
 
 impl Project {
@@ -63,6 +66,7 @@ impl Project {
             table: None,
             page: None,
             expanded: true,
+            archive_open: false,
         };
         this.reload_tables();
         this

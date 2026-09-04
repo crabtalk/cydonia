@@ -63,6 +63,9 @@ pub struct Article {
     /// frame: the sidebar orders on it, and a project of a thousand articles
     /// would be a thousand `stat` calls a frame.
     pub touched: u128,
+    /// Put away: listed under the divider rather than gone. Cached beside
+    /// [`Article::touched`], and for the same reason.
+    pub archived: bool,
 }
 
 impl Article {
@@ -71,11 +74,28 @@ impl Article {
             cover: cover::of(&path),
             title: properties::title(&path),
             touched: project::written(&path),
+            archived: properties::archived(&path),
             path,
             field: None,
             editor: None,
             scroll: ScrollHandle::new(),
             saved: String::new(),
+        }
+    }
+
+    pub fn archive(&mut self, archived: bool) {
+        self.archived = archived;
+        properties::set_archived(&self.path, archived);
+    }
+
+    /// Name it from outside the pane. The open title field is written too, or
+    /// the next keystroke in the article would file the old name back.
+    pub fn rename(&mut self, title: &str, cx: &mut App) {
+        self.title = title.to_owned();
+        self.touched = project::stamp();
+        properties::set_title(&self.path, title);
+        if let Some(field) = &self.field {
+            field.update(cx, |field, cx| field.set_content(title.to_owned(), cx));
         }
     }
 

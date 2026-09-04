@@ -32,6 +32,7 @@ use std::{cmp::Reverse, ops::Range, path::PathBuf};
 /// before the row is built: a turn in flight puts a thinking orb in the mark's
 /// place, and the orb leases the frame clock, which wants the app mutably.
 struct SessionRow {
+    project: usize,
     id: u64,
     label: String,
     icon: Option<SharedString>,
@@ -42,23 +43,62 @@ struct SessionRow {
 /// One line of the sidebar. An address, not content: the label behind it is
 /// read when the row is built, which [`uniform_list`] only does for the rows on
 /// screen.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Row {
     Project(usize),
-    Session { project: usize, id: u64 },
-    Board { project: usize, ix: usize },
-    Article { project: usize, ix: usize },
-    Table { project: usize, ix: usize },
+    /// The line the archived entries are folded under.
+    Archive(usize),
+    Session {
+        project: usize,
+        id: u64,
+    },
+    Board {
+        project: usize,
+        ix: usize,
+    },
+    Article {
+        project: usize,
+        ix: usize,
+    },
+    Table {
+        project: usize,
+        ix: usize,
+    },
 }
 
-/// What the sidebar's name field is attached to. One field for both, because
-/// only one row can be being named at a time. A board is held by its file: an
-/// index moves the moment a neighbour is made or dropped, and the field would
-/// follow the index onto whichever board slid under it.
+/// What the sidebar's name field is attached to. One field for all of them,
+/// because only one row can be being named at a time. Each entry is held by
+/// what identifies it — a file, a session, a table's key — never by an index:
+/// that moves the moment a neighbour is made or dropped, and the field would
+/// follow it onto whichever entry slid underneath.
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) enum Renaming {
     Session(u64),
     Board(PathBuf),
+    Article(PathBuf),
+    Table(String),
+}
+
+/// What an entry's row is written in: the one on screen at full strength, one
+/// put away a step back from the rest.
+pub(crate) fn tint(selected: bool, archived: bool, theme: &Theme) -> Hsla {
+    match (selected, archived) {
+        (true, _) => theme.text,
+        (false, true) => theme.text_faint,
+        (false, false) => theme.text_muted,
+    }
+}
+
+/// An entry's own name in the element tree: two rows must never share one.
+fn key_of(entry: Row) -> String {
+    match entry {
+        Row::Project(ix) => format!("project-{ix}"),
+        Row::Archive(ix) => format!("archive-{ix}"),
+        Row::Session { project, id } => format!("session-{project}-{id}"),
+        Row::Board { project, ix } => format!("board-{project}-{ix}"),
+        Row::Article { project, ix } => format!("article-{project}-{ix}"),
+        Row::Table { project, ix } => format!("table-{project}-{ix}"),
+    }
 }
 
 /// The wash a row paints, and — with the 1px either side of it that used to be
@@ -359,6 +399,7 @@ impl Cydonia {
         };
         let sessions = open.sessions.iter().map(|chat| {
             (
+                chat.closed,
                 chat.touched(),
                 Row::Session {
                     project,
@@ -370,24 +411,40 @@ impl Cydonia {
             .boards
             .iter()
             .enumerate()
-            .map(|(ix, board)| (board.touched, Row::Board { project, ix }));
-        let articles = open
-            .articles
-            .iter()
-            .enumerate()
-            .map(|(ix, article)| (article.touched, Row::Article { project, ix }));
+            .map(|(ix, board)| (board.archived, board.touched, Row::Board { project, ix }));
+        let articles = open.articles.iter().enumerate().map(|(ix, article)| {
+            (
+                article.archived,
+                article.touched,
+                Row::Article { project, ix },
+            )
+        });
         // The store keeps seconds; every other stamp here is milliseconds.
         let tables = open.tables.iter().enumerate().map(|(ix, table)| {
             let at = table.updated_at.unwrap_or(table.created_at).max(0) as u128;
-            (at * 1000, Row::Table { project, ix })
+            (table.archived, at * 1000, Row::Table { project, ix })
         });
-        let mut entries: Vec<(u128, Row)> = sessions
+        let mut entries: Vec<(bool, u128, Row)> = sessions
             .chain(boards)
             .chain(articles)
             .chain(tables)
             .collect();
-        entries.sort_by_key(|(touched, _)| Reverse(*touched));
-        entries.into_iter().map(|(_, row)| row).collect()
+        // One sort for both halves: what was put away sinks, and inside each
+        // half the last thing written is on top.
+        entries.sort_by_key(|(archived, touched, _)| (*archived, Reverse(*touched)));
+        let split = entries.iter().position(|(archived, ..)| *archived);
+        let mut rows: Vec<Row> = entries
+            .iter()
+            .take(split.unwrap_or(entries.len()))
+            .map(|(_, _, row)| *row)
+            .collect();
+        if let Some(split) = split {
+            rows.push(Row::Archive(project));
+            if open.archive_open {
+                rows.extend(entries[split..].iter().map(|(_, _, row)| *row));
+            }
+        }
+        rows
     }
 
     /// Every line the sidebar shows, in order. Addresses only: a project with a
@@ -410,6 +467,7 @@ impl Cydonia {
     pub(crate) fn open_row(&mut self, row: Row, window: &mut Window, cx: &mut Context<Self>) {
         match row {
             Row::Project(ix) => self.select_project(ix, cx),
+            Row::Archive(ix) => self.toggle_archive(ix, cx),
             Row::Session { id, .. } => self.select_session(id, cx),
             Row::Board { project, ix } => self.open_board(project, ix, cx),
             Row::Article { project, ix } => self.open_article(project, ix, window, cx),
@@ -433,6 +491,7 @@ impl Cydonia {
         let workspace = self.workspace.read(cx);
         let inner = match row {
             Row::Project(ix) => self.project_head(ix, cx),
+            Row::Archive(ix) => self.archive_divider(ix, cx),
             Row::Session { project, id } => match self.session_of(project, id, cx) {
                 Some(session) => self.session_row(session, cx),
                 None => Empty.into_any_element(),
@@ -480,12 +539,47 @@ impl Cydonia {
         let workspace = self.workspace.read(cx);
         let chat = workspace.projects.get(project)?.session(id)?;
         Some(SessionRow {
+            project,
             id: chat.id,
             label: chat.label(),
             icon: workspace.agent_icon(&chat.entry.name),
             streaming: chat.streaming,
             archived: chat.closed,
         })
+    }
+
+    /// The line the archive folds under: what is put away is still listed, a
+    /// step below everything still in hand.
+    fn archive_divider(&self, project: usize, cx: &mut Context<Self>) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        let open = self
+            .workspace
+            .read(cx)
+            .projects
+            .get(project)
+            .is_some_and(|open| open.archive_open);
+        row(("archive", project), "archive-row", false, &theme)
+            .child(theme.disclosure(open).text_color(theme.text_faint))
+            .child(
+                div()
+                    .flex_none()
+                    .text_style(TextStyle::Callout)
+                    .text_color(theme.text_faint)
+                    .child("Archived"),
+            )
+            .child(div().flex_1().h(px(1.)).bg(theme.border))
+            .on_click(cx.listener(move |this, _, _, cx| this.toggle_archive(project, cx)))
+            .into_any_element()
+    }
+
+    fn toggle_archive(&mut self, project: usize, cx: &mut Context<Self>) {
+        self.commit(cx);
+        self.workspace.update(cx, |workspace, cx| {
+            if let Some(open) = workspace.projects.get_mut(project) {
+                open.archive_open = !open.archive_open;
+            }
+            cx.notify();
+        });
     }
 
     fn toggle_project(&mut self, ix: usize, cx: &mut Context<Self>) {
@@ -555,17 +649,16 @@ impl Cydonia {
 
     /// One session: its mark and its name.
     fn session_row(&self, session: SessionRow, cx: &mut Context<Self>) -> AnyElement {
+        let entry = Row::Session {
+            project: session.project,
+            id: session.id,
+        };
         let theme = Theme::of(cx).clone();
         let painter = Painter::of(cx);
         let id = session.id;
         let selected =
             self.showing(cx) == Pane::Chat && self.workspace.read(cx).active_id() == Some(id);
-        // An archived session reads a step back; the tint is all that says so.
-        let tint = match (selected, session.archived) {
-            (true, _) => theme.text,
-            (false, true) => theme.text_faint,
-            (false, false) => theme.text_muted,
-        };
+        let tint = tint(selected, session.archived, &theme);
         // The agent's own mark, in the label's colour rather than any of its
         // own: every icon the registry publishes is a `currentColor` glyph, so
         // tinting is the only colour it will ever have. While a turn is in
@@ -616,10 +709,10 @@ impl Cydonia {
                     icons::icon(icons::MENU_DOTS)
                         .size(px(14.))
                         .text_color(theme.text_faint),
-                    Menu::Session(id),
+                    Menu::Entry(entry),
                     cx,
                 )
-                .children(self.session_menu(id, session.archived, cx)),
+                .children(self.entry_menu(entry, session.archived, cx)),
             )
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.select_session(id, cx);
@@ -643,17 +736,15 @@ impl Cydonia {
                 .projects
                 .get(project)
                 .is_some_and(|open| open.board == Some(ix));
-        let tint = if selected {
-            theme.text
-        } else {
-            theme.text_muted
-        };
-        let path = workspace
+        let entry = Row::Board { project, ix };
+        let board = workspace
             .projects
             .get(project)
-            .and_then(|open| open.boards.get(ix))
-            .map(|board| &board.path);
+            .and_then(|open| open.boards.get(ix));
+        let archived = board.is_some_and(|board| board.archived);
+        let path = board.map(|board| &board.path);
         let renaming = matches!(&self.renaming, Some(Renaming::Board(at)) if Some(at) == path);
+        let tint = tint(selected, archived, &theme);
         let label = match renaming {
             true => self.name_field(cx),
             false => row_label(name, tint),
@@ -679,41 +770,40 @@ impl Cydonia {
                 icons::icon(icons::MENU_DOTS)
                     .size(px(14.))
                     .text_color(theme.text_faint),
-                Menu::Board(project, ix),
+                Menu::Entry(entry),
                 cx,
             )
-            .children(self.board_menu(project, ix, cx)),
+            .children(self.entry_menu(entry, archived, cx)),
         )
         .on_click(cx.listener(move |this, _, _, cx| this.open_board(project, ix, cx)))
         .into_any_element()
     }
 
-    fn board_menu(&self, project: usize, ix: usize, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if self.menu != Some(Menu::Board(project, ix)) {
+    /// The `···` on any entry: the same two things whichever kind it is, and
+    /// no third — nothing here deletes.
+    pub(crate) fn entry_menu(
+        &self,
+        entry: Row,
+        archived: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        if self.menu != Some(Menu::Entry(entry)) {
             return None;
         }
-        let path = self
-            .workspace
-            .read(cx)
-            .projects
-            .get(project)
-            .and_then(|open| open.boards.get(ix))
-            .map(|board| board.path.clone());
+        let put = match archived {
+            true => Item::action("Unarchive").with_icon(icons::ARCHIVE_MINIMALISTIC),
+            false => Item::action("Archive").with_icon(icons::ARCHIVE_MINIMALISTIC),
+        };
         let rows = vec![
             menu::row(
                 Item::action("Rename").with_icon(icons::PEN_NEW_SQUARE),
-                move |this, window, cx| {
-                    if let Some(path) = path.clone() {
-                        this.start_rename(Renaming::Board(path), window, cx);
-                    }
-                },
+                move |this, window, cx| this.rename_entry(entry, window, cx),
             ),
-            menu::row(
-                Item::action("Delete").with_icon(icons::TRASH_BIN_MINIMALISTIC),
-                move |this, _, cx| this.delete_board(project, ix, cx),
-            ),
+            menu::row(put, move |this, _, cx| {
+                this.archive_entry(entry, !archived, cx)
+            }),
         ];
-        let id = SharedString::from(format!("board-menu-card-{project}-{ix}"));
+        let id = SharedString::from(format!("entry-menu-{}", key_of(entry)));
         Some(popover::anchored_menu_below(
             id.clone(),
             self.menu_card(id, rows, cx),
@@ -721,39 +811,79 @@ impl Cydonia {
         ))
     }
 
-    fn session_menu(&self, id: u64, archived: bool, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if self.menu != Some(Menu::Session(id)) {
-            return None;
+    /// Put the name field on an entry's row, whichever kind it is. Each is
+    /// addressed by what identifies it, so the field cannot slide onto its
+    /// neighbour if the list reorders under it.
+    fn rename_entry(&mut self, entry: Row, window: &mut Window, cx: &mut Context<Self>) {
+        let workspace = self.workspace.read(cx);
+        let what = match entry {
+            Row::Session { id, .. } => Some(Renaming::Session(id)),
+            Row::Board { project, ix } => workspace
+                .projects
+                .get(project)
+                .and_then(|open| open.boards.get(ix))
+                .map(|board| Renaming::Board(board.path.clone())),
+            Row::Article { project, ix } => workspace
+                .projects
+                .get(project)
+                .and_then(|open| open.articles.get(ix))
+                .map(|article| Renaming::Article(article.path.clone())),
+            Row::Table { project, ix } => workspace
+                .projects
+                .get(project)
+                .and_then(|open| open.tables.get(ix))
+                .map(|table| Renaming::Table(table.key.clone())),
+            Row::Project(_) | Row::Archive(_) => None,
+        };
+        if let Some(what) = what {
+            self.start_rename(what, window, cx);
         }
-        let mut rows = vec![menu::row(
-            Item::action("Rename").with_icon(icons::PEN_NEW_SQUARE),
-            move |this, window, cx| this.start_rename(Renaming::Session(id), window, cx),
-        )];
-        if !archived {
-            rows.push(menu::row(
-                Item::action("Archive").with_icon(icons::ARCHIVE_MINIMALISTIC),
-                move |this, _, cx| {
-                    this.workspace
-                        .update(cx, |workspace, cx| workspace.archive_session(id, cx));
-                },
-            ));
-        }
-        rows.push(menu::row(
-            Item::action("Delete").with_icon(icons::TRASH_BIN_MINIMALISTIC),
-            move |this, _, cx| this.close_session(id, cx),
-        ));
-        let id = SharedString::from(format!("session-menu-{id}"));
-        Some(popover::anchored_menu_below(
-            id.clone(),
-            self.menu_card(id, rows, cx),
-            None,
-        ))
+    }
+
+    /// Put an entry away, or bring it back. Where the flag lives is each
+    /// kind's own business — a board's file, an article's properties, a row in
+    /// the store — and the sidebar asks for it the same way.
+    fn archive_entry(&mut self, entry: Row, archived: bool, cx: &mut Context<Self>) {
+        self.workspace.update(cx, |workspace, cx| match entry {
+            Row::Session { id, .. } => workspace.archive_session(id, archived, cx),
+            Row::Board { project, ix } => {
+                if let Some(path) = workspace
+                    .projects
+                    .get(project)
+                    .and_then(|open| open.boards.get(ix))
+                    .map(|board| board.path.clone())
+                {
+                    workspace.archive_board(&path, archived, cx);
+                }
+            }
+            Row::Article { project, ix } => {
+                if let Some(path) = workspace
+                    .projects
+                    .get(project)
+                    .and_then(|open| open.articles.get(ix))
+                    .map(|article| article.path.clone())
+                {
+                    workspace.archive_article(&path, archived, cx);
+                }
+            }
+            Row::Table { project, ix } => {
+                if let Some(key) = workspace
+                    .projects
+                    .get(project)
+                    .and_then(|open| open.tables.get(ix))
+                    .map(|table| table.key.clone())
+                {
+                    workspace.archive_table(&key, archived, cx);
+                }
+            }
+            Row::Project(_) | Row::Archive(_) => {}
+        });
     }
 
     /// The field, in the row's place. It carries its own press: `TextField`
     /// does not focus itself, and a press that reached the row would open what
     /// is being named out from under the name.
-    fn name_field(&self, cx: &mut Context<Self>) -> AnyElement {
+    pub(crate) fn name_field(&self, cx: &mut Context<Self>) -> AnyElement {
         div()
             .flex_1()
             .min_w_0()
@@ -784,6 +914,20 @@ impl Cydonia {
                 .board_at(path)
                 .map(|board| board.name.clone())
                 .unwrap_or_default(),
+            Renaming::Article(path) => workspace
+                .projects
+                .iter()
+                .flat_map(|open| open.articles.iter())
+                .find(|article| article.path == *path)
+                .map(|article| article.title.clone())
+                .unwrap_or_default(),
+            Renaming::Table(key) => workspace
+                .projects
+                .iter()
+                .flat_map(|open| open.tables.iter())
+                .find(|table| table.key == *key)
+                .map(|table| table.name.clone())
+                .unwrap_or_default(),
         };
         self.name_field
             .update(cx, |field, cx| field.set_content(label, cx));
@@ -800,6 +944,8 @@ impl Cydonia {
         self.workspace.update(cx, |workspace, cx| match what {
             Renaming::Session(id) => workspace.rename_session(id, name, cx),
             Renaming::Board(path) => workspace.rename_board(&path, name, cx),
+            Renaming::Article(path) => workspace.rename_article(&path, name, cx),
+            Renaming::Table(key) => workspace.rename_table(&key, name, cx),
         });
         cx.notify();
     }

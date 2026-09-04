@@ -452,8 +452,13 @@ impl Workspace {
 
     /// Close the connection and keep the transcript. The row stays where it
     /// was, readable, and typing into it opens an agent again.
-    pub fn archive_session(&mut self, id: u64, cx: &mut Context<Self>) {
-        self.with_session(id, cx, |chat| chat.close());
+    /// Put a session away, or bring it back. Closing tears the agent down and
+    /// keeps the transcript; opening it again is what reconnects.
+    pub fn archive_session(&mut self, id: u64, archived: bool, cx: &mut Context<Self>) {
+        self.with_session(id, cx, |chat| match archived {
+            true => chat.close(),
+            false => chat.closed = false,
+        });
     }
 
     pub fn rename_session(&mut self, id: u64, name: String, cx: &mut Context<Self>) {
@@ -574,6 +579,15 @@ impl Workspace {
         cx.notify();
     }
 
+    pub fn archive_board(&mut self, path: &Path, archived: bool, cx: &mut Context<Self>) {
+        let Some(board) = self.board_at_mut(path) else {
+            return;
+        };
+        board.archived = archived;
+        board.save();
+        cx.notify();
+    }
+
     pub fn active_board(&self) -> Option<&Board> {
         let project = self.active_project()?;
         project.boards.get(project.board?)
@@ -613,6 +627,32 @@ impl Workspace {
         self.projects[project].articles.insert(0, article);
         self.open_article(project, 0, cx);
         Some(0)
+    }
+
+    pub fn rename_article(&mut self, path: &Path, name: String, cx: &mut Context<Self>) {
+        let Some(article) = self.article_at_mut(path) else {
+            return;
+        };
+        let name = name.trim().to_owned();
+        article.rename(&name, cx);
+        cx.notify();
+    }
+
+    pub fn archive_article(&mut self, path: &Path, archived: bool, cx: &mut Context<Self>) {
+        let Some(article) = self.article_at_mut(path) else {
+            return;
+        };
+        article.archive(archived);
+        cx.notify();
+    }
+
+    /// The article a file names, wherever it is open — what the sidebar
+    /// addresses one by, since an index moves when a neighbour is made.
+    pub fn article_at_mut(&mut self, path: &Path) -> Option<&mut Article> {
+        self.projects
+            .iter_mut()
+            .flat_map(|open| open.articles.iter_mut())
+            .find(|article| article.path == path)
     }
 
     /// Every project's articles are on show, so picking one brings its project
@@ -871,10 +911,34 @@ impl Workspace {
 
     /// The display name only. The key stays where it is, so a query already
     /// written against this table goes on running.
-    pub fn rename_table(&mut self, name: String, cx: &mut Context<Self>) {
-        self.with_table(cx, |data, key| {
-            let _ = data.update(key, Some(&name), None);
+    pub fn rename_table(&mut self, key: &str, name: String, cx: &mut Context<Self>) {
+        self.with_store(key, cx, |data, key| {
+            let _ = data.update(key, Some(name.trim()), None);
         });
+    }
+
+    pub fn archive_table(&mut self, key: &str, archived: bool, cx: &mut Context<Self>) {
+        self.with_store(key, cx, |data, key| {
+            let _ = data.archive(key, archived);
+        });
+    }
+
+    /// Run `f` against whichever store holds `key`, then re-read what it did.
+    /// Named rather than open: the sidebar acts on rows the pane is not showing.
+    fn with_store(
+        &mut self,
+        key: &str,
+        cx: &mut Context<Self>,
+        f: impl FnOnce(&mut Data, &str),
+    ) -> Option<()> {
+        let project = self
+            .projects
+            .iter_mut()
+            .find(|open| open.tables.iter().any(|table| table.key == key))?;
+        f(project.data.as_mut()?, key);
+        project.reload_tables();
+        cx.notify();
+        Some(())
     }
 
     /// The open table's rows, as the pane last read them.

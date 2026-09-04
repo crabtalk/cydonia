@@ -1,7 +1,7 @@
 //! The `···` and `+` menus every sidebar row and column heading opens, and the
 //! one field that says which of them is showing.
 
-use crate::view::root::Cydonia;
+use crate::view::{root::Cydonia, sidebar::Row};
 use bezel::{
     gpui::{self, AnyElement, Context, Div, SharedString, Stateful, Window, prelude::*, px},
     theme::Theme,
@@ -22,10 +22,8 @@ pub(crate) enum Menu {
     Add(usize),
     /// A project heading: what to do to the project.
     Project(usize),
-    /// The `···` on a session row.
-    Session(u64),
-    /// The `···` on a board row, by project and place in it.
-    Board(usize, usize),
+    /// The `···` on an entry's row, whichever kind it is.
+    Entry(Row),
     /// The `···` on a table's column heading.
     Column(usize),
 }
