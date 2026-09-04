@@ -147,6 +147,26 @@ pub(crate) fn tint(selected: bool, archived: bool, theme: &Theme) -> Hsla {
     }
 }
 
+/// A project on its way to another place in the list. The index is safe to
+/// carry: nothing reorders the list while a drag is in flight.
+#[derive(Clone)]
+pub(crate) struct ProjectDrag(usize);
+
+/// What rides under the cursor while a project is being carried.
+struct Carried(SharedString);
+
+impl Render for Carried {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = Theme::of(cx).clone();
+        popover::popover_card(&theme)
+            .px(px(10.))
+            .py(px(4.))
+            .text_style(TextStyle::Callout)
+            .text_color(theme.text)
+            .child(self.0.clone())
+    }
+}
+
 /// An entry's own name in the element tree: two rows must never share one.
 fn key_of(entry: Row) -> String {
     match entry {
@@ -378,6 +398,7 @@ impl Cydonia {
             Some(project) => (project.name(), project.expanded),
             None => return Empty.into_any_element(),
         };
+        let carried = SharedString::from(name.clone());
         let head = div()
             .id(("project", ix))
             .group("project-head")
@@ -441,7 +462,18 @@ impl Cydonia {
                 MouseButton::Right,
                 cx.listener(move |this, _, _, cx| this.toggle_menu(Menu::Project(ix), cx)),
             )
-            .on_click(cx.listener(move |this, _, _, cx| this.toggle_project(ix, cx)));
+            .on_click(cx.listener(move |this, _, _, cx| this.toggle_project(ix, cx)))
+            // Carried by its heading, and dropped on the heading it is to sit
+            // in front of. Nothing else in the column is draggable: what the
+            // entries are ordered by is when they were last written.
+            .on_drag(ProjectDrag(ix), move |_, _, _, cx| {
+                let carried = carried.clone();
+                cx.new(|_| Carried(carried))
+            })
+            .drag_over::<ProjectDrag>(move |style, _, _, cx| style.bg(Theme::of(cx).element_active))
+            .on_drop(cx.listener(move |this, drag: &ProjectDrag, _, cx| {
+                this.move_project(drag.0, ix, cx);
+            }));
         // Its own menu opens on the press rather than the click, so the note
         // has to be here too — read stale, a right press would swallow.
         self.menu_press(head, Menu::Project(ix), cx)
@@ -643,6 +675,14 @@ impl Cydonia {
             }
             cx.notify();
         });
+    }
+
+    /// Menus address a project by its place in the list, so the one open when
+    /// it moves would be pointing at whichever project slid underneath.
+    fn move_project(&mut self, from: usize, to: usize, cx: &mut Context<Self>) {
+        self.menu = None;
+        self.workspace
+            .update(cx, |workspace, cx| workspace.move_project(from, to, cx));
     }
 
     fn toggle_project(&mut self, ix: usize, cx: &mut Context<Self>) {

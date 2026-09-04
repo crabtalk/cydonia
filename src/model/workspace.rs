@@ -239,6 +239,25 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Carry a project to another place in the list. `active` follows the
+    /// project it points at rather than the index it sits on: which one is in
+    /// front has nothing to do with what order they are listed in.
+    pub fn move_project(&mut self, from: usize, to: usize, cx: &mut Context<Self>) {
+        if from == to || from >= self.projects.len() || to >= self.projects.len() {
+            return;
+        }
+        let project = self.projects.remove(from);
+        self.projects.insert(to, project);
+        self.active = self.active.map(|at| match at {
+            at if at == from => to,
+            at if from < to && (from..=to).contains(&at) => at - 1,
+            at if to < from && (to..=from).contains(&at) => at + 1,
+            at => at,
+        });
+        self.save();
+        cx.notify();
+    }
+
     /// Drop the project: its sessions go with it, and each session's shutdown
     /// sender goes with that — the agent processes die here.
     pub fn close_project(&mut self, ix: usize, cx: &mut Context<Self>) {
