@@ -6,30 +6,27 @@
 //! navigated away from directly behind the form you are filling in.
 
 use crate::{
-    agent::{Listing, mcp::McpServer},
+    agent::Listing,
     model::workspace::Workspace,
     view::root::{HEADER_HEIGHT, TRAFFIC_LIGHT_X, TRAFFIC_LIGHT_Y},
 };
 use bezel::{
     gpui::{
-        self, App, Bounds, Context, Entity, KeyBinding, Render, SharedString, TitlebarOptions,
-        Window, WindowBackgroundAppearance, WindowBounds, WindowHandle, WindowOptions, actions,
-        div, point, prelude::*, px, size,
+        App, Bounds, Context, Entity, Render, SharedString, TitlebarOptions, Window,
+        WindowBackgroundAppearance, WindowBounds, WindowHandle, WindowOptions, div, point,
+        prelude::*, px, size,
     },
     motion::{Fade, Painter},
     theme::{TextStyle, Theme, Typeset, appearance},
     ui::{
         icons,
-        input::TextField,
         widgets::{Layout, Scaffolding},
     },
 };
-use cacp_agents::mcp as registry;
 use std::collections::HashSet;
 
 mod agents;
 mod dev;
-mod mcp;
 mod theme;
 mod typography;
 
@@ -47,39 +44,21 @@ pub(super) const LABEL_GAP: f32 = 8.;
 /// whatever the window gives it, up to this.
 const CONTENT_MAX_WIDTH: f32 = 860.;
 
-/// Claimed on the two MCP fields so `enter` runs the thing the field is for
-/// and stays a newline everywhere else.
-const SEARCH_CONTEXT: &str = "CydoniaMcpSearch";
-const ADD_CONTEXT: &str = "CydoniaMcpAdd";
-
-actions!(cydonia_settings, [SearchMcp, AddMcp]);
-
-pub fn init(cx: &mut App) {
-    cx.bind_keys([
-        KeyBinding::new("enter", SearchMcp, Some(SEARCH_CONTEXT)),
-        KeyBinding::new("enter", AddMcp, Some(ADD_CONTEXT)),
-    ]);
-}
-
 /// Which section the sidebar has selected.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Section {
     Appearance,
     Agents,
-    // After Agents: a server is something an agent reaches, so it reads in the
-    // order it is set up.
-    Mcp,
     Dev,
 }
 
 impl Section {
-    const ALL: [Self; 4] = [Self::Appearance, Self::Agents, Self::Mcp, Self::Dev];
+    const ALL: [Self; 3] = [Self::Appearance, Self::Agents, Self::Dev];
 
     fn title(self) -> &'static str {
         match self {
             Self::Appearance => "Appearance",
             Self::Agents => "Agents",
-            Self::Mcp => "MCP servers",
             Self::Dev => "Dev",
         }
     }
@@ -88,7 +67,6 @@ impl Section {
         match self {
             Self::Appearance => icons::SUN,
             Self::Agents => icons::WIDGET,
-            Self::Mcp => icons::LINK,
             Self::Dev => icons::CPU,
         }
     }
@@ -103,16 +81,6 @@ pub struct SettingsWindow {
     /// Agents with an install or a removal running.
     busy: HashSet<String>,
     error: Option<SharedString>,
-    /// What `mcp.toml` holds. Re-read after every write rather than tracked —
-    /// the file is the store, and one of them has to be the truth.
-    configured: Vec<McpServer>,
-    /// Registry hits for the last search, `None` before the first one — which
-    /// is the difference between "nothing matched" and "you have not searched".
-    results: Option<Vec<registry::Server>>,
-    searching: bool,
-    search: Entity<TextField>,
-    add_name: Entity<TextField>,
-    add_address: Entity<TextField>,
 }
 
 /// Open the window, or bring the open one forward — a second settings window
@@ -150,27 +118,13 @@ pub fn open(
         |window, cx| {
             appearance::observe_window(window, cx).detach();
             cx.new(|cx| {
-                let mut field = |context, placeholder| {
-                    cx.new(|cx| {
-                        TextField::new(cx)
-                            .with_key_context(context)
-                            .with_placeholder(placeholder)
-                    })
-                };
                 let mut this = SettingsWindow {
                     workspace,
                     section,
                     listings: None,
                     busy: HashSet::new(),
                     error: None,
-                    configured: Vec::new(),
-                    results: None,
-                    searching: false,
-                    search: field(SEARCH_CONTEXT, "search the MCP registry…"),
-                    add_name: field(ADD_CONTEXT, "name"),
-                    add_address: field(ADD_CONTEXT, "command args… or https://…"),
                 };
-                this.reload();
                 this.load(cx);
                 this
             })
@@ -187,7 +141,6 @@ impl SettingsWindow {
         self.section = section;
         match section {
             Section::Agents => self.load(cx),
-            Section::Mcp => self.reload(),
             Section::Appearance | Section::Dev => {}
         }
         cx.notify();
@@ -233,8 +186,6 @@ impl Render for SettingsWindow {
             .relative()
             .flex()
             .flex_row()
-            .on_action(cx.listener(Self::search_mcp))
-            .on_action(cx.listener(Self::add_mcp))
             .bg(theme.bg)
             .font_family(theme.font_sans.clone())
             .text_color(theme.text)
@@ -262,7 +213,6 @@ impl Render for SettingsWindow {
                             .child(match self.section {
                                 Section::Appearance => self.appearance_body(cx),
                                 Section::Agents => self.agents_body(cx),
-                                Section::Mcp => self.mcp_body(cx),
                                 Section::Dev => self.dev_body(cx),
                             }),
                     ),

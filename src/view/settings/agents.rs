@@ -11,10 +11,11 @@ use bezel::{
     theme::{TextStyle, Theme, Typeset},
     ui::{
         icons,
+        tooltip::Tooltip,
         widgets::{ButtonStyle, Buttons, Content, Controls, Scaffolding, Status},
     },
 };
-use cacp_agents::Distribution;
+use cacp_agents::{Distribution, registry};
 
 /// An address that opens in the browser, shown as its own text.
 fn link(
@@ -30,6 +31,63 @@ fn link(
         .overflow_hidden()
         .whitespace_nowrap()
         .child(label)
+        .on_click(move |_, _, cx| cx.open_url(&url))
+}
+
+/// The row's first link: what the agent is distributed as. A package is named,
+/// at the version the row is about; an agent that ships no package — a binary,
+/// which is every proprietary one — points at the page its publisher documents
+/// it on, because that is the whole of what it publishes.
+enum Source {
+    Package { name: SharedString, url: String },
+    Page { address: SharedString, url: String },
+}
+
+impl Source {
+    /// Nothing at all for an agent that names neither.
+    fn of(agent: &registry::Agent, version: &str) -> Option<Self> {
+        if let Distribution::Npm { package, .. } = &agent.distribution {
+            let name = cacp_agents::package_name(package);
+            return Some(Self::Package {
+                name: SharedString::from(name.to_owned()),
+                url: format!("https://www.npmjs.com/package/{name}/v/{version}"),
+            });
+        }
+        let url = agent.website.clone().or_else(|| agent.repository.clone())?;
+        Some(Self::Page {
+            address: SharedString::from(trimmed(&url)),
+            url,
+        })
+    }
+
+    /// What it reads as, and where it goes. Both variants are one link on the
+    /// row: which of the two it came from is the labelling, not the shape.
+    fn parts(self) -> (SharedString, String) {
+        match self {
+            Self::Package { name, url } => (name, url),
+            Self::Page { address, url } => (address, url),
+        }
+    }
+}
+
+/// The repository, as its mark. The address is a line of noise in a row this
+/// narrow, and the tooltip has it for whoever wants it.
+fn repo_link(id: (&'static str, usize), url: String, theme: &Theme) -> impl IntoElement {
+    let address = SharedString::from(trimmed(&url));
+    div()
+        .id(id)
+        .group("agent-source")
+        .flex_none()
+        .cursor_pointer()
+        .tooltip(move |window, cx| Tooltip::text(address.clone(), window, cx))
+        .child(
+            // On the glyph rather than on this box: an svg paints from its own
+            // computed style, and inherits no colour from the row around it.
+            icons::icon(icons::GIT_BRANCH)
+                .size(px(13.))
+                .text_color(theme.text_faint)
+                .group_hover("agent-source", |el| el.text_color(theme.accent)),
+        )
         .on_click(move |_, _, cx| cx.open_url(&url))
 }
 
@@ -152,26 +210,20 @@ impl SettingsWindow {
         let painter = Painter::of(cx);
         let busy = self.busy.contains(&listing.agent.id);
         let installed = listing.installed.clone();
-        // What this row would actually download, and where it is published.
-        // The spec carries the pinned version; the link drops it, because the
-        // package's own page resolves whether or not that version still does.
-        let npm = match &listing.agent.distribution {
-            Distribution::Npm { package, .. } => Some((
-                SharedString::from(package.clone()),
-                format!(
-                    "https://www.npmjs.com/package/{}",
-                    cacp_agents::package_name(package)
-                ),
-            )),
-            _ => None,
-        };
-        // Where the project itself lives. A proprietary agent publishes no
-        // repository, which is the only link a binary distribution has.
-        let source = listing
+        // The version this row is about: what is on disk while there is
+        // something on disk, and what the registry pins otherwise. The tag and
+        // the link both read it, so they cannot point at different releases.
+        let version = installed
+            .clone()
+            .unwrap_or_else(|| listing.agent.version.clone());
+        let source = Source::of(&listing.agent, &version).map(Source::parts);
+        // Where the source itself lives, when that is somewhere else: an agent
+        // whose only page IS its repository says it once, as a link.
+        let repository = listing
             .agent
             .repository
             .clone()
-            .or_else(|| listing.agent.website.clone());
+            .filter(|repo| source.as_ref().is_none_or(|(_, url)| url != repo));
         theme
             .card_row(first)
             .child(
@@ -198,74 +250,68 @@ impl SettingsWindow {
                     .child(theme.row_title(listing.agent.name.clone()))
                     .child(
                         div()
-                            .mt(px(4.))
-                            .text_style(TextStyle::Subheadline)
-                            .text_color(theme.text_muted)
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .child(
-                                listing
-                                    .agent
-                                    .description
-                                    .clone()
-                                    .unwrap_or_else(|| listing.agent.id.clone()),
-                            ),
-                    )
-                    .child(
-                        div()
                             .mt(px(2.))
                             .flex()
                             .gap(px(8.))
                             .overflow_hidden()
                             .text_style(TextStyle::Caption)
                             .text_color(theme.text_faint)
-                            .children(npm.map(|(spec, url)| link(("npm", ix), spec, url, &theme)))
-                            .children(source.map(|url| {
-                                let label = SharedString::from(trimmed(&url));
-                                link(("source", ix), label, url, &theme)
-                            })),
+                            .children(
+                                source.map(|(label, url)| link(("source", ix), label, url, &theme)),
+                            )
+                            .children(repository.map(|url| repo_link(("repo", ix), url, &theme))),
                     ),
             )
-            .children(
-                installed
-                    .clone()
-                    .map(|version| theme.badge(format!("v{version}"))),
+            // Two columns rather than two trailing children: widths off the
+            // type ladder, so they hold their line down the card whatever a
+            // version reads or which of the three states the control is in.
+            .child(
+                div()
+                    .flex_none()
+                    .w_16()
+                    .flex()
+                    .justify_end()
+                    .child(theme.badge(format!("v{version}"))),
             )
-            .child(match (busy, installed, listing.agent.installable()) {
-                (true, _, _) => div()
-                    .flex_none()
-                    .text_style(TextStyle::Callout)
-                    .text_color(theme.text_faint)
-                    .child("working…")
-                    .into_any_element(),
-                (false, Some(_), _) => theme
-                    .button(
-                        "Remove",
-                        ButtonStyle::Ghost,
-                        Some(Fade::new(painter, format!("remove-{ix}"))),
-                    )
-                    .id(("remove", ix))
-                    .flex_none()
-                    .on_click(cx.listener(move |this, _, _, cx| this.remove(ix, cx)))
-                    .into_any_element(),
-                (false, None, true) => theme
-                    .button(
-                        "Install",
-                        ButtonStyle::Ghost,
-                        Some(Fade::new(painter, format!("install-{ix}"))),
-                    )
-                    .id(("install", ix))
-                    .flex_none()
-                    .on_click(cx.listener(move |this, _, _, cx| this.install(ix, cx)))
-                    .into_any_element(),
-                // Published, but with no build this machine can run.
-                (false, None, false) => div()
-                    .flex_none()
-                    .text_style(TextStyle::Callout)
-                    .text_color(theme.text_faint)
-                    .child("unavailable")
-                    .into_any_element(),
-            })
+            .child(
+                div().flex_none().w_20().flex().justify_end().child(
+                    match (busy, installed, listing.agent.installable()) {
+                        (true, _, _) => div()
+                            .flex_none()
+                            .text_style(TextStyle::Callout)
+                            .text_color(theme.text_faint)
+                            .child("working…")
+                            .into_any_element(),
+                        (false, Some(_), _) => theme
+                            .button(
+                                "Remove",
+                                ButtonStyle::Ghost,
+                                Some(Fade::new(painter, format!("remove-{ix}"))),
+                            )
+                            .id(("remove", ix))
+                            .flex_none()
+                            .on_click(cx.listener(move |this, _, _, cx| this.remove(ix, cx)))
+                            .into_any_element(),
+                        (false, None, true) => theme
+                            .button(
+                                "Install",
+                                ButtonStyle::Ghost,
+                                Some(Fade::new(painter, format!("install-{ix}"))),
+                            )
+                            .id(("install", ix))
+                            .flex_none()
+                            .on_click(cx.listener(move |this, _, _, cx| this.install(ix, cx)))
+                            .into_any_element(),
+                        // Published, but with no build this machine can run.
+                        (false, None, false) => div()
+                            .flex_none()
+                            .text_style(TextStyle::Callout)
+                            .text_color(theme.text_faint)
+                            .child("unavailable")
+                            .into_any_element(),
+                    },
+                ),
+            )
             .into_any_element()
     }
 
