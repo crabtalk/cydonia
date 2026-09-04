@@ -136,7 +136,7 @@ impl SettingsWindow {
             .into_any_element()
     }
 
-    /// The app's own reduce-transparency switch, so the frost can go without
+    /// The app's own reduce-transparency switch, so the vibrancy can go without
     /// turning the system setting on for every other app.
     pub(super) fn transparency_row(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();

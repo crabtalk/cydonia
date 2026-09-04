@@ -18,7 +18,7 @@ pub struct State {
     pub active: usize,
     #[serde(default)]
     pub appearance: AppearanceMode,
-    /// Whether the frost is off — bezel paints opaque surfaces instead.
+    /// Whether the vibrancy is off — bezel composites the window opaque.
     #[serde(default)]
     pub reduce_transparency: bool,
     /// Whether the text caret blinks. Off holds it lit.

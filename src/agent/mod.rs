@@ -91,7 +91,7 @@ fn fetch(dir: &Path, id: &str, url: &str) -> Option<String> {
     if let Some(path) = cached(dir, id) {
         return Some(path);
     }
-    let path = dir.join(format!("{id}.svg"));
+    let path = cacp_agents::contained(dir, &format!("{id}.svg")).ok()?;
     let body = ureq::get(url).call().ok()?.body_mut().read_to_vec().ok()?;
     std::fs::create_dir_all(dir).ok()?;
     std::fs::write(&path, body).ok()?;
@@ -100,7 +100,7 @@ fn fetch(dir: &Path, id: &str, url: &str) -> Option<String> {
 
 /// The icon already on disk, if it is.
 fn cached(dir: &Path, id: &str) -> Option<String> {
-    let path = dir.join(format!("{id}.svg"));
+    let path = cacp_agents::contained(dir, &format!("{id}.svg")).ok()?;
     path.exists().then(|| path.to_str())?.map(str::to_owned)
 }
 

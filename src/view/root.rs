@@ -22,7 +22,7 @@ use bezel::{
         prelude::*, px,
     },
     motion::{Fade, Painter},
-    theme::{Appearance, Material, SurfaceStyle, TextStyle, Theme, Typeset},
+    theme::{Material, TextStyle, Theme, Typeset},
     ui::{
         floating::Floating,
         icons,
@@ -60,16 +60,6 @@ pub(crate) const SIDEBAR_GUTTER: f32 = 8.;
 /// text, the panel is the column whose text has to win against the desktop.
 const SIDEBAR_MATERIAL: Material = Material::Thick;
 const CONTENT_MATERIAL: Material = Material::UltraThick;
-
-/// bezel's palette with cydonia's popover surface on it. Registered as the
-/// app's builder so a light/dark switch rebuilds it — `appearance::apply`
-/// drops a palette that was only installed.
-pub fn palette(appearance: Appearance) -> Theme {
-    Theme {
-        popover_surface: SurfaceStyle::Material(Material::Thick),
-        ..Theme::for_appearance(appearance)
-    }
-}
 
 /// The header strip's height, measured off `../desktop`: between Cursor's 34
 /// and Notion's 36, and tall enough to hold the 14px traffic lights macOS 26

@@ -27,11 +27,9 @@ fn main() -> Result<()> {
             if let Err(err) = ui::register_fonts(cx) {
                 eprintln!("font registration failed: {err:?}");
             }
-            // Before the first palette is installed.
-            theme::set_palette(root::palette, cx);
             appearance::init(state.appearance, cx);
             // Before the window is opened: it reads its background appearance
-            // on the way up, and frost is what decides that.
+            // on the way up, and vibrancy is what decides that.
             workspace::apply_transparency(state.reduce_transparency, cx);
             workspace::apply_tint(Tint::new(state.hue, state.chroma), cx);
             input::set_caret_blink(state.cursor_blink, cx);

@@ -35,10 +35,12 @@ impl Default for Settings {
             args: vec!["-y".into(), pkg.into()],
             env: BTreeMap::new(),
         };
+        // `npx` resolves a dist-tag against the npm registry on every launch,
+        // so these carry the version the ACP registry pins.
         Self {
             agents: vec![
-                npx("claude", "@agentclientprotocol/claude-agent-acp@latest"),
-                npx("codex", "@agentclientprotocol/codex-acp@latest"),
+                npx("claude", "@agentclientprotocol/claude-agent-acp@0.73.0"),
+                npx("codex", "@agentclientprotocol/codex-acp@1.8.0"),
             ],
         }
     }

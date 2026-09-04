@@ -794,7 +794,7 @@ impl Workspace {
     }
 }
 
-/// Point bezel's frost alpha at the preference. Free rather than a method
+/// Point bezel's tint at the preference. Free rather than a method
 /// because the window reads its background appearance while it is being opened,
 /// which is before there is a workspace to ask.
 pub fn apply_tint(tint: Tint, cx: &mut App) {
@@ -808,7 +808,7 @@ pub fn apply_tint(tint: Tint, cx: &mut App) {
 }
 
 /// Two answers, because bezel asks two questions: the window stops compositing
-/// translucent, and the frost over it goes opaque. Chrome keeps its layers —
+/// translucent, and the tint over it goes opaque. Chrome keeps its layers —
 /// an opaque window carrying them is what this setting asks for, and what the
 /// system's own does not do.
 pub fn apply_transparency(reduce: bool, cx: &mut App) {

@@ -1,7 +1,7 @@
 //! The settings window: a sidebar of sections, and the active section's body
 //! centred under its title.
 //!
-//! A window rather than a sheet, and **opaque** rather than frosted. Settings
+//! A window rather than a sheet, and **opaque** rather than vibrant. Settings
 //! is content, not chrome — a translucent panel would put the app you just
 //! navigated away from directly behind the form you are filling in.
 
