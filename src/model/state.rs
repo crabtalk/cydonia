@@ -7,7 +7,27 @@
 use crate::model::settings;
 use bezel::theme::{TextStyle, appearance::AppearanceMode};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::{collections::BTreeMap, path::PathBuf};
+
+/// The four things a project holds. Which one a launch lands on is the last
+/// one that was open, so the window comes back where it was left.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Kind {
+    Session,
+    Board,
+    Article,
+    Table,
+}
+
+/// One remembered entry: which kind, and which of them.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Entry {
+    pub kind: Kind,
+    /// The file the entry is, or a table's key. An index would drift as
+    /// siblings are added and removed between launches.
+    pub id: String,
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(default)]
@@ -29,6 +49,11 @@ pub struct State {
     /// chroma is the shipped neutral, whatever the hue says.
     pub hue: f32,
     pub chroma: f32,
+    /// What each project was last showing, by project path. Last in the struct
+    /// because a map renders as TOML tables, and a bare key after one of those
+    /// belongs to it.
+    #[serde(default)]
+    pub last: BTreeMap<PathBuf, Entry>,
 }
 
 /// What the body size may be set to, in points: the ladder's smallest measured
@@ -50,6 +75,7 @@ impl Default for State {
             text_size: TextStyle::Body.size(),
             hue: 0.,
             chroma: 0.,
+            last: BTreeMap::new(),
         }
     }
 }
@@ -84,6 +110,7 @@ pub fn restore() -> State {
         text_size: stored.text_size.clamp(TEXT_SIZE.0, TEXT_SIZE.1),
         hue: stored.hue,
         chroma: stored.chroma,
+        last: stored.last,
     }
 }
 

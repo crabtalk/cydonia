@@ -389,17 +389,28 @@ impl Cydonia {
     }
 
     /// Which pane is on screen, as against [`Self::pane`], which is the one
-    /// asked for. They part when the article it points at is gone — deleted,
-    /// or in a project that has none open — and the conversation stands in.
-    /// The sidebar reads this, not the request: a row lit for a pane nobody can
-    /// see is the second selection the eye finds.
+    /// asked for. They part when what it points at is gone — deleted, or in a
+    /// project that has none open — and whatever the project does have stands
+    /// in, so a launch lands on the entry it was left on rather than on an
+    /// empty conversation. The sidebar reads this, not the request: a row lit
+    /// for a pane nobody can see is the second selection the eye finds.
     pub(crate) fn showing(&self, cx: &App) -> Pane {
-        match self.pane {
-            Pane::Board if self.workspace.read(cx).active_board().is_none() => Pane::Chat,
-            Pane::Article if self.workspace.read(cx).active_article().is_none() => Pane::Chat,
-            Pane::Table if self.workspace.read(cx).active_table().is_none() => Pane::Chat,
-            pane => pane,
+        let open = |pane| {
+            let workspace = self.workspace.read(cx);
+            match pane {
+                Pane::Chat => workspace.active_session().is_some(),
+                Pane::Board => workspace.active_board().is_some(),
+                Pane::Article => workspace.active_article().is_some(),
+                Pane::Table => workspace.active_table().is_some(),
+            }
+        };
+        if open(self.pane) {
+            return self.pane;
         }
+        [Pane::Chat, Pane::Board, Pane::Article, Pane::Table]
+            .into_iter()
+            .find(|&pane| open(pane))
+            .unwrap_or(Pane::Chat)
     }
 
     /// Nothing is open, so there is nowhere to send a prompt — the only thing

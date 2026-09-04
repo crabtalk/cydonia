@@ -144,6 +144,16 @@ pub fn stamp() -> u128 {
         .unwrap_or_default()
 }
 
+/// When a file was last written, as the same millisecond stamp ids carry — the
+/// key entries are listed by, so the one you touched last is the one on top.
+pub fn written(path: &Path) -> u128 {
+    std::fs::metadata(path)
+        .and_then(|meta| meta.modified())
+        .ok()
+        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+        .map_or_else(stamp, |since| since.as_millis())
+}
+
 pub fn dir(project: &Path) -> PathBuf {
     project.join(DIR)
 }

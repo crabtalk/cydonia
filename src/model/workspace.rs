@@ -27,7 +27,7 @@ use bezel::{
     ui::input,
 };
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     path::{Path, PathBuf},
 };
 
@@ -57,6 +57,9 @@ pub struct Workspace {
     /// The registry's mark for each configured agent, by name. Empty until the
     /// catalog lands, and stays empty offline.
     agent_icons: HashMap<String, SharedString>,
+    /// What each project was last showing, by project path — where a launch
+    /// puts you back.
+    last: BTreeMap<PathBuf, state::Entry>,
 }
 
 impl Workspace {
@@ -76,11 +79,12 @@ impl Workspace {
             meter: false,
             next_id: 0,
             agent_icons: HashMap::new(),
+            last: state.last,
         };
         for ix in restore {
             this.restore_sessions(ix);
         }
-        this.open_last_session(cx);
+        this.open_last_entry(cx);
         this.load_agent_icons(cx);
         // Temporary dev hook: `CYDONIA_TEST_PROMPT` sends a prompt on launch
         // so a turn can be verified without a composer. Here rather than on
@@ -107,6 +111,7 @@ impl Workspace {
             text_size: self.text_size,
             hue: self.tint.hue,
             chroma: self.tint.chroma,
+            last: self.last.clone(),
         });
     }
 
@@ -229,7 +234,7 @@ impl Workspace {
             return;
         }
         self.active = Some(ix);
-        self.open_last_session(cx);
+        self.open_last_entry(cx);
         self.save();
         cx.notify();
     }
@@ -245,24 +250,74 @@ impl Workspace {
             let next = if active > ix { active - 1 } else { active };
             (!self.projects.is_empty()).then(|| next.min(self.projects.len() - 1))
         });
-        self.open_last_session(cx);
+        self.open_last_entry(cx);
         self.save();
         cx.notify();
     }
 
-    /// The project in front shows its most recent session; nothing there is
-    /// connected until something is sent to it.
-    fn open_last_session(&mut self, cx: &mut Context<Self>) {
-        let Some(project) = self.active.and_then(|ix| self.projects.get_mut(ix)) else {
+    /// Put the project in front back where it was left — the entry it was last
+    /// showing, of whichever kind. Nothing is connected by it: a session opened
+    /// this way stays idle until something is sent to it.
+    ///
+    /// The remembered entry is found by its own identity rather than by
+    /// position, because a sibling added or removed between launches shifts
+    /// every index after it.
+    fn open_last_entry(&mut self, cx: &mut Context<Self>) {
+        let Some(ix) = self.active else {
             return;
         };
-        if project.active.is_some() {
+        let Some(entry) = self
+            .projects
+            .get(ix)
+            .and_then(|open| self.last.get(&open.path))
+        else {
             return;
+        };
+        let (kind, id) = (entry.kind, entry.id.clone());
+        let Some(project) = self.projects.get_mut(ix) else {
+            return;
+        };
+        let at = |path: Option<&Path>| path.is_some_and(|path| path.to_string_lossy() == id);
+        match kind {
+            state::Kind::Session => {
+                project.active = project
+                    .sessions
+                    .iter()
+                    .find(|chat| at(chat.file.as_deref()))
+                    .map(|chat| chat.id);
+            }
+            state::Kind::Board => {
+                project.board = project
+                    .boards
+                    .iter()
+                    .position(|board| at(Some(&board.path)));
+            }
+            state::Kind::Article => {
+                project.article = project
+                    .articles
+                    .iter()
+                    .position(|article| at(Some(&article.path)));
+                if let Some(at) = project.article {
+                    project.articles[at].open(cx);
+                }
+            }
+            state::Kind::Table => {
+                project.table = project.tables.iter().position(|table| table.key == id);
+                project.reload_page();
+            }
         }
-        if let Some(id) = project.sessions.last().map(|chat| chat.id) {
-            project.active = Some(id);
-            cx.notify();
-        }
+        cx.notify();
+    }
+
+    /// Remember the entry a project is now showing, so the next launch lands on
+    /// it. Every way of opening one arrives here.
+    fn remember(&mut self, project: usize, kind: state::Kind, id: String) {
+        let Some(open) = self.projects.get(project) else {
+            return;
+        };
+        self.last
+            .insert(open.path.clone(), state::Entry { kind, id });
+        self.save();
     }
 
     pub fn active_project(&self) -> Option<&Project> {
@@ -308,9 +363,18 @@ impl Workspace {
             return;
         };
         self.projects[ix].active = Some(id);
-        if self.active != Some(ix) {
-            self.active = Some(ix);
-            self.save();
+        self.active = Some(ix);
+        // A session has no file until its first turn is written, so one that
+        // has said nothing is not yet somewhere to come back to.
+        if let Some(file) = self.projects[ix]
+            .session(id)
+            .and_then(|chat| chat.file.clone())
+        {
+            self.remember(
+                ix,
+                state::Kind::Session,
+                file.to_string_lossy().into_owned(),
+            );
         }
         cx.notify();
     }
@@ -375,6 +439,14 @@ impl Workspace {
             chat.resume(cx);
         }
         chat.send(content);
+        let file = chat.file.clone();
+        if let (Some(file), Some(ix)) = (file, self.project_of(id)) {
+            self.remember(
+                ix,
+                state::Kind::Session,
+                file.to_string_lossy().into_owned(),
+            );
+        }
         cx.notify();
     }
 
@@ -403,7 +475,7 @@ impl Workspace {
         }
         project.sessions.retain(|chat| chat.id != id);
         if project.active == Some(id) {
-            project.active = project.sessions.last().map(|chat| chat.id);
+            project.active = project.sessions.first().map(|chat| chat.id);
         }
         cx.notify();
     }
@@ -472,10 +544,9 @@ impl Workspace {
             return;
         }
         open.board = Some(ix);
-        if self.active != Some(project) {
-            self.active = Some(project);
-            self.save();
-        }
+        let id = open.boards[ix].path.to_string_lossy().into_owned();
+        self.active = Some(project);
+        self.remember(project, state::Kind::Board, id);
         cx.notify();
     }
 
@@ -549,10 +620,12 @@ impl Workspace {
         };
         article.open(cx);
         self.projects[project].article = Some(ix);
-        if self.active != Some(project) {
-            self.active = Some(project);
-            self.save();
-        }
+        let id = self.projects[project].articles[ix]
+            .path
+            .to_string_lossy()
+            .into_owned();
+        self.active = Some(project);
+        self.remember(project, state::Kind::Article, id);
         cx.notify();
     }
 
@@ -650,10 +723,9 @@ impl Workspace {
         }
         open.table = Some(ix);
         open.reload_page();
-        if self.active != Some(project) {
-            self.active = Some(project);
-            self.save();
-        }
+        let id = open.tables[ix].key.clone();
+        self.active = Some(project);
+        self.remember(project, state::Kind::Table, id);
         cx.notify();
     }
 
