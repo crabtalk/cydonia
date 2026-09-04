@@ -59,6 +59,10 @@ pub struct Article {
     /// What is on disk. The editor notifies on caret moves too, so without
     /// this every arrow key would rewrite the file.
     saved: String,
+    /// When the document was last written. Held rather than read back per
+    /// frame: the sidebar orders on it, and a project of a thousand articles
+    /// would be a thousand `stat` calls a frame.
+    pub touched: u128,
 }
 
 impl Article {
@@ -66,6 +70,7 @@ impl Article {
         Self {
             cover: cover::of(&path),
             title: properties::title(&path),
+            touched: project::written(&path),
             path,
             field: None,
             editor: None,
@@ -134,6 +139,7 @@ impl Article {
                 let moved = self.title != title;
                 if moved {
                     self.title = title;
+                    self.touched = project::stamp();
                     properties::set_title(&self.path, &self.title);
                 }
                 moved
@@ -144,6 +150,7 @@ impl Article {
             let source = editor.read(cx).source();
             if self.saved != source && std::fs::write(&self.path, &source).is_ok() {
                 self.saved = source;
+                self.touched = project::stamp();
             }
         }
         renamed
@@ -208,13 +215,14 @@ pub fn list(project: &Path) -> Vec<Article> {
     let Ok(entries) = std::fs::read_dir(dir.join(DIR)) else {
         return Vec::new();
     };
-    let mut paths: Vec<PathBuf> = entries
+    let paths: Vec<PathBuf> = entries
         .flatten()
         .map(|entry| entry.path().join(CONTENT))
         .filter(|path| path.is_file())
         .collect();
-    paths.sort_by_key(|path| Reverse(project::written(path)));
-    paths.into_iter().map(Article::new).collect()
+    let mut articles: Vec<Article> = paths.into_iter().map(Article::new).collect();
+    articles.sort_by_key(|article| Reverse(article.touched));
+    articles
 }
 
 pub fn create(project: &Path) -> Option<Article> {

@@ -12,7 +12,7 @@ use crate::{
 };
 use bezel::{
     gpui::{
-        self, AnyElement, Context, Div, Empty, Focusable as _, FontWeight, Hsla, MouseButton,
+        self, AnyElement, App, Context, Div, Empty, Focusable as _, FontWeight, Hsla, MouseButton,
         ScrollStrategy, SharedString, Stateful, Window, div, prelude::*, px, svg, uniform_list,
     },
     motion::Painter,
@@ -26,7 +26,7 @@ use bezel::{
         widgets::{Buttons, Layout},
     },
 };
-use std::ops::Range;
+use std::{cmp::Reverse, ops::Range, path::PathBuf};
 
 /// What the sidebar needs of a session to draw its row, read out of the model
 /// before the row is built: a turn in flight puts a thinking orb in the mark's
@@ -52,11 +52,13 @@ pub(crate) enum Row {
 }
 
 /// What the sidebar's name field is attached to. One field for both, because
-/// only one row can be being named at a time.
-#[derive(Clone, Copy, PartialEq, Eq)]
+/// only one row can be being named at a time. A board is held by its file: an
+/// index moves the moment a neighbour is made or dropped, and the field would
+/// follow the index onto whichever board slid under it.
+#[derive(Clone, PartialEq, Eq)]
 pub(crate) enum Renaming {
     Session(u64),
-    Board { project: usize, ix: usize },
+    Board(PathBuf),
 }
 
 /// The wash a row paints, and — with the 1px either side of it that used to be
@@ -344,24 +346,60 @@ impl Cydonia {
             .into_any_element()
     }
 
+    /// Everything open in one project, last written first — the lines the
+    /// sidebar draws under its head, and the ring a keyboard step walks.
+    ///
+    /// One list rather than four: the kinds are told apart by their marks, and
+    /// grouping by kind buries the table you are working in under every article
+    /// you are not. Only the addresses are ordered — each kind's own list keeps
+    /// the indices these carry.
+    pub(crate) fn entries(&self, project: usize, cx: &App) -> Vec<Row> {
+        let Some(open) = self.workspace.read(cx).projects.get(project) else {
+            return Vec::new();
+        };
+        let sessions = open.sessions.iter().map(|chat| {
+            (
+                chat.touched(),
+                Row::Session {
+                    project,
+                    id: chat.id,
+                },
+            )
+        });
+        let boards = open
+            .boards
+            .iter()
+            .enumerate()
+            .map(|(ix, board)| (board.touched, Row::Board { project, ix }));
+        let articles = open
+            .articles
+            .iter()
+            .enumerate()
+            .map(|(ix, article)| (article.touched, Row::Article { project, ix }));
+        // The store keeps seconds; every other stamp here is milliseconds.
+        let tables = open.tables.iter().enumerate().map(|(ix, table)| {
+            let at = table.updated_at.unwrap_or(table.created_at).max(0) as u128;
+            (at * 1000, Row::Table { project, ix })
+        });
+        let mut entries: Vec<(u128, Row)> = sessions
+            .chain(boards)
+            .chain(articles)
+            .chain(tables)
+            .collect();
+        entries.sort_by_key(|(touched, _)| Reverse(*touched));
+        entries.into_iter().map(|(_, row)| row).collect()
+    }
+
     /// Every line the sidebar shows, in order. Addresses only: a project with a
     /// thousand articles costs a thousand `Row`s here and reads a title for
     /// none of them.
     pub(crate) fn rows(&self, cx: &Context<Self>) -> Vec<Row> {
-        let workspace = self.workspace.read(cx);
         let mut rows = Vec::new();
-        for (p, project) in workspace.projects.iter().enumerate() {
+        for p in 0..self.workspace.read(cx).projects.len() {
             rows.push(Row::Project(p));
-            if !project.expanded {
-                continue;
+            if self.workspace.read(cx).projects[p].expanded {
+                rows.extend(self.entries(p, cx));
             }
-            rows.extend(project.ordered().map(|chat| Row::Session {
-                project: p,
-                id: chat.id,
-            }));
-            rows.extend((0..project.boards.len()).map(|ix| Row::Board { project: p, ix }));
-            rows.extend((0..project.articles.len()).map(|ix| Row::Article { project: p, ix }));
-            rows.extend((0..project.tables.len()).map(|ix| Row::Table { project: p, ix }));
         }
         rows
     }
@@ -610,7 +648,13 @@ impl Cydonia {
         } else {
             theme.text_muted
         };
-        let label = match self.renaming == Some(Renaming::Board { project, ix }) {
+        let path = workspace
+            .projects
+            .get(project)
+            .and_then(|open| open.boards.get(ix))
+            .map(|board| &board.path);
+        let renaming = matches!(&self.renaming, Some(Renaming::Board(at)) if Some(at) == path);
+        let label = match renaming {
             true => self.name_field(cx),
             false => row_label(name, tint),
         };
@@ -648,11 +692,20 @@ impl Cydonia {
         if self.menu != Some(Menu::Board(project, ix)) {
             return None;
         }
+        let path = self
+            .workspace
+            .read(cx)
+            .projects
+            .get(project)
+            .and_then(|open| open.boards.get(ix))
+            .map(|board| board.path.clone());
         let rows = vec![
             menu::row(
                 Item::action("Rename").with_icon(icons::PEN_NEW_SQUARE),
                 move |this, window, cx| {
-                    this.start_rename(Renaming::Board { project, ix }, window, cx);
+                    if let Some(path) = path.clone() {
+                        this.start_rename(Renaming::Board(path), window, cx);
+                    }
                 },
             ),
             menu::row(
@@ -722,15 +775,13 @@ impl Cydonia {
 
     fn start_rename(&mut self, what: Renaming, window: &mut Window, cx: &mut Context<Self>) {
         let workspace = self.workspace.read(cx);
-        let label = match what {
+        let label = match &what {
             Renaming::Session(id) => workspace
-                .session(id)
+                .session(*id)
                 .map(ChatSession::label)
                 .unwrap_or_default(),
-            Renaming::Board { project, ix } => workspace
-                .projects
-                .get(project)
-                .and_then(|open| open.boards.get(ix))
+            Renaming::Board(path) => workspace
+                .board_at(path)
                 .map(|board| board.name.clone())
                 .unwrap_or_default(),
         };
@@ -748,7 +799,7 @@ impl Cydonia {
         let name = self.name_field.read(cx).content().to_string();
         self.workspace.update(cx, |workspace, cx| match what {
             Renaming::Session(id) => workspace.rename_session(id, name, cx),
-            Renaming::Board { project, ix } => workspace.rename_board(project, ix, name, cx),
+            Renaming::Board(path) => workspace.rename_board(&path, name, cx),
         });
         cx.notify();
     }

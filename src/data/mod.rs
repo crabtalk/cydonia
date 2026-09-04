@@ -35,6 +35,7 @@ const DDL: &str = "CREATE TABLE IF NOT EXISTS _tables (
     key        TEXT PRIMARY KEY,
     name       TEXT NOT NULL,
     created_at INTEGER NOT NULL,
+    updated_at INTEGER,
     author     TEXT
 )";
 
@@ -109,6 +110,9 @@ pub struct Table {
     pub columns: Vec<Column>,
     pub rows: i64,
     pub created_at: i64,
+    /// When it was last written in, once it has been — what the list is
+    /// ordered on, with [`Table::created_at`] standing in until then.
+    pub updated_at: Option<i64>,
     /// The agent that made it, by the name `settings.toml` gives it.
     pub author: Option<String>,
 }
@@ -142,6 +146,15 @@ impl Data {
         writer.busy_timeout(BUSY)?;
         writer.execute_batch("PRAGMA journal_mode = WAL")?;
         writer.execute_batch(DDL)?;
+        // A `_tables` written before the column existed. SQLite has no ADD
+        // COLUMN IF NOT EXISTS, and the file is the only record of which shape
+        // this one is.
+        if !columns_of(&writer, "_tables")?
+            .iter()
+            .any(|col| col.name == "updated_at")
+        {
+            writer.execute_batch("ALTER TABLE _tables ADD COLUMN updated_at INTEGER")?;
+        }
 
         let reader = Connection::open_with_flags(
             &path,
@@ -162,9 +175,19 @@ impl Data {
         }
     }
 
-    /// Every table with its columns and row count.
+    /// Every table with its columns and row count, in [`Data::keys`]'s order.
     pub fn list(&self) -> Result<Vec<Table>> {
         self.keys()?.iter().map(|key| self.table(key)).collect()
+    }
+
+    /// Mark a table written just now — the stamp [`Data::keys`] orders on, so
+    /// the one being worked in is the one on top.
+    pub fn touch(&mut self, key: &str) -> Result<()> {
+        self.writer.execute(
+            "UPDATE _tables SET updated_at = ?2 WHERE key = ?1",
+            rusqlite::params![key, now()],
+        )?;
+        Ok(())
     }
 
     /// One table by its key, built from the catalog outward rather than from
@@ -175,13 +198,13 @@ impl Data {
         let meta = self
             .reader
             .query_row(
-                "SELECT name, created_at, author FROM _tables WHERE key = ?1",
+                "SELECT name, created_at, updated_at, author FROM _tables WHERE key = ?1",
                 [key],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )
             .ok();
-        let (name, created_at, author) =
-            meta.unwrap_or_else(|| (key.to_owned(), 0i64, None::<String>));
+        let (name, created_at, updated_at, author) =
+            meta.unwrap_or_else(|| (key.to_owned(), 0i64, None::<i64>, None::<String>));
         Ok(Table {
             columns: columns_of(&self.reader, key)?,
             rows: self.reader.query_row(
@@ -192,17 +215,22 @@ impl Data {
             key: key.to_owned(),
             name,
             created_at,
+            updated_at,
             author,
         })
     }
 
     /// The tables in the file — everything SQLite holds that is not its own
-    /// bookkeeping or ours.
+    /// bookkeeping or ours — last touched first, which is how an article and a
+    /// board are listed. The catalog is still what says a table exists: one
+    /// with no `_tables` row has no age to sort on and goes last, under its
+    /// key.
     fn keys(&self) -> Result<Vec<String>> {
         let mut stmt = self.reader.prepare(
-            "SELECT name FROM sqlite_master \
-             WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name <> '_tables' \
-             ORDER BY name",
+            "SELECT m.name FROM sqlite_master m \
+             LEFT JOIN _tables t ON t.key = m.name \
+             WHERE m.type = 'table' AND m.name NOT LIKE 'sqlite_%' AND m.name <> '_tables' \
+             ORDER BY COALESCE(t.updated_at, t.created_at, 0) DESC, m.name",
         )?;
         let keys = stmt
             .query_map([], |row| row.get(0))?

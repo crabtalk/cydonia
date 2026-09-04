@@ -35,6 +35,10 @@ pub struct Board {
     /// The file this board is, which is where [`Board::save`] writes it back.
     #[serde(skip)]
     pub path: PathBuf,
+    /// When it was last written — the file's own time, kept in memory because
+    /// the sidebar orders on it.
+    #[serde(skip)]
+    pub touched: u128,
     #[serde(default)]
     pub name: String,
     #[serde(default)]
@@ -62,6 +66,7 @@ impl Board {
     fn new(path: PathBuf, name: &str) -> Self {
         Self {
             path,
+            touched: project::stamp(),
             name: name.to_owned(),
             columns: ["Todo", "Doing", "Done"].map(Column::new).into(),
         }
@@ -95,9 +100,10 @@ impl Board {
 
     /// Best effort: a board that cannot be written is not worth failing a
     /// click over.
-    pub fn save(&self) {
+    pub fn save(&mut self) {
         if let Ok(body) = toml::to_string_pretty(self) {
             let _ = std::fs::write(&self.path, body);
+            self.touched = project::stamp();
         }
     }
 
@@ -144,19 +150,20 @@ pub fn list(project: &Path) -> Vec<Board> {
     let Ok(entries) = std::fs::read_dir(dir.join(DIR)) else {
         return Vec::new();
     };
-    let mut paths: Vec<PathBuf> = entries
+    let paths: Vec<PathBuf> = entries
         .flatten()
         .map(|entry| entry.path())
         .filter(|path| path.extension().is_some_and(|ext| ext == "toml"))
         .collect();
-    paths.sort_by_key(|path| Reverse(project::written(path)));
-    paths.into_iter().filter_map(read).collect()
+    let mut boards: Vec<Board> = paths.into_iter().filter_map(read).collect();
+    boards.sort_by_key(|board| Reverse(board.touched));
+    boards
 }
 
 pub fn create(project: &Path) -> Option<Board> {
     let dir = project::init(project).ok()?.join(DIR);
     std::fs::create_dir_all(&dir).ok()?;
-    let board = Board::new(free(&dir, project::stamp()), NAMED);
+    let mut board = Board::new(free(&dir, project::stamp()), NAMED);
     board.save();
     Some(board)
 }
@@ -164,6 +171,7 @@ pub fn create(project: &Path) -> Option<Board> {
 fn read(path: PathBuf) -> Option<Board> {
     let body = std::fs::read_to_string(&path).ok()?;
     let mut board: Board = toml::from_str(&body).ok()?;
+    board.touched = project::written(&path);
     board.path = path;
     Some(board)
 }

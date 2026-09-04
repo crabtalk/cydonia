@@ -72,10 +72,7 @@ fn main() -> Result<()> {
                 },
                 |window, cx| {
                     appearance::observe_window(window, cx).detach();
-                    let app = cx.new(|cx| root::Cydonia::new(settings, state, cx));
-                    let focus = app.read(cx).composer_focus_handle(cx);
-                    window.focus(&focus, cx);
-                    app
+                    cx.new(|cx| root::Cydonia::new(settings, state, window, cx))
                 },
             )
             .expect("failed to open window");

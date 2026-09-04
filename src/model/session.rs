@@ -195,6 +195,15 @@ impl ChatSession {
         }
     }
 
+    /// When this last had something to say, as the millisecond stamp every
+    /// other entry under a project carries — what the sidebar orders on.
+    pub fn touched(&self) -> u128 {
+        self.updated
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+    }
+
     fn to_record(&self) -> Record {
         Record {
             agent: self.entry.name.clone(),

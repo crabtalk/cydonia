@@ -528,10 +528,9 @@ impl Workspace {
     pub fn new_board(&mut self, cx: &mut Context<Self>) -> Option<usize> {
         let project = self.active?;
         let board = board::create(&self.projects[project].path)?;
-        self.projects[project].boards.push(board);
-        let ix = self.projects[project].boards.len() - 1;
-        self.open_board(project, ix, cx);
-        Some(ix)
+        self.projects[project].boards.insert(0, board);
+        self.open_board(project, 0, cx);
+        Some(0)
     }
 
     /// Every project's boards are on show, so picking one brings its project
@@ -566,18 +565,8 @@ impl Workspace {
         cx.notify();
     }
 
-    pub fn rename_board(
-        &mut self,
-        project: usize,
-        ix: usize,
-        name: String,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(board) = self
-            .projects
-            .get_mut(project)
-            .and_then(|open| open.boards.get_mut(ix))
-        else {
+    pub fn rename_board(&mut self, path: &Path, name: String, cx: &mut Context<Self>) {
+        let Some(board) = self.board_at_mut(path) else {
             return;
         };
         board.name = name.trim().to_owned();
@@ -595,6 +584,23 @@ impl Workspace {
         project.boards.get_mut(project.board?)
     }
 
+    /// The board a file names, wherever it is open. What a rename holds onto:
+    /// an index moves the moment a neighbour is made or dropped, and the file
+    /// is the board — it is where [`Board::save`] writes.
+    pub fn board_at(&self, path: &Path) -> Option<&Board> {
+        self.projects
+            .iter()
+            .flat_map(|open| open.boards.iter())
+            .find(|board| board.path == path)
+    }
+
+    pub fn board_at_mut(&mut self, path: &Path) -> Option<&mut Board> {
+        self.projects
+            .iter_mut()
+            .flat_map(|open| open.boards.iter_mut())
+            .find(|board| board.path == path)
+    }
+
     // ── articles ─────────────────────────────────────────────────────
 
     /// A fresh document in the active project, opened as it lands — an empty
@@ -602,10 +608,11 @@ impl Workspace {
     pub fn new_article(&mut self, cx: &mut Context<Self>) -> Option<usize> {
         let project = self.active?;
         let article = article::create(&self.projects[project].path)?;
-        self.projects[project].articles.push(article);
-        let ix = self.projects[project].articles.len() - 1;
-        self.open_article(project, ix, cx);
-        Some(ix)
+        // Where a re-read would put it: the list is newest first, and a new one
+        // appended would sit at the bottom until the next load moved it.
+        self.projects[project].articles.insert(0, article);
+        self.open_article(project, 0, cx);
+        Some(0)
     }
 
     /// Every project's articles are on show, so picking one brings its project
@@ -705,8 +712,8 @@ impl Workspace {
             .ok()?
             .key;
         project.reload_tables();
-        // Found by key rather than taken as the last row: the list is ordered,
-        // so a new table lands wherever its name sorts.
+        // Found by key rather than taken as a known row: the list is ordered by
+        // age, and where the newest lands is the list's business, not this one's.
         let ix = project.tables.iter().position(|table| table.key == key)?;
         self.open_table(at, ix, cx);
         Some(ix)
@@ -764,7 +771,11 @@ impl Workspace {
             .table
             .and_then(|ix| project.tables.get(ix))
             .map(|table| table.key.clone())?;
-        let done = f(project.data.as_mut()?, &key);
+        let data = project.data.as_mut()?;
+        let done = f(data, &key);
+        // Working in a table is what makes it the table you were last in, and
+        // the list is ordered by that.
+        let _ = data.touch(&key);
         project.reload_tables();
         cx.notify();
         Some(done)

@@ -2,7 +2,7 @@
 //! the sidebar and the chat column are hung in.
 
 use crate::{
-    model::{settings::Settings, state::State, workspace::Workspace},
+    model::{session::ChatSession, settings::Settings, state::State, workspace::Workspace},
     view::{
         board::{self, Editing},
         component::{
@@ -17,9 +17,9 @@ use crate::{
 };
 use bezel::{
     gpui::{
-        self, AnyElement, App, Axis, Context, DragMoveEvent, Empty, Entity, Hsla, KeyBinding,
-        PathPromptOptions, Render, UniformListScrollHandle, Window, WindowHandle, actions, div,
-        prelude::*, px,
+        self, AnyElement, App, Axis, Context, DragMoveEvent, Empty, Entity, FocusHandle, Hsla,
+        KeyBinding, PathPromptOptions, Render, UniformListScrollHandle, Window, WindowHandle,
+        actions, div, prelude::*, px,
     },
     motion::{Fade, Painter},
     theme::{Material, TextStyle, Theme, Typeset},
@@ -196,10 +196,18 @@ pub struct Cydonia {
     /// The rail's scroll. A step taken from the keyboard has to bring its
     /// landing into view; the list does not scroll itself.
     pub(crate) rail: UniformListScrollHandle,
+    /// Where the focus rests when no field holds it — a board, a table and a
+    /// transcript have none — so the bindings below always have a path here.
+    focus: FocusHandle,
 }
 
 impl Cydonia {
-    pub fn new(settings: Settings, state: State, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        settings: Settings,
+        state: State,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let composer = cx.new(Composer::new);
         cx.subscribe(
             &composer,
@@ -244,8 +252,23 @@ impl Cydonia {
             renaming: None,
             name_field,
             rail: UniformListScrollHandle::new(),
+            focus: cx.focus_handle(),
         };
+        // Whatever held the focus has left the tree — the composer with the
+        // chat pane, an editor with its article — and an unrendered element
+        // dispatches nothing, so the window takes its focus back.
+        cx.on_focus_lost(window, |this, window, cx| window.focus(&this.focus, cx))
+            .detach();
         this.sync_composer(cx);
+        // Where the caret starts. The composer is drawn only over a chat it can
+        // send to, and focus on an element no frame draws is focus nowhere.
+        let composer = this
+            .workspace
+            .read(cx)
+            .active_session()
+            .is_some_and(ChatSession::resumable)
+            .then(|| this.composer_focus_handle(cx));
+        window.focus(composer.as_ref().unwrap_or(&this.focus), cx);
         this
     }
 
@@ -281,11 +304,9 @@ impl Cydonia {
         self.cycle_entry(-1, window, cx);
     }
 
-    /// Step to the next entry of the kind already open, wrapping at the ends.
-    ///
-    /// Inside the project and inside the kind: an article's neighbour is
-    /// another article, because stepping from one into a board would swap the
-    /// pane under the caret for something that reads nothing like it.
+    /// Step to the next entry the project has open, wrapping at the ends — one
+    /// ring over every kind, in the order the sidebar lists them, so a board
+    /// standing alone still has the article above it for a neighbour.
     fn cycle_entry(&mut self, step: isize, window: &mut Window, cx: &mut Context<Self>) {
         let pane = self.showing(cx);
         let workspace = self.workspace.read(cx);
@@ -295,27 +316,15 @@ impl Cydonia {
         let Some(open) = workspace.projects.get(project) else {
             return;
         };
-        // Held across the read, because opening one wants the app mutably.
-        let landing =
-            match pane {
-                Pane::Chat => {
-                    let ids: Vec<u64> = open.ordered().map(|chat| chat.id).collect();
-                    let at = open
-                        .active
-                        .and_then(|id| ids.iter().position(|open| *open == id));
-                    stepped(at, ids.len(), step).map(|ix| Row::Session {
-                        project,
-                        id: ids[ix],
-                    })
-                }
-                Pane::Article => stepped(open.article, open.articles.len(), step)
-                    .map(|ix| Row::Article { project, ix }),
-                Pane::Board => stepped(open.board, open.boards.len(), step)
-                    .map(|ix| Row::Board { project, ix }),
-                Pane::Table => stepped(open.table, open.tables.len(), step)
-                    .map(|ix| Row::Table { project, ix }),
-            };
-        let Some(landing) = landing else {
+        let showing = match pane {
+            Pane::Chat => open.active.map(|id| Row::Session { project, id }),
+            Pane::Board => open.board.map(|ix| Row::Board { project, ix }),
+            Pane::Article => open.article.map(|ix| Row::Article { project, ix }),
+            Pane::Table => open.table.map(|ix| Row::Table { project, ix }),
+        };
+        let ring = self.entries(project, cx);
+        let at = showing.and_then(|row| ring.iter().position(|entry| *entry == row));
+        let Some(landing) = stepped(at, ring.len(), step).map(|ix| ring[ix]) else {
             return;
         };
         self.open_row(landing, window, cx);
@@ -468,6 +477,10 @@ impl Render for Cydonia {
                     cx.notify();
                 }),
             )
+            // An action reaches the handlers above only through the focused
+            // element's ancestors. Sized at nothing, so the pane that does hold
+            // a field keeps its focus through a click anywhere else.
+            .child(div().track_focus(&self.focus))
             .when(self.sidebar_open, |root| root.child(self.sidebar(cx)))
             .child(self.detail(window, cx))
             // Rides on the seam between the sidebar and the detail column
