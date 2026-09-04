@@ -23,7 +23,7 @@ use bezel::{
         popover,
         surface::Surfaced as _,
         tooltip::Tooltip,
-        widgets::{Buttons, Layout},
+        widgets::{Buttons, Controls, Layout},
     },
 };
 use std::{cmp::Reverse, ops::Range, path::PathBuf};
@@ -64,6 +64,64 @@ pub(crate) enum Row {
         project: usize,
         ix: usize,
     },
+}
+
+/// Which kinds the sidebar lists. One choice for the whole column, above the
+/// projects, because it answers "what am I looking for", not "what is in this
+/// project".
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum Filter {
+    #[default]
+    All,
+    Sessions,
+    Boards,
+    Articles,
+    Tables,
+}
+
+impl Filter {
+    /// Sessions are only on offer while agents are: a kind you cannot make is
+    /// not a kind worth filtering to.
+    fn every(agents: bool) -> Vec<Self> {
+        let mut every = vec![Self::All];
+        if agents {
+            every.push(Self::Sessions);
+        }
+        every.extend([Self::Boards, Self::Articles, Self::Tables]);
+        every
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::All => "All",
+            Self::Sessions => "Sessions",
+            Self::Boards => "Boards",
+            Self::Articles => "Articles",
+            Self::Tables => "Tables",
+        }
+    }
+
+    fn icon(self) -> &'static str {
+        match self {
+            Self::All => icons::SORT_VERTICAL,
+            Self::Sessions => icons::CHAT_ROUND_LINE,
+            Self::Boards => icons::LIST,
+            Self::Articles => icons::DOCUMENT,
+            Self::Tables => icons::WIDGET,
+        }
+    }
+
+    /// Whether an entry is one of the kind being looked for.
+    fn keeps(self, row: Row) -> bool {
+        matches!(
+            (self, row),
+            (Self::All, _)
+                | (Self::Sessions, Row::Session { .. })
+                | (Self::Boards, Row::Board { .. })
+                | (Self::Articles, Row::Article { .. })
+                | (Self::Tables, Row::Table { .. })
+        )
+    }
 }
 
 /// What the sidebar's name field is attached to. One field for all of them,
@@ -192,6 +250,7 @@ impl Cydonia {
                     .justify_end()
                     .child(self.fold_toggle(theme.text_faint, cx)),
             )
+            .child(self.filter_row(cx))
             .child(
                 uniform_list(
                     "project-list",
@@ -319,7 +378,7 @@ impl Cydonia {
             Some(project) => (project.name(), project.expanded),
             None => return Empty.into_any_element(),
         };
-        div()
+        let head = div()
             .id(("project", ix))
             .group("project-head")
             .mx(px(8.))
@@ -382,7 +441,10 @@ impl Cydonia {
                 MouseButton::Right,
                 cx.listener(move |this, _, _, cx| this.toggle_menu(Menu::Project(ix), cx)),
             )
-            .on_click(cx.listener(move |this, _, _, cx| this.toggle_project(ix, cx)))
+            .on_click(cx.listener(move |this, _, _, cx| this.toggle_project(ix, cx)));
+        // Its own menu opens on the press rather than the click, so the note
+        // has to be here too — read stale, a right press would swallow.
+        self.menu_press(head, Menu::Project(ix), cx)
             .into_any_element()
     }
 
@@ -429,6 +491,7 @@ impl Cydonia {
             .chain(articles)
             .chain(tables)
             .collect();
+        entries.retain(|(_, _, row)| self.filter.keeps(*row));
         // One sort for both halves: what was put away sinks, and inside each
         // half the last thing written is on top.
         entries.sort_by_key(|(archived, touched, _)| (*archived, Reverse(*touched)));
@@ -590,6 +653,54 @@ impl Cydonia {
             }
             cx.notify();
         });
+    }
+
+    /// The kind picker, above the projects. bezel's select face rather than a
+    /// row of this column: it is a control, not an entry, and the border is
+    /// what says which of the two you are pointing at.
+    fn filter_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        let trigger = theme
+            .select_trigger(self.filter.label())
+            .id("filter")
+            .relative()
+            .on_click(cx.listener(|this, _, _, cx| {
+                cx.stop_propagation();
+                this.toggle_menu(Menu::Filter, cx);
+            }))
+            .children(self.filter_menu(cx));
+        div()
+            .flex_none()
+            .m(px(root::SIDEBAR_GUTTER))
+            .child(self.menu_press(trigger, Menu::Filter, cx))
+            .into_any_element()
+    }
+
+    fn filter_menu(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if self.menu != Some(Menu::Filter) {
+            return None;
+        }
+        let agents = self.workspace.read(cx).settings.agents_enabled;
+        let rows = Filter::every(agents)
+            .into_iter()
+            .map(|filter| {
+                menu::row(
+                    Item::action(filter.label())
+                        .with_icon(filter.icon())
+                        .checked(self.filter == filter),
+                    move |this, _, cx| {
+                        this.filter = filter;
+                        this.menu = None;
+                        cx.notify();
+                    },
+                )
+            })
+            .collect();
+        Some(popover::anchored_menu_below(
+            "filter-menu",
+            self.menu_card("filter-menu", rows, cx),
+            None,
+        ))
     }
 
     /// What the `+` starts here. Session first: it is what the sidebar is for.

@@ -11,7 +11,7 @@ use crate::{
             meter,
         },
         settings::{self, Section, SettingsWindow},
-        sidebar::{Renaming, Row},
+        sidebar::{Filter, Renaming, Row},
         table,
     },
 };
@@ -188,6 +188,11 @@ pub struct Cydonia {
     pub(crate) cell: Option<table::Cell>,
     pub(crate) cell_field: Entity<TextField>,
     pub(crate) menu: Option<Menu>,
+    /// Whether the press now being handled landed on the open menu's own
+    /// trigger — read by [`Cydonia::toggle_menu`] and nothing else.
+    pub(crate) menu_pressed: bool,
+    /// Which kinds the sidebar is listing.
+    pub(crate) filter: Filter,
     /// What the name field is attached to, and the field itself.
     pub(crate) renaming: Option<Renaming>,
     pub(crate) name_field: Entity<TextField>,
@@ -249,6 +254,8 @@ impl Cydonia {
             cell: None,
             cell_field,
             menu: None,
+            menu_pressed: false,
+            filter: Filter::default(),
             renaming: None,
             name_field,
             rail: UniformListScrollHandle::new(),
