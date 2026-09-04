@@ -10,6 +10,7 @@
 use crate::model::{project, session::ChatItem};
 use serde::{Deserialize, Serialize};
 use std::{
+    cmp::Reverse,
     path::{Path, PathBuf},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -47,8 +48,8 @@ fn dir(project: &Path) -> PathBuf {
     project::dir(project).join(SESSIONS)
 }
 
-/// Every session filed in the project with the file it came from, oldest
-/// first. The path is what lets a row rewrite or delete itself later.
+/// Every session filed in the project with the file it came from, most recently
+/// updated first. The path is what lets a row rewrite or delete itself later.
 pub fn list(project: &Path) -> Vec<(PathBuf, Record)> {
     let Ok(entries) = std::fs::read_dir(dir(project)) else {
         return Vec::new();
@@ -62,7 +63,7 @@ pub fn list(project: &Path) -> Vec<(PathBuf, Record)> {
             Some((path, serde_json::from_str(&body).ok()?))
         })
         .collect();
-    found.sort_by_key(|(_, record)| record.updated);
+    found.sort_by_key(|(_, record)| Reverse(record.updated));
     found
 }
 

@@ -6,14 +6,40 @@ use crate::{
     view::settings::SettingsWindow,
 };
 use bezel::{
-    gpui::{AnyElement, Context, div, prelude::*, px, svg},
+    gpui::{AnyElement, Context, SharedString, div, prelude::*, px, svg},
     motion::{Fade, Painter},
     theme::{TextStyle, Theme, Typeset},
     ui::{
         icons,
-        widgets::{ButtonStyle, Buttons, Content, Scaffolding, Status},
+        widgets::{ButtonStyle, Buttons, Content, Controls, Scaffolding, Status},
     },
 };
+use cacp_agents::Distribution;
+
+/// An address that opens in the browser, shown as its own text.
+fn link(
+    id: (&'static str, usize),
+    label: SharedString,
+    url: String,
+    theme: &Theme,
+) -> impl IntoElement {
+    div()
+        .id(id)
+        .cursor_pointer()
+        .hover(|el| el.text_color(theme.accent))
+        .overflow_hidden()
+        .whitespace_nowrap()
+        .child(label)
+        .on_click(move |_, _, cx| cx.open_url(&url))
+}
+
+/// A URL as an address rather than a link: the scheme is noise in a row.
+fn trimmed(url: &str) -> String {
+    url.trim_start_matches("https://")
+        .trim_start_matches("http://")
+        .trim_end_matches('/')
+        .to_owned()
+}
 
 impl SettingsWindow {
     /// Fetch the catalog and each agent's local state, off the UI thread.
@@ -126,6 +152,26 @@ impl SettingsWindow {
         let painter = Painter::of(cx);
         let busy = self.busy.contains(&listing.agent.id);
         let installed = listing.installed.clone();
+        // What this row would actually download, and where it is published.
+        // The spec carries the pinned version; the link drops it, because the
+        // package's own page resolves whether or not that version still does.
+        let npm = match &listing.agent.distribution {
+            Distribution::Npm { package, .. } => Some((
+                SharedString::from(package.clone()),
+                format!(
+                    "https://www.npmjs.com/package/{}",
+                    cacp_agents::package_name(package)
+                ),
+            )),
+            _ => None,
+        };
+        // Where the project itself lives. A proprietary agent publishes no
+        // repository, which is the only link a binary distribution has.
+        let source = listing
+            .agent
+            .repository
+            .clone()
+            .or_else(|| listing.agent.website.clone());
         theme
             .card_row(first)
             .child(
@@ -164,6 +210,20 @@ impl SettingsWindow {
                                     .clone()
                                     .unwrap_or_else(|| listing.agent.id.clone()),
                             ),
+                    )
+                    .child(
+                        div()
+                            .mt(px(2.))
+                            .flex()
+                            .gap(px(8.))
+                            .overflow_hidden()
+                            .text_style(TextStyle::Caption)
+                            .text_color(theme.text_faint)
+                            .children(npm.map(|(spec, url)| link(("npm", ix), spec, url, &theme)))
+                            .children(source.map(|url| {
+                                let label = SharedString::from(trimmed(&url));
+                                link(("source", ix), label, url, &theme)
+                            })),
                     ),
             )
             .children(
@@ -211,7 +271,58 @@ impl SettingsWindow {
 
     /// The agents section: everything the registry publishes, installed first
     /// so what you already have is what you see.
+    /// The gate over every session. First in the section because nothing below
+    /// it can run while it is off.
+    fn gate_row(&self, cx: &Context<Self>) -> impl IntoElement + use<> {
+        let theme = Theme::of(cx).clone();
+        let on = self.workspace.read(cx).settings.agents_enabled;
+        theme
+            .card_row(true)
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .child(theme.row_title("Enable agents"))
+                    .child(
+                        div()
+                            .mt(px(4.))
+                            .text_style(TextStyle::Subheadline)
+                            .text_color(theme.text_muted)
+                            .child(
+                                "Agents run as downloaded packages on this machine. \
+                                 Sessions cannot be opened while this is off.",
+                            ),
+                    ),
+            )
+            .child(
+                div()
+                    .id("enable-agents")
+                    .cursor_pointer()
+                    .child(theme.toggle(on))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.workspace
+                            .update(cx, |workspace, cx| workspace.set_agents_enabled(!on, cx));
+                        cx.notify();
+                    })),
+            )
+    }
+
     pub(super) fn agents_body(&self, cx: &Context<Self>) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        div()
+            .flex()
+            .flex_col()
+            .children(self.error.clone().map(|err| theme.error_strip(err)))
+            .child(theme.group_box().child(self.gate_row(cx)))
+            .child(theme.field_label("Clients").mt(px(24.)))
+            .child(self.catalogue(cx))
+            .into_any_element()
+    }
+
+    /// What the registry offers, once it has answered.
+    fn catalogue(&self, cx: &Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let Some(listings) = self.listings.as_ref() else {
             return theme
@@ -247,11 +358,6 @@ impl SettingsWindow {
         for (nth, ix) in order.into_iter().enumerate() {
             rows.push(self.agent_row(ix, &listings[ix], nth == 0, cx));
         }
-        div()
-            .flex()
-            .flex_col()
-            .children(self.error.clone().map(|err| theme.error_strip(err)))
-            .child(theme.group_box().children(rows))
-            .into_any_element()
+        theme.group_box().children(rows).into_any_element()
     }
 }

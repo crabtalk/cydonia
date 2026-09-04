@@ -15,7 +15,10 @@
 
 use crate::model::project;
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::{
+    cmp::Reverse,
+    path::{Path, PathBuf},
+};
 
 /// Where a project's boards live, and what the one board a project used to be
 /// allowed was called.
@@ -134,8 +137,7 @@ impl Spot {
     }
 }
 
-/// This project's boards, oldest first — the file names are stamps, so sorting
-/// them is sorting by age.
+/// This project's boards, most recently written first.
 pub fn list(project: &Path) -> Vec<Board> {
     let dir = project::dir(project);
     migrate(&dir);
@@ -147,7 +149,7 @@ pub fn list(project: &Path) -> Vec<Board> {
         .map(|entry| entry.path())
         .filter(|path| path.extension().is_some_and(|ext| ext == "toml"))
         .collect();
-    paths.sort();
+    paths.sort_by_key(|path| Reverse(project::written(path)));
     paths.into_iter().filter_map(read).collect()
 }
 

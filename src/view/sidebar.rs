@@ -13,7 +13,7 @@ use crate::{
 use bezel::{
     gpui::{
         self, AnyElement, Context, Div, Empty, Focusable as _, FontWeight, Hsla, MouseButton,
-        SharedString, Stateful, Window, div, prelude::*, px, svg,
+        ScrollStrategy, SharedString, Stateful, Window, div, prelude::*, px, svg, uniform_list,
     },
     motion::Painter,
     theme::{TextStyle, Theme, Typeset},
@@ -26,6 +26,7 @@ use bezel::{
         widgets::{Buttons, Layout},
     },
 };
+use std::ops::Range;
 
 /// What the sidebar needs of a session to draw its row, read out of the model
 /// before the row is built: a turn in flight puts a thinking orb in the mark's
@@ -38,6 +39,18 @@ struct SessionRow {
     archived: bool,
 }
 
+/// One line of the sidebar. An address, not content: the label behind it is
+/// read when the row is built, which [`uniform_list`] only does for the rows on
+/// screen.
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum Row {
+    Project(usize),
+    Session { project: usize, id: u64 },
+    Board { project: usize, ix: usize },
+    Article { project: usize, ix: usize },
+    Table { project: usize, ix: usize },
+}
+
 /// What the sidebar's name field is attached to. One field for both, because
 /// only one row can be being named at a time.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -45,6 +58,13 @@ pub(crate) enum Renaming {
     Session(u64),
     Board { project: usize, ix: usize },
 }
+
+/// The wash a row paints, and — with the 1px either side of it that used to be
+/// the column's gap — the pitch the list lays every row out at. One height for
+/// headings and rows alike, because [`uniform_list`] measures a single row and
+/// gives every other one the same.
+const ROW_PILL: f32 = 30.;
+pub(crate) const ROW_HEIGHT: f32 = ROW_PILL + 2.;
 
 /// The box every row under a project heading sits in: indented beneath the
 /// heading, and carrying the wash that says which one is open.
@@ -60,9 +80,14 @@ pub(crate) fn row(
     div()
         .id(id)
         .group(group)
+        .h(px(ROW_PILL))
         .ml(px(root::SIDEBAR_GUTTER))
         .mr(px(root::SIDEBAR_GUTTER))
         .px(px(root::SIDEBAR_GUTTER))
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(8.))
         .rounded(px(Theme::control_radius()))
         .cursor_pointer()
         .when(selected, |el| el.bg(theme.element_active))
@@ -71,7 +96,8 @@ pub(crate) fn row(
         .when(!selected, |el| el.hover(|el| el.bg(theme.element_hover)))
 }
 
-/// The plate's own inset around the control it holds.
+/// The inset [`Buttons::control_group`] holds its controls at, mirrored here
+/// because the height below is measured from it and bezel keeps it private.
 const CLUSTER_PAD: f32 = 2.;
 
 /// The floating cluster's height, half of which is the pill's radius: a ghost
@@ -96,8 +122,8 @@ fn row_label(name: String, tint: Hsla) -> AnyElement {
 impl Cydonia {
     pub(crate) fn sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
-        let count = self.workspace.read(cx).projects.len();
-        let sections: Vec<AnyElement> = (0..count).map(|ix| self.project_section(ix, cx)).collect();
+        let rows = self.rows(cx);
+        let count = rows.len();
         div()
             .flex_none()
             .w(px(self.sidebar_width))
@@ -110,9 +136,9 @@ impl Cydonia {
             .border_color(theme.border)
             .flex()
             .flex_col()
-            // Both controls out at the trailing edge, the fold last: the
-            // lights float in the leading half of the strip, which is what
-            // leaves nothing there to pad them clear of.
+            // The fold out at the trailing edge: the lights float in the
+            // leading half of the strip, which is what leaves nothing there to
+            // pad them clear of.
             .child(
                 div()
                     .flex_none()
@@ -122,58 +148,66 @@ impl Cydonia {
                     .flex_row()
                     .items_center()
                     .justify_end()
-                    .gap(px(4.))
+                    .child(self.fold_toggle(theme.text_faint, cx)),
+            )
+            .child(
+                uniform_list(
+                    "project-list",
+                    count,
+                    cx.processor(move |this, range: Range<usize>, _, cx| {
+                        range.map(|ix| this.sidebar_row(rows[ix], cx)).collect()
+                    }),
+                )
+                .track_scroll(&self.rail)
+                .flex_1()
+                .min_h_0(),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .mx(px(8.))
+                    .mb(px(8.))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        theme
+                            .ghost("settings")
+                            .px(px(8.))
+                            .py(px(6.))
+                            .gap(px(8.))
+                            .child(
+                                icons::icon(icons::SETTINGS_MINIMALISTIC)
+                                    .size(px(13.))
+                                    .text_color(theme.text_faint),
+                            )
+                            .child(
+                                div()
+                                    .text_style(TextStyle::Body)
+                                    .text_color(theme.text_muted)
+                                    .child("Settings"),
+                            )
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.open_settings(Section::Appearance, cx)
+                            })),
+                    )
                     .child(
                         theme
                             .ghost("open-project")
-                            .p(px(4.))
+                            .px(px(8.))
+                            .py(px(6.))
                             .tooltip(|window, cx| {
                                 Tooltip::with_keystroke("New project", "⌘O", window, cx)
                             })
                             .child(
-                                icons::icon(icons::PLUS)
-                                    .size(px(14.))
+                                icons::icon(icons::DOCUMENT_ADD)
+                                    .size(px(13.))
                                     .text_color(theme.text_faint),
                             )
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.open_project_action(&OpenProject, window, cx);
                             })),
-                    )
-                    .child(self.fold_toggle(theme.text_faint, cx)),
-            )
-            .child(
-                div()
-                    .id("project-list")
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .flex()
-                    .flex_col()
-                    .gap(px(12.))
-                    .children(sections),
-            )
-            .child(
-                theme
-                    .ghost("settings")
-                    .flex_none()
-                    .mx(px(8.))
-                    .mb(px(8.))
-                    .px(px(8.))
-                    .py(px(6.))
-                    .gap(px(8.))
-                    .child(
-                        icons::icon(icons::SETTINGS_MINIMALISTIC)
-                            .size(px(13.))
-                            .text_color(theme.text_faint),
-                    )
-                    .child(
-                        div()
-                            .text_style(TextStyle::Body)
-                            .text_color(theme.text_muted)
-                            .child("Settings"),
-                    )
-                    .on_click(
-                        cx.listener(|this, _, _, cx| this.open_settings(Section::Appearance, cx)),
                     ),
             )
     }
@@ -188,7 +222,8 @@ impl Cydonia {
     /// choose.
     pub(crate) fn fold_cluster(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
-        div()
+        theme
+            .control_group()
             .absolute()
             .top(px((root::HEADER_HEIGHT - CLUSTER_HEIGHT) / 2.))
             // Full screen takes the lights away, and the room they needed
@@ -199,10 +234,9 @@ impl Cydonia {
                 root::TOOLBAR_INSET
             }))
             .h(px(CLUSTER_HEIGHT))
-            .p(px(CLUSTER_PAD))
+            // A pill, where the group's own corner is cut for a row of square
+            // buttons. Before the glass, which reads the corners off the box.
             .rounded(px(CLUSTER_HEIGHT / 2.))
-            .flex()
-            .flex_row()
             .items_center()
             .child(self.fold_toggle(theme.text, cx))
             // The same glass bezel's own floating bar mounts on. Its
@@ -235,135 +269,185 @@ impl Cydonia {
             .on_click(cx.listener(|this, _, _, cx| this.toggle_sidebar(cx)))
     }
 
-    /// One project in the sidebar: a heading that folds, and everything in the
-    /// project under it.
-    fn project_section(&self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
+    /// One project's heading: it folds, and its `+` opens what can be made in
+    /// the project.
+    fn project_head(&self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
-        let workspace = self.workspace.read(cx);
-        let Some(project) = workspace.projects.get(ix) else {
-            return Empty.into_any_element();
+        let (name, expanded) = match self.workspace.read(cx).projects.get(ix) {
+            Some(project) => (project.name(), project.expanded),
+            None => return Empty.into_any_element(),
         };
-        let expanded = project.expanded;
-        let name = project.name();
-        let sessions: Vec<SessionRow> = project
-            .ordered()
-            .map(|chat| SessionRow {
-                id: chat.id,
-                label: chat.label(),
-                icon: workspace.agent_icon(&chat.entry.name),
-                streaming: chat.streaming,
-                archived: chat.closed,
-            })
-            .collect();
-        let boards: Vec<(usize, String)> = project
-            .boards
-            .iter()
-            .enumerate()
-            .map(|(n, board)| (n, board.label().to_owned()))
-            .collect();
-        let articles: Vec<(usize, String)> = project
-            .articles
-            .iter()
-            .enumerate()
-            .map(|(n, article)| (n, article.label().to_owned()))
-            .collect();
-        let tables: Vec<(usize, String)> = project
-            .tables
-            .iter()
-            .enumerate()
-            .map(|(n, table)| (n, table.name.clone()))
-            .collect();
-
         div()
+            .id(("project", ix))
+            .group("project-head")
+            .mx(px(8.))
+            .px(px(6.))
+            .h(px(ROW_PILL))
+            .rounded(px(Theme::control_radius()))
+            .relative()
             .flex()
-            .flex_col()
-            .gap(px(2.))
+            .flex_row()
+            .items_center()
+            .gap(px(4.))
+            .cursor_pointer()
+            // On the head, not the label: a name's colour is fixed when
+            // its text is laid out, and only this div is stateful enough
+            // to carry the hover that far.
+            .text_color(theme.text_faint)
+            .hover(|el| el.text_color(theme.text))
             .child(
                 div()
-                    .id(("project", ix))
-                    .group("project-head")
-                    .mx(px(8.))
-                    .px(px(6.))
-                    .py(px(4.))
-                    .rounded(px(Theme::control_radius()))
-                    .relative()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(4.))
-                    .cursor_pointer()
-                    // On the head, not the label: a name's colour is fixed when
-                    // its text is laid out, and only this div is stateful enough
-                    // to carry the hover that far.
-                    .text_color(theme.text_faint)
-                    .hover(|el| el.text_color(theme.text))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .text_style(TextStyle::Callout)
-                            .font_weight(FontWeight::MEDIUM)
-                            .child(name),
-                    )
-                    .child(
-                        self.menu_button(
-                            ("project-add", ix),
-                            "project-head",
-                            icons::icon(icons::PLUS)
-                                .size(px(12.))
-                                .text_color(theme.text_faint)
-                                .group_hover("project-head", |el| el.text_color(theme.text)),
-                            Menu::Add(ix),
-                            cx,
-                        )
-                        .children(self.add_menu(ix, cx)),
-                    )
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .text_style(TextStyle::Callout)
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(name),
+            )
+            .child(
+                self.menu_button(
+                    ("project-add", ix),
+                    "project-head",
+                    icons::icon(icons::PLUS)
+                        .size(px(12.))
+                        .text_color(theme.text_faint)
+                        .group_hover("project-head", |el| el.text_color(theme.text)),
+                    Menu::Add(ix),
+                    cx,
+                )
+                .children(self.add_menu(ix, cx)),
+            )
+            .child(
+                theme
+                    .ghost(("project-fold", ix))
+                    .flex_none()
+                    .p(px(3.))
+                    .invisible()
+                    .group_hover("project-head", |el| el.visible())
                     .child(
                         theme
-                            .ghost(("project-fold", ix))
-                            .flex_none()
-                            .p(px(3.))
-                            .invisible()
-                            .group_hover("project-head", |el| el.visible())
-                            .child(
-                                theme
-                                    .disclosure(expanded)
-                                    .text_color(theme.text_faint)
-                                    .group_hover("project-head", |el| el.text_color(theme.text)),
-                            )
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                cx.stop_propagation();
-                                this.toggle_project(ix, cx);
-                            })),
+                            .disclosure(expanded)
+                            .text_color(theme.text_faint)
+                            .group_hover("project-head", |el| el.text_color(theme.text)),
                     )
-                    .children(self.project_menu(ix, cx))
-                    .on_mouse_down(
-                        MouseButton::Right,
-                        cx.listener(move |this, _, _, cx| this.toggle_menu(Menu::Project(ix), cx)),
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| this.toggle_project(ix, cx))),
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.toggle_project(ix, cx);
+                    })),
             )
-            .when(expanded, |section| {
-                section
-                    .children(sessions.into_iter().map(|row| self.session_row(row, cx)))
-                    .children(
-                        boards
-                            .into_iter()
-                            .map(|(n, name)| self.board_row(ix, n, name, cx)),
-                    )
-                    .children(
-                        articles.into_iter().map(|(n, title)| {
-                            self.article_row(ix, n, title, cx).into_any_element()
-                        }),
-                    )
-                    .children(
-                        tables
-                            .into_iter()
-                            .map(|(n, name)| self.table_row(ix, n, name, cx).into_any_element()),
-                    )
-            })
+            .children(self.project_menu(ix, cx))
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, _, _, cx| this.toggle_menu(Menu::Project(ix), cx)),
+            )
+            .on_click(cx.listener(move |this, _, _, cx| this.toggle_project(ix, cx)))
             .into_any_element()
+    }
+
+    /// Every line the sidebar shows, in order. Addresses only: a project with a
+    /// thousand articles costs a thousand `Row`s here and reads a title for
+    /// none of them.
+    pub(crate) fn rows(&self, cx: &Context<Self>) -> Vec<Row> {
+        let workspace = self.workspace.read(cx);
+        let mut rows = Vec::new();
+        for (p, project) in workspace.projects.iter().enumerate() {
+            rows.push(Row::Project(p));
+            if !project.expanded {
+                continue;
+            }
+            rows.extend(project.ordered().map(|chat| Row::Session {
+                project: p,
+                id: chat.id,
+            }));
+            rows.extend((0..project.boards.len()).map(|ix| Row::Board { project: p, ix }));
+            rows.extend((0..project.articles.len()).map(|ix| Row::Article { project: p, ix }));
+            rows.extend((0..project.tables.len()).map(|ix| Row::Table { project: p, ix }));
+        }
+        rows
+    }
+
+    /// Open what a row points at — what a keyboard step does with its landing.
+    /// The pointer never comes through here: each row carries its own
+    /// `on_click`, which needs no [`Row`] to know what it is.
+    pub(crate) fn open_row(&mut self, row: Row, window: &mut Window, cx: &mut Context<Self>) {
+        match row {
+            Row::Project(ix) => self.select_project(ix, cx),
+            Row::Session { id, .. } => self.select_session(id, cx),
+            Row::Board { project, ix } => self.open_board(project, ix, cx),
+            Row::Article { project, ix } => self.open_article(project, ix, window, cx),
+            Row::Table { project, ix } => self.open_table(project, ix, cx),
+        }
+    }
+
+    /// Scroll the rail to a row, if it is not already on screen. `Nearest`
+    /// rather than `Top`: a step to the neighbour below should move the list by
+    /// a row, not throw the one you came from off the top of it.
+    pub(crate) fn reveal(&mut self, row: Row, cx: &Context<Self>) {
+        if let Some(ix) = self.rows(cx).iter().position(|at| *at == row) {
+            self.rail.scroll_to_item(ix, ScrollStrategy::Nearest);
+        }
+    }
+
+    /// One line, built when the list scrolls it into view. The box around it is
+    /// what holds the pitch: the row inside paints the wash, and the pixel
+    /// either side of it is the gap between two.
+    fn sidebar_row(&self, row: Row, cx: &mut Context<Self>) -> AnyElement {
+        let workspace = self.workspace.read(cx);
+        let inner = match row {
+            Row::Project(ix) => self.project_head(ix, cx),
+            Row::Session { project, id } => match self.session_of(project, id, cx) {
+                Some(session) => self.session_row(session, cx),
+                None => Empty.into_any_element(),
+            },
+            Row::Board { project, ix } => {
+                match workspace
+                    .projects
+                    .get(project)
+                    .and_then(|open| open.boards.get(ix).map(|board| board.label().to_owned()))
+                {
+                    Some(name) => self.board_row(project, ix, name, cx),
+                    None => Empty.into_any_element(),
+                }
+            }
+            Row::Article { project, ix } => {
+                match workspace.projects.get(project).and_then(|open| {
+                    open.articles
+                        .get(ix)
+                        .map(|article| article.label().to_owned())
+                }) {
+                    Some(title) => self.article_row(project, ix, title, cx).into_any_element(),
+                    None => Empty.into_any_element(),
+                }
+            }
+            Row::Table { project, ix } => {
+                match workspace
+                    .projects
+                    .get(project)
+                    .and_then(|open| open.tables.get(ix).map(|table| table.name.clone()))
+                {
+                    Some(name) => self.table_row(project, ix, name, cx).into_any_element(),
+                    None => Empty.into_any_element(),
+                }
+            }
+        };
+        div()
+            .h(px(ROW_HEIGHT))
+            .py(px(1.))
+            .child(inner)
+            .into_any_element()
+    }
+
+    /// What the sidebar needs of a session, read when its row comes on screen.
+    fn session_of(&self, project: usize, id: u64, cx: &Context<Self>) -> Option<SessionRow> {
+        let workspace = self.workspace.read(cx);
+        let chat = workspace.projects.get(project)?.session(id)?;
+        Some(SessionRow {
+            id: chat.id,
+            label: chat.label(),
+            icon: workspace.agent_icon(&chat.entry.name),
+            streaming: chat.streaming,
+            archived: chat.closed,
+        })
     }
 
     fn toggle_project(&mut self, ix: usize, cx: &mut Context<Self>) {
@@ -381,14 +465,17 @@ impl Cydonia {
         if self.menu != Some(Menu::Add(ix)) {
             return None;
         }
-        let rows = vec![
-            menu::row(
+        let mut rows = Vec::new();
+        if self.workspace.read(cx).settings.agents_enabled {
+            rows.push(menu::row(
                 Item::action("New session").with_icon(icons::CHAT_ROUND_LINE),
                 move |this, window, cx| {
                     this.select_project(ix, cx);
                     this.new_session_action(&NewSession, window, cx);
                 },
-            ),
+            ));
+        }
+        rows.extend([
             menu::row(
                 Item::action("New board").with_icon(icons::LIST),
                 move |this, _, cx| this.new_board(ix, cx),
@@ -401,7 +488,7 @@ impl Cydonia {
                 Item::action("New table").with_icon(icons::WIDGET),
                 move |this, _, cx| this.new_table(ix, cx),
             ),
-        ];
+        ]);
         let id = SharedString::from(format!("add-menu-{ix}"));
         Some(popover::anchored_menu_below(
             id.clone(),
@@ -474,11 +561,6 @@ impl Cydonia {
         };
 
         row(("session", id), "session-row", selected, &theme)
-            .py(px(6.))
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(8.))
             .child(
                 div()
                     .flex_none()
@@ -539,11 +621,6 @@ impl Cydonia {
             selected,
             &theme,
         )
-        .py(px(6.))
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap(px(8.))
         .child(
             icons::icon(icons::LIST)
                 .size(px(14.))

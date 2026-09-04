@@ -503,11 +503,6 @@ impl Cydonia {
             selected,
             &theme,
         )
-        .py(px(6.))
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap(px(8.))
         .child(
             icons::icon(icons::WIDGET)
                 .size(px(14.))

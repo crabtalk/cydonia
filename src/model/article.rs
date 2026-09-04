@@ -19,8 +19,8 @@ use bezel::{
 use editor::Editor;
 use markdown::Typography;
 use std::{
+    cmp::Reverse,
     path::{Path, PathBuf},
-    time::UNIX_EPOCH,
 };
 
 /// What articles were called before they were named for their age, and what an
@@ -213,7 +213,7 @@ pub fn list(project: &Path) -> Vec<Article> {
         .map(|entry| entry.path().join(CONTENT))
         .filter(|path| path.is_file())
         .collect();
-    paths.sort();
+    paths.sort_by_key(|path| Reverse(project::written(path)));
     paths.into_iter().map(Article::new).collect()
 }
 
@@ -235,16 +235,6 @@ fn free(dir: &Path, stamp: u128) -> PathBuf {
         .unwrap_or_else(|| dir.join(stamp.to_string()))
 }
 
-/// When this file was last written, for an article being given the id it should
-/// have been made with.
-fn written(path: &Path) -> u128 {
-    std::fs::metadata(path)
-        .and_then(|meta| meta.modified())
-        .ok()
-        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
-        .map_or_else(project::stamp, |since| since.as_millis())
-}
-
 /// Articles used to sit loose in `.cydonia/` as `foo.md` beside `foo.cover-N.svg`,
 /// and the stem was the name the sidebar showed. Give each one a directory of
 /// its own age, and keep that stem by writing it in as the title it was.
@@ -263,7 +253,7 @@ fn migrate(dir: &Path) {
         let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
             continue;
         };
-        let to = free(&dir.join(DIR), written(path));
+        let to = free(&dir.join(DIR), project::written(path));
         if std::fs::create_dir_all(&to).is_err() {
             continue;
         }

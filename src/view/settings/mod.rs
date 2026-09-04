@@ -1,7 +1,7 @@
 //! The settings window: a sidebar of sections, and the active section's body
 //! centred under its title.
 //!
-//! A window rather than a sheet, and **opaque** rather than frosted. Settings
+//! A window rather than a sheet, and **opaque** rather than vibrant. Settings
 //! is content, not chrome — a translucent panel would put the app you just
 //! navigated away from directly behind the form you are filling in.
 
@@ -205,6 +205,7 @@ impl SettingsWindow {
             .border_color(theme.border)
             .flex()
             .flex_col()
+            .gap(px(2.))
             .px(px(8.))
             .pb(px(8.))
             // Clears the traffic lights, which have no strip of their own.

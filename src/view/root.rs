@@ -11,17 +11,18 @@ use crate::{
             meter,
         },
         settings::{self, Section, SettingsWindow},
-        sidebar::Renaming,
+        sidebar::{Renaming, Row},
         table,
     },
 };
 use bezel::{
     gpui::{
         self, AnyElement, App, Axis, Context, DragMoveEvent, Empty, Entity, Hsla, KeyBinding,
-        PathPromptOptions, Render, Window, WindowHandle, actions, div, prelude::*, px,
+        PathPromptOptions, Render, UniformListScrollHandle, Window, WindowHandle, actions, div,
+        prelude::*, px,
     },
     motion::{Fade, Painter},
-    theme::{Frost, TextStyle, Theme, Typeset},
+    theme::{Material, TextStyle, Theme, Typeset},
     ui::{
         floating::Floating,
         icons,
@@ -38,7 +39,9 @@ actions!(
         OpenProject,
         OpenSettings,
         CommitName,
-        DismissName
+        DismissName,
+        NextEntry,
+        PrevEntry
     ]
 );
 
@@ -52,11 +55,11 @@ const SIDEBAR_WIDTH_MAX: f32 = 420.;
 /// The sidebar's gutter: a row's outer margin, and the padding inside it.
 pub(crate) const SIDEBAR_GUTTER: f32 = 8.;
 
-/// How deep each column's frost sits. Nothing paints beneath them, so these are
-/// absolute and independent: the sidebar is chrome and holds no long-form text,
-/// the panel is the column whose text has to win against the desktop.
-const SIDEBAR_FROST: Frost = Frost::Thick;
-const CONTENT_FROST: Frost = Frost::UltraThick;
+/// How thick each column's material sits. Nothing paints beneath them, so these
+/// are absolute and independent: the sidebar is chrome and holds no long-form
+/// text, the panel is the column whose text has to win against the desktop.
+const SIDEBAR_MATERIAL: Material = Material::Thick;
+const CONTENT_MATERIAL: Material = Material::UltraThick;
 
 /// The header strip's height, measured off `../desktop`: between Cursor's 34
 /// and Notion's 36, and tall enough to hold the 14px traffic lights macOS 26
@@ -87,21 +90,22 @@ pub(crate) const COMPOSER_BOTTOM: f32 = 20.;
 /// `surface` is the grey the content plane's white sits inside, and falling
 /// back to the panel would leave the two columns one flat sheet.
 pub(crate) fn sidebar_bg(theme: &Theme) -> Hsla {
-    frost(theme, SIDEBAR_FROST).unwrap_or(theme.surface)
+    material(theme, SIDEBAR_MATERIAL).unwrap_or(theme.surface)
 }
 
 /// The content column's fill.
 pub(crate) fn content_bg(theme: &Theme) -> Hsla {
-    frost(theme, CONTENT_FROST).unwrap_or(theme.bg)
+    material(theme, CONTENT_MATERIAL).unwrap_or(theme.bg)
 }
 
-/// A column's own tint at one thickness on the frost scale, or nothing where
-/// the window shows no desktop to sit over. The scale's tone is a neutral scrim
-/// and carries no appearance — tinting it is what makes dark glass dark.
-fn frost(theme: &Theme, thickness: Frost) -> Option<Hsla> {
-    theme.glass_window().then(|| Hsla {
+/// A column's own tint at one thickness on the material ladder, or nothing
+/// where the window shows no desktop to sit over. The ladder's tone is a
+/// neutral scrim and carries no appearance — tinting it is what makes dark
+/// glass dark.
+fn material(theme: &Theme, thickness: Material) -> Option<Hsla> {
+    theme.vibrancy.then(|| Hsla {
         a: thickness.opacity(),
-        ..theme.glass()
+        ..theme.vibrancy_tint()
     })
 }
 
@@ -139,6 +143,11 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-o", OpenProject, None),
         // What macOS binds Preferences to in every other app.
         KeyBinding::new("cmd-,", OpenSettings, None),
+        // What a browser binds its tabs to. Global, because the point is to
+        // move between documents without taking the hand out of the editor —
+        // where `tab` itself is indent.
+        KeyBinding::new("ctrl-tab", NextEntry, None),
+        KeyBinding::new("ctrl-shift-tab", PrevEntry, None),
         KeyBinding::new("enter", CommitName, Some(RENAME_CONTEXT)),
         KeyBinding::new("escape", DismissName, Some(RENAME_CONTEXT)),
     ]);
@@ -152,6 +161,16 @@ pub enum Pane {
     Board,
     Article,
     Table,
+}
+
+/// One step from `at` through `len` entries, wrapping — a list of none has
+/// nowhere to land.
+fn stepped(at: Option<usize>, len: usize, step: isize) -> Option<usize> {
+    if len == 0 {
+        return None;
+    }
+    let at = at.unwrap_or(0) as isize;
+    Some((at + step).rem_euclid(len as isize) as usize)
 }
 
 /// The root view. It owns no app state — only the chrome's own: how wide the
@@ -174,6 +193,9 @@ pub struct Cydonia {
     pub(crate) name_field: Entity<TextField>,
     meter: Entity<Stats>,
     meter_at: Floating,
+    /// The rail's scroll. A step taken from the keyboard has to bring its
+    /// landing into view; the list does not scroll itself.
+    pub(crate) rail: UniformListScrollHandle,
 }
 
 impl Cydonia {
@@ -221,6 +243,7 @@ impl Cydonia {
             menu: None,
             renaming: None,
             name_field,
+            rail: UniformListScrollHandle::new(),
         };
         this.sync_composer(cx);
         this
@@ -238,6 +261,65 @@ impl Cydonia {
                 workspace.new_session(entry, None, cx);
             }
         });
+    }
+
+    pub(crate) fn next_entry(
+        &mut self,
+        _: &NextEntry,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.cycle_entry(1, window, cx);
+    }
+
+    pub(crate) fn prev_entry(
+        &mut self,
+        _: &PrevEntry,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.cycle_entry(-1, window, cx);
+    }
+
+    /// Step to the next entry of the kind already open, wrapping at the ends.
+    ///
+    /// Inside the project and inside the kind: an article's neighbour is
+    /// another article, because stepping from one into a board would swap the
+    /// pane under the caret for something that reads nothing like it.
+    fn cycle_entry(&mut self, step: isize, window: &mut Window, cx: &mut Context<Self>) {
+        let pane = self.showing(cx);
+        let workspace = self.workspace.read(cx);
+        let Some(project) = workspace.active else {
+            return;
+        };
+        let Some(open) = workspace.projects.get(project) else {
+            return;
+        };
+        // Held across the read, because opening one wants the app mutably.
+        let landing =
+            match pane {
+                Pane::Chat => {
+                    let ids: Vec<u64> = open.ordered().map(|chat| chat.id).collect();
+                    let at = open
+                        .active
+                        .and_then(|id| ids.iter().position(|open| *open == id));
+                    stepped(at, ids.len(), step).map(|ix| Row::Session {
+                        project,
+                        id: ids[ix],
+                    })
+                }
+                Pane::Article => stepped(open.article, open.articles.len(), step)
+                    .map(|ix| Row::Article { project, ix }),
+                Pane::Board => stepped(open.board, open.boards.len(), step)
+                    .map(|ix| Row::Board { project, ix }),
+                Pane::Table => stepped(open.table, open.tables.len(), step)
+                    .map(|ix| Row::Table { project, ix }),
+            };
+        let Some(landing) = landing else {
+            return;
+        };
+        self.open_row(landing, window, cx);
+        self.reveal(landing, cx);
     }
 
     /// Leaving a project is the moment a half-written card has to be filed:
@@ -307,17 +389,28 @@ impl Cydonia {
     }
 
     /// Which pane is on screen, as against [`Self::pane`], which is the one
-    /// asked for. They part when the article it points at is gone — deleted,
-    /// or in a project that has none open — and the conversation stands in.
-    /// The sidebar reads this, not the request: a row lit for a pane nobody can
-    /// see is the second selection the eye finds.
+    /// asked for. They part when what it points at is gone — deleted, or in a
+    /// project that has none open — and whatever the project does have stands
+    /// in, so a launch lands on the entry it was left on rather than on an
+    /// empty conversation. The sidebar reads this, not the request: a row lit
+    /// for a pane nobody can see is the second selection the eye finds.
     pub(crate) fn showing(&self, cx: &App) -> Pane {
-        match self.pane {
-            Pane::Board if self.workspace.read(cx).active_board().is_none() => Pane::Chat,
-            Pane::Article if self.workspace.read(cx).active_article().is_none() => Pane::Chat,
-            Pane::Table if self.workspace.read(cx).active_table().is_none() => Pane::Chat,
-            pane => pane,
+        let open = |pane| {
+            let workspace = self.workspace.read(cx);
+            match pane {
+                Pane::Chat => workspace.active_session().is_some(),
+                Pane::Board => workspace.active_board().is_some(),
+                Pane::Article => workspace.active_article().is_some(),
+                Pane::Table => workspace.active_table().is_some(),
+            }
+        };
+        if open(self.pane) {
+            return self.pane;
         }
+        [Pane::Chat, Pane::Board, Pane::Article, Pane::Table]
+            .into_iter()
+            .find(|&pane| open(pane))
+            .unwrap_or(Pane::Chat)
     }
 
     /// Nothing is open, so there is nowhere to send a prompt — the only thing
@@ -364,6 +457,8 @@ impl Render for Cydonia {
             .on_action(cx.listener(Self::dismiss_cell))
             .on_action(cx.listener(Self::open_project_action))
             .on_action(cx.listener(Self::open_settings_action))
+            .on_action(cx.listener(Self::next_entry))
+            .on_action(cx.listener(Self::prev_entry))
             .on_action(cx.listener(Self::commit_name))
             .on_action(cx.listener(Self::dismiss_name))
             .on_drag_move(

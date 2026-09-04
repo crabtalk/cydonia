@@ -7,6 +7,11 @@ use std::{collections::BTreeMap, path::PathBuf};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Settings {
+    /// Whether agents may be launched. Off until asked for: every agent is a
+    /// JS package this machine downloads and runs. Declared above `agents`
+    /// because a bare key after `[[agents]]` would belong to that table.
+    #[serde(default)]
+    pub agents_enabled: bool,
     #[serde(default)]
     pub agents: Vec<Agent>,
 }
@@ -26,6 +31,29 @@ pub struct Agent {
     pub env: BTreeMap<String, String>,
 }
 
+/// The launchers that resolve a package name on every run. An installed
+/// agent's command is a path to an unpacked executable, which resolves nothing.
+const RUNNERS: [&str; 3] = ["npx", "bunx", "pnpx"];
+
+impl Agent {
+    /// Whether every npm package this entry names carries an exact version.
+    /// `npx pkg@latest` resolves against the registry on every launch, which is
+    /// a different program each time.
+    pub fn pinned(&self) -> bool {
+        if !RUNNERS.contains(&self.command.as_str()) {
+            return true;
+        }
+        self.args
+            .iter()
+            .filter(|arg| !arg.starts_with('-'))
+            .all(|spec| {
+                let name = cacp_agents::package_name(spec);
+                spec.len() > name.len()
+                    && spec[name.len() + 1..].starts_with(|c: char| c.is_ascii_digit())
+            })
+    }
+}
+
 impl Default for Settings {
     fn default() -> Self {
         let npx = |name: &str, pkg: &str| Agent {
@@ -35,10 +63,13 @@ impl Default for Settings {
             args: vec!["-y".into(), pkg.into()],
             env: BTreeMap::new(),
         };
+        // `npx` resolves a dist-tag against the npm registry on every launch,
+        // so these carry the version the ACP registry pins.
         Self {
+            agents_enabled: false,
             agents: vec![
-                npx("claude", "@agentclientprotocol/claude-agent-acp@latest"),
-                npx("codex", "@agentclientprotocol/codex-acp@latest"),
+                npx("claude", "@agentclientprotocol/claude-agent-acp@0.73.0"),
+                npx("codex", "@agentclientprotocol/codex-acp@1.8.0"),
             ],
         }
     }
@@ -89,7 +120,26 @@ pub fn load() -> Result<Settings> {
         return Ok(settings);
     }
     let content = std::fs::read_to_string(&path)?;
-    toml::from_str(&content).with_context(|| format!("invalid settings: {}", path.display()))
+    let mut settings: Settings = toml::from_str(&content)
+        .with_context(|| format!("invalid settings: {}", path.display()))?;
+    // A floating tag is a different program on every launch. The line stays in
+    // the file, where it can be read and fixed; it just never launches.
+    settings.agents.retain(Agent::pinned);
+    Ok(settings)
+}
+
+/// Turn the agent gate on or off in the file.
+///
+/// Edited with `toml_edit` for the reason [`put_agent`] is: the file is meant
+/// to be opened by hand, and a round trip would drop every comment in it.
+pub fn set_agents_enabled(on: bool) -> Result<()> {
+    let path = dir()?.join("settings.toml");
+    let body = std::fs::read_to_string(&path).unwrap_or_default();
+    let mut doc: toml_edit::DocumentMut =
+        body.parse().context("settings.toml is not valid toml")?;
+    doc["agents_enabled"] = toml_edit::value(on);
+    std::fs::write(&path, doc.to_string())?;
+    Ok(())
 }
 
 /// Put `agent` in the file, replacing whichever entry already launches it.

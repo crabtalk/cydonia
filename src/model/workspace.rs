@@ -24,9 +24,10 @@ use crate::{
 use bezel::{
     gpui::{App, Context, EntityId, SharedString},
     theme::{self, Brand, Theme, Tint, appearance::AppearanceMode},
+    ui::input,
 };
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     path::{Path, PathBuf},
 };
 
@@ -42,6 +43,7 @@ pub struct Workspace {
     pub active: Option<usize>,
     pub appearance: AppearanceMode,
     pub reduce_transparency: bool,
+    pub cursor_blink: bool,
     /// Session ids are minted here and never reused, so a card's link to the
     /// session it opened stays unambiguous for the life of the process.
     next_id: u64,
@@ -55,6 +57,9 @@ pub struct Workspace {
     /// The registry's mark for each configured agent, by name. Empty until the
     /// catalog lands, and stays empty offline.
     agent_icons: HashMap<String, SharedString>,
+    /// What each project was last showing, by project path — where a launch
+    /// puts you back.
+    last: BTreeMap<PathBuf, state::Entry>,
 }
 
 impl Workspace {
@@ -68,24 +73,30 @@ impl Workspace {
             active,
             appearance: state.appearance,
             reduce_transparency: state.reduce_transparency,
+            cursor_blink: state.cursor_blink,
             text_size: state.text_size,
             tint: Tint::new(state.hue, state.chroma),
             meter: false,
             next_id: 0,
             agent_icons: HashMap::new(),
+            last: state.last,
         };
         for ix in restore {
             this.restore_sessions(ix);
         }
-        this.open_first_session(cx);
+        this.open_last_entry(cx);
         this.load_agent_icons(cx);
         // Temporary dev hook: `CYDONIA_TEST_PROMPT` sends a prompt on launch
         // so a turn can be verified without a composer. Here rather than on
         // connect, which a resume would fire again.
-        if let Ok(prompt) = std::env::var("CYDONIA_TEST_PROMPT")
-            && let Some(id) = this.active_id()
-        {
-            this.send(id, prompt, cx);
+        if let Ok(prompt) = std::env::var("CYDONIA_TEST_PROMPT") {
+            let id = this.active_id().or_else(|| {
+                let entry = this.settings.agents.first().cloned()?;
+                this.new_session(entry, None, cx)
+            });
+            if let Some(id) = id {
+                this.send(id, prompt, cx);
+            }
         }
         this
     }
@@ -96,9 +107,11 @@ impl Workspace {
             active: self.active.unwrap_or_default(),
             appearance: self.appearance,
             reduce_transparency: self.reduce_transparency,
+            cursor_blink: self.cursor_blink,
             text_size: self.text_size,
             hue: self.tint.hue,
             chroma: self.tint.chroma,
+            last: self.last.clone(),
         });
     }
 
@@ -162,6 +175,26 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Let agents run, or stop them running. Written through to `settings.toml`
+    /// rather than app state: it is the file the gate is read back from.
+    /// A failed write leaves both halves alone, so the switch stays where it
+    /// was rather than claiming a gate the file does not carry.
+    pub fn set_agents_enabled(&mut self, on: bool, cx: &mut Context<Self>) {
+        if settings::set_agents_enabled(on).is_err() {
+            return;
+        }
+        self.settings.agents_enabled = on;
+        cx.notify();
+    }
+
+    /// The caret is bezel's, so the setting is: nothing here reads it back.
+    pub fn set_cursor_blink(&mut self, blink: bool, cx: &mut Context<Self>) {
+        self.cursor_blink = blink;
+        input::set_caret_blink(blink, cx);
+        self.save();
+        cx.notify();
+    }
+
     pub fn set_text_size(&mut self, points: f32, cx: &mut Context<Self>) {
         self.text_size = points;
         theme::set_base_text_size(points, cx);
@@ -178,18 +211,22 @@ impl Workspace {
 
     // ── projects ─────────────────────────────────────────────────────
 
+    /// A project just added starts talking to an agent; one already on the
+    /// rail is only brought forward.
     pub fn open_project(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        let open = self.projects.iter().position(|p| p.path == path);
-        let ix = match open {
-            Some(ix) => ix,
-            None => {
-                self.projects.push(Project::new(path));
-                let ix = self.projects.len() - 1;
-                self.restore_sessions(ix);
-                ix
-            }
-        };
+        if let Some(ix) = self.projects.iter().position(|p| p.path == path) {
+            self.select_project(ix, cx);
+            return;
+        }
+        self.projects.push(Project::new(path));
+        let ix = self.projects.len() - 1;
+        self.restore_sessions(ix);
         self.select_project(ix, cx);
+        if self.projects[ix].sessions.is_empty()
+            && let Some(entry) = self.settings.agents.first().cloned()
+        {
+            self.new_session(entry, None, cx);
+        }
     }
 
     pub fn select_project(&mut self, ix: usize, cx: &mut Context<Self>) {
@@ -197,7 +234,7 @@ impl Workspace {
             return;
         }
         self.active = Some(ix);
-        self.open_first_session(cx);
+        self.open_last_entry(cx);
         self.save();
         cx.notify();
     }
@@ -213,32 +250,74 @@ impl Workspace {
             let next = if active > ix { active - 1 } else { active };
             (!self.projects.is_empty()).then(|| next.min(self.projects.len() - 1))
         });
-        self.open_first_session(cx);
+        self.open_last_entry(cx);
         self.save();
         cx.notify();
     }
 
-    /// A project talks to an agent the moment it is looked at: the tab in
-    /// front opens its first session, and the tabs behind it spawn nothing.
+    /// Put the project in front back where it was left — the entry it was last
+    /// showing, of whichever kind. Nothing is connected by it: a session opened
+    /// this way stays idle until something is sent to it.
     ///
-    /// A project with sessions read back from disk shows its most recent one
-    /// rather than opening a second beside it — nothing there is connected
-    /// until something is sent to it.
-    fn open_first_session(&mut self, cx: &mut Context<Self>) {
-        let Some(project) = self.active.and_then(|ix| self.projects.get_mut(ix)) else {
+    /// The remembered entry is found by its own identity rather than by
+    /// position, because a sibling added or removed between launches shifts
+    /// every index after it.
+    fn open_last_entry(&mut self, cx: &mut Context<Self>) {
+        let Some(ix) = self.active else {
             return;
         };
-        if project.active.is_some() {
+        let Some(entry) = self
+            .projects
+            .get(ix)
+            .and_then(|open| self.last.get(&open.path))
+        else {
             return;
-        }
-        if let Some(id) = project.sessions.last().map(|chat| chat.id) {
-            project.active = Some(id);
-            cx.notify();
+        };
+        let (kind, id) = (entry.kind, entry.id.clone());
+        let Some(project) = self.projects.get_mut(ix) else {
             return;
+        };
+        let at = |path: Option<&Path>| path.is_some_and(|path| path.to_string_lossy() == id);
+        match kind {
+            state::Kind::Session => {
+                project.active = project
+                    .sessions
+                    .iter()
+                    .find(|chat| at(chat.file.as_deref()))
+                    .map(|chat| chat.id);
+            }
+            state::Kind::Board => {
+                project.board = project
+                    .boards
+                    .iter()
+                    .position(|board| at(Some(&board.path)));
+            }
+            state::Kind::Article => {
+                project.article = project
+                    .articles
+                    .iter()
+                    .position(|article| at(Some(&article.path)));
+                if let Some(at) = project.article {
+                    project.articles[at].open(cx);
+                }
+            }
+            state::Kind::Table => {
+                project.table = project.tables.iter().position(|table| table.key == id);
+                project.reload_page();
+            }
         }
-        if let Some(entry) = self.settings.agents.first().cloned() {
-            self.new_session(entry, None, cx);
-        }
+        cx.notify();
+    }
+
+    /// Remember the entry a project is now showing, so the next launch lands on
+    /// it. Every way of opening one arrives here.
+    fn remember(&mut self, project: usize, kind: state::Kind, id: String) {
+        let Some(open) = self.projects.get(project) else {
+            return;
+        };
+        self.last
+            .insert(open.path.clone(), state::Entry { kind, id });
+        self.save();
     }
 
     pub fn active_project(&self) -> Option<&Project> {
@@ -254,12 +333,18 @@ impl Workspace {
 
     /// Open a session in the active project. `seed` is its first prompt, sent
     /// as soon as the agent is up — what a dispatched card rides in on.
+    ///
+    /// The one place a session is born, so it is where the agent gate bites:
+    /// nothing spawns an agent until the user has turned agents on.
     pub fn new_session(
         &mut self,
         entry: settings::Agent,
         seed: Option<String>,
         cx: &mut Context<Self>,
     ) -> Option<u64> {
+        if !self.settings.agents_enabled {
+            return None;
+        }
         let ix = self.active?;
         let id = self.next_id;
         self.next_id += 1;
@@ -278,9 +363,18 @@ impl Workspace {
             return;
         };
         self.projects[ix].active = Some(id);
-        if self.active != Some(ix) {
-            self.active = Some(ix);
-            self.save();
+        self.active = Some(ix);
+        // A session has no file until its first turn is written, so one that
+        // has said nothing is not yet somewhere to come back to.
+        if let Some(file) = self.projects[ix]
+            .session(id)
+            .and_then(|chat| chat.file.clone())
+        {
+            self.remember(
+                ix,
+                state::Kind::Session,
+                file.to_string_lossy().into_owned(),
+            );
         }
         cx.notify();
     }
@@ -321,6 +415,9 @@ impl Workspace {
     /// Send to a session, starting an agent for it when it has none — typing
     /// into a session read back from disk is what picks it up again.
     pub fn send(&mut self, id: u64, content: String, cx: &mut Context<Self>) {
+        // Read before `chat` borrows the projects. This is the second place an
+        // agent process starts, so it is the second half of the gate.
+        let enabled = self.settings.agents_enabled;
         let found = self
             .projects
             .iter_mut()
@@ -328,10 +425,28 @@ impl Workspace {
         let Some(chat) = found else {
             return;
         };
+        // Said out loud rather than queued: with no agent to drain it, a
+        // prompt pushed onto the queue reads as a message that went nowhere.
+        if !enabled && !chat.live() {
+            chat.notice(
+                true,
+                "agents are disabled — turn them on in Settings › Agents",
+            );
+            cx.notify();
+            return;
+        }
         if chat.idle() && chat.resumable() {
             chat.resume(cx);
         }
         chat.send(content);
+        let file = chat.file.clone();
+        if let (Some(file), Some(ix)) = (file, self.project_of(id)) {
+            self.remember(
+                ix,
+                state::Kind::Session,
+                file.to_string_lossy().into_owned(),
+            );
+        }
         cx.notify();
     }
 
@@ -360,7 +475,7 @@ impl Workspace {
         }
         project.sessions.retain(|chat| chat.id != id);
         if project.active == Some(id) {
-            project.active = project.sessions.last().map(|chat| chat.id);
+            project.active = project.sessions.first().map(|chat| chat.id);
         }
         cx.notify();
     }
@@ -429,10 +544,9 @@ impl Workspace {
             return;
         }
         open.board = Some(ix);
-        if self.active != Some(project) {
-            self.active = Some(project);
-            self.save();
-        }
+        let id = open.boards[ix].path.to_string_lossy().into_owned();
+        self.active = Some(project);
+        self.remember(project, state::Kind::Board, id);
         cx.notify();
     }
 
@@ -506,10 +620,12 @@ impl Workspace {
         };
         article.open(cx);
         self.projects[project].article = Some(ix);
-        if self.active != Some(project) {
-            self.active = Some(project);
-            self.save();
-        }
+        let id = self.projects[project].articles[ix]
+            .path
+            .to_string_lossy()
+            .into_owned();
+        self.active = Some(project);
+        self.remember(project, state::Kind::Article, id);
         cx.notify();
     }
 
@@ -607,10 +723,9 @@ impl Workspace {
         }
         open.table = Some(ix);
         open.reload_page();
-        if self.active != Some(project) {
-            self.active = Some(project);
-            self.save();
-        }
+        let id = open.tables[ix].key.clone();
+        self.active = Some(project);
+        self.remember(project, state::Kind::Table, id);
         cx.notify();
     }
 
@@ -782,7 +897,7 @@ impl Workspace {
     }
 }
 
-/// Point bezel's frost alpha at the preference. Free rather than a method
+/// Point bezel's tint at the preference. Free rather than a method
 /// because the window reads its background appearance while it is being opened,
 /// which is before there is a workspace to ask.
 pub fn apply_tint(tint: Tint, cx: &mut App) {
@@ -795,11 +910,16 @@ pub fn apply_tint(tint: Tint, cx: &mut App) {
     );
 }
 
+/// Two answers, because bezel asks two questions: the window stops compositing
+/// translucent, and the tint over it goes opaque. Chrome keeps its layers —
+/// an opaque window carrying them is what this setting asks for, and what the
+/// system's own does not do.
 pub fn apply_transparency(reduce: bool, cx: &mut App) {
-    let glass = if reduce { 1.0 } else { Theme::GLASS_ALPHA };
+    let alpha = if reduce { 1.0 } else { Theme::VIBRANCY_ALPHA };
     theme::set_brand(
         Brand {
-            glass,
+            vibrancy_alpha: alpha,
+            vibrancy: !reduce,
             ..theme::brand(cx)
         },
         cx,

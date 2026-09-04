@@ -15,10 +15,10 @@ path = "bin/main.rs"
 # bezel — the component library the GUI is built on. Published as `bezel-*`;
 # the keys here are what the source imports. `platform` carries gpui_platform,
 # which opens the window: gpui core knows no platform of its own.
-bezel = { version = "0.1.4", features = ["platform"] }
-editor = { version = "0.1.4", package = "bezel-editor" }
-markdown = { version = "0.1.4", package = "bezel-markdown" }
-syntax = { version = "0.1.4", package = "bezel-syntax" }
+bezel = { version = "0.1.5", features = ["platform"] }
+editor = { version = "0.1.5", package = "bezel-editor" }
+markdown = { version = "0.1.5", package = "bezel-markdown" }
+syntax = { version = "0.1.5", package = "bezel-syntax" }
 
 # cacp — our ACP implementation. A sibling checkout while both move together.
 cacp = { path = "../cacp/crates/cacp", default-features = false, features = [
@@ -50,16 +50,3 @@ toml_edit = "0.22"
 # Downloads the registry's agent icons. The same client cacp-agents fetches
 # the catalog with, so this adds no second HTTP stack.
 ureq = "3"
-
-# bezel is being fixed in a worktree beside this checkout. Every bezel-* crate
-# in the graph has to come from there together: two copies of the token system
-# is a second type universe, and the window paints shapes but no text.
-[patch.crates-io]
-bezel = { path = "../bezel/crates/bezel" }
-bezel-agent = { path = "../bezel/crates/agent" }
-bezel-editor = { path = "../bezel/crates/editor" }
-bezel-markdown = { path = "../bezel/crates/markdown" }
-bezel-motion = { path = "../bezel/crates/motion" }
-bezel-syntax = { path = "../bezel/crates/syntax" }
-bezel-theme = { path = "../bezel/crates/theme" }
-bezel-ui = { path = "../bezel/crates/ui" }

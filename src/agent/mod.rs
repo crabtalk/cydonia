@@ -91,7 +91,7 @@ fn fetch(dir: &Path, id: &str, url: &str) -> Option<String> {
     if let Some(path) = cached(dir, id) {
         return Some(path);
     }
-    let path = dir.join(format!("{id}.svg"));
+    let path = cacp_agents::contained(dir, &format!("{id}.svg")).ok()?;
     let body = ureq::get(url).call().ok()?.body_mut().read_to_vec().ok()?;
     std::fs::create_dir_all(dir).ok()?;
     std::fs::write(&path, body).ok()?;
@@ -100,11 +100,16 @@ fn fetch(dir: &Path, id: &str, url: &str) -> Option<String> {
 
 /// The icon already on disk, if it is.
 fn cached(dir: &Path, id: &str) -> Option<String> {
-    let path = dir.join(format!("{id}.svg"));
+    let path = cacp_agents::contained(dir, &format!("{id}.svg")).ok()?;
     path.exists().then(|| path.to_str())?.map(str::to_owned)
 }
 
 // ── the catalog, for the settings window ─────────────────────────
+
+/// The catalog takes any publisher who submits one, and each entry is an npm
+/// package this machine would download and run. These are the adapters whose
+/// authors are the labs that build the models.
+const ALLOWED: [&str; 4] = ["claude-acp", "codex-acp", "gemini", "antigravity-acp"];
 
 /// One row of the agents section: what the registry publishes, and whether it
 /// is on this machine.
@@ -130,6 +135,7 @@ pub fn listings() -> Vec<Listing> {
     catalog
         .agents
         .into_iter()
+        .filter(|agent| ALLOWED.contains(&agent.id.as_str()))
         .map(|agent| {
             let installed = Installed::find(&data, &agent.id).map(|found| found.version);
             let icon = cached(&dir, &agent.id).map(SharedString::from);
@@ -154,6 +160,9 @@ pub fn prefetch_icons() {
     };
     let dir = cache.join("icons");
     for agent in &catalog.agents {
+        if !ALLOWED.contains(&agent.id.as_str()) {
+            continue;
+        }
         if let Some(url) = agent.icon.as_deref() {
             fetch(&dir, &agent.id, url);
         }

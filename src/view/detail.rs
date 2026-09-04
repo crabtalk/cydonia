@@ -5,7 +5,7 @@ use crate::{
     model::session::{ChatSession, PlanStatus},
     view::{
         component::{composer, transcript},
-        root::{self, Cydonia, Pane},
+        root::{self, Cydonia, NewSession, Pane},
     },
 };
 use bezel::{
@@ -109,13 +109,13 @@ impl Cydonia {
     ) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
         let open = self.workspace.read(cx).active_project().is_some();
-        // Nothing to send to: the session's agent is gone from settings.toml,
-        // so there is nothing left to reconnect it to.
+        // Nothing to send to: no session at all, or one whose agent has gone
+        // from settings.toml, leaving nothing to reconnect it to.
         let live = self
             .workspace
             .read(cx)
             .active_session()
-            .is_none_or(ChatSession::resumable);
+            .is_some_and(ChatSession::resumable);
         let showing = self.showing(cx);
         let body = if !open {
             self.no_project(cx)
@@ -182,20 +182,117 @@ impl Cydonia {
                 column.child(self.fold_cluster(window, cx))
             })
     }
+}
 
-    /// The session in front, or the invitation to open one.
+/// The invitation's rows as one block: left-aligned so every glyph lands on the
+/// same edge, and held off the line above it — `empty_state` centres its
+/// children, which would otherwise centre each row on its own width.
+fn make_list(rows: impl IntoIterator<Item = AnyElement>) -> impl IntoElement {
+    div()
+        .mt(px(14.))
+        .flex()
+        .flex_col()
+        .items_start()
+        .gap(px(8.))
+        .children(rows)
+}
+
+impl Cydonia {
+    /// What to do when there is nothing to show: open a project, or make the
+    /// first entry in the one that is open. The kinds are listed rather than
+    /// named in a hint, because a list can be clicked.
+    fn nothing_open(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        let workspace = self.workspace.read(cx);
+        let Some(ix) = workspace.active else {
+            return self.no_project(cx);
+        };
+        let agents = workspace.settings.agents_enabled;
+        let name = workspace
+            .projects
+            .get(ix)
+            .map(|project| shown_path(&project.path))
+            .unwrap_or_default();
+        let session = agents.then(|| {
+            self.make_row(
+                "session",
+                "New session",
+                icons::CHAT_ROUND_LINE,
+                cx,
+                move |this, window, cx| this.new_session_action(&NewSession, window, cx),
+            )
+        });
+        theme
+            .empty_state(icons::FOLDER, "Nothing open", format!("in {name}"))
+            .flex_1()
+            .child(make_list(session.into_iter().chain([
+                self.make_row("board", "New board", icons::LIST, cx, move |this, _, cx| {
+                    this.new_board(ix, cx)
+                }),
+                self.make_row(
+                    "article",
+                    "New article",
+                    icons::DOCUMENT_ADD,
+                    cx,
+                    move |this, window, cx| this.new_article(ix, window, cx),
+                ),
+                self.make_row(
+                    "table",
+                    "New table",
+                    icons::WIDGET,
+                    cx,
+                    move |this, _, cx| this.new_table(ix, cx),
+                ),
+            ])))
+            .into_any_element()
+    }
+
+    /// One line of the invitation: a glyph, a label, and what it makes.
+    fn make_row(
+        &self,
+        id: &'static str,
+        label: &'static str,
+        glyph: &'static str,
+        cx: &mut Context<Self>,
+        make: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
+    ) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        // An svg paints in its own `text_color` and inherits none, so the glyph
+        // cannot ride the row's hover. Both halves take the row's group instead,
+        // which lights them together — the group is named per row so hovering
+        // one does not light the rest.
+        div()
+            .id(id)
+            .group(id)
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .cursor_pointer()
+            .text_style(TextStyle::Callout)
+            .child(
+                icons::icon(glyph)
+                    .size(px(14.))
+                    .flex_none()
+                    .text_color(theme.text_muted)
+                    .group_hover(id, |el| el.text_color(theme.text)),
+            )
+            .child(
+                div()
+                    .text_color(theme.text_muted)
+                    .group_hover(id, |el| el.text_color(theme.text))
+                    .child(label),
+            )
+            .on_click(cx.listener(move |this, _, window, cx| make(this, window, cx)))
+            .into_any_element()
+    }
+
+    /// The session in front, or — because the conversation is what stands in
+    /// when a project has nothing else open — the way to make something.
     fn conversation(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let workspace = self.workspace.read(cx);
         let Some(chat) = workspace.active_session() else {
-            return theme
-                .empty_state(
-                    icons::CHAT_ROUND_LINE,
-                    "No session",
-                    "⌘N to start one in this project.",
-                )
-                .flex_1()
-                .into_any_element();
+            return self.nothing_open(cx);
         };
         // Nothing has been said yet, so what the session has to show for
         // itself is the directory the agent was started in.

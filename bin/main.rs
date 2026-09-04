@@ -29,9 +29,10 @@ fn main() -> Result<()> {
             }
             appearance::init(state.appearance, cx);
             // Before the window is opened: it reads its background appearance
-            // on the way up, and frost is what decides that.
+            // on the way up, and vibrancy is what decides that.
             workspace::apply_transparency(state.reduce_transparency, cx);
             workspace::apply_tint(Tint::new(state.hue, state.chroma), cx);
+            input::set_caret_blink(state.cursor_blink, cx);
             theme::set_base_text_size(state.text_size, cx);
             markdown::set_highlighter(
                 cx,
