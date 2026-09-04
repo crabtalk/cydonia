@@ -23,7 +23,7 @@ use bezel::{
         popover,
         surface::Surfaced as _,
         tooltip::Tooltip,
-        widgets::{Buttons, Controls, Layout},
+        widgets::{Buttons, Layout},
     },
 };
 use std::{cmp::Reverse, ops::Range, path::PathBuf};
@@ -270,7 +270,6 @@ impl Cydonia {
                     .justify_end()
                     .child(self.fold_toggle(theme.text_faint, cx)),
             )
-            .child(self.filter_row(cx))
             .child(
                 uniform_list(
                     "project-list",
@@ -314,21 +313,29 @@ impl Cydonia {
                             })),
                     )
                     .child(
-                        theme
-                            .ghost("open-project")
-                            .px(px(8.))
-                            .py(px(6.))
-                            .tooltip(|window, cx| {
-                                Tooltip::with_keystroke("New project", "⌘O", window, cx)
-                            })
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap(px(2.))
+                            .child(self.filter_button(cx))
                             .child(
-                                icons::icon(icons::DOCUMENT_ADD)
-                                    .size(px(13.))
-                                    .text_color(theme.text_faint),
-                            )
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.open_project_action(&OpenProject, window, cx);
-                            })),
+                                theme
+                                    .ghost("open-project")
+                                    .px(px(8.))
+                                    .py(px(6.))
+                                    .tooltip(|window, cx| {
+                                        Tooltip::with_keystroke("New project", "⌘O", window, cx)
+                                    })
+                                    .child(
+                                        icons::icon(icons::DOCUMENT_ADD)
+                                            .size(px(13.))
+                                            .text_color(theme.text_faint),
+                                    )
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.open_project_action(&OpenProject, window, cx);
+                                    })),
+                            ),
                     ),
             )
     }
@@ -695,24 +702,29 @@ impl Cydonia {
         });
     }
 
-    /// The kind picker, above the projects. bezel's select face rather than a
-    /// row of this column: it is a control, not an entry, and the border is
-    /// what says which of the two you are pointing at.
-    fn filter_row(&self, cx: &mut Context<Self>) -> AnyElement {
+    /// The kind picker: a button in the footer, carrying the mark of whatever
+    /// it is narrowed to, so the column says what it is showing without a line
+    /// of its own to say it in.
+    fn filter_button(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
+        let label = self.filter.label();
         let trigger = theme
-            .select_trigger(self.filter.label())
-            .id("filter")
+            .ghost("filter")
             .relative()
+            .px(px(8.))
+            .py(px(6.))
+            .tooltip(move |window, cx| Tooltip::text(format!("Showing {label}"), window, cx))
+            .child(
+                icons::icon(self.filter.icon())
+                    .size(px(13.))
+                    .text_color(theme.text_faint),
+            )
             .on_click(cx.listener(|this, _, _, cx| {
                 cx.stop_propagation();
                 this.toggle_menu(Menu::Filter, cx);
             }))
             .children(self.filter_menu(cx));
-        div()
-            .flex_none()
-            .m(px(root::SIDEBAR_GUTTER))
-            .child(self.menu_press(trigger, Menu::Filter, cx))
+        self.menu_press(trigger, Menu::Filter, cx)
             .into_any_element()
     }
 
@@ -736,7 +748,7 @@ impl Cydonia {
                 )
             })
             .collect();
-        Some(popover::anchored_menu_below(
+        Some(popover::anchored_menu_above(
             "filter-menu",
             self.menu_card("filter-menu", rows, cx),
             None,
