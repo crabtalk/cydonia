@@ -465,14 +465,17 @@ impl Cydonia {
         if self.menu != Some(Menu::Add(ix)) {
             return None;
         }
-        let rows = vec![
-            menu::row(
+        let mut rows = Vec::new();
+        if self.workspace.read(cx).settings.agents_enabled {
+            rows.push(menu::row(
                 Item::action("New session").with_icon(icons::CHAT_ROUND_LINE),
                 move |this, window, cx| {
                     this.select_project(ix, cx);
                     this.new_session_action(&NewSession, window, cx);
                 },
-            ),
+            ));
+        }
+        rows.extend([
             menu::row(
                 Item::action("New board").with_icon(icons::LIST),
                 move |this, _, cx| this.new_board(ix, cx),
@@ -485,7 +488,7 @@ impl Cydonia {
                 Item::action("New table").with_icon(icons::WIDGET),
                 move |this, _, cx| this.new_table(ix, cx),
             ),
-        ];
+        ]);
         let id = SharedString::from(format!("add-menu-{ix}"));
         Some(popover::anchored_menu_below(
             id.clone(),

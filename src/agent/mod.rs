@@ -106,6 +106,11 @@ fn cached(dir: &Path, id: &str) -> Option<String> {
 
 // ── the catalog, for the settings window ─────────────────────────
 
+/// The catalog takes any publisher who submits one, and each entry is an npm
+/// package this machine would download and run. These are the adapters whose
+/// authors are the labs that build the models.
+const ALLOWED: [&str; 4] = ["claude-acp", "codex-acp", "gemini", "antigravity-acp"];
+
 /// One row of the agents section: what the registry publishes, and whether it
 /// is on this machine.
 pub struct Listing {
@@ -130,6 +135,7 @@ pub fn listings() -> Vec<Listing> {
     catalog
         .agents
         .into_iter()
+        .filter(|agent| ALLOWED.contains(&agent.id.as_str()))
         .map(|agent| {
             let installed = Installed::find(&data, &agent.id).map(|found| found.version);
             let icon = cached(&dir, &agent.id).map(SharedString::from);
@@ -154,6 +160,9 @@ pub fn prefetch_icons() {
     };
     let dir = cache.join("icons");
     for agent in &catalog.agents {
+        if !ALLOWED.contains(&agent.id.as_str()) {
+            continue;
+        }
         if let Some(url) = agent.icon.as_deref() {
             fetch(&dir, &agent.id, url);
         }

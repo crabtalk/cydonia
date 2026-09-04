@@ -508,7 +508,7 @@ impl ChatSession {
         });
     }
 
-    fn notice(&mut self, failed: bool, text: &str) {
+    pub(crate) fn notice(&mut self, failed: bool, text: &str) {
         self.items.push(ChatItem::Notice {
             text: text.to_owned(),
             failed,

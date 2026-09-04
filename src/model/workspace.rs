@@ -170,6 +170,18 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Let agents run, or stop them running. Written through to `settings.toml`
+    /// rather than app state: it is the file the gate is read back from.
+    /// A failed write leaves both halves alone, so the switch stays where it
+    /// was rather than claiming a gate the file does not carry.
+    pub fn set_agents_enabled(&mut self, on: bool, cx: &mut Context<Self>) {
+        if settings::set_agents_enabled(on).is_err() {
+            return;
+        }
+        self.settings.agents_enabled = on;
+        cx.notify();
+    }
+
     /// The caret is bezel's, so the setting is: nothing here reads it back.
     pub fn set_cursor_blink(&mut self, blink: bool, cx: &mut Context<Self>) {
         self.cursor_blink = blink;
@@ -266,12 +278,18 @@ impl Workspace {
 
     /// Open a session in the active project. `seed` is its first prompt, sent
     /// as soon as the agent is up — what a dispatched card rides in on.
+    ///
+    /// The one place a session is born, so it is where the agent gate bites:
+    /// nothing spawns an agent until the user has turned agents on.
     pub fn new_session(
         &mut self,
         entry: settings::Agent,
         seed: Option<String>,
         cx: &mut Context<Self>,
     ) -> Option<u64> {
+        if !self.settings.agents_enabled {
+            return None;
+        }
         let ix = self.active?;
         let id = self.next_id;
         self.next_id += 1;
@@ -333,6 +351,9 @@ impl Workspace {
     /// Send to a session, starting an agent for it when it has none — typing
     /// into a session read back from disk is what picks it up again.
     pub fn send(&mut self, id: u64, content: String, cx: &mut Context<Self>) {
+        // Read before `chat` borrows the projects. This is the second place an
+        // agent process starts, so it is the second half of the gate.
+        let enabled = self.settings.agents_enabled;
         let found = self
             .projects
             .iter_mut()
@@ -340,6 +361,16 @@ impl Workspace {
         let Some(chat) = found else {
             return;
         };
+        // Said out loud rather than queued: with no agent to drain it, a
+        // prompt pushed onto the queue reads as a message that went nowhere.
+        if !enabled && !chat.live() {
+            chat.notice(
+                true,
+                "agents are disabled — turn them on in Settings › Agents",
+            );
+            cx.notify();
+            return;
+        }
         if chat.idle() && chat.resumable() {
             chat.resume(cx);
         }
