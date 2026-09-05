@@ -106,9 +106,10 @@ fn cached(dir: &Path, id: &str) -> Option<String> {
 
 // ── the catalog, for the settings window ─────────────────────────
 
-/// The catalog takes any publisher who submits one, and each entry is an npm
-/// package this machine would download and run. These are the adapters whose
-/// authors are the labs that build the models.
+/// The adapters whose authors are the labs that build the models. Named one by
+/// one because each pulls a node runtime down with it — the catalog takes any
+/// publisher who submits one, and running their npm package is running their
+/// code.
 const ALLOWED: [&str; 4] = ["claude-acp", "codex-acp", "gemini", "antigravity-acp"];
 
 /// One row of the agents section: what the registry publishes, and whether it
@@ -135,7 +136,14 @@ pub fn listings() -> Vec<Listing> {
     catalog
         .agents
         .into_iter()
-        .filter(|agent| ALLOWED.contains(&agent.id.as_str()))
+        // Those four, and every agent that ships a native binary: a release
+        // archive needs nothing on this machine but the download, and
+        // `Distribution::Binary` is already narrowed to a build this machine
+        // can run.
+        .filter(|agent| {
+            ALLOWED.contains(&agent.id.as_str())
+                || matches!(agent.distribution, Distribution::Binary(_))
+        })
         .map(|agent| {
             let installed = Installed::find(&data, &agent.id).map(|found| found.version);
             let icon = cached(&dir, &agent.id).map(SharedString::from);
