@@ -20,13 +20,14 @@ use bezel::{
     theme::{TextStyle, Theme, Typeset, appearance},
     ui::{
         icons,
+        input::TextField,
         widgets::{Layout, Scaffolding},
     },
 };
 use std::collections::HashSet;
 
 mod agents;
-mod dev;
+mod performance;
 mod theme;
 mod typography;
 
@@ -49,17 +50,17 @@ const CONTENT_MAX_WIDTH: f32 = 860.;
 pub enum Section {
     Appearance,
     Agents,
-    Dev,
+    Performance,
 }
 
 impl Section {
-    const ALL: [Self; 3] = [Self::Appearance, Self::Agents, Self::Dev];
+    const ALL: [Self; 3] = [Self::Appearance, Self::Agents, Self::Performance];
 
     fn title(self) -> &'static str {
         match self {
             Self::Appearance => "Appearance",
             Self::Agents => "Agents",
-            Self::Dev => "Dev",
+            Self::Performance => "Performance",
         }
     }
 
@@ -67,7 +68,7 @@ impl Section {
         match self {
             Self::Appearance => icons::SUN,
             Self::Agents => icons::WIDGET,
-            Self::Dev => icons::CPU,
+            Self::Performance => icons::CPU,
         }
     }
 }
@@ -80,6 +81,8 @@ pub struct SettingsWindow {
     listings: Option<Vec<Listing>>,
     /// Agents with an install or a removal running.
     busy: HashSet<String>,
+    /// The cover ceiling's field, while its dialog is up.
+    editing: Option<Entity<TextField>>,
     error: Option<SharedString>,
 }
 
@@ -123,6 +126,7 @@ pub fn open(
                     section,
                     listings: None,
                     busy: HashSet::new(),
+                    editing: None,
                     error: None,
                 };
                 this.load(cx);
@@ -141,7 +145,7 @@ impl SettingsWindow {
         self.section = section;
         match section {
             Section::Agents => self.load(cx),
-            Section::Appearance | Section::Dev => {}
+            Section::Appearance | Section::Performance => {}
         }
         cx.notify();
     }
@@ -213,9 +217,10 @@ impl Render for SettingsWindow {
                             .child(match self.section {
                                 Section::Appearance => self.appearance_body(cx),
                                 Section::Agents => self.agents_body(cx),
-                                Section::Dev => self.dev_body(cx),
+                                Section::Performance => self.performance_body(cx),
                             }),
                     ),
             )
+            .children(self.cover_dialog(cx))
     }
 }

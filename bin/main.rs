@@ -11,7 +11,7 @@ use bezel::{
     ui::{self, focus, input},
 };
 use cydonia::{
-    assets,
+    assets, memory,
     model::{settings, state, workspace},
     view::{article, board, component::composer, root, table},
 };
@@ -39,6 +39,7 @@ fn main() -> Result<()> {
                 |language, code| syntax::highlight(code, language),
                 syntax::lang::LANGS.iter().map(|lang| lang.name),
             );
+            memory::init(settings.cover_memory * 1_000_000, cx);
             input::init(cx);
             focus::init(cx);
             composer::init(cx);

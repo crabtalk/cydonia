@@ -29,10 +29,18 @@ cacp-agents = { path = "../cacp/crates/agents" }
 # crates.io
 anyhow = "1"
 dirs = "6"
+# `Shared`, which is the task an in-flight cover is held as. gpui builds its own
+# image cache on it and compiles the crate either way, so this names what is
+# already in the graph rather than adding to it.
+futures = "0.3"
 # Resizes a picked cover on the way in. Already in the graph — gpui decodes
 # every image it paints with it — so this names a crate that is compiled either
 # way rather than adding one.
 image = "0.25"
+# The cover cache's recency list. Zero dependencies of its own — the whole
+# crate is the map and the order, which is exactly what is missing from gpui's
+# own asset cache.
+lru = "0.18"
 # The project database. `bundled` compiles SQLite in: the store is a file we
 # hand to the user, so it cannot depend on whichever sqlite3 a machine ships.
 rusqlite = { version = "0.40", features = ["bundled"] }

@@ -11,6 +11,7 @@
 use crate::{
     agent,
     data::{ColType, Column, Data, Edit, Page, Table},
+    memory,
     model::{
         article::{self, Article},
         board::{self, Board},
@@ -22,7 +23,7 @@ use crate::{
     },
 };
 use bezel::{
-    gpui::{App, Context, EntityId, SharedString},
+    gpui::{App, Context, EntityId, SharedString, Window},
     theme::{self, Brand, Theme, Tint, appearance::AppearanceMode},
     ui::input,
 };
@@ -36,6 +37,20 @@ const UNTITLED: &str = "Untitled";
 
 /// And a column.
 const COLUMN: &str = "Column";
+
+/// The performance section's figures: what is in memory right now.
+pub struct Resident {
+    pub projects: usize,
+    pub articles: usize,
+    /// Articles holding an open [`editor::Editor`]. Built on first open and
+    /// never dropped, so this only climbs.
+    pub editors: usize,
+    /// Covers decoded and held. Bounded — see [`crate::memory`].
+    pub covers: usize,
+    pub sessions: usize,
+    /// Transcript entries across every one of them, read back whole at launch.
+    pub items: usize,
+}
 
 pub struct Workspace {
     pub settings: Settings,
@@ -187,6 +202,20 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Move the cover ceiling. Written through to `settings.toml` first, for
+    /// the reason [`Self::set_agents_enabled`] is, then applied to the cache
+    /// that is already holding pictures under the old one.
+    pub fn set_cover_memory(&mut self, mb: u64, window: &mut Window, cx: &mut Context<Self>) {
+        if settings::set_cover_memory(mb).is_err() {
+            return;
+        }
+        self.settings.cover_memory = mb;
+        memory::covers(cx).update(cx, |covers, cx| {
+            covers.set_limit(mb * 1_000_000, window, cx);
+        });
+        cx.notify();
+    }
+
     /// The caret is bezel's, so the setting is: nothing here reads it back.
     pub fn set_cursor_blink(&mut self, blink: bool, cx: &mut Context<Self>) {
         self.cursor_blink = blink;
@@ -207,6 +236,26 @@ impl Workspace {
         apply_tint(tint, cx);
         self.save();
         cx.notify();
+    }
+
+    // ── performance ──────────────────────────────────────────────────
+
+    /// What this process is holding, counted off the state itself rather than
+    /// tracked alongside it — a tally kept in parallel is a tally that can
+    /// disagree with what is actually resident.
+    pub fn resident(&self, cx: &App) -> Resident {
+        let articles = || self.projects.iter().flat_map(|project| &project.articles);
+        let sessions = || self.projects.iter().flat_map(|project| &project.sessions);
+        Resident {
+            projects: self.projects.len(),
+            articles: articles().count(),
+            editors: articles()
+                .filter(|article| article.editor.is_some())
+                .count(),
+            covers: memory::covers(cx).read(cx).len(),
+            sessions: sessions().count(),
+            items: sessions().map(|chat| chat.items.len()).sum(),
+        }
     }
 
     // ── projects ─────────────────────────────────────────────────────

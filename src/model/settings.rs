@@ -1,6 +1,7 @@
 //! Auto-generated settings — written with defaults on first run, read on
 //! launch. Editable, but never requires user maintenance.
 
+use crate::memory;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::PathBuf};
@@ -10,6 +11,10 @@ pub struct Settings {
     /// Whether agents may be launched. Off until asked for: every agent is a
     /// JS package this machine downloads and runs. Declared above `agents`
     /// because a bare key after `[[agents]]` would belong to that table.
+    /// The ceiling decoded covers run under, in megabytes. Above `agents` for
+    /// the reason `agents_enabled` is.
+    #[serde(default = "cover_memory")]
+    pub cover_memory: u64,
     #[serde(default)]
     pub agents_enabled: bool,
     #[serde(default)]
@@ -29,6 +34,11 @@ pub struct Agent {
     pub args: Vec<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub env: BTreeMap<String, String>,
+}
+
+/// What the cover ceiling is when the file does not say.
+fn cover_memory() -> u64 {
+    memory::DEFAULT_LIMIT / 1_000_000
 }
 
 /// The launchers that resolve a package name on every run. An installed
@@ -66,6 +76,7 @@ impl Default for Settings {
         // `npx` resolves a dist-tag against the npm registry on every launch,
         // so these carry the version the ACP registry pins.
         Self {
+            cover_memory: cover_memory(),
             agents_enabled: false,
             agents: vec![
                 npx("claude", "@agentclientprotocol/claude-agent-acp@0.73.0"),
@@ -138,6 +149,17 @@ pub fn set_agents_enabled(on: bool) -> Result<()> {
     let mut doc: toml_edit::DocumentMut =
         body.parse().context("settings.toml is not valid toml")?;
     doc["agents_enabled"] = toml_edit::value(on);
+    std::fs::write(&path, doc.to_string())?;
+    Ok(())
+}
+
+/// Move the cover ceiling in the file, in megabytes.
+pub fn set_cover_memory(mb: u64) -> Result<()> {
+    let path = dir()?.join("settings.toml");
+    let body = std::fs::read_to_string(&path).unwrap_or_default();
+    let mut doc: toml_edit::DocumentMut =
+        body.parse().context("settings.toml is not valid toml")?;
+    doc["cover_memory"] = toml_edit::value(mb as i64);
     std::fs::write(&path, doc.to_string())?;
     Ok(())
 }

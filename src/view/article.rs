@@ -1,6 +1,7 @@
 //! The article pane: one document, and the sidebar row that opens it.
 
 use crate::{
+    memory,
     model::article,
     view::{
         component::menu::Menu,
@@ -255,7 +256,14 @@ impl Cydonia {
                     .border_b_1()
                     .border_color(theme.border)
             })
-            .children(cover.map(|path| img(path).size_full().object_fit(ObjectFit::Cover)))
+            .children(cover.map(|path| {
+                img(path)
+                    .size_full()
+                    .object_fit(ObjectFit::Cover)
+                    // Off gpui's own asset cache, which never lets a decoded
+                    // cover go. See [`crate::memory`].
+                    .image_cache(&memory::covers(cx))
+            }))
             .child(self.cover_controls(has_cover, cx))
     }
 
