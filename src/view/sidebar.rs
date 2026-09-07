@@ -479,7 +479,10 @@ impl Cydonia {
     ) -> AnyElement {
         let rows = self.rows(cx);
         let head = |row: &Row| matches!(row, Row::Project(_));
-        let Some(at) = rows.get(..=first).and_then(|above| above.iter().rposition(head)) else {
+        let Some(at) = rows
+            .get(..=first)
+            .and_then(|above| above.iter().rposition(head))
+        else {
             return Empty.into_any_element();
         };
         let Row::Project(ix) = rows[at] else {
@@ -738,18 +741,22 @@ impl Cydonia {
         }
     }
 
-    /// Scroll the rail to a row, if it is not already on screen. `Nearest`
-    /// rather than `Top`: a step to the neighbour below should move the list by
-    /// a row, not throw the one you came from off the top of it.
     /// Take the list back to where a project starts, heading and all.
     fn scroll_to_project(&mut self, ix: usize, cx: &mut Context<Self>) {
-        let Some(at) = self.rows(cx).iter().position(|row| *row == Row::Project(ix)) else {
+        let Some(at) = self
+            .rows(cx)
+            .iter()
+            .position(|row| *row == Row::Project(ix))
+        else {
             return;
         };
         self.rail.scroll_to_item(at, ScrollStrategy::Top);
         cx.notify();
     }
 
+    /// Scroll the rail to a row, if it is not already on screen. `Nearest`
+    /// rather than `Top`: a step to the neighbour below should move the list by
+    /// a row, not throw the one you came from off the top of it.
     pub(crate) fn reveal(&mut self, row: Row, cx: &Context<Self>) {
         if let Some(ix) = self.rows(cx).iter().position(|at| *at == row) {
             self.rail.scroll_to_item(ix, ScrollStrategy::Nearest);

@@ -20,7 +20,7 @@ use bezel::{
     theme::{TextStyle, Theme, Typeset, appearance},
     ui::{
         icons,
-        input::TextField,
+        input::{FieldEvent, Shape, TextField},
         widgets::{Layout, Scaffolding},
     },
 };
@@ -102,6 +102,10 @@ pub struct SettingsWindow {
     listings: Option<Vec<Listing>>,
     /// Agents with an install or a removal running.
     busy: HashSet<String>,
+    /// What the agents section is being searched for. Held by the window
+    /// rather than made where it is drawn: what has been typed has to outlive
+    /// the frame, and a section is drawn afresh on every one.
+    search: Entity<TextField>,
     /// The cover ceiling's field, while its dialog is up.
     editing: Option<Entity<TextField>>,
     error: Option<SharedString>,
@@ -142,11 +146,27 @@ pub fn open(
         |window, cx| {
             appearance::observe_window(window, cx).detach();
             cx.new(|cx| {
+                let search = cx.new(|cx| {
+                    TextField::new(cx)
+                        .with_shape(Shape::Line)
+                        .with_frame(false)
+                        .with_placeholder("Search agents…")
+                });
+                // The list narrows as it is typed into. Subscribed rather than
+                // observed: a field notifies on its own caret blink, and this
+                // would rebuild the catalogue twice a second.
+                cx.subscribe(&search, |_, _, event: &FieldEvent, cx| {
+                    if *event == FieldEvent::Changed {
+                        cx.notify();
+                    }
+                })
+                .detach();
                 let mut this = SettingsWindow {
                     workspace,
                     section,
                     listings: None,
                     busy: HashSet::new(),
+                    search,
                     editing: None,
                     error: None,
                 };

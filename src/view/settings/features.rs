@@ -7,10 +7,7 @@
 //! are not the same: sessions run a program on this machine, and boards and
 //! tables are finished work held back to keep the first release one thing.
 
-use crate::{
-    model::settings::Feature,
-    view::settings::{Section, SettingsWindow},
-};
+use crate::{model::settings::Feature, view::settings::SettingsWindow};
 use bezel::{
     gpui::{AnyElement, Context, div, prelude::*, px},
     theme::{TextStyle, Theme, Typeset},
@@ -124,47 +121,5 @@ impl SettingsWindow {
                     })),
             )
             .into_any_element()
-    }
-
-    /// What the agents section shows in place of the gate that used to live
-    /// there: where the switch went, and one press to get to it. A second
-    /// toggle on the same flag would be two pieces of copy to keep in step.
-    pub(super) fn sessions_off(&self, cx: &Context<Self>) -> Option<AnyElement> {
-        let theme = Theme::of(cx).clone();
-        if self.workspace.read(cx).settings.features.sessions {
-            return None;
-        }
-        Some(
-            theme
-                .group_box()
-                .child(
-                    theme
-                        .card_row(true)
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .text_style(TextStyle::Subheadline)
-                                .text_color(theme.text_muted)
-                                .child(
-                                    "Sessions are off, so nothing installed here can be \
-                                     launched. Agents can still be installed and removed.",
-                                ),
-                        )
-                        .child(
-                            div()
-                                .id("to-features")
-                                .flex_none()
-                                .cursor_pointer()
-                                .text_style(TextStyle::Callout)
-                                .text_color(theme.accent)
-                                .child("Features")
-                                .on_click(
-                                    cx.listener(|this, _, _, cx| this.show(Section::Features, cx)),
-                                ),
-                        ),
-                )
-                .into_any_element(),
-        )
     }
 }

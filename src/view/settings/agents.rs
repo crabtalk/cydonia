@@ -6,11 +6,11 @@ use crate::{
     view::settings::SettingsWindow,
 };
 use bezel::{
-    gpui::{AnyElement, Context, SharedString, div, prelude::*, px, svg},
+    gpui::{AnyElement, Context, Focusable as _, SharedString, div, prelude::*, px, svg},
     motion::{Fade, Painter},
     theme::{TextStyle, Theme, Typeset},
     ui::{
-        icons,
+        icons, popover,
         tooltip::Tooltip,
         widgets::{ButtonStyle, Buttons, Content, Scaffolding, Status},
     },
@@ -315,9 +315,12 @@ impl SettingsWindow {
             .into_any_element()
     }
 
-    /// The agents section: everything the registry publishes, installed first
-    /// so what you already have is what you see. The gate itself is not here —
-    /// it is the `sessions` switch, which lives with the other surfaces.
+    /// The agents section: an ACP client manager and nothing else — what is on
+    /// this machine, and what the registry supports.
+    ///
+    /// The gate is not here. It is the `sessions` switch, which lives with the
+    /// other surfaces: what may run is a question about the app, and this is
+    /// the room where clients are put on and taken off.
     pub(super) fn agents_body(&self, cx: &Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         div()
@@ -325,32 +328,23 @@ impl SettingsWindow {
             .flex_col()
             .gap(px(super::GROUP_GAP))
             .children(self.error.clone().map(|err| theme.error_strip(err)))
-            .children(self.sessions_off(cx))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(super::LABEL_GAP))
-                    .child(theme.field_label("Clients"))
-                    .child(self.catalogue(cx)),
-            )
+            .child(self.catalogue(cx))
             .into_any_element()
     }
 
-    /// What the registry offers, once it has answered.
+    /// What is on this machine, and what could be — once the registry has
+    /// answered.
+    ///
+    /// The installed box carries no label. It is the first thing under the
+    /// title and it holds the clients this app has: a heading over it would
+    /// name what is already plain, and with nothing installed there is no box
+    /// at all rather than a labelled empty one.
     fn catalogue(&self, cx: &Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let Some(listings) = self.listings.as_ref() else {
             return theme
                 .group_box()
-                .child(
-                    theme.card_row(true).child(
-                        div()
-                            .text_style(TextStyle::Callout)
-                            .text_color(theme.text_muted)
-                            .child("Reading the agent catalogue…"),
-                    ),
-                )
+                .child(self.note("Reading the agent catalogue…", true, cx))
                 .into_any_element();
         };
         if listings.is_empty() {
@@ -362,18 +356,125 @@ impl SettingsWindow {
                 )
                 .into_any_element();
         }
+        let query = self.search.read(cx).content();
+        // The query belongs to the list below and to nothing else: what is on
+        // this machine stays on screen while a name is being looked for, and
+        // an agent leaves that list by being installed rather than by not
+        // matching — a row in both boxes is one row twice.
+        let installed: Vec<usize> = self
+            .ranked(listings, "")
+            .into_iter()
+            .filter(|&ix| listings[ix].installed.is_some())
+            .collect();
+        let supported: Vec<usize> = self
+            .ranked(listings, query.trim())
+            .into_iter()
+            .filter(|&ix| listings[ix].installed.is_none())
+            .collect();
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(super::GROUP_GAP))
+            .children((!installed.is_empty()).then(|| {
+                theme
+                    .group_box()
+                    .children(self.agent_rows(installed, true, cx))
+            }))
+            .child(self.supported(supported, cx))
+            .into_any_element()
+    }
+
+    /// What can still be put on this machine, headed by the query that narrows
+    /// it: what is searched and what the search leaves are one box, because
+    /// the second is the answer to the first.
+    fn supported(&self, rows: Vec<usize>, cx: &Context<Self>) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        let empty = rows.is_empty();
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(super::LABEL_GAP))
+            .child(theme.field_label("Supported"))
+            .child(
+                theme
+                    .group_box()
+                    .child(self.search_row(cx))
+                    .children(self.agent_rows(rows, false, cx))
+                    .children(empty.then(|| self.note("No matches.", false, cx))),
+            )
+            .into_any_element()
+    }
+
+    /// The query line: frameless, since the box it heads is the frame.
+    ///
+    /// Nothing focuses it — the section opens on a list to read, not on a
+    /// field to type in — and a press anywhere else gives the focus back, so
+    /// the caret is only ever blinking where it was put.
+    fn search_row(&self, cx: &Context<Self>) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        theme
+            .card_row(true)
+            .on_mouse_down_out(cx.listener(|this, _, window, cx| {
+                if this.search.read(cx).focus_handle(cx).is_focused(window) {
+                    window.blur(cx);
+                }
+            }))
+            .child(
+                icons::icon(icons::system::MAGNIFER)
+                    .size(px(14.))
+                    .flex_none()
+                    .text_color(theme.text_faint),
+            )
+            .child(div().flex_1().min_w_0().child(self.search.clone()))
+            .into_any_element()
+    }
+
+    /// Which listings the query keeps, in the order it ranks them: the
+    /// registry's own order is alphabetical, and a search's is how well each
+    /// name answers what was typed.
+    fn ranked(&self, listings: &[Listing], query: &str) -> Vec<usize> {
+        if !query.is_empty() {
+            let names: Vec<&str> = listings
+                .iter()
+                .map(|listing| listing.agent.name.as_str())
+                .collect();
+            return popover::filter_indices(query, &names);
+        }
         let mut order: Vec<usize> = (0..listings.len()).collect();
+        // What cannot be installed here sinks: it is on the list to say the
+        // registry knows it, not to be reached for.
         order.sort_by_key(|&ix| {
             (
-                listings[ix].installed.is_none(),
                 !listings[ix].agent.installable(),
                 listings[ix].agent.name.to_lowercase(),
             )
         });
-        let mut rows: Vec<AnyElement> = Vec::new();
-        for (nth, ix) in order.into_iter().enumerate() {
-            rows.push(self.agent_row(ix, &listings[ix], nth == 0, cx));
-        }
-        theme.group_box().children(rows).into_any_element()
+        order
+    }
+
+    /// The rows of one box. `heads` is whether the first of them opens the box
+    /// — under the search line it does not, and the hairline stays.
+    fn agent_rows(&self, rows: Vec<usize>, heads: bool, cx: &Context<Self>) -> Vec<AnyElement> {
+        let listings = self.listings.as_deref().unwrap_or_default();
+        rows.into_iter()
+            .enumerate()
+            .filter_map(|(nth, ix)| {
+                Some(self.agent_row(ix, listings.get(ix)?, heads && nth == 0, cx))
+            })
+            .collect()
+    }
+
+    /// A quiet line where a row would be: still reading, or nothing to read.
+    fn note(&self, copy: &'static str, first: bool, cx: &Context<Self>) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        theme
+            .card_row(first)
+            .child(
+                div()
+                    .text_style(TextStyle::Callout)
+                    .text_color(theme.text_muted)
+                    .child(copy),
+            )
+            .into_any_element()
     }
 }

@@ -106,22 +106,27 @@ fn cached(dir: &Path, id: &str) -> Option<String> {
 
 // ── the catalog, for the settings window ─────────────────────────
 
-/// The adapters whose authors are the labs that build the models. Named one by
-/// one because each pulls a node runtime down with it — the catalog takes any
-/// publisher who submits one, and running their npm package is running their
-/// code.
-const ALLOWED: [&str; 4] = ["claude-acp", "codex-acp", "gemini", "antigravity-acp"];
+/// The clients cydonia supports, by their id in the catalog. Named one by one
+/// rather than taken by a rule: the registry takes any publisher who submits
+/// one, and installing an agent runs their code on this machine — so what is
+/// offered here is a list somebody chose, not a filter somebody wrote.
+const ALLOWED: [&str; 7] = [
+    "claude-acp",      // Claude Agent
+    "codex-acp",       // Codex
+    "cursor",          // Cursor
+    "gemini",          // Gemini CLI
+    "antigravity-acp", // Google Antigravity
+    "kimi",            // Kimi CLI
+    "opencode",        // OpenCode
+];
 
-/// Whether the catalog entry is one the agents section offers: those four, and
-/// every agent that ships a native binary — a release archive needs nothing on
-/// this machine but the download, and `Distribution::Binary` is already
-/// narrowed to a build this machine can run.
+/// Whether the catalog entry is one of them.
 ///
 /// One predicate, because both [`listings`] and [`prefetch_icons`] have to
 /// answer it the same way: a row this admits and the prefetch skips is a row
 /// that never finds its mark.
 fn listed(agent: &registry::Agent) -> bool {
-    ALLOWED.contains(&agent.id.as_str()) || matches!(agent.distribution, Distribution::Binary(_))
+    ALLOWED.contains(&agent.id.as_str())
 }
 
 /// One row of the agents section: what the registry publishes, and whether it
