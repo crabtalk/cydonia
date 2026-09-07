@@ -429,20 +429,22 @@ impl Cydonia {
                             // so the control goes with them: with sessions off
                             // the play would start nothing, and the card is
                             // still a card without it.
-                            .children(sessions.then(|| match live {
-                                Some(id) => self
-                                    .card_action("open", at, icons::CHAT_ROUND_LINE, cx)
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        cx.stop_propagation();
-                                        this.select_session(id, cx);
-                                        this.show_pane(Pane::Chat, cx);
-                                    })),
-                                None => self.card_action("run", at, icons::PLAY, cx).on_click(
-                                    cx.listener(move |this, _, _, cx| {
-                                        cx.stop_propagation();
-                                        this.dispatch_card(at, cx);
-                                    }),
-                                ),
+                            .children(sessions.then(|| {
+                                match live {
+                                    Some(id) => self
+                                        .card_action("open", at, icons::CHAT_ROUND_LINE, cx)
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            cx.stop_propagation();
+                                            this.select_session(id, cx);
+                                            this.show_pane(Pane::Chat, cx);
+                                        })),
+                                    None => self.card_action("run", at, icons::PLAY, cx).on_click(
+                                        cx.listener(move |this, _, _, cx| {
+                                            cx.stop_propagation();
+                                            this.dispatch_card(at, cx);
+                                        }),
+                                    ),
+                                }
                             }))
                             .child(
                                 self.card_action("delete", at, icons::TRASH_BIN_MINIMALISTIC, cx)

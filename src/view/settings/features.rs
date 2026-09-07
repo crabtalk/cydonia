@@ -9,7 +9,7 @@
 
 use crate::{
     model::settings::Feature,
-    view::settings::{SettingsWindow, Section},
+    view::settings::{Section, SettingsWindow},
 };
 use bezel::{
     gpui::{AnyElement, Context, div, prelude::*, px},
@@ -26,7 +26,14 @@ use bezel::{
 /// Beta is a claim about a row, not about the room. Sessions carry none: an
 /// agent that downloads and runs a package is not immature, it is something to
 /// be asked for.
-fn copy(feature: Feature) -> (&'static str, &'static str, &'static str, Option<&'static str>) {
+fn copy(
+    feature: Feature,
+) -> (
+    &'static str,
+    &'static str,
+    &'static str,
+    Option<&'static str>,
+) {
     match feature {
         Feature::Sessions => (
             icons::CHAT_ROUND_LINE,
@@ -151,9 +158,9 @@ impl SettingsWindow {
                                 .text_style(TextStyle::Callout)
                                 .text_color(theme.accent)
                                 .child("Features")
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.show(Section::Features, cx)
-                                })),
+                                .on_click(
+                                    cx.listener(|this, _, _, cx| this.show(Section::Features, cx)),
+                                ),
                         ),
                 )
                 .into_any_element(),
