@@ -71,9 +71,9 @@
 		keywords: [
 			'ACP client',
 			'Agent Client Protocol',
+			'agent orchestrator',
 			'coding agent desktop app',
-			'notes app for developers',
-			'local-first notes',
+			'local-first workspace',
 			'MCP servers'
 		]
 	};
@@ -81,9 +81,9 @@
 </script>
 
 <svelte:head>
-	<title>Cydonia — a workspace for your notes and your agents</title>
+	<title>Cydonia — a workspace for the agents you run</title>
 	<meta name="description" content={description} />
-	<meta property="og:title" content="Cydonia — a workspace for your notes and your agents" />
+	<meta property="og:title" content="Cydonia — a workspace for the agents you run" />
 	<meta property="og:description" content={description} />
 	<meta property="og:type" content="website" />
 	<meta property="og:image" content="{site}/og.png" />
@@ -93,10 +93,11 @@
 
 <section class="hero">
 	<div class="say">
-		<h1>Your notes and your agents, in the same window.</h1>
+		<h1>Put your coding agents to work in a project you can read.</h1>
 		<p class="lede">
-			A directory becomes a workspace. Your writing stays in it as files, and any agent that speaks
-			the <a href={acp}>Agent Client Protocol</a> works in the same project.
+			Open any directory. Agents that speak the <a href={acp}>Agent Client Protocol</a> work in it,
+			and what comes out stays as durable artifacts on your disk — articles, boards and tables, not
+			a chat log you scroll and lose.
 		</p>
 
 		<div class="cta">
@@ -153,8 +154,8 @@
 {/if}
 
 <section class="own">
-	<h2>It stays yours</h2>
-	<p>Markdown, SVG, one SQLite file and a TOML config — all on your disk.</p>
+	<h2>The work outlives the session</h2>
+	<p>Markdown, SVG, one SQLite file and a TOML config — all on your disk, all yours.</p>
 
 	<dl class="paths">
 		{#each paths as [path, what] (path)}
@@ -169,6 +170,10 @@
 <section class="get" id="download">
 	<h2>Download cydonia</h2>
 	<p>No packaged builds yet. Install from source with <a href="https://rustup.rs">Rust</a>.</p>
+	<p class="state">
+		Today: write in a project and hand it to one agent. Several of them working the same project is
+		what comes next.
+	</p>
 
 	<div class="install code-block">
 		<code>{install}</code>
@@ -409,6 +414,15 @@
 	.get p {
 		margin: 14px 0 0;
 		color: var(--muted);
+	}
+
+	/* Says where the app is, under the button that gets it — a promise the hero
+	   makes is worth qualifying at the point someone acts on it. */
+	.get .state {
+		max-width: 46ch;
+		margin: 10px auto 0;
+		color: var(--faint);
+		font-size: 14px;
 	}
 
 	.install {

@@ -8,7 +8,7 @@ export const site = 'https://cydonia.app';
 
 /** The app in one line — search results and share cards. */
 export const tagline =
-	'A desktop workspace for your notes and your coding agents. Open any directory as a project, write in it, and put an agent to work in the same place — on your own disk.';
+	'A desktop workspace for the coding agents you run. Open any directory as a project, put an ACP agent to work in it, and keep what comes out as durable artifacts on your own disk — articles, boards and tables, not a chat log.';
 
 /**
  * There are no packaged builds yet, so this is how you get it. `--git` rather
