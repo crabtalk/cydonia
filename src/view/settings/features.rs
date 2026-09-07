@@ -38,22 +38,19 @@ fn copy(
         Feature::Sessions => (
             icons::system::CHAT_ROUND_LINE,
             "Sessions",
-            "A session runs an agent — a package this machine downloads and \
-             executes. None starts while this is off.",
+            "Runs an agent — a package this machine downloads and executes.",
             None,
         ),
         Feature::Boards => (
             icons::editing::LIST,
             "Boards",
-            "Cards in columns, one board to a file. Boards already written stay \
-             in the project while this is off.",
+            "Cards in columns, one board to a file.",
             Some("Preview"),
         ),
         Feature::Tables => (
             icons::system::WIDGET,
             "Tables",
-            "Structured records in the project's store. The store is left alone \
-             while this is off.",
+            "Structured records in the project's store.",
             Some("Preview"),
         ),
     }
@@ -105,6 +102,10 @@ impl SettingsWindow {
                     .child(
                         div()
                             .mt(px(4.))
+                            // One line, whatever the window is doing: a row
+                            // that grows a second one moves every switch below
+                            // it down the column.
+                            .truncate()
                             .text_style(TextStyle::Subheadline)
                             .text_color(theme.text_muted)
                             .child(blurb),
