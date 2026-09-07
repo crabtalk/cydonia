@@ -1,26 +1,45 @@
 # Cydonia
 
-A desktop client for [ACP](https://agentclientprotocol.com) agents — connect any coding agent that speaks the Agent Client Protocol and chat with it.
-
-## Usage
+A desktop workspace for notes and [ACP](https://agentclientprotocol.com) agents.
+Open a directory as a project, write articles in it, and hand them to any coding
+agent that speaks the Agent Client Protocol.
 
 ```sh
 cargo install --path .
 cydonia
 ```
 
-Cydonia renders streamed markdown, reasoning, tool calls, and the agent's plan; permission requests pop up as a modal; `fs/read_text_file` and `fs/write_text_file` are served to the agent.
+## Features
+
+A fresh install is articles and nothing else. The rest is off until you ask for
+it, in **Settings › Features** or in `~/.config/cydonia/settings.toml`:
+
+```toml
+[features]
+sessions = false   # agent conversations
+boards = false     # cards in columns
+tables = false     # structured records
+```
+
+`sessions` gates agents as much as it gates the pane — a session is the only
+thing that starts one, and an agent is a package this machine downloads and
+runs. Turning a feature off hides it; nothing on disk is deleted.
+
+## Keys
 
 | Key | Action |
 | --- | --- |
-| `Enter` | send (`Shift+Enter` for a newline) |
-| `/` | the agent's own slash commands (`Up`/`Down` to pick, `Esc` to dismiss) |
+| `Cmd+O` | open a project |
 | `Cmd+N` | new session |
-| `Cmd+Q` | quit |
+| `Cmd+,` | settings |
+| `Ctrl+Tab` / `Ctrl+Shift+Tab` | step between entries of the kind on screen |
+| `Enter` | send (`Shift+Enter` for a newline) |
+| `/` | the agent's own slash commands |
 
 ## Agents
 
-`~/.config/cydonia/settings.toml` is generated on first run and never needs hand-maintenance — it's seeded with the [Claude Code](https://www.npmjs.com/package/@agentclientprotocol/claude-agent-acp) and [Codex](https://www.npmjs.com/package/@agentclientprotocol/codex-acp) adapters. Any ACP agent is an entry away:
+Install one from the ACP registry in **Settings › Agents**, or write it into
+`~/.config/cydonia/settings.toml` yourself:
 
 ```toml
 [[agents]]
@@ -30,17 +49,50 @@ args = ["--acp"]
 # env = { KEY = "VALUE" }
 ```
 
-Set `CYDONIA_DEBUG=/tmp/acp.log` to capture the raw JSON-RPC wire.
+The file is generated on first run, seeded with the
+[Claude Code](https://www.npmjs.com/package/@agentclientprotocol/claude-agent-acp)
+and [Codex](https://www.npmjs.com/package/@agentclientprotocol/codex-acp)
+adapters. Entries that name a floating tag like `@latest` are skipped — that is
+a different program on every launch.
 
-Cydonia paints with [bezel](https://github.com/crabtalk/bezel), pinned to 0.1.2 from crates.io.
+## MCP servers
 
-## Docs
+Servers offered to every agent go in `~/.config/cydonia/mcp.toml`, by hand:
 
-`docs/` is an [mdBook](https://rust-lang.github.io/mdBook/) covering commands, agents, MCP servers, and — worth reading before relying on it — the [limitations](docs/src/limitations.md).
-
-```sh
-mdbook serve docs --open
+```toml
+[[servers]]
+name = "everything"
+enabled = true
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-everything"]
 ```
+
+ACP takes the server list only at `session/new`, so edits apply to the next
+session rather than the running one. There is no connection status: the protocol
+tells a client nothing about whether a server started, so a failed one shows up
+as its tools being absent from the agent.
+
+## Where things live
+
+```
+~/.config/cydonia/   settings.toml, mcp.toml, the agent catalogue cache
+~/.local/share/      installed agents
+<project>/.cydonia/  that project's articles, boards, sessions and store
+```
+
+A project's own store carries a `.gitignore` — none of what cydonia writes
+there is the project's source.
+
+## Development
+
+`cargo run`. Set `CYDONIA_DEBUG=/tmp/acp.log` to capture the raw JSON-RPC wire.
+
+Cydonia paints with [bezel](https://github.com/crabtalk/bezel) 0.1.5, built from
+a checkout beside this one via the manifest's `[patch.crates-io]`.
+
+[fixtures](https://github.com/crabtalk/fixtures) is a demo project to open the
+app against; `cargo run --example covers -- ../fixtures` gives its articles their
+pictures.
 
 ## License
 
