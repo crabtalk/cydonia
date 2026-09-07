@@ -12,8 +12,9 @@ use crate::{
 };
 use bezel::{
     gpui::{
-        self, AnyElement, App, Context, Div, Empty, Focusable as _, FontWeight, Hsla, MouseButton,
-        ScrollStrategy, SharedString, Stateful, Window, div, prelude::*, px, svg, uniform_list,
+        self, AnyElement, App, Bounds, Context, Div, Empty, Entity, Focusable as _, FontWeight,
+        Hsla, MouseButton, Pixels, Point, ScrollStrategy, SharedString, Stateful,
+        UniformListDecoration, Window, div, prelude::*, px, svg, uniform_list,
     },
     motion::Painter,
     theme::{TextStyle, Theme, Typeset},
@@ -216,6 +217,16 @@ fn key_of(entry: Row) -> String {
 const ROW_PILL: f32 = 30.;
 pub(crate) const ROW_HEIGHT: f32 = ROW_PILL + 2.;
 
+/// How far the pinned heading's glass runs past the band it is seen in, and is
+/// clipped away.
+///
+/// A lens bends what is behind it within [`bezel::theme::SurfaceSpec::rim`] of
+/// its own edge, and lights the edge itself. On a bar one row tall that is the
+/// whole of it: two bands and two hairlines, reading as a line ruled along the
+/// top and the bottom. Run the glass out past the clip and only its middle —
+/// the flat blur — is left in view.
+const PINNED_BLEED: f32 = 20.;
+
 /// The box every row under a project heading sits in: indented beneath the
 /// heading, and carrying the wash that says which one is open.
 ///
@@ -269,6 +280,32 @@ fn row_label(name: String, tint: Hsla) -> AnyElement {
         .into_any_element()
 }
 
+/// The heading of the project whose entries are under the scroll, held at the
+/// top of the list while they pass beneath it.
+///
+/// A decoration rather than a child of the column, because this is the one
+/// place the scroll offset for the frame being drawn is known. Read off the
+/// handle in `render` it would be the offset of the frame before, and the
+/// heading would lag the rows it belongs to by one.
+struct PinnedHead(Entity<Cydonia>);
+
+impl UniformListDecoration for PinnedHead {
+    fn compute(
+        &self,
+        visible: Range<usize>,
+        _bounds: Bounds<Pixels>,
+        scroll: Point<Pixels>,
+        item_height: Pixels,
+        _count: usize,
+        _window: &mut Window,
+        cx: &mut App,
+    ) -> AnyElement {
+        self.0.update(cx, |this, cx| {
+            this.pinned_head(visible.start, scroll.y, item_height, cx)
+        })
+    }
+}
+
 impl Cydonia {
     pub(crate) fn sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
@@ -309,6 +346,7 @@ impl Cydonia {
                     }),
                 )
                 .track_scroll(&self.rail)
+                .with_decoration(PinnedHead(cx.entity()))
                 .flex_1()
                 .min_h_0(),
             )
@@ -427,9 +465,68 @@ impl Cydonia {
             .on_click(cx.listener(|this, _, _, cx| this.toggle_sidebar(cx)))
     }
 
+    /// The heading held at the top of the list, and where to hold it.
+    ///
+    /// Measured in the list's own space — the decoration is laid out over the
+    /// whole run of rows, so `y` here is counted from the first of them rather
+    /// than from the top of what is on screen.
+    fn pinned_head(
+        &self,
+        first: usize,
+        scroll: Pixels,
+        item_height: Pixels,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let rows = self.rows(cx);
+        let head = |row: &Row| matches!(row, Row::Project(_));
+        let Some(at) = rows.get(..=first).and_then(|above| above.iter().rposition(head)) else {
+            return Empty.into_any_element();
+        };
+        let Row::Project(ix) = rows[at] else {
+            return Empty.into_any_element();
+        };
+        // The next heading pushes this one out rather than sliding under it,
+        // which is what keeps two of them from ever reading as one block.
+        let next = rows[at + 1..]
+            .iter()
+            .position(head)
+            .map(|after| item_height * (at + 1 + after) - item_height);
+        let rest = item_height * at;
+        let y = next.map_or(-scroll, |limit| (-scroll).min(limit));
+        // Above its own place there is nothing to hold: the row itself is on
+        // screen, in the list, where it belongs.
+        if y <= rest {
+            return Empty.into_any_element();
+        }
+        div()
+            .size_full()
+            .relative()
+            .child(
+                // Stateful, and so an id scope of its own: the copy inside
+                // carries the same ids as the row it stands for.
+                //
+                // The band the glass is seen in, and what clips it to one row.
+                div()
+                    .id("pinned-head")
+                    .absolute()
+                    .top(y)
+                    .left_0()
+                    .w_full()
+                    .h(px(ROW_HEIGHT))
+                    .overflow_hidden()
+                    .child(self.project_head(ix, true, cx)),
+            )
+            .into_any_element()
+    }
+
     /// One project's heading: it folds, and its `+` opens what can be made in
     /// the project.
-    fn project_head(&self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
+    ///
+    /// `pinned` is the copy [`Cydonia::pinned_head`] holds at the top of the
+    /// list. It gives up the pill for the column's full width, and takes the
+    /// glass the floating cluster below it is cut from — a heading with rows
+    /// running under it has to be read against whatever is passing.
+    fn project_head(&self, ix: usize, pinned: bool, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let (name, expanded) = match self.workspace.read(cx).projects.get(ix) {
             Some(project) => (project.name(), project.expanded),
@@ -439,11 +536,24 @@ impl Cydonia {
         let head = div()
             .id(("project", ix))
             .group("project-head")
-            .mx(px(8.))
-            .px(px(6.))
-            .h(px(ROW_PILL))
-            .rounded(px(Theme::control_radius()))
-            .relative()
+            // Pinned it runs edge to edge, and past the band it shows in at
+            // the top and the bottom — see [`PINNED_BLEED`]. The label keeps
+            // the x the pill's own margin and padding put it at.
+            .when(pinned, |el| {
+                el.absolute()
+                    .top(px(-PINNED_BLEED))
+                    .left_0()
+                    .right_0()
+                    .h(px(ROW_HEIGHT + 2. * PINNED_BLEED))
+                    .px(px(8. + 6.))
+            })
+            .when(!pinned, |el| {
+                el.relative()
+                    .mx(px(8.))
+                    .px(px(6.))
+                    .h(px(ROW_PILL))
+                    .rounded(px(Theme::control_radius()))
+            })
             .flex()
             .flex_row()
             .items_center()
@@ -499,7 +609,14 @@ impl Cydonia {
                 MouseButton::Right,
                 cx.listener(move |this, _, _, cx| this.toggle_menu(Menu::Project(ix), cx)),
             )
-            .on_click(cx.listener(move |this, _, _, cx| this.toggle_project(ix, cx)))
+            // A press on the copy is a press on where it came from: the list
+            // goes back to the heading it is standing in for, rather than
+            // folding away the project you are reading. Its own chevron still
+            // folds — that press stops before it reaches here.
+            .on_click(cx.listener(move |this, _, _, cx| match pinned {
+                true => this.scroll_to_project(ix, cx),
+                false => this.toggle_project(ix, cx),
+            }))
             // Carried by its heading, and dropped on the heading it is to sit
             // in front of. Nothing else in the column is draggable: what the
             // entries are ordered by is when they were last written.
@@ -513,8 +630,15 @@ impl Cydonia {
             }));
         // Its own menu opens on the press rather than the click, so the note
         // has to be here too — read stale, a right press would swallow.
-        self.menu_press(head, Menu::Project(ix), cx)
-            .into_any_element()
+        let head = self.menu_press(head, Menu::Project(ix), cx);
+        match pinned {
+            // The same token the cluster at the foot of the column mounts on,
+            // so the two glasses in the sidebar move together.
+            true => head
+                .surface(&theme, theme.popover_surface)
+                .into_any_element(),
+            false => head.into_any_element(),
+        }
     }
 
     /// Everything open in one project, last written first — the lines the
@@ -617,6 +741,15 @@ impl Cydonia {
     /// Scroll the rail to a row, if it is not already on screen. `Nearest`
     /// rather than `Top`: a step to the neighbour below should move the list by
     /// a row, not throw the one you came from off the top of it.
+    /// Take the list back to where a project starts, heading and all.
+    fn scroll_to_project(&mut self, ix: usize, cx: &mut Context<Self>) {
+        let Some(at) = self.rows(cx).iter().position(|row| *row == Row::Project(ix)) else {
+            return;
+        };
+        self.rail.scroll_to_item(at, ScrollStrategy::Top);
+        cx.notify();
+    }
+
     pub(crate) fn reveal(&mut self, row: Row, cx: &Context<Self>) {
         if let Some(ix) = self.rows(cx).iter().position(|at| *at == row) {
             self.rail.scroll_to_item(ix, ScrollStrategy::Nearest);
@@ -629,7 +762,7 @@ impl Cydonia {
     fn sidebar_row(&self, row: Row, cx: &mut Context<Self>) -> AnyElement {
         let workspace = self.workspace.read(cx);
         let inner = match row {
-            Row::Project(ix) => self.project_head(ix, cx),
+            Row::Project(ix) => self.project_head(ix, false, cx),
             Row::Archive(ix) => self.archive_divider(ix, cx),
             Row::Session { project, id } => match self.session_of(project, id, cx) {
                 Some(session) => self.session_row(session, cx),
