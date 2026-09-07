@@ -20,11 +20,10 @@ editor = { version = "0.1.5", package = "bezel-editor" }
 markdown = { version = "0.1.5", package = "bezel-markdown" }
 syntax = { version = "0.1.5", package = "bezel-syntax" }
 
-# cacp — our ACP implementation. A sibling checkout while both move together.
-cacp = { path = "../cacp/crates/cacp", default-features = false, features = [
-    "client",
-] }
-cacp-agents = { path = "../cacp/crates/agents" }
+# cacp — our ACP implementation, taken from the registry like any other
+# dependency now that it is published and settled.
+cacp = { version = "0.1.0", default-features = false, features = ["client"] }
+cacp-agents = "0.1.0"
 
 # crates.io
 anyhow = "1"
@@ -58,3 +57,18 @@ toml_edit = "0.22"
 # Downloads the registry's agent icons. The same client cacp-agents fetches
 # the catalog with, so this adds no second HTTP stack.
 ureq = "3"
+
+# bezel still moves with this app, so it is built from the checkout beside it
+# rather than from whatever was last published. The dependencies above stay
+# version requirements — this table only says where those versions are read
+# from, so removing it builds the same manifest against crates.io.
+#
+# Only the crates cydonia names itself are listed. Each path-depends on the rest
+# of the bezel workspace, so the sibling crates follow without being named — and
+# naming one that is only reached transitively would leave two copies of it in
+# the graph, which is a type from one not fitting the other.
+[patch.crates-io]
+bezel = { path = "../bezel/crates/bezel" }
+bezel-editor = { path = "../bezel/crates/editor" }
+bezel-markdown = { path = "../bezel/crates/markdown" }
+bezel-syntax = { path = "../bezel/crates/syntax" }

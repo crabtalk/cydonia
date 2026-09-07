@@ -74,6 +74,19 @@ impl Section {
         }
     }
 
+    /// The line under the title, where the section needs one. It belongs to
+    /// the header rather than the body: a subtitle sits with what it explains,
+    /// and the gap under the whole block is the same either way.
+    fn subtitle(self) -> Option<&'static str> {
+        match self {
+            Self::Features => Some(
+                "Parts of cydonia that stay off until you ask for them. Turning one \
+                 off hides it; nothing on disk is deleted.",
+            ),
+            Self::Appearance | Self::Agents | Self::Performance => None,
+        }
+    }
+
     fn glyph(self) -> &'static str {
         match self {
             Self::Appearance => icons::SUN,
@@ -224,7 +237,22 @@ impl Render for SettingsWindow {
                             .max_w(px(CONTENT_MAX_WIDTH))
                             .flex()
                             .flex_col()
-                            .child(theme.page_header(self.section.title(), None))
+                            // The header block, held off its body by the gap
+                            // that separates any two groups. Nothing set this
+                            // before, so the page title leaned on `group_box`'s
+                            // own margin and came out with less air under it
+                            // than a field label gets — and none at all in a
+                            // section that opens on a label rather than a box.
+                            .child(
+                                div()
+                                    .mb(px(GROUP_GAP))
+                                    .child(theme.page_header(self.section.title(), None))
+                                    .children(
+                                        self.section
+                                            .subtitle()
+                                            .map(|copy| theme.page_subtitle(copy)),
+                                    ),
+                            )
                             .child(match self.section {
                                 Section::Appearance => self.appearance_body(cx),
                                 Section::Features => self.features_body(cx),

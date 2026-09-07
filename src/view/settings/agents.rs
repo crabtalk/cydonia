@@ -323,10 +323,17 @@ impl SettingsWindow {
         div()
             .flex()
             .flex_col()
+            .gap(px(super::GROUP_GAP))
             .children(self.error.clone().map(|err| theme.error_strip(err)))
             .children(self.sessions_off(cx))
-            .child(theme.field_label("Clients").mt(px(24.)))
-            .child(self.catalogue(cx))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(super::LABEL_GAP))
+                    .child(theme.field_label("Clients"))
+                    .child(self.catalogue(cx)),
+            )
             .into_any_element()
     }
 

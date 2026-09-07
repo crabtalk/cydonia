@@ -55,20 +55,15 @@ fn copy(feature: Feature) -> (&'static str, &'static str, &'static str, Option<&
 impl SettingsWindow {
     pub(super) fn features_body(&self, cx: &Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
-        div()
-            .flex()
-            .flex_col()
-            .child(theme.page_subtitle(
-                "Parts of cydonia that stay off until you ask for them. Turning one \
-                 off hides it; nothing on disk is deleted.",
-            ))
-            .child(
-                theme.group_box().mt(px(super::GROUP_GAP)).children(
-                    Feature::ALL
-                        .into_iter()
-                        .enumerate()
-                        .map(|(ix, feature)| self.feature_row(ix, feature, cx)),
-                ),
+        // The line under the title is the section's, but it is rendered with
+        // the header — see `Section::subtitle`.
+        theme
+            .group_box()
+            .children(
+                Feature::ALL
+                    .into_iter()
+                    .enumerate()
+                    .map(|(ix, feature)| self.feature_row(ix, feature, cx)),
             )
             .into_any_element()
     }

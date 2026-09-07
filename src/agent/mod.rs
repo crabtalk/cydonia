@@ -112,6 +112,18 @@ fn cached(dir: &Path, id: &str) -> Option<String> {
 /// code.
 const ALLOWED: [&str; 4] = ["claude-acp", "codex-acp", "gemini", "antigravity-acp"];
 
+/// Whether the catalog entry is one the agents section offers: those four, and
+/// every agent that ships a native binary — a release archive needs nothing on
+/// this machine but the download, and `Distribution::Binary` is already
+/// narrowed to a build this machine can run.
+///
+/// One predicate, because both [`listings`] and [`prefetch_icons`] have to
+/// answer it the same way: a row this admits and the prefetch skips is a row
+/// that never finds its mark.
+fn listed(agent: &registry::Agent) -> bool {
+    ALLOWED.contains(&agent.id.as_str()) || matches!(agent.distribution, Distribution::Binary(_))
+}
+
 /// One row of the agents section: what the registry publishes, and whether it
 /// is on this machine.
 pub struct Listing {
@@ -136,14 +148,7 @@ pub fn listings() -> Vec<Listing> {
     catalog
         .agents
         .into_iter()
-        // Those four, and every agent that ships a native binary: a release
-        // archive needs nothing on this machine but the download, and
-        // `Distribution::Binary` is already narrowed to a build this machine
-        // can run.
-        .filter(|agent| {
-            ALLOWED.contains(&agent.id.as_str())
-                || matches!(agent.distribution, Distribution::Binary(_))
-        })
+        .filter(listed)
         .map(|agent| {
             let installed = Installed::find(&data, &agent.id).map(|found| found.version);
             let icon = cached(&dir, &agent.id).map(SharedString::from);
@@ -168,7 +173,7 @@ pub fn prefetch_icons() {
     };
     let dir = cache.join("icons");
     for agent in &catalog.agents {
-        if !ALLOWED.contains(&agent.id.as_str()) {
+        if !listed(agent) {
             continue;
         }
         if let Some(url) = agent.icon.as_deref() {
