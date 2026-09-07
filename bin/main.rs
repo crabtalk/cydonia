@@ -11,9 +11,9 @@ use bezel::{
     ui::{self, focus, input},
 };
 use cydonia::{
-    assets,
+    assets, memory,
     model::{settings, state, workspace},
-    view::{article, board, component::composer, root, settings as settings_view, table},
+    view::{article, board, component::composer, root, table},
 };
 
 actions!(cydonia, [Quit]);
@@ -39,6 +39,7 @@ fn main() -> Result<()> {
                 |language, code| syntax::highlight(code, language),
                 syntax::lang::LANGS.iter().map(|lang| lang.name),
             );
+            memory::init(settings.cover_memory * 1_000_000, cx);
             input::init(cx);
             focus::init(cx);
             composer::init(cx);
@@ -47,7 +48,6 @@ fn main() -> Result<()> {
             board::init(cx);
             table::init(cx);
             root::init(cx);
-            settings_view::init(cx);
             set_menus(cx);
 
             let bounds = Bounds::centered(None, size(px(1100.), px(760.)), cx);
@@ -72,10 +72,7 @@ fn main() -> Result<()> {
                 },
                 |window, cx| {
                     appearance::observe_window(window, cx).detach();
-                    let app = cx.new(|cx| root::Cydonia::new(settings, state, cx));
-                    let focus = app.read(cx).composer_focus_handle(cx);
-                    window.focus(&focus, cx);
-                    app
+                    cx.new(|cx| root::Cydonia::new(settings, state, window, cx))
                 },
             )
             .expect("failed to open window");

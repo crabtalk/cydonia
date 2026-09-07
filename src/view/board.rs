@@ -87,13 +87,6 @@ impl Cydonia {
         cx.notify();
     }
 
-    pub(crate) fn delete_board(&mut self, project: usize, ix: usize, cx: &mut Context<Self>) {
-        self.workspace.update(cx, |workspace, cx| {
-            workspace.delete_board(project, ix, cx);
-        });
-        cx.notify();
-    }
-
     /// Point the field at `at`, filing whatever was already open first — so
     /// clicking straight from one card to another never drops an edit.
     fn edit(&mut self, at: Editing, window: &mut Window, cx: &mut Context<Self>) {
@@ -324,7 +317,7 @@ impl Cydonia {
                             .py(px(6.))
                             .gap(px(6.))
                             .child(
-                                icons::icon(icons::PLUS)
+                                icons::icon(icons::system::PLUS)
                                     .size(px(12.))
                                     .text_color(theme.text_faint),
                             )
@@ -359,6 +352,7 @@ impl Cydonia {
         let text = card.text.clone();
         let chat = self.card_session(card, cx);
         let live = chat.map(|chat| chat.id);
+        let sessions = self.workspace.read(cx).settings.features.sessions;
         // The same reading as the sidebar's session row: the card and the row are
         // reporting the same process.
         let running = chat.is_some_and(|chat| chat.streaming);
@@ -418,36 +412,42 @@ impl Cydonia {
                             .items_center()
                             .gap(px(2.))
                             .children((at.column > 0).then(|| {
-                                self.card_action("left", at, icons::ALT_ARROW_LEFT, cx)
+                                self.card_action("left", at, icons::arrows::ALT_ARROW_LEFT, cx)
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         cx.stop_propagation();
                                         this.move_card(at, -1, cx);
                                     }))
                             }))
                             .children((!self.last_column(at, cx)).then(|| {
-                                self.card_action("right", at, icons::ALT_ARROW_RIGHT, cx)
+                                self.card_action("right", at, icons::arrows::ALT_ARROW_RIGHT, cx)
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         cx.stop_propagation();
                                         this.move_card(at, 1, cx);
                                     }))
                             }))
-                            .child(match live {
-                                Some(id) => self
-                                    .card_action("open", at, icons::CHAT_ROUND_LINE, cx)
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        cx.stop_propagation();
-                                        this.select_session(id, cx);
-                                        this.show_pane(Pane::Chat, cx);
-                                    })),
-                                None => self.card_action("run", at, icons::PLAY, cx).on_click(
-                                    cx.listener(move |this, _, _, cx| {
-                                        cx.stop_propagation();
-                                        this.dispatch_card(at, cx);
-                                    }),
-                                ),
-                            })
+                            // Handing a card to an agent is opening a session,
+                            // so the control goes with them: with sessions off
+                            // the play would start nothing, and the card is
+                            // still a card without it.
+                            .children(sessions.then(|| {
+                                match live {
+                                    Some(id) => self
+                                        .card_action("open", at, icons::system::CHAT_ROUND_LINE, cx)
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            cx.stop_propagation();
+                                            this.select_session(id, cx);
+                                            this.show_pane(Pane::Chat, cx);
+                                        })),
+                                    None => self.card_action("run", at, icons::media::PLAY, cx).on_click(
+                                        cx.listener(move |this, _, _, cx| {
+                                            cx.stop_propagation();
+                                            this.dispatch_card(at, cx);
+                                        }),
+                                    ),
+                                }
+                            }))
                             .child(
-                                self.card_action("delete", at, icons::TRASH_BIN_MINIMALISTIC, cx)
+                                self.card_action("delete", at, icons::files::TRASH_BIN_MINIMALISTIC, cx)
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         cx.stop_propagation();
                                         this.delete_card(at, cx);

@@ -36,6 +36,12 @@ const WIDTH: u32 = 1500;
 /// The 5:2 a cover is cut at.
 const HEIGHT: u32 = WIDTH * 2 / 5;
 
+/// What a generated cover costs in memory once it is on screen: gpui rasterises
+/// an SVG at `SMOOTH_SVG_SCALE_FACTOR` — two — in each direction and keeps the
+/// frame as BGRA. An imported picture keeps its own proportions, so it is this
+/// only in the width.
+pub const RASTER_BYTES: u64 = (WIDTH as u64 * 2) * (HEIGHT as u64 * 2) * 4;
+
 /// How wide a cut square lands on screen, in the pane's own pixels. Measured
 /// off paxel.ycombinator.com, whose dither runs a 4px cell and no gutter — the
 /// white lattice in it is the squares that were not cut, not gaps between the

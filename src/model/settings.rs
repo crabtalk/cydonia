@@ -1,19 +1,79 @@
 //! Auto-generated settings — written with defaults on first run, read on
 //! launch. Editable, but never requires user maintenance.
 
+use crate::memory;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::PathBuf};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Settings {
-    /// Whether agents may be launched. Off until asked for: every agent is a
-    /// JS package this machine downloads and runs. Declared above `agents`
-    /// because a bare key after `[[agents]]` would belong to that table.
+    /// The ceiling decoded covers run under, in megabytes. A bare key, so it
+    /// is declared above `features`: one written after that table would belong
+    /// to it.
+    #[serde(default = "cover_memory")]
+    pub cover_memory: u64,
+    /// What the app will show. Every bare key has to go above it, and every
+    /// table below — `[[agents]]` is the one that follows.
     #[serde(default)]
-    pub agents_enabled: bool,
+    pub features: Features,
     #[serde(default)]
     pub agents: Vec<Agent>,
+}
+
+/// The surfaces a project can hold, minus articles — the one thing the app is
+/// for, and so not something to be able to switch off. Every one of these is
+/// off until it is asked for, which makes a fresh install articles and
+/// nothing else.
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Features {
+    /// Whether sessions may be opened. A session is the only thing that starts
+    /// an agent, and an agent is a package this machine downloads and runs, so
+    /// this is a gate over that as much as over the pane.
+    pub sessions: bool,
+    pub boards: bool,
+    pub tables: bool,
+}
+
+/// One switchable surface, named rather than reached as a field so the settings
+/// section can list them and one writer can put any of them in the file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Feature {
+    Sessions,
+    Boards,
+    Tables,
+}
+
+impl Feature {
+    /// The order the Features section lists them in. Sessions first: it is the
+    /// one that decides whether anything runs on this machine.
+    pub const ALL: [Self; 3] = [Self::Sessions, Self::Boards, Self::Tables];
+
+    /// The key it is written under, inside `[features]`.
+    fn key(self) -> &'static str {
+        match self {
+            Self::Sessions => "sessions",
+            Self::Boards => "boards",
+            Self::Tables => "tables",
+        }
+    }
+
+    pub fn on(self, features: &Features) -> bool {
+        match self {
+            Self::Sessions => features.sessions,
+            Self::Boards => features.boards,
+            Self::Tables => features.tables,
+        }
+    }
+
+    pub fn set(self, features: &mut Features, on: bool) {
+        match self {
+            Self::Sessions => features.sessions = on,
+            Self::Boards => features.boards = on,
+            Self::Tables => features.tables = on,
+        }
+    }
 }
 
 /// One launchable ACP agent: `command args...` spawned over stdio.
@@ -29,6 +89,11 @@ pub struct Agent {
     pub args: Vec<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub env: BTreeMap<String, String>,
+}
+
+/// What the cover ceiling is when the file does not say.
+fn cover_memory() -> u64 {
+    memory::DEFAULT_LIMIT / 1_000_000
 }
 
 /// The launchers that resolve a package name on every run. An installed
@@ -66,7 +131,8 @@ impl Default for Settings {
         // `npx` resolves a dist-tag against the npm registry on every launch,
         // so these carry the version the ACP registry pins.
         Self {
-            agents_enabled: false,
+            cover_memory: cover_memory(),
+            features: Features::default(),
             agents: vec![
                 npx("claude", "@agentclientprotocol/claude-agent-acp@0.73.0"),
                 npx("codex", "@agentclientprotocol/codex-acp@1.8.0"),
@@ -128,16 +194,34 @@ pub fn load() -> Result<Settings> {
     Ok(settings)
 }
 
-/// Turn the agent gate on or off in the file.
+/// Switch a feature on or off in the file.
 ///
 /// Edited with `toml_edit` for the reason [`put_agent`] is: the file is meant
-/// to be opened by hand, and a round trip would drop every comment in it.
-pub fn set_agents_enabled(on: bool) -> Result<()> {
+/// to be opened by hand, and a round trip would drop every comment in it. The
+/// table is put in explicitly rather than sprung from the index, because a
+/// table that arrives that way is implicit and prints no header of its own.
+pub fn set_feature(feature: Feature, on: bool) -> Result<()> {
     let path = dir()?.join("settings.toml");
     let body = std::fs::read_to_string(&path).unwrap_or_default();
     let mut doc: toml_edit::DocumentMut =
         body.parse().context("settings.toml is not valid toml")?;
-    doc["agents_enabled"] = toml_edit::value(on);
+    let features = doc["features"].or_insert(toml_edit::table());
+    let Some(features) = features.as_table_mut() else {
+        anyhow::bail!("`features` in settings.toml is not a table");
+    };
+    features.set_implicit(false);
+    features[feature.key()] = toml_edit::value(on);
+    std::fs::write(&path, doc.to_string())?;
+    Ok(())
+}
+
+/// Move the cover ceiling in the file, in megabytes.
+pub fn set_cover_memory(mb: u64) -> Result<()> {
+    let path = dir()?.join("settings.toml");
+    let body = std::fs::read_to_string(&path).unwrap_or_default();
+    let mut doc: toml_edit::DocumentMut =
+        body.parse().context("settings.toml is not valid toml")?;
+    doc["cover_memory"] = toml_edit::value(mb as i64);
     std::fs::write(&path, doc.to_string())?;
     Ok(())
 }

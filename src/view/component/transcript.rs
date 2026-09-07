@@ -90,16 +90,16 @@ fn notice(theme: &Theme, text: &str, failed: bool) -> AnyElement {
 /// The glyph for a tool's category — what the ACP `kind` is for.
 fn tool_icon(kind: ToolKind) -> &'static str {
     match kind {
-        ToolKind::Read => icons::BOOK,
-        ToolKind::Edit => icons::PEN,
-        ToolKind::Delete => icons::TRASH_BIN_MINIMALISTIC,
-        ToolKind::Move => icons::ARROW_RIGHT,
-        ToolKind::Search => icons::MAGNIFER,
-        ToolKind::Execute => icons::TERMINAL,
-        ToolKind::Think => icons::CPU,
-        ToolKind::Fetch => icons::GLOBAL,
-        ToolKind::SwitchMode => icons::TUNING,
-        _ => icons::WIDGET,
+        ToolKind::Read => icons::files::BOOK,
+        ToolKind::Edit => icons::editing::PEN,
+        ToolKind::Delete => icons::files::TRASH_BIN_MINIMALISTIC,
+        ToolKind::Move => icons::arrows::ARROW_RIGHT,
+        ToolKind::Search => icons::system::MAGNIFER,
+        ToolKind::Execute => icons::devices::TERMINAL,
+        ToolKind::Think => icons::devices::CPU,
+        ToolKind::Fetch => icons::devices::GLOBAL,
+        ToolKind::SwitchMode => icons::system::TUNING,
+        _ => icons::system::WIDGET,
     }
 }
 
@@ -304,7 +304,7 @@ fn work(chat: &ChatSession, body: Range<usize>, cx: &mut Context<Workspace>) -> 
                         .text_style(TextStyle::Callout)
                         .text_color(theme.text_muted.opacity(0.7))
                         .child(
-                            icons::icon(icons::CPU)
+                            icons::icon(icons::devices::CPU)
                                 .size(px(12.))
                                 .text_color(theme.text_faint),
                         )

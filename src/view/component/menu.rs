@@ -1,7 +1,7 @@
 //! The `···` and `+` menus every sidebar row and column heading opens, and the
 //! one field that says which of them is showing.
 
-use crate::view::root::Cydonia;
+use crate::view::{root::Cydonia, sidebar::Row};
 use bezel::{
     gpui::{self, AnyElement, Context, Div, SharedString, Stateful, Window, prelude::*, px},
     theme::Theme,
@@ -22,10 +22,10 @@ pub(crate) enum Menu {
     Add(usize),
     /// A project heading: what to do to the project.
     Project(usize),
-    /// The `···` on a session row.
-    Session(u64),
-    /// The `···` on a board row, by project and place in it.
-    Board(usize, usize),
+    /// The `···` on an entry's row, whichever kind it is.
+    Entry(Row),
+    /// The kind picker above the projects.
+    Filter,
     /// The `···` on a table's column heading.
     Column(usize),
 }
@@ -39,9 +39,31 @@ pub(crate) fn row(
 }
 
 impl Cydonia {
+    /// Open a menu, or shut the one already open.
+    ///
+    /// The press that reaches a trigger is the same press the open card's
+    /// `on_mouse_down_out` closes it on, so by click time the menu already
+    /// reads as shut and a plain toggle would open it straight back. What the
+    /// press found is noted by [`Cydonia::menu_press`] instead, in the capture
+    /// phase — ahead of that handler, whichever element owns it.
     pub(crate) fn toggle_menu(&mut self, menu: Menu, cx: &mut Context<Self>) {
-        self.menu = (self.menu != Some(menu)).then_some(menu);
+        let closed_by_this_press = std::mem::take(&mut self.menu_pressed);
+        self.menu = (!closed_by_this_press && self.menu != Some(menu)).then_some(menu);
         cx.notify();
+    }
+
+    /// Note, on the way down, whether the press landed on the trigger of the
+    /// menu that is open. Every trigger claims this, so the note is written
+    /// afresh on each press and can never be read stale.
+    pub(crate) fn menu_press(
+        &self,
+        el: Stateful<Div>,
+        menu: Menu,
+        cx: &Context<Self>,
+    ) -> Stateful<Div> {
+        el.capture_any_mouse_down(cx.listener(move |this, _, _, _| {
+            this.menu_pressed = this.menu == Some(menu);
+        }))
     }
 
     /// A `···` or `+` that opens `menu`, revealed on the row's hover.
@@ -53,7 +75,7 @@ impl Cydonia {
         menu: Menu,
         cx: &Context<Self>,
     ) -> Stateful<Div> {
-        Theme::of(cx)
+        let button = Theme::of(cx)
             .ghost(id)
             .flex_none()
             .relative()
@@ -67,7 +89,8 @@ impl Cydonia {
             .on_click(cx.listener(move |this, _, _, cx| {
                 cx.stop_propagation();
                 this.toggle_menu(menu, cx);
-            }))
+            }));
+        self.menu_press(button, menu, cx)
     }
 
     /// The card every sidebar menu hangs in, dismissed by a press outside it.

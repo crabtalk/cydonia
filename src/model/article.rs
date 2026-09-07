@@ -59,6 +59,13 @@ pub struct Article {
     /// What is on disk. The editor notifies on caret moves too, so without
     /// this every arrow key would rewrite the file.
     saved: String,
+    /// When the document was last written. Held rather than read back per
+    /// frame: the sidebar orders on it, and a project of a thousand articles
+    /// would be a thousand `stat` calls a frame.
+    pub touched: u128,
+    /// Put away: listed under the divider rather than gone. Cached beside
+    /// [`Article::touched`], and for the same reason.
+    pub archived: bool,
 }
 
 impl Article {
@@ -66,11 +73,29 @@ impl Article {
         Self {
             cover: cover::of(&path),
             title: properties::title(&path),
+            touched: project::written(&path),
+            archived: properties::archived(&path),
             path,
             field: None,
             editor: None,
             scroll: ScrollHandle::new(),
             saved: String::new(),
+        }
+    }
+
+    pub fn archive(&mut self, archived: bool) {
+        self.archived = archived;
+        properties::set_archived(&self.path, archived);
+    }
+
+    /// Name it from outside the pane. The open title field is written too, or
+    /// the next keystroke in the article would file the old name back.
+    pub fn rename(&mut self, title: &str, cx: &mut App) {
+        self.title = title.to_owned();
+        self.touched = project::stamp();
+        properties::set_title(&self.path, title);
+        if let Some(field) = &self.field {
+            field.update(cx, |field, cx| field.set_content(title.to_owned(), cx));
         }
     }
 
@@ -134,6 +159,7 @@ impl Article {
                 let moved = self.title != title;
                 if moved {
                     self.title = title;
+                    self.touched = project::stamp();
                     properties::set_title(&self.path, &self.title);
                 }
                 moved
@@ -144,6 +170,7 @@ impl Article {
             let source = editor.read(cx).source();
             if self.saved != source && std::fs::write(&self.path, &source).is_ok() {
                 self.saved = source;
+                self.touched = project::stamp();
             }
         }
         renamed
@@ -208,13 +235,14 @@ pub fn list(project: &Path) -> Vec<Article> {
     let Ok(entries) = std::fs::read_dir(dir.join(DIR)) else {
         return Vec::new();
     };
-    let mut paths: Vec<PathBuf> = entries
+    let paths: Vec<PathBuf> = entries
         .flatten()
         .map(|entry| entry.path().join(CONTENT))
         .filter(|path| path.is_file())
         .collect();
-    paths.sort_by_key(|path| Reverse(project::written(path)));
-    paths.into_iter().map(Article::new).collect()
+    let mut articles: Vec<Article> = paths.into_iter().map(Article::new).collect();
+    articles.sort_by_key(|article| Reverse(article.touched));
+    articles
 }
 
 pub fn create(project: &Path) -> Option<Article> {

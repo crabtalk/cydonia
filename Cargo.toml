@@ -15,24 +15,31 @@ path = "bin/main.rs"
 # bezel — the component library the GUI is built on. Published as `bezel-*`;
 # the keys here are what the source imports. `platform` carries gpui_platform,
 # which opens the window: gpui core knows no platform of its own.
-bezel = { version = "0.1.5", features = ["platform"] }
-editor = { version = "0.1.5", package = "bezel-editor" }
-markdown = { version = "0.1.5", package = "bezel-markdown" }
+bezel = { version = "0.1.6", features = ["platform"] }
+editor = { version = "0.1.6", package = "bezel-editor" }
+markdown = { version = "0.1.6", package = "bezel-markdown" }
 syntax = { version = "0.1.5", package = "bezel-syntax" }
 
-# cacp — our ACP implementation. A sibling checkout while both move together.
-cacp = { path = "../cacp/crates/cacp", default-features = false, features = [
-    "client",
-] }
-cacp-agents = { path = "../cacp/crates/agents" }
+# cacp — our ACP implementation, taken from the registry like any other
+# dependency now that it is published and settled.
+cacp = { version = "0.1.0", default-features = false, features = ["client"] }
+cacp-agents = "0.1.0"
 
 # crates.io
 anyhow = "1"
 dirs = "6"
+# `Shared`, which is the task an in-flight cover is held as. gpui builds its own
+# image cache on it and compiles the crate either way, so this names what is
+# already in the graph rather than adding to it.
+futures = "0.3"
 # Resizes a picked cover on the way in. Already in the graph — gpui decodes
 # every image it paints with it — so this names a crate that is compiled either
 # way rather than adding one.
 image = "0.25"
+# The cover cache's recency list. Zero dependencies of its own — the whole
+# crate is the map and the order, which is exactly what is missing from gpui's
+# own asset cache.
+lru = "0.18"
 # The project database. `bundled` compiles SQLite in: the store is a file we
 # hand to the user, so it cannot depend on whichever sqlite3 a machine ships.
 rusqlite = { version = "0.40", features = ["bundled"] }

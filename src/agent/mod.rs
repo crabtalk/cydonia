@@ -106,10 +106,23 @@ fn cached(dir: &Path, id: &str) -> Option<String> {
 
 // ── the catalog, for the settings window ─────────────────────────
 
-/// The catalog takes any publisher who submits one, and each entry is an npm
-/// package this machine would download and run. These are the adapters whose
-/// authors are the labs that build the models.
+/// The adapters whose authors are the labs that build the models. Named one by
+/// one because each pulls a node runtime down with it — the catalog takes any
+/// publisher who submits one, and running their npm package is running their
+/// code.
 const ALLOWED: [&str; 4] = ["claude-acp", "codex-acp", "gemini", "antigravity-acp"];
+
+/// Whether the catalog entry is one the agents section offers: those four, and
+/// every agent that ships a native binary — a release archive needs nothing on
+/// this machine but the download, and `Distribution::Binary` is already
+/// narrowed to a build this machine can run.
+///
+/// One predicate, because both [`listings`] and [`prefetch_icons`] have to
+/// answer it the same way: a row this admits and the prefetch skips is a row
+/// that never finds its mark.
+fn listed(agent: &registry::Agent) -> bool {
+    ALLOWED.contains(&agent.id.as_str()) || matches!(agent.distribution, Distribution::Binary(_))
+}
 
 /// One row of the agents section: what the registry publishes, and whether it
 /// is on this machine.
@@ -135,7 +148,7 @@ pub fn listings() -> Vec<Listing> {
     catalog
         .agents
         .into_iter()
-        .filter(|agent| ALLOWED.contains(&agent.id.as_str()))
+        .filter(listed)
         .map(|agent| {
             let installed = Installed::find(&data, &agent.id).map(|found| found.version);
             let icon = cached(&dir, &agent.id).map(SharedString::from);
@@ -160,7 +173,7 @@ pub fn prefetch_icons() {
     };
     let dir = cache.join("icons");
     for agent in &catalog.agents {
-        if !ALLOWED.contains(&agent.id.as_str()) {
+        if !listed(agent) {
             continue;
         }
         if let Some(url) = agent.icon.as_deref() {

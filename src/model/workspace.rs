@@ -11,18 +11,19 @@
 use crate::{
     agent,
     data::{ColType, Column, Data, Edit, Page, Table},
+    memory,
     model::{
         article::{self, Article},
         board::{self, Board},
         project::Project,
         record,
         session::ChatSession,
-        settings::{self, Settings},
+        settings::{self, Feature, Settings},
         state::{self, State},
     },
 };
 use bezel::{
-    gpui::{App, Context, EntityId, SharedString},
+    gpui::{App, Context, EntityId, SharedString, Window},
     theme::{self, Brand, Theme, Tint, appearance::AppearanceMode},
     ui::input,
 };
@@ -36,6 +37,20 @@ const UNTITLED: &str = "Untitled";
 
 /// And a column.
 const COLUMN: &str = "Column";
+
+/// The performance section's figures: what is in memory right now.
+pub struct Resident {
+    pub projects: usize,
+    pub articles: usize,
+    /// Articles holding an open [`editor::Editor`]. Built on first open and
+    /// never dropped, so this only climbs.
+    pub editors: usize,
+    /// Covers decoded and held. Bounded — see [`crate::memory`].
+    pub covers: usize,
+    pub sessions: usize,
+    /// Transcript entries across every one of them, read back whole at launch.
+    pub items: usize,
+}
 
 pub struct Workspace {
     pub settings: Settings,
@@ -175,15 +190,33 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Let agents run, or stop them running. Written through to `settings.toml`
+    /// Show a surface, or stop showing it. Written through to `settings.toml`
     /// rather than app state: it is the file the gate is read back from.
     /// A failed write leaves both halves alone, so the switch stays where it
     /// was rather than claiming a gate the file does not carry.
-    pub fn set_agents_enabled(&mut self, on: bool, cx: &mut Context<Self>) {
-        if settings::set_agents_enabled(on).is_err() {
+    ///
+    /// Nothing is reloaded either way. What a project holds is read when it
+    /// opens and the gate is applied at the accessors below, so switching one
+    /// on shows what was already there rather than needing a rescan.
+    pub fn set_feature(&mut self, feature: Feature, on: bool, cx: &mut Context<Self>) {
+        if settings::set_feature(feature, on).is_err() {
             return;
         }
-        self.settings.agents_enabled = on;
+        feature.set(&mut self.settings.features, on);
+        cx.notify();
+    }
+
+    /// Move the cover ceiling. Written through to `settings.toml` first, for
+    /// the reason [`Self::set_agents_enabled`] is, then applied to the cache
+    /// that is already holding pictures under the old one.
+    pub fn set_cover_memory(&mut self, mb: u64, window: &mut Window, cx: &mut Context<Self>) {
+        if settings::set_cover_memory(mb).is_err() {
+            return;
+        }
+        self.settings.cover_memory = mb;
+        memory::covers(cx).update(cx, |covers, cx| {
+            covers.set_limit(mb * 1_000_000, window, cx);
+        });
         cx.notify();
     }
 
@@ -207,6 +240,26 @@ impl Workspace {
         apply_tint(tint, cx);
         self.save();
         cx.notify();
+    }
+
+    // ── performance ──────────────────────────────────────────────────
+
+    /// What this process is holding, counted off the state itself rather than
+    /// tracked alongside it — a tally kept in parallel is a tally that can
+    /// disagree with what is actually resident.
+    pub fn resident(&self, cx: &App) -> Resident {
+        let articles = || self.projects.iter().flat_map(|project| &project.articles);
+        let sessions = || self.projects.iter().flat_map(|project| &project.sessions);
+        Resident {
+            projects: self.projects.len(),
+            articles: articles().count(),
+            editors: articles()
+                .filter(|article| article.editor.is_some())
+                .count(),
+            covers: memory::covers(cx).read(cx).len(),
+            sessions: sessions().count(),
+            items: sessions().map(|chat| chat.items.len()).sum(),
+        }
     }
 
     // ── projects ─────────────────────────────────────────────────────
@@ -235,6 +288,25 @@ impl Workspace {
         }
         self.active = Some(ix);
         self.open_last_entry(cx);
+        self.save();
+        cx.notify();
+    }
+
+    /// Carry a project to another place in the list. `active` follows the
+    /// project it points at rather than the index it sits on: which one is in
+    /// front has nothing to do with what order they are listed in.
+    pub fn move_project(&mut self, from: usize, to: usize, cx: &mut Context<Self>) {
+        if from == to || from >= self.projects.len() || to >= self.projects.len() {
+            return;
+        }
+        let project = self.projects.remove(from);
+        self.projects.insert(to, project);
+        self.active = self.active.map(|at| match at {
+            at if at == from => to,
+            at if from < to && (from..=to).contains(&at) => at - 1,
+            at if to < from && (to..=from).contains(&at) => at + 1,
+            at => at,
+        });
         self.save();
         cx.notify();
     }
@@ -334,15 +406,15 @@ impl Workspace {
     /// Open a session in the active project. `seed` is its first prompt, sent
     /// as soon as the agent is up — what a dispatched card rides in on.
     ///
-    /// The one place a session is born, so it is where the agent gate bites:
-    /// nothing spawns an agent until the user has turned agents on.
+    /// The one place a session is born, so it is where the sessions switch
+    /// bites: nothing spawns an agent until it has been turned on.
     pub fn new_session(
         &mut self,
         entry: settings::Agent,
         seed: Option<String>,
         cx: &mut Context<Self>,
     ) -> Option<u64> {
-        if !self.settings.agents_enabled {
+        if !self.settings.features.sessions {
             return None;
         }
         let ix = self.active?;
@@ -417,7 +489,7 @@ impl Workspace {
     pub fn send(&mut self, id: u64, content: String, cx: &mut Context<Self>) {
         // Read before `chat` borrows the projects. This is the second place an
         // agent process starts, so it is the second half of the gate.
-        let enabled = self.settings.agents_enabled;
+        let enabled = self.settings.features.sessions;
         let found = self
             .projects
             .iter_mut()
@@ -430,7 +502,7 @@ impl Workspace {
         if !enabled && !chat.live() {
             chat.notice(
                 true,
-                "agents are disabled — turn them on in Settings › Agents",
+                "sessions are off — turn them on in Settings › Features",
             );
             cx.notify();
             return;
@@ -452,8 +524,13 @@ impl Workspace {
 
     /// Close the connection and keep the transcript. The row stays where it
     /// was, readable, and typing into it opens an agent again.
-    pub fn archive_session(&mut self, id: u64, cx: &mut Context<Self>) {
-        self.with_session(id, cx, |chat| chat.close());
+    /// Put a session away, or bring it back. Closing tears the agent down and
+    /// keeps the transcript; opening it again is what reconnects.
+    pub fn archive_session(&mut self, id: u64, archived: bool, cx: &mut Context<Self>) {
+        self.with_session(id, cx, |chat| match archived {
+            true => chat.close(),
+            false => chat.closed = false,
+        });
     }
 
     pub fn rename_session(&mut self, id: u64, name: String, cx: &mut Context<Self>) {
@@ -514,8 +591,16 @@ impl Workspace {
         cx.notify();
     }
 
+    /// The session the chat pane would show. Gated, and it is the gate that
+    /// matters most: sessions are read back off disk when a project opens,
+    /// whatever the switch says, so without this a filed transcript would put
+    /// the pane on screen with no composer under it.
     pub fn active_session(&self) -> Option<&ChatSession> {
-        self.active_project().and_then(Project::active_session)
+        self.settings
+            .features
+            .sessions
+            .then(|| self.active_project()?.active_session())
+            .flatten()
     }
 
     pub fn active_id(&self) -> Option<u64> {
@@ -524,14 +609,17 @@ impl Workspace {
 
     // ── boards ───────────────────────────────────────────────────────
 
-    /// A fresh board in the active project, opened as it lands.
+    /// A fresh board in the active project, opened as it lands. Gated here as
+    /// well as in the menus that call it: this is where a board is born.
     pub fn new_board(&mut self, cx: &mut Context<Self>) -> Option<usize> {
+        if !self.settings.features.boards {
+            return None;
+        }
         let project = self.active?;
         let board = board::create(&self.projects[project].path)?;
-        self.projects[project].boards.push(board);
-        let ix = self.projects[project].boards.len() - 1;
-        self.open_board(project, ix, cx);
-        Some(ix)
+        self.projects[project].boards.insert(0, board);
+        self.open_board(project, 0, cx);
+        Some(0)
     }
 
     /// Every project's boards are on show, so picking one brings its project
@@ -566,18 +654,8 @@ impl Workspace {
         cx.notify();
     }
 
-    pub fn rename_board(
-        &mut self,
-        project: usize,
-        ix: usize,
-        name: String,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(board) = self
-            .projects
-            .get_mut(project)
-            .and_then(|open| open.boards.get_mut(ix))
-        else {
+    pub fn rename_board(&mut self, path: &Path, name: String, cx: &mut Context<Self>) {
+        let Some(board) = self.board_at_mut(path) else {
             return;
         };
         board.name = name.trim().to_owned();
@@ -585,14 +663,50 @@ impl Workspace {
         cx.notify();
     }
 
+    pub fn archive_board(&mut self, path: &Path, archived: bool, cx: &mut Context<Self>) {
+        let Some(board) = self.board_at_mut(path) else {
+            return;
+        };
+        board.archived = archived;
+        board.save();
+        cx.notify();
+    }
+
+    /// The board the board pane would show, and the choke point the boards
+    /// switch bites at: with nothing to hand back, the pane is unreachable —
+    /// nothing to render, nothing to step to, nothing for the sidebar to light.
+    /// The files stay where they are.
     pub fn active_board(&self) -> Option<&Board> {
+        if !self.settings.features.boards {
+            return None;
+        }
         let project = self.active_project()?;
         project.boards.get(project.board?)
     }
 
     pub fn active_board_mut(&mut self) -> Option<&mut Board> {
+        if !self.settings.features.boards {
+            return None;
+        }
         let project = self.projects.get_mut(self.active?)?;
         project.boards.get_mut(project.board?)
+    }
+
+    /// The board a file names, wherever it is open. What a rename holds onto:
+    /// an index moves the moment a neighbour is made or dropped, and the file
+    /// is the board — it is where [`Board::save`] writes.
+    pub fn board_at(&self, path: &Path) -> Option<&Board> {
+        self.projects
+            .iter()
+            .flat_map(|open| open.boards.iter())
+            .find(|board| board.path == path)
+    }
+
+    pub fn board_at_mut(&mut self, path: &Path) -> Option<&mut Board> {
+        self.projects
+            .iter_mut()
+            .flat_map(|open| open.boards.iter_mut())
+            .find(|board| board.path == path)
     }
 
     // ── articles ─────────────────────────────────────────────────────
@@ -602,10 +716,37 @@ impl Workspace {
     pub fn new_article(&mut self, cx: &mut Context<Self>) -> Option<usize> {
         let project = self.active?;
         let article = article::create(&self.projects[project].path)?;
-        self.projects[project].articles.push(article);
-        let ix = self.projects[project].articles.len() - 1;
-        self.open_article(project, ix, cx);
-        Some(ix)
+        // Where a re-read would put it: the list is newest first, and a new one
+        // appended would sit at the bottom until the next load moved it.
+        self.projects[project].articles.insert(0, article);
+        self.open_article(project, 0, cx);
+        Some(0)
+    }
+
+    pub fn rename_article(&mut self, path: &Path, name: String, cx: &mut Context<Self>) {
+        let Some(article) = self.article_at_mut(path) else {
+            return;
+        };
+        let name = name.trim().to_owned();
+        article.rename(&name, cx);
+        cx.notify();
+    }
+
+    pub fn archive_article(&mut self, path: &Path, archived: bool, cx: &mut Context<Self>) {
+        let Some(article) = self.article_at_mut(path) else {
+            return;
+        };
+        article.archive(archived);
+        cx.notify();
+    }
+
+    /// The article a file names, wherever it is open — what the sidebar
+    /// addresses one by, since an index moves when a neighbour is made.
+    pub fn article_at_mut(&mut self, path: &Path) -> Option<&mut Article> {
+        self.projects
+            .iter_mut()
+            .flat_map(|open| open.articles.iter_mut())
+            .find(|article| article.path == path)
     }
 
     /// Every project's articles are on show, so picking one brings its project
@@ -680,6 +821,9 @@ impl Workspace {
     /// and a column you can rename is a better start than a dialog asking for
     /// the shape before anything exists to shape.
     pub fn new_table(&mut self, cx: &mut Context<Self>) -> Option<usize> {
+        if !self.settings.features.tables {
+            return None;
+        }
         let at = self.active?;
         let project = self.projects.get_mut(at)?;
         // The one place a store is created: making a table is the moment the
@@ -705,8 +849,8 @@ impl Workspace {
             .ok()?
             .key;
         project.reload_tables();
-        // Found by key rather than taken as the last row: the list is ordered,
-        // so a new table lands wherever its name sorts.
+        // Found by key rather than taken as a known row: the list is ordered by
+        // age, and where the newest lands is the list's business, not this one's.
         let ix = project.tables.iter().position(|table| table.key == key)?;
         self.open_table(at, ix, cx);
         Some(ix)
@@ -764,7 +908,11 @@ impl Workspace {
             .table
             .and_then(|ix| project.tables.get(ix))
             .map(|table| table.key.clone())?;
-        let done = f(project.data.as_mut()?, &key);
+        let data = project.data.as_mut()?;
+        let done = f(data, &key);
+        // Working in a table is what makes it the table you were last in, and
+        // the list is ordered by that.
+        let _ = data.touch(&key);
         project.reload_tables();
         cx.notify();
         Some(done)
@@ -860,18 +1008,50 @@ impl Workspace {
 
     /// The display name only. The key stays where it is, so a query already
     /// written against this table goes on running.
-    pub fn rename_table(&mut self, name: String, cx: &mut Context<Self>) {
-        self.with_table(cx, |data, key| {
-            let _ = data.update(key, Some(&name), None);
+    pub fn rename_table(&mut self, key: &str, name: String, cx: &mut Context<Self>) {
+        self.with_store(key, cx, |data, key| {
+            let _ = data.update(key, Some(name.trim()), None);
         });
     }
 
+    pub fn archive_table(&mut self, key: &str, archived: bool, cx: &mut Context<Self>) {
+        self.with_store(key, cx, |data, key| {
+            let _ = data.archive(key, archived);
+        });
+    }
+
+    /// Run `f` against whichever store holds `key`, then re-read what it did.
+    /// Named rather than open: the sidebar acts on rows the pane is not showing.
+    fn with_store(
+        &mut self,
+        key: &str,
+        cx: &mut Context<Self>,
+        f: impl FnOnce(&mut Data, &str),
+    ) -> Option<()> {
+        let project = self
+            .projects
+            .iter_mut()
+            .find(|open| open.tables.iter().any(|table| table.key == key))?;
+        f(project.data.as_mut()?, key);
+        project.reload_tables();
+        cx.notify();
+        Some(())
+    }
+
     /// The open table's rows, as the pane last read them.
+    /// The rows on screen. Gated beside [`Self::active_table`]: the table pane
+    /// reads the page, not the table, so both have to be shut for it to close.
     pub fn active_page(&self) -> Option<&Page> {
+        if !self.settings.features.tables {
+            return None;
+        }
         self.active_project()?.page.as_ref()
     }
 
     pub fn active_table(&self) -> Option<&Table> {
+        if !self.settings.features.tables {
+            return None;
+        }
         let project = self.active_project()?;
         project.tables.get(project.table?)
     }

@@ -46,6 +46,9 @@ pub struct Project {
     pub page: Option<Page>,
     /// Whether the sidebar shows what is under this project's heading.
     pub expanded: bool,
+    /// Whether it shows what is under the archived divider. Folded away by
+    /// default: what was put away is not what you came back for.
+    pub archive_open: bool,
 }
 
 impl Project {
@@ -63,6 +66,7 @@ impl Project {
             table: None,
             page: None,
             expanded: true,
+            archive_open: false,
         };
         this.reload_tables();
         this
@@ -71,9 +75,9 @@ impl Project {
     /// Re-read what tables exist. The store is the list — nothing here keeps a
     /// second copy of it that a failed write could leave standing.
     pub fn reload_tables(&mut self) {
-        // Held by key across the re-read, not by index: the list is ordered by
-        // name, so renaming the open table moves it and an index would leave
-        // the pane showing whichever table slid into its place.
+        // Held by key across the re-read, not by index: a table made or dropped
+        // beside the open one shifts every index past it, and the pane would be
+        // left showing whichever table slid into its place.
         let open = self
             .table
             .and_then(|ix| self.tables.get(ix))
@@ -125,13 +129,6 @@ impl Project {
 
     pub fn active_session(&self) -> Option<&ChatSession> {
         self.active.and_then(|id| self.session(id))
-    }
-
-    /// Open sessions and archived ones, in that order — an archived session
-    /// is history and belongs under the work still going on.
-    pub fn ordered(&self) -> impl Iterator<Item = &ChatSession> {
-        let open = self.sessions.iter().filter(|chat| !chat.closed);
-        open.chain(self.sessions.iter().filter(|chat| chat.closed))
     }
 }
 
