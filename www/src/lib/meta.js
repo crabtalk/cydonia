@@ -10,8 +10,5 @@ export const site = 'https://cydonia.app';
 export const tagline =
 	'A desktop workspace for the coding agents you run. Open any directory as a project, put an ACP agent to work in it, and keep what comes out as durable artifacts on your own disk — articles, boards and tables, not a chat log.';
 
-/**
- * There are no packaged builds yet, so this is how you get it. `--git` rather
- * than the README's `--path .`, which needs a clone first.
- */
-export const install = `cargo install --git ${repo}`;
+/** There are no packaged builds yet, so the registry is how you get it. */
+export const install = 'cargo install cydonia';

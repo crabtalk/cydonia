@@ -8,7 +8,7 @@ in it, and keep what comes out as durable artifacts on disk — articles, boards
 and tables, not a chat log.
 
 ```sh
-cargo install --path .
+cargo install cydonia
 cydonia
 ```
 

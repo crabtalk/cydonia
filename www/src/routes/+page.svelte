@@ -169,7 +169,7 @@
 
 <section class="get" id="download">
 	<h2>Download cydonia</h2>
-	<p>No packaged builds yet. Install from source with <a href="https://rustup.rs">Rust</a>.</p>
+	<p>No packaged builds yet. Install from crates.io with <a href="https://rustup.rs">Rust</a>.</p>
 	<p class="state">
 		Today: write in a project and hand it to one agent. Several of them working the same project is
 		what comes next.
