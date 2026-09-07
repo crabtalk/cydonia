@@ -5,7 +5,7 @@ use crate::{
     model::article,
     view::{
         component::menu::Menu,
-        root::{Cydonia, Pane},
+        root::{Cydonia, NewArticle, Pane},
         sidebar::{self, Renaming, Row},
     },
 };
@@ -53,6 +53,20 @@ const COLUMN_INSET: f32 = 24.;
 
 impl Cydonia {
     // ── mutations ────────────────────────────────────────────────
+
+    /// The menu's New Article. The sidebar's `+` names a project by the
+    /// heading it sits under; the menu bar has only the one in front.
+    pub(crate) fn new_article_action(
+        &mut self,
+        _: &NewArticle,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(project) = self.workspace.read(cx).active else {
+            return;
+        };
+        self.new_article(project, window, cx);
+    }
 
     pub(crate) fn new_article(
         &mut self,

@@ -7,7 +7,7 @@ use crate::{
     data::ColType,
     view::{
         component::menu::{self, Menu},
-        root::{Cydonia, Pane},
+        root::{Cydonia, NewTable, Pane},
         sidebar::{self, Renaming, Row},
     },
 };
@@ -74,6 +74,20 @@ pub enum Cell {
 
 impl Cydonia {
     // ── mutations ────────────────────────────────────────────────
+
+    /// The menu's New Table. The sidebar's `+` names a project by the heading
+    /// it sits under; the menu bar has only the one in front.
+    pub(crate) fn new_table_action(
+        &mut self,
+        _: &NewTable,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(project) = self.workspace.read(cx).active else {
+            return;
+        };
+        self.new_table(project, cx);
+    }
 
     pub(crate) fn new_table(&mut self, project: usize, cx: &mut Context<Self>) {
         self.select_project(project, cx);
