@@ -317,7 +317,7 @@ impl Cydonia {
                             .py(px(6.))
                             .gap(px(6.))
                             .child(
-                                icons::icon(icons::PLUS)
+                                icons::icon(icons::system::PLUS)
                                     .size(px(12.))
                                     .text_color(theme.text_faint),
                             )
@@ -412,14 +412,14 @@ impl Cydonia {
                             .items_center()
                             .gap(px(2.))
                             .children((at.column > 0).then(|| {
-                                self.card_action("left", at, icons::ALT_ARROW_LEFT, cx)
+                                self.card_action("left", at, icons::arrows::ALT_ARROW_LEFT, cx)
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         cx.stop_propagation();
                                         this.move_card(at, -1, cx);
                                     }))
                             }))
                             .children((!self.last_column(at, cx)).then(|| {
-                                self.card_action("right", at, icons::ALT_ARROW_RIGHT, cx)
+                                self.card_action("right", at, icons::arrows::ALT_ARROW_RIGHT, cx)
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         cx.stop_propagation();
                                         this.move_card(at, 1, cx);
@@ -432,13 +432,13 @@ impl Cydonia {
                             .children(sessions.then(|| {
                                 match live {
                                     Some(id) => self
-                                        .card_action("open", at, icons::CHAT_ROUND_LINE, cx)
+                                        .card_action("open", at, icons::system::CHAT_ROUND_LINE, cx)
                                         .on_click(cx.listener(move |this, _, _, cx| {
                                             cx.stop_propagation();
                                             this.select_session(id, cx);
                                             this.show_pane(Pane::Chat, cx);
                                         })),
-                                    None => self.card_action("run", at, icons::PLAY, cx).on_click(
+                                    None => self.card_action("run", at, icons::media::PLAY, cx).on_click(
                                         cx.listener(move |this, _, _, cx| {
                                             cx.stop_propagation();
                                             this.dispatch_card(at, cx);
@@ -447,7 +447,7 @@ impl Cydonia {
                                 }
                             }))
                             .child(
-                                self.card_action("delete", at, icons::TRASH_BIN_MINIMALISTIC, cx)
+                                self.card_action("delete", at, icons::files::TRASH_BIN_MINIMALISTIC, cx)
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         cx.stop_propagation();
                                         this.delete_card(at, cx);

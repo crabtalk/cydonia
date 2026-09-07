@@ -223,14 +223,14 @@ impl Cydonia {
             rows.push(self.make_row(
                 "session",
                 "New session",
-                icons::CHAT_ROUND_LINE,
+                icons::system::CHAT_ROUND_LINE,
                 cx,
                 move |this, window, cx| this.new_session_action(&NewSession, window, cx),
             ));
         }
         if boards {
             rows.push(
-                self.make_row("board", "New board", icons::LIST, cx, move |this, _, cx| {
+                self.make_row("board", "New board", icons::editing::LIST, cx, move |this, _, cx| {
                     this.new_board(ix, cx)
                 }),
             );
@@ -238,7 +238,7 @@ impl Cydonia {
         rows.push(self.make_row(
             "article",
             "New article",
-            icons::DOCUMENT_ADD,
+            icons::files::DOCUMENT_ADD,
             cx,
             move |this, window, cx| this.new_article(ix, window, cx),
         ));
@@ -246,13 +246,13 @@ impl Cydonia {
             rows.push(self.make_row(
                 "table",
                 "New table",
-                icons::WIDGET,
+                icons::system::WIDGET,
                 cx,
                 move |this, _, cx| this.new_table(ix, cx),
             ));
         }
         theme
-            .empty_state(icons::FOLDER, "Nothing open", format!("in {name}"))
+            .empty_state(icons::files::FOLDER, "Nothing open", format!("in {name}"))
             .flex_1()
             .child(make_list(rows))
             .into_any_element()
@@ -314,7 +314,7 @@ impl Cydonia {
                 .map(|project| shown_path(&project.path))
                 .unwrap_or_default();
             return theme
-                .empty_state(icons::FOLDER, cwd, format!("{} runs here", chat.entry.name))
+                .empty_state(icons::files::FOLDER, cwd, format!("{} runs here", chat.entry.name))
                 .flex_1()
                 .into_any_element();
         }
@@ -343,9 +343,9 @@ impl Cydonia {
                 .text_style(TextStyle::Callout)
                 .children(chat.plan.iter().map(|(text, status)| {
                     let (icon, tone) = match status {
-                        PlanStatus::Done => (icons::CHECK, theme.success),
-                        PlanStatus::Active => (icons::ALT_ARROW_RIGHT, theme.accent),
-                        PlanStatus::Pending => (icons::CHECKLIST, theme.text_faint),
+                        PlanStatus::Done => (icons::status::CHECK, theme.success),
+                        PlanStatus::Active => (icons::arrows::ALT_ARROW_RIGHT, theme.accent),
+                        PlanStatus::Pending => (icons::editing::CHECKLIST, theme.text_faint),
                     };
                     div()
                         .flex()

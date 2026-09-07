@@ -274,7 +274,7 @@ impl Composer {
                     .text_color(theme.text_muted)
                     .into_any_element(),
                 // A slot the catalog has no mark for still has to open the menu.
-                None => icons::icon(icons::WIDGET)
+                None => icons::icon(icons::system::WIDGET)
                     .size(mark)
                     .text_color(theme.text_muted)
                     .into_any_element(),
@@ -313,7 +313,7 @@ impl Composer {
                 }
             })
             .collect();
-        items.push(Item::action("Install an agent…").with_icon(icons::DOWNLOAD));
+        items.push(Item::action("Install an agent…").with_icon(icons::files::DOWNLOAD));
         // The install row sits past the last agent, so the row it reports is an
         // agent exactly while it is in range.
         let agents = self.agents.len();
@@ -350,9 +350,9 @@ impl Composer {
         let streaming = self.streaming;
         let ready = streaming || !self.is_empty(cx);
         let glyph = if streaming {
-            icons::STOP
+            icons::media::STOP
         } else {
-            icons::ARROW_UP
+            icons::arrows::ARROW_UP
         };
         let glyph_size = px(root::composer_disc() / 2.);
         let disc = div()

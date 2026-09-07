@@ -121,11 +121,11 @@ impl Filter {
 
     fn icon(self) -> &'static str {
         match self {
-            Self::All => icons::SORT_VERTICAL,
-            Self::Sessions => icons::CHAT_ROUND_LINE,
-            Self::Boards => icons::LIST,
-            Self::Articles => icons::DOCUMENT,
-            Self::Tables => icons::WIDGET,
+            Self::All => icons::arrows::SORT_VERTICAL,
+            Self::Sessions => icons::system::CHAT_ROUND_LINE,
+            Self::Boards => icons::editing::LIST,
+            Self::Articles => icons::files::DOCUMENT,
+            Self::Tables => icons::system::WIDGET,
         }
     }
 
@@ -328,7 +328,7 @@ impl Cydonia {
                             .py(px(6.))
                             .gap(px(8.))
                             .child(
-                                icons::icon(icons::SETTINGS_MINIMALISTIC)
+                                icons::icon(icons::system::SETTINGS_MINIMALISTIC)
                                     .size(px(13.))
                                     .text_color(theme.text_faint),
                             )
@@ -358,7 +358,7 @@ impl Cydonia {
                                         Tooltip::with_keystroke("New project", "⌘O", window, cx)
                                     })
                                     .child(
-                                        icons::icon(icons::DOCUMENT_ADD)
+                                        icons::icon(icons::files::DOCUMENT_ADD)
                                             .size(px(13.))
                                             .text_color(theme.text_faint),
                                     )
@@ -420,7 +420,7 @@ impl Cydonia {
             .p(px(4.))
             .tooltip(move |window, cx| Tooltip::text(label, window, cx))
             .child(
-                icons::icon(icons::SIDEBAR_MINIMALISTIC_LEFT)
+                icons::icon(icons::system::SIDEBAR_MINIMALISTIC_LEFT)
                     .size(px(14.))
                     .text_color(tint),
             )
@@ -467,7 +467,7 @@ impl Cydonia {
                 self.menu_button(
                     ("project-add", ix),
                     "project-head",
-                    icons::icon(icons::PLUS)
+                    icons::icon(icons::system::PLUS)
                         .size(px(12.))
                         .text_color(theme.text_faint)
                         .group_hover("project-head", |el| el.text_color(theme.text)),
@@ -802,7 +802,7 @@ impl Cydonia {
         let mut rows = Vec::new();
         if sessions {
             rows.push(menu::row(
-                Item::action("New session").with_icon(icons::CHAT_ROUND_LINE),
+                Item::action("New session").with_icon(icons::system::CHAT_ROUND_LINE),
                 move |this, window, cx| {
                     this.select_project(ix, cx);
                     this.new_session_action(&NewSession, window, cx);
@@ -811,17 +811,17 @@ impl Cydonia {
         }
         if boards {
             rows.push(menu::row(
-                Item::action("New board").with_icon(icons::LIST),
+                Item::action("New board").with_icon(icons::editing::LIST),
                 move |this, _, cx| this.new_board(ix, cx),
             ));
         }
         rows.push(menu::row(
-            Item::action("New article").with_icon(icons::DOCUMENT_ADD),
+            Item::action("New article").with_icon(icons::files::DOCUMENT_ADD),
             move |this, window, cx| this.new_article(ix, window, cx),
         ));
         if tables {
             rows.push(menu::row(
-                Item::action("New table").with_icon(icons::WIDGET),
+                Item::action("New table").with_icon(icons::system::WIDGET),
                 move |this, _, cx| this.new_table(ix, cx),
             ));
         }
@@ -840,7 +840,7 @@ impl Cydonia {
             return None;
         }
         let rows = vec![menu::row(
-            Item::action("Remove project").with_icon(icons::TRASH_BIN_MINIMALISTIC),
+            Item::action("Remove project").with_icon(icons::files::TRASH_BIN_MINIMALISTIC),
             move |this, _, cx| this.close_project(ix, cx),
         )];
         let id = SharedString::from(format!("project-menu-{ix}"));
@@ -910,7 +910,7 @@ impl Cydonia {
                 self.menu_button(
                     ("session-menu", id),
                     "session-row",
-                    icons::icon(icons::MENU_DOTS)
+                    icons::icon(icons::system::MENU_DOTS)
                         .size(px(14.))
                         .text_color(theme.text_faint),
                     Menu::Entry(entry),
@@ -961,7 +961,7 @@ impl Cydonia {
             &theme,
         )
         .child(
-            icons::icon(icons::LIST)
+            icons::icon(icons::editing::LIST)
                 .size(px(14.))
                 .flex_none()
                 .text_color(tint),
@@ -971,7 +971,7 @@ impl Cydonia {
             self.menu_button(
                 SharedString::from(format!("board-menu-{project}-{ix}")),
                 "board-row",
-                icons::icon(icons::MENU_DOTS)
+                icons::icon(icons::system::MENU_DOTS)
                     .size(px(14.))
                     .text_color(theme.text_faint),
                 Menu::Entry(entry),
@@ -995,12 +995,12 @@ impl Cydonia {
             return None;
         }
         let put = match archived {
-            true => Item::action("Unarchive").with_icon(icons::ARCHIVE_MINIMALISTIC),
-            false => Item::action("Archive").with_icon(icons::ARCHIVE_MINIMALISTIC),
+            true => Item::action("Unarchive").with_icon(icons::files::ARCHIVE_MINIMALISTIC),
+            false => Item::action("Archive").with_icon(icons::files::ARCHIVE_MINIMALISTIC),
         };
         let rows = vec![
             menu::row(
-                Item::action("Rename").with_icon(icons::PEN_NEW_SQUARE),
+                Item::action("Rename").with_icon(icons::editing::PEN_NEW_SQUARE),
                 move |this, window, cx| this.rename_entry(entry, window, cx),
             ),
             menu::row(put, move |this, _, cx| {

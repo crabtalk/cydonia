@@ -36,21 +36,21 @@ fn copy(
 ) {
     match feature {
         Feature::Sessions => (
-            icons::CHAT_ROUND_LINE,
+            icons::system::CHAT_ROUND_LINE,
             "Sessions",
             "A session runs an agent — a package this machine downloads and \
              executes. None starts while this is off.",
             None,
         ),
         Feature::Boards => (
-            icons::LIST,
+            icons::editing::LIST,
             "Boards",
             "Cards in columns, one board to a file. Boards already written stay \
              in the project while this is off.",
             Some("Preview"),
         ),
         Feature::Tables => (
-            icons::WIDGET,
+            icons::system::WIDGET,
             "Tables",
             "Structured records in the project's store. The store is left alone \
              while this is off.",

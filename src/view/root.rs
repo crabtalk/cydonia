@@ -444,7 +444,7 @@ impl Cydonia {
         let painter = Painter::of(cx);
         theme
             .empty_state(
-                icons::FOLDER,
+                icons::files::FOLDER,
                 "No project open",
                 "An agent runs in a directory. Pick one to start.",
             )

@@ -89,10 +89,10 @@ impl Section {
 
     fn glyph(self) -> &'static str {
         match self {
-            Self::Appearance => icons::SUN,
-            Self::Features => icons::TUNING,
-            Self::Agents => icons::WIDGET,
-            Self::Performance => icons::CPU,
+            Self::Appearance => icons::system::SUN,
+            Self::Features => icons::system::TUNING,
+            Self::Agents => icons::system::WIDGET,
+            Self::Performance => icons::devices::CPU,
         }
     }
 }

@@ -281,7 +281,7 @@ impl Cydonia {
                         .ghost("add-column")
                         .p(px(3.))
                         .child(
-                            icons::icon(icons::PLUS)
+                            icons::icon(icons::system::PLUS)
                                 .size(px(12.))
                                 .text_color(theme.text_faint),
                         )
@@ -325,7 +325,7 @@ impl Cydonia {
                                 .py(px(7.))
                                 .gap(px(6.))
                                 .child(
-                                    icons::icon(icons::PLUS)
+                                    icons::icon(icons::system::PLUS)
                                         .size(px(12.))
                                         .text_color(theme.text_faint),
                                 )
@@ -383,7 +383,7 @@ impl Cydonia {
                 self.menu_button(
                     ("column-menu", ix),
                     "grid-head",
-                    icons::icon(icons::MENU_DOTS)
+                    icons::icon(icons::system::MENU_DOTS)
                         .size(px(14.))
                         .text_color(theme.text_faint),
                     Menu::Column(ix),
@@ -415,7 +415,7 @@ impl Cydonia {
             })
             .collect();
         rows.push(menu::row(
-            Item::action("Delete column").with_icon(icons::TRASH_BIN_MINIMALISTIC),
+            Item::action("Delete column").with_icon(icons::files::TRASH_BIN_MINIMALISTIC),
             move |this, _, cx| this.delete_column(ix, cx),
         ));
         let id = SharedString::from(format!("column-menu-{ix}"));
@@ -461,7 +461,7 @@ impl Cydonia {
             .group_hover("grid-row", |el| el.visible())
             .p(px(3.))
             .child(
-                icons::icon(icons::TRASH_BIN_MINIMALISTIC)
+                icons::icon(icons::files::TRASH_BIN_MINIMALISTIC)
                     .size(px(12.))
                     .text_color(theme.text_faint),
             )
@@ -505,7 +505,7 @@ impl Cydonia {
             &theme,
         )
         .child(
-            icons::icon(icons::WIDGET)
+            icons::icon(icons::system::WIDGET)
                 .size(px(14.))
                 .flex_none()
                 .text_color(tone),
@@ -525,7 +525,7 @@ impl Cydonia {
             self.menu_button(
                 ("table-menu", ix),
                 "table-row",
-                icons::icon(icons::MENU_DOTS)
+                icons::icon(icons::system::MENU_DOTS)
                     .size(px(14.))
                     .text_color(theme.text_faint),
                 Menu::Entry(entry),
@@ -543,10 +543,10 @@ impl Cydonia {
 /// read where a glyph would have told you.
 fn glyph(kind: ColType) -> &'static str {
     match kind {
-        ColType::Text => icons::TEXT,
-        ColType::Number => icons::HASHTAG,
-        ColType::Date => icons::CALENDAR,
-        ColType::Check => icons::CHECKLIST,
+        ColType::Text => icons::editing::TEXT,
+        ColType::Number => icons::editing::HASHTAG,
+        ColType::Date => icons::system::CALENDAR,
+        ColType::Check => icons::editing::CHECKLIST,
     }
 }
 
