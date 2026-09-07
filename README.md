@@ -87,6 +87,23 @@ there is the project's source.
 
 `cargo run`. Set `CYDONIA_DEBUG=/tmp/acp.log` to capture the raw JSON-RPC wire.
 
+`make bundle` assembles `target/bundle/cydonia.app`, which is what carries the
+Dock icon — gpui sets none itself, so a `cargo install` binary stays generic.
+The logo is not in the repo: it is downloaded to `assets/icon.png` on the first
+bundle, and `make icon` refetches it. An unreachable CDN costs the app its icon,
+not its build.
+
+`make dmg` packs it into `target/bundle/cydonia-<version>-<arch>.dmg`. The build
+is single-arch, which is why the name says so.
+
+Both are signed ad-hoc, and Gatekeeper rejects ad-hoc. `make release` signs for
+real, then notarizes and staples. It is the only target that reaches for a
+certificate, and it reads which one from `.env.release` — gitignored, and
+holding `APPLE_SIGNING_IDENTITY` and `APPLE_KEYCHAIN_PROFILE`, the latter named
+by `xcrun notarytool store-credentials` so no password lands in a file. The
+certificate has to be a Developer ID Application; an Apple Development one signs
+perfectly well and Gatekeeper refuses it anyway.
+
 Cydonia paints with [bezel](https://github.com/crabtalk/bezel) 0.1.5, built from
 a checkout beside this one via the manifest's `[patch.crates-io]`.
 

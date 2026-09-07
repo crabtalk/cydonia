@@ -1,1 +1,9 @@
+.DS_Store
+.env
+.env.*
+.claude/worktrees
+/assets
 /target
+
+# website
+www/static/og.png
