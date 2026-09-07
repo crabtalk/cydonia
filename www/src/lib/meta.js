@@ -1,5 +1,8 @@
 export const repo = 'https://github.com/crabtalk/cydonia';
 
+/** The invite is permanent — a link with an expiry would rot on the page. */
+export const discord = 'https://discord.gg/yGZDYnwbx6';
+
 /** Canonical URL. The one place the host is named — sitemap, robots, share cards. */
 export const site = 'https://cydonia.app';
 

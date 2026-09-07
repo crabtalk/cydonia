@@ -364,20 +364,19 @@ impl Cydonia {
                             .ghost("settings")
                             .px(px(8.))
                             .py(px(6.))
-                            .gap(px(8.))
+                            // The mark alone, like every other control on this
+                            // line. What it opens is said in the tooltip, which
+                            // is where the two beside it say theirs.
+                            .tooltip(|window, cx| {
+                                Tooltip::with_keystroke("Settings", "⌘,", window, cx)
+                            })
                             .child(
                                 icons::icon(icons::system::SETTINGS_MINIMALISTIC)
                                     .size(px(13.))
                                     .text_color(theme.text_faint),
                             )
-                            .child(
-                                div()
-                                    .text_style(TextStyle::Body)
-                                    .text_color(theme.text_muted)
-                                    .child("Settings"),
-                            )
                             .on_click(cx.listener(|this, _, _, cx| {
-                                this.open_settings(Section::Appearance, cx)
+                                this.open_settings(Section::General, cx)
                             })),
                     )
                     .child(

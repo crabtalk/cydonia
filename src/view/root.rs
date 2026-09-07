@@ -427,7 +427,7 @@ impl Cydonia {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_settings(Section::Appearance, cx);
+        self.open_settings(Section::General, cx);
     }
 
     pub(crate) fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {

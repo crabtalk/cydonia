@@ -36,7 +36,9 @@ bundle:
 	mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources
 	cp target/release/cydonia $(APP)/Contents/MacOS/cydonia
 	sed 's/@VERSION@/$(VERSION)/g' bundle/Info.plist > $(APP)/Contents/Info.plist
-	@# An unreachable CDN costs the app its icon, not its build.
+	@# An unreachable CDN costs the app its icon, not its build. The `.icns` is
+	@# AppKit's; the 256 png beside it is the app's own — settings paints the
+	@# mark itself, and nothing in the app can read an `.icns`.
 	@[ -f $(ICON) ] || $(MAKE) --no-print-directory icon || true
 	@if [ -f $(ICON) ]; then \
 		mkdir -p $(ICONSET); \
@@ -46,6 +48,7 @@ bundle:
 		done; \
 		iconutil -c icns $(ICONSET) -o $(APP)/Contents/Resources/cydonia.icns; \
 		rm -rf $(ICONSET); \
+		sips -s format png -Z 256 $(ICON) --out $(APP)/Contents/Resources/icon.png >/dev/null; \
 	else \
 		echo "no $(ICON): bundling without an icon"; \
 	fi

@@ -28,6 +28,7 @@ use std::collections::HashSet;
 
 mod agents;
 mod features;
+mod general;
 mod performance;
 mod theme;
 mod typography;
@@ -49,6 +50,7 @@ const CONTENT_MAX_WIDTH: f32 = 860.;
 /// Which section the sidebar has selected.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Section {
+    General,
     Appearance,
     // Before Agents, because it is what decides whether agents matter: with
     // sessions off, nothing installed under Agents can be launched.
@@ -58,7 +60,8 @@ pub enum Section {
 }
 
 impl Section {
-    const ALL: [Self; 4] = [
+    const ALL: [Self; 5] = [
+        Self::General,
         Self::Appearance,
         Self::Features,
         Self::Agents,
@@ -67,6 +70,7 @@ impl Section {
 
     fn title(self) -> &'static str {
         match self {
+            Self::General => "General",
             Self::Appearance => "Appearance",
             Self::Features => "Features",
             Self::Agents => "Agents",
@@ -80,12 +84,14 @@ impl Section {
     fn subtitle(self) -> Option<&'static str> {
         match self {
             Self::Features => Some("Parts of cydonia that stay off until you ask for them."),
-            Self::Appearance | Self::Agents | Self::Performance => None,
+            Self::General | Self::Appearance | Self::Agents | Self::Performance => None,
         }
     }
 
     fn glyph(self) -> &'static str {
         match self {
+            // The gear macOS itself puts on General.
+            Self::General => icons::system::SETTINGS_MINIMALISTIC,
             Self::Appearance => icons::system::SUN,
             Self::Features => icons::system::TUNING,
             Self::Agents => icons::system::WIDGET,
@@ -186,7 +192,7 @@ impl SettingsWindow {
         self.section = section;
         match section {
             Section::Agents => self.load(cx),
-            Section::Appearance | Section::Features | Section::Performance => {}
+            Section::General | Section::Appearance | Section::Features | Section::Performance => {}
         }
         cx.notify();
     }
@@ -271,6 +277,7 @@ impl Render for SettingsWindow {
                                     ),
                             )
                             .child(match self.section {
+                                Section::General => self.general_body(cx),
                                 Section::Appearance => self.appearance_body(cx),
                                 Section::Features => self.features_body(cx),
                                 Section::Agents => self.agents_body(cx),

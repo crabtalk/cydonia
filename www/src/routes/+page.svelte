@@ -1,11 +1,12 @@
 <script>
-	import { siApple, siGithub, siX } from 'simple-icons';
+	import { siApple, siDiscord, siGithub, siX } from 'simple-icons';
 	import { Check, Copy } from 'lucide-static';
 	import Brand from '$lib/Brand.svelte';
 	import Frame from '$lib/Frame.svelte';
-	import { install, repo, site, tagline as description } from '$lib/meta.js';
+	import { discord, install, repo, site, tagline as description } from '$lib/meta.js';
 
 	const author = 'https://x.com/tianyi_gc';
+	const video = 'https://cdn.crabtalk.ai/videos/cydonia.720p.mov';
 	const acp = 'https://agentclientprotocol.com';
 
 	// Off until there are real screenshots to put in the frames — three empty
@@ -109,10 +110,21 @@
 			</a>
 		</div>
 
-		<p class="facts">macOS on Apple silicon · no account, no sync</p>
+		<p class="facts">macOS on Apple silicon · pure rust · no account, no sync</p>
 	</div>
 
-	<Frame ratio="4 / 3" />
+	<!-- Intrinsic 1280x804, spelled out so the hero does not reflow once the
+	     video has loaded its metadata. -->
+	<video
+		class="demo"
+		src={video}
+		autoplay
+		loop
+		muted
+		playsinline
+		preload="metadata"
+		aria-label="Cydonia in use"
+	></video>
 </section>
 
 {#if showcase}
@@ -172,6 +184,9 @@
 		<a href="https://github.com/crabtalk">crabtalk</a>
 	</nav>
 	<nav class="right">
+		<a href={discord} target="_blank" rel="noreferrer" aria-label="Cydonia on Discord">
+			<Brand icon={siDiscord} size={16} />
+		</a>
 		<a href={repo} aria-label="Cydonia on GitHub"><Brand icon={siGithub} size={16} /></a>
 		<a href={author} target="_blank" rel="noreferrer" aria-label="The author on X">
 			<Brand icon={siX} size={15} />
@@ -200,6 +215,15 @@
 		font-size: clamp(36px, 4.6vw, 52px);
 		font-weight: 600;
 		letter-spacing: -0.03em;
+	}
+
+	.demo {
+		width: 100%;
+		aspect-ratio: 1280 / 804;
+		border: 1px solid var(--line);
+		border-radius: 14px;
+		background: var(--panel);
+		object-fit: cover;
 	}
 
 	.lede {

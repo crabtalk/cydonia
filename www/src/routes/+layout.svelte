@@ -1,6 +1,9 @@
 <script>
 	import '../app.css';
+	import { siDiscord } from 'simple-icons';
 	import { base } from '$app/paths';
+	import Brand from '$lib/Brand.svelte';
+	import { discord } from '$lib/meta.js';
 
 	let { children } = $props();
 
@@ -27,9 +30,13 @@
 </script>
 
 <header>
-	<a class="wordmark" href="{base}/">cydonia</a>
+	<a class="wordmark" href="{base}/">Cydonia</a>
 
 	<nav>
+		<a class="community" href={discord} target="_blank" rel="noreferrer">
+			<Brand icon={siDiscord} size={16} />
+			Community
+		</a>
 		<a class="button" href="{base}/#download">Download</a>
 	</nav>
 </header>
@@ -60,6 +67,18 @@
 		font-size: 14.5px;
 	}
 
+	.community {
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+		color: var(--muted);
+	}
+
+	.community:hover {
+		color: var(--text);
+		text-decoration: none;
+	}
+
 	.button {
 		display: inline-flex;
 		align-items: center;
@@ -79,6 +98,10 @@
 	@media (max-width: 720px) {
 		header {
 			padding: 0 18px;
+		}
+
+		nav {
+			gap: 16px;
 		}
 	}
 </style>
