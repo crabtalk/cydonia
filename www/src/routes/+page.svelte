@@ -93,7 +93,7 @@
 
 <section class="hero">
 	<div class="say">
-		<h1>Put your coding agents to work in a project you can read.</h1>
+		<h1>Agents that leave something behind.</h1>
 		<p class="lede">
 			Open any directory. Agents that speak the <a href={acp}>Agent Client Protocol</a> work in it,
 			and what comes out stays as durable artifacts on your disk — articles, boards and tables, not

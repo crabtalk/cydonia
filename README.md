@@ -1,23 +1,22 @@
 # Cydonia
 
+https://github.com/user-attachments/assets/dfe51807-a24a-49f0-b702-918c317ee21d
+
 A desktop workspace for the coding agents you run. Open a directory as a
 project, put any agent that speaks [ACP](https://agentclientprotocol.com) to work
 in it, and keep what comes out as durable artifacts on disk — articles, boards
 and tables, not a chat log.
-
-https://cdn.crabtalk.ai/videos/cydonia.mov
 
 ```sh
 cargo install --path .
 cydonia
 ```
 
-## Status
-
-Articles are the stable part, and a fresh install is articles and nothing else.
-Sessions, boards and tables work and are early, so they ship off. One agent in
-one project is solid; several of them working that project is what is being
-built.
+> [!NOTE]
+> Articles are the stable part, and a fresh install is articles and nothing
+> else. Sessions, boards and tables work and are early, so they ship off. One
+> agent in one project is solid; several of them working that project is what is
+> being built.
 
 ## Features
 
