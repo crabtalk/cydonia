@@ -1,18 +1,27 @@
 # Cydonia
 
-A desktop workspace for notes and [ACP](https://agentclientprotocol.com) agents.
-Open a directory as a project, write articles in it, and hand them to any coding
-agent that speaks the Agent Client Protocol.
+https://github.com/user-attachments/assets/dfe51807-a24a-49f0-b702-918c317ee21d
+
+A desktop workspace for the coding agents you run. Open a directory as a
+project, put any agent that speaks [ACP](https://agentclientprotocol.com) to work
+in it, and keep what comes out as durable artifacts on disk — articles, boards
+and tables, not a chat log.
 
 ```sh
-cargo install --path .
+cargo install cydonia
 cydonia
 ```
 
+> [!NOTE]
+> Articles are the stable part, and a fresh install is articles and nothing
+> else. Sessions, boards and tables work and are early, so they ship off. One
+> agent in one project is solid; several of them working that project is what is
+> being built.
+
 ## Features
 
-A fresh install is articles and nothing else. The rest is off until you ask for
-it, in **Settings › Features** or in `~/.config/cydonia/settings.toml`:
+The rest is off until you ask for it, in **Settings › Features** or in
+`~/.config/cydonia/settings.toml`:
 
 ```toml
 [features]
@@ -24,17 +33,6 @@ tables = false     # structured records
 `sessions` gates agents as much as it gates the pane — a session is the only
 thing that starts one, and an agent is a package this machine downloads and
 runs. Turning a feature off hides it; nothing on disk is deleted.
-
-## Keys
-
-| Key | Action |
-| --- | --- |
-| `Cmd+O` | open a project |
-| `Cmd+N` | new session |
-| `Cmd+,` | settings |
-| `Ctrl+Tab` / `Ctrl+Shift+Tab` | step between entries of the kind on screen |
-| `Enter` | send (`Shift+Enter` for a newline) |
-| `/` | the agent's own slash commands |
 
 ## Agents
 
@@ -49,29 +47,6 @@ args = ["--acp"]
 # env = { KEY = "VALUE" }
 ```
 
-The file is generated on first run, seeded with the
-[Claude Code](https://www.npmjs.com/package/@agentclientprotocol/claude-agent-acp)
-and [Codex](https://www.npmjs.com/package/@agentclientprotocol/codex-acp)
-adapters. Entries that name a floating tag like `@latest` are skipped — that is
-a different program on every launch.
-
-## MCP servers
-
-Servers offered to every agent go in `~/.config/cydonia/mcp.toml`, by hand:
-
-```toml
-[[servers]]
-name = "everything"
-enabled = true
-command = "npx"
-args = ["-y", "@modelcontextprotocol/server-everything"]
-```
-
-ACP takes the server list only at `session/new`, so edits apply to the next
-session rather than the running one. There is no connection status: the protocol
-tells a client nothing about whether a server started, so a failed one shows up
-as its tools being absent from the agent.
-
 ## Where things live
 
 ```
@@ -84,11 +59,6 @@ A project's own store carries a `.gitignore` — none of what cydonia writes
 there is the project's source.
 
 ## Development
-
-`cargo run`. Set `CYDONIA_DEBUG=/tmp/acp.log` to capture the raw JSON-RPC wire.
-
-Cydonia paints with [bezel](https://github.com/crabtalk/bezel) 0.1.5, built from
-a checkout beside this one via the manifest's `[patch.crates-io]`.
 
 [fixtures](https://github.com/crabtalk/fixtures) is a demo project to open the
 app against; `cargo run --example covers -- ../fixtures` gives its articles their

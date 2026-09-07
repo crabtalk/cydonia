@@ -20,7 +20,7 @@ use bezel::{
     theme::{TextStyle, Theme, Typeset, appearance},
     ui::{
         icons,
-        input::TextField,
+        input::{FieldEvent, Shape, TextField},
         widgets::{Layout, Scaffolding},
     },
 };
@@ -28,6 +28,7 @@ use std::collections::HashSet;
 
 mod agents;
 mod features;
+mod general;
 mod performance;
 mod theme;
 mod typography;
@@ -49,6 +50,7 @@ const CONTENT_MAX_WIDTH: f32 = 860.;
 /// Which section the sidebar has selected.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Section {
+    General,
     Appearance,
     // Before Agents, because it is what decides whether agents matter: with
     // sessions off, nothing installed under Agents can be launched.
@@ -58,7 +60,8 @@ pub enum Section {
 }
 
 impl Section {
-    const ALL: [Self; 4] = [
+    const ALL: [Self; 5] = [
+        Self::General,
         Self::Appearance,
         Self::Features,
         Self::Agents,
@@ -67,6 +70,7 @@ impl Section {
 
     fn title(self) -> &'static str {
         match self {
+            Self::General => "General",
             Self::Appearance => "Appearance",
             Self::Features => "Features",
             Self::Agents => "Agents",
@@ -79,16 +83,15 @@ impl Section {
     /// and the gap under the whole block is the same either way.
     fn subtitle(self) -> Option<&'static str> {
         match self {
-            Self::Features => Some(
-                "Parts of cydonia that stay off until you ask for them. Turning one \
-                 off hides it; nothing on disk is deleted.",
-            ),
-            Self::Appearance | Self::Agents | Self::Performance => None,
+            Self::Features => Some("Parts of cydonia that stay off until you ask for them."),
+            Self::General | Self::Appearance | Self::Agents | Self::Performance => None,
         }
     }
 
     fn glyph(self) -> &'static str {
         match self {
+            // The gear macOS itself puts on General.
+            Self::General => icons::system::SETTINGS_MINIMALISTIC,
             Self::Appearance => icons::system::SUN,
             Self::Features => icons::system::TUNING,
             Self::Agents => icons::system::WIDGET,
@@ -105,6 +108,10 @@ pub struct SettingsWindow {
     listings: Option<Vec<Listing>>,
     /// Agents with an install or a removal running.
     busy: HashSet<String>,
+    /// What the agents section is being searched for. Held by the window
+    /// rather than made where it is drawn: what has been typed has to outlive
+    /// the frame, and a section is drawn afresh on every one.
+    search: Entity<TextField>,
     /// The cover ceiling's field, while its dialog is up.
     editing: Option<Entity<TextField>>,
     error: Option<SharedString>,
@@ -145,11 +152,27 @@ pub fn open(
         |window, cx| {
             appearance::observe_window(window, cx).detach();
             cx.new(|cx| {
+                let search = cx.new(|cx| {
+                    TextField::new(cx)
+                        .with_shape(Shape::Line)
+                        .with_frame(false)
+                        .with_placeholder("Search agents…")
+                });
+                // The list narrows as it is typed into. Subscribed rather than
+                // observed: a field notifies on its own caret blink, and this
+                // would rebuild the catalogue twice a second.
+                cx.subscribe(&search, |_, _, event: &FieldEvent, cx| {
+                    if *event == FieldEvent::Changed {
+                        cx.notify();
+                    }
+                })
+                .detach();
                 let mut this = SettingsWindow {
                     workspace,
                     section,
                     listings: None,
                     busy: HashSet::new(),
+                    search,
                     editing: None,
                     error: None,
                 };
@@ -169,7 +192,7 @@ impl SettingsWindow {
         self.section = section;
         match section {
             Section::Agents => self.load(cx),
-            Section::Appearance | Section::Features | Section::Performance => {}
+            Section::General | Section::Appearance | Section::Features | Section::Performance => {}
         }
         cx.notify();
     }
@@ -254,6 +277,7 @@ impl Render for SettingsWindow {
                                     ),
                             )
                             .child(match self.section {
+                                Section::General => self.general_body(cx),
                                 Section::Appearance => self.appearance_body(cx),
                                 Section::Features => self.features_body(cx),
                                 Section::Agents => self.agents_body(cx),

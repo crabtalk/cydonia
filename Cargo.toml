@@ -1,11 +1,21 @@
 [package]
 name = "cydonia"
-description = "Desktop client for ACP agents"
+description = "Desktop workspace for the ACP agents you run, keeping what they produce as files on your disk"
 version = "0.1.0"
 edition = "2024"
+# The floor the edition itself sets. Nothing here reaches past it on purpose.
+rust-version = "1.85"
 license = "MIT"
 repository = "https://github.com/crabtalk/cydonia"
+homepage = "https://cydonia.sh"
 readme = "README.md"
+keywords = ["acp", "agents", "desktop", "gpui", "workspace"]
+categories = ["gui", "development-tools"]
+# What a `cargo install` needs and nothing else. The default is every tracked
+# file, which would ship the website and the bundling plumbing to anyone who
+# installs the binary. `assets/` is absent by design — the logo is downloaded,
+# never committed, and `mark()` already holds the case where it is missing.
+include = ["/src", "/bin", "/build.rs", "/README.md", "/LICENSE"]
 
 [[bin]]
 name = "cydonia"
@@ -18,7 +28,7 @@ path = "bin/main.rs"
 bezel = { version = "0.1.6", features = ["platform"] }
 editor = { version = "0.1.6", package = "bezel-editor" }
 markdown = { version = "0.1.6", package = "bezel-markdown" }
-syntax = { version = "0.1.5", package = "bezel-syntax" }
+syntax = { version = "0.1.6", package = "bezel-syntax" }
 
 # cacp — our ACP implementation, taken from the registry like any other
 # dependency now that it is published and settled.

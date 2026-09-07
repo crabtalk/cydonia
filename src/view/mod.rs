@@ -6,6 +6,7 @@ pub mod article;
 pub mod board;
 pub mod component;
 pub mod detail;
+pub mod menubar;
 pub mod root;
 pub mod settings;
 pub mod sidebar;

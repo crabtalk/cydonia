@@ -15,14 +15,16 @@ use crate::{
         table,
     },
 };
+use anyhow::Result;
 use bezel::{
     gpui::{
-        self, AnyElement, App, Axis, Context, DragMoveEvent, Empty, Entity, FocusHandle, Hsla,
-        KeyBinding, PathPromptOptions, Render, UniformListScrollHandle, Window, WindowHandle,
-        actions, div, prelude::*, px,
+        self, AnyElement, App, Axis, Bounds, Context, DragMoveEvent, Empty, Entity, FocusHandle,
+        Hsla, KeyBinding, PathPromptOptions, Render, TitlebarOptions, UniformListScrollHandle,
+        Window, WindowBounds, WindowHandle, WindowOptions, actions, div, point, prelude::*, px,
+        size,
     },
     motion::{Fade, Painter},
-    theme::{Material, TextStyle, Theme, Typeset},
+    theme::{Material, TextStyle, Theme, Typeset, appearance},
     ui::{
         floating::Floating,
         icons,
@@ -36,8 +38,17 @@ actions!(
     cydonia,
     [
         NewSession,
+        NewBoard,
+        NewArticle,
+        NewTable,
         OpenProject,
+        CloseProject,
         OpenSettings,
+        ToggleSidebar,
+        ShowChat,
+        ShowBoard,
+        ShowArticle,
+        ShowTable,
         CommitName,
         DismissName,
         NextEntry,
@@ -143,6 +154,22 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-o", OpenProject, None),
         // What macOS binds Preferences to in every other app.
         KeyBinding::new("cmd-,", OpenSettings, None),
+        // What every app with a sidebar binds it to. It is claimed app-wide:
+        // the menu item carries it, so AppKit takes the chord before the
+        // window is offered it, and the editor's own `cmd-b` — bold — is not
+        // reached while this one is on the bar.
+        KeyBinding::new("cmd-b", ToggleSidebar, None),
+        KeyBinding::new("cmd-1", ShowChat, None),
+        KeyBinding::new("cmd-2", ShowBoard, None),
+        KeyBinding::new("cmd-3", ShowArticle, None),
+        KeyBinding::new("cmd-4", ShowTable, None),
+        // Bound ahead of the `tab` pair below because the menu draws the first
+        // chord a command was given, and `tab` is the one it cannot draw: gpui
+        // has no macOS key equivalent for it, so AppKit is handed the word
+        // where the API takes one character and shows ⌃T. These are what the
+        // View menu carries.
+        KeyBinding::new("alt-cmd-right", NextEntry, None),
+        KeyBinding::new("alt-cmd-left", PrevEntry, None),
         // What a browser binds its tabs to. Global, because the point is to
         // move between documents without taking the hand out of the editor —
         // where `tab` itself is indent.
@@ -151,6 +178,33 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("enter", CommitName, Some(RENAME_CONTEXT)),
         KeyBinding::new("escape", DismissName, Some(RENAME_CONTEXT)),
     ]);
+}
+
+/// Open the workspace window. Called at launch, and again when the Dock
+/// reopens an app whose window ⌘W closed.
+pub fn open(settings: Settings, state: State, cx: &mut App) -> Result<WindowHandle<Cydonia>> {
+    let bounds = Bounds::centered(None, size(px(1100.), px(760.)), cx);
+    cx.open_window(
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            // No strip of its own: the traffic lights sit in the nav, so the
+            // window owes no titlebar above it.
+            titlebar: Some(TitlebarOptions {
+                appears_transparent: true,
+                traffic_light_position: Some(point(px(TRAFFIC_LIGHT_X), px(TRAFFIC_LIGHT_Y))),
+                ..Default::default()
+            }),
+            // Glass needs a blurred window background to blur into.
+            window_background: Theme::of(cx).window_background_appearance(),
+            window_min_size: Some(size(px(600.), px(320.))),
+            app_id: Some("cydonia".into()),
+            ..Default::default()
+        },
+        |window, cx| {
+            appearance::observe_window(window, cx).detach();
+            cx.new(|cx| Cydonia::new(settings, state, window, cx))
+        },
+    )
 }
 
 /// Which pane the detail column shows. A property of the window, not of a
@@ -367,13 +421,57 @@ impl Cydonia {
             .update(cx, |workspace, cx| workspace.select_session(id, cx));
     }
 
-    fn open_settings_action(&mut self, _: &OpenSettings, _: &mut Window, cx: &mut Context<Self>) {
-        self.open_settings(Section::Appearance, cx);
+    pub(crate) fn open_settings_action(
+        &mut self,
+        _: &OpenSettings,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_settings(Section::General, cx);
     }
 
     pub(crate) fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
         self.sidebar_open = !self.sidebar_open;
         cx.notify();
+    }
+
+    pub(crate) fn toggle_sidebar_action(
+        &mut self,
+        _: &ToggleSidebar,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_sidebar(cx);
+    }
+
+    /// The menu's Close Project. The sidebar names a project by the row it was
+    /// pressed on; the menu bar has only the one in front.
+    pub(crate) fn close_project_action(
+        &mut self,
+        _: &CloseProject,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(ix) = self.workspace.read(cx).active else {
+            return;
+        };
+        self.close_project(ix, cx);
+    }
+
+    pub(crate) fn show_chat(&mut self, _: &ShowChat, _: &mut Window, cx: &mut Context<Self>) {
+        self.show_pane(Pane::Chat, cx);
+    }
+
+    pub(crate) fn show_board(&mut self, _: &ShowBoard, _: &mut Window, cx: &mut Context<Self>) {
+        self.show_pane(Pane::Board, cx);
+    }
+
+    pub(crate) fn show_article(&mut self, _: &ShowArticle, _: &mut Window, cx: &mut Context<Self>) {
+        self.show_pane(Pane::Article, cx);
+    }
+
+    pub(crate) fn show_table(&mut self, _: &ShowTable, _: &mut Window, cx: &mut Context<Self>) {
+        self.show_pane(Pane::Table, cx);
     }
 
     pub(crate) fn open_settings(&mut self, section: Section, cx: &mut Context<Self>) {
@@ -420,21 +518,24 @@ impl Cydonia {
     /// it, so with nothing open there is no pane to name — least of all the
     /// chat, which under the shipped defaults is itself switched off.
     pub(crate) fn showing(&self, cx: &App) -> Option<Pane> {
-        let open = |pane| {
-            let workspace = self.workspace.read(cx);
-            match pane {
-                Pane::Chat => workspace.active_session().is_some(),
-                Pane::Board => workspace.active_board().is_some(),
-                Pane::Article => workspace.active_article().is_some(),
-                Pane::Table => workspace.active_table().is_some(),
-            }
-        };
-        if open(self.pane) {
+        if self.has_pane(self.pane, cx) {
             return Some(self.pane);
         }
         [Pane::Chat, Pane::Board, Pane::Article, Pane::Table]
             .into_iter()
-            .find(|&pane| open(pane))
+            .find(|&pane| self.has_pane(pane, cx))
+    }
+
+    /// Whether the active project has anything open in `pane` — what makes it
+    /// a pane there is to show, as against one asked for.
+    pub(crate) fn has_pane(&self, pane: Pane, cx: &App) -> bool {
+        let workspace = self.workspace.read(cx);
+        match pane {
+            Pane::Chat => workspace.active_session().is_some(),
+            Pane::Board => workspace.active_board().is_some(),
+            Pane::Article => workspace.active_article().is_some(),
+            Pane::Table => workspace.active_table().is_some(),
+        }
     }
 
     /// Nothing is open, so there is nowhere to send a prompt — the only thing
@@ -476,15 +577,13 @@ impl Render for Cydonia {
             .font_family(theme.font_sans.clone())
             .text_color(theme.text)
             .text_style(TextStyle::Body)
-            .on_action(cx.listener(Self::new_session_action))
             .on_action(cx.listener(Self::commit_cell_action))
             .on_action(cx.listener(Self::dismiss_cell))
-            .on_action(cx.listener(Self::open_project_action))
-            .on_action(cx.listener(Self::open_settings_action))
-            .on_action(cx.listener(Self::next_entry))
-            .on_action(cx.listener(Self::prev_entry))
             .on_action(cx.listener(Self::commit_name))
             .on_action(cx.listener(Self::dismiss_name))
+            // Everything the menu bar names, and only under the conditions
+            // that keep its items honest.
+            .map(|root| self.commands(root, cx))
             .on_drag_move(
                 cx.listener(|this, event: &DragMoveEvent<SplitDrag>, _, cx| {
                     this.sidebar_width = f32::from(event.event.position.x)

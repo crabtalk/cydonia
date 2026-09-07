@@ -2,90 +2,68 @@
 
 use anyhow::Result;
 use bezel::{
-    gpui::{
-        self, App, AppContext as _, Bounds, Menu, MenuItem, TitlebarOptions, WindowBounds,
-        WindowOptions, actions, point, px, size,
-    },
+    gpui::App,
     gpui_platform,
-    theme::{self, Theme, Tint, appearance},
+    theme::{self, Tint, appearance},
     ui::{self, focus, input},
 };
 use cydonia::{
     assets, memory,
     model::{settings, state, workspace},
-    view::{article, board, component::composer, root, table},
+    view::{article, board, component::composer, menubar, root, table},
 };
-
-actions!(cydonia, [Quit]);
 
 fn main() -> Result<()> {
     let settings = settings::load()?;
     let state = state::restore();
-    gpui_platform::application()
-        .with_assets(assets::Assets)
-        .run(move |cx: &mut App| {
-            if let Err(err) = ui::register_fonts(cx) {
-                eprintln!("font registration failed: {err:?}");
-            }
-            appearance::init(state.appearance, cx);
-            // Before the window is opened: it reads its background appearance
-            // on the way up, and vibrancy is what decides that.
-            workspace::apply_transparency(state.reduce_transparency, cx);
-            workspace::apply_tint(Tint::new(state.hue, state.chroma), cx);
-            input::set_caret_blink(state.cursor_blink, cx);
-            theme::set_base_text_size(state.text_size, cx);
-            markdown::set_highlighter(
-                cx,
-                |language, code| syntax::highlight(code, language),
-                syntax::lang::LANGS.iter().map(|lang| lang.name),
-            );
-            memory::init(settings.cover_memory * 1_000_000, cx);
-            input::init(cx);
-            focus::init(cx);
-            composer::init(cx);
-            editor::init(cx);
-            article::init(cx);
-            board::init(cx);
-            table::init(cx);
-            root::init(cx);
-            set_menus(cx);
+    let app = gpui_platform::application().with_assets(assets::Assets);
+    // The Dock icon and a second launch both land here. ⌘W leaves the app
+    // running with no window, as it does in every other mac app, so this is
+    // the way back to one.
+    app.on_reopen(|cx| {
+        if cx
+            .windows()
+            .iter()
+            .any(|window| window.downcast::<root::Cydonia>().is_some())
+        {
+            return;
+        }
+        let Ok(settings) = settings::load() else {
+            return;
+        };
+        let _ = root::open(settings, state::restore(), cx);
+    });
+    app.run(move |cx: &mut App| {
+        if let Err(err) = ui::register_fonts(cx) {
+            eprintln!("font registration failed: {err:?}");
+        }
+        appearance::init(state.appearance, cx);
+        // Before the window is opened: it reads its background appearance
+        // on the way up, and vibrancy is what decides that.
+        workspace::apply_transparency(state.reduce_transparency, cx);
+        workspace::apply_tint(Tint::new(state.hue, state.chroma), cx);
+        input::set_caret_blink(state.cursor_blink, cx);
+        theme::set_base_text_size(state.text_size, cx);
+        markdown::set_highlighter(
+            cx,
+            |language, code| syntax::highlight(code, language),
+            syntax::lang::LANGS.iter().map(|lang| lang.name),
+        );
+        memory::init(settings.cover_memory * 1_000_000, cx);
+        input::init(cx);
+        focus::init(cx);
+        composer::init(cx);
+        editor::init(cx);
+        article::init(cx);
+        board::init(cx);
+        table::init(cx);
+        root::init(cx);
+        // Last: it reads every binding above off the keymap to put the
+        // shortcuts beside its items.
+        menubar::init(cx);
 
-            let bounds = Bounds::centered(None, size(px(1100.), px(760.)), cx);
-            cx.open_window(
-                WindowOptions {
-                    window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    // No strip of its own: the traffic lights sit in the nav,
-                    // so the window owes no titlebar above it.
-                    titlebar: Some(TitlebarOptions {
-                        appears_transparent: true,
-                        traffic_light_position: Some(point(
-                            px(root::TRAFFIC_LIGHT_X),
-                            px(root::TRAFFIC_LIGHT_Y),
-                        )),
-                        ..Default::default()
-                    }),
-                    // Glass needs a blurred window background to blur into.
-                    window_background: Theme::of(cx).window_background_appearance(),
-                    window_min_size: Some(size(px(600.), px(320.))),
-                    app_id: Some("cydonia".into()),
-                    ..Default::default()
-                },
-                |window, cx| {
-                    appearance::observe_window(window, cx).detach();
-                    cx.new(|cx| root::Cydonia::new(settings, state, window, cx))
-                },
-            )
-            .expect("failed to open window");
-            cx.activate(true);
-        });
+        root::open(settings, state, cx).expect("failed to open window");
+        cx.activate(true);
+    });
     Ok(())
-}
-
-/// Without a menu item `cmd-q` does nothing — a gpui app gets no menu for
-/// free, the standard ones come from a nib and there is no nib here.
-fn set_menus(cx: &mut App) {
-    cx.on_action(|_: &Quit, cx: &mut App| cx.quit());
-    cx.set_menus(vec![
-        Menu::new("cydonia").items([MenuItem::action("Quit", Quit)]),
-    ]);
 }

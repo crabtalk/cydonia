@@ -5,7 +5,7 @@ use crate::{
         board::{Card, Spot},
         session::ChatSession,
     },
-    view::root::{Cydonia, Pane},
+    view::root::{Cydonia, NewBoard, Pane},
 };
 use bezel::{
     gpui::{
@@ -67,6 +67,20 @@ impl Cydonia {
         self.commit(cx);
         self.pane = pane;
         cx.notify();
+    }
+
+    /// The menu's New Board. The sidebar's `+` names a project by the heading
+    /// it sits under; the menu bar has only the one in front.
+    pub(crate) fn new_board_action(
+        &mut self,
+        _: &NewBoard,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(project) = self.workspace.read(cx).active else {
+            return;
+        };
+        self.new_board(project, cx);
     }
 
     pub(crate) fn new_board(&mut self, project: usize, cx: &mut Context<Self>) {
