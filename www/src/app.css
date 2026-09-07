@@ -1,0 +1,144 @@
+:root {
+	/* Light, and almost colourless. The page is a frame around three things the
+	   visitor came for — the sentence, the app, the install line — so nothing
+	   here competes with them. */
+	--bg: #fff;
+	--panel: #fafafa;
+	--panel-high: #f4f4f5;
+	--line: #e6e6e6;
+	--line-strong: #d4d4d4;
+	--text: #0b0b0c;
+	--muted: #5c5f66;
+	--faint: #8b8f96;
+	--mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
+
+	/* The filled button: its own ink and hover, because in dark the surface it
+	   sits on is the text colour and `#fff` on it would be invisible. */
+	--accent: #0b0b0c;
+	--accent-ink: #fff;
+	--accent-hover: #333;
+	--ok: #12833a;
+	color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+	:root {
+		--bg: #0b0b0c;
+		--panel: #141416;
+		--panel-high: #1c1c1f;
+		--line: #26262a;
+		--line-strong: #3a3a3f;
+		--text: #f2f2f3;
+		--muted: #a2a4ab;
+		--faint: #74767d;
+		--accent: #f2f2f3;
+		--accent-ink: #0b0b0c;
+		--accent-hover: #d6d6d8;
+		--ok: #4ade80;
+	}
+}
+
+* {
+	box-sizing: border-box;
+}
+
+html,
+body {
+	margin: 0;
+	background: var(--bg);
+	color: var(--text);
+	font-family: -apple-system, BlinkMacSystemFont, 'Inter', system-ui, sans-serif;
+	font-size: 16px;
+	line-height: 1.6;
+	-webkit-font-smoothing: antialiased;
+}
+
+a {
+	color: var(--text);
+	text-decoration: none;
+}
+
+a:hover {
+	text-decoration: underline;
+	text-underline-offset: 3px;
+}
+
+code {
+	font-family: var(--mono);
+	font-size: 0.875em;
+	background: var(--panel-high);
+	border-radius: 5px;
+	padding: 0.12em 0.4em;
+}
+
+pre {
+	background: var(--panel);
+	border: 1px solid var(--line);
+	border-radius: 10px;
+	padding: 14px 16px;
+	overflow-x: auto;
+	font-size: 13px;
+	line-height: 1.65;
+}
+
+pre code {
+	background: none;
+	padding: 0;
+	font-size: inherit;
+}
+
+h1,
+h2,
+h3 {
+	line-height: 1.15;
+	letter-spacing: -0.02em;
+}
+
+/* The copy button is bound once, by a delegated handler in the layout, so every
+   code block on the site gets it without markup of its own. */
+.code-block {
+	position: relative;
+}
+
+.copy {
+	position: absolute;
+	top: 8px;
+	right: 8px;
+	display: grid;
+	place-items: center;
+	width: 32px;
+	height: 32px;
+	padding: 0;
+	border: 0;
+	border-radius: 7px;
+	background: transparent;
+	color: var(--faint);
+	cursor: pointer;
+	transition:
+		color 0.12s,
+		background 0.12s;
+}
+
+.copy:hover {
+	color: var(--text);
+	background: var(--panel-high);
+}
+
+.copy svg {
+	width: 15px;
+	height: 15px;
+}
+
+/* lucide names its own marks, so swapping them needs no extra markup. */
+.copy .lucide-check,
+.copy.copied .lucide-copy {
+	display: none;
+}
+
+.copy.copied .lucide-check {
+	display: block;
+}
+
+.copy.copied {
+	color: var(--ok);
+}
