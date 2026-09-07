@@ -14,7 +14,7 @@ args = ["--acp"]
 # env = { KEY = "VALUE" }
 ```
 
-Every configured agent appears in the sessions rail; `Cmd+N` opens a session against one.
+Every configured agent appears in the sessions rail; `Cmd+N` opens a session against one — once sessions are switched on, which they are not in a fresh install. See [Features](./features.md).
 
 ## Authentication
 

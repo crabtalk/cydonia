@@ -12,7 +12,7 @@ use bezel::{
     ui::{
         icons,
         tooltip::Tooltip,
-        widgets::{ButtonStyle, Buttons, Content, Controls, Scaffolding, Status},
+        widgets::{ButtonStyle, Buttons, Content, Scaffolding, Status},
     },
 };
 use cacp_agents::{Distribution, registry};
@@ -316,52 +316,15 @@ impl SettingsWindow {
     }
 
     /// The agents section: everything the registry publishes, installed first
-    /// so what you already have is what you see.
-    /// The gate over every session. First in the section because nothing below
-    /// it can run while it is off.
-    fn gate_row(&self, cx: &Context<Self>) -> impl IntoElement + use<> {
-        let theme = Theme::of(cx).clone();
-        let on = self.workspace.read(cx).settings.agents_enabled;
-        theme
-            .card_row(true)
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .child(theme.row_title("Enable agents"))
-                    .child(
-                        div()
-                            .mt(px(4.))
-                            .text_style(TextStyle::Subheadline)
-                            .text_color(theme.text_muted)
-                            .child(
-                                "Agents run as downloaded packages on this machine. \
-                                 Sessions cannot be opened while this is off.",
-                            ),
-                    ),
-            )
-            .child(
-                div()
-                    .id("enable-agents")
-                    .cursor_pointer()
-                    .child(theme.toggle(on))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.workspace
-                            .update(cx, |workspace, cx| workspace.set_agents_enabled(!on, cx));
-                        cx.notify();
-                    })),
-            )
-    }
-
+    /// so what you already have is what you see. The gate itself is not here —
+    /// it is the `sessions` switch, which lives with the other surfaces.
     pub(super) fn agents_body(&self, cx: &Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         div()
             .flex()
             .flex_col()
             .children(self.error.clone().map(|err| theme.error_strip(err)))
-            .child(theme.group_box().child(self.gate_row(cx)))
+            .children(self.sessions_off(cx))
             .child(theme.field_label("Clients").mt(px(24.)))
             .child(self.catalogue(cx))
             .into_any_element()

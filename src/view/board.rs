@@ -352,6 +352,7 @@ impl Cydonia {
         let text = card.text.clone();
         let chat = self.card_session(card, cx);
         let live = chat.map(|chat| chat.id);
+        let sessions = self.workspace.read(cx).settings.features.sessions;
         // The same reading as the sidebar's session row: the card and the row are
         // reporting the same process.
         let running = chat.is_some_and(|chat| chat.streaming);
@@ -424,7 +425,11 @@ impl Cydonia {
                                         this.move_card(at, 1, cx);
                                     }))
                             }))
-                            .child(match live {
+                            // Handing a card to an agent is opening a session,
+                            // so the control goes with them: with sessions off
+                            // the play would start nothing, and the card is
+                            // still a card without it.
+                            .children(sessions.then(|| match live {
                                 Some(id) => self
                                     .card_action("open", at, icons::CHAT_ROUND_LINE, cx)
                                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -438,7 +443,7 @@ impl Cydonia {
                                         this.dispatch_card(at, cx);
                                     }),
                                 ),
-                            })
+                            }))
                             .child(
                                 self.card_action("delete", at, icons::TRASH_BIN_MINIMALISTIC, cx)
                                     .on_click(cx.listener(move |this, _, _, cx| {

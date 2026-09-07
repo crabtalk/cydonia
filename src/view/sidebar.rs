@@ -3,7 +3,7 @@
 //! this draws on it.
 
 use crate::{
-    model::session::ChatSession,
+    model::{session::ChatSession, settings::Features},
     view::{
         component::menu::{self, Menu},
         root::{self, CommitName, Cydonia, DismissName, NewSession, OpenProject, Pane},
@@ -80,15 +80,33 @@ pub(crate) enum Filter {
 }
 
 impl Filter {
-    /// Sessions are only on offer while agents are: a kind you cannot make is
-    /// not a kind worth filtering to.
-    fn every(agents: bool) -> Vec<Self> {
+    /// Only the kinds that are switched on are on offer: a kind you cannot
+    /// make is not a kind worth filtering to.
+    fn every(features: &Features) -> Vec<Self> {
         let mut every = vec![Self::All];
-        if agents {
+        if features.sessions {
             every.push(Self::Sessions);
         }
-        every.extend([Self::Boards, Self::Articles, Self::Tables]);
+        if features.boards {
+            every.push(Self::Boards);
+        }
+        every.push(Self::Articles);
+        if features.tables {
+            every.push(Self::Tables);
+        }
         every
+    }
+
+    /// The filter as it applies under `features`. A kind switched off while it
+    /// was the one selected would otherwise filter every project down to its
+    /// heading, and an empty column says nothing about why.
+    fn resolved(self, features: &Features) -> Self {
+        match self {
+            Self::Sessions if !features.sessions => Self::All,
+            Self::Boards if !features.boards => Self::All,
+            Self::Tables if !features.tables => Self::All,
+            filter => filter,
+        }
     }
 
     fn label(self) -> &'static str {
@@ -121,6 +139,18 @@ impl Filter {
                 | (Self::Articles, Row::Article { .. })
                 | (Self::Tables, Row::Table { .. })
         )
+    }
+}
+
+/// Whether the kind a row names is switched on. Articles have no switch, and
+/// neither do the two rows that are not entries — a project heading and the
+/// line its archive folds under stand whatever is listed beneath them.
+fn shown(row: Row, features: &Features) -> bool {
+    match row {
+        Row::Session { .. } => features.sessions,
+        Row::Board { .. } => features.boards,
+        Row::Table { .. } => features.tables,
+        Row::Project(_) | Row::Archive(_) | Row::Article { .. } => true,
     }
 }
 
@@ -495,9 +525,11 @@ impl Cydonia {
     /// you are not. Only the addresses are ordered — each kind's own list keeps
     /// the indices these carry.
     pub(crate) fn entries(&self, project: usize, cx: &App) -> Vec<Row> {
-        let Some(open) = self.workspace.read(cx).projects.get(project) else {
+        let workspace = self.workspace.read(cx);
+        let Some(open) = workspace.projects.get(project) else {
             return Vec::new();
         };
+        let features = &workspace.settings.features;
         let sessions = open.sessions.iter().map(|chat| {
             (
                 chat.closed,
@@ -530,7 +562,12 @@ impl Cydonia {
             .chain(articles)
             .chain(tables)
             .collect();
-        entries.retain(|(_, _, row)| self.filter.keeps(*row));
+        // A project is read off disk whole whatever is switched on, so what a
+        // switch hides it hides here — the entries stay in the project and in
+        // memory, and turning it back on lists them again with nothing to
+        // rescan.
+        let filter = self.filter.resolved(features);
+        entries.retain(|(_, _, row)| shown(*row, features) && filter.keeps(*row));
         // One sort for both halves: what was put away sinks, and inside each
         // half the last thing written is on top.
         entries.sort_by_key(|(archived, touched, _)| (*archived, Reverse(*touched)));
@@ -732,8 +769,8 @@ impl Cydonia {
         if self.menu != Some(Menu::Filter) {
             return None;
         }
-        let agents = self.workspace.read(cx).settings.agents_enabled;
-        let rows = Filter::every(agents)
+        let features = &self.workspace.read(cx).settings.features;
+        let rows = Filter::every(features)
             .into_iter()
             .map(|filter| {
                 menu::row(
@@ -760,8 +797,10 @@ impl Cydonia {
         if self.menu != Some(Menu::Add(ix)) {
             return None;
         }
+        let features = &self.workspace.read(cx).settings.features;
+        let (sessions, boards, tables) = (features.sessions, features.boards, features.tables);
         let mut rows = Vec::new();
-        if self.workspace.read(cx).settings.agents_enabled {
+        if sessions {
             rows.push(menu::row(
                 Item::action("New session").with_icon(icons::CHAT_ROUND_LINE),
                 move |this, window, cx| {
@@ -770,20 +809,22 @@ impl Cydonia {
                 },
             ));
         }
-        rows.extend([
-            menu::row(
+        if boards {
+            rows.push(menu::row(
                 Item::action("New board").with_icon(icons::LIST),
                 move |this, _, cx| this.new_board(ix, cx),
-            ),
-            menu::row(
-                Item::action("New article").with_icon(icons::DOCUMENT_ADD),
-                move |this, window, cx| this.new_article(ix, window, cx),
-            ),
-            menu::row(
+            ));
+        }
+        rows.push(menu::row(
+            Item::action("New article").with_icon(icons::DOCUMENT_ADD),
+            move |this, window, cx| this.new_article(ix, window, cx),
+        ));
+        if tables {
+            rows.push(menu::row(
                 Item::action("New table").with_icon(icons::WIDGET),
                 move |this, _, cx| this.new_table(ix, cx),
-            ),
-        ]);
+            ));
+        }
         let id = SharedString::from(format!("add-menu-{ix}"));
         Some(popover::anchored_menu_below(
             id.clone(),
@@ -820,7 +861,7 @@ impl Cydonia {
         let painter = Painter::of(cx);
         let id = session.id;
         let selected =
-            self.showing(cx) == Pane::Chat && self.workspace.read(cx).active_id() == Some(id);
+            self.showing(cx) == Some(Pane::Chat) && self.workspace.read(cx).active_id() == Some(id);
         let tint = tint(selected, session.archived, &theme);
         // The agent's own mark, in the label's colour rather than any of its
         // own: every icon the registry publishes is a `currentColor` glyph, so
@@ -893,7 +934,7 @@ impl Cydonia {
     ) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let workspace = self.workspace.read(cx);
-        let selected = self.showing(cx) == Pane::Board
+        let selected = self.showing(cx) == Some(Pane::Board)
             && workspace.active == Some(project)
             && workspace
                 .projects

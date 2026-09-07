@@ -27,6 +27,7 @@ use bezel::{
 use std::collections::HashSet;
 
 mod agents;
+mod features;
 mod performance;
 mod theme;
 mod typography;
@@ -49,16 +50,25 @@ const CONTENT_MAX_WIDTH: f32 = 860.;
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Section {
     Appearance,
+    // Before Agents, because it is what decides whether agents matter: with
+    // sessions off, nothing installed under Agents can be launched.
+    Features,
     Agents,
     Performance,
 }
 
 impl Section {
-    const ALL: [Self; 3] = [Self::Appearance, Self::Agents, Self::Performance];
+    const ALL: [Self; 4] = [
+        Self::Appearance,
+        Self::Features,
+        Self::Agents,
+        Self::Performance,
+    ];
 
     fn title(self) -> &'static str {
         match self {
             Self::Appearance => "Appearance",
+            Self::Features => "Features",
             Self::Agents => "Agents",
             Self::Performance => "Performance",
         }
@@ -67,6 +77,7 @@ impl Section {
     fn glyph(self) -> &'static str {
         match self {
             Self::Appearance => icons::SUN,
+            Self::Features => icons::TUNING,
             Self::Agents => icons::WIDGET,
             Self::Performance => icons::CPU,
         }
@@ -145,7 +156,7 @@ impl SettingsWindow {
         self.section = section;
         match section {
             Section::Agents => self.load(cx),
-            Section::Appearance | Section::Performance => {}
+            Section::Appearance | Section::Features | Section::Performance => {}
         }
         cx.notify();
     }
@@ -216,6 +227,7 @@ impl Render for SettingsWindow {
                             .child(theme.page_header(self.section.title(), None))
                             .child(match self.section {
                                 Section::Appearance => self.appearance_body(cx),
+                                Section::Features => self.features_body(cx),
                                 Section::Agents => self.agents_body(cx),
                                 Section::Performance => self.performance_body(cx),
                             }),

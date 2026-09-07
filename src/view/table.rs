@@ -482,7 +482,7 @@ impl Cydonia {
     ) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
         let workspace = self.workspace.read(cx);
-        let selected = self.showing(cx) == Pane::Table
+        let selected = self.showing(cx) == Some(Pane::Table)
             && workspace.active == Some(project)
             && workspace
                 .projects

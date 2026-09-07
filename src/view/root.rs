@@ -315,7 +315,11 @@ impl Cydonia {
     /// ring over every kind, in the order the sidebar lists them, so a board
     /// standing alone still has the article above it for a neighbour.
     fn cycle_entry(&mut self, step: isize, window: &mut Window, cx: &mut Context<Self>) {
-        let pane = self.showing(cx);
+        // Nothing on screen is nothing to step from: the launch view is not an
+        // entry, and its neighbour is not another one.
+        let Some(pane) = self.showing(cx) else {
+            return;
+        };
         let workspace = self.workspace.read(cx);
         let Some(project) = workspace.active else {
             return;
@@ -405,12 +409,17 @@ impl Cydonia {
     }
 
     /// Which pane is on screen, as against [`Self::pane`], which is the one
-    /// asked for. They part when what it points at is gone — deleted, or in a
-    /// project that has none open — and whatever the project does have stands
-    /// in, so a launch lands on the entry it was left on rather than on an
-    /// empty conversation. The sidebar reads this, not the request: a row lit
-    /// for a pane nobody can see is the second selection the eye finds.
-    pub(crate) fn showing(&self, cx: &App) -> Pane {
+    /// asked for. They part when what it points at is gone — deleted, switched
+    /// off, or in a project that has none open — and whatever the project does
+    /// have stands in, so a launch lands on the entry it was left on rather
+    /// than on an empty conversation. The sidebar reads this, not the request:
+    /// a row lit for a pane nobody can see is the second selection the eye
+    /// finds.
+    ///
+    /// `None` is the launch view. A pane exists only where something is open in
+    /// it, so with nothing open there is no pane to name — least of all the
+    /// chat, which under the shipped defaults is itself switched off.
+    pub(crate) fn showing(&self, cx: &App) -> Option<Pane> {
         let open = |pane| {
             let workspace = self.workspace.read(cx);
             match pane {
@@ -421,12 +430,11 @@ impl Cydonia {
             }
         };
         if open(self.pane) {
-            return self.pane;
+            return Some(self.pane);
         }
         [Pane::Chat, Pane::Board, Pane::Article, Pane::Table]
             .into_iter()
             .find(|&pane| open(pane))
-            .unwrap_or(Pane::Chat)
     }
 
     /// Nothing is open, so there is nowhere to send a prompt — the only thing

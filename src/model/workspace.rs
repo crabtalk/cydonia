@@ -18,7 +18,7 @@ use crate::{
         project::Project,
         record,
         session::ChatSession,
-        settings::{self, Settings},
+        settings::{self, Feature, Settings},
         state::{self, State},
     },
 };
@@ -190,15 +190,19 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Let agents run, or stop them running. Written through to `settings.toml`
+    /// Show a surface, or stop showing it. Written through to `settings.toml`
     /// rather than app state: it is the file the gate is read back from.
     /// A failed write leaves both halves alone, so the switch stays where it
     /// was rather than claiming a gate the file does not carry.
-    pub fn set_agents_enabled(&mut self, on: bool, cx: &mut Context<Self>) {
-        if settings::set_agents_enabled(on).is_err() {
+    ///
+    /// Nothing is reloaded either way. What a project holds is read when it
+    /// opens and the gate is applied at the accessors below, so switching one
+    /// on shows what was already there rather than needing a rescan.
+    pub fn set_feature(&mut self, feature: Feature, on: bool, cx: &mut Context<Self>) {
+        if settings::set_feature(feature, on).is_err() {
             return;
         }
-        self.settings.agents_enabled = on;
+        feature.set(&mut self.settings.features, on);
         cx.notify();
     }
 
@@ -402,15 +406,15 @@ impl Workspace {
     /// Open a session in the active project. `seed` is its first prompt, sent
     /// as soon as the agent is up — what a dispatched card rides in on.
     ///
-    /// The one place a session is born, so it is where the agent gate bites:
-    /// nothing spawns an agent until the user has turned agents on.
+    /// The one place a session is born, so it is where the sessions switch
+    /// bites: nothing spawns an agent until it has been turned on.
     pub fn new_session(
         &mut self,
         entry: settings::Agent,
         seed: Option<String>,
         cx: &mut Context<Self>,
     ) -> Option<u64> {
-        if !self.settings.agents_enabled {
+        if !self.settings.features.sessions {
             return None;
         }
         let ix = self.active?;
@@ -485,7 +489,7 @@ impl Workspace {
     pub fn send(&mut self, id: u64, content: String, cx: &mut Context<Self>) {
         // Read before `chat` borrows the projects. This is the second place an
         // agent process starts, so it is the second half of the gate.
-        let enabled = self.settings.agents_enabled;
+        let enabled = self.settings.features.sessions;
         let found = self
             .projects
             .iter_mut()
@@ -498,7 +502,7 @@ impl Workspace {
         if !enabled && !chat.live() {
             chat.notice(
                 true,
-                "agents are disabled — turn them on in Settings › Agents",
+                "sessions are off — turn them on in Settings › Features",
             );
             cx.notify();
             return;
@@ -587,8 +591,16 @@ impl Workspace {
         cx.notify();
     }
 
+    /// The session the chat pane would show. Gated, and it is the gate that
+    /// matters most: sessions are read back off disk when a project opens,
+    /// whatever the switch says, so without this a filed transcript would put
+    /// the pane on screen with no composer under it.
     pub fn active_session(&self) -> Option<&ChatSession> {
-        self.active_project().and_then(Project::active_session)
+        self.settings
+            .features
+            .sessions
+            .then(|| self.active_project()?.active_session())
+            .flatten()
     }
 
     pub fn active_id(&self) -> Option<u64> {
@@ -597,8 +609,12 @@ impl Workspace {
 
     // ── boards ───────────────────────────────────────────────────────
 
-    /// A fresh board in the active project, opened as it lands.
+    /// A fresh board in the active project, opened as it lands. Gated here as
+    /// well as in the menus that call it: this is where a board is born.
     pub fn new_board(&mut self, cx: &mut Context<Self>) -> Option<usize> {
+        if !self.settings.features.boards {
+            return None;
+        }
         let project = self.active?;
         let board = board::create(&self.projects[project].path)?;
         self.projects[project].boards.insert(0, board);
@@ -656,12 +672,22 @@ impl Workspace {
         cx.notify();
     }
 
+    /// The board the board pane would show, and the choke point the boards
+    /// switch bites at: with nothing to hand back, the pane is unreachable —
+    /// nothing to render, nothing to step to, nothing for the sidebar to light.
+    /// The files stay where they are.
     pub fn active_board(&self) -> Option<&Board> {
+        if !self.settings.features.boards {
+            return None;
+        }
         let project = self.active_project()?;
         project.boards.get(project.board?)
     }
 
     pub fn active_board_mut(&mut self) -> Option<&mut Board> {
+        if !self.settings.features.boards {
+            return None;
+        }
         let project = self.projects.get_mut(self.active?)?;
         project.boards.get_mut(project.board?)
     }
@@ -795,6 +821,9 @@ impl Workspace {
     /// and a column you can rename is a better start than a dialog asking for
     /// the shape before anything exists to shape.
     pub fn new_table(&mut self, cx: &mut Context<Self>) -> Option<usize> {
+        if !self.settings.features.tables {
+            return None;
+        }
         let at = self.active?;
         let project = self.projects.get_mut(at)?;
         // The one place a store is created: making a table is the moment the
@@ -1010,11 +1039,19 @@ impl Workspace {
     }
 
     /// The open table's rows, as the pane last read them.
+    /// The rows on screen. Gated beside [`Self::active_table`]: the table pane
+    /// reads the page, not the table, so both have to be shut for it to close.
     pub fn active_page(&self) -> Option<&Page> {
+        if !self.settings.features.tables {
+            return None;
+        }
         self.active_project()?.page.as_ref()
     }
 
     pub fn active_table(&self) -> Option<&Table> {
+        if !self.settings.features.tables {
+            return None;
+        }
         let project = self.active_project()?;
         project.tables.get(project.table?)
     }

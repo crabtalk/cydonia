@@ -108,7 +108,6 @@ impl Cydonia {
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
-        let open = self.workspace.read(cx).active_project().is_some();
         // Nothing to send to: no session at all, or one whose agent has gone
         // from settings.toml, leaving nothing to reconnect it to.
         let live = self
@@ -117,21 +116,15 @@ impl Cydonia {
             .active_session()
             .is_some_and(ChatSession::resumable);
         let showing = self.showing(cx);
-        let body = if !open {
-            self.no_project(cx)
-        } else {
-            match showing {
-                Pane::Chat => self.conversation(window, cx),
-                Pane::Board => self.board(cx),
-                Pane::Article => match self.article(cx) {
-                    Some(article) => article,
-                    None => self.conversation(window, cx),
-                },
-                Pane::Table => match self.table(cx) {
-                    Some(table) => table,
-                    None => self.conversation(window, cx),
-                },
-            }
+        let body = match showing {
+            None => self.launch(cx),
+            Some(Pane::Chat) => self.conversation(window, cx),
+            Some(Pane::Board) => self.board(cx),
+            // An entry can be named and not yet loaded — an article holds no
+            // editor until it is opened. The front door stands in for the
+            // moment in between.
+            Some(Pane::Article) => self.article(cx).unwrap_or_else(|| self.launch(cx)),
+            Some(Pane::Table) => self.table(cx).unwrap_or_else(|| self.launch(cx)),
         };
 
         let content = div()
@@ -152,7 +145,7 @@ impl Cydonia {
             .child(content)
             // Out of flow so the transcript runs under it: the composer's glass
             // has something to bend only where the messages reach its edge.
-            .when(open && live && showing == Pane::Chat, |column| {
+            .when(live && showing == Some(Pane::Chat), |column| {
                 column.child(
                     div()
                         .absolute()
@@ -198,52 +191,70 @@ fn make_list(rows: impl IntoIterator<Item = AnyElement>) -> impl IntoElement {
 }
 
 impl Cydonia {
-    /// What to do when there is nothing to show: open a project, or make the
-    /// first entry in the one that is open. The kinds are listed rather than
-    /// named in a hint, because a list can be clicked.
+    /// The front door, and what stands where a pane would be if one were
+    /// showing: a project to open, or the first entry to make in the one that
+    /// already is.
+    fn launch(&self, cx: &mut Context<Self>) -> AnyElement {
+        match self.workspace.read(cx).active_project().is_some() {
+            true => self.nothing_open(cx),
+            false => self.no_project(cx),
+        }
+    }
+
+    /// What to do when there is nothing to show: make the first entry in the
+    /// project that is open. The kinds are listed rather than named in a hint,
+    /// because a list can be clicked — and only the kinds that are switched on
+    /// are listed, so under the shipped defaults this is one line.
     fn nothing_open(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let workspace = self.workspace.read(cx);
         let Some(ix) = workspace.active else {
             return self.no_project(cx);
         };
-        let agents = workspace.settings.agents_enabled;
+        let features = &workspace.settings.features;
+        let (sessions, boards, tables) = (features.sessions, features.boards, features.tables);
         let name = workspace
             .projects
             .get(ix)
             .map(|project| shown_path(&project.path))
             .unwrap_or_default();
-        let session = agents.then(|| {
-            self.make_row(
+        let mut rows: Vec<AnyElement> = Vec::new();
+        if sessions {
+            rows.push(self.make_row(
                 "session",
                 "New session",
                 icons::CHAT_ROUND_LINE,
                 cx,
                 move |this, window, cx| this.new_session_action(&NewSession, window, cx),
-            )
-        });
-        theme
-            .empty_state(icons::FOLDER, "Nothing open", format!("in {name}"))
-            .flex_1()
-            .child(make_list(session.into_iter().chain([
+            ));
+        }
+        if boards {
+            rows.push(
                 self.make_row("board", "New board", icons::LIST, cx, move |this, _, cx| {
                     this.new_board(ix, cx)
                 }),
-                self.make_row(
-                    "article",
-                    "New article",
-                    icons::DOCUMENT_ADD,
-                    cx,
-                    move |this, window, cx| this.new_article(ix, window, cx),
-                ),
-                self.make_row(
-                    "table",
-                    "New table",
-                    icons::WIDGET,
-                    cx,
-                    move |this, _, cx| this.new_table(ix, cx),
-                ),
-            ])))
+            );
+        }
+        rows.push(self.make_row(
+            "article",
+            "New article",
+            icons::DOCUMENT_ADD,
+            cx,
+            move |this, window, cx| this.new_article(ix, window, cx),
+        ));
+        if tables {
+            rows.push(self.make_row(
+                "table",
+                "New table",
+                icons::WIDGET,
+                cx,
+                move |this, _, cx| this.new_table(ix, cx),
+            ));
+        }
+        theme
+            .empty_state(icons::FOLDER, "Nothing open", format!("in {name}"))
+            .flex_1()
+            .child(make_list(rows))
             .into_any_element()
     }
 
@@ -286,13 +297,14 @@ impl Cydonia {
             .into_any_element()
     }
 
-    /// The session in front, or — because the conversation is what stands in
-    /// when a project has nothing else open — the way to make something.
+    /// The session in front. It has one: the chat pane is named by `showing`
+    /// only where a session is open in it, so the empty case is unreachable
+    /// rather than a state this has to draw.
     fn conversation(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let workspace = self.workspace.read(cx);
         let Some(chat) = workspace.active_session() else {
-            return self.nothing_open(cx);
+            return div().flex_1().into_any_element();
         };
         // Nothing has been said yet, so what the session has to show for
         // itself is the directory the agent was started in.
