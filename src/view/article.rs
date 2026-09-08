@@ -19,10 +19,10 @@ use bezel::{
     ui::{
         icons,
         input::TextField,
-        widgets::{ButtonStyle, Buttons as _},
+        widgets::{ButtonStyle, Buttons as _, Status as _},
     },
 };
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 actions!(cydonia_article, [LeaveTitle]);
 
@@ -165,6 +165,42 @@ impl Cydonia {
         cx.notify();
     }
 
+    /// Take the file over the buffer — the notice's Reload.
+    fn revert_article(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
+        self.workspace
+            .update(cx, |workspace, cx| workspace.revert_article(path, cx));
+        self.follow_article(window, cx);
+        cx.notify();
+    }
+
+    /// Put the caret back in the open document after a re-read replaced it.
+    /// The editor is a new entity, so whatever focus the old one held went with
+    /// it — and focus on an element no frame draws is focus nowhere.
+    ///
+    /// Never off the title. That field survives a re-read that did not rebuild
+    /// it, and dragging the caret out of a name somebody is typing is worse
+    /// than one they have to click back into the body.
+    pub(crate) fn follow_article(&self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.showing(cx) != Some(Pane::Article) {
+            return;
+        }
+        let article = self.workspace.read(cx).active_article();
+        let titling = article
+            .and_then(|article| article.field.clone())
+            .is_some_and(|field| field.focus_handle(cx).contains_focused(window, cx));
+        let editor = article.and_then(|article| article.editor.clone());
+        if let Some(editor) = editor.filter(|_| !titling) {
+            window.focus(&editor.focus_handle(cx), cx);
+        }
+    }
+
+    /// Keep the buffer and write it over the file — the notice's other answer.
+    fn keep_article(&mut self, path: &Path, cx: &mut Context<Self>) {
+        self.workspace
+            .update(cx, |workspace, cx| workspace.keep_article(path, cx));
+        cx.notify();
+    }
+
     // ── chrome ───────────────────────────────────────────────────
 
     /// The document. Same frame as [`Cydonia::board`]: the body of the content
@@ -174,48 +210,94 @@ impl Cydonia {
         let field = article.field.clone()?;
         let editor = article.editor.clone()?;
         let cover = article.cover.clone();
+        let stale = article.stale.then(|| article.path.clone());
+        let document = div()
+            .id("article")
+            .on_action(cx.listener(Self::leave_title))
+            .flex_1()
+            .min_h_0()
+            .w_full()
+            .overflow_y_scroll()
+            .track_scroll(&article.scroll)
+            .flex()
+            .flex_col()
+            .child(self.header(cover, field, cx))
+            // Its own height, not the box's share of one: a long document
+            // overflows and scrolls instead of being squashed and clipped,
+            // and `min_h_full` is what leaves the band something to scroll
+            // *under* when the document is short.
+            .child(
+                div()
+                    .w_full()
+                    .flex_none()
+                    .min_h_full()
+                    .flex()
+                    .justify_center()
+                    .child(
+                        // A page, not a paragraph. The editor's box is only
+                        // as tall as the document, and a pane of dead space
+                        // under a one-line note reads as something you
+                        // cannot type in: the floor is what makes a click
+                        // down there land a caret, and the I-beam is what
+                        // says so before the click.
+                        div()
+                            .w_full()
+                            .max_w(px(CONTENT_MAX_WIDTH))
+                            .px(px(COLUMN_INSET))
+                            .py(px(20.))
+                            .flex()
+                            .cursor(CursorStyle::IBeam)
+                            .child(editor),
+                    ),
+            );
         Some(
             div()
-                .id("article")
-                .on_action(cx.listener(Self::leave_title))
                 .flex_1()
                 .min_h_0()
                 .w_full()
-                .overflow_y_scroll()
-                .track_scroll(&article.scroll)
                 .flex()
                 .flex_col()
-                .child(self.header(cover, field, cx))
-                // Its own height, not the box's share of one: a long document
-                // overflows and scrolls instead of being squashed and clipped,
-                // and `min_h_full` is what leaves the band something to scroll
-                // *under* when the document is short.
-                .child(
-                    div()
-                        .w_full()
-                        .flex_none()
-                        .min_h_full()
-                        .flex()
-                        .justify_center()
-                        .child(
-                            // A page, not a paragraph. The editor's box is only
-                            // as tall as the document, and a pane of dead space
-                            // under a one-line note reads as something you
-                            // cannot type in: the floor is what makes a click
-                            // down there land a caret, and the I-beam is what
-                            // says so before the click.
-                            div()
-                                .w_full()
-                                .max_w(px(CONTENT_MAX_WIDTH))
-                                .px(px(COLUMN_INSET))
-                                .py(px(20.))
-                                .flex()
-                                .cursor(CursorStyle::IBeam)
-                                .child(editor),
-                        ),
-                )
+                // Above the scroll box rather than inside it: a document long
+                // enough to scroll would carry the notice off the top of the
+                // pane, and it is about the document as a whole.
+                .children(stale.map(|path| self.stale_notice(path, cx)))
+                .child(document)
                 .into_any_element(),
         )
+    }
+
+    /// The file moved under a document that had edits of its own — see
+    /// [`article::Article::adopt`]. Both are somebody's work, so the pane says
+    /// so and offers the two ways out rather than picking one.
+    fn stale_notice(&self, path: PathBuf, cx: &Context<Self>) -> impl IntoElement + use<> {
+        let theme = Theme::of(cx).clone();
+        let painter = Painter::of(cx);
+        let chip = |id: &'static str, label: &'static str| {
+            theme
+                .button(label, ButtonStyle::Ghost, Some(Fade::new(painter, id)))
+                .control_size(ControlSize::Small)
+                .id(id)
+        };
+        let keep = path.clone();
+        theme
+            .warning_strip("This file changed on disk while you were editing it.")
+            .mx(px(COLUMN_INSET))
+            .flex_none()
+            .items_center()
+            .child(
+                theme
+                    .control_group()
+                    .ml_auto()
+                    .flex_none()
+                    .child(chip("article-revert", "Reload").on_click(cx.listener(
+                        move |this, _, window, cx| this.revert_article(&path, window, cx),
+                    )))
+                    .child(
+                        chip("article-keep", "Keep mine").on_click(
+                            cx.listener(move |this, _, _, cx| this.keep_article(&keep, cx)),
+                        ),
+                    ),
+            )
     }
 
     /// The page's furniture: its picture, and the name under it. Both belong to

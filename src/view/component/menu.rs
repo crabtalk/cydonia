@@ -6,7 +6,7 @@ use bezel::{
     gpui::{self, AnyElement, Context, Div, SharedString, Stateful, Window, prelude::*, px},
     theme::Theme,
     ui::{
-        menu::{self, Item},
+        menu::{self, Hit, Item},
         widgets::Buttons,
     },
 };
@@ -41,15 +41,22 @@ pub(crate) fn row(
 impl Cydonia {
     /// Open a menu, or shut the one already open.
     ///
-    /// The press that reaches a trigger is the same press the open card's
-    /// `on_mouse_down_out` closes it on, so by click time the menu already
-    /// reads as shut and a plain toggle would open it straight back. What the
-    /// press found is noted by [`Cydonia::menu_press`] instead, in the capture
-    /// phase — ahead of that handler, whichever element owns it.
+    /// The press that reaches a trigger is the same press the open card
+    /// dismisses on, so by click time the menu already reads as shut and a
+    /// plain toggle would open it straight back. What the press found is noted
+    /// by [`Cydonia::menu_press`] instead, in the capture phase — ahead of
+    /// that handler, whichever element owns it.
     pub(crate) fn toggle_menu(&mut self, menu: Menu, cx: &mut Context<Self>) {
         let closed_by_this_press = std::mem::take(&mut self.menu_pressed);
         self.menu = (!closed_by_this_press && self.menu != Some(menu)).then_some(menu);
+        self.menu_cursor.clear();
         cx.notify();
+    }
+
+    /// Shut whichever menu is open, and forget the row it was on.
+    fn shut_menu(&mut self) {
+        self.menu = None;
+        self.menu_cursor.clear();
     }
 
     /// Note, on the way down, whether the press landed on the trigger of the
@@ -93,7 +100,9 @@ impl Cydonia {
         self.menu_press(button, menu, cx)
     }
 
-    /// The card every sidebar menu hangs in, dismissed by a press outside it.
+    /// The card every sidebar menu hangs in, dismissed by a press outside it —
+    /// which the card reports itself, since with a panel open only the tree
+    /// knows which presses landed on none of it.
     pub(crate) fn menu_card(
         &self,
         id: impl Into<SharedString>,
@@ -102,15 +111,35 @@ impl Cydonia {
     ) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let (items, acts): (Vec<Item>, Vec<Act>) = rows.into_iter().unzip();
-        menu::card(&theme, id, &items, None, cx, move |this, ix, window, cx| {
-            this.menu = None;
-            acts[ix](this, window, cx);
-            cx.notify();
-        })
-        .on_mouse_down_out(cx.listener(|this, _, _, cx| {
-            this.menu = None;
-            cx.notify();
-        }))
+        // A hit names a row by its path, and reading one back means holding
+        // the list it was built from.
+        let paths = items.clone();
+        menu::card(
+            &theme,
+            id,
+            &items,
+            &self.menu_cursor,
+            cx,
+            move |this, hit, window, cx| match hit {
+                Hit::Point(path) => {
+                    if this.menu_cursor.point_at(&paths, &path) {
+                        cx.notify();
+                    }
+                }
+                Hit::Choose(path) => {
+                    let [row] = path[..] else { return };
+                    this.shut_menu();
+                    if let Some(act) = acts.get(row) {
+                        act(this, window, cx);
+                    }
+                    cx.notify();
+                }
+                Hit::Dismiss => {
+                    this.shut_menu();
+                    cx.notify();
+                }
+            },
+        )
         .into_any_element()
     }
 }

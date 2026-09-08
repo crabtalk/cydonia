@@ -2,7 +2,12 @@
 //! the sidebar and the chat column are hung in.
 
 use crate::{
-    model::{session::ChatSession, settings::Settings, state::State, workspace::Workspace},
+    model::{
+        session::ChatSession,
+        settings::Settings,
+        state::State,
+        workspace::{Reloaded, Workspace},
+    },
     view::{
         board::{self, Editing},
         component::{
@@ -29,6 +34,7 @@ use bezel::{
         floating::Floating,
         icons,
         input::TextField,
+        menu::Cursor,
         stats::Stats,
         widgets::{ButtonStyle, Buttons, Content, Layout, SPLIT_HANDLE_HIT, SplitDrag, SplitStyle},
     },
@@ -52,7 +58,8 @@ actions!(
         CommitName,
         DismissName,
         NextEntry,
-        PrevEntry
+        PrevEntry,
+        CopySelection
     ]
 );
 
@@ -175,6 +182,11 @@ pub fn init(cx: &mut App) {
         // where `tab` itself is indent.
         KeyBinding::new("ctrl-tab", NextEntry, None),
         KeyBinding::new("ctrl-shift-tab", PrevEntry, None),
+        // Claimed app-wide and answered last: an editor and a field bind copy
+        // on their own contexts, which gpui dispatches from the focus outward,
+        // so this only runs where nothing else wanted it — which is exactly
+        // where a transcript selection is the thing being copied.
+        KeyBinding::new("cmd-c", CopySelection, None),
         KeyBinding::new("enter", CommitName, Some(RENAME_CONTEXT)),
         KeyBinding::new("escape", DismissName, Some(RENAME_CONTEXT)),
     ]);
@@ -242,6 +254,10 @@ pub struct Cydonia {
     pub(crate) cell: Option<table::Cell>,
     pub(crate) cell_field: Entity<TextField>,
     pub(crate) menu: Option<Menu>,
+    /// Which of the open menu's rows is live. Held here rather than in the
+    /// card, which is rebuilt every frame: the pointer moves the cursor, and
+    /// a cursor made afresh each paint would light nothing.
+    pub(crate) menu_cursor: Cursor,
     /// Whether the press now being handled landed on the open menu's own
     /// trigger — read by [`Cydonia::toggle_menu`] and nothing else.
     pub(crate) menu_pressed: bool,
@@ -275,6 +291,7 @@ impl Cydonia {
                 ComposerEvent::Cancel => this.cancel_turn(cx),
                 ComposerEvent::Agent(ix) => this.pick_agent(*ix, cx),
                 ComposerEvent::Install => this.open_settings(Section::Agents, cx),
+                ComposerEvent::Switch(id, value) => this.switch(id, value, cx),
             },
         )
         .detach();
@@ -293,6 +310,20 @@ impl Cydonia {
         // read back from it rather than pushed by whoever caused the change.
         cx.observe(&workspace, |this, _, cx| this.sync_composer(cx))
             .detach();
+        // A re-read replaced what a pane is showing — see
+        // [`Workspace::reload_project`]. The card and the cell are addressed by
+        // where they sit, so filing them now would file them into whatever slid
+        // under the index; the edit is dropped instead, and the field with it.
+        // The caret follows the document, which is a new editor entity.
+        cx.subscribe_in(&workspace, window, |this, _, _: &Reloaded, window, cx| {
+            this.editing = None;
+            this.cell = None;
+            this.card_field.update(cx, |field, cx| field.clear(cx));
+            this.cell_field.update(cx, |field, cx| field.clear(cx));
+            this.follow_article(window, cx);
+            cx.notify();
+        })
+        .detach();
 
         let mut this = Self {
             meter: cx.new(Stats::new),
@@ -308,6 +339,7 @@ impl Cydonia {
             cell: None,
             cell_field,
             menu: None,
+            menu_cursor: Cursor::default(),
             menu_pressed: false,
             filter: Filter::default(),
             renaming: None,
@@ -320,6 +352,17 @@ impl Cydonia {
         // dispatches nothing, so the window takes its focus back.
         cx.on_focus_lost(window, |this, window, cx| window.focus(&this.focus, cx))
             .detach();
+        // The backstop under the watch. Coming back to the window is where a
+        // dropped event costs the most and the one moment we can be sure of
+        // catching, so every project is re-read on the way in — see
+        // [`Workspace::reload_projects`].
+        cx.observe_window_activation(window, |this, window, cx| {
+            if window.is_window_active() {
+                this.workspace
+                    .update(cx, |workspace, cx| workspace.reload_projects(cx));
+            }
+        })
+        .detach();
         this.sync_composer(cx);
         // Where the caret starts. The composer is drawn only over a chat it can
         // send to, and focus on an element no frame draws is focus nowhere.
@@ -345,6 +388,13 @@ impl Cydonia {
                 workspace.new_session(entry, None, cx);
             }
         });
+    }
+
+    /// Copy what the transcript has selected. Bound app-wide and reached only
+    /// where nothing nearer to the focus claimed the chord.
+    fn copy_selection(&mut self, _: &CopySelection, _: &mut Window, cx: &mut Context<Self>) {
+        self.workspace
+            .update(cx, |workspace, cx| workspace.copy_selection(cx));
     }
 
     pub(crate) fn next_entry(
@@ -577,6 +627,7 @@ impl Render for Cydonia {
             .font_family(theme.font_sans.clone())
             .text_color(theme.text)
             .text_style(TextStyle::Body)
+            .on_action(cx.listener(Self::copy_selection))
             .on_action(cx.listener(Self::commit_cell_action))
             .on_action(cx.listener(Self::dismiss_cell))
             .on_action(cx.listener(Self::commit_name))

@@ -7,7 +7,7 @@
 //! an instrument you can watch, an inventory belongs on a page you open.
 
 use crate::{
-    model::{cover, workspace::Resident},
+    model::{cover, watch, workspace::Resident},
     view::settings::{self, SettingsWindow},
 };
 use bezel::{
@@ -25,6 +25,15 @@ const FLOOR: u64 = cover::RASTER_BYTES / 1_000_000 + 1;
 
 /// How wide the ceiling's dialog sits.
 const DIALOG_WIDTH: f32 = 320.;
+
+/// The watch delays the row offers, named for what they buy rather than for
+/// what they are. The middle one is [`watch::BOUNCE`], which is what a file
+/// that has never been touched carries.
+const BOUNCES: [(u64, &str); 3] = [
+    (50, "Instant"),
+    (watch::BOUNCE, "Balanced"),
+    (500, "Relaxed"),
+];
 
 /// How many covers a ceiling of `mb` admits — the capacity the cache runs at,
 /// which is the ceiling floored to whole pictures.
@@ -46,7 +55,8 @@ impl SettingsWindow {
                 theme
                     .group_box()
                     .child(self.meter_row(cx))
-                    .child(self.cover_memory_row(cx)),
+                    .child(self.cover_memory_row(cx))
+                    .child(self.watch_bounce_row(cx)),
             )
             .child(self.resident_group(cx))
             .into_any_element()
@@ -123,6 +133,73 @@ impl SettingsWindow {
                     .on_click(
                         cx.listener(|this, _, window, cx| this.edit_cover_memory(window, cx)),
                     ),
+            )
+    }
+
+    /// How long a project's `.cydonia/` has to go quiet before the watch
+    /// re-reads it — see [`crate::model::watch`].
+    ///
+    /// A segmented control rather than a field: the useful values are three,
+    /// and what they are worth saying is what they cost, not what they are.
+    /// `settings.toml` still takes any number in the range, and a file carrying
+    /// one lights no segment — the note underneath is what says where it sits.
+    fn watch_bounce_row(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let theme = Theme::of(cx).clone();
+        // What the watch will actually wait, not what the file says: the ends
+        // of the range are enforced on the way out of it, and a row reporting
+        // the number it was given would be reporting one nothing honours.
+        let ms = watch::bounce(self.workspace.read(cx).settings.watch_bounce).as_millis();
+        theme
+            .card_row(false)
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .child(theme.row_title("Watch delay"))
+                    .child(
+                        div()
+                            .mt(px(4.))
+                            .text_style(TextStyle::Subheadline)
+                            .text_color(theme.text_muted)
+                            .child(format!("Re-read after {ms} ms of quiet.")),
+                    ),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .flex()
+                    .flex_row()
+                    .gap(px(2.))
+                    .p(px(2.))
+                    .rounded(px(Theme::button_radius()))
+                    .border_1()
+                    .border_color(theme.border)
+                    .children(BOUNCES.into_iter().map(|(value, label)| {
+                        let selected = u128::from(value) == ms;
+                        div()
+                            .id(("watch-bounce", value as usize))
+                            .px(px(10.))
+                            .py(px(4.))
+                            .rounded(px(Theme::control_radius()))
+                            .text_style(TextStyle::Callout)
+                            .cursor_pointer()
+                            .when(selected, |el| {
+                                el.bg(theme.element_active).text_color(theme.text)
+                            })
+                            .when(!selected, |el| {
+                                el.text_color(theme.text_muted)
+                                    .hover(|el| el.bg(theme.element_hover))
+                            })
+                            .child(label)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.workspace.update(cx, |workspace, cx| {
+                                    workspace.set_watch_bounce(value, cx)
+                                });
+                                cx.notify();
+                            }))
+                    })),
             )
     }
 

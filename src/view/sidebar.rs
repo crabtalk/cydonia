@@ -5,21 +5,24 @@
 use crate::{
     model::{session::ChatSession, settings::Features},
     view::{
-        component::menu::{self, Menu},
+        component::{
+            menu::{self, Menu},
+            transcript,
+        },
         root::{self, CommitName, Cydonia, DismissName, NewSession, OpenProject, Pane},
         settings::Section,
     },
 };
 use bezel::{
+    agent::orbs::{OrbState, engine::Frame},
     gpui::{
         self, AnyElement, App, Bounds, Context, Div, Empty, Entity, Focusable as _, FontWeight,
         Hsla, MouseButton, Pixels, Point, ScrollStrategy, SharedString, Stateful,
         UniformListDecoration, Window, div, prelude::*, px, svg, uniform_list,
     },
-    motion::Painter,
     theme::{TextStyle, Theme, Typeset},
     ui::{
-        icons, loaders,
+        icons,
         menu::Item,
         popover,
         surface::Surfaced as _,
@@ -27,7 +30,7 @@ use bezel::{
         widgets::{Buttons, Layout},
     },
 };
-use std::{cmp::Reverse, ops::Range, path::PathBuf};
+use std::{cell::RefCell, cmp::Reverse, ops::Range, path::PathBuf, rc::Rc, time::Duration};
 
 /// What the sidebar needs of a session to draw its row, read out of the model
 /// before the row is built: a turn in flight puts a thinking orb in the mark's
@@ -37,8 +40,18 @@ struct SessionRow {
     id: u64,
     label: String,
     icon: Option<SharedString>,
-    streaming: bool,
+    /// The turn in flight, as the orb needs it: which of the twelve, how long
+    /// it has been running, and the buffer it paints into. `None` when nothing
+    /// is in flight, which is what puts the agent's own mark back.
+    working: Option<Working>,
     archived: bool,
+}
+
+/// A session's orb, read off the model with the row.
+struct Working {
+    state: OrbState,
+    since: Duration,
+    frame: Rc<RefCell<Frame>>,
 }
 
 /// One line of the sidebar. An address, not content: the label behind it is
@@ -821,7 +834,11 @@ impl Cydonia {
             id: chat.id,
             label: chat.label(),
             icon: workspace.agent_icon(&chat.entry.name),
-            streaming: chat.streaming,
+            working: chat.streaming.then(|| Working {
+                state: transcript::orb_of(chat),
+                since: chat.elapsed().unwrap_or_default(),
+                frame: chat.transcript.mark.clone(),
+            }),
             archived: chat.closed,
         })
     }
@@ -997,7 +1014,6 @@ impl Cydonia {
             id: session.id,
         };
         let theme = Theme::of(cx).clone();
-        let painter = Painter::of(cx);
         let id = session.id;
         let selected =
             self.showing(cx) == Some(Pane::Chat) && self.workspace.read(cx).active_id() == Some(id);
@@ -1007,16 +1023,12 @@ impl Cydonia {
         // tinting is the only colour it will ever have. While a turn is in
         // flight the orb stands in its place — the same one the transcript
         // works under.
-        let mark = if session.streaming {
-            loaders::orb(
-                loaders::Orb::Cluster,
-                SharedString::from(format!("session-orb-{id}")),
-                14.,
-                &theme,
-                painter,
-                cx,
-            )
-            .into_any_element()
+        let mark = if let Some(working) = session.working {
+            // Wider than the slot it sits in, and left to spill: the orb is a
+            // sphere where the marks around it are glyphs, and widening the
+            // column for it would move every label in the sidebar to make room
+            // for a row that is only sometimes working.
+            transcript::orb(working.state, working.since, &working.frame, cx)
         } else {
             match session.icon {
                 Some(path) => svg()

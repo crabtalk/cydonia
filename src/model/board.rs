@@ -111,6 +111,26 @@ impl Board {
         }
     }
 
+    /// Take what a re-read of the project found — see [`crate::model::watch`].
+    ///
+    /// Nothing here is unsaved: a board is written on the click that changes
+    /// it, so the file is always the board and taking it whole is safe. What is
+    /// worth avoiding is taking it *needlessly* — a card's link to the session
+    /// it opened is [`serde`]-skipped, so it would go with every echo of our
+    /// own save. Compared as the file rather than by its stamp for that reason.
+    ///
+    /// Answers whether the board was actually replaced, which is what tells a
+    /// pane holding a card's position that the position is not that card's any
+    /// more.
+    pub fn adopt(&mut self, fresh: Self) -> bool {
+        if toml::to_string_pretty(self).ok() == toml::to_string_pretty(&fresh).ok() {
+            self.touched = fresh.touched;
+            return false;
+        }
+        *self = fresh;
+        true
+    }
+
     pub fn remove(&self) {
         let _ = std::fs::remove_file(&self.path);
     }

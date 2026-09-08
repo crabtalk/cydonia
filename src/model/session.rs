@@ -24,8 +24,8 @@ use anyhow::anyhow;
 use bezel::gpui::{Context, Task};
 use cacp::schema::{
     ContentBlock, MaybeUndefined, PermissionOptionKind, PlanEntryStatus, RequestPermissionRequest,
-    RequestPermissionResponse, SessionUpdate, StopReason, ToolCallContent, ToolCallStatus,
-    ToolKind,
+    RequestPermissionResponse, SessionConfigKind, SessionConfigOption, SessionConfigOptionValue,
+    SessionModeState, SessionUpdate, StopReason, ToolCallContent, ToolCallStatus, ToolKind,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -73,6 +73,36 @@ pub enum ChatItem {
     },
 }
 
+/// How much of the context window the conversation has taken, as the agent
+/// counts it.
+///
+/// Runtime only, and not written to the record: the file carries the
+/// transcript, and whichever agent reads it back counts for itself.
+#[derive(Clone, Copy)]
+pub struct Usage {
+    pub used: u64,
+    pub size: u64,
+}
+
+impl Usage {
+    /// How full, as a fraction. A window of no size is an agent that does not
+    /// count, and there is nothing to draw for it.
+    pub fn fraction(&self) -> Option<f32> {
+        (self.size > 0).then(|| (self.used as f32 / self.size as f32).clamp(0., 1.))
+    }
+}
+
+/// The turn in flight: when it started, and what the context had spent by then.
+///
+/// Runtime only, like [`Usage`], and for the same reason — the two numbers it
+/// exists to count from are only read while a turn is running, and a relaunch
+/// has none.
+#[derive(Clone, Copy)]
+struct Flight {
+    at: SystemTime,
+    used: u64,
+}
+
 /// One way to answer a permission request. `kind` is what decides how the
 /// button paints — allow and reject must not look alike.
 pub struct Choice {
@@ -91,9 +121,23 @@ pub enum Connection {
     Lost,
 }
 
+/// A slash command the agent offers for this session — what to type, and what
+/// it does. The description is required by the protocol, so a picker can
+/// always say what a name does not.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Command {
+    pub name: String,
+    pub description: String,
+}
+
 pub struct PermissionPrompt {
     pub title: String,
     pub options: Vec<Choice>,
+    /// Whether the answer should stand for every call like this one, rather
+    /// than for this one alone — the checkbox beside the buttons. It picks
+    /// between the `*Once` and `*Always` forms of whichever button is pressed,
+    /// which is what lets two buttons carry four options.
+    pub always: bool,
     reply: Reply<RequestPermissionResponse>,
 }
 
@@ -107,7 +151,22 @@ pub struct ChatSession {
     pub items: Vec<ChatItem>,
     pub plan: Vec<(String, PlanStatus)>,
     pub permission: Option<PermissionPrompt>,
-    pub commands: Vec<String>,
+    pub commands: Vec<Command>,
+    /// The modes the agent offers and the one it is in, as `session/new`
+    /// reported them and every `CurrentModeUpdate` since.
+    ///
+    /// Belongs to the agent process rather than to the transcript, so it is
+    /// filled when a connection goes live and left where it is when one goes
+    /// away — the pane gates on [`Self::live`] rather than on this being empty.
+    pub modes: Option<SessionModeState>,
+    /// The same for config options, which is where the model lives — see
+    /// `SessionConfigOptionCategory::Model`.
+    pub config: Vec<SessionConfigOption>,
+    /// Context spent, when the agent says.
+    pub usage: Option<Usage>,
+    /// What the turn in flight is counted from — see [`Self::elapsed`] and
+    /// [`Self::spent`].
+    flight: Option<Flight>,
     /// The agent's own name for the session, from `SessionInfoUpdate`.
     pub title: String,
     /// The name you typed, which the agent never overwrites. Two fields rather
@@ -150,6 +209,10 @@ impl ChatSession {
             plan: Vec::new(),
             permission: None,
             commands: Vec::new(),
+            modes: None,
+            config: Vec::new(),
+            usage: None,
+            flight: None,
             title: String::new(),
             name: None,
             updated: SystemTime::now(),
@@ -164,7 +227,8 @@ impl ChatSession {
     }
 
     /// A session read back from disk. It starts idle — a launch must not spawn
-    /// an agent per session — and reconnects when something is sent to it.
+    /// an agent per session — and reconnects when it is brought to the front,
+    /// or when something is sent to it.
     pub fn restore(
         id: u64,
         file: PathBuf,
@@ -182,6 +246,10 @@ impl ChatSession {
             plan: Vec::new(),
             permission: None,
             commands: Vec::new(),
+            modes: None,
+            config: Vec::new(),
+            usage: None,
+            flight: None,
             title: record.title,
             name: record.name,
             updated,
@@ -249,14 +317,33 @@ impl ChatSession {
     }
 
     /// Close the connection and keep the transcript. Dropping the [`Session`]
-    /// is what tears the agent process down.
+    /// is what tears the agent process down — see its `Drop`.
     pub fn close(&mut self) {
+        // Before the connection goes, not after: an agent whose stdin closes
+        // half way through answering has a request it can never finish, and
+        // says so on the way out.
+        self.cancel();
         self.connection = Connection::Idle;
         self._pump = Task::ready(());
         self.streaming = false;
         self.closed = true;
         self.queue.clear();
         self.flush();
+    }
+
+    /// How long the turn in flight has been running.
+    pub fn elapsed(&self) -> Option<Duration> {
+        self.flight?.at.elapsed().ok()
+    }
+
+    /// What the turn in flight has spent, as the agent counts context.
+    ///
+    /// The difference rather than the total: `used` is the whole conversation,
+    /// and what a running turn is costing is what it has added to it. `None`
+    /// until an agent has counted at all — most do not until the first turn is
+    /// answered, so a first turn shows its clock and nothing else.
+    pub fn spent(&self) -> Option<u64> {
+        Some(self.usage?.used.saturating_sub(self.flight?.used))
     }
 
     pub fn live(&self) -> bool {
@@ -311,6 +398,10 @@ impl ChatSession {
             return;
         };
         session.prompt(&content);
+        self.flight = Some(Flight {
+            at: SystemTime::now(),
+            used: self.usage.map_or(0, |usage| usage.used),
+        });
         self.items.push(ChatItem::User(content));
         self.updated = SystemTime::now();
         self.streaming = true;
@@ -332,6 +423,49 @@ impl ChatSession {
         }
     }
 
+    /// Switch the agent's mode (`session/set_mode`).
+    ///
+    /// Applied here as well as sent. The request is fire-and-forget and the
+    /// agent's `CurrentModeUpdate` is the confirmation, so a picker that waited
+    /// for it would read as a press that did nothing — and the update, when it
+    /// lands, is what settles any disagreement.
+    pub fn set_mode(&mut self, mode_id: &str) {
+        let Connection::Live(session) = &self.connection else {
+            return;
+        };
+        session.set_mode(mode_id);
+        if let Some(modes) = &mut self.modes {
+            modes.current_mode_id = mode_id.into();
+        }
+    }
+
+    /// The same for a config option, which is where the model lives
+    /// (`session/set_config_option`).
+    pub fn set_config(&mut self, config_id: &str, value: SessionConfigOptionValue) {
+        let Connection::Live(session) = &self.connection else {
+            return;
+        };
+        session.set_config_option(config_id, value.clone());
+        let found = self
+            .config
+            .iter_mut()
+            .find(|option| &*option.id == config_id);
+        let Some(option) = found else {
+            return;
+        };
+        match (&mut option.kind, value) {
+            (SessionConfigKind::Select(select), SessionConfigOptionValue::ValueId { value }) => {
+                select.current_value = value;
+            }
+            (SessionConfigKind::Boolean(flag), SessionConfigOptionValue::Boolean { value }) => {
+                flag.current_value = value;
+            }
+            // The agent offers one shape and was asked for the other. Its own
+            // update is the answer; nothing is guessed at here.
+            _ => {}
+        }
+    }
+
     /// Answer the pending permission prompt with the chosen option id.
     pub fn respond_permission(&mut self, option_id: String) {
         if let Some(prompt) = self.permission.take() {
@@ -339,6 +473,19 @@ impl ChatSession {
                 .reply
                 .send(RequestPermissionResponse::selected(option_id));
         }
+    }
+
+    /// Flip whether the pending prompt is answered once or for good.
+    pub fn toggle_permission_always(&mut self) {
+        if let Some(prompt) = &mut self.permission {
+            prompt.always = !prompt.always;
+        }
+    }
+
+    /// Drop the `ix`th waiting prompt — a steer taken back before the turn in
+    /// flight got to it.
+    pub fn unqueue(&mut self, ix: usize) {
+        self.queue.remove(ix);
     }
 
     fn apply(&mut self, event: Event) {
@@ -457,7 +604,10 @@ impl ChatSession {
                 self.commands = cmds
                     .available_commands
                     .into_iter()
-                    .map(|c| c.name)
+                    .map(|c| Command {
+                        name: c.name,
+                        description: c.description,
+                    })
                     .collect();
             }
             SessionUpdate::Plan(plan) => {
@@ -474,6 +624,19 @@ impl ChatSession {
                         (entry.content, status)
                     })
                     .collect();
+            }
+            SessionUpdate::CurrentModeUpdate(update) => {
+                if let Some(modes) = &mut self.modes {
+                    modes.current_mode_id = update.current_mode_id;
+                }
+            }
+            // Reported whole, like the plan: replace, don't merge.
+            SessionUpdate::ConfigOptionUpdate(update) => self.config = update.config_options,
+            SessionUpdate::UsageUpdate(update) => {
+                self.usage = Some(Usage {
+                    used: update.used,
+                    size: update.size,
+                });
             }
             // We echo the user's message locally.
             SessionUpdate::UserMessageChunk(_) => {}
@@ -513,6 +676,7 @@ impl ChatSession {
         self.permission = Some(PermissionPrompt {
             title,
             options,
+            always: false,
             reply,
         });
     }
@@ -614,6 +778,11 @@ fn pump(
             .update(cx, |workspace, cx| {
                 workspace.with_session(id, cx, |chat| {
                     chat.agent_session = Some(session.session_id.to_string());
+                    // What this agent lets you switch, read off `session/new`
+                    // before the session is boxed away. Every change after
+                    // this arrives as an update.
+                    chat.modes = session.response.modes.clone();
+                    chat.config = session.response.config_options.clone().unwrap_or_default();
                     chat.connection = Connection::Live(Box::new(session));
                 });
                 workspace.session_connected(id, cx);

@@ -26,7 +26,7 @@ mod sql;
 
 pub use rows::{Edit, Page, Record};
 
-const FILE: &str = "data.db";
+pub(crate) const FILE: &str = "data.db";
 const BUSY: Duration = Duration::from_secs(5);
 
 /// The one thing stored beside the data: a table's display name, which SQL has

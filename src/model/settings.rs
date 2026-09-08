@@ -1,7 +1,7 @@
 //! Auto-generated settings — written with defaults on first run, read on
 //! launch. Editable, but never requires user maintenance.
 
-use crate::memory;
+use crate::{memory, model::watch};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::PathBuf};
@@ -13,6 +13,14 @@ pub struct Settings {
     /// to it.
     #[serde(default = "cover_memory")]
     pub cover_memory: u64,
+    /// How long a project's `.cydonia/` has to go quiet before the watch
+    /// re-reads it, in milliseconds — see [`crate::model::watch`]. Bare, so it
+    /// belongs above `features` for the reason above.
+    ///
+    /// Read through [`watch::bounce`] and never used raw: this file is edited
+    /// by hand, and the ends of the range are what a hand cannot reach past.
+    #[serde(default = "watch_bounce")]
+    pub watch_bounce: u64,
     /// What the app will show. Every bare key has to go above it, and every
     /// table below — `[[agents]]` is the one that follows.
     #[serde(default)]
@@ -96,6 +104,11 @@ fn cover_memory() -> u64 {
     memory::DEFAULT_LIMIT / 1_000_000
 }
 
+/// And the watch's bounce, which the watch itself owns.
+fn watch_bounce() -> u64 {
+    watch::BOUNCE
+}
+
 /// The launchers that resolve a package name on every run. An installed
 /// agent's command is a path to an unpacked executable, which resolves nothing.
 const RUNNERS: [&str; 3] = ["npx", "bunx", "pnpx"];
@@ -132,6 +145,7 @@ impl Default for Settings {
         // so these carry the version the ACP registry pins.
         Self {
             cover_memory: cover_memory(),
+            watch_bounce: watch_bounce(),
             features: Features::default(),
             agents: vec![
                 npx("claude", "@agentclientprotocol/claude-agent-acp@0.73.0"),
@@ -222,6 +236,17 @@ pub fn set_cover_memory(mb: u64) -> Result<()> {
     let mut doc: toml_edit::DocumentMut =
         body.parse().context("settings.toml is not valid toml")?;
     doc["cover_memory"] = toml_edit::value(mb as i64);
+    std::fs::write(&path, doc.to_string())?;
+    Ok(())
+}
+
+/// Move the watch's bounce in the file, in milliseconds.
+pub fn set_watch_bounce(ms: u64) -> Result<()> {
+    let path = dir()?.join("settings.toml");
+    let body = std::fs::read_to_string(&path).unwrap_or_default();
+    let mut doc: toml_edit::DocumentMut =
+        body.parse().context("settings.toml is not valid toml")?;
+    doc["watch_bounce"] = toml_edit::value(ms as i64);
     std::fs::write(&path, doc.to_string())?;
     Ok(())
 }

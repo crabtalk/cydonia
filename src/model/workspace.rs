@@ -20,13 +20,15 @@ use crate::{
         session::ChatSession,
         settings::{self, Feature, Settings},
         state::{self, State},
+        watch::{self, Watch},
     },
 };
 use bezel::{
-    gpui::{App, Context, EntityId, SharedString, Window},
+    gpui::{App, ClipboardItem, Context, EntityId, EventEmitter, SharedString, Window},
     theme::{self, Brand, Theme, Tint, appearance::AppearanceMode},
     ui::input,
 };
+use cacp::schema::SessionConfigOptionValue;
 use std::{
     collections::{BTreeMap, HashMap},
     path::{Path, PathBuf},
@@ -37,6 +39,14 @@ const UNTITLED: &str = "Untitled";
 
 /// And a column.
 const COLUMN: &str = "Column";
+
+/// A project was re-read off disk and something a pane was showing has been
+/// replaced — see [`crate::model::watch`].
+///
+/// What a view holds *about* an entry rather than the entry itself has to be
+/// let go of here: a card's position is not that card's any more, and the
+/// editor that had the caret is a different entity.
+pub struct Reloaded;
 
 /// The performance section's figures: what is in memory right now.
 pub struct Resident {
@@ -98,6 +108,7 @@ impl Workspace {
         };
         for ix in restore {
             this.restore_sessions(ix);
+            this.watch_project(ix, cx);
         }
         this.open_last_entry(cx);
         this.load_agent_icons(cx);
@@ -220,6 +231,21 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Move the watch's bounce. Written through to `settings.toml` first, for
+    /// the reason [`Self::set_cover_memory`] is, and clamped on the way in for
+    /// the reason [`crate::model::watch::bounce`] clamps on the way out.
+    ///
+    /// Nothing is re-armed. The pump reads the interval on each pass, so the
+    /// next event to land uses whatever this leaves behind.
+    pub fn set_watch_bounce(&mut self, ms: u64, cx: &mut Context<Self>) {
+        let ms = ms.clamp(watch::BOUNCE_RANGE.0, watch::BOUNCE_RANGE.1);
+        if settings::set_watch_bounce(ms).is_err() {
+            return;
+        }
+        self.settings.watch_bounce = ms;
+        cx.notify();
+    }
+
     /// The caret is bezel's, so the setting is: nothing here reads it back.
     pub fn set_cursor_blink(&mut self, blink: bool, cx: &mut Context<Self>) {
         self.cursor_blink = blink;
@@ -274,6 +300,7 @@ impl Workspace {
         self.projects.push(Project::new(path));
         let ix = self.projects.len() - 1;
         self.restore_sessions(ix);
+        self.watch_project(ix, cx);
         self.select_project(ix, cx);
         if self.projects[ix].sessions.is_empty()
             && let Some(entry) = self.settings.agents.first().cloned()
@@ -378,6 +405,17 @@ impl Workspace {
                 project.reload_page();
             }
         }
+        // Landing back in a session is being in front of it — see
+        // [`Self::wake_session`]. Landing in an article or a board is not, and
+        // starts nothing.
+        let woken = self
+            .projects
+            .get(ix)
+            .filter(|_| matches!(kind, state::Kind::Session))
+            .and_then(|open| open.active);
+        if let Some(id) = woken {
+            self.wake_session(id, cx);
+        }
         cx.notify();
     }
 
@@ -399,6 +437,53 @@ impl Workspace {
     pub fn active_project_mut(&mut self) -> Option<&mut Project> {
         let ix = self.active?;
         self.projects.get_mut(ix)
+    }
+
+    // ── watching ─────────────────────────────────────────────────────
+
+    /// Put a watch on the project at `ix`, so what an agent writes into it
+    /// shows up without anyone asking for it. Every way of opening a project
+    /// arrives here, and closing one drops the watch with the project.
+    fn watch_project(&mut self, ix: usize, cx: &mut Context<Self>) {
+        let Some(path) = self.projects.get(ix).map(|open| open.path.clone()) else {
+            return;
+        };
+        let watch = Watch::open(path, cx);
+        if let Some(project) = self.projects.get_mut(ix) {
+            project.watch = Some(watch);
+        }
+    }
+
+    /// Re-read one project off disk and reconcile it. Addressed by path rather
+    /// than by index because the watch that calls this outlives any index it
+    /// could have been armed with — the rail is reorderable, and closing a
+    /// project shifts every one after it.
+    pub fn reload_project(&mut self, path: &Path, cx: &mut Context<Self>) {
+        let Some(ix) = self.projects.iter().position(|open| open.path == path) else {
+            return;
+        };
+        if self.projects[ix].reload(cx) {
+            cx.emit(Reloaded);
+        }
+        cx.notify();
+    }
+
+    /// Re-read every open project: the backstop under the watch.
+    ///
+    /// Coming back to the window is where a missed event costs the most, and
+    /// it is the one moment we can be sure of catching. A file moved in from
+    /// outside the tree, a network mount the platform reports nothing for, an
+    /// event dropped while the queue overflowed — none of those reach the
+    /// watch, and all of them are corrected here.
+    pub fn reload_projects(&mut self, cx: &mut Context<Self>) {
+        let mut moved = false;
+        for ix in 0..self.projects.len() {
+            moved |= self.projects[ix].reload(cx);
+        }
+        if moved {
+            cx.emit(Reloaded);
+        }
+        cx.notify();
     }
 
     // ── sessions ─────────────────────────────────────────────────────
@@ -448,7 +533,33 @@ impl Workspace {
                 file.to_string_lossy().into_owned(),
             );
         }
+        self.wake_session(id, cx);
         cx.notify();
+    }
+
+    /// Point a session at an agent, if it has none and could have one.
+    ///
+    /// Called where a session is brought *forward* rather than where one is
+    /// created: the session you are looking at is the one you are about to work
+    /// in, and what an agent reports on connect — its modes, its model — is
+    /// what the composer needs before the first prompt rather than after it.
+    ///
+    /// Only ever the one in front. Every other session a project holds stays
+    /// idle, which is what still keeps a launch from starting an agent per
+    /// transcript. An archived one stays where it was put.
+    fn wake_session(&mut self, id: u64, cx: &mut Context<Self>) {
+        if !self.settings.features.sessions {
+            return;
+        }
+        let found = self
+            .projects
+            .iter_mut()
+            .find_map(|project| project.session_mut(id))
+            .filter(|chat| chat.idle() && chat.resumable() && !chat.closed);
+        if let Some(chat) = found {
+            chat.resume(cx);
+            cx.notify();
+        }
     }
 
     fn project_of(&self, id: u64) -> Option<usize> {
@@ -578,6 +689,39 @@ impl Workspace {
             f(chat);
             cx.notify();
         }
+    }
+
+    /// Put what the transcript has selected on the clipboard — see
+    /// [`crate::view::component::transcript::State::copied`].
+    ///
+    /// Answers whether there was anything, so a `cmd-c` that finds no selection
+    /// can be left to whatever else wanted it.
+    pub fn copy_selection(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(text) = self
+            .active_session()
+            .and_then(|chat| chat.transcript.copied(chat))
+        else {
+            return false;
+        };
+        cx.write_to_clipboard(ClipboardItem::new_string(text));
+        true
+    }
+
+    /// Switch a session's mode — what the composer's mode picker reports.
+    /// See [`ChatSession::set_mode`].
+    pub fn set_session_mode(&mut self, id: u64, mode_id: String, cx: &mut Context<Self>) {
+        self.with_session(id, cx, |chat| chat.set_mode(&mode_id));
+    }
+
+    /// The same for a config option, which is where the model lives.
+    pub fn set_session_config(
+        &mut self,
+        id: u64,
+        config_id: String,
+        value: SessionConfigOptionValue,
+        cx: &mut Context<Self>,
+    ) {
+        self.with_session(id, cx, |chat| chat.set_config(&config_id, value));
     }
 
     /// The session reached an agent: send it whatever was typed while it had
@@ -783,6 +927,26 @@ impl Workspace {
             .article
             .filter(|open| *open != ix)
             .map(|open| if open > ix { open - 1 } else { open });
+        cx.notify();
+    }
+
+    /// Take the file over the buffer, for an article the watch found had moved
+    /// underneath one — what the pane's notice offers. See [`Article::revert`].
+    pub fn revert_article(&mut self, path: &Path, cx: &mut Context<Self>) {
+        let Some(article) = self.article_at_mut(path) else {
+            return;
+        };
+        article.revert(cx);
+        cx.notify();
+    }
+
+    /// Keep the buffer instead, and write it over what landed — the other half
+    /// of the same notice. See [`Article::keep`].
+    pub fn keep_article(&mut self, path: &Path, cx: &mut Context<Self>) {
+        let Some(article) = self.article_at_mut(path) else {
+            return;
+        };
+        article.keep(cx);
         cx.notify();
     }
 
@@ -1076,6 +1240,8 @@ impl Workspace {
         }
     }
 }
+
+impl EventEmitter<Reloaded> for Workspace {}
 
 /// Point bezel's tint at the preference. Free rather than a method
 /// because the window reads its background appearance while it is being opened,

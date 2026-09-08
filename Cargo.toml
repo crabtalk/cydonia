@@ -1,7 +1,7 @@
 [package]
 name = "cydonia"
 description = "Desktop workspace for the ACP agents you run, keeping what they produce as files on your disk"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 # The floor the edition itself sets. Nothing here reaches past it on purpose.
 rust-version = "1.85"
@@ -25,10 +25,10 @@ path = "bin/main.rs"
 # bezel — the component library the GUI is built on. Published as `bezel-*`;
 # the keys here are what the source imports. `platform` carries gpui_platform,
 # which opens the window: gpui core knows no platform of its own.
-bezel = { version = "0.1.6", features = ["platform"] }
-editor = { version = "0.1.6", package = "bezel-editor" }
-markdown = { version = "0.1.6", package = "bezel-markdown" }
-syntax = { version = "0.1.6", package = "bezel-syntax" }
+bezel = { version = "0.1.8", features = ["platform"] }
+editor = { version = "0.1.8", package = "bezel-editor" }
+markdown = { version = "0.1.8", package = "bezel-markdown" }
+syntax = { version = "0.1.8", package = "bezel-syntax" }
 
 # cacp — our ACP implementation, taken from the registry like any other
 # dependency now that it is published and settled.
@@ -50,6 +50,10 @@ image = "0.25"
 # crate is the map and the order, which is exactly what is missing from gpui's
 # own asset cache.
 lru = "0.18"
+# The filesystem watch behind a project's `.cydonia/`. One backend per
+# platform — FSEvents here, inotify on Linux — behind one interface, which is
+# the whole reason to take a dependency for this rather than poll.
+notify = "8"
 # The project database. `bundled` compiles SQLite in: the store is a file we
 # hand to the user, so it cannot depend on whichever sqlite3 a machine ships.
 rusqlite = { version = "0.40", features = ["bundled"] }
@@ -59,7 +63,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # cacp spawns its read and write loops with `tokio::spawn`, so the connection
 # needs a runtime of its own — gpui's executor is smol's.
-tokio = { version = "1", features = ["process", "rt-multi-thread", "sync"] }
+tokio = { version = "1", features = ["process", "rt-multi-thread", "sync", "time"] }
 toml = "0.8"
 # Installing an agent edits settings.toml in place. `toml` would round-trip
 # it through a value tree and drop every comment the file was written with.

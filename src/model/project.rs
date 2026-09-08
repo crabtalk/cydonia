@@ -10,9 +10,13 @@ use crate::{
         article::{self, Article},
         board::{self, Board},
         session::ChatSession,
+        watch::Watch,
+        workspace::Workspace,
     },
 };
+use bezel::gpui::Context;
 use std::{
+    collections::HashMap,
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -49,6 +53,9 @@ pub struct Project {
     /// Whether it shows what is under the archived divider. Folded away by
     /// default: what was put away is not what you came back for.
     pub archive_open: bool,
+    /// The watch on this project's `.cydonia/`, once it is up. Held here so
+    /// closing the project drops it, which is what takes the watch down.
+    pub watch: Option<Watch>,
 }
 
 impl Project {
@@ -67,9 +74,111 @@ impl Project {
             page: None,
             expanded: true,
             archive_open: false,
+            watch: None,
         };
         this.reload_tables();
         this
+    }
+
+    /// Re-read everything on disk and reconcile it with what is held. The
+    /// answer to any event under `.cydonia/` — see [`crate::model::watch`] for
+    /// why the event itself is never read for more than where it landed.
+    ///
+    /// Answers whether anything a view holds *about* an entry moved: a card's
+    /// place on a board, a column's place in a table, the editor a document was
+    /// being read in. Everything else is drawn off the model each frame and
+    /// nobody keeps a handle on it, so a re-read that only changed those has
+    /// nothing to announce — and announcing it would drop the edit somebody has
+    /// open over the echo of their own save.
+    pub fn reload(&mut self, cx: &mut Context<Workspace>) -> bool {
+        // The store can appear long after the project was opened, and an agent
+        // making one is exactly the case this watch is here for.
+        if self.data.is_none() {
+            self.data = Data::attach(&self.path);
+        }
+        let articles = self.reload_articles(cx);
+        let boards = self.reload_boards();
+        let before = self.shape();
+        self.reload_tables();
+        articles || boards || before != self.shape()
+    }
+
+    /// What the table pane addresses by position: which tables there are, and
+    /// what the open one's columns are called.
+    fn shape(&self) -> (Vec<String>, Vec<String>) {
+        let keys = self.tables.iter().map(|table| table.key.clone()).collect();
+        let columns = self
+            .page
+            .as_ref()
+            .map(|page| page.columns.iter().map(|col| col.name.clone()).collect())
+            .unwrap_or_default();
+        (keys, columns)
+    }
+
+    /// Re-list the articles and merge the re-read into what is open.
+    ///
+    /// Held by path across the merge, not by index, and for the reason
+    /// [`Self::reload_tables`] holds by key: the list is ordered by when each
+    /// was last written, so one article changing can move every other one.
+    ///
+    /// Carries out [`Article::adopt`]'s answer — an open document rebuilt over
+    /// what the file now says has taken the caret with it.
+    fn reload_articles(&mut self, cx: &mut Context<Workspace>) -> bool {
+        let open = self.open_article().map(Path::to_path_buf);
+        let mut held: HashMap<PathBuf, Article> = self
+            .articles
+            .drain(..)
+            .map(|article| (article.path.clone(), article))
+            .collect();
+        let mut rebuilt = false;
+        self.articles = article::list(&self.path)
+            .into_iter()
+            .map(|fresh| match held.remove(&fresh.path) {
+                // Already on screen — the editor over it, its scroll and its
+                // undo history stay where they are.
+                Some(mut article) => {
+                    rebuilt |= article.adopt(&fresh, cx);
+                    article
+                }
+                None => fresh,
+            })
+            .collect();
+        self.article = open.and_then(|path| self.articles.iter().position(|at| at.path == path));
+        rebuilt
+    }
+
+    /// The file the article pane is showing, if it is showing one.
+    fn open_article(&self) -> Option<&Path> {
+        let article = self.articles.get(self.article?)?;
+        Some(&article.path)
+    }
+
+    /// The same, for boards. Nothing here is a live surface, so the merge is
+    /// only about not disturbing a board the re-read did not change — see
+    /// [`Board::adopt`], whose answer is carried out of here.
+    fn reload_boards(&mut self) -> bool {
+        let open = self
+            .board
+            .and_then(|ix| self.boards.get(ix))
+            .map(|board| board.path.clone());
+        let mut held: HashMap<PathBuf, Board> = self
+            .boards
+            .drain(..)
+            .map(|board| (board.path.clone(), board))
+            .collect();
+        let mut moved = false;
+        self.boards = board::list(&self.path)
+            .into_iter()
+            .map(|fresh| match held.remove(&fresh.path) {
+                Some(mut board) => {
+                    moved |= board.adopt(fresh);
+                    board
+                }
+                None => fresh,
+            })
+            .collect();
+        self.board = open.and_then(|path| self.boards.iter().position(|at| at.path == path));
+        moved
     }
 
     /// Re-read what tables exist. The store is the list — nothing here keeps a

@@ -66,6 +66,11 @@ pub struct Article {
     /// Put away: listed under the divider rather than gone. Cached beside
     /// [`Article::touched`], and for the same reason.
     pub archived: bool,
+    /// The file moved under an open document that has edits of its own — see
+    /// [`Article::adopt`]. Runtime only: what it marks is a disagreement
+    /// between the buffer and the disk, and reopening the app ends it by
+    /// reading the disk.
+    pub stale: bool,
 }
 
 impl Article {
@@ -80,6 +85,7 @@ impl Article {
             editor: None,
             scroll: ScrollHandle::new(),
             saved: String::new(),
+            stale: false,
         }
     }
 
@@ -171,9 +177,84 @@ impl Article {
             if self.saved != source && std::fs::write(&self.path, &source).is_ok() {
                 self.saved = source;
                 self.touched = project::stamp();
+                // The buffer is the file again, whatever landed under it while
+                // it was not — typing on is the third answer to the notice, and
+                // it is the one most people will give.
+                self.stale = false;
             }
         }
         renamed
+    }
+
+    /// Keep the buffer and write it over what landed on disk — the pane's other
+    /// way out of the notice. The same write a keystroke makes, said out loud.
+    pub fn keep(&mut self, cx: &App) {
+        self.write(cx);
+        self.stale = false;
+    }
+
+    /// Take what a re-read of the project found — see [`crate::model::watch`].
+    ///
+    /// The file wins, except where the document is open with edits that have
+    /// not been written. There the buffer stands and the pane is told the file
+    /// moved underneath it: an agent's write and a half-typed paragraph are
+    /// both somebody's work, and this is not the layer that gets to choose.
+    ///
+    /// Answers whether the surfaces were replaced, which is what tells the pane
+    /// the editor it had the caret in is not there any more.
+    pub fn adopt(&mut self, fresh: &Self, cx: &mut Context<Workspace>) -> bool {
+        self.cover = fresh.cover.clone();
+        self.archived = fresh.archived;
+        self.touched = fresh.touched;
+        // Never opened: the label is the whole of what is held, and the file
+        // is where it came from.
+        if self.editor.is_none() {
+            self.title = fresh.title.clone();
+            return false;
+        }
+        // The echo of our own write, which every save produces. `saved` is what
+        // this process last put on disk, so the two agreeing is the file saying
+        // nothing new.
+        let disk = std::fs::read_to_string(&self.path).unwrap_or_default();
+        if disk == self.saved && fresh.title == self.title {
+            return false;
+        }
+        if self.edited(cx) {
+            self.stale = true;
+            return false;
+        }
+        self.revert(cx);
+        true
+    }
+
+    /// Throw the surfaces away and build them again over what is on disk. What
+    /// the pane's Reload does, and what [`Article::adopt`] does for a document
+    /// with nothing of its own to lose.
+    ///
+    /// The undo history goes with the old editor. There is no honest way to
+    /// keep it: it is a history of a document this one no longer is.
+    pub fn revert(&mut self, cx: &mut Context<Workspace>) {
+        self.title = properties::title(&self.path);
+        self.touched = project::written(&self.path);
+        self.cover = cover::of(&self.path);
+        self.archived = properties::archived(&self.path);
+        self.field = None;
+        self.editor = None;
+        self.open(cx);
+        self.stale = false;
+    }
+
+    /// Whether either surface holds something the disk does not. The title is
+    /// filed on the keystroke, so in practice this is the body — but a rename
+    /// that failed to write leaves the field ahead of the file too.
+    fn edited(&self, cx: &App) -> bool {
+        self.editor
+            .as_ref()
+            .is_some_and(|editor| editor.read(cx).source() != self.saved)
+            || self
+                .field
+                .as_ref()
+                .is_some_and(|field| *field.read(cx).content() != self.title)
     }
 
     /// All of it: the directory is the article.

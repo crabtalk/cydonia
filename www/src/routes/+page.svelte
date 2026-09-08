@@ -1,12 +1,15 @@
 <script>
 	import { siApple, siDiscord, siGithub, siX } from 'simple-icons';
-	import { Check, Copy } from 'lucide-static';
+	import { Check, Copy, Download } from 'lucide-static';
 	import Brand from '$lib/Brand.svelte';
 	import Frame from '$lib/Frame.svelte';
-	import { discord, install, repo, site, tagline as description } from '$lib/meta.js';
+	import { base } from '$app/paths';
+	import { anchor, day, latest } from '$lib/changelog.js';
+	import { discord, dmg, dmgFor, install, repo, site, tagline as description } from '$lib/meta.js';
 
 	const author = 'https://x.com/tianyi_gc';
-	const video = 'https://cdn.crabtalk.ai/videos/cydonia.720p.mov';
+	const video = 'https://cdn.crabtalk.ai/videos/cydonia.720p.mp4';
+	const poster = 'https://cdn.crabtalk.ai/pics/cydonia.720p.poster.jpg';
 	const acp = 'https://agentclientprotocol.com';
 
 	// Off until there are real screenshots to put in the frames — three empty
@@ -94,14 +97,8 @@
 <section class="hero">
 	<div class="say">
 		<h1>Agents that leave something behind.</h1>
-		<p class="lede">
-			Open any directory. Agents that speak the <a href={acp}>Agent Client Protocol</a> work in it,
-			and what comes out stays as durable artifacts on your disk — articles, boards and tables, not
-			a chat log you scroll and lose.
-		</p>
-
 		<div class="cta">
-			<a class="button primary" href="#download">
+			<a class="button primary" href={dmg}>
 				<Brand icon={siApple} size={16} />
 				Download
 			</a>
@@ -119,6 +116,7 @@
 	<video
 		class="demo"
 		src={video}
+		{poster}
 		autoplay
 		loop
 		muted
@@ -168,19 +166,33 @@
 </section>
 
 <section class="get" id="download">
-	<h2>Download cydonia</h2>
-	<p>No packaged builds yet. Install from crates.io with <a href="https://rustup.rs">Rust</a>.</p>
-	<p class="state">
-		Today: write in a project and hand it to one agent. Several of them working the same project is
-		what comes next.
-	</p>
+	<h2>Try Cydonia</h2>
 
-	<div class="install code-block">
-		<code>{install}</code>
-		<button class="copy" type="button" aria-label="Copy">
-			<!-- eslint-disable-next-line svelte/no-at-html-tags -->
-			{@html Copy}{@html Check}
-		</button>
+	<div class="head">
+		<a class="num" href="{base}/changelog/#{anchor(latest.version)}">{latest.version}</a>
+		<span class="tag">Latest</span>
+		<span class="day">{day(latest.date)}</span>
+	</div>
+
+	{#if latest.summary}
+		<p class="summary">{latest.summary}</p>
+	{/if}
+
+	<a class="dl" href={dmgFor(latest.version)}>
+		<!-- eslint-disable-next-line svelte/no-at-html-tags -->
+		{@html Download}
+		cydonia-{latest.version}-arm64.dmg
+	</a>
+
+	<div class="alt">
+		<span class="or">or</span>
+		<span class="install code-block">
+			<code>{install}</code>
+			<button class="copy" type="button" aria-label="Copy">
+				<!-- eslint-disable-next-line svelte/no-at-html-tags -->
+				{@html Copy}{@html Check}
+			</button>
+		</span>
 	</div>
 </section>
 
@@ -203,7 +215,7 @@
 	section {
 		max-width: 1080px;
 		margin: 0 auto;
-		padding: 0 28px;
+		padding: 0 var(--gutter);
 	}
 
 	.hero {
@@ -231,16 +243,7 @@
 		object-fit: cover;
 	}
 
-	.lede {
-		max-width: 44ch;
-		margin: 22px 0 0;
-		color: var(--muted);
-		font-size: 17px;
-	}
-
-	.lede a,
-	.reel a,
-	.get a {
+	.reel a {
 		text-decoration: underline;
 		text-underline-offset: 3px;
 		text-decoration-color: var(--line-strong);
@@ -264,9 +267,11 @@
 		font-weight: 500;
 	}
 
-	.button:hover {
-		background: var(--panel);
-		text-decoration: none;
+	@media (hover: hover) {
+		.button:hover {
+			background: var(--panel);
+			text-decoration: none;
+		}
 	}
 
 	.button.primary {
@@ -275,9 +280,11 @@
 		color: var(--accent-ink);
 	}
 
-	.button.primary:hover {
-		background: var(--accent-hover);
-		border-color: var(--accent-hover);
+	@media (hover: hover) {
+		.button.primary:hover {
+			background: var(--accent-hover);
+			border-color: var(--accent-hover);
+		}
 	}
 
 	.facts {
@@ -319,9 +326,11 @@
 		color: var(--faint);
 	}
 
-	.outline a:hover {
-		color: var(--muted);
-		text-decoration: none;
+	@media (hover: hover) {
+		.outline a:hover {
+			color: var(--muted);
+			text-decoration: none;
+		}
 	}
 
 	.outline .current a {
@@ -358,8 +367,12 @@
 		color: var(--muted);
 	}
 
+	/* The section between the hero and the download had no top padding at all,
+	   so it read as a continuation of the hero rather than its own stretch of
+	   page. Scales with the viewport instead of needing a breakpoint. */
 	.own {
-		padding-bottom: 88px;
+		padding-top: clamp(80px, 11vw, 144px);
+		padding-bottom: clamp(80px, 11vw, 144px);
 	}
 
 	.own h2 {
@@ -401,7 +414,6 @@
 
 	.get {
 		padding-bottom: 96px;
-		text-align: center;
 	}
 
 	.get h2 {
@@ -411,29 +423,83 @@
 		letter-spacing: -0.03em;
 	}
 
-	.get p {
-		margin: 14px 0 0;
+	.head {
+		margin-top: 34px;
+	}
+
+	/* Version, badge and day are one line, with the date at the far end so a
+	   column of them lines up as the list grows. */
+	.head {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+	}
+
+	.num {
+		font-family: var(--mono);
+		font-size: 15px;
+		font-weight: 500;
+	}
+
+	.tag {
+		padding: 2px 8px;
+		border-radius: 999px;
+		background: var(--panel-high);
+		color: var(--muted);
+		font-size: 12px;
+	}
+
+	.day {
+		margin-left: auto;
+		color: var(--faint);
+		font-size: 13.5px;
+	}
+
+	.summary {
+		max-width: 62ch;
+		margin: 12px 0 0;
 		color: var(--muted);
 	}
 
-	/* Says where the app is, under the button that gets it — a promise the hero
-	   makes is worth qualifying at the point someone acts on it. */
-	.get .state {
-		max-width: 46ch;
-		margin: 10px auto 0;
+	/* Every release names its file the same quiet way. The page's one filled
+	   button is in the hero, where a call to action belongs. */
+	.dl {
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+		margin-top: 14px;
+		color: var(--muted);
+		font-family: var(--mono);
+		font-size: 13px;
+	}
+
+	.dl :global(svg) {
+		width: 14px;
+		height: 14px;
+	}
+
+	/* The other way in, under the file rather than beside it. A one-liner needs
+	   no tab, heading or rule to introduce it — just the word `or`. */
+	.alt {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 12px;
+		margin-top: 30px;
+	}
+
+	.or {
 		color: var(--faint);
 		font-size: 14px;
 	}
 
 	.install {
-		display: flex;
+		display: inline-flex;
 		align-items: center;
-		justify-content: center;
-		max-width: 540px;
-		margin: 28px auto 0;
-		padding: 16px 20px;
+		max-width: 100%;
+		padding: 6px 40px 6px 12px;
 		border: 1px solid var(--line);
-		border-radius: 12px;
+		border-radius: 8px;
 		background: var(--panel);
 		overflow-x: auto;
 	}
@@ -441,14 +507,25 @@
 	.install code {
 		background: none;
 		padding: 0;
-		font-size: 14px;
+		font-size: 13px;
+		/* The body's 1.6 is what made this a block rather than a line. */
+		line-height: 1.5;
 		white-space: nowrap;
 	}
 
+	/* Sized with the box it sits in: the shared 32px — 40px on touch — was
+	   built for a panel and is taller than this line. */
 	.install :global(.copy) {
 		top: 50%;
-		right: 10px;
+		right: 5px;
+		width: 26px;
+		height: 26px;
 		transform: translateY(-50%);
+	}
+
+	.install :global(.copy svg) {
+		width: 13px;
+		height: 13px;
 	}
 
 	footer {
@@ -457,7 +534,7 @@
 		gap: 20px;
 		max-width: 1080px;
 		margin: 0 auto;
-		padding: 0 28px 56px;
+		padding: 0 var(--gutter) 56px;
 		font-size: 14px;
 	}
 
@@ -472,12 +549,23 @@
 	}
 
 	footer .right {
+		gap: 4px;
 		margin-left: auto;
+		margin-right: -11px;
 		color: var(--muted);
 	}
 
-	footer a:hover {
-		color: var(--text);
+	footer .right a {
+		display: grid;
+		place-items: center;
+		width: 42px;
+		height: 42px;
+	}
+
+	@media (hover: hover) {
+		footer a:hover {
+			color: var(--text);
+		}
 	}
 
 	@media (max-width: 940px) {
@@ -504,12 +592,6 @@
 	}
 
 	@media (max-width: 720px) {
-		section,
-		footer {
-			padding-left: 18px;
-			padding-right: 18px;
-		}
-
 		.cta {
 			flex-wrap: wrap;
 		}

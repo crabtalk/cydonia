@@ -22,15 +22,30 @@ use cacp::{
         WriteTextFileRequest, WriteTextFileResponse,
     },
 };
+use std::process::Stdio;
 use std::{
     path::PathBuf,
     sync::{Arc, OnceLock},
+    time::Duration,
 };
 use tokio::{
     process::{Child, Command},
     runtime::Runtime,
     sync::{mpsc, oneshot},
 };
+
+/// Where the protocol tap writes, and the switch that leaves an agent's stderr
+/// where it can be read.
+const DEBUG: &str = "CYDONIA_DEBUG";
+
+/// How long a `session/cancel` already on the wire is given to land before the
+/// process is killed under it.
+///
+/// Short, because it is all this can buy. Closing the agent's stdin — the thing
+/// that would actually let it wind itself up — is not reachable from here:
+/// cacp's read loop holds a `Peer` of its own, so the write loop that owns
+/// stdin outlives every handle this side can drop.
+const SHUTDOWN_GRACE: Duration = Duration::from_millis(250);
 
 /// The runtime every connection runs on, started on first use.
 pub fn runtime() -> &'static Runtime {
@@ -68,10 +83,12 @@ impl<T> Reply<T> {
 
 /// A live session: the connection, its identity, and the agent process.
 pub struct Session {
-    conn: AgentConn,
+    /// `Some` for the whole of a session's life — emptied only by
+    /// [`Session::drop`], which has to take it to close it before the process.
+    conn: Option<AgentConn>,
     tx: mpsc::UnboundedSender<Event>,
-    /// Dropping this kills the agent.
-    _child: Child,
+    /// The agent process. Held in an `Option` for the same reason as `conn`.
+    child: Option<Child>,
     pub session_id: SessionId,
     pub init: InitializeResponse,
     pub response: NewSessionResponse,
@@ -121,6 +138,15 @@ impl Session {
     pub async fn spawn(entry: &settings::Agent, launch: Launch) -> Result<(Self, Events)> {
         let mut command = Command::new(&entry.command);
         command.args(&entry.args).envs(&entry.env);
+        // An agent's diagnostics are not this app's. cacp leaves the choice to
+        // the caller — "a TUI usually wants it captured and a CLI usually does
+        // not" — and a desktop app that inherits them sprays a node SDK's
+        // teardown chatter over whichever terminal happened to launch it, about
+        // a shutdown the user asked for. `CYDONIA_DEBUG`, which already
+        // redirects the protocol tap, is what hands them back.
+        if std::env::var_os(DEBUG).is_none() {
+            command.stderr(Stdio::null());
+        }
 
         let configured = mcp::servers();
 
@@ -128,6 +154,7 @@ impl Session {
         let (conn, child) = cacp::spawn(&mut command, Arc::new(Frontend(tx.clone())), debug_tap())
             .map_err(|e| anyhow!("failed to start {}: {}", entry.command, error_text(&e)))?;
 
+        let echo = tx.clone();
         let session = Self::open(conn, child, tx, launch, configured).await?;
         // `session/load` replays the whole conversation before it answers, and
         // the client is holding that transcript already: the replay is spent
@@ -135,7 +162,21 @@ impl Session {
         // Only updates can be queued at this point — nothing else is sent
         // until we prompt.
         if session.loaded {
-            while events.try_recv().is_ok() {}
+            // All but the one thing in the replay that is state rather than
+            // transcript: what the conversation has already spent. Nothing in
+            // ACP asks for that — it arrives as a notification or not at all —
+            // so spending it here is what leaves a resumed session reading
+            // empty until its next turn. The last one wins, and goes back on
+            // the channel the frontend is about to read.
+            let mut usage = None;
+            while let Ok(event) = events.try_recv() {
+                if let Event::Update(SessionUpdate::UsageUpdate(update)) = event {
+                    usage = Some(update);
+                }
+            }
+            if let Some(update) = usage {
+                let _ = echo.send(Event::Update(SessionUpdate::UsageUpdate(update)));
+            }
         }
         Ok((session, events))
     }
@@ -219,15 +260,21 @@ impl Session {
         };
 
         Ok(Self {
-            conn,
+            conn: Some(conn),
             tx,
-            _child: child,
+            child: Some(child),
             session_id: response.session_id.clone(),
             init,
             response,
             cwd,
             loaded,
         })
+    }
+
+    /// A handle on the agent. Cheap to clone, and present for as long as
+    /// anything can reach the session — the `Option` is [`Session::drop`]'s.
+    fn conn(&self) -> AgentConn {
+        self.conn.clone().expect("the session is being dropped")
     }
 
     /// Send a prompt turn. Its result arrives as [`Event::TurnDone`] —
@@ -240,7 +287,7 @@ impl Session {
     /// embedded resources). Same result path as [`Self::prompt`].
     pub fn prompt_blocks(&self, blocks: Vec<ContentBlock>) {
         let request = PromptRequest::new(self.session_id.clone(), blocks);
-        let conn = self.conn.clone();
+        let conn = self.conn();
         let tx = self.tx.clone();
         runtime().spawn(async move {
             let done = conn
@@ -255,7 +302,7 @@ impl Session {
     /// with an [`Event::TurnDone`] carrying `StopReason::Cancelled`. Pending
     /// permission replies are the frontend's to answer `Cancelled`.
     pub fn cancel(&self) -> Result<(), Error> {
-        self.conn.cancel(CancelNotification {
+        self.conn().cancel(CancelNotification {
             session_id: self.session_id.clone(),
             meta: None,
         })
@@ -270,7 +317,7 @@ impl Session {
             mode_id: mode_id.into(),
             meta: None,
         };
-        let conn = self.conn.clone();
+        let conn = self.conn();
         runtime().spawn(async move { conn.set_session_mode(request).await });
     }
 
@@ -285,7 +332,7 @@ impl Session {
             value,
             meta: None,
         };
-        let conn = self.conn.clone();
+        let conn = self.conn();
         runtime().spawn(async move { conn.set_session_config_option(request).await });
     }
 }
@@ -324,6 +371,30 @@ impl Client for Frontend {
         std::fs::write(&request.path, &request.content)
             .map(|()| WriteTextFileResponse::default())
             .map_err(|e| io_error(&request.path, &e))
+    }
+}
+
+/// Take the agent down: the connection first, then the process behind it.
+///
+/// `cacp::spawn` sets `kill_on_drop`, so letting the child field drop on its own
+/// is an immediate SIGKILL — mid-request, if the agent was answering one.
+/// [`ChatSession::close`] sends `session/cancel` ahead of this, and the pause
+/// here is what gives that notification time to be read.
+///
+/// It is not a clean shutdown, and cannot be until cacp can close an agent's
+/// stdin: its read loop is handed a `Peer` by value, so the write loop holding
+/// stdin lives as long as the agent does, whatever this side drops. Until then
+/// the kill is the only exit and the agent's stderr is where the noise goes —
+/// see [`DEBUG`].
+impl Drop for Session {
+    fn drop(&mut self) {
+        let (Some(conn), Some(mut child)) = (self.conn.take(), self.child.take()) else {
+            return;
+        };
+        drop(conn);
+        runtime().spawn(async move {
+            let _ = tokio::time::timeout(SHUTDOWN_GRACE, child.wait()).await;
+        });
     }
 }
 
@@ -451,7 +522,7 @@ fn io_error(path: &std::path::Path, e: &std::io::Error) -> Error {
 
 /// With `CYDONIA_DEBUG=<path>` set, append every JSON-RPC line to that file.
 fn debug_tap() -> Option<Tap> {
-    let path = std::env::var("CYDONIA_DEBUG").ok()?;
+    let path = std::env::var(DEBUG).ok()?;
     Some(Arc::new(move |direction: Direction, line: &str| {
         use std::io::Write;
         if let Ok(mut f) = std::fs::OpenOptions::new()
