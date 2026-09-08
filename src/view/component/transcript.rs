@@ -29,8 +29,10 @@ use cacp::schema::ToolKind;
 use markdown::{BlockLayouts, Selection};
 use std::{
     cell::RefCell,
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, hash_map::DefaultHasher},
+    hash::{Hash, Hasher},
     ops::Range,
+    time::Duration,
 };
 
 const CONTENT_MAX_WIDTH: f32 = 720.;
@@ -209,8 +211,15 @@ pub fn render(chat: &ChatSession, window: &mut Window, cx: &mut Context<Workspac
         let running = chat.streaming && position == last;
         zones.push(zone(chat, turn, running, window, cx));
     }
-    if chat.streaming {
-        zones.push(working(chat, cx));
+    // Only while the turn has nothing to show. Once it has, the text arriving
+    // under it *is* the sign that it is running — and a row pinned below prose
+    // that reflows on every streamed frame is a row that jumps, taking the eye
+    // with it. See [`working`].
+    if let Some(turn) = turns
+        .last()
+        .filter(|turn| chat.streaming && turn.range.len() <= 1)
+    {
+        zones.push(working(chat, turn.range.start, cx));
     }
 
     div()
@@ -465,8 +474,113 @@ fn tool(chat: &ChatSession, ix: usize, first: bool, cx: &mut Context<Workspace>)
         .into_any_element()
 }
 
-/// The turn in flight, while it has produced nothing to show yet.
-fn working(chat: &ChatSession, cx: &mut Context<Workspace>) -> AnyElement {
+/// What a turn in flight is called while it has nothing to show yet.
+///
+/// Taken from `../desktop`, which settled this first.
+///
+/// A list rather than one word, and long enough that the same one twice reads
+/// as chance. Which one a turn gets is [`verb`]'s business.
+const WORKING: [&str; 40] = [
+    "Thinking",
+    "Brewing",
+    "Cultivating",
+    "Simmering",
+    "Percolating",
+    "Distilling",
+    "Weaving",
+    "Conjuring",
+    "Steeping",
+    "Fermenting",
+    "Crystallizing",
+    "Synthesizing",
+    "Composing",
+    "Pondering",
+    "Unraveling",
+    "Forging",
+    "Kindling",
+    "Gathering",
+    "Polishing",
+    "Assembling",
+    "Decoding",
+    "Untangling",
+    "Refining",
+    "Shaping",
+    "Hatching",
+    "Coalescing",
+    "Contemplating",
+    "Illuminating",
+    "Molding",
+    "Calibrating",
+    "Churning",
+    "Marinating",
+    "Incubating",
+    "Digesting",
+    "Sprouting",
+    "Condensing",
+    "Mulling",
+    "Concocting",
+    "Ruminating",
+    "Orchestrating",
+];
+
+/// Which word a turn gets: the question's own hash.
+///
+/// Stable, because it has to be — a word rerolled per frame would be a spinner
+/// made of text, and the transcript repaints every 120ms while a turn streams.
+/// Not the turn's position, which was the first thing tried and which makes the
+/// first turn of every session the first word in the list.
+///
+/// Hashing what was *asked* gets the variety a random pick would, and keeps it
+/// for as long as the question is on screen.
+fn verb(question: &str) -> &'static str {
+    let mut hash = DefaultHasher::new();
+    question.hash(&mut hash);
+    WORKING[hash.finish() as usize % WORKING.len()]
+}
+
+/// A turn's age, in the coarsest unit that still says something.
+fn since(elapsed: Duration) -> String {
+    let secs = elapsed.as_secs();
+    match secs < 60 {
+        true => format!("{secs}s"),
+        false => format!("{}m {}s", secs / 60, secs % 60),
+    }
+}
+
+/// Tokens, thinned to the digits that carry: `840`, `4.2k`, `128k`.
+fn tokens(spent: u64) -> String {
+    match spent {
+        n if n < 1_000 => n.to_string(),
+        n if n < 100_000 => format!("{:.1}k", n as f64 / 1_000.),
+        n => format!("{}k", n / 1_000),
+    }
+}
+
+/// What the turn has cost so far, quieter than the word it follows. Absent
+/// until there is something to say — a turn that has not been running a whole
+/// second yet is not news.
+fn spend(chat: &ChatSession, theme: &Theme) -> Option<AnyElement> {
+    let mut parts = Vec::new();
+    if let Some(elapsed) = chat.elapsed().filter(|elapsed| elapsed.as_secs() > 0) {
+        parts.push(since(elapsed));
+    }
+    // Only once it is worth a number. A turn opens on nothing spent, and
+    // `0 tokens` is a fact about the clock rather than about the turn.
+    if let Some(spent) = chat.spent().filter(|spent| *spent > 0) {
+        parts.push(format!("{} tokens", tokens(spent)));
+    }
+    (!parts.is_empty()).then(|| {
+        div()
+            .text_style(TextStyle::Callout)
+            .text_color(theme.text_faint.opacity(0.6))
+            .child(format!("({})", parts.join(" · ")))
+            .into_any_element()
+    })
+}
+
+/// The turn in flight, while it has produced nothing to show yet. `at` is the
+/// turn's first item — the question, which is what its word comes from.
+fn working(chat: &ChatSession, at: usize, cx: &mut Context<Workspace>) -> AnyElement {
     let theme = Theme::of(cx).clone();
     let view = Painter::of(cx);
     div()
@@ -487,7 +601,13 @@ fn working(chat: &ChatSession, cx: &mut Context<Workspace>) -> AnyElement {
             div()
                 .text_style(TextStyle::Callout)
                 .text_color(theme.text_faint)
-                .child("working…"),
+                .child(format!(
+                    "{}…",
+                    verb(chat.items.get(at).and_then(item_text).unwrap_or_default())
+                )),
         )
+        // The clock keeps itself: the orb pulses, so this row is repainted
+        // every frame whether or not the agent has said anything.
+        .children(spend(chat, &theme))
         .into_any_element()
 }

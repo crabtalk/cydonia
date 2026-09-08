@@ -92,6 +92,17 @@ impl Usage {
     }
 }
 
+/// The turn in flight: when it started, and what the context had spent by then.
+///
+/// Runtime only, like [`Usage`], and for the same reason — the two numbers it
+/// exists to count from are only read while a turn is running, and a relaunch
+/// has none.
+#[derive(Clone, Copy)]
+struct Flight {
+    at: SystemTime,
+    used: u64,
+}
+
 /// One way to answer a permission request. `kind` is what decides how the
 /// button paints — allow and reject must not look alike.
 pub struct Choice {
@@ -139,6 +150,9 @@ pub struct ChatSession {
     pub config: Vec<SessionConfigOption>,
     /// Context spent, when the agent says.
     pub usage: Option<Usage>,
+    /// What the turn in flight is counted from — see [`Self::elapsed`] and
+    /// [`Self::spent`].
+    flight: Option<Flight>,
     /// The agent's own name for the session, from `SessionInfoUpdate`.
     pub title: String,
     /// The name you typed, which the agent never overwrites. Two fields rather
@@ -184,6 +198,7 @@ impl ChatSession {
             modes: None,
             config: Vec::new(),
             usage: None,
+            flight: None,
             title: String::new(),
             name: None,
             updated: SystemTime::now(),
@@ -220,6 +235,7 @@ impl ChatSession {
             modes: None,
             config: Vec::new(),
             usage: None,
+            flight: None,
             title: record.title,
             name: record.name,
             updated,
@@ -301,6 +317,21 @@ impl ChatSession {
         self.flush();
     }
 
+    /// How long the turn in flight has been running.
+    pub fn elapsed(&self) -> Option<Duration> {
+        self.flight?.at.elapsed().ok()
+    }
+
+    /// What the turn in flight has spent, as the agent counts context.
+    ///
+    /// The difference rather than the total: `used` is the whole conversation,
+    /// and what a running turn is costing is what it has added to it. `None`
+    /// until an agent has counted at all — most do not until the first turn is
+    /// answered, so a first turn shows its clock and nothing else.
+    pub fn spent(&self) -> Option<u64> {
+        Some(self.usage?.used.saturating_sub(self.flight?.used))
+    }
+
     pub fn live(&self) -> bool {
         matches!(self.connection, Connection::Live(_))
     }
@@ -353,6 +384,10 @@ impl ChatSession {
             return;
         };
         session.prompt(&content);
+        self.flight = Some(Flight {
+            at: SystemTime::now(),
+            used: self.usage.map_or(0, |usage| usage.used),
+        });
         self.items.push(ChatItem::User(content));
         self.updated = SystemTime::now();
         self.streaming = true;
