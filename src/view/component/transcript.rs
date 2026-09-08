@@ -13,11 +13,12 @@ use crate::{
     view::root,
 };
 use bezel::{
+    agent::orbs::{OrbSize, OrbState, engine::Frame, orb_element},
     gpui::{AnyElement, Context, ScrollHandle, SharedString, Window, div, prelude::*, px},
     motion::Painter,
     theme::{TextStyle, Theme, Typeset},
     ui::{
-        icons, loaders,
+        icons,
         scroll::{self, FollowState},
         widgets::{Layout, Status, Takeover},
     },
@@ -32,6 +33,7 @@ use std::{
     collections::{HashMap, HashSet, hash_map::DefaultHasher},
     hash::{Hash, Hasher},
     ops::Range,
+    rc::Rc,
     time::Duration,
 };
 
@@ -40,6 +42,17 @@ const CONTENT_MAX_WIDTH: f32 = 720.;
 /// The transcript's breathing room at either end. The bottom carries the
 /// floating composer on top of it, so the last message scrolls clear of it.
 const PAD: f32 = 28.;
+
+/// What the orb is drawn on: 30 frames a second while a turn is in flight,
+/// claimed for a third of a second at a time and renewed by the render it
+/// drives. A turn that ends stops rendering the row, the claim lapses, and the
+/// app's clock parks itself.
+const ORB_FPS: f32 = 30.;
+const ORB_LEASE: Duration = Duration::from_millis(300);
+
+/// The still frame an orb holds where motion is turned off — the engine's own
+/// convention, and a pose rather than the empty t = 0 arrangement.
+const ORB_STILL: f32 = 0.6;
 
 /// Where a session's scrollback sits and which of its zones are open — view
 /// state, per session, so switching back finds the transcript as it was left.
@@ -64,6 +77,15 @@ pub struct State {
     /// layouts are refilled by the renderer every frame, and an item drawn for
     /// the first time has to be able to put its own in.
     layouts: RefCell<HashMap<usize, BlockLayouts>>,
+    /// The working orb's geometry, reused tick to tick. The engine overwrites
+    /// it every frame, so one buffer per session is what keeps a turn in
+    /// flight from growing a fresh pair of vectors thirty times a second.
+    orb: Rc<RefCell<Frame>>,
+    /// The same, for the sidebar's mark. Two orbs on screen are two buffers:
+    /// each is filled where it is built and read back in the paint phase, so
+    /// one between them would have both painting the geometry of whichever
+    /// was built last.
+    pub(crate) mark: Rc<RefCell<Frame>>,
 }
 
 impl State {
@@ -533,9 +555,56 @@ const WORKING: [&str; 40] = [
 /// Hashing what was *asked* gets the variety a random pick would, and keeps it
 /// for as long as the question is on screen.
 fn verb(question: &str) -> &'static str {
+    WORKING[asked_hash(question) % WORKING.len()]
+}
+
+/// Which orb a session's turn in flight wears, off the same hash for the same
+/// reason: a shape rerolled per frame would be twelve loaders playing at once,
+/// and one picked per place would have the sidebar and the transcript showing
+/// the same turn as two different things.
+///
+/// The word and the shape are picked apart rather than paired — there are
+/// forty of one and twelve of the other, and pairing them would cost the words
+/// their variety.
+pub fn orb_of(chat: &ChatSession) -> OrbState {
+    // The turn in flight opened at the last thing asked — which is where
+    // `turns` starts one too, and 0 for a session that was never asked
+    // anything.
+    let at = chat
+        .items
+        .iter()
+        .rposition(|item| matches!(item, ChatItem::User(_)))
+        .unwrap_or(0);
+    let question = chat.items.get(at).and_then(item_text).unwrap_or_default();
+    OrbState::ALL_STATES[asked_hash(question) % OrbState::ALL_STATES.len()]
+}
+
+/// That orb, drawn, at the time the turn has been running — unbounded, which
+/// is what the engine wants, and starting from nothing every turn.
+///
+/// The orb paints one frame of a clock it does not keep, so this asks for the
+/// frames itself. The claim is renewed by the render it drives rather than
+/// held anywhere, so it lapses on its own the moment the orb stops being
+/// drawn.
+pub fn orb<V: 'static>(
+    state: OrbState,
+    since: Duration,
+    frame: &Rc<RefCell<Frame>>,
+    cx: &mut Context<V>,
+) -> AnyElement {
+    Painter::of(cx).lease(ORB_FPS, ORB_LEASE, cx);
+    let t = match cx.reduce_motion() {
+        true => ORB_STILL,
+        false => since.as_secs_f32(),
+    };
+    orb_element(state, OrbSize::Inline, t, frame).into_any_element()
+}
+
+/// The question, as a number to pick with.
+fn asked_hash(question: &str) -> usize {
     let mut hash = DefaultHasher::new();
     question.hash(&mut hash);
-    WORKING[hash.finish() as usize % WORKING.len()]
+    hash.finish() as usize
 }
 
 /// A turn's age, in the coarsest unit that still says something.
@@ -579,34 +648,27 @@ fn spend(chat: &ChatSession, theme: &Theme) -> Option<AnyElement> {
 }
 
 /// The turn in flight, while it has produced nothing to show yet. `at` is the
-/// turn's first item — the question, which is what its word comes from.
+/// turn's first item — the question, which is what its word and its orb come
+/// from.
 fn working(chat: &ChatSession, at: usize, cx: &mut Context<Workspace>) -> AnyElement {
     let theme = Theme::of(cx).clone();
-    let view = Painter::of(cx);
+    let asked = chat.items.get(at).and_then(item_text).unwrap_or_default();
+    let state = orb_of(chat);
+    let since = chat.elapsed().unwrap_or_default();
     div()
         .flex()
         .flex_row()
         .items_center()
         .gap(px(8.))
         .pb(px(28.))
-        .child(loaders::orb(
-            loaders::Orb::Cluster,
-            SharedString::from(format!("working-{}", chat.id)),
-            18.,
-            &theme,
-            view,
-            cx,
-        ))
+        .child(orb(state, since, &chat.transcript.orb, cx))
         .child(
             div()
                 .text_style(TextStyle::Callout)
                 .text_color(theme.text_faint)
-                .child(format!(
-                    "{}…",
-                    verb(chat.items.get(at).and_then(item_text).unwrap_or_default())
-                )),
+                .child(format!("{}…", verb(asked))),
         )
-        // The clock keeps itself: the orb pulses, so this row is repainted
+        // The clock keeps itself: the orb turns, so this row is repainted
         // every frame whether or not the agent has said anything.
         .children(spend(chat, &theme))
         .into_any_element()
