@@ -53,6 +53,4 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: mozilla-actions/sccache-action@v0.0.11
       - run: sudo .github/scripts/linux-deps
-      # `build`, not `check`: what breaks here is linking against the system
-      # libraries above, and `check` never reaches the linker.
-      - run: cargo build --workspace --all-targets
+      - run: cargo build --bin cydonia

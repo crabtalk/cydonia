@@ -22,12 +22,12 @@ use cacp::{
         WriteTextFileRequest, WriteTextFileResponse,
     },
 };
+use std::process::Stdio;
 use std::{
     path::PathBuf,
     sync::{Arc, OnceLock},
     time::Duration,
 };
-use std::process::Stdio;
 use tokio::{
     process::{Child, Command},
     runtime::Runtime,

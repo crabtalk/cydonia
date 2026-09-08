@@ -452,20 +452,27 @@ impl Cydonia {
                                             this.select_session(id, cx);
                                             this.show_pane(Pane::Chat, cx);
                                         })),
-                                    None => self.card_action("run", at, icons::media::PLAY, cx).on_click(
-                                        cx.listener(move |this, _, _, cx| {
+                                    None => self
+                                        .card_action("run", at, icons::media::PLAY, cx)
+                                        .on_click(cx.listener(move |this, _, _, cx| {
                                             cx.stop_propagation();
                                             this.dispatch_card(at, cx);
-                                        }),
-                                    ),
+                                        })),
                                 }
                             }))
                             .child(
-                                self.card_action("delete", at, icons::files::TRASH_BIN_MINIMALISTIC, cx)
-                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                self.card_action(
+                                    "delete",
+                                    at,
+                                    icons::files::TRASH_BIN_MINIMALISTIC,
+                                    cx,
+                                )
+                                .on_click(cx.listener(
+                                    move |this, _, _, cx| {
                                         cx.stop_propagation();
                                         this.delete_card(at, cx);
-                                    })),
+                                    },
+                                )),
                             ),
                     ),
             )
