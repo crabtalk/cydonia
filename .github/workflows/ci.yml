@@ -1,0 +1,58 @@
+name: ci
+
+# Branches reach `main` through a pull request, so `pull_request` covers them —
+# pushing to a branch that has one open would otherwise run everything twice.
+# `push` is left for `main` itself, which is merged into rather than pushed.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A second push to the same branch cancels the first: only the tip matters.
+# Keyed on the source branch, since a pull request's own ref is not it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+  # sccache keys on the compilation itself, so the two jobs below share what
+  # they build of the dependency tree instead of each warming a cache of its
+  # own. It cannot cache incremental artefacts, and cargo's incremental mode
+  # would route around it, so that is off.
+  CARGO_INCREMENTAL: 0
+  SCCACHE_GHA_ENABLED: "true"
+  RUSTC_WRAPPER: sccache
+
+jobs:
+  check:
+    name: fmt + clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      # Ahead of the apt install: formatting needs no system library, and a
+      # failure here should report in seconds rather than after a package fetch.
+      - run: cargo fmt --all --check
+      # clippy runs build scripts, and those probe for the libraries below.
+      - run: sudo .github/scripts/linux-deps
+      - run: cargo clippy --workspace --all-targets
+
+  # Linux, and only Linux. cydonia is developed and shipped on macOS, so that
+  # is the platform that cannot break unnoticed — this is the one that can.
+  # gpui builds for both, and the Linux half goes stale in silence otherwise.
+  build:
+    name: build (linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      - run: sudo .github/scripts/linux-deps
+      # `build`, not `check`: what breaks here is linking against the system
+      # libraries above, and `check` never reaches the linker.
+      - run: cargo build --workspace --all-targets

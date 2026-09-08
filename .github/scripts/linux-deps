@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# What gpui links against on Linux and the runner image does not carry: fonts,
+# and both display servers, since `gpui_linux` defaults to wayland + x11. The
+# generic toolchain — build-essential, pkg-config, libssl-dev — is already
+# there. Taken from bezel, which cydonia is built on and which needs the same
+# set for the same reason.
+set -euo pipefail
+apt-get update
+apt-get install -y --no-install-recommends \
+    libfontconfig-dev \
+    libwayland-dev \
+    libx11-xcb-dev \
+    libxkbcommon-x11-dev
