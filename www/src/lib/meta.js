@@ -10,5 +10,12 @@ export const site = 'https://cydonia.app';
 export const tagline =
 	'A desktop workspace for the coding agents you run. Open any directory as a project, put an ACP agent to work in it, and keep what comes out as durable artifacts on your own disk — articles, boards and tables, not a chat log.';
 
-/** There are no packaged builds yet, so the registry is how you get it. */
+/** The other way in, for anyone who would rather build it. */
 export const install = 'cargo install cydonia';
+
+/** Injected by Vite from Cargo.toml — see vite.config.js. */
+export const version = __CYDONIA_VERSION__;
+
+/** The release names both the tag and the asset after the version, so neither
+    the URL nor the version has to be repeated anywhere. */
+export const dmg = `${repo}/releases/download/v${version}/cydonia-${version}-arm64.dmg`;

@@ -3,7 +3,7 @@
 	import { Check, Copy } from 'lucide-static';
 	import Brand from '$lib/Brand.svelte';
 	import Frame from '$lib/Frame.svelte';
-	import { discord, install, repo, site, tagline as description } from '$lib/meta.js';
+	import { discord, dmg, install, repo, site, tagline as description, version } from '$lib/meta.js';
 
 	const author = 'https://x.com/tianyi_gc';
 	const video = 'https://cdn.crabtalk.ai/videos/cydonia.720p.mp4';
@@ -95,14 +95,8 @@
 <section class="hero">
 	<div class="say">
 		<h1>Agents that leave something behind.</h1>
-		<p class="lede">
-			Open any directory. Agents that speak the <a href={acp}>Agent Client Protocol</a> work in it,
-			and what comes out stays as durable artifacts on your disk — articles, boards and tables, not
-			a chat log you scroll and lose.
-		</p>
-
 		<div class="cta">
-			<a class="button primary" href="#download">
+			<a class="button primary" href={dmg}>
 				<Brand icon={siApple} size={16} />
 				Download
 			</a>
@@ -171,11 +165,20 @@
 
 <section class="get" id="download">
 	<h2>Download cydonia</h2>
-	<p>No packaged builds yet. Install from crates.io with <a href="https://rustup.rs">Rust</a>.</p>
+	<p>Signed and notarised, for macOS on Apple silicon.</p>
 	<p class="state">
 		Today: write in a project and hand it to one agent. Several of them working the same project is
 		what comes next.
 	</p>
+
+	<div class="cta">
+		<a class="button primary" href={dmg}>
+			<Brand icon={siApple} size={16} />
+			Download {version}
+		</a>
+	</div>
+
+	<p class="alt">Or install from crates.io with <a href="https://rustup.rs">Rust</a>.</p>
 
 	<div class="install code-block">
 		<code>{install}</code>
@@ -233,14 +236,6 @@
 		object-fit: cover;
 	}
 
-	.lede {
-		max-width: 44ch;
-		margin: 22px 0 0;
-		color: var(--muted);
-		font-size: 17px;
-	}
-
-	.lede a,
 	.reel a,
 	.get a {
 		text-decoration: underline;
@@ -433,13 +428,24 @@
 		font-size: 14px;
 	}
 
+	/* The one button on the page that is the page's whole point, centred under
+	   the heading rather than left-aligned like the pair in the hero. */
+	.get .cta {
+		justify-content: center;
+	}
+
+	.get .alt {
+		margin-top: 36px;
+		font-size: 14px;
+	}
+
 	.install {
 		display: flex;
 		align-items: center;
 		justify-content: center;
 		justify-content: safe center;
 		max-width: 540px;
-		margin: 28px auto 0;
+		margin: 12px auto 0;
 		padding: 16px 52px;
 		border: 1px solid var(--line);
 		border-radius: 12px;
