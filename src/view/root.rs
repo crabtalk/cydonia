@@ -57,7 +57,8 @@ actions!(
         CommitName,
         DismissName,
         NextEntry,
-        PrevEntry
+        PrevEntry,
+        CopySelection
     ]
 );
 
@@ -180,6 +181,11 @@ pub fn init(cx: &mut App) {
         // where `tab` itself is indent.
         KeyBinding::new("ctrl-tab", NextEntry, None),
         KeyBinding::new("ctrl-shift-tab", PrevEntry, None),
+        // Claimed app-wide and answered last: an editor and a field bind copy
+        // on their own contexts, which gpui dispatches from the focus outward,
+        // so this only runs where nothing else wanted it — which is exactly
+        // where a transcript selection is the thing being copied.
+        KeyBinding::new("cmd-c", CopySelection, None),
         KeyBinding::new("enter", CommitName, Some(RENAME_CONTEXT)),
         KeyBinding::new("escape", DismissName, Some(RENAME_CONTEXT)),
     ]);
@@ -376,6 +382,13 @@ impl Cydonia {
                 workspace.new_session(entry, None, cx);
             }
         });
+    }
+
+    /// Copy what the transcript has selected. Bound app-wide and reached only
+    /// where nothing nearer to the focus claimed the chord.
+    fn copy_selection(&mut self, _: &CopySelection, _: &mut Window, cx: &mut Context<Self>) {
+        self.workspace
+            .update(cx, |workspace, cx| workspace.copy_selection(cx));
     }
 
     pub(crate) fn next_entry(
@@ -608,6 +621,7 @@ impl Render for Cydonia {
             .font_family(theme.font_sans.clone())
             .text_color(theme.text)
             .text_style(TextStyle::Body)
+            .on_action(cx.listener(Self::copy_selection))
             .on_action(cx.listener(Self::commit_cell_action))
             .on_action(cx.listener(Self::dismiss_cell))
             .on_action(cx.listener(Self::commit_name))

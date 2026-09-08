@@ -10,7 +10,10 @@ use crate::{
         session::{ChatItem, ChatSession, ToolStatus},
         workspace::Workspace,
     },
-    view::root,
+    view::{
+        component::ext::selectable::{self, Pointer},
+        root,
+    },
 };
 use bezel::{
     gpui::{AnyElement, Context, ScrollHandle, SharedString, Window, div, prelude::*, px},
@@ -23,7 +26,9 @@ use bezel::{
     },
 };
 use cacp::schema::ToolKind;
+use markdown::{BlockLayouts, Selection};
 use std::{
+    cell::RefCell,
     collections::{HashMap, HashSet},
     ops::Range,
 };
@@ -44,6 +49,67 @@ pub struct State {
     work: HashMap<usize, Takeover>,
     /// Tool items whose output is showing, by item index.
     output: HashSet<usize>,
+    /// Which item's text is selected and what of it. One at a time — a press
+    /// in another item is what clears the last, the same way a page of prose
+    /// has one selection however many paragraphs it holds.
+    selection: Option<(usize, Selection)>,
+    /// Whether the pointer is down and dragging the selection's head about.
+    dragging: bool,
+    /// What each item painted, so a press can be resolved against what is on
+    /// screen rather than against the source.
+    ///
+    /// Behind a cell because the transcript is drawn from `&ChatSession`: the
+    /// layouts are refilled by the renderer every frame, and an item drawn for
+    /// the first time has to be able to put its own in.
+    layouts: RefCell<HashMap<usize, BlockLayouts>>,
+}
+
+impl State {
+    /// The layout store for item `ix`, made on the first frame it is drawn.
+    fn layouts(&self, ix: usize) -> BlockLayouts {
+        self.layouts.borrow_mut().entry(ix).or_default().clone()
+    }
+
+    /// What `ix` has selected, if it is the item holding the selection.
+    fn selection(&self, ix: usize) -> Option<Selection> {
+        self.selection
+            .filter(|(item, _)| *item == ix)
+            .map(|(_, selection)| selection)
+    }
+
+    /// Answer the pointer over item `ix`. A press starts a selection there and
+    /// drops whatever another item held; a move drags its head.
+    pub fn point(&mut self, ix: usize, pointer: Pointer) {
+        match pointer {
+            Pointer::Down(cursor) => {
+                self.selection = Some((ix, Selection::at(cursor)));
+                self.dragging = true;
+            }
+            Pointer::Move(cursor) => {
+                if let Some((item, selection)) = self.selection.filter(|(item, _)| *item == ix) {
+                    self.selection = Some((item, selection.extend_to(cursor)));
+                }
+            }
+            Pointer::Up => self.dragging = false,
+        }
+    }
+
+    /// What is selected, as it would be pasted, or nothing when a press
+    /// collapsed without a drag behind it.
+    pub fn copied(&self, chat: &ChatSession) -> Option<String> {
+        let (ix, selection) = self.selection?;
+        let doc = markdown::parse(item_text(chat.items.get(ix)?)?);
+        let text = selectable::copied(&doc, selection);
+        (!text.is_empty()).then_some(text)
+    }
+}
+
+/// The prose of an item, for the two kinds that carry any.
+fn item_text(item: &ChatItem) -> Option<&str> {
+    match item {
+        ChatItem::User(text) | ChatItem::Agent(text) => Some(text),
+        _ => None,
+    }
 }
 
 /// A question and the answer it drew.
@@ -85,6 +151,35 @@ fn notice(theme: &Theme, text: &str, failed: bool) -> AnyElement {
         theme.warning_strip(SharedString::from(text.to_owned()))
     };
     strip.mt(px(0.)).into_any_element()
+}
+
+/// One message, selectable. The transcript's two prose items — what you asked
+/// and what came back — are the same element, because copying the one is the
+/// same act as copying the other.
+///
+/// The session id rides in the closure rather than the item: a pointer event
+/// arrives at the workspace, which holds every session, and the transcript on
+/// screen is only one of them.
+fn prose(
+    chat: &ChatSession,
+    ix: usize,
+    text: &str,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) -> AnyElement {
+    let id = chat.id;
+    selectable::markdown(
+        ("transcript-prose", ix),
+        &markdown::parse(text),
+        &chat.transcript.layouts(ix),
+        chat.transcript.selection(ix),
+        chat.transcript.dragging,
+        window,
+        cx,
+        move |workspace, pointer, cx| {
+            workspace.with_session(id, cx, |chat| chat.transcript.point(ix, pointer));
+        },
+    )
 }
 
 /// The glyph for a tool's category — what the ACP `kind` is for.
@@ -198,7 +293,7 @@ fn zone(
                 .bg(theme.surface_raised)
                 .text_style(TextStyle::Body)
                 .text_color(theme.text)
-                .child(text.clone()),
+                .child(prose(chat, first, text, window, cx)),
         );
     }
     if !body.is_empty() {
@@ -219,7 +314,7 @@ fn zone(
     }
     for ix in turn.answer_from..turn.range.end {
         zone = zone.child(match &chat.items[ix] {
-            ChatItem::Agent(text) => markdown::markdown(text, window, cx),
+            ChatItem::Agent(text) => prose(chat, ix, text, window, cx),
             ChatItem::Notice { text, failed } => notice(&theme, text, *failed),
             _ => div().into_any_element(),
         });

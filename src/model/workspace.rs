@@ -24,7 +24,7 @@ use crate::{
     },
 };
 use bezel::{
-    gpui::{App, Context, EntityId, EventEmitter, SharedString, Window},
+    gpui::{App, ClipboardItem, Context, EntityId, EventEmitter, SharedString, Window},
     theme::{self, Brand, Theme, Tint, appearance::AppearanceMode},
     ui::input,
 };
@@ -689,6 +689,22 @@ impl Workspace {
             f(chat);
             cx.notify();
         }
+    }
+
+    /// Put what the transcript has selected on the clipboard — see
+    /// [`crate::view::component::transcript::State::copied`].
+    ///
+    /// Answers whether there was anything, so a `cmd-c` that finds no selection
+    /// can be left to whatever else wanted it.
+    pub fn copy_selection(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(text) = self
+            .active_session()
+            .and_then(|chat| chat.transcript.copied(chat))
+        else {
+            return false;
+        };
+        cx.write_to_clipboard(ClipboardItem::new_string(text));
+        true
     }
 
     /// Switch a session's mode — what the composer's mode picker reports.

@@ -7,4 +7,5 @@
 //! Nothing else in the app should grow a dependency on the *shape* of these
 //! beyond what bezel would offer. When a file here goes, it goes whole.
 
+pub mod selectable;
 pub mod submenu;
