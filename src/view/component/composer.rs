@@ -414,6 +414,10 @@ impl Composer {
                     .enumerate()
                     .map(|(ix, switch)| self.switch_row(ix, switch, theme, cx)),
             )
+            // Under a rule, and last: the rows above are what the session can
+            // be *switched* to, and this is the one line that answers back.
+            .child(popover::divider())
+            .child(self.usage_row(theme))
             .on_mouse_down_out(cx.listener(|composer, _, _, cx| {
                 composer.close_menu();
                 cx.notify();
@@ -567,65 +571,66 @@ impl Composer {
             .map(|option| option.name.clone())
     }
 
-    /// The strip above the pill: how much of the session's context is spent.
+    /// Context spent, as the menu carries it: a name, and whatever the agent
+    /// has counted. The number carries the warning rather than the track,
+    /// because bezel's bar paints its fill from the theme and recolouring it
+    /// would mean reimplementing it.
     ///
-    /// Absent when the agent does not count, so the pill does not move down for
-    /// sessions that will never have anything to put here. What the session can
-    /// be *switched* to hangs off the agent mark instead — see [`Self::chip`].
-    fn rail(&self, theme: &Theme) -> Option<AnyElement> {
-        let meter = self.meter(theme)?;
-        Some(
-            div()
-                .w_full()
-                .pr(px(root::COMPOSER_INSET))
-                .pb(px(4.))
-                .flex()
-                .flex_row()
-                .items_center()
-                .justify_end()
-                .child(meter)
-                .into_any_element(),
-        )
-    }
-
-    /// Context spent, as a track and a percentage. The number carries the
-    /// warning rather than the track, because bezel's bar paints its fill from
-    /// the theme and recolouring it would mean reimplementing it.
-    fn meter(&self, theme: &Theme) -> Option<AnyElement> {
-        let usage = self.usage?;
-        let fraction = usage.fraction()?;
-        let percent = (fraction * 100.).round() as u32;
-        let (used, size) = (usage.used, usage.size);
-        Some(
-            div()
-                .id("composer-usage")
-                .flex_none()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(px(5.))
-                // The raw counts would be noise on the strip, and the tooltip
-                // has them for whoever wants them.
-                .tooltip(move |window, cx| {
-                    Tooltip::text(format!("{used} of {size} tokens"), window, cx)
-                })
-                .child(
-                    div()
-                        .w(px(44.))
-                        .flex_none()
-                        .child(theme.progress_bar(fraction)),
-                )
+    /// A dash until it counts, and for an agent that never does — the two are
+    /// one state here, since nothing in ACP asks and only an update tells. Not
+    /// a 0%: a session with nothing said is not empty, its prompt and its
+    /// tools being in the window before you type.
+    fn usage_row(&self, theme: &Theme) -> AnyElement {
+        let row = div()
+            .id("composer-usage")
+            // The metrics `popover::menu_row` gives a row, without the hover
+            // and the pointer: nothing here is pressable.
+            .px(px(8.))
+            .py(px(6.))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(10.))
+            .text_style(TextStyle::Body)
+            .text_color(theme.text_muted)
+            .child(div().flex_1().min_w_0().child("Context"));
+        let Some((usage, fraction)) = self
+            .usage
+            .and_then(|usage| Some((usage, usage.fraction()?)))
+        else {
+            return row
                 .child(
                     div()
                         .text_style(TextStyle::Caption)
-                        .text_color(match fraction >= WARN_AT {
-                            true => theme.warning,
-                            false => theme.text_faint,
-                        })
-                        .child(format!("{percent}%")),
+                        .text_color(theme.text_faint)
+                        .child("—"),
                 )
-                .into_any_element(),
-        )
+                .into_any_element();
+        };
+        let percent = (fraction * 100.).round() as u32;
+        let (used, size) = (usage.used, usage.size);
+        row
+            // The raw counts would be noise in a row of words, and the tooltip
+            // has them for whoever wants them.
+            .tooltip(move |window, cx| {
+                Tooltip::text(format!("{used} of {size} tokens"), window, cx)
+            })
+            .child(
+                div()
+                    .w(px(44.))
+                    .flex_none()
+                    .child(theme.progress_bar(fraction)),
+            )
+            .child(
+                div()
+                    .text_style(TextStyle::Caption)
+                    .text_color(match fraction >= WARN_AT {
+                        true => theme.warning,
+                        false => theme.text_faint,
+                    })
+                    .child(format!("{percent}%")),
+            )
+            .into_any_element()
     }
 
     /// Send, as the disc inside the pill's trailing end — a stop square while a
@@ -693,7 +698,6 @@ impl Composer {
             .on_action(cx.listener(Self::command_dismiss))
             .flex()
             .flex_col()
-            .children(self.rail(&theme))
             .child(
                 div()
                     .w_full()

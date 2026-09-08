@@ -154,6 +154,7 @@ impl Session {
         let (conn, child) = cacp::spawn(&mut command, Arc::new(Frontend(tx.clone())), debug_tap())
             .map_err(|e| anyhow!("failed to start {}: {}", entry.command, error_text(&e)))?;
 
+        let echo = tx.clone();
         let session = Self::open(conn, child, tx, launch, configured).await?;
         // `session/load` replays the whole conversation before it answers, and
         // the client is holding that transcript already: the replay is spent
@@ -161,7 +162,21 @@ impl Session {
         // Only updates can be queued at this point — nothing else is sent
         // until we prompt.
         if session.loaded {
-            while events.try_recv().is_ok() {}
+            // All but the one thing in the replay that is state rather than
+            // transcript: what the conversation has already spent. Nothing in
+            // ACP asks for that — it arrives as a notification or not at all —
+            // so spending it here is what leaves a resumed session reading
+            // empty until its next turn. The last one wins, and goes back on
+            // the channel the frontend is about to read.
+            let mut usage = None;
+            while let Ok(event) = events.try_recv() {
+                if let Event::Update(SessionUpdate::UsageUpdate(update)) = event {
+                    usage = Some(update);
+                }
+            }
+            if let Some(update) = usage {
+                let _ = echo.send(Event::Update(SessionUpdate::UsageUpdate(update)));
+            }
         }
         Ok((session, events))
     }
