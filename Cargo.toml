@@ -50,6 +50,10 @@ image = "0.25"
 # crate is the map and the order, which is exactly what is missing from gpui's
 # own asset cache.
 lru = "0.18"
+# The filesystem watch behind a project's `.cydonia/`. One backend per
+# platform — FSEvents here, inotify on Linux — behind one interface, which is
+# the whole reason to take a dependency for this rather than poll.
+notify = "8"
 # The project database. `bundled` compiles SQLite in: the store is a file we
 # hand to the user, so it cannot depend on whichever sqlite3 a machine ships.
 rusqlite = { version = "0.40", features = ["bundled"] }

@@ -2,7 +2,12 @@
 //! the sidebar and the chat column are hung in.
 
 use crate::{
-    model::{session::ChatSession, settings::Settings, state::State, workspace::Workspace},
+    model::{
+        session::ChatSession,
+        settings::Settings,
+        state::State,
+        workspace::{Reloaded, Workspace},
+    },
     view::{
         board::{self, Editing},
         component::{
@@ -293,6 +298,20 @@ impl Cydonia {
         // read back from it rather than pushed by whoever caused the change.
         cx.observe(&workspace, |this, _, cx| this.sync_composer(cx))
             .detach();
+        // A re-read replaced what a pane is showing — see
+        // [`Workspace::reload_project`]. The card and the cell are addressed by
+        // where they sit, so filing them now would file them into whatever slid
+        // under the index; the edit is dropped instead, and the field with it.
+        // The caret follows the document, which is a new editor entity.
+        cx.subscribe_in(&workspace, window, |this, _, _: &Reloaded, window, cx| {
+            this.editing = None;
+            this.cell = None;
+            this.card_field.update(cx, |field, cx| field.clear(cx));
+            this.cell_field.update(cx, |field, cx| field.clear(cx));
+            this.follow_article(window, cx);
+            cx.notify();
+        })
+        .detach();
 
         let mut this = Self {
             meter: cx.new(Stats::new),
@@ -320,6 +339,17 @@ impl Cydonia {
         // dispatches nothing, so the window takes its focus back.
         cx.on_focus_lost(window, |this, window, cx| window.focus(&this.focus, cx))
             .detach();
+        // The backstop under the watch. Coming back to the window is where a
+        // dropped event costs the most and the one moment we can be sure of
+        // catching, so every project is re-read on the way in — see
+        // [`Workspace::reload_projects`].
+        cx.observe_window_activation(window, |this, window, cx| {
+            if window.is_window_active() {
+                this.workspace
+                    .update(cx, |workspace, cx| workspace.reload_projects(cx));
+            }
+        })
+        .detach();
         this.sync_composer(cx);
         // Where the caret starts. The composer is drawn only over a chat it can
         // send to, and focus on an element no frame draws is focus nowhere.

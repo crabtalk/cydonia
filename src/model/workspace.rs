@@ -20,10 +20,11 @@ use crate::{
         session::ChatSession,
         settings::{self, Feature, Settings},
         state::{self, State},
+        watch::Watch,
     },
 };
 use bezel::{
-    gpui::{App, Context, EntityId, SharedString, Window},
+    gpui::{App, Context, EntityId, EventEmitter, SharedString, Window},
     theme::{self, Brand, Theme, Tint, appearance::AppearanceMode},
     ui::input,
 };
@@ -37,6 +38,14 @@ const UNTITLED: &str = "Untitled";
 
 /// And a column.
 const COLUMN: &str = "Column";
+
+/// A project was re-read off disk and something a pane was showing has been
+/// replaced — see [`crate::model::watch`].
+///
+/// What a view holds *about* an entry rather than the entry itself has to be
+/// let go of here: a card's position is not that card's any more, and the
+/// editor that had the caret is a different entity.
+pub struct Reloaded;
 
 /// The performance section's figures: what is in memory right now.
 pub struct Resident {
@@ -98,6 +107,7 @@ impl Workspace {
         };
         for ix in restore {
             this.restore_sessions(ix);
+            this.watch_project(ix, cx);
         }
         this.open_last_entry(cx);
         this.load_agent_icons(cx);
@@ -274,6 +284,7 @@ impl Workspace {
         self.projects.push(Project::new(path));
         let ix = self.projects.len() - 1;
         self.restore_sessions(ix);
+        self.watch_project(ix, cx);
         self.select_project(ix, cx);
         if self.projects[ix].sessions.is_empty()
             && let Some(entry) = self.settings.agents.first().cloned()
@@ -399,6 +410,53 @@ impl Workspace {
     pub fn active_project_mut(&mut self) -> Option<&mut Project> {
         let ix = self.active?;
         self.projects.get_mut(ix)
+    }
+
+    // ── watching ─────────────────────────────────────────────────────
+
+    /// Put a watch on the project at `ix`, so what an agent writes into it
+    /// shows up without anyone asking for it. Every way of opening a project
+    /// arrives here, and closing one drops the watch with the project.
+    fn watch_project(&mut self, ix: usize, cx: &mut Context<Self>) {
+        let Some(path) = self.projects.get(ix).map(|open| open.path.clone()) else {
+            return;
+        };
+        let watch = Watch::open(path, cx);
+        if let Some(project) = self.projects.get_mut(ix) {
+            project.watch = Some(watch);
+        }
+    }
+
+    /// Re-read one project off disk and reconcile it. Addressed by path rather
+    /// than by index because the watch that calls this outlives any index it
+    /// could have been armed with — the rail is reorderable, and closing a
+    /// project shifts every one after it.
+    pub fn reload_project(&mut self, path: &Path, cx: &mut Context<Self>) {
+        let Some(ix) = self.projects.iter().position(|open| open.path == path) else {
+            return;
+        };
+        if self.projects[ix].reload(cx) {
+            cx.emit(Reloaded);
+        }
+        cx.notify();
+    }
+
+    /// Re-read every open project: the backstop under the watch.
+    ///
+    /// Coming back to the window is where a missed event costs the most, and
+    /// it is the one moment we can be sure of catching. A file moved in from
+    /// outside the tree, a network mount the platform reports nothing for, an
+    /// event dropped while the queue overflowed — none of those reach the
+    /// watch, and all of them are corrected here.
+    pub fn reload_projects(&mut self, cx: &mut Context<Self>) {
+        let mut moved = false;
+        for ix in 0..self.projects.len() {
+            moved |= self.projects[ix].reload(cx);
+        }
+        if moved {
+            cx.emit(Reloaded);
+        }
+        cx.notify();
     }
 
     // ── sessions ─────────────────────────────────────────────────────
@@ -786,6 +844,26 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Take the file over the buffer, for an article the watch found had moved
+    /// underneath one — what the pane's notice offers. See [`Article::revert`].
+    pub fn revert_article(&mut self, path: &Path, cx: &mut Context<Self>) {
+        let Some(article) = self.article_at_mut(path) else {
+            return;
+        };
+        article.revert(cx);
+        cx.notify();
+    }
+
+    /// Keep the buffer instead, and write it over what landed — the other half
+    /// of the same notice. See [`Article::keep`].
+    pub fn keep_article(&mut self, path: &Path, cx: &mut Context<Self>) {
+        let Some(article) = self.article_at_mut(path) else {
+            return;
+        };
+        article.keep(cx);
+        cx.notify();
+    }
+
     pub fn active_article(&self) -> Option<&Article> {
         let project = self.active_project()?;
         project.articles.get(project.article?)
@@ -1076,6 +1154,8 @@ impl Workspace {
         }
     }
 }
+
+impl EventEmitter<Reloaded> for Workspace {}
 
 /// Point bezel's tint at the preference. Free rather than a method
 /// because the window reads its background appearance while it is being opened,
