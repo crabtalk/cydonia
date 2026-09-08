@@ -27,7 +27,7 @@ env:
 
 jobs:
   check:
-    name: fmt + clippy
+    name: check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
