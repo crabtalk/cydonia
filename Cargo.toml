@@ -63,7 +63,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # cacp spawns its read and write loops with `tokio::spawn`, so the connection
 # needs a runtime of its own — gpui's executor is smol's.
-tokio = { version = "1", features = ["process", "rt-multi-thread", "sync"] }
+tokio = { version = "1", features = ["process", "rt-multi-thread", "sync", "time"] }
 toml = "0.8"
 # Installing an agent edits settings.toml in place. `toml` would round-trip
 # it through a value tree and drop every comment the file was written with.

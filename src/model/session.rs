@@ -287,8 +287,12 @@ impl ChatSession {
     }
 
     /// Close the connection and keep the transcript. Dropping the [`Session`]
-    /// is what tears the agent process down.
+    /// is what tears the agent process down — see its `Drop`.
     pub fn close(&mut self) {
+        // Before the connection goes, not after: an agent whose stdin closes
+        // half way through answering has a request it can never finish, and
+        // says so on the way out.
+        self.cancel();
         self.connection = Connection::Idle;
         self._pump = Task::ready(());
         self.streaming = false;

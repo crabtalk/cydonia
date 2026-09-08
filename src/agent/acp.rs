@@ -25,12 +25,18 @@ use cacp::{
 use std::{
     path::PathBuf,
     sync::{Arc, OnceLock},
+    time::Duration,
 };
 use tokio::{
     process::{Child, Command},
     runtime::Runtime,
     sync::{mpsc, oneshot},
 };
+
+/// How long an agent is given to leave on its own once its stdin has closed,
+/// before the process is killed under it. Long enough for a node agent to run
+/// its own teardown, short enough that quitting the app is not a wait.
+const SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
 
 /// The runtime every connection runs on, started on first use.
 pub fn runtime() -> &'static Runtime {
@@ -68,10 +74,12 @@ impl<T> Reply<T> {
 
 /// A live session: the connection, its identity, and the agent process.
 pub struct Session {
-    conn: AgentConn,
+    /// `Some` for the whole of a session's life — emptied only by
+    /// [`Session::drop`], which has to take it to close it before the process.
+    conn: Option<AgentConn>,
     tx: mpsc::UnboundedSender<Event>,
-    /// Dropping this kills the agent.
-    _child: Child,
+    /// The agent process. Held in an `Option` for the same reason as `conn`.
+    child: Option<Child>,
     pub session_id: SessionId,
     pub init: InitializeResponse,
     pub response: NewSessionResponse,
@@ -219,15 +227,21 @@ impl Session {
         };
 
         Ok(Self {
-            conn,
+            conn: Some(conn),
             tx,
-            _child: child,
+            child: Some(child),
             session_id: response.session_id.clone(),
             init,
             response,
             cwd,
             loaded,
         })
+    }
+
+    /// A handle on the agent. Cheap to clone, and present for as long as
+    /// anything can reach the session — the `Option` is [`Session::drop`]'s.
+    fn conn(&self) -> AgentConn {
+        self.conn.clone().expect("the session is being dropped")
     }
 
     /// Send a prompt turn. Its result arrives as [`Event::TurnDone`] —
@@ -240,7 +254,7 @@ impl Session {
     /// embedded resources). Same result path as [`Self::prompt`].
     pub fn prompt_blocks(&self, blocks: Vec<ContentBlock>) {
         let request = PromptRequest::new(self.session_id.clone(), blocks);
-        let conn = self.conn.clone();
+        let conn = self.conn();
         let tx = self.tx.clone();
         runtime().spawn(async move {
             let done = conn
@@ -255,7 +269,7 @@ impl Session {
     /// with an [`Event::TurnDone`] carrying `StopReason::Cancelled`. Pending
     /// permission replies are the frontend's to answer `Cancelled`.
     pub fn cancel(&self) -> Result<(), Error> {
-        self.conn.cancel(CancelNotification {
+        self.conn().cancel(CancelNotification {
             session_id: self.session_id.clone(),
             meta: None,
         })
@@ -270,7 +284,7 @@ impl Session {
             mode_id: mode_id.into(),
             meta: None,
         };
-        let conn = self.conn.clone();
+        let conn = self.conn();
         runtime().spawn(async move { conn.set_session_mode(request).await });
     }
 
@@ -285,7 +299,7 @@ impl Session {
             value,
             meta: None,
         };
-        let conn = self.conn.clone();
+        let conn = self.conn();
         runtime().spawn(async move { conn.set_session_config_option(request).await });
     }
 }
@@ -324,6 +338,31 @@ impl Client for Frontend {
         std::fs::write(&request.path, &request.content)
             .map(|()| WriteTextFileResponse::default())
             .map_err(|e| io_error(&request.path, &e))
+    }
+}
+
+/// Take the agent down in the order it expects: the connection first, then the
+/// process behind it.
+///
+/// `cacp::spawn` sets `kill_on_drop`, so letting the child field drop on its own
+/// is a SIGKILL — mid-request, if the agent was answering one. That is what
+/// makes an SDK report a query closed before its response arrived, and it is
+/// noise about a shutdown the user asked for.
+///
+/// Dropping the connection instead ends the write loop that owns the agent's
+/// stdin, and an agent reading EOF winds itself up. The kill stays as the
+/// backstop for one that will not: nothing here can await, so the waiting is
+/// handed to the runtime, and the child is killed the moment that task lets go
+/// of it.
+impl Drop for Session {
+    fn drop(&mut self) {
+        let (Some(conn), Some(mut child)) = (self.conn.take(), self.child.take()) else {
+            return;
+        };
+        drop(conn);
+        runtime().spawn(async move {
+            let _ = tokio::time::timeout(SHUTDOWN_GRACE, child.wait()).await;
+        });
     }
 }
 
