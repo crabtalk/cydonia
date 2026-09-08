@@ -25,10 +25,10 @@ path = "bin/main.rs"
 # bezel — the component library the GUI is built on. Published as `bezel-*`;
 # the keys here are what the source imports. `platform` carries gpui_platform,
 # which opens the window: gpui core knows no platform of its own.
-bezel = { version = "0.1.6", features = ["platform"] }
-editor = { version = "0.1.6", package = "bezel-editor" }
-markdown = { version = "0.1.6", package = "bezel-markdown" }
-syntax = { version = "0.1.6", package = "bezel-syntax" }
+bezel = { version = "0.1.7", features = ["platform"] }
+editor = { version = "0.1.7", package = "bezel-editor" }
+markdown = { version = "0.1.7", package = "bezel-markdown" }
+syntax = { version = "0.1.7", package = "bezel-syntax" }
 
 # cacp — our ACP implementation, taken from the registry like any other
 # dependency now that it is published and settled.

@@ -552,9 +552,9 @@ checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
 
 [[package]]
 name = "bezel"
-version = "0.1.6"
+version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d9f18d5267fe61aced5b24719f2c3926ea2064dc021ef16897caff21f78213b0"
+checksum = "ba2a6646ea955f7d327a0cdfc1629dd043c44caa9aa872a0c4e489f0e3de46a7"
 dependencies = [
  "bezel-agent",
  "bezel-gpui",
@@ -567,9 +567,9 @@ dependencies = [
 
 [[package]]
 name = "bezel-agent"
-version = "0.1.6"
+version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "34c5bb767ff8abb40185267e9f17db60f61ea202548c2488698dc3514f216fe6"
+checksum = "da6b792917b5065709de646663e681bd4ff46bde3847d91e0b6b007949fca4c7"
 dependencies = [
  "bezel-gpui",
  "bezel-theme",
@@ -578,9 +578,9 @@ dependencies = [
 
 [[package]]
 name = "bezel-editor"
-version = "0.1.6"
+version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9475dd6b349a038faedebdcf5579f98ba84e852a6fc4c4e470537c4e817e0340"
+checksum = "ad37a4b14e11c43c45a88c9b130b5cef7c6eef148d803e97c3079c3c5af07c7f"
 dependencies = [
  "bezel-gpui",
  "bezel-markdown",
@@ -889,9 +889,9 @@ dependencies = [
 
 [[package]]
 name = "bezel-icons"
-version = "0.1.6"
+version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "522d4581d09a736bcfe7a436a1c514a537ab65ddcb1735bb5faae668f3cde5d1"
+checksum = "ffc203ab088e677c5364f0f81d8cdd7136fd4d4997053046ce4ca9477a022e4f"
 dependencies = [
  "bezel-gpui",
  "icondata_core",
@@ -900,9 +900,9 @@ dependencies = [
 
 [[package]]
 name = "bezel-markdown"
-version = "0.1.6"
+version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "63136345ff17079d0195781a9c116a1590afbe2cb865701b0c6cd9328ff87b50"
+checksum = "4c805a71419509d072c8f2cf492856c9a7d712bb6871fb304249b0d3395dfccf"
 dependencies = [
  "bezel-gpui",
  "bezel-theme",
@@ -911,9 +911,9 @@ dependencies = [
 
 [[package]]
 name = "bezel-motion"
-version = "0.1.6"
+version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b753d1158d62c32290d4bc1b231ebcd4cafd9a084d038b3f2c04b01a65047b4b"
+checksum = "5ef8a218c500ca25c1c1230e884caac4959132300945c6065015aa0cb45cd42f"
 dependencies = [
  "bezel-gpui",
  "web-time",
@@ -921,9 +921,9 @@ dependencies = [
 
 [[package]]
 name = "bezel-syntax"
-version = "0.1.6"
+version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bbff6a79f54ba6a1bb054a04c2a5e2873d878f9b5501f7fbc7ab05a0723311f7"
+checksum = "13d3484c3acf8b580d54ffd1e157d43dd3d6fbaded56d0a08ea9903663561fb0"
 dependencies = [
  "bezel-theme",
  "tree-sitter",
@@ -940,9 +940,9 @@ dependencies = [
 
 [[package]]
 name = "bezel-theme"
-version = "0.1.6"
+version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8bec39ff388206ffa4a7c53885d2a63e29247c6a826f47287596f3132113fabf"
+checksum = "f4fa31db5ae59b9eafd672f41e61994d554d21fbd2ebff20fd4cfc8e3f0e55da"
 dependencies = [
  "bezel-gpui",
  "objc",
@@ -952,9 +952,9 @@ dependencies = [
 
 [[package]]
 name = "bezel-ui"
-version = "0.1.6"
+version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "43a645a588fb43946e01029712e27e862ec6927bc40b353b084f3ad3a192f3b0"
+checksum = "4fe6fb24227183627225bcdacb5e6406ad5289a78bcd0b72cb506864edbdc043"
 dependencies = [
  "bezel-gpui",
  "bezel-icons",
