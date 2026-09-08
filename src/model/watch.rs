@@ -23,10 +23,22 @@ use std::{
     time::Duration,
 };
 
-/// How quiet the directory has to go before it is re-read. Writing one document
-/// is a string of events — the content, the properties beside it, the directory
-/// holding both — and re-reading on each would be re-reading a file mid-write.
-const SETTLE: Duration = Duration::from_millis(150);
+/// How quiet the directory has to go before it is re-read, in milliseconds, and
+/// what the setting behind it defaults to. Writing one document is a string of
+/// events — the content, the properties beside it, the directory holding both —
+/// and re-reading on each would be re-reading a file mid-write.
+pub const BOUNCE: u64 = 150;
+
+/// What the setting may be wound to. `settings.toml` is meant to be edited by
+/// hand, so both ends are enforced on the way out of it rather than trusted:
+/// a bounce of nothing is a re-read per event, which for the store is a re-read
+/// of our own re-read.
+pub const BOUNCE_RANGE: (u64, u64) = (20, 2_000);
+
+/// The bounce as the timer wants it, clamped — see [`BOUNCE_RANGE`].
+pub fn bounce(ms: u64) -> Duration {
+    Duration::from_millis(ms.clamp(BOUNCE_RANGE.0, BOUNCE_RANGE.1))
+}
 
 /// A live watch on one project. Dropping it is what takes the watch down, so a
 /// closed project unwatches itself and nothing has to remember to.
@@ -55,7 +67,12 @@ impl Watch {
                     if knocks.next().await.is_none() {
                         return;
                     }
-                    cx.background_executor().timer(SETTLE).await;
+                    // Read per pass rather than captured: moving the setting
+                    // takes effect on the next event, with nothing to re-arm.
+                    let settle = workspace
+                        .read_with(cx, |workspace, _| bounce(workspace.settings.watch_bounce))
+                        .unwrap_or_else(|_| bounce(BOUNCE));
+                    cx.background_executor().timer(settle).await;
                     while knocks.try_recv().is_ok() {}
                     let held = workspace
                         .update(cx, |workspace, cx| workspace.reload_project(&root, cx))

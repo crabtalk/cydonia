@@ -20,7 +20,7 @@ use crate::{
         session::ChatSession,
         settings::{self, Feature, Settings},
         state::{self, State},
-        watch::Watch,
+        watch::{self, Watch},
     },
 };
 use bezel::{
@@ -227,6 +227,21 @@ impl Workspace {
         memory::covers(cx).update(cx, |covers, cx| {
             covers.set_limit(mb * 1_000_000, window, cx);
         });
+        cx.notify();
+    }
+
+    /// Move the watch's bounce. Written through to `settings.toml` first, for
+    /// the reason [`Self::set_cover_memory`] is, and clamped on the way in for
+    /// the reason [`crate::model::watch::bounce`] clamps on the way out.
+    ///
+    /// Nothing is re-armed. The pump reads the interval on each pass, so the
+    /// next event to land uses whatever this leaves behind.
+    pub fn set_watch_bounce(&mut self, ms: u64, cx: &mut Context<Self>) {
+        let ms = ms.clamp(watch::BOUNCE_RANGE.0, watch::BOUNCE_RANGE.1);
+        if settings::set_watch_bounce(ms).is_err() {
+            return;
+        }
+        self.settings.watch_bounce = ms;
         cx.notify();
     }
 
