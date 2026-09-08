@@ -121,6 +121,15 @@ pub enum Connection {
     Lost,
 }
 
+/// A slash command the agent offers for this session — what to type, and what
+/// it does. The description is required by the protocol, so a picker can
+/// always say what a name does not.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Command {
+    pub name: String,
+    pub description: String,
+}
+
 pub struct PermissionPrompt {
     pub title: String,
     pub options: Vec<Choice>,
@@ -142,7 +151,7 @@ pub struct ChatSession {
     pub items: Vec<ChatItem>,
     pub plan: Vec<(String, PlanStatus)>,
     pub permission: Option<PermissionPrompt>,
-    pub commands: Vec<String>,
+    pub commands: Vec<Command>,
     /// The modes the agent offers and the one it is in, as `session/new`
     /// reported them and every `CurrentModeUpdate` since.
     ///
@@ -595,7 +604,10 @@ impl ChatSession {
                 self.commands = cmds
                     .available_commands
                     .into_iter()
-                    .map(|c| c.name)
+                    .map(|c| Command {
+                        name: c.name,
+                        description: c.description,
+                    })
                     .collect();
             }
             SessionUpdate::Plan(plan) => {

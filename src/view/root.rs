@@ -34,6 +34,7 @@ use bezel::{
         floating::Floating,
         icons,
         input::TextField,
+        menu::Cursor,
         stats::Stats,
         widgets::{ButtonStyle, Buttons, Content, Layout, SPLIT_HANDLE_HIT, SplitDrag, SplitStyle},
     },
@@ -253,6 +254,10 @@ pub struct Cydonia {
     pub(crate) cell: Option<table::Cell>,
     pub(crate) cell_field: Entity<TextField>,
     pub(crate) menu: Option<Menu>,
+    /// Which of the open menu's rows is live. Held here rather than in the
+    /// card, which is rebuilt every frame: the pointer moves the cursor, and
+    /// a cursor made afresh each paint would light nothing.
+    pub(crate) menu_cursor: Cursor,
     /// Whether the press now being handled landed on the open menu's own
     /// trigger — read by [`Cydonia::toggle_menu`] and nothing else.
     pub(crate) menu_pressed: bool,
@@ -334,6 +339,7 @@ impl Cydonia {
             cell: None,
             cell_field,
             menu: None,
+            menu_cursor: Cursor::default(),
             menu_pressed: false,
             filter: Filter::default(),
             renaming: None,

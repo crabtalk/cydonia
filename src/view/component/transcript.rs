@@ -10,10 +10,7 @@ use crate::{
         session::{ChatItem, ChatSession, ToolStatus},
         workspace::Workspace,
     },
-    view::{
-        component::ext::selectable::{self, Pointer},
-        root,
-    },
+    view::root,
 };
 use bezel::{
     gpui::{AnyElement, Context, ScrollHandle, SharedString, Window, div, prelude::*, px},
@@ -26,7 +23,10 @@ use bezel::{
     },
 };
 use cacp::schema::ToolKind;
-use markdown::{BlockLayouts, Selection};
+use markdown::{
+    BlockLayouts, Selection,
+    selectable::{self, Pointer},
+};
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet, hash_map::DefaultHasher},
@@ -170,7 +170,7 @@ fn prose(
     cx: &mut Context<Workspace>,
 ) -> AnyElement {
     let id = chat.id;
-    selectable::markdown(
+    selectable::render(
         ("transcript-prose", ix),
         &markdown::parse(text),
         &chat.transcript.layouts(ix),
