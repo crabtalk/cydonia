@@ -27,16 +27,25 @@ use std::{
     sync::{Arc, OnceLock},
     time::Duration,
 };
+use std::process::Stdio;
 use tokio::{
     process::{Child, Command},
     runtime::Runtime,
     sync::{mpsc, oneshot},
 };
 
-/// How long an agent is given to leave on its own once its stdin has closed,
-/// before the process is killed under it. Long enough for a node agent to run
-/// its own teardown, short enough that quitting the app is not a wait.
-const SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
+/// Where the protocol tap writes, and the switch that leaves an agent's stderr
+/// where it can be read.
+const DEBUG: &str = "CYDONIA_DEBUG";
+
+/// How long a `session/cancel` already on the wire is given to land before the
+/// process is killed under it.
+///
+/// Short, because it is all this can buy. Closing the agent's stdin — the thing
+/// that would actually let it wind itself up — is not reachable from here:
+/// cacp's read loop holds a `Peer` of its own, so the write loop that owns
+/// stdin outlives every handle this side can drop.
+const SHUTDOWN_GRACE: Duration = Duration::from_millis(250);
 
 /// The runtime every connection runs on, started on first use.
 pub fn runtime() -> &'static Runtime {
@@ -129,6 +138,15 @@ impl Session {
     pub async fn spawn(entry: &settings::Agent, launch: Launch) -> Result<(Self, Events)> {
         let mut command = Command::new(&entry.command);
         command.args(&entry.args).envs(&entry.env);
+        // An agent's diagnostics are not this app's. cacp leaves the choice to
+        // the caller — "a TUI usually wants it captured and a CLI usually does
+        // not" — and a desktop app that inherits them sprays a node SDK's
+        // teardown chatter over whichever terminal happened to launch it, about
+        // a shutdown the user asked for. `CYDONIA_DEBUG`, which already
+        // redirects the protocol tap, is what hands them back.
+        if std::env::var_os(DEBUG).is_none() {
+            command.stderr(Stdio::null());
+        }
 
         let configured = mcp::servers();
 
@@ -341,19 +359,18 @@ impl Client for Frontend {
     }
 }
 
-/// Take the agent down in the order it expects: the connection first, then the
-/// process behind it.
+/// Take the agent down: the connection first, then the process behind it.
 ///
 /// `cacp::spawn` sets `kill_on_drop`, so letting the child field drop on its own
-/// is a SIGKILL — mid-request, if the agent was answering one. That is what
-/// makes an SDK report a query closed before its response arrived, and it is
-/// noise about a shutdown the user asked for.
+/// is an immediate SIGKILL — mid-request, if the agent was answering one.
+/// [`ChatSession::close`] sends `session/cancel` ahead of this, and the pause
+/// here is what gives that notification time to be read.
 ///
-/// Dropping the connection instead ends the write loop that owns the agent's
-/// stdin, and an agent reading EOF winds itself up. The kill stays as the
-/// backstop for one that will not: nothing here can await, so the waiting is
-/// handed to the runtime, and the child is killed the moment that task lets go
-/// of it.
+/// It is not a clean shutdown, and cannot be until cacp can close an agent's
+/// stdin: its read loop is handed a `Peer` by value, so the write loop holding
+/// stdin lives as long as the agent does, whatever this side drops. Until then
+/// the kill is the only exit and the agent's stderr is where the noise goes —
+/// see [`DEBUG`].
 impl Drop for Session {
     fn drop(&mut self) {
         let (Some(conn), Some(mut child)) = (self.conn.take(), self.child.take()) else {
@@ -490,7 +507,7 @@ fn io_error(path: &std::path::Path, e: &std::io::Error) -> Error {
 
 /// With `CYDONIA_DEBUG=<path>` set, append every JSON-RPC line to that file.
 fn debug_tap() -> Option<Tap> {
-    let path = std::env::var("CYDONIA_DEBUG").ok()?;
+    let path = std::env::var(DEBUG).ok()?;
     Some(Arc::new(move |direction: Direction, line: &str| {
         use std::io::Write;
         if let Ok(mut f) = std::fs::OpenOptions::new()
