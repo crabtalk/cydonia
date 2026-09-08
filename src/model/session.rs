@@ -124,6 +124,11 @@ pub enum Connection {
 pub struct PermissionPrompt {
     pub title: String,
     pub options: Vec<Choice>,
+    /// Whether the answer should stand for every call like this one, rather
+    /// than for this one alone — the checkbox beside the buttons. It picks
+    /// between the `*Once` and `*Always` forms of whichever button is pressed,
+    /// which is what lets two buttons carry four options.
+    pub always: bool,
     reply: Reply<RequestPermissionResponse>,
 }
 
@@ -461,6 +466,19 @@ impl ChatSession {
         }
     }
 
+    /// Flip whether the pending prompt is answered once or for good.
+    pub fn toggle_permission_always(&mut self) {
+        if let Some(prompt) = &mut self.permission {
+            prompt.always = !prompt.always;
+        }
+    }
+
+    /// Drop the `ix`th waiting prompt — a steer taken back before the turn in
+    /// flight got to it.
+    pub fn unqueue(&mut self, ix: usize) {
+        self.queue.remove(ix);
+    }
+
     fn apply(&mut self, event: Event) {
         self.updated = SystemTime::now();
         match event {
@@ -646,6 +664,7 @@ impl ChatSession {
         self.permission = Some(PermissionPrompt {
             title,
             options,
+            always: false,
             reply,
         });
     }

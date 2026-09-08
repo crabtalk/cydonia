@@ -31,8 +31,9 @@ actions!(
 /// newline in every other multi-line field.
 const KEY_CONTEXT: &str = "CydoniaComposer";
 
-/// What the pill and the agent mark are cut from.
-const SURFACE: SurfaceStyle = SurfaceStyle::Glass(Glass::Regular);
+/// What the pill and the agent mark are cut from — and every card that floats
+/// in the same stack over the transcript, which is why it is not private.
+pub(crate) const SURFACE: SurfaceStyle = SurfaceStyle::Glass(Glass::Regular);
 
 /// How full the context has to be before the meter says so in amber. Late
 /// enough that it is not shouting through a normal conversation, early enough
