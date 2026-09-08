@@ -9,7 +9,10 @@ use crate::{
     },
 };
 use bezel::{
-    gpui::{AnyElement, App, Context, FocusHandle, Focusable as _, Window, div, prelude::*, px},
+    gpui::{
+        AnyElement, App, Context, FocusHandle, Focusable as _, SharedString, Window, div,
+        prelude::*, px,
+    },
     motion::{Fade, Painter},
     theme::{TextStyle, Theme, Typeset},
     ui::{
@@ -17,8 +20,101 @@ use bezel::{
         widgets::{ButtonStyle, Buttons, Content, Scaffolding},
     },
 };
-use cacp::schema::PermissionOptionKind;
+use cacp::schema::{
+    PermissionOptionKind, SessionConfigKind, SessionConfigOptionCategory, SessionConfigOptionValue,
+    SessionConfigSelectOption, SessionConfigSelectOptions, SessionModeState,
+};
 use std::path::Path;
+
+/// What the live session can be switched between, flattened to the one shape
+/// the composer draws: its config options, then its modes.
+///
+/// Config first, because the model is a config option and it is the one people
+/// came for. Booleans are left out — a menu of two rows is a toggle wearing a
+/// menu, and the agent menu has nowhere to put a real one yet.
+fn switches(chat: &ChatSession) -> Vec<composer::Switch> {
+    let mut switches: Vec<composer::Switch> = chat
+        .config
+        .iter()
+        .filter_map(|option| {
+            let SessionConfigKind::Select(select) = &option.kind else {
+                return None;
+            };
+            let options = select_options(&select.options);
+            // A select with nothing to select is a menu with no rows.
+            (!options.is_empty()).then(|| composer::Switch {
+                id: composer::SwitchId::Config(option.id.to_string().into()),
+                name: option.name.clone().into(),
+                current: Some(select.current_value.to_string().into()),
+                options,
+            })
+        })
+        .collect();
+    if let Some(modes) = chat
+        .modes
+        .as_ref()
+        .filter(|modes| !modes.available_modes.is_empty())
+        .filter(|modes| !covered_by_config(chat, modes))
+    {
+        switches.push(composer::Switch {
+            id: composer::SwitchId::Mode,
+            name: "Mode".into(),
+            current: Some(modes.current_mode_id.to_string().into()),
+            options: modes
+                .available_modes
+                .iter()
+                .map(|mode| composer::SwitchOption {
+                    id: mode.id.to_string().into(),
+                    name: mode.name.clone().into(),
+                })
+                .collect(),
+        });
+    }
+    switches
+}
+
+/// Whether the agent is already offering these modes as a config option.
+///
+/// Some agents report their modes twice — once through `session/new`'s `modes`
+/// and again as a config option — and two switches onto one piece of state is
+/// two ways to disagree about it. The config option wins: it is the general
+/// mechanism, and its update is what confirms a change.
+///
+/// Matched on the values as well as on the category, because the category is
+/// optional and an agent that leaves it off still sends the same list twice.
+fn covered_by_config(chat: &ChatSession, modes: &SessionModeState) -> bool {
+    chat.config.iter().any(|option| {
+        if option.category == Some(SessionConfigOptionCategory::Mode) {
+            return true;
+        }
+        let SessionConfigKind::Select(select) = &option.kind else {
+            return false;
+        };
+        let values = select_options(&select.options);
+        modes
+            .available_modes
+            .iter()
+            .all(|mode| values.iter().any(|value| value.id.as_ref() == &*mode.id))
+    })
+}
+
+/// A select's values, with a group's rows folded in beside the ungrouped ones.
+/// A switch gets one flat card, and a group is a heading it has nowhere to put.
+fn select_options(options: &SessionConfigSelectOptions) -> Vec<composer::SwitchOption> {
+    fn one(option: &SessionConfigSelectOption) -> composer::SwitchOption {
+        composer::SwitchOption {
+            id: option.value.to_string().into(),
+            name: option.name.clone().into(),
+        }
+    }
+    match options {
+        SessionConfigSelectOptions::Ungrouped(options) => options.iter().map(one).collect(),
+        SessionConfigSelectOptions::Grouped(groups) => groups
+            .iter()
+            .flat_map(|group| group.options.iter().map(one))
+            .collect(),
+    }
+}
 
 /// A path as it is shown: `~` for a home directory nobody needs spelled out.
 fn shown_path(path: &Path) -> String {
@@ -94,11 +190,18 @@ impl Cydonia {
         let current = chat
             .map(|chat| chat.entry.name.clone())
             .and_then(|name| agents.iter().position(|agent| agent.name == name));
+        // Both belong to the agent process rather than to the transcript, so a
+        // session read back off disk offers neither until it reconnects.
+        let live = chat.filter(|chat| chat.live());
+        let switches = live.map(switches).unwrap_or_default();
+        let usage = live.and_then(|chat| chat.usage);
         self.composer.update(cx, |composer, cx| {
             composer.set_placeholder(&placeholder, cx);
             composer.set_commands(&commands, cx);
             composer.set_streaming(streaming, cx);
             composer.set_agents(&agents, current, cx);
+            composer.set_switches(&switches, cx);
+            composer.set_usage(usage, cx);
         });
     }
 
@@ -229,11 +332,13 @@ impl Cydonia {
             ));
         }
         if boards {
-            rows.push(
-                self.make_row("board", "New board", icons::editing::LIST, cx, move |this, _, cx| {
-                    this.new_board(ix, cx)
-                }),
-            );
+            rows.push(self.make_row(
+                "board",
+                "New board",
+                icons::editing::LIST,
+                cx,
+                move |this, _, cx| this.new_board(ix, cx),
+            ));
         }
         rows.push(self.make_row(
             "article",
@@ -314,7 +419,11 @@ impl Cydonia {
                 .map(|project| shown_path(&project.path))
                 .unwrap_or_default();
             return theme
-                .empty_state(icons::files::FOLDER, cwd, format!("{} runs here", chat.entry.name))
+                .empty_state(
+                    icons::files::FOLDER,
+                    cwd,
+                    format!("{} runs here", chat.entry.name),
+                )
                 .flex_1()
                 .into_any_element();
         }
@@ -404,6 +513,32 @@ impl Cydonia {
                     }),
                 )),
         )
+    }
+
+    /// A pick from one of the composer's switches — the session's mode, or a
+    /// config option like the model.
+    pub(crate) fn switch(
+        &mut self,
+        id: &composer::SwitchId,
+        value: &SharedString,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(session) = self.workspace.read(cx).active_session().map(|chat| chat.id) else {
+            return;
+        };
+        let value = value.to_string();
+        self.workspace.update(cx, |workspace, cx| match id {
+            composer::SwitchId::Mode => workspace.set_session_mode(session, value, cx),
+            composer::SwitchId::Config(config) => workspace.set_session_config(
+                session,
+                config.to_string(),
+                SessionConfigOptionValue::ValueId {
+                    value: value.into(),
+                },
+                cx,
+            ),
+        });
+        cx.notify();
     }
 
     /// Prompts waiting for the in-flight turn.

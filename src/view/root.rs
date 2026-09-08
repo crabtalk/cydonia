@@ -280,6 +280,7 @@ impl Cydonia {
                 ComposerEvent::Cancel => this.cancel_turn(cx),
                 ComposerEvent::Agent(ix) => this.pick_agent(*ix, cx),
                 ComposerEvent::Install => this.open_settings(Section::Agents, cx),
+                ComposerEvent::Switch(id, value) => this.switch(id, value, cx),
             },
         )
         .detach();

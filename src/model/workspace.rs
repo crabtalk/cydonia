@@ -28,6 +28,7 @@ use bezel::{
     theme::{self, Brand, Theme, Tint, appearance::AppearanceMode},
     ui::input,
 };
+use cacp::schema::SessionConfigOptionValue;
 use std::{
     collections::{BTreeMap, HashMap},
     path::{Path, PathBuf},
@@ -404,6 +405,17 @@ impl Workspace {
                 project.reload_page();
             }
         }
+        // Landing back in a session is being in front of it — see
+        // [`Self::wake_session`]. Landing in an article or a board is not, and
+        // starts nothing.
+        let woken = self
+            .projects
+            .get(ix)
+            .filter(|_| matches!(kind, state::Kind::Session))
+            .and_then(|open| open.active);
+        if let Some(id) = woken {
+            self.wake_session(id, cx);
+        }
         cx.notify();
     }
 
@@ -521,7 +533,33 @@ impl Workspace {
                 file.to_string_lossy().into_owned(),
             );
         }
+        self.wake_session(id, cx);
         cx.notify();
+    }
+
+    /// Point a session at an agent, if it has none and could have one.
+    ///
+    /// Called where a session is brought *forward* rather than where one is
+    /// created: the session you are looking at is the one you are about to work
+    /// in, and what an agent reports on connect — its modes, its model — is
+    /// what the composer needs before the first prompt rather than after it.
+    ///
+    /// Only ever the one in front. Every other session a project holds stays
+    /// idle, which is what still keeps a launch from starting an agent per
+    /// transcript. An archived one stays where it was put.
+    fn wake_session(&mut self, id: u64, cx: &mut Context<Self>) {
+        if !self.settings.features.sessions {
+            return;
+        }
+        let found = self
+            .projects
+            .iter_mut()
+            .find_map(|project| project.session_mut(id))
+            .filter(|chat| chat.idle() && chat.resumable() && !chat.closed);
+        if let Some(chat) = found {
+            chat.resume(cx);
+            cx.notify();
+        }
     }
 
     fn project_of(&self, id: u64) -> Option<usize> {
@@ -651,6 +689,23 @@ impl Workspace {
             f(chat);
             cx.notify();
         }
+    }
+
+    /// Switch a session's mode — what the composer's mode picker reports.
+    /// See [`ChatSession::set_mode`].
+    pub fn set_session_mode(&mut self, id: u64, mode_id: String, cx: &mut Context<Self>) {
+        self.with_session(id, cx, |chat| chat.set_mode(&mode_id));
+    }
+
+    /// The same for a config option, which is where the model lives.
+    pub fn set_session_config(
+        &mut self,
+        id: u64,
+        config_id: String,
+        value: SessionConfigOptionValue,
+        cx: &mut Context<Self>,
+    ) {
+        self.with_session(id, cx, |chat| chat.set_config(&config_id, value));
     }
 
     /// The session reached an agent: send it whatever was typed while it had

@@ -1,19 +1,24 @@
 //! The composer: a growing field on a glass card, and the agent's slash
 //! commands behind `/`.
 
-use crate::view::root;
+use crate::{
+    model::session::Usage,
+    view::{component::ext::submenu, root},
+};
 use bezel::{
     gpui::{
-        self, AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, KeyBinding,
-        Render, SharedString, Window, actions, div, point, prelude::*, px, svg,
+        self, AnyElement, App, Context, ElementId, Entity, EventEmitter, FocusHandle, Focusable,
+        KeyBinding, Render, SharedString, Window, actions, div, point, prelude::*, px, svg,
     },
-    theme::{self, Glass, SurfaceStyle, Theme},
+    theme::{self, Glass, SurfaceStyle, TextStyle, Theme, Typeset},
     ui::{
         icons,
         input::{self, Shape, TextField},
         menu::{self, Item},
         popover,
         surface::Surfaced as _,
+        tooltip::Tooltip,
+        widgets::Controls as _,
     },
 };
 
@@ -28,6 +33,11 @@ const KEY_CONTEXT: &str = "CydoniaComposer";
 
 /// What the pill and the agent mark are cut from.
 const SURFACE: SurfaceStyle = SurfaceStyle::Glass(Glass::Regular);
+
+/// How full the context has to be before the meter says so in amber. Late
+/// enough that it is not shouting through a normal conversation, early enough
+/// to leave room to compact before a turn is refused.
+const WARN_AT: f32 = 0.8;
 
 pub fn init(cx: &mut App) {
     let ctx = Some(KEY_CONTEXT);
@@ -50,6 +60,37 @@ pub struct Agent {
     pub icon: Option<SharedString>,
 }
 
+/// Which request a [`Switch`] is, since the agent offers two shapes of the
+/// same idea.
+#[derive(Clone, PartialEq, Eq)]
+pub enum SwitchId {
+    /// `session/set_mode`. A session has one mode, so it carries no id.
+    Mode,
+    /// `session/set_config_option`, by the option's own id — which is where
+    /// the model lives.
+    Config(SharedString),
+}
+
+/// One value a switch can be set to.
+#[derive(Clone, PartialEq)]
+pub struct SwitchOption {
+    pub id: SharedString,
+    pub name: SharedString,
+}
+
+/// One switchable thing the session offers: the agent's mode, or a config
+/// option. One shape for both — the composer shows a value and reports a pick,
+/// and which request that is stays the session's business.
+#[derive(Clone, PartialEq)]
+pub struct Switch {
+    pub id: SwitchId,
+    /// What the thing is called, shown when it is on a value the agent no
+    /// longer offers — which happens when an update lands mid-pick.
+    pub name: SharedString,
+    pub current: Option<SharedString>,
+    pub options: Vec<SwitchOption>,
+}
+
 pub enum ComposerEvent {
     Submit(String),
     Cancel,
@@ -57,6 +98,16 @@ pub enum ComposerEvent {
     Agent(usize),
     /// Nothing here to pick: open settings where agents are installed.
     Install,
+    /// Set a switch to one of its values, by id.
+    Switch(SwitchId, SharedString),
+}
+
+/// Which row's alternatives are flown out. The agents are one of these too —
+/// the menu gives every choice the session offers the same shape.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Flyout {
+    Agent,
+    Switch(usize),
 }
 
 pub struct Composer {
@@ -72,7 +123,21 @@ pub struct Composer {
     /// The configured agents, and which one the session runs on.
     agents: Vec<Agent>,
     agent: Option<usize>,
+    /// What the live session can be switched between — its mode, its model.
+    /// Empty for a session with no agent behind it.
+    switches: Vec<Switch>,
+    /// Context spent, when the agent counts it.
+    usage: Option<Usage>,
+    /// Whether the agent mark's menu is up.
     menu: bool,
+    /// Which row's alternatives are flown out beside it, while they are.
+    ///
+    /// Sticky rather than tied to the row's own hover: the card is a deferred
+    /// layer and not geometrically inside the row, so a pointer travelling into
+    /// it leaves the row and would close what it was reaching for. Another row
+    /// taking the hover is what closes this one — which is what AppKit's
+    /// submenus do anyway.
+    submenu: Option<Flyout>,
 }
 
 impl EventEmitter<ComposerEvent> for Composer {}
@@ -96,7 +161,10 @@ impl Composer {
             streaming: false,
             agents: Vec::new(),
             agent: None,
+            switches: Vec::new(),
+            usage: None,
             menu: false,
+            submenu: None,
         }
     }
 
@@ -133,7 +201,33 @@ impl Composer {
         }
         self.agents = agents.to_vec();
         self.agent = current;
-        self.menu = false;
+        self.close_menu();
+        cx.notify();
+    }
+
+    /// What the session can be switched between, and how much context it has
+    /// spent. Both belong to a live connection, so both go empty with one.
+    pub fn set_switches(&mut self, switches: &[Switch], cx: &mut Context<Self>) {
+        if self.switches == switches {
+            return;
+        }
+        self.switches = switches.to_vec();
+        // A flown-out switch is an index into the list that just changed. The
+        // agents are not in that list and keep whatever they had open.
+        self.submenu = self.submenu.filter(|open| *open == Flyout::Agent);
+        cx.notify();
+    }
+
+    pub fn set_usage(&mut self, usage: Option<Usage>, cx: &mut Context<Self>) {
+        let same = match (self.usage, usage) {
+            (Some(held), Some(next)) => held.used == next.used && held.size == next.size,
+            (None, None) => true,
+            _ => false,
+        };
+        if same {
+            return;
+        }
+        self.usage = usage;
         cx.notify();
     }
 
@@ -208,7 +302,9 @@ impl Composer {
     /// menu, then the command picker, and the turn in flight once there is
     /// nothing left to close.
     fn command_dismiss(&mut self, _: &CommandDismiss, _: &mut Window, cx: &mut Context<Self>) {
-        if self.menu {
+        if self.submenu.take().is_some() {
+            // A submenu shuts before the menu holding it — one press, one level.
+        } else if self.menu {
             self.menu = false;
         } else if self.command.take().is_none() {
             cx.emit(ComposerEvent::Cancel);
@@ -252,6 +348,12 @@ impl Composer {
 
     /// The agent the session runs on, as the mark that opens the rest — the
     /// placeholder already carries its name. Picking one is the app's call to
+    /// Shut the menu and whatever was flown out of it.
+    fn close_menu(&mut self) {
+        self.menu = false;
+        self.submenu = None;
+    }
+
     /// act on: an ACP session is bound to the process serving it, so the
     /// composer only reports the choice.
     fn chip(&self, theme: &Theme, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -281,6 +383,7 @@ impl Composer {
             })
             .on_click(cx.listener(|composer, _, _, cx| {
                 composer.menu = !composer.menu;
+                composer.submenu = None;
                 cx.notify();
             }));
         Some(
@@ -290,57 +393,238 @@ impl Composer {
                 // A surface draws its whole subtree in one layer, so the menu
                 // hangs off the positioning parent beside it.
                 .child(button.surface(theme, SURFACE))
-                .children(self.agent_menu(theme, cx))
+                .children(self.menu_card(theme, cx))
                 .into_any_element(),
         )
     }
 
-    /// Opens upward from the chip: `anchored_menu_above` pins to the trigger's
-    /// top-left, which is why the chip carries the `relative`.
-    fn agent_menu(&self, theme: &Theme, cx: &mut Context<Self>) -> Option<AnyElement> {
+    /// The agent mark's menu. Every choice the session offers has the same
+    /// shape: a row naming it, the value it is on, and a card of alternatives
+    /// off its trailing edge. See [`submenu`] for why that is not `menu::card`.
+    fn menu_card(&self, theme: &Theme, cx: &mut Context<Self>) -> Option<AnyElement> {
         if !self.menu {
             return None;
         }
-        let mut items: Vec<Item> = self
-            .agents
-            .iter()
-            .enumerate()
-            .map(|(ix, agent)| {
-                let item = Item::action(agent.name.clone()).checked(Some(ix) == self.agent);
-                match agent.icon.clone() {
-                    Some(mark) => item.with_icon(mark),
-                    None => item,
-                }
-            })
-            .collect();
-        items.push(Item::action("Install an agent…").with_icon(icons::files::DOWNLOAD));
-        // The install row sits past the last agent, so the row it reports is an
-        // agent exactly while it is in range.
-        let agents = self.agents.len();
-        Some(popover::anchored_menu_above(
-            "composer-agents",
-            menu::card(
-                theme,
-                "composer-agents",
-                &items,
-                None,
-                cx,
-                move |composer, row, _, cx| {
-                    composer.menu = false;
-                    match row < agents {
-                        true => cx.emit(ComposerEvent::Agent(row)),
-                        false => cx.emit(ComposerEvent::Install),
-                    }
-                    cx.notify();
-                },
+        let card = submenu::card(theme)
+            .child(self.agent_row(theme, cx))
+            .children(
+                self.switches
+                    .iter()
+                    .enumerate()
+                    .map(|(ix, switch)| self.switch_row(ix, switch, theme, cx)),
             )
             .on_mouse_down_out(cx.listener(|composer, _, _, cx| {
-                composer.menu = false;
+                composer.close_menu();
                 cx.notify();
-            }))
-            .into_any_element(),
+            }));
+        Some(popover::anchored_menu_above(
+            "composer-menu",
+            card.into_any_element(),
             None,
         ))
+    }
+
+    /// Which agent the session talks to, carrying the mark of whoever it is on
+    /// as its own glyph.
+    fn agent_row(&self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
+        let agent = self.agent.and_then(|ix| self.agents.get(ix));
+        let card = submenu::card(theme)
+            .children(self.agents.iter().enumerate().map(|(ix, agent)| {
+                submenu::row(
+                    ("composer-agent-value", ix),
+                    agent.name.clone(),
+                    agent.icon.clone(),
+                    Some(ix) == self.agent,
+                    theme,
+                    cx,
+                )
+                .on_click(cx.listener(move |composer, _, _, cx| {
+                    composer.close_menu();
+                    cx.emit(ComposerEvent::Agent(ix));
+                    cx.notify();
+                }))
+                .into_any_element()
+            }))
+            .child(popover::divider())
+            .child(
+                submenu::row(
+                    "composer-install",
+                    "Install an agent…".into(),
+                    Some(icons::files::DOWNLOAD.into()),
+                    false,
+                    theme,
+                    cx,
+                )
+                .on_click(cx.listener(|composer, _, _, cx| {
+                    composer.close_menu();
+                    cx.emit(ComposerEvent::Install);
+                    cx.notify();
+                })),
+            );
+        // The mark rides with the name it belongs to rather than sitting in
+        // the leading column: the column is for what a row *is*, and every row
+        // here is a word.
+        let value = agent.map(|agent| {
+            let value = submenu::Value::new(agent.name.clone());
+            match agent.icon.clone() {
+                Some(mark) => value.with_icon(mark),
+                None => value,
+            }
+        });
+        self.opener(
+            Flyout::Agent,
+            "composer-agent-row",
+            "Agent".into(),
+            value,
+            card,
+            theme,
+            cx,
+        )
+    }
+
+    /// One switch — a mode, or a config option like the model.
+    fn switch_row(
+        &self,
+        ix: usize,
+        switch: &Switch,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let id = switch.id.clone();
+        let card =
+            submenu::card(theme).children(switch.options.iter().enumerate().map(|(at, option)| {
+                let value = option.id.clone();
+                let id = id.clone();
+                submenu::row(
+                    ("composer-switch-value", at),
+                    option.name.clone(),
+                    None,
+                    switch.current.as_ref() == Some(&option.id),
+                    theme,
+                    cx,
+                )
+                .on_click(cx.listener(move |composer, _, _, cx| {
+                    composer.close_menu();
+                    cx.emit(ComposerEvent::Switch(id.clone(), value.clone()));
+                    cx.notify();
+                }))
+                .into_any_element()
+            }));
+        self.opener(
+            Flyout::Switch(ix),
+            ("composer-switch-row", ix),
+            switch.name.clone(),
+            self.value_of(switch).map(submenu::Value::new),
+            card,
+            theme,
+            cx,
+        )
+    }
+
+    /// A row that opens `card` beside itself, with which one is out kept here —
+    /// one menu has at most one submenu, so the state belongs to the menu.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one row, and it has that many parts"
+    )]
+    fn opener(
+        &self,
+        flyout: Flyout,
+        id: impl Into<ElementId>,
+        label: SharedString,
+        value: Option<submenu::Value>,
+        card: gpui::Div,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        submenu::opener(
+            id,
+            label,
+            value,
+            // No leading glyph: these rows are words, and the column would open
+            // an empty gutter down the menu's left.
+            None,
+            self.submenu == Some(flyout),
+            card,
+            theme,
+            cx,
+            move |composer, open, cx| {
+                composer.submenu = open.then_some(flyout);
+                cx.notify();
+            },
+        )
+    }
+
+    /// The name of the value a switch is on, when it is on one the agent still
+    /// offers. An update landing mid-pick is what leaves it on one that is gone.
+    fn value_of(&self, switch: &Switch) -> Option<SharedString> {
+        let current = switch.current.as_ref()?;
+        switch
+            .options
+            .iter()
+            .find(|option| &option.id == current)
+            .map(|option| option.name.clone())
+    }
+
+    /// The strip above the pill: how much of the session's context is spent.
+    ///
+    /// Absent when the agent does not count, so the pill does not move down for
+    /// sessions that will never have anything to put here. What the session can
+    /// be *switched* to hangs off the agent mark instead — see [`Self::chip`].
+    fn rail(&self, theme: &Theme) -> Option<AnyElement> {
+        let meter = self.meter(theme)?;
+        Some(
+            div()
+                .w_full()
+                .pr(px(root::COMPOSER_INSET))
+                .pb(px(4.))
+                .flex()
+                .flex_row()
+                .items_center()
+                .justify_end()
+                .child(meter)
+                .into_any_element(),
+        )
+    }
+
+    /// Context spent, as a track and a percentage. The number carries the
+    /// warning rather than the track, because bezel's bar paints its fill from
+    /// the theme and recolouring it would mean reimplementing it.
+    fn meter(&self, theme: &Theme) -> Option<AnyElement> {
+        let usage = self.usage?;
+        let fraction = usage.fraction()?;
+        let percent = (fraction * 100.).round() as u32;
+        let (used, size) = (usage.used, usage.size);
+        Some(
+            div()
+                .id("composer-usage")
+                .flex_none()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(5.))
+                // The raw counts would be noise on the strip, and the tooltip
+                // has them for whoever wants them.
+                .tooltip(move |window, cx| {
+                    Tooltip::text(format!("{used} of {size} tokens"), window, cx)
+                })
+                .child(
+                    div()
+                        .w(px(44.))
+                        .flex_none()
+                        .child(theme.progress_bar(fraction)),
+                )
+                .child(
+                    div()
+                        .text_style(TextStyle::Caption)
+                        .text_color(match fraction >= WARN_AT {
+                            true => theme.warning,
+                            false => theme.text_faint,
+                        })
+                        .child(format!("{percent}%")),
+                )
+                .into_any_element(),
+        )
     }
 
     /// Send, as the disc inside the pill's trailing end — a stop square while a
@@ -406,6 +690,9 @@ impl Composer {
             .on_action(cx.listener(Self::command_next))
             .on_action(cx.listener(Self::command_previous))
             .on_action(cx.listener(Self::command_dismiss))
+            .flex()
+            .flex_col()
+            .children(self.rail(&theme))
             .child(
                 div()
                     .w_full()
