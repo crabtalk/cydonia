@@ -1,8 +1,9 @@
 <script>
 	import '../app.css';
-	import { siDiscord } from 'simple-icons';
+	import { siApple, siDiscord } from 'simple-icons';
 	import { base } from '$app/paths';
 	import Brand from '$lib/Brand.svelte';
+	import Logo from '$lib/Logo.svelte';
 	import { discord } from '$lib/meta.js';
 
 	let { children } = $props();
@@ -30,7 +31,10 @@
 </script>
 
 <header>
-	<a class="wordmark" href="{base}/">Cydonia</a>
+	<a class="wordmark" href="{base}/">
+		<Logo size={18} />
+		Cydonia
+	</a>
 
 	<nav>
 		<a
@@ -43,7 +47,10 @@
 			<Brand icon={siDiscord} size={16} />
 			<span>Community</span>
 		</a>
-		<a class="button" href="{base}/#download">Download</a>
+		<a class="button" href="{base}/#download">
+			<Brand icon={siApple} size={16} />
+			Download
+		</a>
 	</nav>
 </header>
 
@@ -60,10 +67,21 @@
 	}
 
 	.wordmark {
+		display: inline-flex;
+		align-items: center;
+		gap: 9px;
 		flex: none;
 		font-size: 17px;
 		font-weight: 600;
 		letter-spacing: -0.02em;
+	}
+
+	/* The rule underlines the mark along with the word, which reads as a strike
+	   through the logo rather than a link. */
+	@media (hover: hover) {
+		.wordmark:hover {
+			text-decoration: none;
+		}
 	}
 
 	nav {
@@ -91,6 +109,7 @@
 	.button {
 		display: inline-flex;
 		align-items: center;
+		gap: 8px;
 		height: 36px;
 		padding: 0 16px;
 		border-radius: 9px;

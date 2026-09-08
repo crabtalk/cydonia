@@ -1,9 +1,11 @@
 <script>
 	import { siApple, siDiscord, siGithub, siX } from 'simple-icons';
-	import { Check, Copy } from 'lucide-static';
+	import { Check, Copy, Download } from 'lucide-static';
 	import Brand from '$lib/Brand.svelte';
 	import Frame from '$lib/Frame.svelte';
-	import { discord, dmg, install, repo, site, tagline as description, version } from '$lib/meta.js';
+	import { base } from '$app/paths';
+	import { anchor, day, latest } from '$lib/changelog.js';
+	import { discord, dmg, dmgFor, install, repo, site, tagline as description } from '$lib/meta.js';
 
 	const author = 'https://x.com/tianyi_gc';
 	const video = 'https://cdn.crabtalk.ai/videos/cydonia.720p.mp4';
@@ -164,28 +166,33 @@
 </section>
 
 <section class="get" id="download">
-	<h2>Download cydonia</h2>
-	<p>Signed and notarised, for macOS on Apple silicon.</p>
-	<p class="state">
-		Today: write in a project and hand it to one agent. Several of them working the same project is
-		what comes next.
-	</p>
+	<h2>Try Cydonia</h2>
 
-	<div class="cta">
-		<a class="button primary" href={dmg}>
-			<Brand icon={siApple} size={16} />
-			Download {version}
-		</a>
+	<div class="head">
+		<a class="num" href="{base}/changelog/#{anchor(latest.version)}">{latest.version}</a>
+		<span class="tag">Latest</span>
+		<span class="day">{day(latest.date)}</span>
 	</div>
 
-	<p class="alt">Or install from crates.io with <a href="https://rustup.rs">Rust</a>.</p>
+	{#if latest.summary}
+		<p class="summary">{latest.summary}</p>
+	{/if}
 
-	<div class="install code-block">
-		<code>{install}</code>
-		<button class="copy" type="button" aria-label="Copy">
-			<!-- eslint-disable-next-line svelte/no-at-html-tags -->
-			{@html Copy}{@html Check}
-		</button>
+	<a class="dl" href={dmgFor(latest.version)}>
+		<!-- eslint-disable-next-line svelte/no-at-html-tags -->
+		{@html Download}
+		cydonia-{latest.version}-arm64.dmg
+	</a>
+
+	<div class="alt">
+		<span class="or">or</span>
+		<span class="install code-block">
+			<code>{install}</code>
+			<button class="copy" type="button" aria-label="Copy">
+				<!-- eslint-disable-next-line svelte/no-at-html-tags -->
+				{@html Copy}{@html Check}
+			</button>
+		</span>
 	</div>
 </section>
 
@@ -236,8 +243,7 @@
 		object-fit: cover;
 	}
 
-	.reel a,
-	.get a {
+	.reel a {
 		text-decoration: underline;
 		text-underline-offset: 3px;
 		text-decoration-color: var(--line-strong);
@@ -361,8 +367,12 @@
 		color: var(--muted);
 	}
 
+	/* The section between the hero and the download had no top padding at all,
+	   so it read as a continuation of the hero rather than its own stretch of
+	   page. Scales with the viewport instead of needing a breakpoint. */
 	.own {
-		padding-bottom: 88px;
+		padding-top: clamp(80px, 11vw, 144px);
+		padding-bottom: clamp(80px, 11vw, 144px);
 	}
 
 	.own h2 {
@@ -404,7 +414,6 @@
 
 	.get {
 		padding-bottom: 96px;
-		text-align: center;
 	}
 
 	.get h2 {
@@ -414,41 +423,83 @@
 		letter-spacing: -0.03em;
 	}
 
-	.get p {
-		margin: 14px 0 0;
+	.head {
+		margin-top: 34px;
+	}
+
+	/* Version, badge and day are one line, with the date at the far end so a
+	   column of them lines up as the list grows. */
+	.head {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+	}
+
+	.num {
+		font-family: var(--mono);
+		font-size: 15px;
+		font-weight: 500;
+	}
+
+	.tag {
+		padding: 2px 8px;
+		border-radius: 999px;
+		background: var(--panel-high);
+		color: var(--muted);
+		font-size: 12px;
+	}
+
+	.day {
+		margin-left: auto;
+		color: var(--faint);
+		font-size: 13.5px;
+	}
+
+	.summary {
+		max-width: 62ch;
+		margin: 12px 0 0;
 		color: var(--muted);
 	}
 
-	/* Says where the app is, under the button that gets it — a promise the hero
-	   makes is worth qualifying at the point someone acts on it. */
-	.get .state {
-		max-width: 46ch;
-		margin: 10px auto 0;
+	/* Every release names its file the same quiet way. The page's one filled
+	   button is in the hero, where a call to action belongs. */
+	.dl {
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+		margin-top: 14px;
+		color: var(--muted);
+		font-family: var(--mono);
+		font-size: 13px;
+	}
+
+	.dl :global(svg) {
+		width: 14px;
+		height: 14px;
+	}
+
+	/* The other way in, under the file rather than beside it. A one-liner needs
+	   no tab, heading or rule to introduce it — just the word `or`. */
+	.alt {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 12px;
+		margin-top: 30px;
+	}
+
+	.or {
 		color: var(--faint);
 		font-size: 14px;
 	}
 
-	/* The one button on the page that is the page's whole point, centred under
-	   the heading rather than left-aligned like the pair in the hero. */
-	.get .cta {
-		justify-content: center;
-	}
-
-	.get .alt {
-		margin-top: 36px;
-		font-size: 14px;
-	}
-
 	.install {
-		display: flex;
+		display: inline-flex;
 		align-items: center;
-		justify-content: center;
-		justify-content: safe center;
-		max-width: 540px;
-		margin: 12px auto 0;
-		padding: 16px 52px;
+		max-width: 100%;
+		padding: 6px 40px 6px 12px;
 		border: 1px solid var(--line);
-		border-radius: 12px;
+		border-radius: 8px;
 		background: var(--panel);
 		overflow-x: auto;
 	}
@@ -456,14 +507,25 @@
 	.install code {
 		background: none;
 		padding: 0;
-		font-size: 14px;
+		font-size: 13px;
+		/* The body's 1.6 is what made this a block rather than a line. */
+		line-height: 1.5;
 		white-space: nowrap;
 	}
 
+	/* Sized with the box it sits in: the shared 32px — 40px on touch — was
+	   built for a panel and is taller than this line. */
 	.install :global(.copy) {
 		top: 50%;
-		right: 10px;
+		right: 5px;
+		width: 26px;
+		height: 26px;
 		transform: translateY(-50%);
+	}
+
+	.install :global(.copy svg) {
+		width: 13px;
+		height: 13px;
 	}
 
 	footer {

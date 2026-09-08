@@ -4,7 +4,7 @@ export const repo = 'https://github.com/crabtalk/cydonia';
 export const discord = 'https://discord.gg/yGZDYnwbx6';
 
 /** Canonical URL. The one place the host is named — sitemap, robots, share cards. */
-export const site = 'https://cydonia.app';
+export const site = 'https://cydonia.sh';
 
 /** The app in one line — search results and share cards. */
 export const tagline =
@@ -13,9 +13,10 @@ export const tagline =
 /** The other way in, for anyone who would rather build it. */
 export const install = 'cargo install cydonia';
 
-/** Injected by Vite from Cargo.toml — see vite.config.js. */
-export const version = __CYDONIA_VERSION__;
+/** A release names both its tag and its asset after the version, so every
+    version in the changelog can say where its own dmg is. */
+export const dmgFor = (version) =>
+	`${repo}/releases/download/v${version}/cydonia-${version}-arm64.dmg`;
 
-/** The release names both the tag and the asset after the version, so neither
-    the URL nor the version has to be repeated anywhere. */
-export const dmg = `${repo}/releases/download/v${version}/cydonia-${version}-arm64.dmg`;
+/** The one the buttons point at. Injected by Vite from Cargo.toml — see vite.config.js. */
+export const dmg = dmgFor(__CYDONIA_VERSION__);

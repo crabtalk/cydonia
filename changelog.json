@@ -1,0 +1,39 @@
+[
+  {
+    "version": "0.1.1",
+    "date": "2026-09-09",
+    "summary": "The turn in flight carries a name and what it spends, the agent's model and mode move into its menu, and an open project reconciles whatever lands in .cydonia.",
+    "new": [
+      "Put bezel's thinking orbs on the working turn and its row",
+      "Rebuild the menus on bezel 0.1.8, and describe the slash commands",
+      "Meter the context in the agent menu and keep it across a load",
+      "Draw the permission request as an alert and the steer as a message",
+      "Name the turn in flight and count what it is spending",
+      "Select and copy text out of the transcript",
+      "Pick the agent's model and mode from its menu, and meter the context",
+      "Make the watch delay a setting in Settings > Performance",
+      "Watch each open project's .cydonia and reconcile what lands in it"
+    ],
+    "fixed": [
+      "Capture an agent's stderr instead of inheriting it",
+      "Close an agent's connection before killing its process"
+    ]
+  },
+  {
+    "version": "0.1.0",
+    "date": "2026-09-07",
+    "summary": "The first release.",
+    "new": [
+      "The product site, a macOS bundle, the menu bar and settings",
+      "Rebuild the sidebar around one ordered list per project",
+      "Gate agents and open each project where it was left",
+      "Persist every session and rebuild the chrome on bezel's tokens",
+      "Turn the app into a per-project workspace",
+      "Add per-project boards and articles, and a settings window",
+      "ACP coverage, registry installs, and a GPUI client"
+    ],
+    "changed": [
+      "Rebuild the desktop client on bezel and cacp"
+    ]
+  }
+]
