@@ -6,7 +6,8 @@
 	import { discord, install, repo, site, tagline as description } from '$lib/meta.js';
 
 	const author = 'https://x.com/tianyi_gc';
-	const video = 'https://cdn.crabtalk.ai/videos/cydonia.720p.mov';
+	const video = 'https://cdn.crabtalk.ai/videos/cydonia.720p.mp4';
+	const poster = 'https://cdn.crabtalk.ai/pics/cydonia.720p.poster.jpg';
 	const acp = 'https://agentclientprotocol.com';
 
 	// Off until there are real screenshots to put in the frames — three empty
@@ -119,6 +120,7 @@
 	<video
 		class="demo"
 		src={video}
+		{poster}
 		autoplay
 		loop
 		muted
@@ -203,7 +205,7 @@
 	section {
 		max-width: 1080px;
 		margin: 0 auto;
-		padding: 0 28px;
+		padding: 0 var(--gutter);
 	}
 
 	.hero {
@@ -264,9 +266,11 @@
 		font-weight: 500;
 	}
 
-	.button:hover {
-		background: var(--panel);
-		text-decoration: none;
+	@media (hover: hover) {
+		.button:hover {
+			background: var(--panel);
+			text-decoration: none;
+		}
 	}
 
 	.button.primary {
@@ -275,9 +279,11 @@
 		color: var(--accent-ink);
 	}
 
-	.button.primary:hover {
-		background: var(--accent-hover);
-		border-color: var(--accent-hover);
+	@media (hover: hover) {
+		.button.primary:hover {
+			background: var(--accent-hover);
+			border-color: var(--accent-hover);
+		}
 	}
 
 	.facts {
@@ -319,9 +325,11 @@
 		color: var(--faint);
 	}
 
-	.outline a:hover {
-		color: var(--muted);
-		text-decoration: none;
+	@media (hover: hover) {
+		.outline a:hover {
+			color: var(--muted);
+			text-decoration: none;
+		}
 	}
 
 	.outline .current a {
@@ -429,9 +437,10 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
+		justify-content: safe center;
 		max-width: 540px;
 		margin: 28px auto 0;
-		padding: 16px 20px;
+		padding: 16px 52px;
 		border: 1px solid var(--line);
 		border-radius: 12px;
 		background: var(--panel);
@@ -457,7 +466,7 @@
 		gap: 20px;
 		max-width: 1080px;
 		margin: 0 auto;
-		padding: 0 28px 56px;
+		padding: 0 var(--gutter) 56px;
 		font-size: 14px;
 	}
 
@@ -472,12 +481,23 @@
 	}
 
 	footer .right {
+		gap: 4px;
 		margin-left: auto;
+		margin-right: -11px;
 		color: var(--muted);
 	}
 
-	footer a:hover {
-		color: var(--text);
+	footer .right a {
+		display: grid;
+		place-items: center;
+		width: 42px;
+		height: 42px;
+	}
+
+	@media (hover: hover) {
+		footer a:hover {
+			color: var(--text);
+		}
 	}
 
 	@media (max-width: 940px) {
@@ -504,12 +524,6 @@
 	}
 
 	@media (max-width: 720px) {
-		section,
-		footer {
-			padding-left: 18px;
-			padding-right: 18px;
-		}
-
 		.cta {
 			flex-wrap: wrap;
 		}

@@ -33,9 +33,15 @@
 	<a class="wordmark" href="{base}/">Cydonia</a>
 
 	<nav>
-		<a class="community" href={discord} target="_blank" rel="noreferrer">
+		<a
+			class="community"
+			href={discord}
+			target="_blank"
+			rel="noreferrer"
+			aria-label="Cydonia community on Discord"
+		>
 			<Brand icon={siDiscord} size={16} />
-			Community
+			<span>Community</span>
 		</a>
 		<a class="button" href="{base}/#download">Download</a>
 	</nav>
@@ -49,11 +55,12 @@
 		align-items: center;
 		max-width: 1080px;
 		margin: 0 auto;
-		padding: 0 28px;
+		padding: 0 var(--gutter);
 		height: 68px;
 	}
 
 	.wordmark {
+		flex: none;
 		font-size: 17px;
 		font-weight: 600;
 		letter-spacing: -0.02em;
@@ -74,9 +81,11 @@
 		color: var(--muted);
 	}
 
-	.community:hover {
-		color: var(--text);
-		text-decoration: none;
+	@media (hover: hover) {
+		.community:hover {
+			color: var(--text);
+			text-decoration: none;
+		}
 	}
 
 	.button {
@@ -90,18 +99,22 @@
 		font-weight: 500;
 	}
 
-	.button:hover {
-		background: var(--accent-hover);
-		text-decoration: none;
+	@media (hover: hover) {
+		.button:hover {
+			background: var(--accent-hover);
+			text-decoration: none;
+		}
 	}
 
-	@media (max-width: 720px) {
-		header {
-			padding: 0 18px;
+	/* On a phone the three of these together are wider than the bar. The mark
+	   alone still says Discord, and the link keeps its name for screen readers. */
+	@media (max-width: 560px) {
+		nav {
+			gap: 14px;
 		}
 
-		nav {
-			gap: 16px;
+		.community span {
+			display: none;
 		}
 	}
 </style>

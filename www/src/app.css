@@ -12,6 +12,10 @@
 	--faint: #8b8f96;
 	--mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
 
+	/* The gutter the header, every section and the footer share. Named here so
+	   the step down for narrow screens happens once, not in each of them. */
+	--gutter: 28px;
+
 	/* The filled button: its own ink and hover, because in dark the surface it
 	   sits on is the text colour and `#fff` on it would be invisible. */
 	--accent: #0b0b0c;
@@ -38,6 +42,12 @@
 	}
 }
 
+@media (max-width: 720px) {
+	:root {
+		--gutter: 18px;
+	}
+}
+
 * {
 	box-sizing: border-box;
 }
@@ -51,6 +61,8 @@ body {
 	font-size: 16px;
 	line-height: 1.6;
 	-webkit-font-smoothing: antialiased;
+	text-size-adjust: 100%;
+	-webkit-text-size-adjust: 100%;
 }
 
 a {
@@ -58,9 +70,11 @@ a {
 	text-decoration: none;
 }
 
-a:hover {
-	text-decoration: underline;
-	text-underline-offset: 3px;
+@media (hover: hover) {
+	a:hover {
+		text-decoration: underline;
+		text-underline-offset: 3px;
+	}
 }
 
 code {
@@ -119,9 +133,19 @@ h3 {
 		background 0.12s;
 }
 
-.copy:hover {
-	color: var(--text);
-	background: var(--panel-high);
+@media (hover: hover) {
+	.copy:hover {
+		color: var(--text);
+		background: var(--panel-high);
+	}
+}
+
+/* A finger needs more than the 32px a cursor is happy with. */
+@media (pointer: coarse) {
+	.copy {
+		width: 40px;
+		height: 40px;
+	}
 }
 
 .copy svg {
