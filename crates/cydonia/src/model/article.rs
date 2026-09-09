@@ -18,7 +18,7 @@ use bezel::{
 };
 use editor::Editor;
 use markdown::Typography;
-use schema::{project, properties};
+use schema::{article as layout, article::properties, project};
 use std::{
     cmp::Reverse,
     path::{Path, PathBuf},
@@ -34,11 +34,6 @@ pub const UNNAMED: &str = "Untitled";
 /// Claimed on the title field, so `enter` there moves to the body and stays a
 /// newline in every other field.
 pub const TITLE_CONTEXT: &str = "CydoniaArticleTitle";
-
-/// Where a project's articles live, and what the document is called inside the
-/// directory that is one.
-const DIR: &str = "articles";
-const CONTENT: &str = "content.md";
 
 pub struct Article {
     pub path: PathBuf,
@@ -312,14 +307,13 @@ impl Article {
 /// This project's articles, or none for a project that has never had one. Each
 /// subdirectory is one; a directory with no document in it is not.
 pub fn list(project: &Path) -> Vec<Article> {
-    let dir = project::dir(project);
-    migrate(&dir);
-    let Ok(entries) = std::fs::read_dir(dir.join(DIR)) else {
+    migrate(project);
+    let Ok(entries) = std::fs::read_dir(layout::dir(project)) else {
         return Vec::new();
     };
     let paths: Vec<PathBuf> = entries
         .flatten()
-        .map(|entry| entry.path().join(CONTENT))
+        .map(|entry| layout::content(&entry.path()))
         .filter(|path| path.is_file())
         .collect();
     let mut articles: Vec<Article> = paths.into_iter().map(Article::new).collect();
@@ -328,21 +322,12 @@ pub fn list(project: &Path) -> Vec<Article> {
 }
 
 pub fn create(project: &Path) -> Option<Article> {
-    let dir = project::init(project).ok()?.join(DIR);
-    let article = free(&dir, project::stamp());
+    let dir = layout::init(project).ok()?;
+    let article = layout::free(&dir, project::stamp());
     std::fs::create_dir_all(&article).ok()?;
-    let path = article.join(CONTENT);
+    let path = layout::content(&article);
     std::fs::write(&path, "").ok()?;
     Some(Article::new(path))
-}
-
-/// This millisecond's directory, or the first after it that is not taken. Two
-/// articles made inside one millisecond is the only way that happens.
-fn free(dir: &Path, stamp: u128) -> PathBuf {
-    (stamp..)
-        .map(|stamp| dir.join(stamp.to_string()))
-        .find(|article| !article.exists())
-        .unwrap_or_else(|| dir.join(stamp.to_string()))
 }
 
 /// Articles used to sit loose in `.cydonia/` as `foo.md` beside `foo.cover-N.svg`,
@@ -351,8 +336,8 @@ fn free(dir: &Path, stamp: u128) -> PathBuf {
 ///
 /// Runs the first time a project is opened after the change; one with nothing
 /// loose in it costs the `read_dir` [`list`] was about to do anyway.
-fn migrate(dir: &Path) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
+fn migrate(project: &Path) {
+    let Ok(entries) = std::fs::read_dir(project::dir(project)) else {
         return;
     };
     let loose: Vec<PathBuf> = entries.flatten().map(|entry| entry.path()).collect();
@@ -363,7 +348,7 @@ fn migrate(dir: &Path) {
         let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
             continue;
         };
-        let to = free(&dir.join(DIR), project::written(path));
+        let to = layout::free(&layout::dir(project), project::written(path));
         if std::fs::create_dir_all(&to).is_err() {
             continue;
         }
@@ -380,7 +365,7 @@ fn migrate(dir: &Path) {
         }) {
             let _ = std::fs::rename(cover.0, to.join(cover.1));
         }
-        let content = to.join(CONTENT);
+        let content = layout::content(&to);
         if std::fs::rename(path, &content).is_ok() && !stem.starts_with(UNTITLED) {
             // Verbatim, slug and all: it is what the sidebar was already
             // showing, so nothing a person is looking at changes.

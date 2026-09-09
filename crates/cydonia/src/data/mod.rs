@@ -10,7 +10,7 @@
 //! anything believed about the text.
 
 use anyhow::{Result, anyhow, bail};
-use rusqlite::{Connection, OpenFlags, Row, types::ValueRef};
+use rusqlite::{Connection, OpenFlags, Row as SqlRow, types::ValueRef};
 use schema::project;
 use serde_json::Value;
 use std::{
@@ -25,7 +25,10 @@ mod sql;
 
 // The shapes a store answers with live in `schema` — they are what the app
 // draws and what a client reads, and only the reads and writes below are ours.
-pub use schema::data::{ColType, Column, Edit, Page, Record, Rows, Table};
+pub use schema::table::{
+    ColType, Column, Table,
+    rows::{Edit, Page, Row, Rows},
+};
 
 pub(crate) const FILE: &str = "data.db";
 const BUSY: Duration = Duration::from_secs(5);
@@ -344,7 +347,7 @@ pub(crate) fn columns_of(conn: &Connection, key: &str) -> Result<Vec<Column>> {
 /// One cell as JSON, by what SQLite actually stored rather than by what the
 /// column was declared — a `NUMERIC` column holds whichever of the two the
 /// value converted to, and the reader wants the value.
-pub(crate) fn value(row: &Row, i: usize) -> Value {
+pub(crate) fn value(row: &SqlRow, i: usize) -> Value {
     match row.get_ref(i) {
         Ok(ValueRef::Integer(n)) => Value::from(n),
         Ok(ValueRef::Real(f)) => Value::from(f),

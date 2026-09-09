@@ -29,7 +29,7 @@ use bezel::{
 use cacp::schema::SessionConfigOptionValue;
 use schema::{
     board::{self, Board},
-    record,
+    session as record,
 };
 use std::{
     collections::{BTreeMap, HashMap},

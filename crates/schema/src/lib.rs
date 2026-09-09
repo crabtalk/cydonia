@@ -1,5 +1,9 @@
-//! What cydonia keeps: the boards, session records, article properties and
-//! tables a project holds, as shapes rather than as files.
+//! What cydonia keeps: the articles, boards, sessions and tables a project
+//! holds, as shapes rather than as files.
+//!
+//! One module per kind, which is the same four the app lets a project show.
+//! [`project`] is the odd one out and is meant to be: it is the directory the
+//! other four sit inside, not a fifth thing beside them.
 //!
 //! The filesystem is one backend for these and not the definition of them. A
 //! board is a board whether it was read out of `.cydonia/boards/` or handed
@@ -10,9 +14,8 @@
 //! Nothing here reaches for gpui, and that is the rule the crate exists to
 //! hold: a shape a client reads must not carry anything about a window.
 
+pub mod article;
 pub mod board;
-pub mod chat;
-pub mod data;
 pub mod project;
-pub mod properties;
-pub mod record;
+pub mod session;
+pub mod table;

@@ -24,7 +24,7 @@ use cacp::schema::{
     PermissionOptionKind, SessionConfigKind, SessionConfigOptionCategory, SessionConfigOptionValue,
     SessionConfigSelectOption, SessionConfigSelectOptions, SessionModeState,
 };
-use schema::chat::PlanStatus;
+use schema::session::chat::PlanStatus;
 use std::path::Path;
 use surface::Surfaced as _;
 

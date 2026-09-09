@@ -23,9 +23,9 @@ use cacp::schema::{
     RequestPermissionResponse, SessionConfigKind, SessionConfigOption, SessionConfigOptionValue,
     SessionModeState, SessionUpdate, StopReason, ToolCallContent, ToolCallStatus,
 };
-use schema::{
+use schema::session::{
+    self as record, Record,
     chat::{ChatItem, PlanStatus, ToolStatus},
-    record::{self, Record},
 };
 use std::{
     collections::VecDeque,

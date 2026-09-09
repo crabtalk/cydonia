@@ -28,7 +28,7 @@ use markdown::{
     BlockLayouts, Selection,
     selectable::{self, Pointer},
 };
-use schema::chat::{ChatItem, ToolStatus};
+use schema::session::chat::{ChatItem, ToolStatus};
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet, hash_map::DefaultHasher},

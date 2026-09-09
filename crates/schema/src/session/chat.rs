@@ -1,7 +1,7 @@
 //! What a transcript is made of: one variant per thing a turn can put on
 //! screen, and the two small states a tool call and a plan step move through.
 //!
-//! This is the shape [`crate::record`] writes and reads back, so it is also
+//! This is the shape [`super::Record`] writes and reads back, so it is also
 //! the shape anything reading a session off disk has to understand. Kept apart
 //! from the live session for that reason — a session is a connection and a
 //! process, and neither of those is in the file.

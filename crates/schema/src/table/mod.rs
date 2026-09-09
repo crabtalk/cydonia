@@ -1,5 +1,5 @@
-//! The project's tables, as shapes: what a column may hold, what a table is,
-//! and what a read of one comes back as.
+//! The project's tables: what a column may hold, and what a table is.
+//! [`rows`] holds what is in one.
 //!
 //! No SQL here and no connection — those are the backend's, and the backend is
 //! whichever store the app opened. What is here is the part a client reads: a
@@ -9,8 +9,9 @@
 //! A table's `key` is the SQL identifier and never moves; its `name` is free
 //! text, so renaming one cannot break a query an agent already wrote.
 
+pub mod rows;
+
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 /// What a column holds. Four, closed, and every one a word SQLite keeps
 /// verbatim in its catalog — which is what lets a declaration be the registry.
@@ -90,41 +91,4 @@ pub struct Table {
     pub archived: bool,
     /// The agent that made it, by the name `settings.toml` gives it.
     pub author: Option<String>,
-}
-
-/// A `SELECT`'s answer: the column names once, then the rows.
-#[derive(Debug, Serialize)]
-pub struct Rows {
-    pub columns: Vec<String>,
-    pub rows: Vec<Vec<Value>>,
-}
-
-/// One window of a table, with everything a grid needs to draw it.
-#[derive(Debug, Serialize)]
-pub struct Page {
-    pub key: String,
-    pub name: String,
-    pub columns: Vec<Column>,
-    /// Rows in the whole table, not in this window — the scrollbar's length.
-    pub total: i64,
-    /// Where `rows` starts, echoed back so a window that arrives after the
-    /// viewport moved on can be dropped rather than drawn in the wrong place.
-    pub offset: i64,
-    pub rows: Vec<Record>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct Record {
-    pub rowid: i64,
-    /// In `columns` order.
-    pub cells: Vec<Value>,
-}
-
-/// One cell to write. A pasted block and a single edit are the same thing at
-/// different lengths, so there is one shape for both.
-#[derive(Debug, Deserialize)]
-pub struct Edit {
-    pub rowid: i64,
-    pub column: String,
-    pub value: Value,
 }

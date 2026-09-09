@@ -9,7 +9,7 @@ cargo add cydonia-schema
 ```
 
 ```rust
-use cydonia_schema::{board, record};
+use cydonia_schema::{board, session};
 use std::path::Path;
 
 let project = Path::new("/path/to/project");
@@ -17,18 +17,20 @@ let project = Path::new("/path/to/project");
 for board in board::list(project) {
     println!("{} — {} columns", board.label(), board.columns.len());
 }
-for (file, session) in record::list(project) {
-    println!("{} on {} ({})", session.title, session.agent, file.display());
+for (file, record) in session::list(project) {
+    println!("{} on {} ({})", record.title, record.agent, file.display());
 }
 ```
 
+One module per kind — the same four a project can show — and `project`, the
+directory they all sit inside.
+
 | Module | What it is |
 | --- | --- |
+| `article` | Where a document sits; `article::properties` is its `properties.toml` |
 | `board` | `Board`, `Column`, `Card` — cards in lanes, one file per board |
-| `record` | `Record` — an archived session: its agent, its id, its transcript |
-| `chat` | `ChatItem` — what a transcript is made of |
-| `data` | `Table`, `Column`, `ColType`, `Page` — the project's SQL tables |
-| `properties` | An article's `properties.toml`, edited in place |
+| `session` | `Record`, an archived session; `session::chat` is its transcript |
+| `table` | `Table`, `ColType`; `table::rows` is `Page`, `Row`, `Edit` |
 | `project` | Where `.cydonia/` is, and the millisecond stamp ids carry |
 
 The filesystem is one backend for these, not the definition of them — a board

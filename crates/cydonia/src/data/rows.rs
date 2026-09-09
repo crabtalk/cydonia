@@ -5,10 +5,10 @@
 //! deletion, with no surrogate key column to hide from the person and no
 //! position index that means something different the moment the order changes.
 
-use crate::data::{self, Data, Edit, Page, Record};
+use crate::data::{self, Data, Edit, Page, Row};
 use anyhow::{Result, bail};
 use rusqlite::params_from_iter;
-use schema::data::Column;
+use schema::table::Column;
 
 impl Data {
     /// Read a window of rows.
@@ -61,7 +61,7 @@ impl Data {
         ))?;
         let rows = stmt
             .query_map([limit, offset], |row| {
-                Ok(Record {
+                Ok(Row {
                     rowid: row.get(0)?,
                     cells: (1..=count).map(|i| data::value(row, i)).collect(),
                 })
