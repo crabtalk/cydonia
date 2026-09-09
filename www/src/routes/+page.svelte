@@ -1,15 +1,23 @@
 <script>
-	import { siApple, siDiscord, siGithub, siX } from 'simple-icons';
+	import { siApple, siGithub } from 'simple-icons';
 	import { Check, Copy, Download } from 'lucide-static';
 	import Brand from '$lib/Brand.svelte';
 	import Frame from '$lib/Frame.svelte';
+	import Media from '$lib/Media.svelte';
 	import { base } from '$app/paths';
-	import { anchor, day, latest } from '$lib/changelog.js';
-	import { discord, dmg, dmgFor, install, repo, site, tagline as description } from '$lib/meta.js';
+	import { anchor, day, latest, media } from '$lib/changelog.js';
+	import {
+		cdn,
+		dmg,
+		dmgFor,
+		install,
+		repo,
+		site,
+		tagline as description
+	} from '$lib/meta.js';
 
-	const author = 'https://x.com/tianyi_gc';
-	const video = 'https://cdn.crabtalk.ai/videos/cydonia.720p.mp4';
-	const poster = 'https://cdn.crabtalk.ai/pics/cydonia.720p.poster.jpg';
+	const video = `${cdn}/videos/cydonia/v0.1.0.mp4`;
+	const poster = `${cdn}/pics/cydonia/v0.1.0.jpg`;
 	const acp = 'https://agentclientprotocol.com';
 
 	// Off until there are real screenshots to put in the frames — three empty
@@ -111,17 +119,17 @@
 		<p class="facts">macOS on Apple silicon · pure rust · no account, no sync</p>
 	</div>
 
-	<!-- Intrinsic 1280x804, spelled out so the hero does not reflow once the
-	     video has loaded its metadata. -->
+	<!-- The poster is what loads; the 0.9 MB behind it waits for a click. The
+	     ratio is spelled out in CSS so the box does not reflow when it does. -->
 	<video
 		class="demo"
 		src={video}
 		{poster}
-		autoplay
+		controls
 		loop
 		muted
 		playsinline
-		preload="metadata"
+		preload="none"
 		aria-label="Cydonia in use"
 	></video>
 </section>
@@ -178,6 +186,10 @@
 		<p class="summary">{latest.summary}</p>
 	{/if}
 
+	{#if media(latest)}
+		<Media media={media(latest)} height={280} />
+	{/if}
+
 	<a class="dl" href={dmgFor(latest.version)}>
 		<!-- eslint-disable-next-line svelte/no-at-html-tags -->
 		{@html Download}
@@ -195,21 +207,6 @@
 		</span>
 	</div>
 </section>
-
-<footer>
-	<nav class="left">
-		<a href="https://github.com/crabtalk">crabtalk</a>
-	</nav>
-	<nav class="right">
-		<a href={discord} target="_blank" rel="noreferrer" aria-label="Cydonia on Discord">
-			<Brand icon={siDiscord} size={16} />
-		</a>
-		<a href={repo} aria-label="Cydonia on GitHub"><Brand icon={siGithub} size={16} /></a>
-		<a href={author} target="_blank" rel="noreferrer" aria-label="The author on X">
-			<Brand icon={siX} size={15} />
-		</a>
-	</nav>
-</footer>
 
 <style>
 	section {
@@ -526,46 +523,6 @@
 	.install :global(.copy svg) {
 		width: 13px;
 		height: 13px;
-	}
-
-	footer {
-		display: flex;
-		align-items: center;
-		gap: 20px;
-		max-width: 1080px;
-		margin: 0 auto;
-		padding: 0 var(--gutter) 56px;
-		font-size: 14px;
-	}
-
-	footer nav {
-		display: flex;
-		align-items: center;
-		gap: 20px;
-	}
-
-	footer .left a {
-		color: var(--muted);
-	}
-
-	footer .right {
-		gap: 4px;
-		margin-left: auto;
-		margin-right: -11px;
-		color: var(--muted);
-	}
-
-	footer .right a {
-		display: grid;
-		place-items: center;
-		width: 42px;
-		height: 42px;
-	}
-
-	@media (hover: hover) {
-		footer a:hover {
-			color: var(--text);
-		}
 	}
 
 	@media (max-width: 940px) {

@@ -1,10 +1,12 @@
 <script>
 	import '../app.css';
-	import { siApple, siDiscord } from 'simple-icons';
+	import { siApple, siDiscord, siGithub, siX } from 'simple-icons';
 	import { base } from '$app/paths';
 	import Brand from '$lib/Brand.svelte';
 	import Logo from '$lib/Logo.svelte';
-	import { discord } from '$lib/meta.js';
+	import { discord, repo } from '$lib/meta.js';
+
+	const author = 'https://x.com/tianyi_gc';
 
 	let { children } = $props();
 
@@ -56,7 +58,61 @@
 
 {@render children()}
 
+<footer>
+	<nav class="left">
+		<a href="https://github.com/crabtalk">crabtalk</a>
+	</nav>
+	<nav class="right">
+		<a href={discord} target="_blank" rel="noreferrer" aria-label="Cydonia on Discord">
+			<Brand icon={siDiscord} size={16} />
+		</a>
+		<a href={repo} aria-label="Cydonia on GitHub"><Brand icon={siGithub} size={16} /></a>
+		<a href={author} target="_blank" rel="noreferrer" aria-label="The author on X">
+			<Brand icon={siX} size={15} />
+		</a>
+	</nav>
+</footer>
+
 <style>
+	footer {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 20px;
+		max-width: 1080px;
+		margin: 0 auto;
+		padding: 0 var(--gutter) 56px;
+		font-size: 14px;
+	}
+
+	footer nav {
+		display: flex;
+		align-items: center;
+		gap: 20px;
+	}
+
+	footer .left a {
+		color: var(--muted);
+	}
+
+	footer .right {
+		gap: 4px;
+		color: var(--muted);
+	}
+
+	footer .right a {
+		display: grid;
+		place-items: center;
+		width: 42px;
+		height: 42px;
+	}
+
+	@media (hover: hover) {
+		footer a:hover {
+			color: var(--text);
+		}
+	}
+
 	header {
 		display: flex;
 		align-items: center;
@@ -84,7 +140,7 @@
 		}
 	}
 
-	nav {
+	header nav {
 		display: flex;
 		align-items: center;
 		gap: 20px;
@@ -128,7 +184,7 @@
 	/* On a phone the three of these together are wider than the bar. The mark
 	   alone still says Discord, and the link keeps its name for screen readers. */
 	@media (max-width: 560px) {
-		nav {
+		header nav {
 			gap: 14px;
 		}
 

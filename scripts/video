@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# Turn a screen recording into something a browser will stream.
+#
+# The container is the least of it. What matters is `+faststart` — a QuickTime
+# recording writes its index after the frames, so a player has to fetch the tail
+# before it can decode anything — keeping the source's own frame timing, since
+# these are variable-rate and resampling to a fixed rate drops real frames and
+# encodes *larger*, and yuv420p, because recorders emit 4:2:2 that browsers
+# refuse to decode.
+#
+# usage: scripts/video in.mov [out.mp4]
+#   --crf N    quality, lower is better. Default 26, which holds up for UI text;
+#              28 smudges around glyphs and 32 blocks visibly.
+#   --poster   also write the first frame to <out>.poster.jpg
+set -euo pipefail
+
+crf=26
+poster=
+args=()
+
+while (($#)); do
+    case $1 in
+    --crf) crf=$2; shift 2 ;;
+    --poster) poster=1; shift ;;
+    -h | --help)
+        awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"
+        exit 0
+        ;;
+    *) args+=("$1"); shift ;;
+    esac
+done
+
+if ((${#args[@]} == 0)); then
+    echo "usage: $(basename "$0") in.mov [out.mp4]" >&2
+    exit 1
+fi
+
+command -v ffmpeg >/dev/null || { echo "web-video: ffmpeg not on PATH" >&2; exit 1; }
+
+src=${args[0]}
+out=${args[1]-${src%.*}.mp4}
+[[ -f $src ]] || { echo "web-video: no such file: $src" >&2; exit 1; }
+[[ $src != "$out" ]] || { echo "web-video: refusing to overwrite the source" >&2; exit 1; }
+
+# Screen recordings usually carry no audio, but guessing drops a soundtrack or
+# pads a silent file with an empty track, so ask the file instead.
+if ffprobe -v error -select_streams a -show_entries stream=index -of csv=p=0 "$src" | grep -q .; then
+    audio=(-c:a aac -b:a 128k)
+else
+    audio=(-an)
+fi
+
+ffmpeg -hide_banner -loglevel error -y -i "$src" \
+    "${audio[@]}" -fps_mode passthrough \
+    -c:v libx264 -crf "$crf" -preset veryslow \
+    -pix_fmt yuv420p -profile:v high -level 4.0 \
+    -movflags +faststart \
+    "$out"
+
+[[ -n $poster ]] && ffmpeg -hide_banner -loglevel error -y -i "$src" \
+    -frames:v 1 -q:v 3 "${out%.*}.poster.jpg"
+
+size() { stat -f%z "$1" 2>/dev/null || stat -c%s "$1"; }
+awk -v a="$(size "$src")" -v b="$(size "$out")" -v s="$src" -v o="$out" \
+    'BEGIN { printf "%s  %.2f MB  ->  %s  %.2f MB  (%.0f%% smaller)\n", s, a/1048576, o, b/1048576, (1 - b/a) * 100 }'
+
+# `+faststart` is the flag most worth confirming, and it is cheap to: the index
+# is either in the first few KB or it is at the end of the file.
+if head -c 8192 "$out" | LC_ALL=C grep -q moov; then
+    echo "  index at the front — plays before the whole file arrives"
+else
+    echo "  warning: index is not at the front, +faststart did not take" >&2
+fi
