@@ -1,0 +1,22 @@
+[package]
+name = "cydonia-schema"
+description = "The shapes cydonia keeps on disk and answers with: boards, session records, article properties, tables"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["acp", "agents", "schema", "cydonia"]
+categories = ["data-structures"]
+
+[dependencies]
+anyhow.workspace = true
+# The one thing a transcript borrows from the protocol: what kind of tool a
+# call was. Taken rather than restated, so a tool cydonia renders and a tool
+# the agent reported are the same value and not two enums to keep in step.
+cacp.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+toml_edit.workspace = true

@@ -13,11 +13,7 @@
 
 use crate::{
     agent::acp::{self, Event, Launch, Reply, Session},
-    model::{
-        record::{self, Record},
-        settings,
-        workspace::Workspace,
-    },
+    model::{settings, workspace::Workspace},
     view::component::transcript,
 };
 use anyhow::anyhow;
@@ -25,9 +21,12 @@ use bezel::gpui::{Context, Task};
 use cacp::schema::{
     ContentBlock, MaybeUndefined, PermissionOptionKind, PlanEntryStatus, RequestPermissionRequest,
     RequestPermissionResponse, SessionConfigKind, SessionConfigOption, SessionConfigOptionValue,
-    SessionModeState, SessionUpdate, StopReason, ToolCallContent, ToolCallStatus, ToolKind,
+    SessionModeState, SessionUpdate, StopReason, ToolCallContent, ToolCallStatus,
 };
-use serde::{Deserialize, Serialize};
+use schema::{
+    chat::{ChatItem, PlanStatus, ToolStatus},
+    record::{self, Record},
+};
 use std::{
     collections::VecDeque,
     path::PathBuf,
@@ -35,43 +34,6 @@ use std::{
 };
 
 const STREAM_FRAME: Duration = Duration::from_millis(120);
-
-#[derive(Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub enum ToolStatus {
-    Running,
-    Success,
-    Failure,
-}
-
-#[derive(Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub enum PlanStatus {
-    Pending,
-    Active,
-    Done,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-pub enum ChatItem {
-    User(String),
-    Agent(String),
-    Thinking {
-        text: String,
-        done: bool,
-    },
-    Tool {
-        id: String,
-        kind: ToolKind,
-        label: String,
-        status: ToolStatus,
-        output: String,
-    },
-    /// Something the session has to say for itself: a stop reason, or a
-    /// failure. `failed` picks which strip it paints as.
-    Notice {
-        text: String,
-        failed: bool,
-    },
-}
 
 /// How much of the context window the conversation has taken, as the agent
 /// counts it.

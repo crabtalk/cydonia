@@ -2,7 +2,7 @@
 //! flight stacks under it — plan, permission, queue, composer.
 
 use crate::{
-    model::session::{ChatSession, Choice, PlanStatus},
+    model::session::{ChatSession, Choice},
     view::{
         component::{composer, transcript},
         root::{self, Cydonia, NewSession, Pane},
@@ -24,6 +24,7 @@ use cacp::schema::{
     PermissionOptionKind, SessionConfigKind, SessionConfigOptionCategory, SessionConfigOptionValue,
     SessionConfigSelectOption, SessionConfigSelectOptions, SessionModeState,
 };
+use schema::chat::PlanStatus;
 use std::path::Path;
 use surface::Surfaced as _;
 

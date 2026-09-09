@@ -6,10 +6,7 @@
 //! what stops a model's thinking-out-loud being presented as its reply.
 
 use crate::{
-    model::{
-        session::{ChatItem, ChatSession, ToolStatus},
-        workspace::Workspace,
-    },
+    model::{session::ChatSession, workspace::Workspace},
     view::root,
 };
 use bezel::{
@@ -31,6 +28,7 @@ use markdown::{
     BlockLayouts, Selection,
     selectable::{self, Pointer},
 };
+use schema::chat::{ChatItem, ToolStatus};
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet, hash_map::DefaultHasher},

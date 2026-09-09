@@ -7,7 +7,7 @@
 //! Written as the session changes rather than when it ends, so a session
 //! survives a crash and not just an orderly quit.
 
-use crate::model::{project, session::ChatItem};
+use crate::{chat::ChatItem, project};
 use serde::{Deserialize, Serialize};
 use std::{
     cmp::Reverse,

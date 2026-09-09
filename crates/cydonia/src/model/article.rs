@@ -11,13 +11,14 @@
 //! disagreeing — and a path already handed to an agent is not one we can
 //! rewrite the way a vault rewrites its own links.
 
-use crate::model::{cover, project, properties, workspace::Workspace};
+use crate::model::{cover, workspace::Workspace};
 use bezel::{
     gpui::{App, AppContext as _, Context, Entity, ScrollHandle},
     ui::input::{Shape, TextField},
 };
 use editor::Editor;
 use markdown::Typography;
+use schema::{project, properties};
 use std::{
     cmp::Reverse,
     path::{Path, PathBuf},

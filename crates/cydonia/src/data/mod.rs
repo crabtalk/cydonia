@@ -9,10 +9,9 @@
 //! read-only: what stops a `SELECT` writing is the connection itself, never
 //! anything believed about the text.
 
-use crate::model::project;
 use anyhow::{Result, anyhow, bail};
 use rusqlite::{Connection, OpenFlags, Row, types::ValueRef};
-use serde::{Deserialize, Serialize};
+use schema::project;
 use serde_json::Value;
 use std::{
     collections::HashSet,
@@ -24,7 +23,9 @@ mod ddl;
 mod rows;
 mod sql;
 
-pub use rows::{Edit, Page, Record};
+// The shapes a store answers with live in `schema` — they are what the app
+// draws and what a client reads, and only the reads and writes below are ours.
+pub use schema::data::{ColType, Column, Edit, Page, Record, Rows, Table};
 
 pub(crate) const FILE: &str = "data.db";
 const BUSY: Duration = Duration::from_secs(5);
@@ -39,93 +40,6 @@ const DDL: &str = "CREATE TABLE IF NOT EXISTS _tables (
     archived   INTEGER,
     author     TEXT
 )";
-
-/// What a column holds. Four, closed, and every one a word SQLite keeps
-/// verbatim in its catalog — which is what lets a declaration be the registry.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ColType {
-    Text,
-    Number,
-    Date,
-    Check,
-}
-
-impl ColType {
-    /// Every type, for the prompt that has to name the menu. Interpolated
-    /// rather than retyped in prose, so adding one here reaches the model.
-    pub const ALL: [Self; 4] = [Self::Text, Self::Number, Self::Date, Self::Check];
-
-    /// The wire name — what the tools take and hand back.
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Text => "text",
-            Self::Number => "number",
-            Self::Date => "date",
-            Self::Check => "check",
-        }
-    }
-
-    /// The declared type written into `CREATE TABLE`. `DATE` and `BOOLEAN` both
-    /// take NUMERIC affinity, which is exactly right: a day is unix seconds and
-    /// a checkbox is 0 or 1.
-    fn sql(self) -> &'static str {
-        match self {
-            Self::Text => "TEXT",
-            Self::Number => "NUMERIC",
-            Self::Date => "DATE",
-            Self::Check => "BOOLEAN",
-        }
-    }
-}
-
-/// Reading the catalog back. Total rather than fallible, because the catalog is
-/// not our enum: a table made outside these tools may declare anything, and a
-/// column we cannot name is still a column the person can read.
-impl From<&str> for ColType {
-    fn from(declared: &str) -> Self {
-        match declared.to_ascii_uppercase().as_str() {
-            "NUMERIC" => Self::Number,
-            "DATE" => Self::Date,
-            "BOOLEAN" => Self::Check,
-            _ => Self::Text,
-        }
-    }
-}
-
-/// A column's name is its SQL identifier — quoted everywhere, so it stays free
-/// text the way a spreadsheet header is. Only tables carry a key, because only
-/// a table is addressed in prose after it is renamed.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Column {
-    pub name: String,
-    #[serde(rename = "type")]
-    pub kind: ColType,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct Table {
-    /// What `FROM` takes.
-    pub key: String,
-    pub name: String,
-    pub columns: Vec<Column>,
-    pub rows: i64,
-    pub created_at: i64,
-    /// When it was last written in, once it has been — what the list is
-    /// ordered on, with [`Table::created_at`] standing in until then.
-    pub updated_at: Option<i64>,
-    /// Put away: listed under the divider rather than dropped.
-    pub archived: bool,
-    /// The agent that made it, by the name `settings.toml` gives it.
-    pub author: Option<String>,
-}
-
-/// A `SELECT`'s answer: the column names once, then the rows.
-#[derive(Debug, Serialize)]
-pub struct Rows {
-    pub columns: Vec<String>,
-    pub rows: Vec<Vec<Value>>,
-}
 
 pub struct Data {
     writer: Connection,

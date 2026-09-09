@@ -1,10 +1,7 @@
 //! The board pane: lanes of cards, and the one field that writes them.
 
 use crate::{
-    model::{
-        board::{Card, Spot},
-        session::ChatSession,
-    },
+    model::session::ChatSession,
     view::root::{Cydonia, NewBoard, Pane},
 };
 use bezel::{
@@ -21,6 +18,7 @@ use bezel::{
         widgets::Buttons,
     },
 };
+use schema::board::{Card, Spot};
 
 actions!(cydonia_board, [CommitCard, DismissCard]);
 

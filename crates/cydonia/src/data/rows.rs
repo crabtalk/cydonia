@@ -5,41 +5,10 @@
 //! deletion, with no surrogate key column to hide from the person and no
 //! position index that means something different the moment the order changes.
 
-use crate::data::{self, Column, Data};
+use crate::data::{self, Data, Edit, Page, Record};
 use anyhow::{Result, bail};
 use rusqlite::params_from_iter;
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
-
-/// One window of a table, with everything a grid needs to draw it.
-#[derive(Debug, Serialize)]
-pub struct Page {
-    pub key: String,
-    pub name: String,
-    pub columns: Vec<Column>,
-    /// Rows in the whole table, not in this window — the scrollbar's length.
-    pub total: i64,
-    /// Where `rows` starts, echoed back so a window that arrives after the
-    /// viewport moved on can be dropped rather than drawn in the wrong place.
-    pub offset: i64,
-    pub rows: Vec<Record>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct Record {
-    pub rowid: i64,
-    /// In `columns` order.
-    pub cells: Vec<Value>,
-}
-
-/// One cell to write. A pasted block and a single edit are the same thing at
-/// different lengths, so there is one shape for both.
-#[derive(Debug, Deserialize)]
-pub struct Edit {
-    pub rowid: i64,
-    pub column: String,
-    pub value: Value,
-}
+use schema::data::Column;
 
 impl Data {
     /// Read a window of rows.

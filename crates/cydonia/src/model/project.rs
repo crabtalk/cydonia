@@ -8,22 +8,17 @@ use crate::{
     data::{Data, Page, Table},
     model::{
         article::{self, Article},
-        board::{self, Board},
         session::ChatSession,
         watch::Watch,
         workspace::Workspace,
     },
 };
 use bezel::gpui::Context;
+use schema::board::{self, Board};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
 };
-
-/// Everything cydonia holds for a project lives here: its articles, its
-/// archived sessions, and its database.
-const DIR: &str = ".cydonia";
 
 /// How many rows the table pane reads at once. The count beside them is the
 /// table's own, so a window that does not reach the end says so.
@@ -239,44 +234,4 @@ impl Project {
     pub fn active_session(&self) -> Option<&ChatSession> {
         self.active.and_then(|id| self.session(id))
     }
-}
-
-/// Now, in milliseconds — the id an article or a board is made with. Sorting
-/// these is sorting by age, which is the order they are listed back in.
-pub fn stamp() -> u128 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|since| since.as_millis())
-        .unwrap_or_default()
-}
-
-/// When a file was last written, as the same millisecond stamp ids carry — the
-/// key entries are listed by, so the one you touched last is the one on top.
-pub fn written(path: &Path) -> u128 {
-    std::fs::metadata(path)
-        .and_then(|meta| meta.modified())
-        .ok()
-        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
-        .map_or_else(stamp, |since| since.as_millis())
-}
-
-pub fn dir(project: &Path) -> PathBuf {
-    project.join(DIR)
-}
-
-/// The same directory, made if it is not there, and carrying the `.gitignore`
-/// that keeps the whole of it out of the repo it sits in — none of what cydonia
-/// writes here is the project's source.
-///
-/// Every path that creates the directory comes through here. A second
-/// `create_dir_all` elsewhere would make it without the ignore file, and
-/// whichever ran first would decide whether the repo sees a database.
-pub fn init(project: &Path) -> std::io::Result<PathBuf> {
-    let dir = dir(project);
-    std::fs::create_dir_all(&dir)?;
-    let ignore = dir.join(".gitignore");
-    if !ignore.exists() {
-        std::fs::write(&ignore, "*\n")?;
-    }
-    Ok(dir)
 }

@@ -11,13 +11,11 @@
 //! So nothing here reads an event beyond *where* it landed: the answer to any
 //! of them is the same re-read.
 
-use crate::{
-    data,
-    model::{project, workspace::Workspace},
-};
+use crate::{data, model::workspace::Workspace};
 use bezel::gpui::{Context, Task};
 use futures::{StreamExt as _, channel::mpsc};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher as _};
+use schema::project;
 use std::{
     path::{Path, PathBuf},
     time::Duration,

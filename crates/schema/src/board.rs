@@ -1,9 +1,8 @@
 //! A project's boards: columns of task cards, and the files that outlive them.
 //!
-//! Machine-written like [`crate::model::state`], and kept in the project's own
-//! `.cydonia/` — a board is the project's work, so it travels with the
-//! directory rather than living under a path in the config dir that a rename
-//! would orphan.
+//! Machine-written, and kept in the project's own `.cydonia/` — a board is the
+//! project's work, so it travels with the directory rather than living under a
+//! path in the config dir that a rename would orphan.
 //!
 //! One file per board, named for the millisecond it was made. An id rather
 //! than the name: the name is a property, and a file named after it would be a
@@ -13,7 +12,7 @@
 //! move is a remove and an insert. A flat list with an ordinal only earns its
 //! keep where several views group the same cards differently.
 
-use crate::model::project;
+use crate::project;
 use serde::{Deserialize, Serialize};
 use std::{
     cmp::Reverse,
@@ -111,7 +110,8 @@ impl Board {
         }
     }
 
-    /// Take what a re-read of the project found — see [`crate::model::watch`].
+    /// Take what a re-read of the project found, which is what the app answers a
+    /// change under `.cydonia/` with.
     ///
     /// Nothing here is unsaved: a board is written on the click that changes
     /// it, so the file is always the board and taking it whole is safe. What is

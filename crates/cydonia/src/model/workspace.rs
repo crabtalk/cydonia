@@ -14,9 +14,7 @@ use crate::{
     memory,
     model::{
         article::{self, Article},
-        board::{self, Board},
         project::Project,
-        record,
         session::ChatSession,
         settings::{self, Feature, Settings},
         state::{self, State},
@@ -29,6 +27,10 @@ use bezel::{
     ui::input,
 };
 use cacp::schema::SessionConfigOptionValue;
+use schema::{
+    board::{self, Board},
+    record,
+};
 use std::{
     collections::{BTreeMap, HashMap},
     path::{Path, PathBuf},

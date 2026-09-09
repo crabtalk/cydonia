@@ -2,9 +2,9 @@
 //! markdown does not — the title today, and the typed fields a page carries
 //! next to it later.
 //!
-//! Edited in place with `toml_edit` like [`crate::model::settings`], because an
-//! agent writing into this file is expected: re-serialising it through a value
-//! tree would drop every key and comment cydonia does not itself know about.
+//! Edited in place with `toml_edit`, because an agent writing into this file is
+//! expected: re-serialising it through a value tree would drop every key and
+//! comment cydonia does not itself know about.
 
 use std::path::{Path, PathBuf};
 
