@@ -99,16 +99,14 @@ impl Watch {
 /// long after it was opened — so a project without one is watched shallowly at
 /// its own root, where the one event that matters is the directory appearing.
 fn arm(root: &Path) -> Option<(RecommendedWatcher, mpsc::UnboundedReceiver<()>, bool)> {
-    // The prefix every event is matched against, resolved once. FSEvents
-    // reports the real path, so a project reached through a symlink would never
-    // match the prefix it was armed with.
-    let dir = project::dir(&std::fs::canonicalize(root).unwrap_or_else(|_| root.to_owned()));
+    // The prefix every event is matched against, resolved once.
+    let dir = project::dir(&reported(root));
     let (tx, rx) = mpsc::unbounded();
     let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
         let Ok(event) = event else {
             return;
         };
-        if event.paths.iter().any(|path| ours(&dir, path)) {
+        if event.paths.iter().any(|path| ours(&dir, &plain(path))) {
             let _ = tx.unbounded_send(());
         }
     })
@@ -119,6 +117,59 @@ fn arm(root: &Path) -> Option<(RecommendedWatcher, mpsc::UnboundedReceiver<()>, 
             .watch(root, RecursiveMode::NonRecursive)
             .ok()
             .map(|()| (watcher, rx, false)),
+    }
+}
+
+/// `root` as the backend will report it.
+///
+/// FSEvents and inotify report the real path, so a project reached through a
+/// symlink would never match the prefix it was armed with — hence
+/// `canonicalize`. `ReadDirectoryChangesW` reports nothing but the name that
+/// moved, which notify joins to the path it was handed, so on Windows the
+/// path as given is the one that matches. Canonicalizing there would only
+/// put the `\\?\` verbatim prefix on this side of the comparison, and the
+/// on-disk casing where the event carries the caller's.
+fn reported(root: &Path) -> PathBuf {
+    if cfg!(windows) {
+        return plain(root);
+    }
+    std::fs::canonicalize(root).unwrap_or_else(|_| root.to_owned())
+}
+
+/// `path` without the `\\?\` prefix Windows puts on a canonical path. Two
+/// spellings of one directory, and `strip_prefix` knows nothing of that: a
+/// prefix in one form never matches a path in the other. Anything else is
+/// handed back as it came.
+fn plain(path: &Path) -> PathBuf {
+    #[cfg(windows)]
+    {
+        use std::path::{Component, Prefix};
+        let mut parts = path.components();
+        let rest = match parts.next() {
+            Some(Component::Prefix(prefix)) => match prefix.kind() {
+                Prefix::VerbatimDisk(disk) => PathBuf::from(format!("{}:\\", disk as char)),
+                Prefix::VerbatimUNC(server, share) => {
+                    let mut unc = std::ffi::OsString::from(r"\\");
+                    unc.push(server);
+                    unc.push(r"\");
+                    unc.push(share);
+                    unc.push(r"\");
+                    PathBuf::from(unc)
+                }
+                _ => return path.to_owned(),
+            },
+            _ => return path.to_owned(),
+        };
+        parts
+            .filter(|part| !matches!(part, Component::RootDir))
+            .fold(rest, |mut plain, part| {
+                plain.push(part);
+                plain
+            })
+    }
+    #[cfg(not(windows))]
+    {
+        path.to_owned()
     }
 }
 
@@ -181,6 +232,29 @@ mod tests {
             "/other/.cydonia/articles/1/content.md",
         ] {
             assert!(!ours(dir, Path::new(path)), "{path} should not knock");
+        }
+    }
+
+    /// A canonical Windows path is the same directory as the plain one, and
+    /// the comparison has to see it that way. Elsewhere there is no verbatim
+    /// form, and a path comes back as it went in.
+    #[test]
+    fn a_verbatim_prefix_is_taken_off() {
+        if cfg!(windows) {
+            assert_eq!(
+                plain(Path::new(r"\\?\C:\p\.cydonia\articles")),
+                PathBuf::from(r"C:\p\.cydonia\articles")
+            );
+            assert_eq!(
+                plain(Path::new(r"\\?\UNC\host\share\p")),
+                PathBuf::from(r"\\host\share\p")
+            );
+            assert_eq!(plain(Path::new(r"C:\p")), PathBuf::from(r"C:\p"));
+        } else {
+            assert_eq!(
+                plain(Path::new("/p/.cydonia")),
+                PathBuf::from("/p/.cydonia")
+            );
         }
     }
 }

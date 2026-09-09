@@ -8,7 +8,10 @@
 use crate::{
     agent::Listing,
     model::workspace::Workspace,
-    view::root::{HEADER_HEIGHT, TRAFFIC_LIGHT_X, TRAFFIC_LIGHT_Y},
+    view::{
+        component::caption,
+        root::{HEADER_HEIGHT, TRAFFIC_LIGHT_X, TRAFFIC_LIGHT_Y},
+    },
 };
 use bezel::{
     gpui::{
@@ -230,7 +233,7 @@ impl SettingsWindow {
 }
 
 impl Render for SettingsWindow {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::of(cx).clone();
         div()
             .size_full()
@@ -241,6 +244,17 @@ impl Render for SettingsWindow {
             .font_family(theme.font_sans.clone())
             .text_color(theme.text)
             .text_style(TextStyle::Body)
+            // Where the platform draws no titlebar, the band the sidebar
+            // clears for the traffic lights is the one to drag the window by.
+            .child(
+                caption::draggable(div())
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .w(px(SIDEBAR_WIDTH))
+                    .h(px(HEADER_HEIGHT)),
+            )
+            .children(caption::controls(window, cx))
             .child(self.sidebar(cx))
             .child(
                 div()

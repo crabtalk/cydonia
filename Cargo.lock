@@ -1344,8 +1344,6 @@ dependencies = [
 [[package]]
 name = "cacp-agents"
 version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b5ec8a9504ec758ef61864ef88c3849bf31281f084d7170b39eed4e602a724b0"
 dependencies = [
  "anyhow",
  "serde",

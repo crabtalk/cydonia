@@ -46,19 +46,35 @@ actions!(
 pub fn init(cx: &mut App) {
     // A nib gives an app these; there is no nib here, and an item whose action
     // nothing has bound shows no shortcut and answers to none — ⌘Q included.
+    //
+    // `secondary-` is ⌘ on macOS and Ctrl elsewhere — see `root::init`. The
+    // rest are AppKit's own vocabulary, bound where AppKit is: hiding an app
+    // is a thing only macOS does, and full screen there is ⌃⌘F where every
+    // other desktop says F11.
     cx.bind_keys([
-        KeyBinding::new("cmd-q", Quit, None),
-        KeyBinding::new("cmd-h", Hide, None),
-        KeyBinding::new("alt-cmd-h", HideOthers, None),
-        KeyBinding::new("cmd-w", CloseWindow, None),
-        KeyBinding::new("cmd-m", Minimize, None),
-        KeyBinding::new("ctrl-cmd-f", ToggleFullScreen, None),
+        KeyBinding::new("secondary-q", Quit, None),
+        KeyBinding::new("secondary-w", CloseWindow, None),
     ]);
+    if cfg!(target_os = "macos") {
+        cx.bind_keys([
+            KeyBinding::new("cmd-h", Hide, None),
+            KeyBinding::new("alt-cmd-h", HideOthers, None),
+            KeyBinding::new("cmd-m", Minimize, None),
+            KeyBinding::new("ctrl-cmd-f", ToggleFullScreen, None),
+        ]);
+    } else {
+        cx.bind_keys([KeyBinding::new("f11", ToggleFullScreen, None)]);
+    }
 
     cx.on_action(|_: &Quit, cx: &mut App| cx.quit());
-    cx.on_action(|_: &Hide, cx: &mut App| cx.hide());
-    cx.on_action(|_: &HideOthers, cx: &mut App| cx.hide_other_apps());
-    cx.on_action(|_: &ShowAll, cx: &mut App| cx.unhide_other_apps());
+    // gpui's Windows platform has no implementation behind these — the calls
+    // panic rather than do nothing — and nothing off macOS binds or lists
+    // them, so they are answered only where they can be.
+    if cfg!(target_os = "macos") {
+        cx.on_action(|_: &Hide, cx: &mut App| cx.hide());
+        cx.on_action(|_: &HideOthers, cx: &mut App| cx.hide_other_apps());
+        cx.on_action(|_: &ShowAll, cx: &mut App| cx.unhide_other_apps());
+    }
     cx.on_action(|_: &Minimize, cx: &mut App| front(cx, |window| window.minimize_window()));
     cx.on_action(|_: &Zoom, cx: &mut App| front(cx, |window| window.zoom_window()));
     cx.on_action(|_: &ToggleFullScreen, cx: &mut App| {

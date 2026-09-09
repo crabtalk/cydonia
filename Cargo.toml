@@ -71,3 +71,9 @@ toml_edit = "0.22"
 # Downloads the registry's agent icons. The same client cacp-agents fetches
 # the catalog with, so this adds no second HTTP stack.
 ureq = "3"
+
+# Repo-local copies of dependencies, each the published version with the
+# smallest change cydonia could not make from its own side. What each one is
+# for, and why it is here rather than upstream yet, is in patches/README.md.
+[patch.crates-io]
+cacp-agents = { path = "patches/cacp-agents" }

@@ -54,3 +54,17 @@ jobs:
       - uses: mozilla-actions/sccache-action@v0.0.11
       - run: sudo .github/scripts/linux-deps
       - run: cargo build --bin cydonia
+
+  # Windows, because it is the platform with a branch of its own in the agent
+  # launcher, the watch and the window chrome — the ones `cfg(windows)` hides
+  # from the two jobs above. The library tests run too: the launcher's are
+  # about `.cmd` files, and the watch's about `\\?\` paths.
+  build-windows:
+    name: build (windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      - run: cargo build --bin cydonia
+      - run: cargo test --lib
