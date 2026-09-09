@@ -23,6 +23,7 @@ use std::{
     cmp::Reverse,
     path::{Path, PathBuf},
 };
+use url::Url;
 
 /// What articles were called before they were named for their age, and what an
 /// unnamed one was called among them.
@@ -300,6 +301,25 @@ impl Article {
         let previous = std::mem::replace(&mut self.cover, next);
         if let Some(old) = previous.filter(|old| Some(old) != self.cover.as_ref()) {
             let _ = std::fs::remove_file(old);
+        }
+    }
+}
+
+/// What a reader gets, out of what the pane holds.
+///
+/// The cover crosses as `file://` because this backend's covers *are* files.
+/// Kept a conversion rather than a field: the picture is one this article
+/// seeds from, writes and deletes, and every one of those wants the path back.
+impl From<&Article> for layout::Article {
+    fn from(article: &Article) -> Self {
+        Self {
+            title: article.title.clone(),
+            archived: article.archived,
+            touched: article.touched,
+            cover: article
+                .cover
+                .as_deref()
+                .and_then(|file| Url::from_file_path(file).ok()),
         }
     }
 }

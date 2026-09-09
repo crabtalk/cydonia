@@ -1905,6 +1905,7 @@ dependencies = [
  "toml 0.8.23",
  "toml_edit 0.22.27",
  "ureq",
+ "url",
 ]
 
 [[package]]
@@ -1917,6 +1918,7 @@ dependencies = [
  "serde_json",
  "toml 0.8.23",
  "toml_edit 0.22.27",
+ "url",
 ]
 
 [[package]]
@@ -6691,6 +6693,7 @@ dependencies = [
  "idna",
  "percent-encoding",
  "serde",
+ "serde_derive",
 ]
 
 [[package]]

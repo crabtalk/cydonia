@@ -34,3 +34,7 @@ toml = "0.8"
 # Editing a settings or properties file in place. `toml` would round-trip it
 # through a value tree and drop every comment the file was written with.
 toml_edit = "0.22"
+# Where a cover is, said in a way that is not "on this disk". Already in the
+# graph — gpui carries it — so this names a crate that is compiled either way
+# rather than adding one.
+url = { version = "2", features = ["serde"] }

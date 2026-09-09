@@ -17,7 +17,31 @@
 pub mod properties;
 
 use crate::project;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use url::Url;
+
+/// An article as a reader gets one: what it is called, whether it is put away,
+/// when it last changed, and where its picture is.
+///
+/// Not the document. The markdown is read when something opens it — the
+/// sidebar lists every article in a project and opens none of them, so a body
+/// on this struct would be every article's body loaded to draw a list.
+///
+/// The cover is a [`Url`] rather than a path because where it is, is the
+/// backend's business: a file on this disk says `file://`, and one served over
+/// a connection says so in the same field without the shape changing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Article {
+    pub title: String,
+    #[serde(default)]
+    pub archived: bool,
+    /// When it last changed, as the same millisecond stamp ids carry — what
+    /// the sidebar orders on.
+    pub touched: u128,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cover: Option<Url>,
+}
 
 /// Where a project's articles live, and what the document is called inside the
 /// directory that is one.

@@ -27,7 +27,7 @@ directory they all sit inside.
 
 | Module | What it is |
 | --- | --- |
-| `article` | Where a document sits; `article::properties` is its `properties.toml` |
+| `article` | `Article` — title, cover and state; `article::properties` is its file |
 | `board` | `Board`, `Column`, `Card` — cards in lanes, one file per board |
 | `session` | `Record`, an archived session; `session::chat` is its transcript |
 | `table` | `Table`, `ColType`; `table::rows` is `Page`, `Row`, `Edit` |
