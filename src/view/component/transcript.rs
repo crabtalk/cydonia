@@ -14,12 +14,15 @@ use crate::{
 };
 use bezel::{
     agent::orbs::{OrbSize, OrbState, engine::Frame, orb_element},
-    gpui::{AnyElement, Context, ScrollHandle, SharedString, Window, div, prelude::*, px},
+    gpui::{
+        AnyElement, Context, Empty, Pixels, ScrollHandle, SharedString, Window, div, prelude::*, px,
+    },
     motion::Painter,
-    theme::{TextStyle, Theme, Typeset},
+    theme::{TextStyle, Theme, Typeset, ink},
     ui::{
         icons,
         scroll::{self, FollowState},
+        tooltip::Tooltip,
         widgets::{Layout, Status, Takeover},
     },
 };
@@ -42,6 +45,17 @@ const CONTENT_MAX_WIDTH: f32 = 720.;
 /// The transcript's breathing room at either end. The bottom carries the
 /// floating composer on top of it, so the last message scrolls clear of it.
 const PAD: f32 = 28.;
+
+/// The rail's marks, down the left of the pane: one dash per turn, how far it
+/// stands off the edge, and the padding that carries both the gap between two
+/// marks and the hitbox — a two-pixel line is not something a pointer catches.
+const MARK: f32 = 16.;
+const MARK_THICK: f32 = 2.;
+const MARK_PAD: f32 = 5.;
+const RAIL_INSET: f32 = 12.;
+
+/// How much of a question its mark's tooltip carries.
+const ASKED_MAX: usize = 80;
 
 /// What the orb is drawn on: 30 frames a second while a turn is in flight,
 /// claimed for a third of a second at a time and renewed by the render it
@@ -276,15 +290,75 @@ pub fn render(chat: &ChatSession, window: &mut Window, cx: &mut Context<Workspac
                     &chat.transcript.follow,
                 )),
         )
-        .child(scroll::rail(
-            SharedString::from(format!("transcript-rail-{id}")),
-            &chat.transcript.scroll,
-            turns.len(),
+        .child(rail(
+            chat,
+            &turns,
             // The column is centred in the pane and the pane runs to the
             // window's right edge, so what is clear after the text is what is
             // clear beside it.
             window.viewport_size().width - chat.transcript.scroll.bounds().right(),
         ))
+        .into_any_element()
+}
+
+/// One mark per turn down the left of the pane, the turn at the top of the
+/// viewport lit, and the question it opened on its tooltip. A press jumps
+/// there.
+///
+/// `bezel::ui::scroll::rail` in every respect but the tooltip, which is the
+/// whole point here: a column of identical dashes says how many turns there
+/// are and nothing about which is which, and the thing a person is looking for
+/// is what they asked.
+fn rail(chat: &ChatSession, turns: &[Turn], room: Pixels) -> AnyElement {
+    // bezel's own floor plus the marks' padding, which reaches toward the
+    // text: a hitbox over the prose would swallow presses meant for it.
+    if turns.is_empty() || room < px(scroll::RAIL_ROOM + 2. * MARK_PAD) {
+        return Empty.into_any_element();
+    }
+    let at = chat.transcript.scroll.top_item();
+    div()
+        .absolute()
+        .top_0()
+        .bottom_0()
+        .left(px(RAIL_INSET))
+        .flex()
+        .flex_col()
+        .items_center()
+        .justify_center()
+        .overflow_hidden()
+        .children(turns.iter().enumerate().map(|(ix, turn)| {
+            // A turn opens on a question, except the leading chunk of a
+            // session — which is whatever arrived before the first one, and has
+            // nothing to name itself with.
+            let asked = match chat.items.get(turn.range.start) {
+                Some(ChatItem::User(text)) => Some(SharedString::from(clipped(text, ASKED_MAX))),
+                _ => None,
+            }
+            .filter(|asked| !asked.is_empty());
+            let handle = chat.transcript.scroll.clone();
+            div()
+                .id(("rail-mark", ix))
+                // The padding is the hitbox and the gap between two marks at
+                // once; the dash inside it brightens for the whole of it.
+                .p(px(MARK_PAD))
+                .group("rail-mark")
+                .cursor_pointer()
+                .when_some(asked, |mark, asked| {
+                    mark.tooltip(move |window, cx| Tooltip::text(asked.clone(), window, cx))
+                })
+                .on_click(move |_, window, _| {
+                    handle.scroll_to_item(ix);
+                    window.refresh();
+                })
+                .child(
+                    div()
+                        .w(px(MARK))
+                        .h(px(MARK_THICK))
+                        .rounded_full()
+                        .bg(if ix == at { ink(0.6) } else { ink(0.2) })
+                        .group_hover("rail-mark", |mark| mark.bg(ink(0.32))),
+                )
+        }))
         .into_any_element()
 }
 
@@ -465,7 +539,7 @@ const TITLE_MAX: usize = 72;
 /// all.
 fn title(label: &str) -> (SharedString, Option<SharedString>, Option<SharedString>) {
     let label = label.trim();
-    let line = label.split_whitespace().collect::<Vec<_>>().join(" ");
+    let line = one_line(label);
     let cut = line
         .char_indices()
         .nth(HEAD_MAX)
@@ -479,6 +553,20 @@ fn title(label: &str) -> (SharedString, Option<SharedString>, Option<SharedStrin
         (line != label || line.chars().count() > TITLE_MAX)
             .then(|| SharedString::from(label.to_owned())),
     )
+}
+
+/// `text` with every run of whitespace — newlines included — as one space.
+fn one_line(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// The same, cut to `max` characters and ellipsized.
+fn clipped(text: &str, max: usize) -> String {
+    let line = one_line(text);
+    match line.char_indices().nth(max) {
+        Some((at, _)) => format!("{}…", line[..at].trim_end()),
+        None => line,
+    }
 }
 
 /// One tool call, and what it printed.
