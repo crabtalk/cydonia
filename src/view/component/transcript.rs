@@ -451,6 +451,36 @@ fn work(chat: &ChatSession, body: Range<usize>, cx: &mut Context<Workspace>) -> 
     out
 }
 
+/// How far a title's head — the word that names the call — may run before the
+/// rest of the line has to start truncating.
+const HEAD_MAX: usize = 24;
+
+/// How long a one-lined title may run before the row's ellipsis is the only
+/// way to read it, and the full text is worth opening for.
+const TITLE_MAX: usize = 72;
+
+/// A tool's title, as a row one line tall can take it: the head that names the
+/// call, the rest that truncates beside it, and the whole text when the one
+/// line lost something — a shell script arrives as its own title, newlines and
+/// all.
+fn title(label: &str) -> (SharedString, Option<SharedString>, Option<SharedString>) {
+    let label = label.trim();
+    let line = label.split_whitespace().collect::<Vec<_>>().join(" ");
+    let cut = line
+        .char_indices()
+        .nth(HEAD_MAX)
+        .map_or(line.len(), |(at, _)| at);
+    let head = line[..cut].find(char::is_whitespace).unwrap_or(cut);
+    let (name, rest) = line.split_at(head);
+    let rest = rest.trim();
+    (
+        SharedString::from(name.to_owned()),
+        (!rest.is_empty()).then(|| SharedString::from(rest.to_owned())),
+        (line != label || line.chars().count() > TITLE_MAX)
+            .then(|| SharedString::from(label.to_owned())),
+    )
+}
+
 /// One tool call, and what it printed.
 fn tool(chat: &ChatSession, ix: usize, first: bool, cx: &mut Context<Workspace>) -> AnyElement {
     let theme = Theme::of(cx).clone();
@@ -468,17 +498,18 @@ fn tool(chat: &ChatSession, ix: usize, first: bool, cx: &mut Context<Workspace>)
     let open = chat.transcript.output.contains(&ix);
     let failed = *status == ToolStatus::Failure;
     let meta = (*status == ToolStatus::Running).then(|| SharedString::from("running"));
+    let (name, rest, full) = title(label);
     div()
         .when(!first, |el| el.border_t_1().border_color(theme.border))
         .child(
             theme
                 .step_row(
                     tool_icon(*kind),
-                    label.clone(),
-                    None,
+                    name,
+                    rest,
                     meta,
                     failed,
-                    (!output.is_empty()).then_some(open),
+                    (!output.is_empty() || full.is_some()).then_some(open),
                 )
                 .hover(|el| el.bg(theme.element_hover))
                 .id(("tool", ix))
@@ -490,6 +521,11 @@ fn tool(chat: &ChatSession, ix: usize, first: bool, cx: &mut Context<Workspace>)
                     });
                 })),
         )
+        // What the row could not hold, in the order it was read: the call
+        // itself, then what it printed.
+        .when_some(full.filter(|_| open), |el, full| {
+            el.child(theme.step_output(("tool-title", ix), full))
+        })
         .when(open && !output.is_empty(), |el| {
             el.child(theme.step_output(("tool-output", ix), output.clone()))
         })
@@ -672,4 +708,42 @@ fn working(chat: &ChatSession, at: usize, cx: &mut Context<Workspace>) -> AnyEle
         // every frame whether or not the agent has said anything.
         .children(spend(chat, &theme))
         .into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::title;
+
+    /// A shell script arrives as its own title. The row gets one line of it;
+    /// the whole thing is what opening the row is for.
+    #[test]
+    fn a_script_is_one_line_and_a_way_back_to_the_rest() {
+        let script = "python3 -c \"\nimport json\nprint(json.dumps({}))\n\"";
+        let (name, rest, full) = title(script);
+        assert_eq!(name, "python3");
+        assert_eq!(
+            rest.expect("the command after the head"),
+            "-c \" import json print(json.dumps({})) \""
+        );
+        assert_eq!(full.expect("the script, as written"), script);
+    }
+
+    /// A title that already fits keeps its head and its rest, and has nothing
+    /// left over to open onto.
+    #[test]
+    fn a_short_title_opens_onto_nothing() {
+        let (name, rest, full) = title("Read src/view/root.rs");
+        assert_eq!(name, "Read");
+        assert_eq!(rest.expect("the path"), "src/view/root.rs");
+        assert!(full.is_none());
+    }
+
+    /// One long word is still one line: the head is capped so the rest has
+    /// somewhere to truncate.
+    #[test]
+    fn a_head_longer_than_the_row_is_cut() {
+        let (name, rest, _) = title(&"x".repeat(40));
+        assert_eq!(name.len(), super::HEAD_MAX);
+        assert_eq!(rest.expect("what the head could not take").len(), 16);
+    }
 }
