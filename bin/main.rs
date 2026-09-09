@@ -1,5 +1,12 @@
 //! Cydonia — desktop client for ACP agents.
 
+// A Windows executable is a console program unless it says otherwise, and a
+// console program launched from Explorer is given a console: a black window
+// standing behind the app for as long as it runs. Release builds say
+// otherwise. Debug builds keep the console, which is where `cargo run` shows
+// a panic.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 use anyhow::Result;
 use bezel::{
     gpui::App,
@@ -61,6 +68,16 @@ fn main() -> Result<()> {
         // Last: it reads every binding above off the keymap to put the
         // shortcuts beside its items.
         menubar::init(cx);
+        // No Dock to come back from: off macOS a process with no window is
+        // not an app anyone can see or reopen, so the last window closing is
+        // the app quitting — the door ⌘Q is on a Mac.
+        #[cfg(not(target_os = "macos"))]
+        cx.on_window_closed(|cx, _| {
+            if cx.windows().is_empty() {
+                cx.quit();
+            }
+        })
+        .detach();
 
         root::open(settings, state, cx).expect("failed to open window");
         cx.activate(true);

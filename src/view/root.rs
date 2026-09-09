@@ -11,6 +11,7 @@ use crate::{
     view::{
         board::{self, Editing},
         component::{
+            caption,
             composer::{Composer, ComposerEvent},
             menu::Menu,
             meter,
@@ -155,28 +156,42 @@ pub(crate) const TOOLBAR_INSET: f32 = if cfg!(target_os = "macos") {
     HEADER_INSET
 };
 
+/// A shortcut as a tooltip names it, for a key bound with `secondary-` below:
+/// `⌘,` where that modifier is ⌘, and `Ctrl+,` where it is Ctrl.
+pub(crate) fn shortcut(key: &str) -> String {
+    if cfg!(target_os = "macos") {
+        format!("⌘{key}")
+    } else {
+        format!("Ctrl+{key}")
+    }
+}
+
+/// Every chord here is written with `secondary-`, gpui's name for the
+/// platform's primary modifier: ⌘ on macOS, and Ctrl on Windows and Linux,
+/// where `cmd-` would name the Windows and Super keys — chords the desktop
+/// itself has claimed.
 pub fn init(cx: &mut App) {
     cx.bind_keys([
-        KeyBinding::new("cmd-n", NewSession, None),
-        KeyBinding::new("cmd-o", OpenProject, None),
+        KeyBinding::new("secondary-n", NewSession, None),
+        KeyBinding::new("secondary-o", OpenProject, None),
         // What macOS binds Preferences to in every other app.
-        KeyBinding::new("cmd-,", OpenSettings, None),
+        KeyBinding::new("secondary-,", OpenSettings, None),
         // What every app with a sidebar binds it to. It is claimed app-wide:
         // the menu item carries it, so AppKit takes the chord before the
         // window is offered it, and the editor's own `cmd-b` — bold — is not
         // reached while this one is on the bar.
-        KeyBinding::new("cmd-b", ToggleSidebar, None),
-        KeyBinding::new("cmd-1", ShowChat, None),
-        KeyBinding::new("cmd-2", ShowBoard, None),
-        KeyBinding::new("cmd-3", ShowArticle, None),
-        KeyBinding::new("cmd-4", ShowTable, None),
+        KeyBinding::new("secondary-b", ToggleSidebar, None),
+        KeyBinding::new("secondary-1", ShowChat, None),
+        KeyBinding::new("secondary-2", ShowBoard, None),
+        KeyBinding::new("secondary-3", ShowArticle, None),
+        KeyBinding::new("secondary-4", ShowTable, None),
         // Bound ahead of the `tab` pair below because the menu draws the first
         // chord a command was given, and `tab` is the one it cannot draw: gpui
         // has no macOS key equivalent for it, so AppKit is handed the word
         // where the API takes one character and shows ⌃T. These are what the
         // View menu carries.
-        KeyBinding::new("alt-cmd-right", NextEntry, None),
-        KeyBinding::new("alt-cmd-left", PrevEntry, None),
+        KeyBinding::new("alt-secondary-right", NextEntry, None),
+        KeyBinding::new("alt-secondary-left", PrevEntry, None),
         // What a browser binds its tabs to. Global, because the point is to
         // move between documents without taking the hand out of the editor —
         // where `tab` itself is indent.
@@ -186,7 +201,7 @@ pub fn init(cx: &mut App) {
         // on their own contexts, which gpui dispatches from the focus outward,
         // so this only runs where nothing else wanted it — which is exactly
         // where a transcript selection is the thing being copied.
-        KeyBinding::new("cmd-c", CopySelection, None),
+        KeyBinding::new("secondary-c", CopySelection, None),
         KeyBinding::new("enter", CommitName, Some(RENAME_CONTEXT)),
         KeyBinding::new("escape", DismissName, Some(RENAME_CONTEXT)),
     ]);
@@ -667,5 +682,8 @@ impl Render for Cydonia {
                     .meter
                     .then(|| meter::panel("app-meter", &self.meter_at, &self.meter, window)),
             )
+            // Last, so nothing draws over them: the window's own buttons,
+            // where the platform leaves them to us.
+            .children(caption::controls(window, cx))
     }
 }

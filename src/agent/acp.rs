@@ -8,7 +8,10 @@
 //! - The connection runs on its own tokio runtime. cacp spawns its read and
 //!   write loops with `tokio::spawn`, and gpui's executor is smol's.
 
-use crate::{agent::mcp, model::settings};
+use crate::{
+    agent::{command, mcp},
+    model::settings,
+};
 use anyhow::{Result, anyhow};
 use cacp::{
     AgentConn, Client, Direction, Error, Tap,
@@ -29,7 +32,7 @@ use std::{
     time::Duration,
 };
 use tokio::{
-    process::{Child, Command},
+    process::Child,
     runtime::Runtime,
     sync::{mpsc, oneshot},
 };
@@ -89,6 +92,9 @@ pub struct Session {
     tx: mpsc::UnboundedSender<Event>,
     /// The agent process. Held in an `Option` for the same reason as `conn`.
     child: Option<Child>,
+    /// The process tree under it, where the platform can hold one — see
+    /// [`command::Job`]. Taken by [`Session::drop`] too, to end last.
+    job: Option<command::Job>,
     pub session_id: SessionId,
     pub init: InitializeResponse,
     pub response: NewSessionResponse,
@@ -136,8 +142,10 @@ impl Session {
     /// replays that session's history instead of starting fresh; a failed
     /// load (stale id, agent restart) falls back to a new session.
     pub async fn spawn(entry: &settings::Agent, launch: Launch) -> Result<(Self, Events)> {
-        let mut command = Command::new(&entry.command);
-        command.args(&entry.args).envs(&entry.env);
+        // Resolved the way the platform needs — see [`command`] for what a
+        // bare `npx` takes to start on Windows.
+        let mut command =
+            command::build(entry).map_err(|e| anyhow!("failed to start {}: {e}", entry.command))?;
         // An agent's diagnostics are not this app's. cacp leaves the choice to
         // the caller — "a TUI usually wants it captured and a CLI usually does
         // not" — and a desktop app that inherits them sprays a node SDK's
@@ -153,9 +161,12 @@ impl Session {
         let (tx, mut events) = mpsc::unbounded_channel();
         let (conn, child) = cacp::spawn(&mut command, Arc::new(Frontend(tx.clone())), debug_tap())
             .map_err(|e| anyhow!("failed to start {}: {}", entry.command, error_text(&e)))?;
+        // Straight after the spawn, ahead of anything the agent starts of its
+        // own: what it starts joins the job it is already in.
+        let job = command::adopt(&child);
 
         let echo = tx.clone();
-        let session = Self::open(conn, child, tx, launch, configured).await?;
+        let session = Self::open(conn, child, job, tx, launch, configured).await?;
         // `session/load` replays the whole conversation before it answers, and
         // the client is holding that transcript already: the replay is spent
         // here rather than arriving as a second copy of what is on screen.
@@ -184,6 +195,7 @@ impl Session {
     async fn open(
         conn: AgentConn,
         child: Child,
+        job: Option<command::Job>,
         tx: mpsc::UnboundedSender<Event>,
         launch: Launch,
         configured: Vec<mcp::McpServer>,
@@ -263,6 +275,7 @@ impl Session {
             conn: Some(conn),
             tx,
             child: Some(child),
+            job,
             session_id: response.session_id.clone(),
             init,
             response,
@@ -392,8 +405,13 @@ impl Drop for Session {
             return;
         };
         drop(conn);
+        let job = self.job.take();
         runtime().spawn(async move {
             let _ = tokio::time::timeout(SHUTDOWN_GRACE, child.wait()).await;
+            // The process first, under its own `kill_on_drop`; then the job,
+            // which takes whatever the process had started with it.
+            drop(child);
+            drop(job);
         });
     }
 }

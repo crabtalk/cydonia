@@ -6,6 +6,7 @@ use crate::{
     model::{session::ChatSession, settings::Features},
     view::{
         component::{
+            caption,
             menu::{self, Menu},
             transcript,
         },
@@ -339,8 +340,10 @@ impl Cydonia {
             // The fold out at the trailing edge: the lights float in the
             // leading half of the strip, which is what leaves nothing there to
             // pad them clear of.
+            // And, where the platform draws no titlebar of its own, the
+            // strip is the one the window is dragged by.
             .child(
-                div()
+                caption::draggable(div())
                     .flex_none()
                     .h(px(root::HEADER_HEIGHT))
                     .pr(px(8.))
@@ -381,7 +384,7 @@ impl Cydonia {
                             // line. What it opens is said in the tooltip, which
                             // is where the two beside it say theirs.
                             .tooltip(|window, cx| {
-                                Tooltip::with_keystroke("Settings", "⌘,", window, cx)
+                                Tooltip::with_keystroke("Settings", root::shortcut(","), window, cx)
                             })
                             .child(
                                 icons::icon(icons::system::SETTINGS_MINIMALISTIC)
@@ -405,7 +408,12 @@ impl Cydonia {
                                     .px(px(8.))
                                     .py(px(6.))
                                     .tooltip(|window, cx| {
-                                        Tooltip::with_keystroke("New project", "⌘O", window, cx)
+                                        Tooltip::with_keystroke(
+                                            "New project",
+                                            root::shortcut("O"),
+                                            window,
+                                            cx,
+                                        )
                                     })
                                     .child(
                                         icons::icon(icons::files::DOCUMENT_ADD)

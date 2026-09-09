@@ -118,7 +118,12 @@ impl Agent {
     /// `npx pkg@latest` resolves against the registry on every launch, which is
     /// a different program each time.
     pub fn pinned(&self) -> bool {
-        if !RUNNERS.contains(&self.command.as_str()) {
+        // By stem, so `npx.cmd` — the file the word is on a Windows machine,
+        // and what someone there may well write — is the launcher `npx` is.
+        let runner = std::path::Path::new(&self.command)
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().to_ascii_lowercase());
+        if !runner.is_some_and(|stem| RUNNERS.contains(&stem.as_str())) {
             return true;
         }
         self.args
@@ -376,4 +381,37 @@ fn claims(table: &toml_edit::Table, agent: &Agent, supersedes: Option<&str>) -> 
                 .filter_map(|v| v.as_str())
                 .any(|arg| cacp_agents::package_name(arg) == package)
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(command: &str, spec: &str) -> Agent {
+        Agent {
+            name: "agent".into(),
+            id: None,
+            command: command.into(),
+            args: vec!["-y".into(), spec.into()],
+            env: BTreeMap::new(),
+        }
+    }
+
+    /// The defaults are pinned, a floating tag is not, and the launcher is
+    /// recognised by its stem — `npx.cmd` is what the file is called on
+    /// Windows, and what someone there may write.
+    #[test]
+    fn a_runner_is_known_by_its_stem() {
+        let pinned = "@agentclientprotocol/claude-agent-acp@0.73.0";
+        let floating = "@agentclientprotocol/claude-agent-acp@latest";
+        assert!(entry("npx", pinned).pinned());
+        assert!(!entry("npx", floating).pinned());
+        assert!(entry("npx.cmd", pinned).pinned());
+        assert!(!entry("npx.cmd", floating).pinned());
+        assert!(!entry("NPX.CMD", floating).pinned());
+        assert!(!entry(r"C:\Program Files\nodejs\npx.cmd", floating).pinned());
+        // A path to an unpacked executable resolves nothing, whatever its
+        // arguments say.
+        assert!(entry("/opt/agent/bin/agent", floating).pinned());
+    }
 }
