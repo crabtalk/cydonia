@@ -20,7 +20,7 @@ in `~/.config/cydonia/settings.toml`.
 <project>/.cydonia/  that project's articles, boards, sessions and store
 ```
 
-The shapes under `.cydonia/` are [`cydonia-schema`](https://crates.io/crates/cydonia-schema),
+The shapes under `.cydonia/` are [`cydonia-artifact`](https://crates.io/crates/cydonia-artifact),
 a crate of their own — read a project without linking the app.
 
 Full documentation, agent setup and screenshots:

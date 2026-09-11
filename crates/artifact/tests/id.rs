@@ -1,6 +1,6 @@
 //! Every entry comes back named, including one written before ids existed.
 
-use cydonia_schema::{
+use cydonia_artifact::{
     project::{self, Project as _},
     session::record::Record,
 };

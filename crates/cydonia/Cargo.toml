@@ -18,7 +18,7 @@ path = "bin/main.rs"
 [dependencies]
 # The data model, and the only crate here that anything outside cydonia is
 # meant to depend on — see the workspace manifest.
-schema = { version = "0.1.1", path = "../schema", package = "cydonia-schema" }
+artifact = { version = "0.1.1", path = "../artifact", package = "cydonia-artifact" }
 
 # bezel — the component library the GUI is built on. Published as `bezel-*`;
 # the keys here are what the source imports. `platform` carries gpui_platform,
@@ -65,7 +65,7 @@ toml.workspace = true
 # it through a value tree and drop every comment the file was written with.
 toml_edit.workspace = true
 # Handing a cover out as a link rather than as a path on this disk — see
-# `Article::shape`. The same crate schema states them with.
+# `Article::shape`. The same crate `artifact` states them with.
 url.workspace = true
 # Downloads the registry's agent icons. The same client cacp-agents fetches
 # the catalog with, so this adds no second HTTP stack.

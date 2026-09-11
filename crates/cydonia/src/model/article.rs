@@ -12,13 +12,13 @@
 //! rewrite the way a vault rewrites its own links.
 
 use crate::model::{cover, workspace::Workspace};
+use artifact::{article as layout, article::properties};
 use bezel::{
     gpui::{App, AppContext as _, Context, Entity, ScrollHandle},
     ui::input::{Shape, TextField},
 };
 use editor::Editor;
 use markdown::Typography;
-use schema::{article as layout, article::properties};
 use std::{
     cmp::Reverse,
     path::{Path, PathBuf},
@@ -75,7 +75,7 @@ impl Article {
         Self {
             cover: cover::of(&path),
             title: properties::title(&path),
-            touched: schema::stamp::of(&path),
+            touched: artifact::stamp::of(&path),
             archived: properties::archived(&path),
             path,
             field: None,
@@ -95,7 +95,7 @@ impl Article {
     /// the next keystroke in the article would file the old name back.
     pub fn rename(&mut self, title: &str, cx: &mut App) {
         self.title = title.to_owned();
-        self.touched = schema::stamp::now();
+        self.touched = artifact::stamp::now();
         properties::set_title(&self.path, title);
         if let Some(field) = &self.field {
             field.update(cx, |field, cx| field.set_content(title.to_owned(), cx));
@@ -162,7 +162,7 @@ impl Article {
                 let moved = self.title != title;
                 if moved {
                     self.title = title;
-                    self.touched = schema::stamp::now();
+                    self.touched = artifact::stamp::now();
                     properties::set_title(&self.path, &self.title);
                 }
                 moved
@@ -173,7 +173,7 @@ impl Article {
             let source = editor.read(cx).source();
             if self.saved != source && std::fs::write(&self.path, &source).is_ok() {
                 self.saved = source;
-                self.touched = schema::stamp::now();
+                self.touched = artifact::stamp::now();
                 // The buffer is the file again, whatever landed under it while
                 // it was not — typing on is the third answer to the notice, and
                 // it is the one most people will give.
@@ -232,7 +232,7 @@ impl Article {
     /// keep it: it is a history of a document this one no longer is.
     pub fn revert(&mut self, cx: &mut Context<Workspace>) {
         self.title = properties::title(&self.path);
-        self.touched = schema::stamp::of(&self.path);
+        self.touched = artifact::stamp::of(&self.path);
         self.cover = cover::of(&self.path);
         self.archived = properties::archived(&self.path);
         self.field = None;
@@ -344,7 +344,7 @@ pub fn list(project: &Path) -> Vec<Article> {
 
 pub fn create(project: &Path) -> Option<Article> {
     let dir = layout::init(project).ok()?;
-    let article = layout::free(&dir, schema::stamp::now());
+    let article = layout::free(&dir, artifact::stamp::now());
     std::fs::create_dir_all(&article).ok()?;
     let path = layout::content(&article);
     std::fs::write(&path, "").ok()?;
@@ -369,7 +369,7 @@ fn migrate(project: &Path) {
         let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
             continue;
         };
-        let to = layout::free(&layout::dir(project), schema::stamp::of(path));
+        let to = layout::free(&layout::dir(project), artifact::stamp::of(path));
         if std::fs::create_dir_all(&to).is_err() {
             continue;
         }

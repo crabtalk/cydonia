@@ -17,18 +17,18 @@ use crate::{
     view::component::transcript,
 };
 use anyhow::anyhow;
-use bezel::gpui::{Context, Task};
-use cacp::schema::{
-    ContentBlock, MaybeUndefined, PermissionOptionKind, PlanEntryStatus, RequestPermissionRequest,
-    RequestPermissionResponse, SessionConfigKind, SessionConfigOption, SessionConfigOptionValue,
-    SessionModeState, SessionUpdate, StopReason, ToolCallContent, ToolCallStatus,
-};
-use schema::{
+use artifact::{
     project::{Project as _, fs},
     session::{
         chat::{ChatItem, PlanStatus, ToolStatus},
         record::Record,
     },
+};
+use bezel::gpui::{Context, Task};
+use cacp::schema::{
+    ContentBlock, MaybeUndefined, PermissionOptionKind, PlanEntryStatus, RequestPermissionRequest,
+    RequestPermissionResponse, SessionConfigKind, SessionConfigOption, SessionConfigOptionValue,
+    SessionModeState, SessionUpdate, StopReason, ToolCallContent, ToolCallStatus,
 };
 use std::{
     collections::VecDeque,

@@ -1,6 +1,6 @@
 //! What an article says on the wire.
 
-use cydonia_schema::article::Article;
+use cydonia_artifact::article::Article;
 use std::path::Path;
 use url::Url;
 

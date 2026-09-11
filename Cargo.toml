@@ -1,40 +1,20 @@
-# The workspace. Two crates: the app, and the data model it is built on.
-#
-# `schema` is the half that has to be readable from outside — the shapes the
-# app-level MCP server answers with, and what anyone building on cydonia
-# depends on. Keeping it a crate of its own is what makes that a contract
-# rather than a promise: nothing in it can reach for gpui, so nothing about
-# the window can leak into a shape a client reads.
 [workspace]
-members = ["crates/cydonia", "crates/schema"]
+members = ["crates/*"]
 resolver = "3"
 
-# One version for both, bumped together. They ship as a pair — a schema the
-# app cannot read is not a release of anything.
 [workspace.package]
 version = "0.1.1"
 edition = "2024"
-# The floor the edition itself sets. Nothing here reaches past it on purpose.
 rust-version = "1.85"
 license = "MIT"
 repository = "https://github.com/crabtalk/cydonia"
 homepage = "https://cydonia.sh"
 
-# What both crates take, so a version bump lands in one place.
 [workspace.dependencies]
 anyhow = "1"
-# cacp — our ACP implementation. `schema` takes it for the one tool-call enum a
-# transcript carries; the app takes the client with it.
 cacp = { version = "0.1.0", default-features = false }
 serde = { version = "1", features = ["derive"] }
-# An archived transcript is an array of tagged enum variants, which is the one
-# shape `toml` cannot round-trip.
 serde_json = "1"
 toml = "0.8"
-# Editing a settings or properties file in place. `toml` would round-trip it
-# through a value tree and drop every comment the file was written with.
 toml_edit = "0.22"
-# Where a cover is, said in a way that is not "on this disk". Already in the
-# graph — gpui carries it — so this names a crate that is compiled either way
-# rather than adding one.
 url = { version = "2", features = ["serde"] }

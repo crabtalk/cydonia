@@ -10,8 +10,8 @@
 //! anything believed about the text.
 
 use anyhow::{Result, anyhow, bail};
+use artifact::project::fs;
 use rusqlite::{Connection, OpenFlags, Row as SqlRow, types::ValueRef};
-use schema::project::fs;
 use serde_json::Value;
 use std::{
     collections::HashSet,
@@ -25,7 +25,7 @@ mod sql;
 
 // The shapes a store answers with live in `schema` — they are what the app
 // draws and what a client reads, and only the reads and writes below are ours.
-pub use schema::table::{
+pub use artifact::table::{
     ColType, Column, Table,
     rows::{Edit, Page, Row, Rows},
 };

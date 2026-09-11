@@ -4,6 +4,7 @@ use crate::{
     model::session::ChatSession,
     view::root::{Cydonia, NewBoard, Pane},
 };
+use artifact::board::{Card, Spot};
 use bezel::{
     gpui::{
         self, AnyElement, App, Context, Div, Entity, Focusable as _, FontWeight, KeyBinding,
@@ -18,7 +19,6 @@ use bezel::{
         widgets::Buttons,
     },
 };
-use schema::board::{Card, Spot};
 
 actions!(cydonia_board, [CommitCard, DismissCard]);
 

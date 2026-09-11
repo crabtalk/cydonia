@@ -21,16 +21,16 @@ use crate::{
         watch::{self, Watch},
     },
 };
+use artifact::{
+    board::Board,
+    project::{Project as _, fs},
+};
 use bezel::{
     gpui::{App, ClipboardItem, Context, EntityId, EventEmitter, SharedString, Window},
     theme::{self, Brand, Theme, Tint, appearance::AppearanceMode},
     ui::input,
 };
 use cacp::schema::SessionConfigOptionValue;
-use schema::{
-    board::Board,
-    project::{Project as _, fs},
-};
 use std::{
     collections::{BTreeMap, HashMap},
     path::{Path, PathBuf},

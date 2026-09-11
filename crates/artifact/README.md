@@ -1,15 +1,15 @@
-# cydonia-schema
+# cydonia-artifact
 
-The shapes [cydonia](https://cydonia.sh) keeps in a project's `.cydonia/`:
-boards, session records, article properties, tables. Read them without linking
-the app.
+The artifacts [cydonia](https://cydonia.sh) keeps — articles, boards, sessions
+and tables — as the shapes they are, not as the files they happen to be in.
+Read a project without linking the app.
 
 ```sh
-cargo add cydonia-schema
+cargo add cydonia-artifact
 ```
 
 ```rust
-use cydonia_schema::project::{Project as _, fs};
+use cydonia_artifact::project::{Project as _, fs};
 
 let project = fs::Project::new("/path/to/project");
 

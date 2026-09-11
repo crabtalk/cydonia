@@ -13,11 +13,11 @@ use crate::{
         workspace::Workspace,
     },
 };
-use bezel::gpui::Context;
-use schema::{
+use artifact::{
     board::Board,
     project::{Project as _, fs},
 };
+use bezel::gpui::Context;
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -220,7 +220,7 @@ impl Project {
     }
 
     /// Where this project's work is kept. The filesystem, for this app —
-    /// [`schema::backend`] is what a different one would be, and nothing above
+    /// [`artifact::backend`] is what a different one would be, and nothing above
     /// here names a file.
     pub fn store(&self) -> fs::Project {
         fs::Project::new(&self.path)

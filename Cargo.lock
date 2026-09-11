@@ -1892,7 +1892,7 @@ dependencies = [
  "bezel-syntax",
  "cacp",
  "cacp-agents",
- "cydonia-schema",
+ "cydonia-artifact",
  "dirs 6.0.0",
  "futures",
  "image",
@@ -1909,7 +1909,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "cydonia-schema"
+name = "cydonia-artifact"
 version = "0.1.1"
 dependencies = [
  "anyhow",

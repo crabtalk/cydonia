@@ -7,8 +7,8 @@
 
 use crate::data::{self, Data, Edit, Page, Row};
 use anyhow::{Result, bail};
+use artifact::table::Column;
 use rusqlite::params_from_iter;
-use schema::table::Column;
 
 impl Data {
     /// Read a window of rows.

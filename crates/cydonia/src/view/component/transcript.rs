@@ -9,6 +9,7 @@ use crate::{
     model::{session::ChatSession, workspace::Workspace},
     view::root,
 };
+use artifact::session::chat::{ChatItem, ToolStatus};
 use bezel::{
     agent::orbs::{OrbSize, OrbState, engine::Frame, orb_element},
     gpui::{
@@ -28,7 +29,6 @@ use markdown::{
     BlockLayouts, Selection,
     selectable::{self, Pointer},
 };
-use schema::session::chat::{ChatItem, ToolStatus};
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet, hash_map::DefaultHasher},

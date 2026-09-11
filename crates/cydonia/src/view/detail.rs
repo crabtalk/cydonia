@@ -8,6 +8,7 @@ use crate::{
         root::{self, Cydonia, NewSession, Pane},
     },
 };
+use artifact::session::chat::PlanStatus;
 use bezel::{
     gpui::{
         AnyElement, App, Context, FocusHandle, Focusable as _, SharedString, Window, div,
@@ -24,7 +25,6 @@ use cacp::schema::{
     PermissionOptionKind, SessionConfigKind, SessionConfigOptionCategory, SessionConfigOptionValue,
     SessionConfigSelectOption, SessionConfigSelectOptions, SessionModeState,
 };
-use schema::session::chat::PlanStatus;
 use std::path::Path;
 use surface::Surfaced as _;
 

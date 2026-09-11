@@ -12,10 +12,10 @@
 //! of them is the same re-read.
 
 use crate::{data, model::workspace::Workspace};
+use artifact::project::fs;
 use bezel::gpui::{Context, Task};
 use futures::{StreamExt as _, channel::mpsc};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher as _};
-use schema::project::fs;
 use std::{
     path::{Path, PathBuf},
     time::Duration,

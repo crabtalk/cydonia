@@ -1,13 +1,13 @@
 [package]
-name = "cydonia-schema"
-description = "The shapes cydonia keeps on disk and answers with: boards, session records, article properties, tables"
+name = "cydonia-artifact"
+description = "The artifacts cydonia keeps and answers with: articles, boards, sessions, tables"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-keywords = ["acp", "agents", "schema", "cydonia"]
+keywords = ["acp", "agents", "artifacts", "cydonia"]
 categories = ["data-structures"]
 
 [dependencies]
