@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+# Turn a screenshot into something worth serving.
+#
+# A macOS capture is a Retina PNG: two or three megabytes, twice the pixels any
+# layout asks for, and — for a window capture — an alpha channel carrying the
+# drop shadow. JPEG has no alpha, so that shadow has to be flattened onto some
+# colour rather than left to composite against black.
+#
+# usage: scripts/image in.png [out.jpg]
+#   --width N     cap the long edge at N pixels. Default 1280, matching the
+#                 clips. Never upscales a smaller source.
+#   --quality N   2 to 31, lower is better. Default 3.
+#   --bg COLOUR   what to flatten transparency onto. Default white.
+set -euo pipefail
+
+width=1280
+quality=3
+bg=white
+args=()
+
+while (($#)); do
+    case $1 in
+    --width) width=$2; shift 2 ;;
+    --quality) quality=$2; shift 2 ;;
+    --bg) bg=$2; shift 2 ;;
+    -h | --help)
+        awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"
+        exit 0
+        ;;
+    *) args+=("$1"); shift ;;
+    esac
+done
+
+if ((${#args[@]} == 0)); then
+    echo "usage: $(basename "$0") in.png [out.jpg]" >&2
+    exit 1
+fi
+
+command -v ffmpeg >/dev/null || { echo "image: ffmpeg not on PATH" >&2; exit 1; }
+
+src=${args[0]}
+out=${args[1]-${src%.*}.jpg}
+[[ -f $src ]] || { echo "image: no such file: $src" >&2; exit 1; }
+[[ $src != "$out" ]] || { echo "image: refusing to overwrite the source" >&2; exit 1; }
+
+read -r ow oh pix < <(ffprobe -v error -select_streams v:0 \
+    -show_entries stream=width,height,pix_fmt -of csv=p=0 "$src" | tr ',' ' ')
+
+# Downscale only. Enlarging a screenshot invents detail that was never captured.
+tw=$ow
+th=$oh
+if ((ow > width)); then
+    tw=$width
+    th=$(((oh * width + ow / 2) / ow))
+fi
+
+case $pix in
+rgba | argb | bgra | abgr | rgba64* | ya8 | ya16* | yuva* | pal8) alpha=1 ;;
+*) alpha= ;;
+esac
+
+if [[ -n $alpha ]]; then
+    # Lay the shot over a solid frame of its own size: without this the shadow
+    # composites against black and every window grows a dark halo.
+    ffmpeg -hide_banner -loglevel error -y -i "$src" -filter_complex \
+        "color=c=${bg}:s=${tw}x${th}[bg];[0:v]scale=${tw}:${th}:flags=lanczos[fg];[bg][fg]overlay=format=auto" \
+        -frames:v 1 -q:v "$quality" -map_metadata -1 "$out"
+else
+    ffmpeg -hide_banner -loglevel error -y -i "$src" \
+        -vf "scale=${tw}:${th}:flags=lanczos" \
+        -frames:v 1 -q:v "$quality" -map_metadata -1 "$out"
+fi
+
+size() { stat -f%z "$1" 2>/dev/null || stat -c%s "$1"; }
+awk -v a="$(size "$src")" -v b="$(size "$out")" -v s="$src" -v o="$out" \
+    -v ow="$ow" -v oh="$oh" -v tw="$tw" -v th="$th" \
+    'BEGIN { printf "%s  %dx%d  %.2f MB  ->  %s  %dx%d  %.2f MB  (%.0f%% smaller)\n",
+             s, ow, oh, a/1048576, o, tw, th, b/1048576, (1 - b/a) * 100 }'
+[[ -n $alpha ]] && echo "  flattened transparency onto ${bg} — pass --bg to change it"

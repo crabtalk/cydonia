@@ -1,0 +1,39 @@
+[package]
+name = "cydonia"
+description = "Desktop workspace for the ACP agents you run, keeping what they produce as files on your disk"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords = ["acp", "agents", "desktop", "gpui", "workspace"]
+categories = ["gui", "development-tools"]
+
+[[bin]]
+name = "cydonia"
+path = "bin/main.rs"
+
+[dependencies]
+artifact.workspace = true
+anyhow.workspace = true
+bezel.workspace = true
+cacp = { workspace = true, features = ["client"] }
+cacp-agents.workspace = true
+dirs.workspace = true
+editor.workspace = true
+futures.workspace = true
+image.workspace = true
+lru.workspace = true
+markdown.workspace = true
+notify.workspace = true
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+syntax.workspace = true
+tokio.workspace = true
+toml.workspace = true
+toml_edit.workspace = true
+ureq.workspace = true
+url.workspace = true

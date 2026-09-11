@@ -1,7 +1,8 @@
 <script>
-	import { Download } from 'lucide-static';
-	import { anchor, day, groups, releases } from '$lib/changelog.js';
-	import { dmgFor, site } from '$lib/meta.js';
+	import { Download, Tag } from 'lucide-static';
+	import { anchor, day, groups, media, releases } from '$lib/changelog.js';
+	import Media from '$lib/Media.svelte';
+	import { dmgFor, releaseFor, site } from '$lib/meta.js';
 
 	const description =
 		'Every release of Cydonia — what is new, what changed and what is fixed in each version.';
@@ -26,17 +27,29 @@
 				<div class="head">
 					<a class="num" href="#{anchor(release.version)}">{release.version}</a>
 					<span class="day">{day(release.date)}</span>
-					<a class="dl" href={dmgFor(release.version)}>
-						<!-- eslint-disable-next-line svelte/no-at-html-tags -->
-						{@html Download}
-						Download
-					</a>
 				</div>
 
 				<div class="body">
 					{#if release.summary}
 						<p class="summary">{release.summary}</p>
 					{/if}
+
+					{#if media(release)}
+						<Media media={media(release)} />
+					{/if}
+
+					<div class="links">
+						<a href={releaseFor(release.version)} target="_blank" rel="noreferrer">
+							<!-- eslint-disable-next-line svelte/no-at-html-tags -->
+							{@html Tag}
+							v{release.version}
+						</a>
+						<a href={dmgFor(release.version)}>
+							<!-- eslint-disable-next-line svelte/no-at-html-tags -->
+							{@html Download}
+							cydonia-{release.version}-arm64.dmg
+						</a>
+					</div>
 
 					{#each groups(release) as group (group.title)}
 						<h2>{group.title}</h2>
@@ -110,18 +123,26 @@
 		font-size: 13.5px;
 	}
 
-	/* Named for the version above it rather than repeating the filename: the
-	   rail is 140px and the file is wider than that. */
-	.dl {
+	.links {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 20px;
+		margin-top: 18px;
+	}
+
+	/* Both name the thing they fetch — a tag and a file — so both are set in the
+	   face the rest of the page uses for names of that kind. */
+	.links a {
 		display: inline-flex;
 		align-items: center;
 		gap: 7px;
-		margin-top: 12px;
 		color: var(--muted);
+		font-family: var(--mono);
 		font-size: 13px;
 	}
 
-	.dl :global(svg) {
+	.links :global(svg) {
 		width: 14px;
 		height: 14px;
 	}

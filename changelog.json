@@ -3,6 +3,12 @@
     "version": "0.1.1",
     "date": "2026-09-09",
     "summary": "The turn in flight carries a name and what it spends, the agent's model and mode move into its menu, and an open project reconciles whatever lands in .cydonia.",
+    "media": {
+      "poster": "pics/cydonia/v0.1.1.jpg",
+      "alt": "…",
+      "w": 1280,
+      "h": 900
+    },
     "new": [
       "Put bezel's thinking orbs on the working turn and its row",
       "Rebuild the menus on bezel 0.1.8, and describe the slash commands",
@@ -23,6 +29,13 @@
     "version": "0.1.0",
     "date": "2026-09-07",
     "summary": "The first release.",
+    "media": {
+      "src": "videos/cydonia/v0.1.0.mp4",
+      "poster": "pics/cydonia/v0.1.0.jpg",
+      "alt": "…",
+      "w": 1280,
+      "h": 804
+    },
     "new": [
       "The product site, a macOS bundle, the menu bar and settings",
       "Rebuild the sidebar around one ordered list per project",

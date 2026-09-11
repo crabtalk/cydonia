@@ -1,0 +1,19 @@
+[package]
+name = "cydonia-artifact"
+description = "The artifacts cydonia keeps and answers with: articles, boards, sessions, tables"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["acp", "agents", "artifacts", "cydonia"]
+categories = ["data-structures"]
+
+[dependencies]
+cacp.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+toml_edit.workspace = true
+url.workspace = true

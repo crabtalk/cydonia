@@ -1892,6 +1892,7 @@ dependencies = [
  "bezel-syntax",
  "cacp",
  "cacp-agents",
+ "cydonia-artifact",
  "dirs 6.0.0",
  "futures",
  "image",
@@ -1904,6 +1905,19 @@ dependencies = [
  "toml 0.8.23",
  "toml_edit 0.22.27",
  "ureq",
+ "url",
+]
+
+[[package]]
+name = "cydonia-artifact"
+version = "0.1.1"
+dependencies = [
+ "cacp",
+ "serde",
+ "serde_json",
+ "toml 0.8.23",
+ "toml_edit 0.22.27",
+ "url",
 ]
 
 [[package]]
@@ -6678,6 +6692,7 @@ dependencies = [
  "idna",
  "percent-encoding",
  "serde",
+ "serde_derive",
 ]
 
 [[package]]

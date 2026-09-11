@@ -6,7 +6,11 @@
 # The logo is not in git. It is downloaded once into assets/, which is ignored,
 # so a fresh clone needs nothing but the network to build an illustrated app.
 
-VERSION  := $(shell sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+# Read out of `[workspace.package]`, which is where both crates take it from.
+# Scoped to that section rather than matched anywhere in the file: a bare
+# `version =` under some other table would otherwise name the bundle and the
+# DMG after the wrong thing, and nothing would fail — it would just ship.
+VERSION  := $(shell sed -n '/^\[workspace.package\]/,/^\[/ s/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
 ARCH     := $(shell uname -m)
 ICON     := assets/icon.png
 ICON_URL := https://cdn.crabtalk.ai/logos/cydonia.png
