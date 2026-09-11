@@ -12,30 +12,28 @@
 //! move is a remove and an insert. A flat list with an ordinal only earns its
 //! keep where several views group the same cards differently.
 
-use crate::project;
+use crate::stamp;
 use serde::{Deserialize, Serialize};
-use std::{
-    cmp::Reverse,
-    path::{Path, PathBuf},
-};
-
-/// Where a project's boards live, and what the one board a project used to be
-/// allowed was called.
-const DIR: &str = "boards";
-const FILE: &str = "board.toml";
 
 /// What a board is called before it is named, and what one whose name has been
 /// taken off is shown as.
-const NAMED: &str = "Board";
+pub const NAMED: &str = "Board";
 pub const UNNAMED: &str = "Untitled";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Board {
-    /// The file this board is, which is where [`Board::save`] writes it back.
-    #[serde(skip)]
-    pub path: PathBuf,
-    /// When it was last written — the file's own time, kept in memory because
-    /// the sidebar orders on it.
+    /// What names this board, for as long as it exists. Written into the file
+    /// rather than left to be the file's name: a board a backend keeps in a
+    /// row has no name to be, and a reader that was handed one has no
+    /// directory to look in.
+    ///
+    /// Defaulted, and filled from the file's own name when a board written
+    /// before ids existed is read — see [`crate::id`].
+    #[serde(default)]
+    pub id: String,
+    /// When it was last written, as the backend that holds it counts — kept
+    /// beside the board because the sidebar orders on it, and never written
+    /// into the record, which would be a second copy able to disagree.
     #[serde(skip)]
     pub touched: u128,
     /// Put away: listed under the divider rather than gone.
@@ -64,11 +62,12 @@ pub struct Card {
 }
 
 impl Board {
-    /// The lanes every board starts with.
-    fn new(path: PathBuf, name: &str) -> Self {
+    /// The lanes every board starts with, under the name the backend about to
+    /// keep it has minted.
+    pub fn new(id: String, name: &str) -> Self {
         Self {
-            path,
-            touched: project::stamp(),
+            id,
+            touched: stamp::now(),
             archived: false,
             name: name.to_owned(),
             columns: ["Todo", "Doing", "Done"].map(Column::new).into(),
@@ -101,15 +100,6 @@ impl Board {
         (at.card < column.cards.len()).then(|| column.cards.remove(at.card))
     }
 
-    /// Best effort: a board that cannot be written is not worth failing a
-    /// click over.
-    pub fn save(&mut self) {
-        if let Ok(body) = toml::to_string_pretty(self) {
-            let _ = std::fs::write(&self.path, body);
-            self.touched = project::stamp();
-        }
-    }
-
     /// Take what a re-read of the project found, which is what the app answers a
     /// change under `.cydonia/` with.
     ///
@@ -129,10 +119,6 @@ impl Board {
         }
         *self = fresh;
         true
-    }
-
-    pub fn remove(&self) {
-        let _ = std::fs::remove_file(&self.path);
     }
 }
 
@@ -165,63 +151,4 @@ impl Spot {
     pub fn new(column: usize, card: usize) -> Self {
         Self { column, card }
     }
-}
-
-/// This project's boards, most recently written first.
-pub fn list(project: &Path) -> Vec<Board> {
-    let dir = project::dir(project);
-    migrate(&dir);
-    let Ok(entries) = std::fs::read_dir(dir.join(DIR)) else {
-        return Vec::new();
-    };
-    let paths: Vec<PathBuf> = entries
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| path.extension().is_some_and(|ext| ext == "toml"))
-        .collect();
-    let mut boards: Vec<Board> = paths.into_iter().filter_map(read).collect();
-    boards.sort_by_key(|board| Reverse(board.touched));
-    boards
-}
-
-pub fn create(project: &Path) -> Option<Board> {
-    let dir = project::init(project).ok()?.join(DIR);
-    std::fs::create_dir_all(&dir).ok()?;
-    let mut board = Board::new(free(&dir, project::stamp()), NAMED);
-    board.save();
-    Some(board)
-}
-
-fn read(path: PathBuf) -> Option<Board> {
-    let body = std::fs::read_to_string(&path).ok()?;
-    let mut board: Board = toml::from_str(&body).ok()?;
-    board.touched = project::written(&path);
-    board.path = path;
-    Some(board)
-}
-
-/// This millisecond's file, or the first after it that is not taken. Two boards
-/// made inside one millisecond is the only way that happens.
-fn free(dir: &Path, stamp: u128) -> PathBuf {
-    (stamp..)
-        .map(|stamp| dir.join(format!("{stamp}.toml")))
-        .find(|board| !board.exists())
-        .unwrap_or_else(|| dir.join(format!("{stamp}.toml")))
-}
-
-/// A project used to have one board, in `.cydonia/board.toml`. Give it the
-/// directory and the name the rest are made with, and it is the first of many.
-fn migrate(dir: &Path) {
-    let old = dir.join(FILE);
-    let Some(mut board) = read(old.clone()) else {
-        return;
-    };
-    let to = dir.join(DIR);
-    if std::fs::create_dir_all(&to).is_err() {
-        return;
-    }
-    board.path = free(&to, project::stamp());
-    board.name = NAMED.to_owned();
-    board.save();
-    let _ = std::fs::remove_file(old);
 }

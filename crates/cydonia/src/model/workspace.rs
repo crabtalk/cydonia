@@ -27,10 +27,7 @@ use bezel::{
     ui::input,
 };
 use cacp::schema::SessionConfigOptionValue;
-use schema::{
-    board::{self, Board},
-    session as record,
-};
+use schema::{backend::fs, board::Board};
 use std::{
     collections::{BTreeMap, HashMap},
     path::{Path, PathBuf},
@@ -384,14 +381,11 @@ impl Workspace {
                 project.active = project
                     .sessions
                     .iter()
-                    .find(|chat| at(chat.file.as_deref()))
+                    .find(|chat| chat.record.as_deref() == Some(id.as_str()))
                     .map(|chat| chat.id);
             }
             state::Kind::Board => {
-                project.board = project
-                    .boards
-                    .iter()
-                    .position(|board| at(Some(&board.path)));
+                project.board = project.boards.iter().position(|board| board.id == id);
             }
             state::Kind::Article => {
                 project.article = project
@@ -525,15 +519,11 @@ impl Workspace {
         self.active = Some(ix);
         // A session has no file until its first turn is written, so one that
         // has said nothing is not yet somewhere to come back to.
-        if let Some(file) = self.projects[ix]
+        if let Some(record) = self.projects[ix]
             .session(id)
-            .and_then(|chat| chat.file.clone())
+            .and_then(|chat| chat.record.clone())
         {
-            self.remember(
-                ix,
-                state::Kind::Session,
-                file.to_string_lossy().into_owned(),
-            );
+            self.remember(ix, state::Kind::Session, record);
         }
         self.wake_session(id, cx);
         cx.notify();
@@ -576,7 +566,7 @@ impl Workspace {
     /// `settings.toml` comes back readable but cannot reconnect.
     fn restore_sessions(&mut self, ix: usize) {
         let path = self.projects[ix].path.clone();
-        for (file, stored) in record::list(&path) {
+        for stored in self.projects[ix].store().sessions() {
             let id = self.next_id;
             self.next_id += 1;
             let entry = self
@@ -592,7 +582,7 @@ impl Workspace {
                     args: Vec::new(),
                     env: Default::default(),
                 });
-            let chat = ChatSession::restore(id, file, path.clone(), entry, stored);
+            let chat = ChatSession::restore(id, path.clone(), entry, stored);
             self.projects[ix].sessions.push(chat);
         }
     }
@@ -624,13 +614,9 @@ impl Workspace {
             chat.resume(cx);
         }
         chat.send(content);
-        let file = chat.file.clone();
-        if let (Some(file), Some(ix)) = (file, self.project_of(id)) {
-            self.remember(
-                ix,
-                state::Kind::Session,
-                file.to_string_lossy().into_owned(),
-            );
+        let record = chat.record.clone();
+        if let (Some(record), Some(ix)) = (record, self.project_of(id)) {
+            self.remember(ix, state::Kind::Session, record);
         }
         cx.notify();
     }
@@ -660,8 +646,8 @@ impl Workspace {
         };
         // Closing a session is what deletes it: leaving the file would put
         // the row back on the next launch.
-        if let Some(file) = project.session(id).and_then(|chat| chat.file.as_ref()) {
-            record::remove(file);
+        if let Some(record) = project.session(id).and_then(|chat| chat.record.clone()) {
+            project.store().remove_session(&record);
         }
         project.sessions.retain(|chat| chat.id != id);
         if project.active == Some(id) {
@@ -762,7 +748,7 @@ impl Workspace {
             return None;
         }
         let project = self.active?;
-        let board = board::create(&self.projects[project].path)?;
+        let board = self.projects[project].store().create_board()?;
         self.projects[project].boards.insert(0, board);
         self.open_board(project, 0, cx);
         Some(0)
@@ -778,7 +764,7 @@ impl Workspace {
             return;
         }
         open.board = Some(ix);
-        let id = open.boards[ix].path.to_string_lossy().into_owned();
+        let id = open.boards[ix].id.clone();
         self.active = Some(project);
         self.remember(project, state::Kind::Board, id);
         cx.notify();
@@ -792,7 +778,7 @@ impl Workspace {
         if ix >= project.boards.len() {
             return;
         }
-        project.boards.remove(ix).remove();
+        project.store().remove_board(&project.boards.remove(ix).id);
         project.board = project
             .board
             .filter(|open| *open != ix)
@@ -800,21 +786,19 @@ impl Workspace {
         cx.notify();
     }
 
-    pub fn rename_board(&mut self, path: &Path, name: String, cx: &mut Context<Self>) {
-        let Some(board) = self.board_at_mut(path) else {
-            return;
-        };
-        board.name = name.trim().to_owned();
-        board.save();
+    pub fn rename_board(&mut self, id: &str, name: String, cx: &mut Context<Self>) {
+        self.with_board(id, |store, board| {
+            board.name = name.trim().to_owned();
+            store.save_board(board);
+        });
         cx.notify();
     }
 
-    pub fn archive_board(&mut self, path: &Path, archived: bool, cx: &mut Context<Self>) {
-        let Some(board) = self.board_at_mut(path) else {
-            return;
-        };
-        board.archived = archived;
-        board.save();
+    pub fn archive_board(&mut self, id: &str, archived: bool, cx: &mut Context<Self>) {
+        self.with_board(id, |store, board| {
+            board.archived = archived;
+            store.save_board(board);
+        });
         cx.notify();
     }
 
@@ -841,18 +825,34 @@ impl Workspace {
     /// The board a file names, wherever it is open. What a rename holds onto:
     /// an index moves the moment a neighbour is made or dropped, and the file
     /// is the board — it is where [`Board::save`] writes.
-    pub fn board_at(&self, path: &Path) -> Option<&Board> {
+    pub fn board_at(&self, id: &str) -> Option<&Board> {
         self.projects
             .iter()
             .flat_map(|open| open.boards.iter())
-            .find(|board| board.path == path)
+            .find(|board| board.id == id)
     }
 
-    pub fn board_at_mut(&mut self, path: &Path) -> Option<&mut Board> {
-        self.projects
-            .iter_mut()
-            .flat_map(|open| open.boards.iter_mut())
-            .find(|board| board.path == path)
+    /// Reach a board wherever it is open, with the store that holds it — the
+    /// project it is in, and the only thing that can write it back.
+    fn with_board(&mut self, id: &str, edit: impl FnOnce(&fs::Project, &mut Board)) {
+        for open in &mut self.projects {
+            let store = open.store();
+            if let Some(board) = open.boards.iter_mut().find(|board| board.id == id) {
+                edit(&store, board);
+                return;
+            }
+        }
+    }
+
+    /// Write the open board back, for an edit the pane made in place.
+    pub fn save_board(&mut self) {
+        let Some(open) = self.active.and_then(|ix| self.projects.get_mut(ix)) else {
+            return;
+        };
+        let store = open.store();
+        if let Some(board) = open.board.and_then(|ix| open.boards.get_mut(ix)) {
+            store.save_board(board);
+        }
     }
 
     // ── articles ─────────────────────────────────────────────────────

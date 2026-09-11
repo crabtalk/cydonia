@@ -176,7 +176,7 @@ fn shown(row: Row, features: &Features) -> bool {
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) enum Renaming {
     Session(u64),
-    Board(PathBuf),
+    Board(String),
     Article(PathBuf),
     Table(String),
 }
@@ -1097,8 +1097,8 @@ impl Cydonia {
             .get(project)
             .and_then(|open| open.boards.get(ix));
         let archived = board.is_some_and(|board| board.archived);
-        let path = board.map(|board| &board.path);
-        let renaming = matches!(&self.renaming, Some(Renaming::Board(at)) if Some(at) == path);
+        let id = board.map(|board| &board.id);
+        let renaming = matches!(&self.renaming, Some(Renaming::Board(at)) if Some(at) == id);
         let tint = tint(selected, archived, &theme);
         let label = match renaming {
             true => self.name_field(cx),
@@ -1177,7 +1177,7 @@ impl Cydonia {
                 .projects
                 .get(project)
                 .and_then(|open| open.boards.get(ix))
-                .map(|board| Renaming::Board(board.path.clone())),
+                .map(|board| Renaming::Board(board.id.clone())),
             Row::Article { project, ix } => workspace
                 .projects
                 .get(project)
@@ -1202,13 +1202,13 @@ impl Cydonia {
         self.workspace.update(cx, |workspace, cx| match entry {
             Row::Session { id, .. } => workspace.archive_session(id, archived, cx),
             Row::Board { project, ix } => {
-                if let Some(path) = workspace
+                if let Some(id) = workspace
                     .projects
                     .get(project)
                     .and_then(|open| open.boards.get(ix))
-                    .map(|board| board.path.clone())
+                    .map(|board| board.id.clone())
                 {
-                    workspace.archive_board(&path, archived, cx);
+                    workspace.archive_board(&id, archived, cx);
                 }
             }
             Row::Article { project, ix } => {
@@ -1265,8 +1265,8 @@ impl Cydonia {
                 .session(*id)
                 .map(ChatSession::label)
                 .unwrap_or_default(),
-            Renaming::Board(path) => workspace
-                .board_at(path)
+            Renaming::Board(id) => workspace
+                .board_at(id)
                 .map(|board| board.name.clone())
                 .unwrap_or_default(),
             Renaming::Article(path) => workspace
@@ -1298,7 +1298,7 @@ impl Cydonia {
         let name = self.name_field.read(cx).content().to_string();
         self.workspace.update(cx, |workspace, cx| match what {
             Renaming::Session(id) => workspace.rename_session(id, name, cx),
-            Renaming::Board(path) => workspace.rename_board(&path, name, cx),
+            Renaming::Board(id) => workspace.rename_board(&id, name, cx),
             Renaming::Article(path) => workspace.rename_article(&path, name, cx),
             Renaming::Table(key) => workspace.rename_table(&key, name, cx),
         });

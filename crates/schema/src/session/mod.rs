@@ -9,16 +9,21 @@
 
 pub mod chat;
 
-use crate::{project, session::chat::ChatItem};
+use crate::session::chat::ChatItem;
 use serde::{Deserialize, Serialize};
-use std::{
-    cmp::Reverse,
-    path::{Path, PathBuf},
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[derive(Serialize, Deserialize)]
 pub struct Record {
+    /// What names this session here, minted when its file is and never moving
+    /// after. Not [`Record::session`]: that one is the agent's, absent until
+    /// the session first reaches one, and gone the moment the agent forgets
+    /// it. This is ours, and it is what a reader asks for a session by.
+    ///
+    /// Defaulted, and filled from the file's own name for a session written
+    /// before ids existed — see [`crate::id`].
+    #[serde(default)]
+    pub id: String,
     /// The agent it runs on, by the name `settings.toml` gives it. Resolving
     /// that name against the settings is what lets the session reconnect.
     pub agent: String,
@@ -42,57 +47,4 @@ impl Record {
     pub fn at(&self) -> SystemTime {
         UNIX_EPOCH + Duration::from_secs(self.updated)
     }
-}
-
-const SESSIONS: &str = "sessions";
-
-fn dir(project: &Path) -> PathBuf {
-    project::dir(project).join(SESSIONS)
-}
-
-/// Every session filed in the project with the file it came from, most recently
-/// updated first. The path is what lets a row rewrite or delete itself later.
-pub fn list(project: &Path) -> Vec<(PathBuf, Record)> {
-    let Ok(entries) = std::fs::read_dir(dir(project)) else {
-        return Vec::new();
-    };
-    let mut found: Vec<(PathBuf, Record)> = entries
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
-        .filter_map(|path| {
-            let body = std::fs::read_to_string(&path).ok()?;
-            Some((path, serde_json::from_str(&body).ok()?))
-        })
-        .collect();
-    found.sort_by_key(|(_, record)| Reverse(record.updated));
-    found
-}
-
-/// Mint the file a session is written to from here on. Called on the first
-/// write and not before: opening a project must not put a `.cydonia/` in it.
-pub fn create(project: &Path) -> Option<PathBuf> {
-    let dir = project::init(project).ok()?.join(SESSIONS);
-    std::fs::create_dir_all(&dir).ok()?;
-    let stamp = project::stamp();
-    let mut path = dir.join(format!("{stamp}.json"));
-    for n in 2.. {
-        if !path.exists() {
-            break;
-        }
-        path = dir.join(format!("{stamp}-{n}.json"));
-    }
-    Some(path)
-}
-
-/// Best effort, like [`remove`]: a session that cannot be written is not worth
-/// failing a turn over.
-pub fn write(file: &Path, record: &Record) {
-    if let Ok(body) = serde_json::to_string_pretty(record) {
-        let _ = std::fs::write(file, body);
-    }
-}
-
-pub fn remove(file: &Path) {
-    let _ = std::fs::remove_file(file);
 }

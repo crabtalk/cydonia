@@ -152,7 +152,7 @@ impl Cydonia {
                     }
                 }
             }
-            board.save();
+            workspace.save_board();
             cx.notify();
         });
     }
@@ -185,7 +185,7 @@ impl Cydonia {
             if let Some(card) = board.take(at) {
                 board.columns[to].cards.push(card);
             }
-            board.save();
+            workspace.save_board();
             cx.notify();
         });
         cx.notify();
@@ -198,7 +198,7 @@ impl Cydonia {
                 return;
             };
             board.take(at);
-            board.save();
+            workspace.save_board();
             cx.notify();
         });
         cx.notify();

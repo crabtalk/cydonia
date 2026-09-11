@@ -10,33 +10,11 @@
 //! because the project directory is the whole identity — it is what a session
 //! is spawned with as its `cwd`, and moving it moves everything under it.
 
-use std::{
-    path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::path::{Path, PathBuf};
 
 /// Everything cydonia holds for a project lives here: its articles, its
 /// archived sessions, and its database.
 const DIR: &str = ".cydonia";
-
-/// Now, in milliseconds — the id an article or a board is made with. Sorting
-/// these is sorting by age, which is the order they are listed back in.
-pub fn stamp() -> u128 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|since| since.as_millis())
-        .unwrap_or_default()
-}
-
-/// When a file was last written, as the same millisecond stamp ids carry — the
-/// key entries are listed by, so the one you touched last is the one on top.
-pub fn written(path: &Path) -> u128 {
-    std::fs::metadata(path)
-        .and_then(|meta| meta.modified())
-        .ok()
-        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
-        .map_or_else(stamp, |since| since.as_millis())
-}
 
 pub fn dir(project: &Path) -> PathBuf {
     project.join(DIR)

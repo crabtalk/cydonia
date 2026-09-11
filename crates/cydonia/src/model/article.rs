@@ -75,7 +75,7 @@ impl Article {
         Self {
             cover: cover::of(&path),
             title: properties::title(&path),
-            touched: project::written(&path),
+            touched: schema::stamp::of(&path),
             archived: properties::archived(&path),
             path,
             field: None,
@@ -95,7 +95,7 @@ impl Article {
     /// the next keystroke in the article would file the old name back.
     pub fn rename(&mut self, title: &str, cx: &mut App) {
         self.title = title.to_owned();
-        self.touched = project::stamp();
+        self.touched = schema::stamp::now();
         properties::set_title(&self.path, title);
         if let Some(field) = &self.field {
             field.update(cx, |field, cx| field.set_content(title.to_owned(), cx));
@@ -162,7 +162,7 @@ impl Article {
                 let moved = self.title != title;
                 if moved {
                     self.title = title;
-                    self.touched = project::stamp();
+                    self.touched = schema::stamp::now();
                     properties::set_title(&self.path, &self.title);
                 }
                 moved
@@ -173,7 +173,7 @@ impl Article {
             let source = editor.read(cx).source();
             if self.saved != source && std::fs::write(&self.path, &source).is_ok() {
                 self.saved = source;
-                self.touched = project::stamp();
+                self.touched = schema::stamp::now();
                 // The buffer is the file again, whatever landed under it while
                 // it was not — typing on is the third answer to the notice, and
                 // it is the one most people will give.
@@ -232,7 +232,7 @@ impl Article {
     /// keep it: it is a history of a document this one no longer is.
     pub fn revert(&mut self, cx: &mut Context<Workspace>) {
         self.title = properties::title(&self.path);
-        self.touched = project::written(&self.path);
+        self.touched = schema::stamp::of(&self.path);
         self.cover = cover::of(&self.path);
         self.archived = properties::archived(&self.path);
         self.field = None;
@@ -313,6 +313,7 @@ impl Article {
 impl From<&Article> for layout::Article {
     fn from(article: &Article) -> Self {
         Self {
+            id: layout::id_of(&article.path),
             title: article.title.clone(),
             archived: article.archived,
             touched: article.touched,
@@ -343,7 +344,7 @@ pub fn list(project: &Path) -> Vec<Article> {
 
 pub fn create(project: &Path) -> Option<Article> {
     let dir = layout::init(project).ok()?;
-    let article = layout::free(&dir, project::stamp());
+    let article = layout::free(&dir, schema::stamp::now());
     std::fs::create_dir_all(&article).ok()?;
     let path = layout::content(&article);
     std::fs::write(&path, "").ok()?;
@@ -368,7 +369,7 @@ fn migrate(project: &Path) {
         let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
             continue;
         };
-        let to = layout::free(&layout::dir(project), project::written(path));
+        let to = layout::free(&layout::dir(project), schema::stamp::of(path));
         if std::fs::create_dir_all(&to).is_err() {
             continue;
         }

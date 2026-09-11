@@ -33,6 +33,9 @@ use url::Url;
 /// a connection says so in the same field without the shape changing.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Article {
+    /// What names this article. The directory it is in, for the filesystem
+    /// backend — the document moves within it and the name does not.
+    pub id: String,
     pub title: String,
     #[serde(default)]
     pub archived: bool,
@@ -65,6 +68,16 @@ pub fn content(article: &Path) -> PathBuf {
 
 /// This millisecond's directory, or the first after it that is not taken. Two
 /// articles made inside one millisecond is the only way that happens.
+/// What names the article a document sits in: the directory it is in, which
+/// is what a reader asks for it by.
+pub fn id_of(content: &Path) -> String {
+    content
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str())
+        .map_or_else(crate::id::mint, str::to_owned)
+}
+
 pub fn free(dir: &Path, stamp: u128) -> PathBuf {
     (stamp..)
         .map(|stamp| dir.join(stamp.to_string()))

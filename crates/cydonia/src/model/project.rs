@@ -14,7 +14,7 @@ use crate::{
     },
 };
 use bezel::gpui::Context;
-use schema::board::{self, Board};
+use schema::{backend, board::Board};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -56,7 +56,7 @@ pub struct Project {
 impl Project {
     pub fn new(path: PathBuf) -> Self {
         let mut this = Self {
-            boards: board::list(&path),
+            boards: backend::fs::Project::new(&path).boards(),
             articles: article::list(&path),
             data: Data::attach(&path),
             path,
@@ -155,16 +155,18 @@ impl Project {
         let open = self
             .board
             .and_then(|ix| self.boards.get(ix))
-            .map(|board| board.path.clone());
-        let mut held: HashMap<PathBuf, Board> = self
+            .map(|board| board.id.clone());
+        let mut held: HashMap<String, Board> = self
             .boards
             .drain(..)
-            .map(|board| (board.path.clone(), board))
+            .map(|board| (board.id.clone(), board))
             .collect();
         let mut moved = false;
-        self.boards = board::list(&self.path)
+        self.boards = self
+            .store()
+            .boards()
             .into_iter()
-            .map(|fresh| match held.remove(&fresh.path) {
+            .map(|fresh| match held.remove(&fresh.id) {
                 Some(mut board) => {
                     moved |= board.adopt(fresh);
                     board
@@ -172,7 +174,7 @@ impl Project {
                 None => fresh,
             })
             .collect();
-        self.board = open.and_then(|path| self.boards.iter().position(|at| at.path == path));
+        self.board = open.and_then(|id| self.boards.iter().position(|at| at.id == id));
         moved
     }
 
@@ -212,6 +214,13 @@ impl Project {
             (Some(key), Some(data)) => data.read(&key, None, false, PAGE, 0).ok(),
             _ => None,
         };
+    }
+
+    /// Where this project's work is kept. The filesystem, for this app —
+    /// [`schema::backend`] is what a different one would be, and nothing above
+    /// here names a file.
+    pub fn store(&self) -> backend::fs::Project {
+        backend::fs::Project::new(&self.path)
     }
 
     /// The tab's label: the directory's own name, or the whole path when it

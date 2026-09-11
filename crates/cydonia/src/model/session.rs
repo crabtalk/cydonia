@@ -23,9 +23,12 @@ use cacp::schema::{
     RequestPermissionResponse, SessionConfigKind, SessionConfigOption, SessionConfigOptionValue,
     SessionModeState, SessionUpdate, StopReason, ToolCallContent, ToolCallStatus,
 };
-use schema::session::{
-    self as record, Record,
-    chat::{ChatItem, PlanStatus, ToolStatus},
+use schema::{
+    backend::fs,
+    session::{
+        Record,
+        chat::{ChatItem, PlanStatus, ToolStatus},
+    },
 };
 use std::{
     collections::VecDeque,
@@ -140,7 +143,10 @@ pub struct ChatSession {
     /// The agent's own id for this session — what `session/load` resumes.
     pub agent_session: Option<String>,
     /// Where the session is written, once it has anything to write.
-    pub file: Option<PathBuf>,
+    /// What this session is filed under, once it has been written. Minted on
+    /// the first flush and not before — a session that has said nothing is not
+    /// yet anything to come back to.
+    pub record: Option<String>,
     /// Whether the user archived it. Typing into it clears this.
     pub closed: bool,
     pub streaming: bool,
@@ -179,7 +185,7 @@ impl ChatSession {
             name: None,
             updated: SystemTime::now(),
             agent_session: None,
-            file: None,
+            record: None,
             closed: false,
             streaming: false,
             queue: seed.into_iter().collect(),
@@ -191,13 +197,7 @@ impl ChatSession {
     /// A session read back from disk. It starts idle — a launch must not spawn
     /// an agent per session — and reconnects when it is brought to the front,
     /// or when something is sent to it.
-    pub fn restore(
-        id: u64,
-        file: PathBuf,
-        cwd: PathBuf,
-        entry: settings::Agent,
-        record: Record,
-    ) -> Self {
+    pub fn restore(id: u64, cwd: PathBuf, entry: settings::Agent, record: Record) -> Self {
         let updated = record.at();
         Self {
             id,
@@ -216,7 +216,7 @@ impl ChatSession {
             name: record.name,
             updated,
             agent_session: record.session,
-            file: Some(file),
+            record: Some(record.id),
             closed: record.closed,
             streaming: false,
             queue: VecDeque::new(),
@@ -236,6 +236,9 @@ impl ChatSession {
 
     fn to_record(&self) -> Record {
         Record {
+            // The file is minted before the first write, so by the time there
+            // is a record to name there is a name for it.
+            id: self.record.clone().unwrap_or_default(),
             agent: self.entry.name.clone(),
             session: self.agent_session.clone(),
             title: self.title.clone(),
@@ -256,11 +259,12 @@ impl ChatSession {
         if self.items.is_empty() {
             return;
         }
-        if self.file.is_none() {
-            self.file = record::create(&self.cwd);
+        let store = fs::Project::new(&self.cwd);
+        if self.record.is_none() {
+            self.record = store.create_session();
         }
-        if let Some(file) = &self.file {
-            record::write(file, &self.to_record());
+        if self.record.is_some() {
+            store.save_session(&self.to_record());
         }
     }
 

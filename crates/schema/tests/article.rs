@@ -6,6 +6,7 @@ use url::Url;
 
 fn article(cover: Option<&str>) -> Article {
     Article {
+        id: "1757000000000".into(),
         title: "Roadmap".into(),
         archived: false,
         touched: 1_757_000_000_000,
@@ -44,7 +45,8 @@ fn a_name_needing_escapes_survives_the_round_trip() {
 #[test]
 fn an_older_record_reads_back() {
     let back: Article =
-        serde_json::from_str(r#"{"title":"Roadmap","touched":1757000000000}"#).unwrap();
+        serde_json::from_str(r#"{"id":"1757000000000","title":"Roadmap","touched":1757000000000}"#)
+            .unwrap();
     assert_eq!(back.title, "Roadmap");
     assert!(!back.archived);
     assert!(back.cover.is_none());
