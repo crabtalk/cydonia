@@ -24,10 +24,10 @@ use cacp::schema::{
     SessionModeState, SessionUpdate, StopReason, ToolCallContent, ToolCallStatus,
 };
 use schema::{
-    backend::fs,
+    project::{Project as _, fs},
     session::{
-        Record,
         chat::{ChatItem, PlanStatus, ToolStatus},
+        record::Record,
     },
 };
 use std::{

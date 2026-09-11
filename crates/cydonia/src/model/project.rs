@@ -14,7 +14,10 @@ use crate::{
     },
 };
 use bezel::gpui::Context;
-use schema::{backend, board::Board};
+use schema::{
+    board::Board,
+    project::{Project as _, fs},
+};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -56,7 +59,7 @@ pub struct Project {
 impl Project {
     pub fn new(path: PathBuf) -> Self {
         let mut this = Self {
-            boards: backend::fs::Project::new(&path).boards(),
+            boards: fs::Project::new(&path).boards(),
             articles: article::list(&path),
             data: Data::attach(&path),
             path,
@@ -219,8 +222,8 @@ impl Project {
     /// Where this project's work is kept. The filesystem, for this app —
     /// [`schema::backend`] is what a different one would be, and nothing above
     /// here names a file.
-    pub fn store(&self) -> backend::fs::Project {
-        backend::fs::Project::new(&self.path)
+    pub fn store(&self) -> fs::Project {
+        fs::Project::new(&self.path)
     }
 
     /// The tab's label: the directory's own name, or the whole path when it

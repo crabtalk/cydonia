@@ -18,7 +18,7 @@ use bezel::{
 };
 use editor::Editor;
 use markdown::Typography;
-use schema::{article as layout, article::properties, project};
+use schema::{article as layout, article::properties};
 use std::{
     cmp::Reverse,
     path::{Path, PathBuf},
@@ -358,7 +358,7 @@ pub fn create(project: &Path) -> Option<Article> {
 /// Runs the first time a project is opened after the change; one with nothing
 /// loose in it costs the `read_dir` [`list`] was about to do anyway.
 fn migrate(project: &Path) {
-    let Ok(entries) = std::fs::read_dir(project::dir(project)) else {
+    let Ok(entries) = std::fs::read_dir(layout::dir(project)) else {
         return;
     };
     let loose: Vec<PathBuf> = entries.flatten().map(|entry| entry.path()).collect();

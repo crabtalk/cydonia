@@ -11,7 +11,7 @@
 
 use anyhow::{Result, anyhow, bail};
 use rusqlite::{Connection, OpenFlags, Row as SqlRow, types::ValueRef};
-use schema::project;
+use schema::project::fs;
 use serde_json::Value;
 use std::{
     collections::HashSet,
@@ -60,7 +60,7 @@ impl Data {
     /// database it needs the shared-memory sidecar an open writer has already
     /// made — so opening it first fails on a store nobody has written yet.
     pub fn open(project: &Path) -> Result<Self> {
-        let path = project::init(project)?.join(FILE);
+        let path = fs::Project::new(project).init()?.join(FILE);
 
         let writer = Connection::open(&path)?;
         writer.busy_timeout(BUSY)?;
@@ -90,7 +90,7 @@ impl Data {
     /// The store as it already is, or nothing. Browsing a project must not
     /// write a database into it — [`Data::open`] is what creates one.
     pub fn attach(project: &Path) -> Option<Self> {
-        match project::dir(project).join(FILE).exists() {
+        match fs::Project::new(project).cydonia().join(FILE).exists() {
             true => Self::open(project).ok(),
             false => None,
         }

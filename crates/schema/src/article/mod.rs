@@ -16,7 +16,7 @@
 
 pub mod properties;
 
-use crate::project;
+use crate::project::fs;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use url::Url;
@@ -53,12 +53,12 @@ const CONTENT: &str = "content.md";
 
 /// Where this project's articles are, whether or not any have been written.
 pub fn dir(project: &Path) -> PathBuf {
-    project::dir(project).join(DIR)
+    fs::Project::new(project).cydonia().join(DIR)
 }
 
 /// The same, made along with the `.cydonia/` it sits in.
 pub fn init(project: &Path) -> std::io::Result<PathBuf> {
-    Ok(project::init(project)?.join(DIR))
+    Ok(fs::Project::new(project).init()?.join(DIR))
 }
 
 /// The document inside one article's directory — the path an agent is given.

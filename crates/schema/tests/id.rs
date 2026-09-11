@@ -1,7 +1,10 @@
 //! Every entry comes back named, including one written before ids existed.
 
-use cydonia_schema::{backend::fs::Project, project};
-use std::{fs, path::Path};
+use cydonia_schema::{
+    project::{self, Project as _},
+    session::record::Record,
+};
+use std::fs;
 
 /// A scratch project, torn down when the test ends.
 struct Scratch(std::path::PathBuf);
@@ -14,13 +17,9 @@ impl Scratch {
         Self(dir)
     }
 
-    fn path(&self) -> &Path {
-        &self.0
-    }
-
     /// The store under it, which is what holds the entries.
-    fn store(&self) -> Project {
-        Project::new(&self.0)
+    fn store(&self) -> project::fs::Project {
+        project::fs::Project::new(&self.0)
     }
 }
 
@@ -43,7 +42,7 @@ fn a_new_board_is_named_when_it_is_made() {
 #[test]
 fn a_board_written_before_ids_takes_the_name_of_its_file() {
     let scratch = Scratch::new("board-old");
-    let dir = project::init(scratch.path()).unwrap().join("boards");
+    let dir = scratch.store().init().unwrap().join("boards");
     fs::create_dir_all(&dir).unwrap();
     fs::write(dir.join("1757000000000.toml"), "name = \"Roadmap\"\n").unwrap();
 
@@ -58,7 +57,7 @@ fn a_board_written_before_ids_takes_the_name_of_its_file() {
 #[test]
 fn reading_an_old_board_leaves_the_file_alone() {
     let scratch = Scratch::new("board-quiet");
-    let dir = project::init(scratch.path()).unwrap().join("boards");
+    let dir = scratch.store().init().unwrap().join("boards");
     fs::create_dir_all(&dir).unwrap();
     let file = dir.join("1757000000000.toml");
     let before = "name = \"Roadmap\"\n";
@@ -86,7 +85,7 @@ fn sessions_made_together_are_named_apart() {
 #[test]
 fn a_session_written_before_ids_takes_the_name_of_its_file() {
     let scratch = Scratch::new("session-old");
-    let dir = project::init(scratch.path()).unwrap().join("sessions");
+    let dir = scratch.store().init().unwrap().join("sessions");
     fs::create_dir_all(&dir).unwrap();
     fs::write(
         dir.join("1757000000000-2.json"),
@@ -101,8 +100,8 @@ fn a_session_written_before_ids_takes_the_name_of_its_file() {
 }
 
 /// The least a session can be filed as.
-fn record(id: &str) -> cydonia_schema::session::Record {
-    cydonia_schema::session::Record {
+fn record(id: &str) -> Record {
+    Record {
         id: id.to_owned(),
         agent: "claude".into(),
         session: None,

@@ -27,7 +27,10 @@ use bezel::{
     ui::input,
 };
 use cacp::schema::SessionConfigOptionValue;
-use schema::{backend::fs, board::Board};
+use schema::{
+    board::Board,
+    project::{Project as _, fs},
+};
 use std::{
     collections::{BTreeMap, HashMap},
     path::{Path, PathBuf},

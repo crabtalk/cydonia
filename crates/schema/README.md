@@ -9,7 +9,7 @@ cargo add cydonia-schema
 ```
 
 ```rust
-use cydonia_schema::backend::fs;
+use cydonia_schema::project::{Project as _, fs};
 
 let project = fs::Project::new("/path/to/project");
 
@@ -22,17 +22,16 @@ for record in project.sessions() {
 ```
 
 One module per kind — the same four a project can show — and none of them names
-a file. Reading and writing belongs to a backend; `backend::fs` is the one
-cydonia ships, and a board is the same board whichever one answered.
+a file. Reading and writing is `project::Project`'s, and `project::fs` is
+the one impl cydonia ships — so a board is the same board whichever answered.
 
 | Module | What it is |
 | --- | --- |
 | `article` | `Article` — title, cover and state; `article::properties` is its file |
 | `board` | `Board`, `Column`, `Card` — cards in lanes |
-| `session` | `Record`, an archived session; `session::chat` is its transcript |
+| `session` | `session::record` is what one is filed as, `session::chat` its transcript |
 | `table` | `Table`, `ColType`; `table::rows` is `Page`, `Row`, `Edit` |
-| `backend` | Where the shapes come from; `backend::fs` is `.cydonia/` |
-| `project` | Where `.cydonia/` is |
+| `project` | `Project` — what a backend answers; `project::fs` is `.cydonia/` |
 | `id` | What names an entry, and keeps naming it |
 | `stamp` | The millisecond it was made, and the one it last changed at |
 

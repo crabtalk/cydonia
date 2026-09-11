@@ -15,7 +15,7 @@ use crate::{data, model::workspace::Workspace};
 use bezel::gpui::{Context, Task};
 use futures::{StreamExt as _, channel::mpsc};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher as _};
-use schema::project;
+use schema::project::fs;
 use std::{
     path::{Path, PathBuf},
     time::Duration,
@@ -81,7 +81,7 @@ impl Watch {
                     }
                     // Armed on the project because it had no `.cydonia/` yet,
                     // and now it has one: drop out and arm on the real thing.
-                    if !deep && project::dir(&root).exists() {
+                    if !deep && fs::Project::new(&root).cydonia().exists() {
                         break;
                     }
                 }
@@ -100,7 +100,8 @@ fn arm(root: &Path) -> Option<(RecommendedWatcher, mpsc::UnboundedReceiver<()>, 
     // The prefix every event is matched against, resolved once. FSEvents
     // reports the real path, so a project reached through a symlink would never
     // match the prefix it was armed with.
-    let dir = project::dir(&std::fs::canonicalize(root).unwrap_or_else(|_| root.to_owned()));
+    let dir =
+        fs::Project::new(std::fs::canonicalize(root).unwrap_or_else(|_| root.to_owned())).cydonia();
     let (tx, rx) = mpsc::unbounded();
     let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
         let Ok(event) = event else {
@@ -111,7 +112,7 @@ fn arm(root: &Path) -> Option<(RecommendedWatcher, mpsc::UnboundedReceiver<()>, 
         }
     })
     .ok()?;
-    match watcher.watch(&project::dir(root), RecursiveMode::Recursive) {
+    match watcher.watch(&fs::Project::new(root).cydonia(), RecursiveMode::Recursive) {
         Ok(()) => Some((watcher, rx, true)),
         Err(_) => watcher
             .watch(root, RecursiveMode::NonRecursive)
