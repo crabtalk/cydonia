@@ -298,6 +298,12 @@ impl Cydonia {
             .flex()
             .flex_col()
             .overflow_hidden()
+            // The band is drawn over the column, so the room it needs is taken
+            // here. Held on the pane rather than inside each pane's scroll,
+            // which is where it wants to end up — `../desktop` reserves it
+            // inside the scroll so content slides under the glass, and doing
+            // that means every pane's own scroll box, not this one div.
+            .pt(px(root::HEADER_HEIGHT))
             .child(body);
 
         div()
@@ -308,6 +314,8 @@ impl Cydonia {
             .flex()
             .flex_col()
             .child(content)
+            // After the content, so it draws over it.
+            .child(self.pane_header(window, cx))
             // Out of flow so the transcript runs under it: the composer's glass
             // has something to bend only where the messages reach its edge.
             .when(live && showing == Some(Pane::Chat), |column| {
@@ -333,11 +341,6 @@ impl Cydonia {
                                 .child(self.composer.clone()),
                         ),
                 )
-            })
-            // Out of flow, so folding the sidebar away costs the pane nothing:
-            // the controls float on the column rather than taking a row off it.
-            .when(!self.sidebar_open, |column| {
-                column.child(self.fold_cluster(window, cx))
             })
     }
 }

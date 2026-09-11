@@ -15,6 +15,7 @@ use crate::{
             menu::Menu,
             meter,
         },
+        header,
         settings::{self, Section, SettingsWindow},
         sidebar::{Filter, Renaming, Row},
         table,
@@ -253,6 +254,10 @@ pub struct Cydonia {
     /// What the table pane's field is attached to, and the field itself.
     pub(crate) cell: Option<table::Cell>,
     pub(crate) cell_field: Entity<TextField>,
+    /// The delete waiting to be agreed to, and the name to ask about. Held
+    /// with its label rather than looked up when the dialog draws: what is
+    /// being asked about must not change wording under the question.
+    pub(crate) confirming: Option<header::Confirming>,
     pub(crate) menu: Option<Menu>,
     /// Which of the open menu's rows is live. Held here rather than in the
     /// card, which is rebuilt every frame: the pointer moves the cursor, and
@@ -338,6 +343,7 @@ impl Cydonia {
             card_field,
             cell: None,
             cell_field,
+            confirming: None,
             menu: None,
             menu_cursor: Cursor::default(),
             menu_pressed: false,
@@ -667,5 +673,8 @@ impl Render for Cydonia {
                     .meter
                     .then(|| meter::panel("app-meter", &self.meter_at, &self.meter, window)),
             )
+            // Over every column and every floating control: nothing behind it
+            // is answerable while it is asking.
+            .children(self.confirm_delete(cx))
     }
 }

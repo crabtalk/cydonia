@@ -427,7 +427,11 @@ impl Cydonia {
             .and_then(|open| open.articles.get(ix));
         let archived = article.is_some_and(|article| article.archived);
         let path = article.map(|article| &article.path);
-        let renaming = matches!(&self.renaming, Some(Renaming::Article(at)) if Some(at) == path);
+        // The band draws the field when it is showing this entry — see
+        // [`Cydonia::header_renaming`], which is what keeps one field from
+        // being claimed by two places at once.
+        let renaming = matches!(&self.renaming, Some(Renaming::Article(at)) if Some(at) == path)
+            && self.header_renaming(cx).is_none();
         let tint = sidebar::tint(selected, archived, &theme);
         let id = SharedString::from(format!("article-{project}-{ix}"));
 
@@ -459,7 +463,7 @@ impl Cydonia {
                     Menu::Entry(entry),
                     cx,
                 )
-                .children(self.entry_menu(entry, archived, cx)),
+                .children(self.entry_menu(Menu::Entry(entry), entry, archived, cx)),
             )
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.open_article(project, ix, window, cx);

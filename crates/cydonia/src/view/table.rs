@@ -509,7 +509,11 @@ impl Cydonia {
             .and_then(|open| open.tables.get(ix));
         let archived = table.is_some_and(|table| table.archived);
         let key = table.map(|table| &table.key);
-        let renaming = matches!(&self.renaming, Some(Renaming::Table(at)) if Some(at) == key);
+        // The band draws the field when it is showing this entry — see
+        // [`Cydonia::header_renaming`], which is what keeps one field from
+        // being claimed by two places at once.
+        let renaming = matches!(&self.renaming, Some(Renaming::Table(at)) if Some(at) == key)
+            && self.header_renaming(cx).is_none();
         let tone = sidebar::tint(selected, archived, &theme);
 
         sidebar::row(
@@ -545,7 +549,7 @@ impl Cydonia {
                 Menu::Entry(entry),
                 cx,
             )
-            .children(self.entry_menu(entry, archived, cx)),
+            .children(self.entry_menu(Menu::Entry(entry), entry, archived, cx)),
         )
         .on_click(cx.listener(move |this, _, _, cx| {
             this.open_table(project, ix, cx);

@@ -274,14 +274,6 @@ pub(crate) fn row(
         .when(!selected, |el| el.hover(|el| el.bg(theme.element_hover)))
 }
 
-/// The inset [`Buttons::control_group`] holds its controls at, mirrored here
-/// because the height below is measured from it and bezel keeps it private.
-const CLUSTER_PAD: f32 = 2.;
-
-/// The floating cluster's height, half of which is the pill's radius: a ghost
-/// button's box — a 14pt glyph in 4pt of padding — inside that inset.
-const CLUSTER_HEIGHT: f32 = 14. + 2. * 4. + 2. * CLUSTER_PAD;
-
 /// A row's name. The line height is what the field pins itself to: left to
 /// gpui's default the label's box is φ×13, and renaming would resize the row
 /// under the name being typed.
@@ -424,45 +416,14 @@ impl Cydonia {
             )
     }
 
-    /// The fold toggle once the sidebar is away, as a glass pill over the
-    /// content. Out of flow and hugging the one control it holds: a band would
-    /// take a row off every pane to carry a single button, and the column under
-    /// it is what the button is for. Only the fold — adding a project acts on
-    /// the list you are looking at, and with the list gone it is chrome for
-    /// somewhere you are not. Its tone is the strong one, because the plate
-    /// floats over whatever the pane shows, which can be a picture we did not
-    /// choose.
-    pub(crate) fn fold_cluster(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
-        let theme = Theme::of(cx).clone();
-        theme
-            .control_group()
-            .absolute()
-            .top(px((root::HEADER_HEIGHT - CLUSTER_HEIGHT) / 2.))
-            // Full screen takes the lights away, and the room they needed
-            // would be left as a hole.
-            .left(px(if window.is_fullscreen() {
-                root::HEADER_INSET
-            } else {
-                root::TOOLBAR_INSET
-            }))
-            .h(px(CLUSTER_HEIGHT))
-            // A pill, where the group's own corner is cut for a row of square
-            // buttons. Before the glass, which reads the corners off the box.
-            .rounded(px(CLUSTER_HEIGHT / 2.))
-            .items_center()
-            .child(self.fold_toggle(theme.text, cx))
-            // The same glass bezel's own floating bar mounts on. Its
-            // `control_bar` is the shipped container, and it refuses this case
-            // on purpose: a fixed 56pt tall, and sized by its caller rather
-            // than by what it holds.
-            .surface(&theme, theme.popover_surface)
-            .into_any_element()
-    }
-
     /// The control that folds the sidebar away and brings it back. It belongs
     /// to whichever column runs along the window's left edge, so it changes
     /// strip across the collapse — and takes that strip's tone with it.
-    fn fold_toggle(&self, tint: Hsla, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    pub(crate) fn fold_toggle(
+        &self,
+        tint: Hsla,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
         let label = if self.sidebar_open {
             "Hide sidebar"
@@ -1045,7 +1006,12 @@ impl Cydonia {
             }
         };
 
-        let label = match self.renaming == Some(Renaming::Session(id)) {
+        // The band draws the field when it is showing this entry — see
+        // [`Cydonia::header_renaming`], which is what keeps one field from
+        // being claimed by two places at once.
+        let label = match self.renaming == Some(Renaming::Session(id))
+            && self.header_renaming(cx).is_none()
+        {
             true => self.name_field(cx),
             false => row_label(session.label, tint),
         };
@@ -1071,7 +1037,12 @@ impl Cydonia {
                     Menu::Entry(entry),
                     cx,
                 )
-                .children(self.entry_menu(entry, session.archived, cx)),
+                .children(self.entry_menu(
+                    Menu::Entry(entry),
+                    entry,
+                    session.archived,
+                    cx,
+                )),
             )
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.select_session(id, cx);
@@ -1102,7 +1073,11 @@ impl Cydonia {
             .and_then(|open| open.boards.get(ix));
         let archived = board.is_some_and(|board| board.archived);
         let id = board.map(|board| &board.id);
-        let renaming = matches!(&self.renaming, Some(Renaming::Board(at)) if Some(at) == id);
+        // The band draws the field when it is showing this entry — see
+        // [`Cydonia::header_renaming`], which is what keeps one field from
+        // being claimed by two places at once.
+        let renaming = matches!(&self.renaming, Some(Renaming::Board(at)) if Some(at) == id)
+            && self.header_renaming(cx).is_none();
         let tint = tint(selected, archived, &theme);
         let label = match renaming {
             true => self.name_field(cx),
@@ -1132,28 +1107,39 @@ impl Cydonia {
                 Menu::Entry(entry),
                 cx,
             )
-            .children(self.entry_menu(entry, archived, cx)),
+            .children(self.entry_menu(Menu::Entry(entry), entry, archived, cx)),
         )
         .on_click(cx.listener(move |this, _, _, cx| this.open_board(project, ix, cx)))
         .into_any_element()
     }
 
-    /// The `···` on any entry: the same two things whichever kind it is, and
-    /// no third — nothing here deletes.
+    /// The `···` on any entry: the same things whichever kind it is.
+    ///
+    /// Delete is offered from the header and not from a row. In the sidebar you
+    /// are running a pointer down a list and the row under it is whichever one
+    /// you stopped on; in the header there is one thing it could mean, and it
+    /// is the thing filling the window. `../desktop` draws the line in the same
+    /// place — its row menus archive, its `PostActions` in the title bar
+    /// deletes.
+    /// `at` is the trigger that would have opened it — the row's own
+    /// [`Menu::Entry`], or the header's [`Menu::Header`]. The same entry is
+    /// drawn in both places, so the trigger and not the entry is what says
+    /// which menu is open.
     pub(crate) fn entry_menu(
         &self,
+        at: Menu,
         entry: Row,
         archived: bool,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        if self.menu != Some(Menu::Entry(entry)) {
+        if self.menu != Some(at) {
             return None;
         }
         let put = match archived {
             true => Item::action("Unarchive").with_icon(icons::files::ARCHIVE_MINIMALISTIC),
             false => Item::action("Archive").with_icon(icons::files::ARCHIVE_MINIMALISTIC),
         };
-        let rows = vec![
+        let mut rows = vec![
             menu::row(
                 Item::action("Rename").with_icon(icons::editing::PEN_NEW_SQUARE),
                 move |this, window, cx| this.rename_entry(entry, window, cx),
@@ -1162,12 +1148,36 @@ impl Cydonia {
                 this.archive_entry(entry, !archived, cx)
             }),
         ];
-        let id = SharedString::from(format!("entry-menu-{}", key_of(entry)));
+        if at == Menu::Header {
+            rows.push(menu::row(
+                Item::action("Delete").with_icon(icons::files::TRASH_BIN_MINIMALISTIC),
+                move |this, _, cx| this.ask_delete(entry, cx),
+            ));
+        }
+        let id = match at {
+            Menu::Header => SharedString::from("header-menu-card"),
+            _ => SharedString::from(format!("entry-menu-{}", key_of(entry))),
+        };
         Some(popover::anchored_menu_below(
             id.clone(),
             self.menu_card(id, rows, cx),
             None,
         ))
+    }
+
+    /// Drop the entry the header is showing, file and all. The pane it was
+    /// filling falls back to the front door, which is what every one of these
+    /// leaves behind when it clears the index it was open at.
+    pub(crate) fn delete_entry(&mut self, entry: Row, cx: &mut Context<Self>) {
+        self.commit(cx);
+        self.workspace.update(cx, |workspace, cx| match entry {
+            Row::Session { id, .. } => workspace.close_session(id, cx),
+            Row::Board { project, ix } => workspace.delete_board(project, ix, cx),
+            Row::Article { project, ix } => workspace.delete_article(project, ix, cx),
+            Row::Table { project, ix } => workspace.delete_table(project, ix, cx),
+            Row::Project(_) | Row::Archive(_) => {}
+        });
+        cx.notify();
     }
 
     /// Put the name field on an entry's row, whichever kind it is. Each is

@@ -24,6 +24,10 @@ pub(crate) enum Menu {
     Project(usize),
     /// The `···` on an entry's row, whichever kind it is.
     Entry(Row),
+    /// The `···` in the pane header. Its own key rather than `Entry` of what
+    /// the header is showing: that entry has a row in the sidebar too, and a
+    /// key naming the entry would have one click open both of them.
+    Header,
     /// The kind picker above the projects.
     Filter,
     /// The `···` on a table's column heading.
