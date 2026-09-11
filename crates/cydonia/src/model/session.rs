@@ -253,6 +253,19 @@ impl ChatSession {
         }
     }
 
+    /// The id this session is filed under, minted now if it has none.
+    ///
+    /// A dispatched card writes the link on the click that made it, and until
+    /// then a session that has said nothing has no id to be written down.
+    /// Bringing the mint forward costs nothing: a dispatched session carries a
+    /// first prompt, so it is about to have something to file anyway.
+    pub fn mint_record(&mut self) -> Option<&str> {
+        if self.record.is_none() {
+            self.record = fs::Project::new(&self.cwd).create_session();
+        }
+        self.record.as_deref()
+    }
+
     /// Write the session out. The file is minted on the first write and not
     /// before — opening a project must not put a `.cydonia/` in it.
     pub fn flush(&mut self) {

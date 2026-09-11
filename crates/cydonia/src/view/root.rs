@@ -311,14 +311,14 @@ impl Cydonia {
         cx.observe(&workspace, |this, _, cx| this.sync_composer(cx))
             .detach();
         // A re-read replaced what a pane is showing — see
-        // [`Workspace::reload_project`]. The card and the cell are addressed by
-        // where they sit, so filing them now would file them into whatever slid
-        // under the index; the edit is dropped instead, and the field with it.
-        // The caret follows the document, which is a new editor entity.
+        // [`Workspace::reload_project`]. The card is held by id, so it comes
+        // through unless what it names is gone; the cell is still addressed by
+        // where it sits, so filing it now would file it into whatever slid
+        // under the index, and it is dropped. The caret follows the document,
+        // which is a new editor entity.
         cx.subscribe_in(&workspace, window, |this, _, _: &Reloaded, window, cx| {
-            this.editing = None;
+            this.drop_stale_edit(cx);
             this.cell = None;
-            this.card_field.update(cx, |field, cx| field.clear(cx));
             this.cell_field.update(cx, |field, cx| field.clear(cx));
             this.follow_article(window, cx);
             cx.notify();

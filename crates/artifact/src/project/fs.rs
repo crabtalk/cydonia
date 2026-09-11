@@ -90,9 +90,9 @@ impl Project {
         let mut board: Board = toml::from_str(&body).ok()?;
         board.touched = stamp::of(path);
         // A board written before ids existed already has one — the name of the
-        // file it is in. Taken in memory and not written back: `boards` runs on
-        // every re-read, and a write from inside one is an event the watch
-        // would answer by re-reading again.
+        // file it is in. Its columns and cards have none at all, and filling
+        // those is [`Board::mint_ids`], which `boards` calls once it has the
+        // whole list.
         if board.id.is_empty() {
             board.id = stem(path);
         }
@@ -140,6 +140,16 @@ impl super::Project for Project {
             .filter(|path| path.extension().is_some_and(|ext| ext == "toml"))
             .filter_map(|path| self.read_board(&path))
             .collect();
+        // Anything short of ids is written back now rather than left for the
+        // next save. Two reads of the same id-less board mint two different
+        // sets, so a board that stayed unwritten would never compare equal to
+        // itself and every re-read would report a change nobody made. The
+        // write costs one watch event, which finds nothing left to mint.
+        for board in &mut boards {
+            if board.mint_ids() {
+                super::Project::save_board(self, board);
+            }
+        }
         boards.sort_by_key(|board| Reverse(board.touched));
         boards
     }

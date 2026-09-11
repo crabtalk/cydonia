@@ -179,6 +179,10 @@ pub(crate) enum Renaming {
     Board(String),
     Article(PathBuf),
     Table(String),
+    /// A lane on the open board. The one entry here that no row in the sidebar
+    /// stands for — the field is drawn in the column's own header instead,
+    /// which works because only one thing is ever being named.
+    Column(String),
 }
 
 /// What an entry's row is written in: the one on screen at full strength, one
@@ -1258,7 +1262,12 @@ impl Cydonia {
             .into_any_element()
     }
 
-    fn start_rename(&mut self, what: Renaming, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn start_rename(
+        &mut self,
+        what: Renaming,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let workspace = self.workspace.read(cx);
         let label = match &what {
             Renaming::Session(id) => workspace
@@ -1283,6 +1292,11 @@ impl Cydonia {
                 .find(|table| table.key == *key)
                 .map(|table| table.name.clone())
                 .unwrap_or_default(),
+            Renaming::Column(id) => workspace
+                .active_board()
+                .and_then(|board| board.column(id))
+                .map(|column| column.name.clone())
+                .unwrap_or_default(),
         };
         self.name_field
             .update(cx, |field, cx| field.set_content(label, cx));
@@ -1301,6 +1315,7 @@ impl Cydonia {
             Renaming::Board(id) => workspace.rename_board(&id, name, cx),
             Renaming::Article(path) => workspace.rename_article(&path, name, cx),
             Renaming::Table(key) => workspace.rename_table(&key, name, cx),
+            Renaming::Column(id) => workspace.rename_column(&id, name, cx),
         });
         cx.notify();
     }

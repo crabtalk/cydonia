@@ -665,6 +665,27 @@ impl Workspace {
         self.projects.iter().find_map(|project| project.session(id))
     }
 
+    /// The session filed under this id, wherever it is — how a card finds the
+    /// agent it was handed to after a launch that renumbered every session.
+    /// [`ChatSession::id`] is minted per launch and means nothing on disk;
+    /// this is the name that keeps.
+    pub fn session_by_record(&self, record: &str) -> Option<&ChatSession> {
+        self.projects
+            .iter()
+            .flat_map(|project| project.sessions.iter())
+            .find(|chat| chat.record.as_deref() == Some(record))
+    }
+
+    /// The id a session is filed under, minted if it has none — what a
+    /// dispatched card writes down.
+    pub fn mint_record(&mut self, id: u64) -> Option<String> {
+        self.projects
+            .iter_mut()
+            .find_map(|project| project.session_mut(id))?
+            .mint_record()
+            .map(str::to_owned)
+    }
+
     /// Run `f` on the session (when it still exists) and repaint.
     pub fn with_session(
         &mut self,
@@ -837,6 +858,41 @@ impl Workspace {
 
     /// Reach a board wherever it is open, with the store that holds it — the
     /// project it is in, and the only thing that can write it back.
+    /// A lane on the open board, answered by its id so the pane can open it
+    /// straight into its name.
+    pub fn new_column(&mut self, cx: &mut Context<Self>) -> Option<String> {
+        let id = self
+            .active_board_mut()?
+            .add_column(artifact::board::column::NAMED)
+            .id
+            .clone();
+        self.save_board();
+        cx.notify();
+        Some(id)
+    }
+
+    pub fn rename_column(&mut self, id: &str, name: String, cx: &mut Context<Self>) {
+        let renamed = self
+            .active_board_mut()
+            .is_some_and(|board| board.rename_column(id, name.trim()));
+        if renamed {
+            self.save_board();
+        }
+        cx.notify();
+    }
+
+    /// Drop a lane, which a board refuses while it still holds cards — see
+    /// [`Board::remove_column`].
+    pub fn remove_column(&mut self, id: &str, cx: &mut Context<Self>) {
+        let gone = self
+            .active_board_mut()
+            .is_some_and(|board| board.remove_column(id));
+        if gone {
+            self.save_board();
+        }
+        cx.notify();
+    }
+
     fn with_board(&mut self, id: &str, edit: impl FnOnce(&fs::Project, &mut Board)) {
         for open in &mut self.projects {
             let store = open.store();
