@@ -11,10 +11,6 @@ keywords = ["acp", "agents", "artifacts", "cydonia"]
 categories = ["data-structures"]
 
 [dependencies]
-anyhow.workspace = true
-# The one thing a transcript borrows from the protocol: what kind of tool a
-# call was. Taken rather than restated, so a tool cydonia renders and a tool
-# the agent reported are the same value and not two enums to keep in step.
 cacp.workspace = true
 serde.workspace = true
 serde_json.workspace = true

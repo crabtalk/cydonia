@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/*"]
+members = ["crates/cydonia", "crates/artifact"]
 resolver = "3"
 
 [workspace.package]
@@ -11,10 +11,24 @@ repository = "https://github.com/crabtalk/cydonia"
 homepage = "https://cydonia.sh"
 
 [workspace.dependencies]
+artifact = { version = "0.1.1", path = "crates/artifact", package = "cydonia-artifact" }
 anyhow = "1"
+bezel = { version = "0.1.8", features = ["platform"] }
 cacp = { version = "0.1.0", default-features = false }
+cacp-agents = "0.1.0"
+dirs = "6"
+editor = { version = "0.1.8", package = "bezel-editor" }
+futures = "0.3"
+image = "0.25"
+lru = "0.18"
+markdown = { version = "0.1.8", package = "bezel-markdown" }
+notify = "8"
+rusqlite = { version = "0.40", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+syntax = { version = "0.1.8", package = "bezel-syntax" }
+tokio = { version = "1", features = ["process", "rt-multi-thread", "sync", "time"] }
 toml = "0.8"
 toml_edit = "0.22"
+ureq = "3"
 url = { version = "2", features = ["serde"] }

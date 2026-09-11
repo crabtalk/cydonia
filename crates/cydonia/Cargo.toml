@@ -16,57 +16,24 @@ name = "cydonia"
 path = "bin/main.rs"
 
 [dependencies]
-# The data model, and the only crate here that anything outside cydonia is
-# meant to depend on — see the workspace manifest.
-artifact = { version = "0.1.1", path = "../artifact", package = "cydonia-artifact" }
-
-# bezel — the component library the GUI is built on. Published as `bezel-*`;
-# the keys here are what the source imports. `platform` carries gpui_platform,
-# which opens the window: gpui core knows no platform of its own.
-bezel = { version = "0.1.8", features = ["platform"] }
-editor = { version = "0.1.8", package = "bezel-editor" }
-markdown = { version = "0.1.8", package = "bezel-markdown" }
-syntax = { version = "0.1.8", package = "bezel-syntax" }
-
-# cacp — our ACP implementation, taken from the registry like any other
-# dependency now that it is published and settled.
-cacp = { workspace = true, features = ["client"] }
-cacp-agents = "0.1.0"
-
-# crates.io
+artifact.workspace = true
 anyhow.workspace = true
-dirs = "6"
-# `Shared`, which is the task an in-flight cover is held as. gpui builds its own
-# image cache on it and compiles the crate either way, so this names what is
-# already in the graph rather than adding to it.
-futures = "0.3"
-# Resizes a picked cover on the way in. Already in the graph — gpui decodes
-# every image it paints with it — so this names a crate that is compiled either
-# way rather than adding one.
-image = "0.25"
-# The cover cache's recency list. Zero dependencies of its own — the whole
-# crate is the map and the order, which is exactly what is missing from gpui's
-# own asset cache.
-lru = "0.18"
-# The filesystem watch behind a project's `.cydonia/`. One backend per
-# platform — FSEvents here, inotify on Linux — behind one interface, which is
-# the whole reason to take a dependency for this rather than poll.
-notify = "8"
-# The project database. `bundled` compiles SQLite in: the store is a file we
-# hand to the user, so it cannot depend on whichever sqlite3 a machine ships.
-rusqlite = { version = "0.40", features = ["bundled"] }
+bezel.workspace = true
+cacp = { workspace = true, features = ["client"] }
+cacp-agents.workspace = true
+dirs.workspace = true
+editor.workspace = true
+futures.workspace = true
+image.workspace = true
+lru.workspace = true
+markdown.workspace = true
+notify.workspace = true
+rusqlite.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-# cacp spawns its read and write loops with `tokio::spawn`, so the connection
-# needs a runtime of its own — gpui's executor is smol's.
-tokio = { version = "1", features = ["process", "rt-multi-thread", "sync", "time"] }
+syntax.workspace = true
+tokio.workspace = true
 toml.workspace = true
-# Installing an agent edits settings.toml in place. `toml` would round-trip
-# it through a value tree and drop every comment the file was written with.
 toml_edit.workspace = true
-# Handing a cover out as a link rather than as a path on this disk — see
-# `Article::shape`. The same crate `artifact` states them with.
+ureq.workspace = true
 url.workspace = true
-# Downloads the registry's agent icons. The same client cacp-agents fetches
-# the catalog with, so this adds no second HTTP stack.
-ureq = "3"
