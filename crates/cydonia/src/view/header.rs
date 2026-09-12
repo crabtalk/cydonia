@@ -218,7 +218,7 @@ impl Cydonia {
                                 // finds it is what a list of rows needs, not a
                                 // band with one control.
                                 None,
-                                icons::icon(icons::system::MENU_DOTS)
+                                icons::icon(icons::layout::Ellipsis)
                                     .size(px(14.))
                                     .text_color(theme.text_faint),
                                 Menu::Header,

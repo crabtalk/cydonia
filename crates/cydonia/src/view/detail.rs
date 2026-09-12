@@ -391,7 +391,7 @@ impl Cydonia {
             rows.push(self.make_row(
                 "session",
                 "New session",
-                icons::system::CHAT_ROUND_LINE,
+                icons::social::MessageCircle,
                 cx,
                 move |this, window, cx| this.new_session_action(&NewSession, window, cx),
             ));
@@ -400,7 +400,7 @@ impl Cydonia {
             rows.push(self.make_row(
                 "board",
                 "New board",
-                icons::editing::LIST,
+                icons::text::List,
                 cx,
                 move |this, _, cx| this.new_board(ix, cx),
             ));
@@ -408,7 +408,7 @@ impl Cydonia {
         rows.push(self.make_row(
             "article",
             "New article",
-            icons::files::DOCUMENT_ADD,
+            icons::files::FilePlus,
             cx,
             move |this, window, cx| this.new_article(ix, window, cx),
         ));
@@ -416,13 +416,13 @@ impl Cydonia {
             rows.push(self.make_row(
                 "table",
                 "New table",
-                icons::system::WIDGET,
+                icons::layout::LayoutGrid,
                 cx,
                 move |this, _, cx| this.new_table(ix, cx),
             ));
         }
         theme
-            .empty_state(icons::files::FOLDER, "Nothing open", format!("in {name}"))
+            .empty_state(icons::files::Folder, "Nothing open", format!("in {name}"))
             .flex_1()
             .child(make_list(rows))
             .into_any_element()
@@ -433,7 +433,7 @@ impl Cydonia {
         &self,
         id: &'static str,
         label: &'static str,
-        glyph: &'static str,
+        glyph: &'static [u8],
         cx: &mut Context<Self>,
         make: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
     ) -> AnyElement {
@@ -485,7 +485,7 @@ impl Cydonia {
                 .unwrap_or_default();
             return theme
                 .empty_state(
-                    icons::files::FOLDER,
+                    icons::files::Folder,
                     cwd,
                     format!("{} runs here", chat.entry.name),
                 )
@@ -518,9 +518,9 @@ impl Cydonia {
                 .text_style(TextStyle::Callout)
                 .children(chat.plan.iter().map(|(text, status)| {
                     let (icon, tone) = match status {
-                        PlanStatus::Done => (icons::status::CHECK, theme.success),
-                        PlanStatus::Active => (icons::arrows::ALT_ARROW_RIGHT, theme.accent),
-                        PlanStatus::Pending => (icons::editing::CHECKLIST, theme.text_faint),
+                        PlanStatus::Done => (icons::notifications::Check, theme.success),
+                        PlanStatus::Active => (icons::arrows::ChevronRight, theme.accent),
+                        PlanStatus::Pending => (icons::text::ListChecks, theme.text_faint),
                     };
                     div()
                         .flex()
@@ -647,7 +647,7 @@ impl Cydonia {
                         .items_start()
                         .gap(px(8.))
                         .child(
-                            icons::icon(icons::system::KEY_MINIMALISTIC)
+                            icons::icon(icons::security::Key)
                                 .size(px(14.))
                                 .flex_none()
                                 // A glyph's box is its size and the line beside
@@ -739,7 +739,7 @@ impl Cydonia {
                             .mt(px(4.))
                             .cursor_pointer()
                             .child(
-                                icons::icon(icons::system::CLOSE)
+                                icons::icon(icons::notifications::X)
                                     .size(px(12.))
                                     .text_color(theme.text_faint)
                                     .group_hover(group, |el| el.text_color(theme.text)),

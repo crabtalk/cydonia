@@ -88,14 +88,14 @@ impl Section {
         }
     }
 
-    fn glyph(self) -> &'static str {
+    fn glyph(self) -> &'static [u8] {
         match self {
             // The gear macOS itself puts on General.
-            Self::General => icons::system::SETTINGS_MINIMALISTIC,
-            Self::Appearance => icons::system::SUN,
-            Self::Features => icons::system::TUNING,
-            Self::Agents => icons::system::WIDGET,
-            Self::Performance => icons::devices::CPU,
+            Self::General => icons::account::Settings,
+            Self::Appearance => icons::weather::Sun,
+            Self::Features => icons::account::SlidersHorizontal,
+            Self::Agents => icons::layout::LayoutGrid,
+            Self::Performance => icons::devices::Cpu,
         }
     }
 }

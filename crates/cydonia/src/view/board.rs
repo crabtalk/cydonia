@@ -292,7 +292,7 @@ impl Cydonia {
         }
         let doomed = card.to_owned();
         let rows = vec![menu::row(
-            Item::action("Delete").with_icon(icons::files::TRASH_BIN_MINIMALISTIC),
+            Item::action("Delete").with_icon(icons::files::Trash),
             move |this, _, cx| this.ask_delete_card(&doomed, cx),
         )];
         let id = SharedString::from(format!("card-menu-card-{card}"));
@@ -399,7 +399,7 @@ impl Cydonia {
                             .py(px(6.))
                             .gap(px(6.))
                             .child(
-                                icons::icon(icons::system::PLUS)
+                                icons::icon(icons::math::Plus)
                                     .size(px(12.))
                                     .text_color(theme.text_faint),
                             )
@@ -461,7 +461,7 @@ impl Cydonia {
                     .group_hover("column", |el| el.visible())
                     .p(px(3.))
                     .child(
-                        icons::icon(icons::files::TRASH_BIN_MINIMALISTIC)
+                        icons::icon(icons::files::Trash)
                             .size(px(12.))
                             .text_color(theme.text_faint),
                     )
@@ -487,7 +487,7 @@ impl Cydonia {
                     .py(px(6.))
                     .gap(px(6.))
                     .child(
-                        icons::icon(icons::system::PLUS)
+                        icons::icon(icons::math::Plus)
                             .size(px(12.))
                             .text_color(theme.text_faint),
                     )
@@ -579,7 +579,7 @@ impl Cydonia {
                         self.menu_button(
                             SharedString::from(format!("card-menu-{id}")),
                             Some("card"),
-                            icons::icon(icons::system::MENU_DOTS)
+                            icons::icon(icons::layout::Ellipsis)
                                 .size(px(14.))
                                 .text_color(theme.text_faint),
                             Menu::Card(id.to_owned()),
@@ -619,7 +619,7 @@ impl Cydonia {
                             .gap(px(2.))
                             .children(left.map(|to| {
                                 let (card, to) = (id.to_owned(), to.to_owned());
-                                self.card_action("left", id, icons::arrows::ALT_ARROW_LEFT, cx)
+                                self.card_action("left", id, icons::arrows::ChevronLeft, cx)
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         cx.stop_propagation();
                                         this.move_card(&card, &to, cx);
@@ -627,7 +627,7 @@ impl Cydonia {
                             }))
                             .children(right.map(|to| {
                                 let (card, to) = (id.to_owned(), to.to_owned());
-                                self.card_action("right", id, icons::arrows::ALT_ARROW_RIGHT, cx)
+                                self.card_action("right", id, icons::arrows::ChevronRight, cx)
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         cx.stop_propagation();
                                         this.move_card(&card, &to, cx);
@@ -640,14 +640,14 @@ impl Cydonia {
                             .children(sessions.then(|| {
                                 match live {
                                     Some(session) => self
-                                        .card_action("open", id, icons::system::CHAT_ROUND_LINE, cx)
+                                        .card_action("open", id, icons::social::MessageCircle, cx)
                                         .on_click(cx.listener(move |this, _, _, cx| {
                                             cx.stop_propagation();
                                             this.select_session(session, cx);
                                             this.show_pane(Pane::Chat, cx);
                                         })),
                                     None => self
-                                        .card_action("run", id, icons::media::PLAY, cx)
+                                        .card_action("run", id, icons::multimedia::Play, cx)
                                         .on_click(cx.listener(move |this, _, _, cx| {
                                             cx.stop_propagation();
                                             this.dispatch_card(&run, cx);
@@ -667,7 +667,7 @@ impl Cydonia {
         &self,
         name: &'static str,
         id: &str,
-        glyph: &'static str,
+        glyph: &'static [u8],
         cx: &Context<Self>,
     ) -> Stateful<Div> {
         let theme = Theme::of(cx).clone();

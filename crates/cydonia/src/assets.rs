@@ -5,10 +5,7 @@
 //! read rather than a table — there is nothing to keep in sync.
 
 use anyhow::Result;
-use bezel::{
-    gpui::{AssetSource, SharedString},
-    ui::icons,
-};
+use bezel::gpui::{AssetSource, SharedString};
 use std::{borrow::Cow, path::PathBuf};
 
 /// The app's own mark, wherever this build keeps it: beside the binary in a
@@ -31,14 +28,14 @@ pub fn mark() -> Option<PathBuf> {
 pub struct Assets;
 
 impl AssetSource for Assets {
+    /// Files and nothing else. An icon is its own SVG bytes since bezel 0.1.9
+    /// — `icons::icon` hands them straight to `svg().data()`, so the set
+    /// registers no assets and there is nothing here to ask it for.
     fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
-        if let Some(bytes) = icons::Assets.load(path)? {
-            return Ok(Some(bytes));
-        }
         Ok(std::fs::read(path).ok().map(Cow::Owned))
     }
 
-    fn list(&self, path: &str) -> Result<Vec<SharedString>> {
-        icons::Assets.list(path)
+    fn list(&self, _path: &str) -> Result<Vec<SharedString>> {
+        Ok(Vec::new())
     }
 }

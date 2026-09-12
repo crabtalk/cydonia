@@ -39,7 +39,7 @@ pub fn cache_dir() -> Option<PathBuf> {
 /// Blocking: this reaches the network on a cold cache. Call it off the UI
 /// thread. An empty map is the honest answer offline — every caller falls
 /// back to what it drew before.
-pub fn icons(configured: &[settings::Agent]) -> HashMap<String, SharedString> {
+pub fn icons(configured: &[settings::Agent]) -> HashMap<String, &'static [u8]> {
     let Some(cache) = cache_dir() else {
         return HashMap::new();
     };
@@ -79,14 +79,22 @@ pub fn icons(configured: &[settings::Agent]) -> HashMap<String, SharedString> {
                     .find_map(|arg| by_package.get(cacp_agents::package_name(arg)).copied())?,
             };
             let path = fetch(&dir, id, icons.get(id)?)?;
-            Some((entry.name.clone(), SharedString::from(path)))
+            Some((entry.name.clone(), bytes(&path)?))
         })
         .collect()
 }
 
-/// The icon on disk, downloading it once. The asset path is the file's own
-/// path — [`crate::assets`] reads it back by that name, so nothing has to keep
-/// a second table mapping one to the other.
+/// A downloaded icon's bytes, read once and promoted to `'static`.
+///
+/// Since bezel 0.1.10 a glyph *is* its bytes, which suits a set compiled into
+/// the binary. These are fetched at runtime instead, and the map holding them
+/// is built once at launch and never dropped — so leaking them states that in
+/// the type rather than changing it.
+fn bytes(path: &str) -> Option<&'static [u8]> {
+    Some(Box::leak(std::fs::read(path).ok()?.into_boxed_slice()))
+}
+
+/// The icon on disk, downloading it once.
 fn fetch(dir: &Path, id: &str, url: &str) -> Option<String> {
     if let Some(path) = cached(dir, id) {
         return Some(path);

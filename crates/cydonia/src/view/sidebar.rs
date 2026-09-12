@@ -18,7 +18,7 @@ use bezel::{
     gpui::{
         self, AnyElement, App, Bounds, Context, Div, Empty, Entity, Focusable as _, FontWeight,
         Hsla, MouseButton, Pixels, Point, ScrollStrategy, SharedString, Stateful,
-        UniformListDecoration, Window, div, prelude::*, px, svg, uniform_list,
+        UniformListDecoration, Window, div, prelude::*, px, uniform_list,
     },
     theme::{TextStyle, Theme, Typeset},
     ui::{
@@ -39,7 +39,7 @@ struct SessionRow {
     project: usize,
     id: u64,
     label: String,
-    icon: Option<SharedString>,
+    icon: Option<&'static [u8]>,
     /// The turn in flight, as the orb needs it: which of the twelve, how long
     /// it has been running, and the buffer it paints into. `None` when nothing
     /// is in flight, which is what puts the agent's own mark back.
@@ -133,13 +133,13 @@ impl Filter {
         }
     }
 
-    fn icon(self) -> &'static str {
+    fn icon(self) -> &'static [u8] {
         match self {
-            Self::All => icons::arrows::SORT_VERTICAL,
-            Self::Sessions => icons::system::CHAT_ROUND_LINE,
-            Self::Boards => icons::editing::LIST,
-            Self::Articles => icons::files::DOCUMENT,
-            Self::Tables => icons::system::WIDGET,
+            Self::All => icons::arrows::ArrowUpDown,
+            Self::Sessions => icons::social::MessageCircle,
+            Self::Boards => icons::text::List,
+            Self::Articles => icons::files::FileText,
+            Self::Tables => icons::layout::LayoutGrid,
         }
     }
 
@@ -379,7 +379,7 @@ impl Cydonia {
                                 Tooltip::with_keystroke("Settings", "⌘,", window, cx)
                             })
                             .child(
-                                icons::icon(icons::system::SETTINGS_MINIMALISTIC)
+                                icons::icon(icons::account::Settings)
                                     .size(px(13.))
                                     .text_color(theme.text_faint),
                             )
@@ -403,7 +403,7 @@ impl Cydonia {
                                         Tooltip::with_keystroke("New project", "⌘O", window, cx)
                                     })
                                     .child(
-                                        icons::icon(icons::files::DOCUMENT_ADD)
+                                        icons::icon(icons::files::FilePlus)
                                             .size(px(13.))
                                             .text_color(theme.text_faint),
                                     )
@@ -434,7 +434,7 @@ impl Cydonia {
             .p(px(4.))
             .tooltip(move |window, cx| Tooltip::text(label, window, cx))
             .child(
-                icons::icon(icons::system::SIDEBAR_MINIMALISTIC_LEFT)
+                icons::icon(icons::layout::PanelLeft)
                     .size(px(14.))
                     .text_color(tint),
             )
@@ -556,7 +556,7 @@ impl Cydonia {
                 self.menu_button(
                     ("project-add", ix),
                     Some("project-head"),
-                    icons::icon(icons::system::PLUS)
+                    icons::icon(icons::math::Plus)
                         .size(px(12.))
                         .text_color(theme.text_faint)
                         .group_hover("project-head", |el| el.text_color(theme.text)),
@@ -922,7 +922,7 @@ impl Cydonia {
         let mut rows = Vec::new();
         if sessions {
             rows.push(menu::row(
-                Item::action("New session").with_icon(icons::system::CHAT_ROUND_LINE),
+                Item::action("New session").with_icon(icons::social::MessageCircle),
                 move |this, window, cx| {
                     this.select_project(ix, cx);
                     this.new_session_action(&NewSession, window, cx);
@@ -931,17 +931,17 @@ impl Cydonia {
         }
         if boards {
             rows.push(menu::row(
-                Item::action("New board").with_icon(icons::editing::LIST),
+                Item::action("New board").with_icon(icons::text::List),
                 move |this, _, cx| this.new_board(ix, cx),
             ));
         }
         rows.push(menu::row(
-            Item::action("New article").with_icon(icons::files::DOCUMENT_ADD),
+            Item::action("New article").with_icon(icons::files::FilePlus),
             move |this, window, cx| this.new_article(ix, window, cx),
         ));
         if tables {
             rows.push(menu::row(
-                Item::action("New table").with_icon(icons::system::WIDGET),
+                Item::action("New table").with_icon(icons::layout::LayoutGrid),
                 move |this, _, cx| this.new_table(ix, cx),
             ));
         }
@@ -960,7 +960,7 @@ impl Cydonia {
             return None;
         }
         let rows = vec![menu::row(
-            Item::action("Remove project").with_icon(icons::files::TRASH_BIN_MINIMALISTIC),
+            Item::action("Remove project").with_icon(icons::files::Trash),
             move |this, _, cx| this.close_project(ix, cx),
         )];
         let id = SharedString::from(format!("project-menu-{ix}"));
@@ -995,10 +995,8 @@ impl Cydonia {
             transcript::orb(working.state, working.since, &working.frame, cx)
         } else {
             match session.icon {
-                Some(path) => svg()
-                    .path(path)
+                Some(glyph) => icons::icon(glyph)
                     .size(px(14.))
-                    .flex_none()
                     .text_color(tint)
                     .into_any_element(),
                 None => Empty.into_any_element(),
@@ -1030,7 +1028,7 @@ impl Cydonia {
                 self.menu_button(
                     ("session-menu", id),
                     Some("session-row"),
-                    icons::icon(icons::system::MENU_DOTS)
+                    icons::icon(icons::layout::Ellipsis)
                         .size(px(14.))
                         .text_color(theme.text_faint),
                     Menu::Entry(entry),
@@ -1083,7 +1081,7 @@ impl Cydonia {
             &theme,
         )
         .child(
-            icons::icon(icons::editing::LIST)
+            icons::icon(icons::text::List)
                 .size(px(14.))
                 .flex_none()
                 .text_color(tint),
@@ -1093,7 +1091,7 @@ impl Cydonia {
             self.menu_button(
                 SharedString::from(format!("board-menu-{project}-{ix}")),
                 Some("board-row"),
-                icons::icon(icons::system::MENU_DOTS)
+                icons::icon(icons::layout::Ellipsis)
                     .size(px(14.))
                     .text_color(theme.text_faint),
                 Menu::Entry(entry),
@@ -1128,8 +1126,8 @@ impl Cydonia {
             return None;
         }
         let put = match archived {
-            true => Item::action("Unarchive").with_icon(icons::files::ARCHIVE_MINIMALISTIC),
-            false => Item::action("Archive").with_icon(icons::files::ARCHIVE_MINIMALISTIC),
+            true => Item::action("Unarchive").with_icon(icons::files::Archive),
+            false => Item::action("Archive").with_icon(icons::files::Archive),
         };
         // A board's name in the band is itself the way into its identity panel,
         // so the menu does not offer a second route to it — `../desktop`'s rule
@@ -1144,14 +1142,14 @@ impl Cydonia {
             rows.insert(
                 0,
                 menu::row(
-                    Item::action("Rename").with_icon(icons::editing::PEN_NEW_SQUARE),
+                    Item::action("Rename").with_icon(icons::text::SquarePen),
                     move |this, window, cx| this.rename_entry(entry, window, cx),
                 ),
             );
         }
         if header {
             rows.push(menu::row(
-                Item::action("Delete").with_icon(icons::files::TRASH_BIN_MINIMALISTIC),
+                Item::action("Delete").with_icon(icons::files::Trash),
                 move |this, _, cx| this.ask_delete(entry, cx),
             ));
         }

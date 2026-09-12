@@ -26,7 +26,7 @@ use artifact::{
     project::{Project as _, fs},
 };
 use bezel::{
-    gpui::{App, ClipboardItem, Context, EntityId, EventEmitter, SharedString, Window},
+    gpui::{App, ClipboardItem, Context, EntityId, EventEmitter, Window},
     theme::{self, Brand, Theme, Tint, appearance::AppearanceMode},
     ui::input,
 };
@@ -83,7 +83,7 @@ pub struct Workspace {
     pub meter: bool,
     /// The registry's mark for each configured agent, by name. Empty until the
     /// catalog lands, and stays empty offline.
-    agent_icons: HashMap<String, SharedString>,
+    agent_icons: HashMap<String, &'static [u8]>,
     /// What each project was last showing, by project path — where a launch
     /// puts you back.
     last: BTreeMap<PathBuf, state::Entry>,
@@ -164,8 +164,8 @@ impl Workspace {
     }
 
     /// The registry's mark for whatever this session runs on.
-    pub fn agent_icon(&self, name: &str) -> Option<SharedString> {
-        self.agent_icons.get(name).cloned()
+    pub fn agent_icon(&self, name: &str) -> Option<&'static [u8]> {
+        self.agent_icons.get(name).copied()
     }
 
     /// Which agent an unasked-for session runs on: whoever the project is

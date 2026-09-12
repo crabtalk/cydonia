@@ -295,7 +295,7 @@ impl Cydonia {
                         .ghost("add-column")
                         .p(px(3.))
                         .child(
-                            icons::icon(icons::system::PLUS)
+                            icons::icon(icons::math::Plus)
                                 .size(px(12.))
                                 .text_color(theme.text_faint),
                         )
@@ -339,7 +339,7 @@ impl Cydonia {
                                 .py(px(7.))
                                 .gap(px(6.))
                                 .child(
-                                    icons::icon(icons::system::PLUS)
+                                    icons::icon(icons::math::Plus)
                                         .size(px(12.))
                                         .text_color(theme.text_faint),
                                 )
@@ -397,7 +397,7 @@ impl Cydonia {
                 self.menu_button(
                     ("column-menu", ix),
                     Some("grid-head"),
-                    icons::icon(icons::system::MENU_DOTS)
+                    icons::icon(icons::layout::Ellipsis)
                         .size(px(14.))
                         .text_color(theme.text_faint),
                     Menu::Column(ix),
@@ -429,7 +429,7 @@ impl Cydonia {
             })
             .collect();
         rows.push(menu::row(
-            Item::action("Delete column").with_icon(icons::files::TRASH_BIN_MINIMALISTIC),
+            Item::action("Delete column").with_icon(icons::files::Trash),
             move |this, _, cx| this.delete_column(ix, cx),
         ));
         let id = SharedString::from(format!("column-menu-{ix}"));
@@ -475,7 +475,7 @@ impl Cydonia {
             .group_hover("grid-row", |el| el.visible())
             .p(px(3.))
             .child(
-                icons::icon(icons::files::TRASH_BIN_MINIMALISTIC)
+                icons::icon(icons::files::Trash)
                     .size(px(12.))
                     .text_color(theme.text_faint),
             )
@@ -523,7 +523,7 @@ impl Cydonia {
             &theme,
         )
         .child(
-            icons::icon(icons::system::WIDGET)
+            icons::icon(icons::layout::LayoutGrid)
                 .size(px(14.))
                 .flex_none()
                 .text_color(tone),
@@ -543,7 +543,7 @@ impl Cydonia {
             self.menu_button(
                 ("table-menu", ix),
                 Some("table-row"),
-                icons::icon(icons::system::MENU_DOTS)
+                icons::icon(icons::layout::Ellipsis)
                     .size(px(14.))
                     .text_color(theme.text_faint),
                 Menu::Entry(entry),
@@ -559,12 +559,12 @@ impl Cydonia {
 
 /// The mark for what a column holds. A menu of four bare labels asks you to
 /// read where a glyph would have told you.
-fn glyph(kind: ColType) -> &'static str {
+fn glyph(kind: ColType) -> &'static [u8] {
     match kind {
-        ColType::Text => icons::editing::TEXT,
-        ColType::Number => icons::editing::HASHTAG,
-        ColType::Date => icons::system::CALENDAR,
-        ColType::Check => icons::editing::CHECKLIST,
+        ColType::Text => icons::text::Type,
+        ColType::Number => icons::text::Hash,
+        ColType::Date => icons::time::Calendar,
+        ColType::Check => icons::text::ListChecks,
     }
 }
 

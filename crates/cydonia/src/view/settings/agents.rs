@@ -83,7 +83,7 @@ fn repo_link(id: (&'static str, usize), url: String, theme: &Theme) -> impl Into
         .child(
             // On the glyph rather than on this box: an svg paints from its own
             // computed style, and inherits no colour from the row around it.
-            icons::icon(icons::editing::GIT_BRANCH)
+            icons::icon(icons::development::GitBranch)
                 .size(px(13.))
                 .text_color(theme.text_faint)
                 .group_hover("agent-source", |el| el.text_color(theme.accent)),
@@ -350,7 +350,7 @@ impl SettingsWindow {
         if listings.is_empty() {
             return theme
                 .empty_state(
-                    icons::system::WIDGET,
+                    icons::layout::LayoutGrid,
                     "No catalogue",
                     "The agent registry could not be reached.",
                 )
@@ -420,7 +420,7 @@ impl SettingsWindow {
                 }
             }))
             .child(
-                icons::icon(icons::system::MAGNIFER)
+                icons::icon(icons::text::Search)
                     .size(px(14.))
                     .flex_none()
                     .text_color(theme.text_faint),

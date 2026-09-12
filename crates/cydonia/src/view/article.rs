@@ -437,7 +437,7 @@ impl Cydonia {
 
         sidebar::row(id, "article-row", selected, &theme)
             .child(
-                icons::icon(icons::files::DOCUMENT)
+                icons::icon(icons::files::FileText)
                     .size(px(14.))
                     .flex_none()
                     .text_color(tint),
@@ -457,7 +457,7 @@ impl Cydonia {
                 self.menu_button(
                     ("article-menu", ix),
                     Some("article-row"),
-                    icons::icon(icons::system::MENU_DOTS)
+                    icons::icon(icons::layout::Ellipsis)
                         .size(px(14.))
                         .text_color(theme.text_faint),
                     Menu::Entry(entry),

@@ -219,18 +219,18 @@ fn prose(
 }
 
 /// The glyph for a tool's category — what the ACP `kind` is for.
-fn tool_icon(kind: ToolKind) -> &'static str {
+fn tool_icon(kind: ToolKind) -> &'static [u8] {
     match kind {
-        ToolKind::Read => icons::files::BOOK,
-        ToolKind::Edit => icons::editing::PEN,
-        ToolKind::Delete => icons::files::TRASH_BIN_MINIMALISTIC,
-        ToolKind::Move => icons::arrows::ARROW_RIGHT,
-        ToolKind::Search => icons::system::MAGNIFER,
-        ToolKind::Execute => icons::devices::TERMINAL,
-        ToolKind::Think => icons::devices::CPU,
-        ToolKind::Fetch => icons::devices::GLOBAL,
-        ToolKind::SwitchMode => icons::system::TUNING,
-        _ => icons::system::WIDGET,
+        ToolKind::Read => icons::text::Book,
+        ToolKind::Edit => icons::text::Pen,
+        ToolKind::Delete => icons::files::Trash,
+        ToolKind::Move => icons::arrows::ArrowRight,
+        ToolKind::Search => icons::text::Search,
+        ToolKind::Execute => icons::development::Terminal,
+        ToolKind::Think => icons::devices::Cpu,
+        ToolKind::Fetch => icons::navigation::Globe,
+        ToolKind::SwitchMode => icons::account::SlidersHorizontal,
+        _ => icons::layout::LayoutGrid,
     }
 }
 
@@ -502,7 +502,7 @@ fn work(chat: &ChatSession, body: Range<usize>, cx: &mut Context<Workspace>) -> 
                         .text_style(TextStyle::Callout)
                         .text_color(theme.text_muted.opacity(0.7))
                         .child(
-                            icons::icon(icons::devices::CPU)
+                            icons::icon(icons::devices::Cpu)
                                 .size(px(12.))
                                 .text_color(theme.text_faint),
                         )
