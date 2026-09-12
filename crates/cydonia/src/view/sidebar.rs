@@ -1124,7 +1124,7 @@ impl Cydonia {
         archived: bool,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        if self.menu != Some(at) {
+        if self.menu.as_ref() != Some(&at) {
             return None;
         }
         let put = match archived {
@@ -1135,7 +1135,8 @@ impl Cydonia {
         // so the menu does not offer a second route to it — `../desktop`'s rule
         // for what a `···` may carry: only commands with no affordance on the
         // object. Everywhere else the name is display-only and this is the way.
-        let named = !(at == Menu::Header && matches!(entry, Row::Board { .. }));
+        let header = at == Menu::Header;
+        let named = !(header && matches!(entry, Row::Board { .. }));
         let mut rows = vec![menu::row(put, move |this, _, cx| {
             this.archive_entry(entry, !archived, cx)
         })];
@@ -1148,15 +1149,15 @@ impl Cydonia {
                 ),
             );
         }
-        if at == Menu::Header {
+        if header {
             rows.push(menu::row(
                 Item::action("Delete").with_icon(icons::files::TRASH_BIN_MINIMALISTIC),
                 move |this, _, cx| this.ask_delete(entry, cx),
             ));
         }
-        let id = match at {
-            Menu::Header => SharedString::from("header-menu-card"),
-            _ => SharedString::from(format!("entry-menu-{}", key_of(entry))),
+        let id = match header {
+            true => SharedString::from("header-menu-card"),
+            false => SharedString::from(format!("entry-menu-{}", key_of(entry))),
         };
         Some(popover::anchored_menu_below(
             id.clone(),

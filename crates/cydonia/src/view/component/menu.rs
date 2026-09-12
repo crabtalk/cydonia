@@ -16,7 +16,11 @@ type Act = Box<dyn Fn(&mut Cydonia, &mut Window, &mut Context<Cydonia>)>;
 
 /// Which menu is open. One field rather than a flag each, so opening one
 /// closes the rest by construction.
-#[derive(Clone, Copy, PartialEq, Eq)]
+///
+/// Cloned rather than copied since [`Menu::Card`] names its card, which is a
+/// string — a card is addressed by id everywhere else and a menu key that used
+/// its position would open the wrong one the moment a card moved.
+#[derive(Clone, PartialEq, Eq)]
 pub(crate) enum Menu {
     /// The `+` on a project heading: what to start here.
     Add(usize),
@@ -32,6 +36,8 @@ pub(crate) enum Menu {
     Filter,
     /// The `···` on a table's column heading.
     Column(usize),
+    /// The `···` on a card, by card id.
+    Card(String),
 }
 
 /// One row of a menu, and what picking it does.
@@ -52,7 +58,8 @@ impl Cydonia {
     /// that handler, whichever element owns it.
     pub(crate) fn toggle_menu(&mut self, menu: Menu, cx: &mut Context<Self>) {
         let closed_by_this_press = std::mem::take(&mut self.menu_pressed);
-        self.menu = (!closed_by_this_press && self.menu != Some(menu)).then_some(menu);
+        let shut = closed_by_this_press || self.menu.as_ref() == Some(&menu);
+        self.menu = (!shut).then_some(menu);
         self.menu_cursor.clear();
         cx.notify();
     }
@@ -73,7 +80,7 @@ impl Cydonia {
         cx: &Context<Self>,
     ) -> Stateful<Div> {
         el.capture_any_mouse_down(cx.listener(move |this, _, _, _| {
-            this.menu_pressed = this.menu == Some(menu);
+            this.menu_pressed = this.menu.as_ref() == Some(&menu);
         }))
     }
 
@@ -96,15 +103,19 @@ impl Cydonia {
             .relative()
             // An open menu keeps its trigger on show — by then the pointer is
             // over the menu, not the row that opened it.
-            .when_some(group.filter(|_| self.menu != Some(menu)), |el, group| {
-                el.invisible().group_hover(group, |el| el.visible())
-            })
+            .when_some(
+                group.filter(|_| self.menu.as_ref() != Some(&menu)),
+                |el, group| el.invisible().group_hover(group, |el| el.visible()),
+            )
             .p(px(3.))
             .child(mark)
-            .on_click(cx.listener(move |this, _, _, cx| {
-                cx.stop_propagation();
-                this.toggle_menu(menu, cx);
-            }));
+            .on_click({
+                let menu = menu.clone();
+                cx.listener(move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.toggle_menu(menu.clone(), cx);
+                })
+            });
         self.menu_press(button, menu, cx)
     }
 

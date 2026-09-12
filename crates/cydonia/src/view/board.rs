@@ -3,6 +3,7 @@
 use crate::{
     model::session::ChatSession,
     view::{
+        component::menu::{self, Menu},
         root::{Cydonia, NewBoard, Pane},
         sidebar::Renaming,
     },
@@ -19,6 +20,8 @@ use bezel::{
         icons,
         input::{self, Shape, TextField},
         loaders,
+        menu::Item,
+        popover,
         widgets::Buttons,
     },
 };
@@ -211,7 +214,7 @@ impl Cydonia {
         cx.notify();
     }
 
-    fn delete_card(&mut self, card: &str, cx: &mut Context<Self>) {
+    pub(crate) fn delete_card(&mut self, card: &str, cx: &mut Context<Self>) {
         self.commit(cx);
         let card = card.to_owned();
         self.workspace.update(cx, |workspace, cx| {
@@ -287,6 +290,25 @@ impl Cydonia {
             }
         });
         cx.notify();
+    }
+
+    /// The `···` on a card: the one thing you can do to it that the row of
+    /// glyphs underneath should not carry, because it cannot be undone.
+    fn card_menu(&self, card: &str, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if self.menu.as_ref() != Some(&Menu::Card(card.to_owned())) {
+            return None;
+        }
+        let doomed = card.to_owned();
+        let rows = vec![menu::row(
+            Item::action("Delete").with_icon(icons::files::TRASH_BIN_MINIMALISTIC),
+            move |this, _, cx| this.ask_delete_card(&doomed, cx),
+        )];
+        let id = SharedString::from(format!("card-menu-card-{card}"));
+        Some(popover::anchored_menu_below(
+            id.clone(),
+            self.menu_card(id, rows, cx),
+            None,
+        ))
     }
 
     /// The session a card was dispatched to, while it is still open — a card
@@ -535,7 +557,7 @@ impl Cydonia {
             )
             .into_any_element()
         });
-        let (opened, dropped, run) = (id.to_owned(), id.to_owned(), id.to_owned());
+        let (opened, run) = (id.to_owned(), id.to_owned());
         div()
             .id(SharedString::from(format!("card-{id}")))
             .group("card")
@@ -552,11 +574,36 @@ impl Cydonia {
             .gap(px(6.))
             .child(
                 div()
-                    .max_h(px(140.))
-                    .overflow_hidden()
-                    .text_style(TextStyle::Callout)
-                    .text_color(theme.text)
-                    .child(text),
+                    .flex()
+                    .flex_row()
+                    .items_start()
+                    .gap(px(6.))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .max_h(px(140.))
+                            .overflow_hidden()
+                            .text_style(TextStyle::Callout)
+                            .text_color(theme.text)
+                            .child(text),
+                    )
+                    // What is done *to* the card, as against what is done with
+                    // it: the row underneath carries the moves and the run,
+                    // which are one press each and wanted often. Delete is
+                    // neither, and it is the one that cannot be taken back.
+                    .child(
+                        self.menu_button(
+                            SharedString::from(format!("card-menu-{id}")),
+                            Some("card"),
+                            icons::icon(icons::system::MENU_DOTS)
+                                .size(px(14.))
+                                .text_color(theme.text_faint),
+                            Menu::Card(id.to_owned()),
+                            cx,
+                        )
+                        .children(self.card_menu(id, cx)),
+                    ),
             )
             .child(
                 div()
@@ -625,21 +672,7 @@ impl Cydonia {
                                             this.dispatch_card(&run, cx);
                                         })),
                                 }
-                            }))
-                            .child(
-                                self.card_action(
-                                    "delete",
-                                    id,
-                                    icons::files::TRASH_BIN_MINIMALISTIC,
-                                    cx,
-                                )
-                                .on_click(cx.listener(
-                                    move |this, _, _, cx| {
-                                        cx.stop_propagation();
-                                        this.delete_card(&dropped, cx);
-                                    },
-                                )),
-                            ),
+                            })),
                     ),
             )
             .on_click(cx.listener(move |this, _, window, cx| {

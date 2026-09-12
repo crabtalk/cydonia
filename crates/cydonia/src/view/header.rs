@@ -95,9 +95,19 @@ pub(crate) enum Naming {
     Panel(String),
 }
 
+/// What a pending delete is aimed at.
+#[derive(Clone)]
+pub(crate) enum Doomed {
+    /// A whole entry — a board, a session, an article, a table. Named by its
+    /// row, which is what the header's `···` acts on.
+    Entry(Row),
+    /// One card on the open board, by id.
+    Card(String),
+}
+
 /// A delete that has been asked for and not yet agreed to.
 pub(crate) struct Confirming {
-    pub entry: Row,
+    pub doomed: Doomed,
     /// What to call it in the question. Taken when the question is asked: the
     /// entry could be renamed from under an open dialog, and a dialog that
     /// changed its mind about what it was asking would be worse than a stale
@@ -138,10 +148,31 @@ impl Cydonia {
         let (goes, note) = self.goes_with(entry, cx);
         self.menu = None;
         self.confirming = Some(Confirming {
-            entry,
+            doomed: Doomed::Entry(entry),
             label,
             goes,
             note,
+        });
+        cx.notify();
+    }
+
+    /// The same question for one card. A card is not a file of its own — it
+    /// lives inside the board's — so there is no path to quote, only the name
+    /// the card answers to.
+    pub(crate) fn ask_delete_card(&mut self, card: &str, cx: &mut Context<Self>) {
+        let label = self
+            .workspace
+            .read(cx)
+            .active_board()
+            .and_then(|board| Some((board, board.card(card)?)))
+            .map(|(board, found)| board.handle_of(found).unwrap_or_else(|| found.text.clone()))
+            .unwrap_or_default();
+        self.menu = None;
+        self.confirming = Some(Confirming {
+            doomed: Doomed::Card(card.to_owned()),
+            label,
+            goes: None,
+            note: "This cannot be undone.".to_owned(),
         });
         cx.notify();
     }
@@ -205,7 +236,7 @@ impl Cydonia {
     pub(crate) fn confirm_delete(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let confirming = self.confirming.as_ref()?;
         let theme = Theme::of(cx).clone();
-        let entry = confirming.entry;
+        let doomed = confirming.doomed.clone();
         Some(
             div()
                 .id("delete-scrim")
@@ -274,7 +305,12 @@ impl Cydonia {
                                         .id("delete-confirm")
                                         .on_click(cx.listener(move |this, _, _, cx| {
                                             this.confirming = None;
-                                            this.delete_entry(entry, cx);
+                                            match &doomed {
+                                                Doomed::Entry(entry) => {
+                                                    this.delete_entry(*entry, cx)
+                                                }
+                                                Doomed::Card(card) => this.delete_card(card, cx),
+                                            }
                                         })),
                                 ),
                         ),
