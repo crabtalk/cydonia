@@ -27,8 +27,7 @@ use std::collections::HashSet;
 /// taken off is shown as.
 pub const NAMED: &str = "Board";
 
-/// The number the first card on a board takes. One rather than nought, because
-/// a handle is read by a person.
+/// The number the first card takes. One, not nought: a person reads it.
 pub const FIRST: u64 = 1;
 pub const UNNAMED: &str = "Untitled";
 
@@ -53,17 +52,14 @@ pub struct Board {
     pub archived: bool,
     #[serde(default)]
     pub name: String,
-    /// What every card here is prefixed with — `ROAD`, for `ROAD-12`. Derived
-    /// from the name when the board is made and kept across a rename: a handle
-    /// that has been said out loud has to go on meaning the card it meant.
-    ///
-    /// Unique among the boards of one project, which is as far as a handle ever
-    /// has to carry — the agent that hears one is running in that project.
+    /// What every card here is prefixed with — `ROAD`, for `ROAD-12`. Unique
+    /// among one project's boards, which is as far as a handle has to carry.
+    /// See [`key`].
     #[serde(default)]
     pub key: String,
-    /// The number the next card here takes. Kept in the file rather than read
-    /// back as `max + 1` over the cards: the counter only climbs, so a deleted
-    /// ROAD-12 leaves a gap instead of coming back as somebody else's.
+    /// The number the next card takes. In the file rather than `max + 1` over
+    /// the cards: it only climbs, so a deleted ROAD-12 leaves a gap instead of
+    /// coming back as somebody else's.
     #[serde(default)]
     pub next_handle: u64,
     #[serde(default)]
@@ -71,12 +67,8 @@ pub struct Board {
 }
 
 impl Board {
-    /// A board with nothing on it, under the name the backend about to keep it
-    /// has minted.
-    ///
-    /// No lanes: Todo/Doing/Done here was a guess about the work compiled into
-    /// a constructor, and a board whose columns you name has to start with the
-    /// ones you named.
+    /// A board with nothing on it. No lanes: Todo/Doing/Done here was a guess
+    /// about the work compiled into a constructor.
     pub fn new(id: String, name: &str) -> Self {
         Self {
             id,
@@ -99,16 +91,12 @@ impl Board {
         }
     }
 
-    /// Give every column and card that has none an id, and say whether
-    /// anything was given one — which is what tells the backend that what it
-    /// just read is behind what it now holds.
-    ///
-    /// The board a caller gets back is addressable or it is nothing: a client
-    /// handed a card with no id cannot name it to say anything about it.
+    /// Name everything that has no name — ids and handles — and say whether
+    /// anything was named, which is what tells the backend its file is behind.
+    /// A card a client cannot name is a card it cannot say anything about.
     pub fn mint_ids(&mut self) -> bool {
         let mut taken = self.taken();
-        // Handles come off the counter even here, so a board read twice never
-        // numbers the same card differently — and a card that had one keeps it.
+        // Off the same counter, so a board read twice numbers alike.
         let mut next = self.next_handle.max(FIRST);
         let mut minted = false;
         for column in &mut self.columns {
@@ -135,8 +123,8 @@ impl Board {
         minted
     }
 
-    /// Every id this board is already using. Unique within the board and no
-    /// further — nothing outside a board points at a card.
+    /// Every id in use here. Unique within the board and no further — nothing
+    /// outside one points at a card.
     fn taken(&self) -> HashSet<String> {
         self.columns
             .iter()
@@ -155,10 +143,9 @@ impl Board {
 
     // ── columns ──────────────────────────────────────────────────
     //
-    // Named operations rather than reaching into `columns`, because this is
-    // the vocabulary the MCP tools answer in: a caller over a connection has
-    // only what is named here, and the pane taking the same route is what
-    // keeps the two from drifting.
+    // Named operations rather than reaching into `columns`: this is the
+    // vocabulary the MCP tools answer in, and the pane taking the same route is
+    // what keeps the two from drifting.
 
     pub fn column(&self, id: &str) -> Option<&Column> {
         self.columns.iter().find(|column| column.id == id)
@@ -185,12 +172,8 @@ impl Board {
         }
     }
 
-    /// Drop a lane, and refuse while it still holds cards.
-    ///
-    /// The cards are the work and the column is only where they sit, so there
-    /// is no reading of "delete this column" that means "and the work in it".
-    /// Emptying it first is a step; a tool call that quietly took six cards
-    /// with it is not recoverable.
+    /// Drop a lane, refusing while it holds cards: "delete this column" has no
+    /// reading that means "and the work in it".
     pub fn remove_column(&mut self, id: &str) -> bool {
         let Some(at) = self
             .columns
@@ -229,17 +212,15 @@ impl Board {
         column.cards.last()
     }
 
-    /// The next number, and the counter moved past it. Answers [`FIRST`] for a
-    /// board written before the counter existed, whose default is zero — a card
-    /// numbered nought reads as an error, not as the first of anything.
+    /// The next number, and the counter moved past it. [`FIRST`] for a board
+    /// written before the counter existed, since nought reads as an error.
     fn take_handle(&mut self) -> u64 {
         let handle = self.next_handle.max(FIRST);
         self.next_handle = handle + 1;
         handle
     }
 
-    /// What to call this card out loud: `ROAD-12`. Nothing while the board has
-    /// no key, which is a board nobody has written back yet.
+    /// What to call this card out loud: `ROAD-12`.
     pub fn handle_of(&self, card: &Card) -> Option<String> {
         let handle = card.handle?;
         (!self.key.is_empty()).then(|| format!("{}-{handle}", self.key))
@@ -321,9 +302,9 @@ impl Board {
     }
 }
 
-/// An id nothing on this board is using. `-2` settles a tie the same way a
-/// session's file name does — a pass runs well inside the millisecond every id
-/// in it is minted from, so ties are the rule and not the exception.
+/// An id nothing here is using. A pass runs well inside the millisecond its
+/// ids are minted from, so `-2` settles the tie — as a session's file name
+/// does.
 fn mint(taken: &mut HashSet<String>) -> String {
     let stamp = id::mint();
     let mut fresh = stamp.clone();

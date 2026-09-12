@@ -15,7 +15,7 @@ use crate::{
             menu::Menu,
             meter,
         },
-        header,
+        confirm, info,
         settings::{self, Section, SettingsWindow},
         sidebar::{Filter, Renaming, Row},
         table,
@@ -257,9 +257,9 @@ pub struct Cydonia {
     /// The delete waiting to be agreed to, and the name to ask about. Held
     /// with its label rather than looked up when the dialog draws: what is
     /// being asked about must not change wording under the question.
-    pub(crate) confirming: Option<header::Confirming>,
+    pub(crate) confirming: Option<confirm::Confirming>,
     /// The board identity panel, while it is open — see [`header::BoardInfo`].
-    pub(crate) info: Option<header::BoardInfo>,
+    pub(crate) info: Option<info::BoardInfo>,
     /// Whether the press now being handled landed on the name of the board
     /// whose panel is open — read by [`Cydonia::toggle_info`] and nothing else,
     /// the way [`Cydonia::menu_pressed`] is read by `toggle_menu`.

@@ -1,13 +1,9 @@
 //! A board's short name, the prefix every card handle carries: `ROAD` in
 //! `ROAD-12`.
 //!
-//! Derived from the board's name when the board is made, and kept across a
-//! rename — a handle already said out loud, or written into a note, has to go
-//! on meaning the card it meant.
-//!
-//! ASCII only, because a handle is typed and read back character by character.
-//! A name with no ASCII in it falls back to [`FALLBACK`] and the uniquing
-//! suffix does the rest.
+//! Derived from the name when the board is made and kept across a rename — a
+//! handle already written down has to go on meaning the card it meant. ASCII
+//! only, since a handle is typed.
 
 use std::collections::HashSet;
 
@@ -18,8 +14,8 @@ const FALLBACK: &str = "B";
 const INITIALS: usize = 4;
 const OPENING: usize = 3;
 
-/// Take a key as typed: the ASCII alphanumerics of it, uppercased. Nothing for
-/// a string with none, which is not a key anyone could say.
+/// A key as typed: its ASCII alphanumerics, uppercased. Nothing for a string
+/// with none.
 pub fn normalize(raw: &str) -> Option<String> {
     let key: String = raw
         .chars()
@@ -29,11 +25,10 @@ pub fn normalize(raw: &str) -> Option<String> {
     (!key.is_empty()).then_some(key)
 }
 
-/// A key for a board of this name, clear of the ones its neighbours hold.
-///
-/// `Why CrabTalk` keys as `WC`, `Roadmap` as `ROA`. Unique by a trailing digit,
-/// which is why [`super::Card::handle`] is split off the *last* `-`: `ROA2-5`
-/// is a card on the second Roadmap, not card `2-5` on `ROA`.
+/// A key for a board of this name, clear of the ones its neighbours hold:
+/// `Why CrabTalk` → `WC`, `Roadmap` → `ROA`. Unique by a trailing digit, which
+/// is why a handle splits off its *last* `-` — `ROA2-5` is a card on the second
+/// Roadmap, not card `2-5` on `ROA`.
 pub fn derive(name: &str, taken: &HashSet<String>) -> String {
     let words: Vec<&str> = name
         .split_whitespace()

@@ -55,9 +55,8 @@ pub fn field(cx: &mut App) -> Entity<TextField> {
     })
 }
 
-/// What the field is attached to. Held by id and never by where the card sits:
-/// a re-read of the project renumbers every position, and the field would
-/// follow the number onto whatever slid underneath it.
+/// What the field is attached to. By id, never by position: a re-read
+/// renumbers, and the field would follow the number onto whatever slid under.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Editing {
     /// A card being written, to land at the end of this column.
@@ -164,11 +163,8 @@ impl Cydonia {
     }
 
     /// Let go of an edit a re-read made meaningless, and keep one it did not.
-    ///
-    /// The field is held by id, so a board that came back with the card still
-    /// on it is a board the edit still belongs to — wherever the card has been
-    /// moved to in the meantime. Only a card that has gone leaves the field
-    /// pointing at nothing, and filing it then would file it nowhere.
+    /// Held by id, so a card that merely moved keeps its open field; only one
+    /// that has gone leaves the field pointing at nothing.
     pub(crate) fn drop_stale_edit(&mut self, cx: &mut Context<Self>) {
         let Some(at) = self.editing.clone() else {
             return;
@@ -197,8 +193,7 @@ impl Cydonia {
     }
 
     /// Carry a card into another lane, its session with it. The neighbour is
-    /// named rather than stepped to: the row that drew the arrow is the one
-    /// that knew what was beside it.
+    /// named rather than stepped to — the row that drew the arrow knew it.
     fn move_card(&mut self, card: &str, to: &str, cx: &mut Context<Self>) {
         self.commit(cx);
         let (card, to) = (card.to_owned(), to.to_owned());
@@ -230,8 +225,7 @@ impl Cydonia {
         cx.notify();
     }
 
-    /// A lane at the right-hand end, opened straight into its name — nobody
-    /// means to keep a column called Column.
+    /// A lane at the right-hand end, opened straight into its name.
     fn new_column(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.commit(cx);
         let id = self
@@ -270,10 +264,8 @@ impl Cydonia {
             let (Some(text), Some(entry)) = (text, workspace.preferred_agent()) else {
                 return;
             };
-            // Nothing to link to is nothing to write. Answering a refused
-            // dispatch by clearing the field would take the card's last
-            // session off it, and now that the field is on the file that would
-            // stick.
+            // Nothing to link to is nothing to write: clearing the field on a
+            // refused dispatch would take the card's last session off it.
             let Some(record) = workspace
                 .new_session(entry, Some(text), cx)
                 .and_then(|id| workspace.mint_record(id))
@@ -292,8 +284,8 @@ impl Cydonia {
         cx.notify();
     }
 
-    /// The `···` on a card: the one thing you can do to it that the row of
-    /// glyphs underneath should not carry, because it cannot be undone.
+    /// The `···` on a card: what the row of glyphs underneath should not carry,
+    /// because it cannot be undone.
     fn card_menu(&self, card: &str, cx: &mut Context<Self>) -> Option<AnyElement> {
         if self.menu.as_ref() != Some(&Menu::Card(card.to_owned())) {
             return None;
@@ -320,18 +312,14 @@ impl Cydonia {
 
     // ── chrome ───────────────────────────────────────────────────
 
-    /// The lanes. Same frame as [`Cydonia::transcript`]: the body of the
-    /// content card, with the composer stack still pinned under it.
-    ///
-    /// A board opens with none of these, so the lane that makes one is always
-    /// drawn — on an empty board it is the whole pane, and there is nothing
-    /// else it could be asking for.
+    /// The lanes. A board opens with none, so the lane that makes one is
+    /// always drawn — on an empty board it is the whole pane.
     pub fn board(&self, cx: &mut Context<Self>) -> AnyElement {
         let Some(board) = self.workspace.read(cx).active_board() else {
             return div().flex_1().into_any_element();
         };
-        // Read out before drawing: every column borrows the board again, and
-        // each one needs to know what is beside it to point an arrow at.
+        // Read out before drawing: each column borrows the board again, and
+        // needs to know what is beside it to point an arrow at.
         let ids: Vec<String> = board
             .columns
             .iter()
@@ -374,8 +362,7 @@ impl Cydonia {
         else {
             return div().into_any_element();
         };
-        // Whichever lanes sit either side, by name — the arrows on a card carry
-        // it to one of these and nowhere else.
+        // Whichever lanes sit either side — where a card's arrows carry it.
         let left = ix.checked_sub(1).map(|n| ids[n].clone());
         let right = ids.get(ix + 1).cloned();
         let mut rows: Vec<AnyElement> = cards
@@ -430,10 +417,8 @@ impl Cydonia {
             .into_any_element()
     }
 
-    /// The lane's name and its count — and, while the lane is empty, the way
-    /// to be rid of it. A column holding cards offers no control at all: the
-    /// cards are the work, and "delete this column" has no reading that means
-    /// "and the six things in it".
+    /// The lane's name and count, and — only while it is empty — the way to be
+    /// rid of it. See [`artifact::board::Board::remove_column`].
     fn column_header(
         &self,
         id: &str,
@@ -588,10 +573,8 @@ impl Cydonia {
                             .text_color(theme.text)
                             .child(text),
                     )
-                    // What is done *to* the card, as against what is done with
-                    // it: the row underneath carries the moves and the run,
-                    // which are one press each and wanted often. Delete is
-                    // neither, and it is the one that cannot be taken back.
+                    // What is done *to* the card. The row underneath carries
+                    // the moves and the run — one press each, all reversible.
                     .child(
                         self.menu_button(
                             SharedString::from(format!("card-menu-{id}")),
@@ -611,10 +594,8 @@ impl Cydonia {
                     .flex_row()
                     .items_center()
                     .gap(px(2.))
-                    // What to call this card out loud. Tabular, so a column of
-                    // them lines up, and in the mono face for the same reason
-                    // the delete dialog sets a path there: it is meant to be
-                    // read back character by character, not skimmed.
+                    // What to call this card out loud, in the mono face for
+                    // the reason the delete dialog sets a path there.
                     .children(handle.map(|handle| {
                         div()
                             .flex_none()

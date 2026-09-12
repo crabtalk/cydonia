@@ -8,9 +8,8 @@ pub const NAMED: &str = "Column";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Column {
-    /// What names this column, for as long as it exists — what an agent holds
-    /// while the user renames the column under it. Defaulted, and minted by
-    /// the read that finds it missing — see [`super::Board::mint_ids`].
+    /// What an agent holds while the column is renamed under it. Minted on
+    /// read when missing — see [`super::Board::mint_ids`].
     #[serde(default)]
     pub id: String,
     pub name: String,

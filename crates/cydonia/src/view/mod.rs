@@ -5,8 +5,10 @@
 pub mod article;
 pub mod board;
 pub mod component;
+pub mod confirm;
 pub mod detail;
 pub mod header;
+pub mod info;
 pub mod menubar;
 pub mod root;
 pub mod settings;
