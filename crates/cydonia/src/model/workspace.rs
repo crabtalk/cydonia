@@ -854,14 +854,6 @@ impl Workspace {
         Ok(())
     }
 
-    pub fn rename_board(&mut self, id: &str, name: String, cx: &mut Context<Self>) {
-        self.with_board(id, |store, board| {
-            board.name = name.trim().to_owned();
-            store.save_board(board);
-        });
-        cx.notify();
-    }
-
     pub fn archive_board(&mut self, id: &str, archived: bool, cx: &mut Context<Self>) {
         self.with_board(id, |store, board| {
             board.archived = archived;

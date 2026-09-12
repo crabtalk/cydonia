@@ -75,13 +75,24 @@ pub(crate) struct Toolbar {
     pub entry: Option<Entry>,
 }
 
-/// The thing the title names, in the three ways the band needs it: to put a
-/// menu on, to say whether that menu offers Archive or Unarchive, and to know
-/// which rename is this one.
+/// The thing the title names: what to put a menu on, whether that menu offers
+/// Archive or Unarchive, and how the thing is renamed.
 pub(crate) struct Entry {
     pub row: Row,
     pub archived: bool,
-    pub renaming: Renaming,
+    pub naming: Naming,
+}
+
+/// Where an entry is renamed, which is one place per kind and never two.
+pub(crate) enum Naming {
+    /// In the band, in place — a pane named by one field and nothing else. See
+    /// [`Cydonia::header_renaming`].
+    Inline(Renaming),
+    /// In the board's identity panel, by id. A board is named by two things,
+    /// its name and its key, and they are derived from each other — so there is
+    /// one place that edits both and no inline field anywhere. See
+    /// [`Cydonia::toggle_info`].
+    Panel(String),
 }
 
 /// A delete that has been asked for and not yet agreed to.
@@ -296,7 +307,7 @@ impl Cydonia {
                             id: chat.id,
                         },
                         archived: chat.closed,
-                        renaming: Renaming::Session(chat.id),
+                        naming: Naming::Inline(Renaming::Session(chat.id)),
                     }),
                 }
             }
@@ -308,7 +319,7 @@ impl Cydonia {
                     entry: Some(Entry {
                         row: Row::Board { project, ix },
                         archived: board.archived,
-                        renaming: Renaming::Board(board.id.clone()),
+                        naming: Naming::Panel(board.id.clone()),
                     }),
                 }
             }
@@ -320,7 +331,7 @@ impl Cydonia {
                     entry: Some(Entry {
                         row: Row::Article { project, ix },
                         archived: article.archived,
-                        renaming: Renaming::Article(article.path.clone()),
+                        naming: Naming::Inline(Renaming::Article(article.path.clone())),
                     }),
                 }
             }
@@ -332,7 +343,7 @@ impl Cydonia {
                     entry: Some(Entry {
                         row: Row::Table { project, ix },
                         archived: table.archived,
-                        renaming: Renaming::Table(table.key.clone()),
+                        naming: Naming::Inline(Renaming::Table(table.key.clone())),
                     }),
                 }
             }
@@ -341,24 +352,43 @@ impl Cydonia {
 
     // ── the board's identity panel ───────────────────────────────
 
+    /// Show the panel, or put it away when the press that opened this one is
+    /// the press that shut it.
+    ///
+    /// The panel dismisses on a press outside itself, which lands before the
+    /// click — so by the time the name's own handler runs the panel already
+    /// reads as shut, and opening it again is all a plain toggle could do. What
+    /// the press found is noted on the way down instead.
+    fn toggle_info(&mut self, board: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let shut_by_this_press = std::mem::take(&mut self.info_pressed);
+        if shut_by_this_press || self.info.is_some() {
+            self.info = None;
+            cx.notify();
+            return;
+        }
+        self.open_info(board, window, cx);
+    }
+
     /// Open the panel on the board the band is showing, seeded from what it is
     /// called now.
-    fn open_info(&mut self, board: &str, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn open_info(&mut self, board: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.commit(cx);
+        // One editor at a time, and before the board is looked up rather than
+        // after: a rename left in flight would otherwise outlive a board that
+        // has gone, and the band would go on drawing a field for it.
+        self.menu = None;
+        self.renaming = None;
         let Some((name, key)) = self
             .workspace
             .read(cx)
             .board_at(board)
             .map(|board| (board.name.clone(), board.key.clone()))
         else {
+            cx.notify();
             return;
         };
         let name = seed(name, "name this board…", cx);
         let key = seed(key, "KEY", cx);
-        // One editor at a time: a rename started from the sidebar row puts the
-        // shared name field in the band, which is where this panel hangs from.
-        self.menu = None;
-        self.renaming = None;
         window.focus(&name.read(cx).focus_handle(cx), cx);
         self.info = Some(BoardInfo {
             board: board.to_owned(),
@@ -410,17 +440,15 @@ impl Cydonia {
             .gap(px(10.))
             .child(self.info_row("Name", info.name.clone(), cx))
             .child(self.info_row("Key", info.key.clone(), cx))
-            .child(
+            // Only when there is something wrong. A standing line explaining
+            // what a key is for would be a caption on two labelled fields, and
+            // any example it gave would name a board that is not this one.
+            .children(info.error.clone().map(|why| {
                 div()
                     .text_style(TextStyle::Caption)
-                    .text_color(match info.error.is_some() {
-                        true => theme.danger,
-                        false => theme.text_faint,
-                    })
-                    .child(info.error.clone().unwrap_or_else(|| {
-                        SharedString::from("The key names every card here: ROAD-12.")
-                    })),
-            )
+                    .text_color(theme.danger)
+                    .child(why)
+            }))
             .child(
                 div()
                     .flex()
@@ -485,7 +513,10 @@ impl Cydonia {
     pub(crate) fn header_renaming(&self, cx: &App) -> Option<&Renaming> {
         let at = self.renaming.as_ref()?;
         let showing = self.toolbar(self.showing(cx)?, cx)?;
-        (showing.entry?.renaming == *at).then_some(at)
+        let Naming::Inline(shown) = showing.entry?.naming else {
+            return None;
+        };
+        (shown == *at).then_some(at)
     }
 
     /// The band itself, drawn over the pane rather than above it: the content
@@ -506,7 +537,7 @@ impl Cydonia {
         // entry whose identity is two fields and so the only one with a panel.
         let board = toolbar.as_ref().and_then(|toolbar| match &toolbar.entry {
             Some(Entry {
-                renaming: Renaming::Board(id),
+                naming: Naming::Panel(id),
                 ..
             }) => Some(id.clone()),
             _ => None,
@@ -540,7 +571,6 @@ impl Cydonia {
                         .flex_row()
                         .items_center()
                         .gap(px(6.))
-                        .group("header")
                         // A board's name is the way into its identity panel,
                         // the way `../desktop` opens a project's from the name
                         // it shows: what a thing is called and what it answers
@@ -552,6 +582,13 @@ impl Cydonia {
                                 .relative()
                                 .min_w_0()
                                 .flex_1()
+                                // A row, so the name is only as wide as it
+                                // reads. Stretched to the band's whole width it
+                                // would take every press that landed on the
+                                // empty half of the header with it.
+                                .flex()
+                                .flex_row()
+                                .items_center()
                                 .child(
                                     div()
                                         .id("header-title")
@@ -563,11 +600,26 @@ impl Cydonia {
                                         .when_some(board.clone(), |title, _| title.cursor_pointer())
                                         .child(toolbar.title)
                                         .when_some(board.clone(), |title, id| {
-                                            title.on_click(cx.listener(
-                                                move |this, _, window, cx| {
-                                                    this.open_info(&id, window, cx);
-                                                },
-                                            ))
+                                            // Noted on the way down, ahead of
+                                            // the panel's own dismiss — see
+                                            // [`Cydonia::toggle_info`], which
+                                            // is [`Cydonia::toggle_menu`]'s
+                                            // problem and its answer.
+                                            let opened = id.clone();
+                                            title
+                                                .capture_any_mouse_down(cx.listener(
+                                                    move |this, _, _, _| {
+                                                        this.info_pressed =
+                                                            this.info.as_ref().is_some_and(
+                                                                |info| info.board == opened,
+                                                            );
+                                                    },
+                                                ))
+                                                .on_click(cx.listener(
+                                                    move |this, _, window, cx| {
+                                                        this.toggle_info(&id, window, cx);
+                                                    },
+                                                ))
                                         }),
                                 )
                                 .children(board.as_deref().and_then(|id| self.info_panel(id, cx))),
@@ -575,7 +627,13 @@ impl Cydonia {
                         .children(toolbar.entry.map(|entry| {
                             self.menu_button(
                                 SharedString::from("header-menu"),
-                                "header",
+                                // On show, not behind a hover. There is one of
+                                // these on screen and it belongs to the pane in
+                                // front of you — hiding a trigger until the
+                                // pointer finds it is what a list of rows
+                                // needs, not what a band with a single control
+                                // does.
+                                None,
                                 icons::icon(icons::system::MENU_DOTS)
                                     .size(px(14.))
                                     .text_color(theme.text_faint),

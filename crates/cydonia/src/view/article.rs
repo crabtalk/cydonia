@@ -456,7 +456,7 @@ impl Cydonia {
             .child(
                 self.menu_button(
                     ("article-menu", ix),
-                    "article-row",
+                    Some("article-row"),
                     icons::icon(icons::system::MENU_DOTS)
                         .size(px(14.))
                         .text_color(theme.text_faint),

@@ -78,10 +78,14 @@ impl Cydonia {
     }
 
     /// A `···` or `+` that opens `menu`, revealed on the row's hover.
+    /// `group` is the hover group that reveals it — one row in a list of them,
+    /// where a `···` on every line at once would be noise. `None` for a trigger
+    /// that is the only one on screen and stands on its own, which is what the
+    /// pane header's is.
     pub(crate) fn menu_button(
         &self,
         id: impl Into<gpui::ElementId>,
-        group: &'static str,
+        group: Option<&'static str>,
         mark: impl IntoElement,
         menu: Menu,
         cx: &Context<Self>,
@@ -92,7 +96,7 @@ impl Cydonia {
             .relative()
             // An open menu keeps its trigger on show — by then the pointer is
             // over the menu, not the row that opened it.
-            .when(self.menu != Some(menu), |el| {
+            .when_some(group.filter(|_| self.menu != Some(menu)), |el, group| {
                 el.invisible().group_hover(group, |el| el.visible())
             })
             .p(px(3.))

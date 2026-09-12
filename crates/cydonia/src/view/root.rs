@@ -260,6 +260,10 @@ pub struct Cydonia {
     pub(crate) confirming: Option<header::Confirming>,
     /// The board identity panel, while it is open — see [`header::BoardInfo`].
     pub(crate) info: Option<header::BoardInfo>,
+    /// Whether the press now being handled landed on the name of the board
+    /// whose panel is open — read by [`Cydonia::toggle_info`] and nothing else,
+    /// the way [`Cydonia::menu_pressed`] is read by `toggle_menu`.
+    pub(crate) info_pressed: bool,
     pub(crate) menu: Option<Menu>,
     /// Which of the open menu's rows is live. Held here rather than in the
     /// card, which is rebuilt every frame: the pointer moves the cursor, and
@@ -347,6 +351,7 @@ impl Cydonia {
             cell_field,
             confirming: None,
             info: None,
+            info_pressed: false,
             menu: None,
             menu_cursor: Cursor::default(),
             menu_pressed: false,

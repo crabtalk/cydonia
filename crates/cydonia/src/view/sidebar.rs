@@ -176,7 +176,6 @@ fn shown(row: Row, features: &Features) -> bool {
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) enum Renaming {
     Session(u64),
-    Board(String),
     Article(PathBuf),
     Table(String),
     /// A lane on the open board. The one entry here that no row in the sidebar
@@ -556,7 +555,7 @@ impl Cydonia {
             .child(
                 self.menu_button(
                     ("project-add", ix),
-                    "project-head",
+                    Some("project-head"),
                     icons::icon(icons::system::PLUS)
                         .size(px(12.))
                         .text_color(theme.text_faint)
@@ -1030,7 +1029,7 @@ impl Cydonia {
             .child(
                 self.menu_button(
                     ("session-menu", id),
-                    "session-row",
+                    Some("session-row"),
                     icons::icon(icons::system::MENU_DOTS)
                         .size(px(14.))
                         .text_color(theme.text_faint),
@@ -1072,17 +1071,10 @@ impl Cydonia {
             .get(project)
             .and_then(|open| open.boards.get(ix));
         let archived = board.is_some_and(|board| board.archived);
-        let id = board.map(|board| &board.id);
-        // The band draws the field when it is showing this entry — see
-        // [`Cydonia::header_renaming`], which is what keeps one field from
-        // being claimed by two places at once.
-        let renaming = matches!(&self.renaming, Some(Renaming::Board(at)) if Some(at) == id)
-            && self.header_renaming(cx).is_none();
         let tint = tint(selected, archived, &theme);
-        let label = match renaming {
-            true => self.name_field(cx),
-            false => row_label(name, tint),
-        };
+        // No inline field on a board's row, ever: a board is named by its panel
+        // — see [`Self::rename_entry`].
+        let label = row_label(name, tint);
 
         row(
             SharedString::from(format!("board-{project}-{ix}")),
@@ -1100,7 +1092,7 @@ impl Cydonia {
         .child(
             self.menu_button(
                 SharedString::from(format!("board-menu-{project}-{ix}")),
-                "board-row",
+                Some("board-row"),
                 icons::icon(icons::system::MENU_DOTS)
                     .size(px(14.))
                     .text_color(theme.text_faint),
@@ -1191,15 +1183,29 @@ impl Cydonia {
     /// Put the name field on an entry's row, whichever kind it is. Each is
     /// addressed by what identifies it, so the field cannot slide onto its
     /// neighbour if the list reorders under it.
+    ///
+    /// A board is the exception and has no field here: it is named by two
+    /// things at once, so it opens its identity panel instead — which lives
+    /// under the band, so the board is brought to the front first. One way to
+    /// name a board, wherever you asked from.
     fn rename_entry(&mut self, entry: Row, window: &mut Window, cx: &mut Context<Self>) {
-        let workspace = self.workspace.read(cx);
-        let what = match entry {
-            Row::Session { id, .. } => Some(Renaming::Session(id)),
-            Row::Board { project, ix } => workspace
+        if let Row::Board { project, ix } = entry {
+            let id = self
+                .workspace
+                .read(cx)
                 .projects
                 .get(project)
                 .and_then(|open| open.boards.get(ix))
-                .map(|board| Renaming::Board(board.id.clone())),
+                .map(|board| board.id.clone());
+            if let Some(id) = id {
+                self.open_board(project, ix, cx);
+                self.open_info(&id, window, cx);
+            }
+            return;
+        }
+        let workspace = self.workspace.read(cx);
+        let what = match entry {
+            Row::Session { id, .. } => Some(Renaming::Session(id)),
             Row::Article { project, ix } => workspace
                 .projects
                 .get(project)
@@ -1210,7 +1216,7 @@ impl Cydonia {
                 .get(project)
                 .and_then(|open| open.tables.get(ix))
                 .map(|table| Renaming::Table(table.key.clone())),
-            Row::Project(_) | Row::Archive(_) => None,
+            Row::Board { .. } | Row::Project(_) | Row::Archive(_) => None,
         };
         if let Some(what) = what {
             self.start_rename(what, window, cx);
@@ -1292,10 +1298,6 @@ impl Cydonia {
                 .session(*id)
                 .map(ChatSession::label)
                 .unwrap_or_default(),
-            Renaming::Board(id) => workspace
-                .board_at(id)
-                .map(|board| board.name.clone())
-                .unwrap_or_default(),
             Renaming::Article(path) => workspace
                 .projects
                 .iter()
@@ -1332,7 +1334,6 @@ impl Cydonia {
         let name = self.name_field.read(cx).content().to_string();
         self.workspace.update(cx, |workspace, cx| match what {
             Renaming::Session(id) => workspace.rename_session(id, name, cx),
-            Renaming::Board(id) => workspace.rename_board(&id, name, cx),
             Renaming::Article(path) => workspace.rename_article(&path, name, cx),
             Renaming::Table(key) => workspace.rename_table(&key, name, cx),
             Renaming::Column(id) => workspace.rename_column(&id, name, cx),

@@ -396,7 +396,7 @@ impl Cydonia {
             .child(
                 self.menu_button(
                     ("column-menu", ix),
-                    "grid-head",
+                    Some("grid-head"),
                     icons::icon(icons::system::MENU_DOTS)
                         .size(px(14.))
                         .text_color(theme.text_faint),
@@ -542,7 +542,7 @@ impl Cydonia {
         .child(
             self.menu_button(
                 ("table-menu", ix),
-                "table-row",
+                Some("table-row"),
                 icons::icon(icons::system::MENU_DOTS)
                     .size(px(14.))
                     .text_color(theme.text_faint),
