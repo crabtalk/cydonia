@@ -810,6 +810,50 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Take the board's identity whole, as the header's panel gives it: what it
+    /// is called, and the key its handles carry.
+    ///
+    /// Answers what is wrong rather than quietly keeping the old one — a key
+    /// that is taken is something the panel stays open to say.
+    ///
+    /// Re-keying renames every handle on the board: `ROAD-12` becomes
+    /// `BACK-12`. That is the cost of letting the key be edited at all, and it
+    /// is the caller's to accept — the number is what does not move.
+    pub fn edit_board(
+        &mut self,
+        id: &str,
+        name: String,
+        key: &str,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        let key = artifact::board::key::normalize(key)
+            .ok_or("A key needs at least one letter or digit.".to_owned())?;
+        let Some(open) = self
+            .projects
+            .iter_mut()
+            .find(|open| open.boards.iter().any(|board| board.id == id))
+        else {
+            return Ok(());
+        };
+        // Among this project's boards and no further: a handle is heard by an
+        // agent running in this project, so that is as far as it has to carry.
+        if open
+            .boards
+            .iter()
+            .any(|board| board.id != id && board.key == key)
+        {
+            return Err(format!("{key} is another board's key here."));
+        }
+        let store = open.store();
+        if let Some(board) = open.boards.iter_mut().find(|board| board.id == id) {
+            board.name = name.trim().to_owned();
+            board.key = key;
+            store.save_board(board);
+        }
+        cx.notify();
+        Ok(())
+    }
+
     pub fn rename_board(&mut self, id: &str, name: String, cx: &mut Context<Self>) {
         self.with_board(id, |store, board| {
             board.name = name.trim().to_owned();

@@ -258,6 +258,8 @@ pub struct Cydonia {
     /// with its label rather than looked up when the dialog draws: what is
     /// being asked about must not change wording under the question.
     pub(crate) confirming: Option<header::Confirming>,
+    /// The board identity panel, while it is open — see [`header::BoardInfo`].
+    pub(crate) info: Option<header::BoardInfo>,
     pub(crate) menu: Option<Menu>,
     /// Which of the open menu's rows is live. Held here rather than in the
     /// card, which is rebuilt every frame: the pointer moves the cursor, and
@@ -344,6 +346,7 @@ impl Cydonia {
             cell: None,
             cell_field,
             confirming: None,
+            info: None,
             menu: None,
             menu_cursor: Cursor::default(),
             menu_pressed: false,
@@ -637,6 +640,8 @@ impl Render for Cydonia {
             .on_action(cx.listener(Self::commit_cell_action))
             .on_action(cx.listener(Self::dismiss_cell))
             .on_action(cx.listener(Self::commit_name))
+            .on_action(cx.listener(Self::commit_info))
+            .on_action(cx.listener(Self::dismiss_info))
             .on_action(cx.listener(Self::dismiss_name))
             // Everything the menu bar names, and only under the conditions
             // that keep its items honest.

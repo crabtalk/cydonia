@@ -30,16 +30,17 @@ fn a_board_written_before_ids_takes_the_name_of_its_file() {
     assert_eq!(boards[0].name, "Roadmap");
 }
 
-/// Reading writes back only what it minted. A board with nothing to name is
-/// left alone: `boards` runs on every re-read of a project, and a write from
-/// inside one is an event the watch answers by re-reading again.
+/// Reading writes back only what it minted. A board already carrying
+/// everything — its id, its key, its counter — is left alone: `boards` runs on
+/// every re-read of a project, and a write from inside one is an event the
+/// watch answers by re-reading again.
 #[test]
-fn reading_an_old_board_leaves_the_file_alone() {
+fn reading_a_settled_board_leaves_the_file_alone() {
     let scratch = Scratch::new("board-quiet");
     let dir = scratch.store().init().unwrap().join("boards");
     fs::create_dir_all(&dir).unwrap();
     let file = dir.join("1757000000000.toml");
-    let before = "name = \"Roadmap\"\n";
+    let before = "id = \"1757000000000\"\narchived = false\nname = \"Roadmap\"\nkey = \"ROA\"\nnext_handle = 1\ncolumns = []\n";
     fs::write(&file, before).unwrap();
 
     scratch.store().boards();

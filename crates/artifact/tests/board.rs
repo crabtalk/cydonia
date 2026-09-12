@@ -139,6 +139,89 @@ fn renaming_a_column_leaves_its_id_alone() {
     assert!(!board.rename_column("nobody", "Backlog"));
 }
 
+/// Cards are numbered from one, in the order they are made, and the number is
+/// said with the board's key.
+#[test]
+fn cards_are_handled_in_the_order_they_are_made() {
+    let mut board = Board::new("1757000000000".into(), "Roadmap");
+    board.key = "ROA".into();
+    let todo = board.add_column("Todo").id.clone();
+    let first = board
+        .add_card(&todo, "Retire Spot".into())
+        .unwrap()
+        .id
+        .clone();
+    let second = board
+        .add_card(&todo, "Wire the picker".into())
+        .unwrap()
+        .id
+        .clone();
+
+    let handle = |id: &str| board.handle_of(board.card(id).unwrap()).unwrap();
+    assert_eq!(handle(&first), "ROA-1");
+    assert_eq!(handle(&second), "ROA-2");
+}
+
+/// The counter only climbs. A deleted ROAD-12 leaves a gap rather than coming
+/// back as somebody else's card — a handle already said out loud has to go on
+/// meaning what it meant.
+#[test]
+fn a_deleted_handle_never_comes_back() {
+    let mut board = Board::new("1757000000000".into(), "Roadmap");
+    board.key = "ROA".into();
+    let todo = board.add_column("Todo").id.clone();
+    let first = board.add_card(&todo, "one".into()).unwrap().id.clone();
+    board.add_card(&todo, "two".into());
+
+    board.remove_card(&first);
+    let third = board.add_card(&todo, "three".into()).unwrap().id.clone();
+
+    assert_eq!(
+        board.handle_of(board.card(&third).unwrap()).unwrap(),
+        "ROA-3"
+    );
+}
+
+/// A board keeps its key when it is renamed. The key was derived from the name
+/// once; re-deriving it would break every handle written down since.
+#[test]
+fn renaming_a_board_leaves_its_key_alone() {
+    let mut board = Board::new("1757000000000".into(), "Roadmap");
+    board.key = "ROA".into();
+    board.name = "Backlog".into();
+    assert_eq!(board.key, "ROA");
+}
+
+/// Cards a read finds unnumbered are numbered, and numbered the same the second
+/// time — the same reason the ids are written back.
+#[test]
+fn a_board_read_twice_keeps_its_handles() {
+    let scratch = Scratch::new("board-handles");
+    let dir = scratch.store().init().unwrap().join("boards");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join("1757000000000.toml"),
+        "name = \"Roadmap\"\n\n[[columns]]\nname = \"Todo\"\n\n[[columns.cards]]\ntext = \"one\"\n\n[[columns.cards]]\ntext = \"two\"\n",
+    )
+    .unwrap();
+
+    let first = handles(&scratch.store().boards()[0]);
+    let second = handles(&scratch.store().boards()[0]);
+    assert_eq!(first, vec!["ROA-1", "ROA-2"]);
+    assert_eq!(first, second);
+}
+
+/// Two boards in one project cannot answer to the same name.
+#[test]
+fn boards_in_a_project_take_different_keys() {
+    let scratch = Scratch::new("board-keys");
+    let one = scratch.store().create_board().expect("made");
+    let two = scratch.store().create_board().expect("made");
+
+    assert!(!one.key.is_empty());
+    assert_ne!(one.key, two.key);
+}
+
 /// A card that was never dispatched has no key for a session, rather than an
 /// empty one every reader has to know to expect.
 #[test]
@@ -177,9 +260,24 @@ fn a_dispatched_card_keeps_its_session() {
 fn unnamed(name: &str, cards: usize) -> Column {
     let mut column = Column::new(String::new(), name);
     column.cards = (0..cards)
-        .map(|n| Card::new(String::new(), format!("card {n}")))
+        .map(|n| Card {
+            id: String::new(),
+            handle: None,
+            text: format!("card {n}"),
+            session: None,
+        })
         .collect();
     column
+}
+
+/// What every card on the board is called out loud, in the order they sit.
+fn handles(board: &Board) -> Vec<String> {
+    board
+        .columns
+        .iter()
+        .flat_map(|column| column.cards.iter())
+        .filter_map(|card| board.handle_of(card))
+        .collect()
 }
 
 /// Every id on the board, columns and cards together, in the order they sit.

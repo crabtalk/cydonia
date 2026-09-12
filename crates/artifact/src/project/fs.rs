@@ -14,13 +14,14 @@
 //! the person who can see the file does.
 
 use crate::{
-    board::{self, Board},
+    board::{self, Board, key},
     id,
     session::record::Record,
     stamp,
 };
 use std::{
     cmp::Reverse,
+    collections::HashSet,
     path::{Path, PathBuf},
 };
 
@@ -140,13 +141,25 @@ impl super::Project for Project {
             .filter(|path| path.extension().is_some_and(|ext| ext == "toml"))
             .filter_map(|path| self.read_board(&path))
             .collect();
+        // A key is unique among a project's boards, so it is settled here,
+        // where the whole list is in hand and nothing else can be holding one.
+        let mut keys: HashSet<String> = boards
+            .iter()
+            .map(|board| board.key.clone())
+            .filter(|key| !key.is_empty())
+            .collect();
         // Anything short of ids is written back now rather than left for the
         // next save. Two reads of the same id-less board mint two different
         // sets, so a board that stayed unwritten would never compare equal to
         // itself and every re-read would report a change nobody made. The
         // write costs one watch event, which finds nothing left to mint.
         for board in &mut boards {
-            if board.mint_ids() {
+            let keyed = board.key.is_empty();
+            if keyed {
+                board.key = key::derive(&board.name, &keys);
+                keys.insert(board.key.clone());
+            }
+            if board.mint_ids() || keyed {
                 super::Project::save_board(self, board);
             }
         }
@@ -156,7 +169,15 @@ impl super::Project for Project {
     fn create_board(&self) -> Option<Board> {
         let dir = self.init().ok()?.join(BOARDS);
         std::fs::create_dir_all(&dir).ok()?;
+        // What the project's other boards are already called, so the new one's
+        // key is clear of them. Reading them is also what settles any key they
+        // are still missing.
+        let taken: HashSet<String> = super::Project::boards(self)
+            .into_iter()
+            .map(|board| board.key)
+            .collect();
         let mut board = Board::new(stem(&free(&dir, stamp::now())), board::NAMED);
+        board.key = key::derive(&board.name, &taken);
         super::Project::save_board(self, &mut board);
         Some(board)
     }

@@ -1139,15 +1139,23 @@ impl Cydonia {
             true => Item::action("Unarchive").with_icon(icons::files::ARCHIVE_MINIMALISTIC),
             false => Item::action("Archive").with_icon(icons::files::ARCHIVE_MINIMALISTIC),
         };
-        let mut rows = vec![
-            menu::row(
-                Item::action("Rename").with_icon(icons::editing::PEN_NEW_SQUARE),
-                move |this, window, cx| this.rename_entry(entry, window, cx),
-            ),
-            menu::row(put, move |this, _, cx| {
-                this.archive_entry(entry, !archived, cx)
-            }),
-        ];
+        // A board's name in the band is itself the way into its identity panel,
+        // so the menu does not offer a second route to it — `../desktop`'s rule
+        // for what a `···` may carry: only commands with no affordance on the
+        // object. Everywhere else the name is display-only and this is the way.
+        let named = !(at == Menu::Header && matches!(entry, Row::Board { .. }));
+        let mut rows = vec![menu::row(put, move |this, _, cx| {
+            this.archive_entry(entry, !archived, cx)
+        })];
+        if named {
+            rows.insert(
+                0,
+                menu::row(
+                    Item::action("Rename").with_icon(icons::editing::PEN_NEW_SQUARE),
+                    move |this, window, cx| this.rename_entry(entry, window, cx),
+                ),
+            );
+        }
         if at == Menu::Header {
             rows.push(menu::row(
                 Item::action("Delete").with_icon(icons::files::TRASH_BIN_MINIMALISTIC),
@@ -1310,6 +1318,8 @@ impl Cydonia {
         };
         self.name_field
             .update(cx, |field, cx| field.set_content(label, cx));
+        // See [`Cydonia::open_info`] — the other way round.
+        self.info = None;
         self.renaming = Some(what);
         window.focus(&self.name_field.read(cx).focus_handle(cx), cx);
         cx.notify();

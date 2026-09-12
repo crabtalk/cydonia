@@ -14,6 +14,7 @@
 
 pub mod card;
 pub mod column;
+pub mod key;
 
 pub use card::Card;
 pub use column::Column;
@@ -25,6 +26,10 @@ use std::collections::HashSet;
 /// What a board is called before it is named, and what one whose name has been
 /// taken off is shown as.
 pub const NAMED: &str = "Board";
+
+/// The number the first card on a board takes. One rather than nought, because
+/// a handle is read by a person.
+pub const FIRST: u64 = 1;
 pub const UNNAMED: &str = "Untitled";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -48,6 +53,19 @@ pub struct Board {
     pub archived: bool,
     #[serde(default)]
     pub name: String,
+    /// What every card here is prefixed with — `ROAD`, for `ROAD-12`. Derived
+    /// from the name when the board is made and kept across a rename: a handle
+    /// that has been said out loud has to go on meaning the card it meant.
+    ///
+    /// Unique among the boards of one project, which is as far as a handle ever
+    /// has to carry — the agent that hears one is running in that project.
+    #[serde(default)]
+    pub key: String,
+    /// The number the next card here takes. Kept in the file rather than read
+    /// back as `max + 1` over the cards: the counter only climbs, so a deleted
+    /// ROAD-12 leaves a gap instead of coming back as somebody else's.
+    #[serde(default)]
+    pub next_handle: u64,
     #[serde(default)]
     pub columns: Vec<Column>,
 }
@@ -65,6 +83,10 @@ impl Board {
             touched: stamp::now(),
             archived: false,
             name: name.to_owned(),
+            // Filled by whoever knows what the neighbouring boards have taken
+            // — see [`key::derive`]. Empty until then, the way the ids are.
+            key: String::new(),
+            next_handle: FIRST,
             columns: Vec::new(),
         }
     }
@@ -85,6 +107,9 @@ impl Board {
     /// handed a card with no id cannot name it to say anything about it.
     pub fn mint_ids(&mut self) -> bool {
         let mut taken = self.taken();
+        // Handles come off the counter even here, so a board read twice never
+        // numbers the same card differently — and a card that had one keeps it.
+        let mut next = self.next_handle.max(FIRST);
         let mut minted = false;
         for column in &mut self.columns {
             if column.id.is_empty() {
@@ -96,7 +121,16 @@ impl Board {
                     card.id = mint(&mut taken);
                     minted = true;
                 }
+                if card.handle.is_none() {
+                    card.handle = Some(next);
+                    next += 1;
+                    minted = true;
+                }
             }
+        }
+        if self.next_handle != next {
+            self.next_handle = next;
+            minted = true;
         }
         minted
     }
@@ -189,9 +223,26 @@ impl Board {
     /// lands.
     pub fn add_card(&mut self, column: &str, text: String) -> Option<&Card> {
         let id = self.mint_id();
+        let handle = self.take_handle();
         let column = self.column_mut(column)?;
-        column.cards.push(Card::new(id, text));
+        column.cards.push(Card::new(id, handle, text));
         column.cards.last()
+    }
+
+    /// The next number, and the counter moved past it. Answers [`FIRST`] for a
+    /// board written before the counter existed, whose default is zero — a card
+    /// numbered nought reads as an error, not as the first of anything.
+    fn take_handle(&mut self) -> u64 {
+        let handle = self.next_handle.max(FIRST);
+        self.next_handle = handle + 1;
+        handle
+    }
+
+    /// What to call this card out loud: `ROAD-12`. Nothing while the board has
+    /// no key, which is a board nobody has written back yet.
+    pub fn handle_of(&self, card: &Card) -> Option<String> {
+        let handle = card.handle?;
+        (!self.key.is_empty()).then(|| format!("{}-{handle}", self.key))
     }
 
     pub fn rewrite_card(&mut self, id: &str, text: &str) -> bool {

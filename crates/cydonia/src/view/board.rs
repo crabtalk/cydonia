@@ -509,11 +509,11 @@ impl Cydonia {
         }
         let theme = Theme::of(cx).clone();
         let painter = Painter::of(cx);
-        let Some(card) = self
+        let Some((card, handle)) = self
             .workspace
             .read(cx)
             .active_board()
-            .and_then(|board| board.card(id))
+            .and_then(|board| board.card(id).map(|card| (card, board.handle_of(card))))
         else {
             return div().into_any_element();
         };
@@ -564,6 +564,18 @@ impl Cydonia {
                     .flex_row()
                     .items_center()
                     .gap(px(2.))
+                    // What to call this card out loud. Tabular, so a column of
+                    // them lines up, and in the mono face for the same reason
+                    // the delete dialog sets a path there: it is meant to be
+                    // read back character by character, not skimmed.
+                    .children(handle.map(|handle| {
+                        div()
+                            .flex_none()
+                            .text_style(TextStyle::Caption)
+                            .font_family(theme.font_mono.clone())
+                            .text_color(theme.text_faint)
+                            .child(handle)
+                    }))
                     // On show, not behind a hover — a card's run is what you
                     // look at the board to see, and hiding it would mean
                     // hunting for the one that is working.

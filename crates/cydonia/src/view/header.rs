@@ -16,13 +16,54 @@ use crate::view::{
     sidebar::{Renaming, Row},
 };
 use bezel::{
-    gpui::{AnyElement, App, Context, FontWeight, SharedString, Window, div, prelude::*, px},
+    gpui::{
+        self, AnyElement, App, Context, Entity, Focusable as _, FontWeight, KeyBinding,
+        SharedString, Window, actions, div, prelude::*, px,
+    },
     theme::{TextStyle, Theme, Typeset},
     ui::{
         icons,
+        input::TextField,
+        popover,
         widgets::{ButtonStyle, Buttons, Scaffolding as _},
     },
 };
+
+actions!(cydonia_header, [CommitInfo, DismissInfo]);
+
+/// Claimed on the identity panel's fields, so `enter` files the panel rather
+/// than doing whatever `enter` does in every other field.
+const INFO_CONTEXT: &str = "CydoniaBoardInfo";
+
+/// How wide the labels run, so the two fields start on one edge.
+const LABEL_WIDTH: f32 = 34.;
+
+pub fn init(cx: &mut App) {
+    cx.bind_keys([
+        KeyBinding::new("enter", CommitInfo, Some(INFO_CONTEXT)),
+        KeyBinding::new("escape", DismissInfo, Some(INFO_CONTEXT)),
+    ]);
+}
+
+/// A board's identity, open for editing: what it is called, and the key every
+/// handle on it carries.
+///
+/// A panel rather than the inline field the other panes rename with, because a
+/// board is named by two things and they are worth seeing together — the key is
+/// derived from the name, so changing one is usually changing both.
+///
+/// Buffered: nothing is written until Save, and dismissing discards. Built when
+/// it opens, so it is always seeded from what is there now.
+pub(crate) struct BoardInfo {
+    /// Which board, by id — the panel outlives a re-read of the project.
+    pub board: String,
+    pub name: Entity<TextField>,
+    pub key: Entity<TextField>,
+    /// What was wrong with the last attempt to file it. Keeps the panel open,
+    /// because a key that is taken is a thing to fix rather than to be told
+    /// about after the fact.
+    pub error: Option<SharedString>,
+}
 
 /// What a pane puts in the band.
 pub(crate) struct Toolbar {
@@ -60,6 +101,17 @@ pub(crate) struct Confirming {
     pub goes: Option<String>,
     /// The sentence under it.
     pub note: String,
+}
+
+/// One of the panel's fields, holding what is there now.
+fn seed(content: String, placeholder: &'static str, cx: &mut App) -> Entity<TextField> {
+    let field = cx.new(|cx| {
+        TextField::new(cx)
+            .with_key_context(INFO_CONTEXT)
+            .with_placeholder(placeholder)
+    });
+    field.update(cx, |field, cx| field.set_content(content, cx));
+    field
 }
 
 impl Cydonia {
@@ -287,6 +339,143 @@ impl Cydonia {
         })
     }
 
+    // ── the board's identity panel ───────────────────────────────
+
+    /// Open the panel on the board the band is showing, seeded from what it is
+    /// called now.
+    fn open_info(&mut self, board: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.commit(cx);
+        let Some((name, key)) = self
+            .workspace
+            .read(cx)
+            .board_at(board)
+            .map(|board| (board.name.clone(), board.key.clone()))
+        else {
+            return;
+        };
+        let name = seed(name, "name this board…", cx);
+        let key = seed(key, "KEY", cx);
+        // One editor at a time: a rename started from the sidebar row puts the
+        // shared name field in the band, which is where this panel hangs from.
+        self.menu = None;
+        self.renaming = None;
+        window.focus(&name.read(cx).focus_handle(cx), cx);
+        self.info = Some(BoardInfo {
+            board: board.to_owned(),
+            name,
+            key,
+            error: None,
+        });
+        cx.notify();
+    }
+
+    pub(crate) fn commit_info(&mut self, _: &CommitInfo, _: &mut Window, cx: &mut Context<Self>) {
+        let Some(info) = self.info.as_ref() else {
+            return;
+        };
+        let board = info.board.clone();
+        let name = info.name.read(cx).content().trim().to_owned();
+        let key = info.key.read(cx).content().trim().to_owned();
+        let filed = self.workspace.update(cx, |workspace, cx| {
+            workspace.edit_board(&board, name, &key, cx)
+        });
+        match filed {
+            Ok(()) => self.info = None,
+            // Left open, holding what was typed: a key already taken is
+            // something to change, not something to be told about after the
+            // panel has thrown the rest of the edit away.
+            Err(why) => {
+                if let Some(info) = self.info.as_mut() {
+                    info.error = Some(why.into());
+                }
+            }
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn dismiss_info(&mut self, _: &DismissInfo, _: &mut Window, cx: &mut Context<Self>) {
+        self.info = None;
+        cx.notify();
+    }
+
+    /// The panel, hung under the name that opens it.
+    fn info_panel(&self, board: &str, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let info = self.info.as_ref().filter(|info| info.board == board)?;
+        let theme = Theme::of(cx).clone();
+        let card = popover::popover_card(&theme)
+            .w(px(280.))
+            .p(px(12.))
+            .flex()
+            .flex_col()
+            .gap(px(10.))
+            .child(self.info_row("Name", info.name.clone(), cx))
+            .child(self.info_row("Key", info.key.clone(), cx))
+            .child(
+                div()
+                    .text_style(TextStyle::Caption)
+                    .text_color(match info.error.is_some() {
+                        true => theme.danger,
+                        false => theme.text_faint,
+                    })
+                    .child(info.error.clone().unwrap_or_else(|| {
+                        SharedString::from("The key names every card here: ROAD-12.")
+                    })),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .justify_end()
+                    .gap(px(8.))
+                    .child(
+                        theme
+                            .button("Cancel", ButtonStyle::Ghost, None)
+                            .id("info-cancel")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.dismiss_info(&DismissInfo, window, cx)
+                            })),
+                    )
+                    .child(
+                        theme
+                            .button("Save", ButtonStyle::Prominent, None)
+                            .id("info-save")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.commit_info(&CommitInfo, window, cx)
+                            })),
+                    ),
+            )
+            // Pressing away is dismissing, and dismissing discards — what was
+            // typed is not filed until Save says so.
+            .on_mouse_down_out(
+                cx.listener(|this, _, window, cx| this.dismiss_info(&DismissInfo, window, cx)),
+            )
+            .into_any_element();
+        Some(popover::anchored_menu_below(
+            SharedString::from("board-info"),
+            card,
+            None,
+        ))
+    }
+
+    fn info_row(&self, label: &str, field: Entity<TextField>, cx: &Context<Self>) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(8.))
+            .child(
+                div()
+                    .flex_none()
+                    .w(px(LABEL_WIDTH))
+                    .text_style(TextStyle::Caption)
+                    .text_color(theme.text_muted)
+                    .child(label.to_owned()),
+            )
+            .child(div().flex_1().min_w_0().child(field))
+            .into_any_element()
+    }
+
     /// Which rename the band is drawing the name field for, if any.
     ///
     /// One field, and it can only be in one place: the sidebar row for the same
@@ -313,6 +502,15 @@ impl Cydonia {
             false => root::TOOLBAR_INSET,
         };
         let renaming = self.header_renaming(cx).is_some();
+        // Which board the band is showing, if it is showing one — the only
+        // entry whose identity is two fields and so the only one with a panel.
+        let board = toolbar.as_ref().and_then(|toolbar| match &toolbar.entry {
+            Some(Entry {
+                renaming: Renaming::Board(id),
+                ..
+            }) => Some(id.clone()),
+            _ => None,
+        });
         div()
             .absolute()
             .top_0()
@@ -343,15 +541,36 @@ impl Cydonia {
                         .items_center()
                         .gap(px(6.))
                         .group("header")
+                        // A board's name is the way into its identity panel,
+                        // the way `../desktop` opens a project's from the name
+                        // it shows: what a thing is called and what it answers
+                        // to are one panel, opened from the thing they name.
+                        // The other panes are named by one field and rename
+                        // from the `···`.
                         .child(
                             div()
+                                .relative()
                                 .min_w_0()
                                 .flex_1()
-                                .overflow_hidden()
-                                .text_style(TextStyle::Subheadline)
-                                .font_weight(FontWeight::MEDIUM)
-                                .text_color(theme.text)
-                                .child(toolbar.title),
+                                .child(
+                                    div()
+                                        .id("header-title")
+                                        .min_w_0()
+                                        .overflow_hidden()
+                                        .text_style(TextStyle::Subheadline)
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .text_color(theme.text)
+                                        .when_some(board.clone(), |title, _| title.cursor_pointer())
+                                        .child(toolbar.title)
+                                        .when_some(board.clone(), |title, id| {
+                                            title.on_click(cx.listener(
+                                                move |this, _, window, cx| {
+                                                    this.open_info(&id, window, cx);
+                                                },
+                                            ))
+                                        }),
+                                )
+                                .children(board.as_deref().and_then(|id| self.info_panel(id, cx))),
                         )
                         .children(toolbar.entry.map(|entry| {
                             self.menu_button(
