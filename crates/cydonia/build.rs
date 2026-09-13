@@ -1,14 +1,20 @@
-//! What the general section shows beside the version: the commit this binary
-//! was built from.
+//! Two things the binary cannot work out for itself: the commit it was built
+//! from, and whether it is the build that ships.
 //!
-//! Asked here rather than at runtime because the app that ships has no
-//! repository to ask — a bundle in `/Applications` is a binary and an icon —
-//! so the answer is compiled in or it does not exist.
+//! The commit is asked here rather than at runtime because the app that ships
+//! has no repository to ask — a bundle in `/Applications` is a binary and an
+//! icon — so the answer is compiled in or it does not exist.
 
 use std::process::Command;
 
 fn main() {
     println!("cargo::rustc-env=CYDONIA_COMMIT={}", commit());
+    // Declared whatever the profile is, or every `cfg!(prod)` in the crate is
+    // an unexpected-cfg warning — which CI turns into an error.
+    println!("cargo::rustc-check-cfg=cfg(prod)");
+    if profile().as_deref() == Some("prod") {
+        println!("cargo::rustc-cfg=prod");
+    }
     // Cargo has no reason of its own to look at git, so without these the
     // stamp is whichever commit was checked out the last time something else
     // forced a rebuild. `--git-path` resolves them through the repository
@@ -19,6 +25,18 @@ fn main() {
             println!("cargo::rerun-if-changed={path}");
         }
     }
+}
+
+/// Which profile is being built, which cargo names to a build script nowhere:
+/// `PROFILE` is only ever `debug` or `release`, whatever the profile is called.
+/// `OUT_DIR` does carry it — `target/<profile>/build/<pkg>-<hash>/out`, with the
+/// target triple in front of it for a cross build — so the answer is the
+/// component before `build`.
+fn profile() -> Option<String> {
+    let out = std::env::var("OUT_DIR").ok()?;
+    let mut parts = std::path::Path::new(&out).components().rev();
+    parts.find(|part| part.as_os_str() == "build")?;
+    Some(parts.next()?.as_os_str().to_str()?.to_owned())
 }
 
 /// `1a2b3c4`, and `1a2b3c4-dirty` where the tree has been edited since — the

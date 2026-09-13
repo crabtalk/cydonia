@@ -91,7 +91,9 @@ pub fn init(cx: &mut App) {
     // twice, and the app does it on its own anyway. Hung on the updater it acts
     // on, so a build that has none also has no handler and no item — see
     // [`menus`].
-    if let Some(updater) = update::of(cx) {
+    if update::supported(cx)
+        && let Some(updater) = update::of(cx)
+    {
         cx.on_action(move |_: &CheckForUpdates, cx: &mut App| {
             updater.update(cx, |updater, cx| updater.check(true, cx));
         });
@@ -111,7 +113,7 @@ fn menus(cx: &App) -> Vec<Menu> {
     // `cargo install` binary, a working copy, an architecture no image is cut
     // for — gets no item rather than one that would decline.
     let mut app = Vec::new();
-    if update::of(cx).is_some() {
+    if update::supported(cx) {
         app.push(MenuItem::action("Check for Updates…", CheckForUpdates));
         app.push(MenuItem::separator());
     }

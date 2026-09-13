@@ -27,6 +27,7 @@ use bezel::{
 use std::collections::HashSet;
 
 mod agents;
+mod developer;
 mod features;
 mod general;
 mod mcp;
@@ -48,6 +49,12 @@ pub(super) const LABEL_GAP: f32 = 8.;
 /// whatever the window gives it, up to this.
 const CONTENT_MAX_WIDTH: f32 = 860.;
 
+/// Whether this is the build that ships. The `prod` profile is the only thing
+/// that sets it — see `build.rs` — so `--release` is still a build with the
+/// Developer section in it, which is what makes `make bundle` worth opening:
+/// the updater runs in a bundle and nowhere else.
+pub(crate) const PROD: bool = cfg!(prod);
+
 /// Which section the sidebar has selected.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Section {
@@ -61,17 +68,28 @@ pub enum Section {
     // same reading that puts Features before it.
     Mcp,
     Performance,
+    // Last, and not in the build that ships — see [`Section::listed`].
+    Developer,
 }
 
 impl Section {
-    const ALL: [Self; 6] = [
+    const ALL: [Self; 7] = [
         Self::General,
         Self::Appearance,
         Self::Features,
         Self::Agents,
         Self::Mcp,
         Self::Performance,
+        Self::Developer,
     ];
+
+    /// Whether this build lists it in the sidebar. Developer holds switches for
+    /// looking at what has not happened yet, which is not something to hand
+    /// somebody who installed the app — so it is absent from a `prod` build
+    /// rather than empty in one.
+    fn listed(self) -> bool {
+        !matches!(self, Self::Developer) || !PROD
+    }
 
     fn title(self) -> &'static str {
         match self {
@@ -81,6 +99,7 @@ impl Section {
             Self::Agents => "Agents",
             Self::Mcp => "MCP",
             Self::Performance => "Performance",
+            Self::Developer => "Developer",
         }
     }
 
@@ -93,6 +112,7 @@ impl Section {
             Self::Mcp => {
                 Some("The tools cydonia offers the agents it runs, over a port on this machine.")
             }
+            Self::Developer => Some("Switches for looking at what has not happened yet."),
             Self::General | Self::Appearance | Self::Agents | Self::Performance => None,
         }
     }
@@ -106,6 +126,7 @@ impl Section {
             Self::Agents => icons::layout::LayoutGrid,
             Self::Mcp => icons::development::Plug,
             Self::Performance => icons::devices::Cpu,
+            Self::Developer => icons::development::Wrench,
         }
     }
 }
@@ -212,7 +233,8 @@ impl SettingsWindow {
             | Section::Appearance
             | Section::Features
             | Section::Mcp
-            | Section::Performance => {}
+            | Section::Performance
+            | Section::Developer => {}
         }
         cx.notify();
     }
@@ -235,17 +257,23 @@ impl SettingsWindow {
             // Clears the traffic lights, which have no strip of their own.
             // Set after the shorthand — `p` writes every side.
             .pt(px(HEADER_HEIGHT))
-            .children(Section::ALL.into_iter().enumerate().map(|(ix, section)| {
-                theme
-                    .nav_row(
-                        Some(section.glyph().into()),
-                        section.title(),
-                        section == self.section,
-                        Fade::new(painter, format!("section-{ix}")),
-                    )
-                    .id(("section", ix))
-                    .on_click(cx.listener(move |this, _, _, cx| this.show(section, cx)))
-            }))
+            .children(
+                Section::ALL
+                    .into_iter()
+                    .filter(|section| section.listed())
+                    .enumerate()
+                    .map(|(ix, section)| {
+                        theme
+                            .nav_row(
+                                Some(section.glyph().into()),
+                                section.title(),
+                                section == self.section,
+                                Fade::new(painter, format!("section-{ix}")),
+                            )
+                            .id(("section", ix))
+                            .on_click(cx.listener(move |this, _, _, cx| this.show(section, cx)))
+                    }),
+            )
     }
 }
 
@@ -303,6 +331,7 @@ impl Render for SettingsWindow {
                                 Section::Agents => self.agents_body(cx),
                                 Section::Mcp => self.mcp_body(cx),
                                 Section::Performance => self.performance_body(cx),
+                                Section::Developer => self.developer_body(cx),
                             }),
                     ),
             )

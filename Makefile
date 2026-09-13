@@ -12,6 +12,12 @@
 # DMG after the wrong thing, and nothing would fail — it would just ship.
 VERSION  := $(shell sed -n '/^\[workspace.package\]/,/^\[/ s/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
 ARCH     := $(shell uname -m)
+# Which cargo profile the app is built with, and the directory that names.
+# `release` by default, so a local `make bundle` or `make open` carries the
+# Developer section and the switches in it. `make release` overrides it with
+# `prod`, which is the size-wound profile and the only one those are compiled
+# out of — see crates/cydonia/build.rs.
+PROFILE  ?= release
 ICON     := assets/icon.png
 ICON_URL := https://cdn.crabtalk.ai/logos/cydonia.png
 APP      := target/bundle/cydonia.app
@@ -35,10 +41,10 @@ CUSTOMICON := 0000000000000000040000000000000000000000000000000000000000000000
 .PHONY: bundle dmg release icon open clean
 
 bundle:
-	cargo build --release
+	cargo build --profile $(PROFILE)
 	rm -rf $(APP) $(ICONSET)
 	mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources
-	cp target/release/cydonia $(APP)/Contents/MacOS/cydonia
+	cp target/$(PROFILE)/cydonia $(APP)/Contents/MacOS/cydonia
 	sed 's/@VERSION@/$(VERSION)/g' bundle/Info.plist > $(APP)/Contents/Info.plist
 	@# An unreachable CDN costs the app its icon, not its build. The `.icns` is
 	@# AppKit's; the 256 png beside it is the app's own — settings paints the
@@ -99,7 +105,7 @@ release:
 	  : $${APPLE_SIGNING_IDENTITY:?missing in .env.release}; \
 	  : $${APPLE_KEYCHAIN_PROFILE:?missing in .env.release}; \
 	  set -e; \
-	  $(MAKE) --no-print-directory dmg SIGN="$$APPLE_SIGNING_IDENTITY"; \
+	  $(MAKE) --no-print-directory dmg SIGN="$$APPLE_SIGNING_IDENTITY" PROFILE=prod; \
 	  xcrun notarytool submit $(DMG) --keychain-profile "$$APPLE_KEYCHAIN_PROFILE" --wait; \
 	  xcrun stapler staple $(DMG); \
 	  xcrun stapler validate $(DMG); \

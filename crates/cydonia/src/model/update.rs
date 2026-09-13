@@ -124,6 +124,12 @@ pub struct Updater {
     /// The poll, held rather than detached: dropping it stops it, which is what
     /// switching `auto_update` off does.
     poll: Option<Task<()>>,
+    /// Whether the notifier is being looked at rather than meant — the
+    /// Developer section's switch. Held here because the thing it has to reach
+    /// is in another window; kept out of [`Status`] because a pretended release
+    /// has no bundle behind it, and a state that says it has would be one
+    /// [`Updater::restart`] could act on.
+    preview: bool,
 }
 
 /// The one updater, reached from the menu bar and from settings.
@@ -142,6 +148,7 @@ pub fn init(auto: bool, cx: &mut App) {
             status: Status::Idle,
             app,
             poll: None,
+            preview: false,
         };
         if auto {
             this.poll(cx);
@@ -151,17 +158,54 @@ pub fn init(auto: bool, cx: &mut App) {
     cx.set_global(Handle(updater));
 }
 
-/// The updater, when this build has one. `None` is the answer for a build that
-/// cannot replace itself, and every surface treats it as "say nothing": no menu
-/// item, no rows in settings.
+/// The updater. There is one in every build, because the Developer section can
+/// put its notifier on screen in a build no release could ever replace — which
+/// is most of them, `cargo run` included.
 pub fn of(cx: &App) -> Option<Entity<Updater>> {
-    let handle = cx.try_global::<Handle>()?;
-    handle.0.read(cx).app.is_some().then(|| handle.0.clone())
+    Some(cx.try_global::<Handle>()?.0.clone())
+}
+
+/// Whether a release could actually replace this build: a bundle, on the
+/// architecture an image is cut for. What the menu item and the Updates box in
+/// settings hang off — a build this is false for shows neither, rather than
+/// showing a control that would decline.
+pub fn supported(cx: &App) -> bool {
+    cx.try_global::<Handle>()
+        .is_some_and(|handle| handle.0.read(cx).app.is_some())
 }
 
 impl Updater {
     pub fn status(&self) -> &Status {
         &self.status
+    }
+
+    /// The version a restart would put in, for whatever says so outside of
+    /// settings — see [`crate::view::sidebar`].
+    ///
+    /// The preview answers here and nowhere else, so the one thing it can do is
+    /// put the notifier on screen. Pressing it while it is pretending does
+    /// nothing at all: [`Self::restart`] reads the status, which a preview
+    /// never touches.
+    pub fn ready(&self) -> Option<SharedString> {
+        if self.preview {
+            return Some(pretend());
+        }
+        match &self.status {
+            Status::Ready { version, .. } => Some(version.clone()),
+            _ => None,
+        }
+    }
+
+    pub fn previewing(&self) -> bool {
+        self.preview
+    }
+
+    /// Show the notifier for a release that has not happened. In memory only —
+    /// a switch for looking at something is not a preference, and a relaunch is
+    /// the right way to put it down.
+    pub fn set_preview(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.preview = on;
+        cx.notify();
     }
 
     /// Read the feed, and fetch what it names if that is newer than this.
@@ -345,6 +389,17 @@ fn numbers(version: &str) -> Option<[u64; 3]> {
         *slot = parts.next()?.parse().ok()?;
     }
     parts.next().is_none().then_some(out)
+}
+
+/// What the preview calls itself: this build with its patch moved on, which is
+/// what the release after any given one nearly always is. A representative
+/// string rather than a placeholder, because the width of it is half of what
+/// there is to look at.
+fn pretend() -> SharedString {
+    match numbers(VERSION) {
+        Some([major, minor, patch]) => format!("{major}.{minor}.{}", patch + 1).into(),
+        None => VERSION.into(),
+    }
 }
 
 /// The image a version ships as, named as the Makefile names it.

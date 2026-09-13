@@ -10,6 +10,25 @@ license = "MIT"
 repository = "https://github.com/crabtalk/cydonia"
 homepage = "https://cydonia.sh"
 
+# What ships: the release profile, wound down to size rather than speed, and the
+# only profile that compiles out the Developer section — see
+# `crates/cydonia/build.rs`. `make release` builds it; `make bundle` stays on
+# `release`, so a local bundle still carries the switches worth looking at.
+[profile.prod]
+inherits = "release"
+# `z` over `s`: no loop vectorisation either, which is the rest of what a binary
+# this size spends its pages on. A desktop app is waiting on the person using it
+# far more than on itself, and nothing in the frame path here is a hot numeric
+# loop — the one cost that would show is gpui's, and it is not in this crate.
+opt-level = "z"
+# One unit and a whole-program pass: inlining across crate lines is where most
+# of the size goes, and a release is built once.
+lto = "fat"
+codegen-units = 1
+# The bundle carries no dSYM and nothing reads a backtrace off a shipped build,
+# so the table is a third of the binary for nobody.
+strip = "symbols"
+
 [workspace.dependencies]
 artifact = { version = "0.1.3", path = "crates/artifact", package = "cydonia-artifact" }
 anyhow = "1"

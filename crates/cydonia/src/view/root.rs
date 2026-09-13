@@ -6,6 +6,7 @@ use crate::{
         session::ChatSession,
         settings::Settings,
         state::{self, State},
+        update,
         workspace::{Reloaded, Workspace},
     },
     view::{
@@ -351,6 +352,12 @@ impl Cydonia {
         // read back from it rather than pushed by whoever caused the change.
         cx.observe(&workspace, |this, _, cx| this.sync_composer(cx))
             .detach();
+        // The notice at the foot of the sidebar is the updater's, and the
+        // updater moves on its own clock — and from the other window, where the
+        // Developer switch that previews it lives.
+        if let Some(updater) = update::of(cx) {
+            cx.observe(&updater, |_, _, cx| cx.notify()).detach();
+        }
         // A re-read replaced what a pane is showing — see
         // [`Workspace::reload_project`]. The card is held by id, so it comes
         // through unless what it names is gone; the cell is still addressed by

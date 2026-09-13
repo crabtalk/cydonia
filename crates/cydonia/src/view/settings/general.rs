@@ -89,6 +89,9 @@ impl SettingsWindow {
     /// [`crate::model::update`], which is also what decides whether the menu bar
     /// carries a check.
     fn updates(&self, cx: &Context<Self>) -> Option<AnyElement> {
+        if !update::supported(cx) {
+            return None;
+        }
         let updater = update::of(cx)?;
         let theme = Theme::of(cx).clone();
         let auto = self.workspace.read(cx).settings.auto_update;
