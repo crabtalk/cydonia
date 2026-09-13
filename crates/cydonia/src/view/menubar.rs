@@ -18,9 +18,12 @@
 //! focused path handles its action — which is what [`Cydonia::commands`] is
 //! for, and why a greyed item's shortcut still reaches the keymap underneath.
 
-use crate::view::root::{
-    CloseProject, Cydonia, NewArticle, NewBoard, NewSession, NewTable, NextEntry, OpenProject,
-    OpenSettings, Pane, PrevEntry, ShowArticle, ShowBoard, ShowChat, ShowTable, ToggleSidebar,
+use crate::{
+    model::update,
+    view::root::{
+        CloseProject, Cydonia, NewArticle, NewBoard, NewSession, NewTable, NextEntry, OpenProject,
+        OpenSettings, Pane, PrevEntry, ShowArticle, ShowBoard, ShowChat, ShowTable, ToggleSidebar,
+    },
 };
 use bezel::{
     gpui::{
@@ -32,6 +35,7 @@ use bezel::{
 actions!(
     cydonia,
     [
+        CheckForUpdates,
         CloseWindow,
         Hide,
         HideOthers,
@@ -83,26 +87,47 @@ pub fn init(cx: &mut App) {
         })
     });
 
-    cx.set_menus(menus());
+    // No chord: looking for a release is not something to reach for by hand
+    // twice, and the app does it on its own anyway. Hung on the updater it acts
+    // on, so a build that has none also has no handler and no item — see
+    // [`menus`].
+    if let Some(updater) = update::of(cx) {
+        cx.on_action(move |_: &CheckForUpdates, cx: &mut App| {
+            updater.update(cx, |updater, cx| updater.check(true, cx));
+        });
+    }
+
+    let menus = menus(cx);
+    cx.set_menus(menus);
 }
 
 /// The tree.
 ///
 /// No About: an about panel is a window this app does not have, and an item
 /// that opens a web page in its place is not one.
-fn menus() -> Vec<Menu> {
+fn menus(cx: &App) -> Vec<Menu> {
+    // The one conditional item in the tree, and it leads the app menu the way
+    // it does in every other mac app. A build that cannot replace itself — a
+    // `cargo install` binary, a working copy, an architecture no image is cut
+    // for — gets no item rather than one that would decline.
+    let mut app = Vec::new();
+    if update::of(cx).is_some() {
+        app.push(MenuItem::action("Check for Updates…", CheckForUpdates));
+        app.push(MenuItem::separator());
+    }
+    app.extend([
+        MenuItem::action("Settings…", OpenSettings),
+        MenuItem::separator(),
+        MenuItem::action("Hide cydonia", Hide),
+        MenuItem::action("Hide Others", HideOthers),
+        MenuItem::action("Show All", ShowAll),
+        MenuItem::separator(),
+        MenuItem::action("Quit cydonia", Quit),
+    ]);
     vec![
         // Titled for the unbundled binary alone — a bundle takes the first
         // menu's name from `CFBundleName`, which is this same lowercase word.
-        Menu::new("cydonia").items([
-            MenuItem::action("Settings…", OpenSettings),
-            MenuItem::separator(),
-            MenuItem::action("Hide cydonia", Hide),
-            MenuItem::action("Hide Others", HideOthers),
-            MenuItem::action("Show All", ShowAll),
-            MenuItem::separator(),
-            MenuItem::action("Quit cydonia", Quit),
-        ]),
+        Menu::new("cydonia").items(app),
         Menu::new("File").items([
             MenuItem::action("New Session", NewSession),
             MenuItem::action("New Board", NewBoard),

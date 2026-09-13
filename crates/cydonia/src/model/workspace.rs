@@ -18,6 +18,7 @@ use crate::{
         session::ChatSession,
         settings::{self, Feature, Settings},
         state::{self, State},
+        update,
         watch::{self, Watch},
     },
 };
@@ -255,6 +256,25 @@ impl Workspace {
     /// Where the tools answer, while they do.
     pub fn mcp_url(&self) -> Option<String> {
         agent::serve::url()
+    }
+
+    // ── releases ─────────────────────────────────────────────────
+
+    /// Look for releases on our own, or stop looking. The file is what the next
+    /// launch reads; the updater is what runs until then, so both are told.
+    ///
+    /// A release already staged is left alone: this switch is about the looking,
+    /// and throwing away a bundle that is downloaded and verified would be a
+    /// second thing under one name.
+    pub fn set_auto_update(&mut self, on: bool, cx: &mut Context<Self>) {
+        if settings::set_auto_update(on).is_err() {
+            return;
+        }
+        self.settings.auto_update = on;
+        if let Some(updater) = update::of(cx) {
+            updater.update(cx, |updater, cx| updater.set_auto(on, cx));
+        }
+        cx.notify();
     }
 
     /// Move the cover ceiling. Written through to `settings.toml` first, for

@@ -7,7 +7,7 @@
 
 use crate::{
     agent::Listing,
-    model::workspace::Workspace,
+    model::{update, workspace::Workspace},
     view::root::{HEADER_HEIGHT, TRAFFIC_LIGHT_X, TRAFFIC_LIGHT_Y},
 };
 use bezel::{
@@ -177,6 +177,12 @@ pub fn open(
                     }
                 })
                 .detach();
+                // The general section reads the updater, which moves on its own
+                // — a check that lands while this window sits open has to reach
+                // the row that reports it.
+                if let Some(updater) = update::of(cx) {
+                    cx.observe(&updater, |_, _, cx| cx.notify()).detach();
+                }
                 let mut this = SettingsWindow {
                     workspace,
                     section,

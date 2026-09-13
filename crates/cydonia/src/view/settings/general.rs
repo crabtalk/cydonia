@@ -1,11 +1,16 @@
-//! The general section: what this copy of cydonia is, and where the people
-//! who use it are.
+//! The general section: what this copy of cydonia is, whether a newer one is
+//! out, and where the people who use it are.
 
-use crate::{assets, view::settings::SettingsWindow};
+use crate::{
+    assets,
+    model::update::{self, Status, Updater},
+    view::settings::SettingsWindow,
+};
 use bezel::{
-    gpui::{AnyElement, Context, div, img, prelude::*, px},
+    gpui::{AnyElement, Context, Entity, SharedString, div, img, prelude::*, px},
+    motion::{Fade, Painter},
     theme::{TextStyle, Theme, Typeset},
-    ui::widgets::{Content, Scaffolding},
+    ui::widgets::{ButtonStyle, Buttons, Content, Controls, Scaffolding},
 };
 
 /// What this build is, read at compile time from `Cargo.toml` — the same
@@ -63,6 +68,7 @@ impl SettingsWindow {
                             }),
                     ),
             )
+            .children(self.updates(cx))
             .child(
                 div().flex().justify_center().child(
                     div()
@@ -75,6 +81,136 @@ impl SettingsWindow {
                         .on_click(|_, _, cx| cx.open_url(COMMUNITY)),
                 ),
             )
+            .into_any_element()
+    }
+
+    /// Releases: whether the app looks for one itself, and where the looking has
+    /// got to. Absent whole on a build no release could replace — see
+    /// [`crate::model::update`], which is also what decides whether the menu bar
+    /// carries a check.
+    fn updates(&self, cx: &Context<Self>) -> Option<AnyElement> {
+        let updater = update::of(cx)?;
+        let theme = Theme::of(cx).clone();
+        let auto = self.workspace.read(cx).settings.auto_update;
+        Some(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(super::LABEL_GAP))
+                .child(theme.field_label("Updates"))
+                .child(
+                    theme
+                        .group_box()
+                        .child(
+                            theme
+                                .card_row(true)
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .flex()
+                                        .flex_col()
+                                        .child(theme.row_title("Automatic updates"))
+                                        .child(
+                                            div()
+                                                .mt(px(4.))
+                                                .truncate()
+                                                .text_style(TextStyle::Subheadline)
+                                                .text_color(theme.text_muted)
+                                                .child(
+                                                    "Look for a release, and fetch it ready to \
+                                                     restart into.",
+                                                ),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .id("auto-update")
+                                        .cursor_pointer()
+                                        .child(theme.toggle(auto))
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.workspace.update(cx, |workspace, cx| {
+                                                workspace.set_auto_update(!auto, cx)
+                                            });
+                                            cx.notify();
+                                        })),
+                                ),
+                        )
+                        .child(self.release_row(&updater, cx)),
+                )
+                .into_any_element(),
+        )
+    }
+
+    /// What the updater is doing, and the one thing to do about it. The restart
+    /// is the only control here that is prominent: it is the only one that acts
+    /// on the app rather than on what it knows.
+    fn release_row(&self, updater: &Entity<Updater>, cx: &Context<Self>) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        let painter = Painter::of(cx);
+        let status = updater.read(cx).status().clone();
+        let (line, detail): (SharedString, Option<SharedString>) = match &status {
+            Status::Idle => ("Releases".into(), Some("Nothing asked for yet.".into())),
+            Status::Checking => ("Looking for a release…".into(), None),
+            Status::Current => ("cydonia is up to date".into(), None),
+            Status::Downloading(version) => (format!("Fetching cydonia {version}…").into(), None),
+            Status::Ready { version, .. } => (
+                format!("cydonia {version} is ready").into(),
+                Some("It goes in as the app restarts.".into()),
+            ),
+            Status::Failed(err) => ("No release could be fetched".into(), Some(err.clone())),
+        };
+        let working = matches!(status, Status::Checking | Status::Downloading(_));
+        let ready = matches!(status, Status::Ready { .. });
+        let updater = updater.clone();
+        theme
+            .card_row(false)
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .child(theme.row_title(line))
+                    .children(detail.map(|copy| {
+                        div()
+                            .mt(px(4.))
+                            .truncate()
+                            .text_style(TextStyle::Subheadline)
+                            .text_color(theme.text_muted)
+                            .child(copy)
+                    })),
+            )
+            .child(if working {
+                div()
+                    .flex_none()
+                    .text_style(TextStyle::Callout)
+                    .text_color(theme.text_faint)
+                    .child("working…")
+                    .into_any_element()
+            } else if ready {
+                theme
+                    .button("Restart to Update", ButtonStyle::Prominent, None)
+                    .id("restart")
+                    .flex_none()
+                    .on_click(cx.listener(move |_, _, _, cx| {
+                        updater.update(cx, |updater, cx| updater.restart(cx));
+                    }))
+                    .into_any_element()
+            } else {
+                theme
+                    .button(
+                        "Check Now",
+                        ButtonStyle::Ghost,
+                        Some(Fade::new(painter, "check-now")),
+                    )
+                    .id("check-now")
+                    .flex_none()
+                    .on_click(cx.listener(move |_, _, _, cx| {
+                        updater.update(cx, |updater, cx| updater.check(true, cx));
+                    }))
+                    .into_any_element()
+            })
             .into_any_element()
     }
 }

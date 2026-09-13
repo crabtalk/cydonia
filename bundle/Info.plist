@@ -14,7 +14,7 @@
 	<key>CFBundleIconFile</key>
 	<string>cydonia</string>
 	<key>CFBundleIdentifier</key>
-	<string>app.cydonia</string>
+	<string>sh.cydonia</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<!-- The app menu's title, which is why it is lowercase: it replaces the
