@@ -1,8 +1,10 @@
 //! The door: Streamable HTTP on loopback, one endpoint for the whole app.
 //!
-//! One address and no configuration. The port is whatever the system hands
-//! out, because nobody types it — the app hands the URL to the agents it
-//! launches and there is nothing else to give it to.
+//! One address, and the same one next launch. The port is pinned rather than
+//! asked of the system: a client keeps the URL in its own config file, and a
+//! number that moved every restart would be a client that had to be told again
+//! every restart. Something else holding it is answered by stepping past it,
+//! not by giving up and not by drifting somewhere nobody will look.
 //!
 //! There is no token. A process running as this user can already write every
 //! file these tools write, so a gate between them buys nothing. A *page* in a
@@ -26,6 +28,16 @@ use tokio::{net::TcpListener, sync::oneshot};
 
 /// Where the tools answer.
 pub const PATH: &str = "/mcp";
+
+/// The port the door prefers. Pinned so the address survives a restart, which
+/// is what lets a client be configured once.
+pub const PORT: u16 = 7457;
+
+/// How far past it the door will walk when something already holds one. A
+/// second cydonia is the usual reason, and it takes the next number rather
+/// than failing — but a walk that went on forever would land somewhere nobody
+/// was told about, so it stops.
+const SPAN: u16 = 16;
 
 /// The only address this ever binds. Named here rather than passed in: a
 /// server whose tools edit the user's files has no business being reachable
@@ -55,13 +67,32 @@ impl Drop for Door {
     }
 }
 
-/// Bind a loopback port and start answering.
+/// Bind the pinned port and start answering, stepping past whatever is already
+/// holding it — see [`PORT`] and [`SPAN`].
 ///
-/// The port is the system's to choose. Awaited rather than spawned so a bind
-/// that fails is an error where it can be reported, though there is little to
-/// fail on a port nobody asked for.
+/// The error handed back is the last one, which is the honest thing to report:
+/// every port in the range was refused, and the reason the last was refused is
+/// as good an account as any.
 pub async fn open(server: Arc<Server>) -> std::io::Result<Door> {
-    let listener = TcpListener::bind(SocketAddr::from((HOST, 0))).await?;
+    let mut refused = None;
+    for port in PORT..PORT.saturating_add(SPAN) {
+        match open_at(port, server.clone()).await {
+            Ok(door) => return Ok(door),
+            Err(why) => refused = Some(why),
+        }
+    }
+    Err(refused.unwrap_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::AddrInUse,
+            "no port in the range is free",
+        )
+    }))
+}
+
+/// The same, on exactly the port asked for. Zero is the system's to choose,
+/// which is what a test wants and what the app never does.
+pub async fn open_at(port: u16, server: Arc<Server>) -> std::io::Result<Door> {
+    let listener = TcpListener::bind(SocketAddr::from((HOST, port))).await?;
     let url = format!("http://{}{PATH}", listener.local_addr()?);
     let router = Router::new()
         .route(PATH, post(call).get(no_stream))

@@ -64,7 +64,9 @@ fn door(name: &str) -> (Scratch, tokio::runtime::Runtime, String) {
     let scratch = Scratch::new(name);
     let runtime = tokio::runtime::Runtime::new().expect("a runtime");
     let server = Arc::new(Server::new().mount(&tools::board::TOOLS));
-    let door = runtime.block_on(http::open(server)).expect("a free port");
+    let door = runtime
+        .block_on(http::open_at(0, server))
+        .expect("a free port");
     let url = door.url().to_owned();
     // Held by the runtime for the rest of the test: the listener lives in a
     // task, and letting the handle drop here would close it before the first
@@ -96,4 +98,24 @@ fn request(url: &str, method: &str, body: &str, headers: &[(&str, &str)]) -> Str
     let mut answer = String::new();
     let _ = stream.read_to_string(&mut answer);
     answer
+}
+
+/// Something else on the pinned port is answered by taking the next one. A
+/// second cydonia is the usual reason, and the first must not be what stops it
+/// starting.
+#[test]
+fn a_taken_port_is_stepped_past() {
+    let runtime = tokio::runtime::Runtime::new().expect("a runtime");
+    let first = runtime
+        .block_on(http::open(Arc::new(Server::new())))
+        .expect("the pinned port, or one after it");
+    let second = runtime
+        .block_on(http::open(Arc::new(Server::new())))
+        .expect("the one after that");
+    assert_ne!(first.url(), second.url());
+    assert!(
+        first.url().starts_with("http://127.0.0.1:"),
+        "{}",
+        first.url()
+    );
 }

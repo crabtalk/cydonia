@@ -230,7 +230,15 @@ fn a_notification_is_not_answered() {
             .expect("a frame");
     let answer = server.handle(&call).expect("an answer");
     let tools = answer.result.expect("a result");
-    assert_eq!(tools["tools"].as_array().expect("a list").len(), 9);
+    let names: Vec<&str> = tools["tools"]
+        .as_array()
+        .expect("a list")
+        .iter()
+        .filter_map(|tool| tool["name"].as_str())
+        .collect();
+    // Every mounted set is in one list, which is what an agent sees.
+    assert!(names.contains(&"list_boards"), "{names:?}");
+    assert!(names.contains(&"list_articles"), "{names:?}");
 }
 
 /// A call that was told no comes back as a *result* the model can read, not as

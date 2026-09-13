@@ -17,14 +17,16 @@
 //! can then fix it without spending a second call finding out, which is the
 //! difference between a tool that costs one turn and one that costs three.
 
-use crate::tool::{Answer, Args, Outcome, Tool, Trouble};
+use crate::{
+    tool::{Answer, Args, Outcome, Tool, Trouble},
+    tools::{PROJECT, fields, root},
+};
 use artifact::{
     board::Board,
     project::{Project, fs},
 };
 use serde_json::{Value, json};
 
-const PROJECT: &str = "The project: the path of the directory the work is in.";
 const BOARD: &str = "The board: its key (ROAD), its name, or its id.";
 const CARD: &str = "The card: its handle (ROAD-12), or its id.";
 const COLUMN: &str = "The column: its name, or its id.";
@@ -255,15 +257,9 @@ fn remove_column(args: Args<'_>) -> Outcome {
 
 // ── addressing ───────────────────────────────────────────────────
 
-/// The project a call is about. A directory, and it has to be one — a path
-/// with a typo in it would otherwise read as a project with no boards, which
-/// is a thing a model would believe.
+/// The project a call is about, as the store that holds its boards.
 fn store(args: &Args<'_>) -> Result<fs::Project, Trouble> {
-    let path = args.text("project")?;
-    match std::path::Path::new(path).is_dir() {
-        true => Ok(fs::Project::new(path)),
-        false => Err(Trouble::Refused(format!("no directory at {path}"))),
-    }
+    Ok(fs::Project::new(root(args)?))
 }
 
 /// The board a needle names: its id, its key, or its name, in that order —
@@ -497,24 +493,4 @@ fn columns(board: &Board) -> String {
             .collect::<Vec<_>>()
             .join(", "),
     }
-}
-
-/// An object schema over the named arguments. Every one this surface takes is
-/// a required string — an address, or a line of text — so there is nothing
-/// else for a schema here to say.
-fn fields(args: &[(&str, &str)]) -> Value {
-    let properties = args
-        .iter()
-        .map(|(name, about)| {
-            (
-                (*name).to_owned(),
-                json!({ "type": "string", "description": about }),
-            )
-        })
-        .collect::<serde_json::Map<_, _>>();
-    json!({
-        "type": "object",
-        "properties": properties,
-        "required": args.iter().map(|(name, _)| *name).collect::<Vec<_>>(),
-    })
 }

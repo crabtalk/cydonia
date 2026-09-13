@@ -40,10 +40,12 @@ impl Scratch {
         self.store().create_board(name, key)
     }
 
-    /// A server with the board tools on it — the same call the app makes, and
+    /// A server with every tool set on it — the same call the app makes, and
     /// holding no project, because a call says which one it is about.
     pub fn server(&self) -> Server {
-        Server::new().mount(&tools::board::TOOLS)
+        Server::new()
+            .mount(&tools::article::TOOLS)
+            .mount(&tools::board::TOOLS)
     }
 }
 

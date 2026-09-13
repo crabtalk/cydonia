@@ -63,9 +63,10 @@ pub fn url() -> Option<String> {
     door.as_ref().map(|door| door.url().to_owned())
 }
 
-/// What is on it. Boards today; a tool set per surface as they arrive.
+/// What is on it. Articles and boards; a tool set per surface as they arrive.
 fn server() -> Server {
     Server::new()
+        .mount(&tools::article::TOOLS)
         .mount(&tools::board::TOOLS)
         .writable(write().clone())
 }
