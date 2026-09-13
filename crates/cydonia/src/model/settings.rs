@@ -60,10 +60,12 @@ impl Default for Mcp {
 }
 
 /// The surfaces a project can hold, minus articles — the one thing the app is
-/// for, and so not something to be able to switch off. Every one of these is
-/// off until it is asked for, which makes a fresh install articles and
-/// nothing else.
-#[derive(Debug, Default, Serialize, Deserialize)]
+/// for, and so not something to be able to switch off.
+///
+/// Boards are on to begin with: a board is files in the project and nothing
+/// runs to hold one, so a fresh install is a place to write and a place to
+/// plan. The other two are off until they are asked for.
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Features {
     /// Whether sessions may be opened. A session is the only thing that starts
@@ -72,6 +74,16 @@ pub struct Features {
     pub sessions: bool,
     pub boards: bool,
     pub tables: bool,
+}
+
+impl Default for Features {
+    fn default() -> Self {
+        Self {
+            sessions: false,
+            boards: true,
+            tables: false,
+        }
+    }
 }
 
 /// One switchable surface, named rather than reached as a field so the settings

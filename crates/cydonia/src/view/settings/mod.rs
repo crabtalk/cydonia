@@ -89,7 +89,7 @@ impl Section {
     /// and the gap under the whole block is the same either way.
     fn subtitle(self) -> Option<&'static str> {
         match self {
-            Self::Features => Some("Parts of cydonia that stay off until you ask for them."),
+            Self::Features => Some("Parts of cydonia you can put away, and ones to ask for."),
             Self::Mcp => {
                 Some("The tools cydonia offers the agents it runs, over a port on this machine.")
             }
