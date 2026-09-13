@@ -109,7 +109,7 @@ fn cached(dir: &Path, id: &str) -> Option<String> {
 /// rather than taken by a rule: the registry takes any publisher who submits
 /// one, and installing an agent runs their code on this machine — so what is
 /// offered here is a list somebody chose, not a filter somebody wrote.
-const ALLOWED: [&str; 7] = [
+const ALLOWED: [&str; 8] = [
     "claude-acp",      // Claude Agent
     "codex-acp",       // Codex
     "cursor",          // Cursor
@@ -117,6 +117,7 @@ const ALLOWED: [&str; 7] = [
     "antigravity-acp", // Google Antigravity
     "kimi",            // Kimi CLI
     "opencode",        // OpenCode
+    "pi-acp",          // pi ACP
 ];
 
 /// Whether the catalog entry is one of them.
