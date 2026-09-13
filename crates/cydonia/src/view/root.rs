@@ -15,7 +15,7 @@ use crate::{
             menu::Menu,
             meter,
         },
-        confirm, info,
+        confirm, create, info,
         settings::{self, Section, SettingsWindow},
         sidebar::{Filter, Renaming, Row},
         table,
@@ -260,6 +260,9 @@ pub struct Cydonia {
     pub(crate) confirming: Option<confirm::Confirming>,
     /// The board identity panel, while it is open — see [`header::BoardInfo`].
     pub(crate) info: Option<info::BoardInfo>,
+    /// The board that has been asked for and not yet made — see
+    /// [`create::Making`].
+    pub(crate) making: Option<create::Making>,
     /// Whether the press now being handled landed on the name of the board
     /// whose panel is open — read by [`Cydonia::toggle_info`] and nothing else,
     /// the way [`Cydonia::menu_pressed`] is read by `toggle_menu`.
@@ -351,6 +354,7 @@ impl Cydonia {
             cell_field,
             confirming: None,
             info: None,
+            making: None,
             info_pressed: false,
             menu: None,
             menu_cursor: Cursor::default(),
@@ -647,6 +651,8 @@ impl Render for Cydonia {
             .on_action(cx.listener(Self::commit_name))
             .on_action(cx.listener(Self::commit_info))
             .on_action(cx.listener(Self::dismiss_info))
+            .on_action(cx.listener(Self::make_board))
+            .on_action(cx.listener(Self::dismiss_new_board))
             .on_action(cx.listener(Self::dismiss_name))
             // Everything the menu bar names, and only under the conditions
             // that keep its items honest.
@@ -686,5 +692,6 @@ impl Render for Cydonia {
             // Over every column and every floating control: nothing behind it
             // is answerable while it is asking.
             .children(self.confirm_delete(cx))
+            .children(self.new_board_dialog(cx))
     }
 }

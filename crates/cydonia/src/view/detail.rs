@@ -402,7 +402,7 @@ impl Cydonia {
                 "New board",
                 icons::text::List,
                 cx,
-                move |this, _, cx| this.new_board(ix, cx),
+                move |this, window, cx| this.ask_new_board(ix, window, cx),
             ));
         }
         rows.push(self.make_row(

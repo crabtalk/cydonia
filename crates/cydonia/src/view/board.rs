@@ -75,27 +75,18 @@ impl Cydonia {
     }
 
     /// The menu's New Board. The sidebar's `+` names a project by the heading
-    /// it sits under; the menu bar has only the one in front.
+    /// it sits under; the menu bar has only the one in front. Both raise the
+    /// dialog that names it — see [`Cydonia::ask_new_board`].
     pub(crate) fn new_board_action(
         &mut self,
         _: &NewBoard,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let Some(project) = self.workspace.read(cx).active else {
             return;
         };
-        self.new_board(project, cx);
-    }
-
-    pub(crate) fn new_board(&mut self, project: usize, cx: &mut Context<Self>) {
-        self.select_project(project, cx);
-        let ix = self
-            .workspace
-            .update(cx, |workspace, cx| workspace.new_board(cx));
-        if let Some(ix) = ix {
-            self.open_board(project, ix, cx);
-        }
+        self.ask_new_board(project, window, cx);
     }
 
     pub(crate) fn open_board(&mut self, project: usize, ix: usize, cx: &mut Context<Self>) {

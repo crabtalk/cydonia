@@ -211,12 +211,27 @@ fn a_board_read_twice_keeps_its_handles() {
     assert_eq!(first, second);
 }
 
+/// A board made from the dialog is filed as it was asked for: the name typed
+/// into it, and the key beside it rather than one derived over the top.
+#[test]
+fn a_board_is_made_with_the_key_it_is_given() {
+    let scratch = Scratch::new("board-given-key");
+    let board = scratch
+        .store()
+        .create_board("Roadmap", "back")
+        .expect("made");
+
+    assert_eq!(board.name, "Roadmap");
+    assert_eq!(board.key, "BACK");
+    assert_eq!(scratch.store().boards()[0].key, "BACK");
+}
+
 /// Two boards in one project cannot answer to the same name.
 #[test]
 fn boards_in_a_project_take_different_keys() {
     let scratch = Scratch::new("board-keys");
-    let one = scratch.store().create_board().expect("made");
-    let two = scratch.store().create_board().expect("made");
+    let one = scratch.store().create_board("Roadmap", "").expect("made");
+    let two = scratch.store().create_board("Roadmap", "").expect("made");
 
     assert!(!one.key.is_empty());
     assert_ne!(one.key, two.key);

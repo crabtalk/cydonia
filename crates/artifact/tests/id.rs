@@ -10,7 +10,7 @@ use common::Scratch;
 #[test]
 fn a_new_board_is_named_when_it_is_made() {
     let scratch = Scratch::new("board-new");
-    let board = scratch.store().create_board().expect("made");
+    let board = scratch.store().create_board("Roadmap", "").expect("made");
     assert!(!board.id.is_empty());
     assert_eq!(scratch.store().boards()[0].id, board.id);
 }

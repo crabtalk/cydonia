@@ -166,18 +166,24 @@ impl super::Project for Project {
         boards.sort_by_key(|board| Reverse(board.touched));
         boards
     }
-    fn create_board(&self) -> Option<Board> {
+    fn create_board(&self, name: &str, key: &str) -> Option<Board> {
         let dir = self.init().ok()?.join(BOARDS);
         std::fs::create_dir_all(&dir).ok()?;
-        // What the project's other boards are already called, so the new one's
-        // key is clear of them. Reading them is also what settles any key they
-        // are still missing.
-        let taken: HashSet<String> = super::Project::boards(self)
-            .into_iter()
-            .map(|board| board.key)
-            .collect();
-        let mut board = Board::new(stem(&free(&dir, stamp::now())), board::NAMED);
-        board.key = key::derive(&board.name, &taken);
+        let mut board = Board::new(stem(&free(&dir, stamp::now())), name);
+        board.key = match key::normalize(key) {
+            Some(key) => key,
+            // Nothing given, so it is derived from the name — against what the
+            // project's other boards are already keyed, so it is clear of
+            // them. Reading them is also what settles any key they are still
+            // missing.
+            None => {
+                let taken: HashSet<String> = super::Project::boards(self)
+                    .into_iter()
+                    .map(|board| board.key)
+                    .collect();
+                key::derive(&board.name, &taken)
+            }
+        };
         super::Project::save_board(self, &mut board);
         Some(board)
     }

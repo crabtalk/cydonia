@@ -10,7 +10,7 @@ use bezel::{
 use cydonia::{
     assets, memory,
     model::{settings, state, workspace},
-    view::{article, board, component::composer, info, menubar, root, table},
+    view::{article, board, component::composer, create, info, menubar, root, table},
 };
 
 fn main() -> Result<()> {
@@ -57,6 +57,7 @@ fn main() -> Result<()> {
         article::init(cx);
         board::init(cx);
         info::init(cx);
+        create::init(cx);
         table::init(cx);
         root::init(cx);
         // Last: it reads every binding above off the keymap to put the

@@ -933,7 +933,7 @@ impl Cydonia {
         if boards {
             rows.push(menu::row(
                 Item::action("New board").with_icon(icons::text::List),
-                move |this, _, cx| this.new_board(ix, cx),
+                move |this, window, cx| this.ask_new_board(ix, window, cx),
             ));
         }
         rows.push(menu::row(

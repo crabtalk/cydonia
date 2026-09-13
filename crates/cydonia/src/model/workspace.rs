@@ -765,17 +765,41 @@ impl Workspace {
 
     // ── boards ───────────────────────────────────────────────────────
 
-    /// A fresh board in the active project, opened as it lands. Gated here as
-    /// well as in the menus that call it: this is where a board is born.
-    pub fn new_board(&mut self, cx: &mut Context<Self>) -> Option<usize> {
+    /// A board in `project`, called and keyed as the dialog that asked for it
+    /// has them, and opened as it lands. Gated here as well as in the menus
+    /// that call it: this is where a board is born.
+    ///
+    /// Answers what is wrong rather than making the board anyway — a key that
+    /// is taken is something the dialog stays open to say, the way
+    /// [`Self::edit_board`] does.
+    pub fn new_board(
+        &mut self,
+        project: usize,
+        name: String,
+        key: &str,
+        cx: &mut Context<Self>,
+    ) -> Result<usize, String> {
         if !self.settings.features.boards {
-            return None;
+            return Err("Boards are switched off.".to_owned());
         }
-        let project = self.active?;
-        let board = self.projects[project].store().create_board()?;
-        self.projects[project].boards.insert(0, board);
+        let key = artifact::board::key::normalize(key)
+            .ok_or("A key needs at least one letter or digit.".to_owned())?;
+        let open = self
+            .projects
+            .get_mut(project)
+            .ok_or("That project is not open.".to_owned())?;
+        // The same reach as [`Self::edit_board`]: a handle is heard by an agent
+        // running in this project, so that is as far as it has to carry.
+        if open.boards.iter().any(|board| board.key == key) {
+            return Err(format!("{key} is another board's key here."));
+        }
+        let board = open
+            .store()
+            .create_board(name.trim(), &key)
+            .ok_or("The board could not be written.".to_owned())?;
+        open.boards.insert(0, board);
         self.open_board(project, 0, cx);
-        Some(0)
+        Ok(0)
     }
 
     /// Every project's boards are on show, so picking one brings its project
