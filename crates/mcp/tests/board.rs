@@ -20,7 +20,7 @@ fn a_board_answers_to_key_name_and_id() {
 
     for needle in ["ROAD", "road", "Roadmap", board.id.as_str()] {
         let text = said(server.call(
-            "get_board",
+            "board_read",
             json!({ "project": scratch.path(), "board": needle }),
         ));
         assert!(text.starts_with("Roadmap (ROAD)"), "{needle}: {text}");
@@ -38,28 +38,28 @@ fn a_card_is_addressed_by_the_handle_it_is_given() {
         .expect("a board");
     let server = scratch.server();
     said(server.call(
-        "add_column",
+        "board_add_column",
         json!({ "project": scratch.path(), "board": "ROAD", "name": "Todo" }),
     ));
     said(server.call(
-        "add_column",
+        "board_add_column",
         json!({ "project": scratch.path(), "board": "ROAD", "name": "Doing" }),
     ));
 
     let added = said(server.call(
-        "add_card",
+        "board_add_card",
         json!({ "project": scratch.path(), "board": "ROAD", "column": "Todo", "text": "Wire the model picker" }),
     ));
     assert_eq!(added, "ROAD-1 added to Todo");
 
     // No board argument anywhere below: the handle carries it.
     let moved = said(server.call(
-        "move_card",
+        "board_move_card",
         json!({ "project": scratch.path(), "card": "ROAD-1", "column": "Doing" }),
     ));
     assert_eq!(moved, "ROAD-1 moved to Doing");
     let text = said(server.call(
-        "get_board",
+        "board_read",
         json!({ "project": scratch.path(), "board": "ROAD" }),
     ));
     assert!(
@@ -78,16 +78,16 @@ fn a_handle_splits_on_its_last_dash() {
     store.create_board("Roadmap", "ROA2").expect("another");
     let server = scratch.server();
     said(server.call(
-        "add_column",
+        "board_add_column",
         json!({ "project": scratch.path(), "board": "ROA2", "name": "Todo" }),
     ));
     said(server.call(
-        "add_card",
+        "board_add_card",
         json!({ "project": scratch.path(), "board": "ROA2", "column": "Todo", "text": "the second one" }),
     ));
 
     let text = said(server.call(
-        "rewrite_card",
+        "board_rewrite_card",
         json!({ "project": scratch.path(), "card": "ROA2-1", "text": "still it" }),
     ));
     assert_eq!(text, "ROA2-1 now reads: still it");
@@ -104,24 +104,24 @@ fn a_refusal_says_what_is_there() {
         .expect("a board");
     let server = scratch.server();
     said(server.call(
-        "add_column",
+        "board_add_column",
         json!({ "project": scratch.path(), "board": "ROAD", "name": "Todo" }),
     ));
 
     let why = refused(server.call(
-        "get_board",
+        "board_read",
         json!({ "project": scratch.path(), "board": "Backlog" }),
     ));
     assert!(why.contains("ROAD (Roadmap)"), "{why}");
 
     let why = refused(server.call(
-        "add_card",
+        "board_add_card",
         json!({ "project": scratch.path(), "board": "ROAD", "column": "Doing", "text": "x" }),
     ));
     assert!(why.contains("Todo"), "{why}");
 
     let why = refused(server.call(
-        "move_card",
+        "board_move_card",
         json!({ "project": scratch.path(), "card": "ROAD-9", "column": "Todo" }),
     ));
     assert!(why.contains("ROAD-9"), "{why}");
@@ -138,26 +138,26 @@ fn a_column_holding_cards_is_not_dropped() {
         .expect("a board");
     let server = scratch.server();
     said(server.call(
-        "add_column",
+        "board_add_column",
         json!({ "project": scratch.path(), "board": "ROAD", "name": "Todo" }),
     ));
     said(server.call(
-        "add_card",
+        "board_add_card",
         json!({ "project": scratch.path(), "board": "ROAD", "column": "Todo", "text": "Retire Spot" }),
     ));
 
     let why = refused(server.call(
-        "remove_column",
+        "board_remove_column",
         json!({ "project": scratch.path(), "board": "ROAD", "column": "Todo" }),
     ));
     assert!(why.contains("still holds cards"), "{why}");
 
     said(server.call(
-        "remove_card",
+        "board_remove_card",
         json!({ "project": scratch.path(), "card": "ROAD-1" }),
     ));
     let text = said(server.call(
-        "remove_column",
+        "board_remove_column",
         json!({ "project": scratch.path(), "board": "ROAD", "column": "Todo" }),
     ));
     assert_eq!(text, "Todo removed from Roadmap");
@@ -174,9 +174,9 @@ fn a_missing_argument_is_not_a_refusal() {
         .expect("a board");
     let server = scratch.server();
 
-    let why = invalid(server.call("get_board", json!({ "project": scratch.path() })));
+    let why = invalid(server.call("board_read", json!({ "project": scratch.path() })));
     assert!(why.contains("board"), "{why}");
-    let why = invalid(server.call("get_board", json!({ "board": "ROAD" })));
+    let why = invalid(server.call("board_read", json!({ "board": "ROAD" })));
     assert!(why.contains("project"), "{why}");
     let why = invalid(server.call("no_such_tool", json!({})));
     assert!(why.contains("no_such_tool"), "{why}");
@@ -193,11 +193,11 @@ fn what_a_tool_wrote_is_on_disk() {
         .expect("a board");
     let server = scratch.server();
     said(server.call(
-        "add_column",
+        "board_add_column",
         json!({ "project": scratch.path(), "board": "ROAD", "name": "Todo" }),
     ));
     said(server.call(
-        "add_card",
+        "board_add_card",
         json!({ "project": scratch.path(), "board": "ROAD", "column": "Todo", "text": "Wire the model picker" }),
     ));
 
@@ -237,8 +237,8 @@ fn a_notification_is_not_answered() {
         .filter_map(|tool| tool["name"].as_str())
         .collect();
     // Every mounted set is in one list, which is what an agent sees.
-    assert!(names.contains(&"list_boards"), "{names:?}");
-    assert!(names.contains(&"list_articles"), "{names:?}");
+    assert!(names.contains(&"board_list"), "{names:?}");
+    assert!(names.contains(&"article_list"), "{names:?}");
 }
 
 /// A call that was told no comes back as a *result* the model can read, not as
@@ -253,7 +253,7 @@ fn a_refusal_reaches_the_model_as_a_result() {
         "id": 1,
         "method": "tools/call",
         "params": {
-            "name": "get_board",
+            "name": "board_read",
             "arguments": { "project": scratch.path(), "board": "Nothing" },
         },
     }))
@@ -297,10 +297,10 @@ fn a_read_only_server_offers_no_way_to_write() {
         .iter()
         .filter_map(|tool| tool["name"].as_str())
         .collect();
-    assert_eq!(names, ["list_boards", "get_board"], "{names:?}");
+    assert_eq!(names, ["board_list", "board_read"], "{names:?}");
 
     let why = refused(server.call(
-        "add_column",
+        "board_add_column",
         json!({ "project": scratch.path(), "board": "ROAD", "name": "Todo" }),
     ));
     assert!(why.contains("read only"), "{why}");
@@ -309,7 +309,7 @@ fn a_read_only_server_offers_no_way_to_write() {
     // nothing rebuilt — an agent is holding the URL.
     switch.store(true, std::sync::atomic::Ordering::Relaxed);
     said(server.call(
-        "add_column",
+        "board_add_column",
         json!({ "project": scratch.path(), "board": "ROAD", "name": "Todo" }),
     ));
 }

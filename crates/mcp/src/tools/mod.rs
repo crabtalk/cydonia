@@ -1,6 +1,17 @@
 //! The tool sets, one per surface a project holds, and the two things every
 //! tool in them has in common: the project it is about, and the shape of a
 //! schema over arguments that are all required strings.
+//!
+//! A tool is named `<surface>_<verb>[_<noun>]` — `board_list`, `article_read`,
+//! `board_move_card`. The prefix is the module, which is what makes the flat
+//! list MCP insists on read as the set of sets it actually is: an agent holding
+//! forty tools from four servers can see at a glance which are ours and which
+//! of ours are about what. It is also the only thing a list can be grouped on
+//! later, since a name is all the wire carries — `../desktop` groups its own
+//! `brain_*` and `radar_*` that way.
+//!
+//! The noun is left off where the module already said it: `board_read` reads a
+//! board, and only `board_add_card` has to say what it adds.
 
 pub mod article;
 pub mod board;

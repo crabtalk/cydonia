@@ -27,21 +27,21 @@ const ARTICLE: &str = "The article: its title, or its id.";
 
 pub static TOOLS: [Tool; 5] = [
     Tool {
-        name: "list_articles",
+        name: "article_list",
         description: "List the project's articles, most recently written first.",
         schema: || fields(&[("project", PROJECT)]),
         writes: false,
-        call: list_articles,
+        call: list,
     },
     Tool {
-        name: "read_article",
+        name: "article_read",
         description: "Read one article's markdown.",
         schema: || fields(&[("project", PROJECT), ("article", ARTICLE)]),
         writes: false,
-        call: read_article,
+        call: read,
     },
     Tool {
-        name: "add_article",
+        name: "article_add",
         description: "Write a new article, and answer the id it is filed under.",
         schema: || {
             fields(&[
@@ -51,10 +51,10 @@ pub static TOOLS: [Tool; 5] = [
             ])
         },
         writes: true,
-        call: add_article,
+        call: add,
     },
     Tool {
-        name: "rewrite_article",
+        name: "article_rewrite",
         description: "Replace an article's markdown. The title is left alone.",
         schema: || {
             fields(&[
@@ -64,10 +64,10 @@ pub static TOOLS: [Tool; 5] = [
             ])
         },
         writes: true,
-        call: rewrite_article,
+        call: rewrite,
     },
     Tool {
-        name: "rename_article",
+        name: "article_rename",
         description: "Rename an article. What it is filed under does not change.",
         schema: || {
             fields(&[
@@ -77,13 +77,13 @@ pub static TOOLS: [Tool; 5] = [
             ])
         },
         writes: true,
-        call: rename_article,
+        call: rename,
     },
 ];
 
 // ── the tools ────────────────────────────────────────────────────
 
-fn list_articles(args: Args<'_>) -> Outcome {
+fn list(args: Args<'_>) -> Outcome {
     let held = articles(root(&args)?);
     if held.is_empty() {
         return Ok(Answer::said("this project has no articles"));
@@ -102,14 +102,14 @@ fn list_articles(args: Args<'_>) -> Outcome {
     Ok(Answer::said(listing(&held)).with(json!({ "articles": data })))
 }
 
-fn read_article(args: Args<'_>) -> Outcome {
+fn read(args: Args<'_>) -> Outcome {
     let found = locate(root(&args)?, args.text("article")?)?;
     let text = std::fs::read_to_string(&found.content)
         .map_err(|e| Trouble::Refused(format!("{} cannot be read — {e}", found.label())))?;
     Ok(Answer::said(text).with(json!({ "id": found.id, "title": found.title })))
 }
 
-fn add_article(args: Args<'_>) -> Outcome {
+fn add(args: Args<'_>) -> Outcome {
     let project = root(&args)?;
     let title = args.text("title")?;
     let text = args.text("text")?;
@@ -128,7 +128,7 @@ fn add_article(args: Args<'_>) -> Outcome {
     Ok(Answer::said(format!("{title} written")).with(json!({ "id": id, "title": title })))
 }
 
-fn rewrite_article(args: Args<'_>) -> Outcome {
+fn rewrite(args: Args<'_>) -> Outcome {
     let found = locate(root(&args)?, args.text("article")?)?;
     let text = args.text("text")?;
     std::fs::write(&found.content, text)
@@ -136,7 +136,7 @@ fn rewrite_article(args: Args<'_>) -> Outcome {
     Ok(Answer::said(format!("{} rewritten", found.label())))
 }
 
-fn rename_article(args: Args<'_>) -> Outcome {
+fn rename(args: Args<'_>) -> Outcome {
     let found = locate(root(&args)?, args.text("article")?)?;
     let title = args.text("title")?;
     properties::set_title(&found.content, title);

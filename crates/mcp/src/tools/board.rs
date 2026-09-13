@@ -33,21 +33,21 @@ const COLUMN: &str = "The column: its name, or its id.";
 
 pub static TOOLS: [Tool; 9] = [
     Tool {
-        name: "list_boards",
+        name: "board_list",
         description: "List the project's boards, with how much is on each.",
         schema: || fields(&[("project", PROJECT)]),
         writes: false,
-        call: list_boards,
+        call: list,
     },
     Tool {
-        name: "get_board",
+        name: "board_read",
         description: "Read one board: its columns, and the cards under them by handle.",
         schema: || fields(&[("project", PROJECT), ("board", BOARD)]),
         writes: false,
-        call: get_board,
+        call: read,
     },
     Tool {
-        name: "add_card",
+        name: "board_add_card",
         description: "Put a new card at the end of a column, and answer its handle.",
         schema: || {
             fields(&[
@@ -61,7 +61,7 @@ pub static TOOLS: [Tool; 9] = [
         call: add_card,
     },
     Tool {
-        name: "rewrite_card",
+        name: "board_rewrite_card",
         description: "Replace what a card says.",
         schema: || {
             fields(&[
@@ -74,21 +74,21 @@ pub static TOOLS: [Tool; 9] = [
         call: rewrite_card,
     },
     Tool {
-        name: "move_card",
+        name: "board_move_card",
         description: "Carry a card to the end of another column on the same board.",
         schema: || fields(&[("project", PROJECT), ("card", CARD), ("column", COLUMN)]),
         writes: true,
         call: move_card,
     },
     Tool {
-        name: "remove_card",
+        name: "board_remove_card",
         description: "Take a card off its board for good.",
         schema: || fields(&[("project", PROJECT), ("card", CARD)]),
         writes: true,
         call: remove_card,
     },
     Tool {
-        name: "add_column",
+        name: "board_add_column",
         description: "Add a column at the right-hand end of a board.",
         schema: || {
             fields(&[
@@ -101,7 +101,7 @@ pub static TOOLS: [Tool; 9] = [
         call: add_column,
     },
     Tool {
-        name: "rename_column",
+        name: "board_rename_column",
         description: "Rename a column. Cards keep the handles they already have.",
         schema: || {
             fields(&[
@@ -115,7 +115,7 @@ pub static TOOLS: [Tool; 9] = [
         call: rename_column,
     },
     Tool {
-        name: "remove_column",
+        name: "board_remove_column",
         description: "Drop an empty column. A column holding cards is refused — empty it first.",
         schema: || fields(&[("project", PROJECT), ("board", BOARD), ("column", COLUMN)]),
         writes: true,
@@ -125,7 +125,7 @@ pub static TOOLS: [Tool; 9] = [
 
 // ── the tools ────────────────────────────────────────────────────
 
-fn list_boards(args: Args<'_>) -> Outcome {
+fn list(args: Args<'_>) -> Outcome {
     let project = &store(&args)?;
     let boards = project.boards();
     if boards.is_empty() {
@@ -147,7 +147,7 @@ fn list_boards(args: Args<'_>) -> Outcome {
     Ok(Answer::said(listing(&boards)).with(json!({ "boards": data })))
 }
 
-fn get_board(args: Args<'_>) -> Outcome {
+fn read(args: Args<'_>) -> Outcome {
     let project = &store(&args)?;
     let board = board(project, args.text("board")?)?;
     Ok(Answer::said(outline(&board)).with(shape(&board)))

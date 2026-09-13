@@ -23,7 +23,7 @@ fn a_browser_is_turned_away() {
 
     let answer = send(&url, list, &[]);
     assert!(answer.starts_with("HTTP/1.1 200"), "{answer}");
-    assert!(answer.contains("list_boards"), "{answer}");
+    assert!(answer.contains("board_list"), "{answer}");
 }
 
 /// A notification is answered by not answering, which over HTTP is the status
@@ -42,7 +42,7 @@ fn a_call_reaches_the_directory_it_names() {
     let (scratch, _runtime, url) = door("directory");
     scratch.store_create("Roadmap", "ROAD").expect("a board");
     let call = format!(
-        r#"{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"list_boards","arguments":{{"project":"{}"}}}}}}"#,
+        r#"{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"board_list","arguments":{{"project":"{}"}}}}}}"#,
         scratch.path().display()
     );
     let answer = send(&url, &call, &[]);
