@@ -1,5 +1,9 @@
 //! A scratch project, torn down when the test ends.
 
+// Every test binary compiles this module whole and reaches for a part of it, so
+// what one of them leaves alone is not dead.
+#![allow(dead_code)]
+
 use cydonia_artifact::project;
 use std::{
     fs,

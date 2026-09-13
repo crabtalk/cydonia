@@ -17,12 +17,15 @@
       "Ask before a delete, naming the file that goes with it",
       "Move a card's delete into its own menu, off the row of one-press controls",
       "Keep the session a card was dispatched to across a quit",
-      "Move to bezel 0.1.10 and the Lucide icon set"
+      "Move to bezel 0.1.11 and the Lucide icon set",
+      "Come back to the entry the window was left on, in the pane it is read in"
     ],
     "fixed": [
       "Stop a re-read of a project dropping the card being written",
       "Stop a sidebar row's menu opening the header's with it",
-      "Leave a card's last session alone when a dispatch is refused"
+      "Leave a card's last session alone when a dispatch is refused",
+      "Name a page from one place, so a rename cannot land on half of it",
+      "Stamp an article by both the files it is written to, so renaming one stops sinking it down the list"
     ]
   },
   {
