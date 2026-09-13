@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/cydonia", "crates/artifact"]
+members = ["crates/cydonia", "crates/artifact", "crates/mcp"]
 resolver = "3"
 
 [workspace.package]
@@ -22,6 +22,7 @@ futures = "0.3"
 image = "0.25"
 lru = "0.18"
 markdown = { version = "0.1.11", package = "bezel-markdown" }
+mcp = { version = "0.1.2", path = "crates/mcp", package = "cydonia-mcp" }
 notify = "8"
 rusqlite = { version = "0.40", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }

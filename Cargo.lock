@@ -1919,6 +1919,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "cydonia-mcp"
+version = "0.1.2"
+dependencies = [
+ "cydonia-artifact",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "data-url"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

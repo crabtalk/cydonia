@@ -1,0 +1,16 @@
+[package]
+name = "cydonia-mcp"
+description = "The MCP server cydonia answers as: the tools an agent works a project through"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["mcp", "agents", "tools", "cydonia"]
+categories = ["development-tools"]
+
+[dependencies]
+artifact.workspace = true
+serde.workspace = true
+serde_json.workspace = true
