@@ -20,12 +20,14 @@ fn an_article_is_written_and_found_by_its_title() {
             "title": "Notes on the watch",
             "text": "# Notes\n\nIt bounces.",
         }),
+        None,
     ));
     assert_eq!(made, "Notes on the watch written");
 
     let read = said(server.call(
         "article_read",
         json!({ "project": scratch.path(), "article": "notes on the watch" }),
+        None,
     ));
     assert_eq!(read, "# Notes\n\nIt bounces.");
 }
@@ -39,18 +41,21 @@ fn a_rename_leaves_the_id_alone() {
     said(server.call(
         "article_add",
         json!({ "project": scratch.path(), "title": "Draft", "text": "x" }),
+        None,
     ));
 
-    let listed = said(server.call("article_list", json!({ "project": scratch.path() })));
+    let listed = said(server.call("article_list", json!({ "project": scratch.path() }), None));
     let id = listed.split_whitespace().last().expect("an id").to_owned();
 
     said(server.call(
         "article_rename",
         json!({ "project": scratch.path(), "article": "Draft", "title": "Shipped" }),
+        None,
     ));
     let read = said(server.call(
         "article_read",
         json!({ "project": scratch.path(), "article": &id }),
+        None,
     ));
     assert_eq!(read, "x", "the same article answers to the same id");
 }
@@ -63,15 +68,18 @@ fn a_rewrite_keeps_the_title() {
     said(server.call(
         "article_add",
         json!({ "project": scratch.path(), "title": "Roadmap", "text": "first" }),
+        None,
     ));
     said(server.call(
         "article_rewrite",
         json!({ "project": scratch.path(), "article": "Roadmap", "text": "second" }),
+        None,
     ));
 
     let read = said(server.call(
         "article_read",
         json!({ "project": scratch.path(), "article": "Roadmap" }),
+        None,
     ));
     assert_eq!(read, "second");
 }
@@ -85,18 +93,24 @@ fn a_refusal_says_what_is_there() {
     said(server.call(
         "article_add",
         json!({ "project": scratch.path(), "title": "Roadmap", "text": "x" }),
+        None,
     ));
 
     let why = refused(server.call(
         "article_read",
         json!({ "project": scratch.path(), "article": "Nothing" }),
+        None,
     ));
     assert!(why.contains("Roadmap"), "{why}");
 
-    let why = refused(server.call("article_list", json!({ "project": "/no/such/directory" })));
+    let why = refused(server.call(
+        "article_list",
+        json!({ "project": "/no/such/directory" }),
+        None,
+    ));
     assert!(why.contains("no directory"), "{why}");
 
-    let why = invalid(server.call("article_read", json!({ "project": scratch.path() })));
+    let why = invalid(server.call("article_read", json!({ "project": scratch.path() }), None));
     assert!(why.contains("article"), "{why}");
 }
 
@@ -105,6 +119,6 @@ fn a_refusal_says_what_is_there() {
 fn nothing_written_yet_is_said_plainly() {
     let scratch = Scratch::new("articles-empty");
     let server = scratch.server();
-    let text = said(server.call("article_list", json!({ "project": scratch.path() })));
+    let text = said(server.call("article_list", json!({ "project": scratch.path() }), None));
     assert_eq!(text, "this project has no articles");
 }

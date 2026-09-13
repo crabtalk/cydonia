@@ -17,12 +17,12 @@ use cacp::{
     AgentConn, Client, Direction, Error, Tap,
     schema::{
         AuthenticateRequest, CancelNotification, ClientCapabilities, ContentBlock, EnvVariable,
-        FileSystemCapabilities, InitializeRequest, InitializeResponse, LoadSessionRequest,
-        McpServer, McpServerHttp, McpServerStdio, NewSessionRequest, NewSessionResponse,
-        PromptRequest, ReadTextFileRequest, ReadTextFileResponse, RequestPermissionRequest,
-        RequestPermissionResponse, SessionConfigOptionValue, SessionId, SessionNotification,
-        SessionUpdate, SetSessionConfigOptionRequest, SetSessionModeRequest, StopReason,
-        WriteTextFileRequest, WriteTextFileResponse,
+        FileSystemCapabilities, HttpHeader, InitializeRequest, InitializeResponse,
+        LoadSessionRequest, McpServer, McpServerHttp, McpServerStdio, NewSessionRequest,
+        NewSessionResponse, PromptRequest, ReadTextFileRequest, ReadTextFileResponse,
+        RequestPermissionRequest, RequestPermissionResponse, SessionConfigOptionValue, SessionId,
+        SessionNotification, SessionUpdate, SetSessionConfigOptionRequest, SetSessionModeRequest,
+        StopReason, WriteTextFileRequest, WriteTextFileResponse,
     },
 };
 use std::process::Stdio;
@@ -210,7 +210,7 @@ impl Session {
 
         // Only now are the agent's MCP capabilities known, so remote
         // servers can be dropped for agents that can't reach them.
-        let mcp_servers = acp_mcp_servers(&configured, &init);
+        let mcp_servers = acp_mcp_servers(&configured, &init, &cwd);
 
         let mut loaded = false;
         let mut response = None;
@@ -428,13 +428,27 @@ const _: () = {
 /// Cydonia's own door goes first, when the agent can reach it. It is not in
 /// `mcp.toml` and must not be — that file is the servers the user added, and
 /// this one is not the user's to remove.
-fn acp_mcp_servers(configured: &[mcp::McpServer], init: &InitializeResponse) -> Vec<McpServer> {
+fn acp_mcp_servers(
+    configured: &[mcp::McpServer],
+    init: &InitializeResponse,
+    cwd: &std::path::Path,
+) -> Vec<McpServer> {
     let http = init.agent_capabilities.mcp_capabilities.http;
     let ours = http.then(serve::url).flatten().map(|url| {
         McpServer::Http(McpServerHttp {
             name: SERVER.to_owned(),
             url,
-            headers: Vec::new(),
+            // Which project this session is. The tools then take no directory
+            // at all — one a session's model had to supply is one it could
+            // supply wrongly, about something already known here.
+            headers: vec![{
+                let (name, value) = serve::project(cwd);
+                HttpHeader {
+                    name: name.to_owned(),
+                    value,
+                    meta: None,
+                }
+            }],
             meta: None,
         })
     });

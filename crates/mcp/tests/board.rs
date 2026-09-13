@@ -22,6 +22,7 @@ fn a_board_answers_to_key_name_and_id() {
         let text = said(server.call(
             "board_read",
             json!({ "project": scratch.path(), "board": needle }),
+            None,
         ));
         assert!(text.starts_with("Roadmap (ROAD)"), "{needle}: {text}");
     }
@@ -40,27 +41,31 @@ fn a_card_is_addressed_by_the_handle_it_is_given() {
     said(server.call(
         "board_add_column",
         json!({ "project": scratch.path(), "board": "ROAD", "name": "Todo" }),
+        None,
     ));
     said(server.call(
         "board_add_column",
         json!({ "project": scratch.path(), "board": "ROAD", "name": "Doing" }),
+        None,
     ));
 
     let added = said(server.call(
         "board_add_card",
         json!({ "project": scratch.path(), "board": "ROAD", "column": "Todo", "text": "Wire the model picker" }),
-    ));
+    None));
     assert_eq!(added, "ROAD-1 added to Todo");
 
     // No board argument anywhere below: the handle carries it.
     let moved = said(server.call(
         "board_move_card",
         json!({ "project": scratch.path(), "card": "ROAD-1", "column": "Doing" }),
+        None,
     ));
     assert_eq!(moved, "ROAD-1 moved to Doing");
     let text = said(server.call(
         "board_read",
         json!({ "project": scratch.path(), "board": "ROAD" }),
+        None,
     ));
     assert!(
         text.contains("Doing\n  ROAD-1  Wire the model picker"),
@@ -80,15 +85,17 @@ fn a_handle_splits_on_its_last_dash() {
     said(server.call(
         "board_add_column",
         json!({ "project": scratch.path(), "board": "ROA2", "name": "Todo" }),
+        None,
     ));
     said(server.call(
         "board_add_card",
         json!({ "project": scratch.path(), "board": "ROA2", "column": "Todo", "text": "the second one" }),
-    ));
+    None));
 
     let text = said(server.call(
         "board_rewrite_card",
         json!({ "project": scratch.path(), "card": "ROA2-1", "text": "still it" }),
+        None,
     ));
     assert_eq!(text, "ROA2-1 now reads: still it");
 }
@@ -106,23 +113,27 @@ fn a_refusal_says_what_is_there() {
     said(server.call(
         "board_add_column",
         json!({ "project": scratch.path(), "board": "ROAD", "name": "Todo" }),
+        None,
     ));
 
     let why = refused(server.call(
         "board_read",
         json!({ "project": scratch.path(), "board": "Backlog" }),
+        None,
     ));
     assert!(why.contains("ROAD (Roadmap)"), "{why}");
 
     let why = refused(server.call(
         "board_add_card",
         json!({ "project": scratch.path(), "board": "ROAD", "column": "Doing", "text": "x" }),
+        None,
     ));
     assert!(why.contains("Todo"), "{why}");
 
     let why = refused(server.call(
         "board_move_card",
         json!({ "project": scratch.path(), "card": "ROAD-9", "column": "Todo" }),
+        None,
     ));
     assert!(why.contains("ROAD-9"), "{why}");
 }
@@ -140,25 +151,29 @@ fn a_column_holding_cards_is_not_dropped() {
     said(server.call(
         "board_add_column",
         json!({ "project": scratch.path(), "board": "ROAD", "name": "Todo" }),
+        None,
     ));
     said(server.call(
         "board_add_card",
         json!({ "project": scratch.path(), "board": "ROAD", "column": "Todo", "text": "Retire Spot" }),
-    ));
+    None));
 
     let why = refused(server.call(
         "board_remove_column",
         json!({ "project": scratch.path(), "board": "ROAD", "column": "Todo" }),
+        None,
     ));
     assert!(why.contains("still holds cards"), "{why}");
 
     said(server.call(
         "board_remove_card",
         json!({ "project": scratch.path(), "card": "ROAD-1" }),
+        None,
     ));
     let text = said(server.call(
         "board_remove_column",
         json!({ "project": scratch.path(), "board": "ROAD", "column": "Todo" }),
+        None,
     ));
     assert_eq!(text, "Todo removed from Roadmap");
 }
@@ -174,11 +189,11 @@ fn a_missing_argument_is_not_a_refusal() {
         .expect("a board");
     let server = scratch.server();
 
-    let why = invalid(server.call("board_read", json!({ "project": scratch.path() })));
+    let why = invalid(server.call("board_read", json!({ "project": scratch.path() }), None));
     assert!(why.contains("board"), "{why}");
-    let why = invalid(server.call("board_read", json!({ "board": "ROAD" })));
+    let why = invalid(server.call("board_read", json!({ "board": "ROAD" }), None));
     assert!(why.contains("project"), "{why}");
-    let why = invalid(server.call("no_such_tool", json!({})));
+    let why = invalid(server.call("no_such_tool", json!({}), None));
     assert!(why.contains("no_such_tool"), "{why}");
 }
 
@@ -195,11 +210,12 @@ fn what_a_tool_wrote_is_on_disk() {
     said(server.call(
         "board_add_column",
         json!({ "project": scratch.path(), "board": "ROAD", "name": "Todo" }),
+        None,
     ));
     said(server.call(
         "board_add_card",
         json!({ "project": scratch.path(), "board": "ROAD", "column": "Todo", "text": "Wire the model picker" }),
-    ));
+    None));
 
     // A fresh store, the way the watch re-reads one.
     let boards = scratch.store().boards();
@@ -223,12 +239,12 @@ fn a_notification_is_not_answered() {
     let notification: Request =
         serde_json::from_value(json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }))
             .expect("a frame");
-    assert!(server.handle(&notification).is_none());
+    assert!(server.handle(&notification, None).is_none());
 
     let call: Request =
         serde_json::from_value(json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" }))
             .expect("a frame");
-    let answer = server.handle(&call).expect("an answer");
+    let answer = server.handle(&call, None).expect("an answer");
     let tools = answer.result.expect("a result");
     let names: Vec<&str> = tools["tools"]
         .as_array()
@@ -258,7 +274,7 @@ fn a_refusal_reaches_the_model_as_a_result() {
         },
     }))
     .expect("a frame");
-    let answer = server.handle(&call).expect("an answer");
+    let answer = server.handle(&call, None).expect("an answer");
     assert!(answer.error.is_none(), "a refusal is not a protocol error");
     let result = answer.result.expect("a result");
     assert_eq!(result["isError"], json!(true));
@@ -287,7 +303,7 @@ fn a_read_only_server_offers_no_way_to_write() {
         serde_json::from_value(json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" }))
             .expect("a frame");
     let listed = server
-        .handle(&call)
+        .handle(&call, None)
         .expect("an answer")
         .result
         .expect("a result");
@@ -302,6 +318,7 @@ fn a_read_only_server_offers_no_way_to_write() {
     let why = refused(server.call(
         "board_add_column",
         json!({ "project": scratch.path(), "board": "ROAD", "name": "Todo" }),
+        None,
     ));
     assert!(why.contains("read only"), "{why}");
 
@@ -311,5 +328,6 @@ fn a_read_only_server_offers_no_way_to_write() {
     said(server.call(
         "board_add_column",
         json!({ "project": scratch.path(), "board": "ROAD", "name": "Todo" }),
+        None,
     ));
 }

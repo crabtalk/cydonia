@@ -22,6 +22,7 @@ use axum::{
 };
 use std::{
     net::{Ipv4Addr, SocketAddr},
+    path::{Path, PathBuf},
     sync::Arc,
 };
 use tokio::{net::TcpListener, sync::oneshot};
@@ -32,6 +33,14 @@ pub const PATH: &str = "/mcp";
 /// The port the door prefers. Pinned so the address survives a restart, which
 /// is what lets a client be configured once.
 pub const PORT: u16 = 7457;
+
+/// Which project the caller is working in, when it is working in one.
+///
+/// A session belongs to a project and the app knows which, so the client is
+/// told on the way in rather than its model asked on every call. A caller that
+/// sends none — anything configured by hand against this port — names the
+/// directory it means per call instead.
+pub const PROJECT: &str = "x-cydonia-project";
 
 /// How far past it the door will walk when something already holds one. A
 /// second cydonia is the usual reason, and it takes the next number rather
@@ -113,6 +122,10 @@ pub async fn open_at(port: u16, server: Arc<Server>) -> std::io::Result<Door> {
 
 /// One MCP call.
 async fn call(State(server): State<Arc<Server>>, headers: HeaderMap, body: String) -> Response {
+    let at = headers
+        .get(PROJECT)
+        .and_then(|value| value.to_str().ok())
+        .and_then(decoded);
     // A client that is not a browser sends no `Origin` at all. One that does is
     // a page, and a page reaching a loopback port is the rebinding attack this
     // check exists for — the name it resolved is not one we can vouch for, so
@@ -123,7 +136,7 @@ async fn call(State(server): State<Arc<Server>>, headers: HeaderMap, body: Strin
     let Ok(request) = serde_json::from_str::<Request>(&body) else {
         return (StatusCode::BAD_REQUEST, "not a JSON-RPC request").into_response();
     };
-    match server.handle(&request) {
+    match server.handle(&request, at.as_deref()) {
         Some(response) => axum::Json(response).into_response(),
         // A notification is answered by not answering, which over HTTP is the
         // status that says so.
@@ -135,4 +148,48 @@ async fn call(State(server): State<Arc<Server>>, headers: HeaderMap, body: Strin
 /// has nothing to push — `listChanged` is false for the same reason.
 async fn no_stream() -> Response {
     (StatusCode::METHOD_NOT_ALLOWED, "this server pushes nothing").into_response()
+}
+
+// ── the project header ───────────────────────────────────────────
+
+/// A path as the header carries it. Percent-encoded because a header value is
+/// ASCII and a project called `~/文档/cydonia` is not — and because a path is
+/// the one thing here that somebody else chose the bytes of.
+///
+/// Lossy for a path that is not UTF-8, which cydonia cannot hold anyway: the
+/// projects it remembers are TOML strings in `state.toml`.
+pub fn encoded(path: &Path) -> String {
+    let mut out = String::new();
+    for byte in path.to_string_lossy().as_bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => {
+                out.push(*byte as char);
+            }
+            _ => out.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    out
+}
+
+/// The path back out of it. Nothing for a value that is not one, which is
+/// answered by treating the caller as unbound rather than by refusing it — a
+/// header we cannot read is not a call we have to reject.
+fn decoded(value: &str) -> Option<PathBuf> {
+    let raw = value.as_bytes();
+    let mut out = Vec::with_capacity(raw.len());
+    let mut at = 0;
+    while at < raw.len() {
+        match raw[at] {
+            b'%' if at + 2 < raw.len() => {
+                let hex = std::str::from_utf8(&raw[at + 1..at + 3]).ok()?;
+                out.push(u8::from_str_radix(hex, 16).ok()?);
+                at += 3;
+            }
+            byte => {
+                out.push(byte);
+                at += 1;
+            }
+        }
+    }
+    Some(PathBuf::from(String::from_utf8(out).ok()?))
 }

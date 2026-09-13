@@ -29,26 +29,29 @@ pub static TOOLS: [Tool; 5] = [
     Tool {
         name: "article_list",
         description: "List the project's articles, most recently written first.",
-        schema: || fields(&[("project", PROJECT)]),
+        schema: |bound| fields(bound, &[("project", PROJECT)]),
         writes: false,
         call: list,
     },
     Tool {
         name: "article_read",
         description: "Read one article's markdown.",
-        schema: || fields(&[("project", PROJECT), ("article", ARTICLE)]),
+        schema: |bound| fields(bound, &[("project", PROJECT), ("article", ARTICLE)]),
         writes: false,
         call: read,
     },
     Tool {
         name: "article_add",
         description: "Write a new article, and answer the id it is filed under.",
-        schema: || {
-            fields(&[
-                ("project", PROJECT),
-                ("title", "What the article is called."),
-                ("text", "Its markdown."),
-            ])
+        schema: |bound| {
+            fields(
+                bound,
+                &[
+                    ("project", PROJECT),
+                    ("title", "What the article is called."),
+                    ("text", "Its markdown."),
+                ],
+            )
         },
         writes: true,
         call: add,
@@ -56,12 +59,15 @@ pub static TOOLS: [Tool; 5] = [
     Tool {
         name: "article_rewrite",
         description: "Replace an article's markdown. The title is left alone.",
-        schema: || {
-            fields(&[
-                ("project", PROJECT),
-                ("article", ARTICLE),
-                ("text", "The markdown it should hold now."),
-            ])
+        schema: |bound| {
+            fields(
+                bound,
+                &[
+                    ("project", PROJECT),
+                    ("article", ARTICLE),
+                    ("text", "The markdown it should hold now."),
+                ],
+            )
         },
         writes: true,
         call: rewrite,
@@ -69,12 +75,15 @@ pub static TOOLS: [Tool; 5] = [
     Tool {
         name: "article_rename",
         description: "Rename an article. What it is filed under does not change.",
-        schema: || {
-            fields(&[
-                ("project", PROJECT),
-                ("article", ARTICLE),
-                ("title", "What it should be called now."),
-            ])
+        schema: |bound| {
+            fields(
+                bound,
+                &[
+                    ("project", PROJECT),
+                    ("article", ARTICLE),
+                    ("title", "What it should be called now."),
+                ],
+            )
         },
         writes: true,
         call: rename,

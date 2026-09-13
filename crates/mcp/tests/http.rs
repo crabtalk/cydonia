@@ -119,3 +119,53 @@ fn a_taken_port_is_stepped_past() {
         first.url()
     );
 }
+
+/// A caller opened in a project is told which on the way in, so its tools take
+/// no directory at all — an argument a model has to supply is one it can
+/// supply wrongly, about something already known here.
+#[test]
+fn a_bound_caller_never_names_its_project() {
+    let scratch = Scratch::new("bound");
+    let runtime = tokio::runtime::Runtime::new().expect("a runtime");
+    let server = Arc::new(Server::new().mount(&tools::article::TOOLS));
+    let door = runtime
+        .block_on(http::open_at(0, server))
+        .expect("a free port");
+    let bound = http::encoded(scratch.path());
+    let list = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
+
+    let told = send(door.url(), list, &[(http::PROJECT, &bound)]);
+    assert!(!told.contains("\"project\""), "{told}");
+    let loose = send(door.url(), list, &[]);
+    assert!(loose.contains("\"project\""), "{loose}");
+
+    // And a call lands in the bound directory without being given one.
+    let call = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"article_list","arguments":{}}}"#;
+    let answer = send(door.url(), call, &[(http::PROJECT, &bound)]);
+    assert!(answer.contains("no articles"), "{answer}");
+}
+
+/// A project is whatever somebody called their directory, and a header value
+/// is ASCII.
+#[test]
+fn a_project_survives_the_header_it_rides_on() {
+    let awkward = std::path::Path::new("/Users/tianyi/文档/my project");
+    let there_and_back = http::encoded(awkward);
+    assert!(there_and_back.is_ascii(), "{there_and_back}");
+
+    let scratch = Scratch::new("encoded");
+    let runtime = tokio::runtime::Runtime::new().expect("a runtime");
+    let server = Arc::new(Server::new().mount(&tools::article::TOOLS));
+    let door = runtime
+        .block_on(http::open_at(0, server))
+        .expect("a free port");
+    // The round trip is what the door does with it, so it is asked through the
+    // door: a path it decoded wrongly is a directory that is not there.
+    let call = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"article_list","arguments":{}}}"#;
+    let answer = send(
+        door.url(),
+        call,
+        &[(http::PROJECT, &http::encoded(scratch.path()))],
+    );
+    assert!(answer.contains("no articles"), "{answer}");
+}

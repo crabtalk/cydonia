@@ -5,6 +5,7 @@
 //! [`crate::Server::mount`].
 
 use serde_json::Value;
+use std::path::Path;
 
 pub struct Tool {
     /// What `tools/call` names. Flat and snake_cased, which is what every
@@ -16,7 +17,11 @@ pub struct Tool {
     /// The JSON Schema of `arguments`, built when it is asked for. A `Value`
     /// held in a `static` would want a lock or a lazy, for a list that is
     /// rebuilt once per `tools/list`.
-    pub schema: fn() -> Value,
+    ///
+    /// Takes whether the caller is already bound to a project: a session is
+    /// opened in one, so the argument that names it is left out of the schema
+    /// entirely rather than asked for and ignored.
+    pub schema: fn(bound: bool) -> Value,
     /// Whether calling this changes the project. What the write switch reads,
     /// and a property of the tool rather than a second list somewhere that
     /// could disagree with it.
@@ -65,24 +70,37 @@ pub enum Trouble {
     Refused(String),
 }
 
-/// The `arguments` object of a `tools/call`, and the two questions anything
-/// here asks of it. Every argument this surface takes is a required string —
-/// an address, or a line of text.
-pub struct Args<'a>(&'a Value);
+/// The `arguments` object of a `tools/call`, and the project the caller is
+/// working in when it has one.
+///
+/// Every argument this surface takes is a required string — an address, or a
+/// line of text. The project is the exception, and the reason is that it is
+/// not really an argument: a session is opened in a directory and the client
+/// was told which, so asking its model to repeat it back is asking it to guess
+/// at something already known.
+pub struct Args<'a> {
+    arguments: &'a Value,
+    at: Option<&'a Path>,
+}
 
 impl<'a> Args<'a> {
-    pub fn new(arguments: &'a Value) -> Self {
-        Self(arguments)
+    pub fn new(arguments: &'a Value, at: Option<&'a Path>) -> Self {
+        Self { arguments, at }
+    }
+
+    /// The project the caller is bound to, if it is bound to one.
+    pub fn at(&self) -> Option<&'a Path> {
+        self.at
     }
 
     pub fn text(&self, name: &str) -> Result<&'a str, Trouble> {
-        match self.0.get(name).and_then(Value::as_str) {
+        match self.arguments.get(name).and_then(Value::as_str) {
             Some(text) => Ok(text),
             None => Err(Trouble::Invalid(format!("{name} is required, as a string"))),
         }
     }
 
     pub fn maybe(&self, name: &str) -> Option<&'a str> {
-        self.0.get(name).and_then(Value::as_str)
+        self.arguments.get(name).and_then(Value::as_str)
     }
 }

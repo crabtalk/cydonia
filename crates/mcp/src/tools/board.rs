@@ -35,27 +35,30 @@ pub static TOOLS: [Tool; 9] = [
     Tool {
         name: "board_list",
         description: "List the project's boards, with how much is on each.",
-        schema: || fields(&[("project", PROJECT)]),
+        schema: |bound| fields(bound, &[("project", PROJECT)]),
         writes: false,
         call: list,
     },
     Tool {
         name: "board_read",
         description: "Read one board: its columns, and the cards under them by handle.",
-        schema: || fields(&[("project", PROJECT), ("board", BOARD)]),
+        schema: |bound| fields(bound, &[("project", PROJECT), ("board", BOARD)]),
         writes: false,
         call: read,
     },
     Tool {
         name: "board_add_card",
         description: "Put a new card at the end of a column, and answer its handle.",
-        schema: || {
-            fields(&[
-                ("project", PROJECT),
-                ("board", BOARD),
-                ("column", COLUMN),
-                ("text", "What the card says."),
-            ])
+        schema: |bound| {
+            fields(
+                bound,
+                &[
+                    ("project", PROJECT),
+                    ("board", BOARD),
+                    ("column", COLUMN),
+                    ("text", "What the card says."),
+                ],
+            )
         },
         writes: true,
         call: add_card,
@@ -63,12 +66,15 @@ pub static TOOLS: [Tool; 9] = [
     Tool {
         name: "board_rewrite_card",
         description: "Replace what a card says.",
-        schema: || {
-            fields(&[
-                ("project", PROJECT),
-                ("card", CARD),
-                ("text", "What the card should say now."),
-            ])
+        schema: |bound| {
+            fields(
+                bound,
+                &[
+                    ("project", PROJECT),
+                    ("card", CARD),
+                    ("text", "What the card should say now."),
+                ],
+            )
         },
         writes: true,
         call: rewrite_card,
@@ -76,26 +82,34 @@ pub static TOOLS: [Tool; 9] = [
     Tool {
         name: "board_move_card",
         description: "Carry a card to the end of another column on the same board.",
-        schema: || fields(&[("project", PROJECT), ("card", CARD), ("column", COLUMN)]),
+        schema: |bound| {
+            fields(
+                bound,
+                &[("project", PROJECT), ("card", CARD), ("column", COLUMN)],
+            )
+        },
         writes: true,
         call: move_card,
     },
     Tool {
         name: "board_remove_card",
         description: "Take a card off its board for good.",
-        schema: || fields(&[("project", PROJECT), ("card", CARD)]),
+        schema: |bound| fields(bound, &[("project", PROJECT), ("card", CARD)]),
         writes: true,
         call: remove_card,
     },
     Tool {
         name: "board_add_column",
         description: "Add a column at the right-hand end of a board.",
-        schema: || {
-            fields(&[
-                ("project", PROJECT),
-                ("board", BOARD),
-                ("name", "What the column is called."),
-            ])
+        schema: |bound| {
+            fields(
+                bound,
+                &[
+                    ("project", PROJECT),
+                    ("board", BOARD),
+                    ("name", "What the column is called."),
+                ],
+            )
         },
         writes: true,
         call: add_column,
@@ -103,13 +117,16 @@ pub static TOOLS: [Tool; 9] = [
     Tool {
         name: "board_rename_column",
         description: "Rename a column. Cards keep the handles they already have.",
-        schema: || {
-            fields(&[
-                ("project", PROJECT),
-                ("board", BOARD),
-                ("column", COLUMN),
-                ("name", "What the column should be called now."),
-            ])
+        schema: |bound| {
+            fields(
+                bound,
+                &[
+                    ("project", PROJECT),
+                    ("board", BOARD),
+                    ("column", COLUMN),
+                    ("name", "What the column should be called now."),
+                ],
+            )
         },
         writes: true,
         call: rename_column,
@@ -117,7 +134,12 @@ pub static TOOLS: [Tool; 9] = [
     Tool {
         name: "board_remove_column",
         description: "Drop an empty column. A column holding cards is refused — empty it first.",
-        schema: || fields(&[("project", PROJECT), ("board", BOARD), ("column", COLUMN)]),
+        schema: |bound| {
+            fields(
+                bound,
+                &[("project", PROJECT), ("board", BOARD), ("column", COLUMN)],
+            )
+        },
         writes: true,
         call: remove_column,
     },

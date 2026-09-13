@@ -24,11 +24,21 @@ use std::path::Path;
 /// directory a call is about is the call's to say.
 pub(crate) const PROJECT: &str = "The project: the path of the directory the work is in.";
 
-/// The directory a call is about, and it has to be one — a path with a typo in
-/// it would otherwise read as a project with nothing in it, which is a thing a
-/// model would believe.
+/// The directory a call is about: the one the caller was opened in, or the one
+/// it named.
+///
+/// The binding wins, and there is no argument to override it with — a session
+/// is a project's, and a client that could reach past its own would be one
+/// mistake away from writing to somebody else's work.
+///
+/// Either way it has to be a directory. A path with a typo in it would
+/// otherwise read as a project with nothing in it, which is a thing a model
+/// would believe.
 pub(crate) fn root<'a>(args: &Args<'a>) -> Result<&'a Path, Trouble> {
-    let path = Path::new(args.text("project")?);
+    let path = match args.at() {
+        Some(at) => at,
+        None => Path::new(args.text("project")?),
+    };
     match path.is_dir() {
         true => Ok(path),
         false => Err(Trouble::Refused(format!(
@@ -41,7 +51,19 @@ pub(crate) fn root<'a>(args: &Args<'a>) -> Result<&'a Path, Trouble> {
 /// An object schema over the named arguments. Every one this surface takes is
 /// a required string — an address, or a line of text — so there is nothing
 /// else for a schema here to say.
-pub(crate) fn fields(args: &[(&str, &str)]) -> Value {
+///
+/// `bound` is whether the caller already has a project, in which case the
+/// argument that names one is left out: an argument a model must supply and
+/// the server will ignore is an argument that costs a turn to get wrong.
+pub(crate) fn fields(bound: bool, args: &[(&str, &str)]) -> Value {
+    let args: Vec<(&str, &str)> = match bound {
+        true => args
+            .iter()
+            .filter(|(name, _)| *name != "project")
+            .copied()
+            .collect(),
+        false => args.to_vec(),
+    };
     let properties = args
         .iter()
         .map(|(name, about)| {

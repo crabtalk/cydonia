@@ -8,6 +8,7 @@
 //! listening is worth something, not because anybody has to type it.
 
 use mcp::{Server, http::Door, tools};
+use std::path::Path;
 use std::sync::{
     Arc, Mutex, OnceLock,
     atomic::{AtomicBool, Ordering},
@@ -61,6 +62,15 @@ pub fn serve(open: bool) {
 pub fn url() -> Option<String> {
     let door = held().lock().ok()?;
     door.as_ref().map(|door| door.url().to_owned())
+}
+
+/// The header that tells the door which project a session is, ready to be put
+/// on the wire.
+///
+/// Here rather than at the call site: inside `agent/`, `mcp` is this app's own
+/// module of that name, and reaching the crate from there reads as a typo.
+pub fn project(cwd: &Path) -> (&'static str, String) {
+    (mcp::http::PROJECT, mcp::http::encoded(cwd))
 }
 
 /// What is on it. Articles and boards; a tool set per surface as they arrive.
