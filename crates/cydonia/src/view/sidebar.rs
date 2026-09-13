@@ -536,13 +536,32 @@ impl Cydonia {
             .flex()
             .flex_row()
             .items_center()
-            .gap(px(4.))
+            .gap(px(6.))
             .cursor_pointer()
             // On the head, not the label: a name's colour is fixed when
             // its text is laid out, and only this div is stateful enough
             // to carry the hover that far.
             .text_color(theme.text_faint)
             .hover(|el| el.text_color(theme.text))
+            .child(
+                theme
+                    .ghost(("project-fold", ix))
+                    .flex_none()
+                    .p(px(2.))
+                    .child(
+                        icons::icon(match expanded {
+                            true => icons::files::FolderOpen,
+                            false => icons::files::Folder,
+                        })
+                        .size(px(14.))
+                        .text_color(theme.text_faint)
+                        .group_hover("project-head", |el| el.text_color(theme.text)),
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.toggle_project(ix, cx);
+                    })),
+            )
             .child(
                 div()
                     .flex_1()
@@ -565,24 +584,6 @@ impl Cydonia {
                 )
                 .children(self.add_menu(ix, cx)),
             )
-            .child(
-                theme
-                    .ghost(("project-fold", ix))
-                    .flex_none()
-                    .p(px(3.))
-                    .invisible()
-                    .group_hover("project-head", |el| el.visible())
-                    .child(
-                        theme
-                            .disclosure(expanded)
-                            .text_color(theme.text_faint)
-                            .group_hover("project-head", |el| el.text_color(theme.text)),
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        cx.stop_propagation();
-                        this.toggle_project(ix, cx);
-                    })),
-            )
             .children(self.project_menu(ix, cx))
             .on_mouse_down(
                 MouseButton::Right,
@@ -590,8 +591,8 @@ impl Cydonia {
             )
             // A press on the copy is a press on where it came from: the list
             // goes back to the heading it is standing in for, rather than
-            // folding away the project you are reading. Its own chevron still
-            // folds — that press stops before it reaches here.
+            // folding away the project you are reading. Its own folder mark
+            // still folds — that press stops before it reaches here.
             .on_click(cx.listener(move |this, _, _, cx| match pinned {
                 true => this.scroll_to_project(ix, cx),
                 false => this.toggle_project(ix, cx),
