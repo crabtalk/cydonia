@@ -418,6 +418,14 @@ impl Workspace {
         cx.notify();
     }
 
+    /// What the active project was last showing, by kind. What the window puts
+    /// its pane on when it lands here — [`Self::open_last_entry`] opens the
+    /// entry, and this is how the view learns which one of the four it was.
+    pub fn landing(&self) -> Option<state::Kind> {
+        let open = self.active_project()?;
+        self.last.get(&open.path).map(|entry| entry.kind)
+    }
+
     /// Remember the entry a project is now showing, so the next launch lands on
     /// it. Every way of opening one arrives here.
     fn remember(&mut self, project: usize, kind: state::Kind, id: String) {
@@ -986,15 +994,6 @@ impl Workspace {
         self.projects[project].articles.insert(0, article);
         self.open_article(project, 0, cx);
         Some(0)
-    }
-
-    pub fn rename_article(&mut self, path: &Path, name: String, cx: &mut Context<Self>) {
-        let Some(article) = self.article_at_mut(path) else {
-            return;
-        };
-        let name = name.trim().to_owned();
-        article.rename(&name, cx);
-        cx.notify();
     }
 
     pub fn archive_article(&mut self, path: &Path, archived: bool, cx: &mut Context<Self>) {

@@ -1,7 +1,10 @@
 //! A scratch project, torn down when the test ends.
 
 use cydonia_artifact::project;
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 pub struct Scratch(PathBuf);
 
@@ -11,6 +14,11 @@ impl Scratch {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         Self(dir)
+    }
+
+    /// The directory itself — what a project is.
+    pub fn path(&self) -> &Path {
+        &self.0
     }
 
     /// The store under it, which is what holds the entries.

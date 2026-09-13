@@ -5,7 +5,7 @@ use crate::{
     model::{
         session::ChatSession,
         settings::Settings,
-        state::State,
+        state::{self, State},
         workspace::{Reloaded, Workspace},
     },
     view::{
@@ -230,6 +230,18 @@ pub enum Pane {
     Table,
 }
 
+impl Pane {
+    /// The pane a remembered entry is read in — see [`Workspace::landing`].
+    fn of(kind: state::Kind) -> Self {
+        match kind {
+            state::Kind::Session => Self::Chat,
+            state::Kind::Board => Self::Board,
+            state::Kind::Article => Self::Article,
+            state::Kind::Table => Self::Table,
+        }
+    }
+}
+
 /// One step from `at` through `len` entries, wrapping — a list of none has
 /// nowhere to land.
 fn stepped(at: Option<usize>, len: usize, step: isize) -> Option<usize> {
@@ -381,6 +393,9 @@ impl Cydonia {
             }
         })
         .detach();
+        // The window comes back on the entry it was left on — the whole point
+        // of [`state::Entry`], and the pane the entry is read in is half of it.
+        this.land(cx);
         this.sync_composer(cx);
         // Where the caret starts. The composer is drawn only over a chat it can
         // send to, and focus on an element no frame draws is focus nowhere.
@@ -475,6 +490,19 @@ impl Cydonia {
         self.commit(cx);
         self.workspace
             .update(cx, |workspace, cx| workspace.select_project(ix, cx));
+        self.land(cx);
+    }
+
+    /// Put the pane on what the project coming forward was last showing.
+    ///
+    /// Without this the pane is whatever the last project was read in, and
+    /// [`Self::showing`] falls back through the four in a fixed order — so a
+    /// project with a board open from earlier in the session lands on the
+    /// board however recently the article beside it was read.
+    fn land(&mut self, cx: &mut Context<Self>) {
+        if let Some(kind) = self.workspace.read(cx).landing() {
+            self.pane = Pane::of(kind);
+        }
     }
 
     pub(crate) fn close_project(&mut self, ix: usize, cx: &mut Context<Self>) {

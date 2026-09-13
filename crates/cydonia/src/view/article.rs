@@ -6,7 +6,7 @@ use crate::{
     view::{
         component::menu::Menu,
         root::{Cydonia, NewArticle, Pane},
-        sidebar::{self, Renaming, Row},
+        sidebar::{self, Row},
     },
 };
 use bezel::{
@@ -426,12 +426,6 @@ impl Cydonia {
             .get(project)
             .and_then(|open| open.articles.get(ix));
         let archived = article.is_some_and(|article| article.archived);
-        let path = article.map(|article| &article.path);
-        // The band draws the field when it is showing this entry — see
-        // [`Cydonia::header_renaming`], which is what keeps one field from
-        // being claimed by two places at once.
-        let renaming = matches!(&self.renaming, Some(Renaming::Article(at)) if Some(at) == path)
-            && self.header_renaming(cx).is_none();
         let tint = sidebar::tint(selected, archived, &theme);
         let id = SharedString::from(format!("article-{project}-{ix}"));
 
@@ -442,17 +436,17 @@ impl Cydonia {
                     .flex_none()
                     .text_color(tint),
             )
-            .child(match renaming {
-                true => self.name_field(cx),
-                false => div()
+            // Display-only: the title is written at the head of the page, and
+            // this row is never a second field for it.
+            .child(
+                div()
                     .flex_1()
                     .min_w_0()
                     .truncate()
                     .text_style(TextStyle::Body)
                     .text_color(tint)
-                    .child(title)
-                    .into_any_element(),
-            })
+                    .child(title),
+            )
             .child(
                 self.menu_button(
                     ("article-menu", ix),

@@ -1,7 +1,17 @@
 //! What an article says on the wire.
 
-use cydonia_artifact::article::Article;
-use std::path::Path;
+mod common;
+
+use common::Scratch;
+use cydonia_artifact::{
+    article::{self, Article},
+    stamp,
+};
+use std::{
+    fs,
+    path::Path,
+    time::{Duration, SystemTime},
+};
 use url::Url;
 
 fn article(cover: Option<&str>) -> Article {
@@ -50,4 +60,41 @@ fn an_older_record_reads_back() {
     assert_eq!(back.title, "Roadmap");
     assert!(!back.archived);
     assert!(back.cover.is_none());
+}
+
+/// Naming a page is writing it, and the name is in the properties. Ordered on
+/// the markdown alone, an article that was only ever renamed sinks back down
+/// the sidebar the moment it is re-read.
+#[test]
+fn a_page_is_touched_by_its_properties() {
+    let scratch = Scratch::new("article-touched");
+    let dir = article::dir(scratch.path()).join("1757000000000");
+    fs::create_dir_all(&dir).unwrap();
+    let content = article::content(&dir);
+    fs::write(&content, "").unwrap();
+
+    let written = article::touched(&content);
+    // A second on, so the filesystem has somewhere to put it whatever its
+    // stamps are rounded to.
+    let later = SystemTime::now() + Duration::from_secs(1);
+    let properties = fs::File::create(article::properties::path(&content).unwrap()).unwrap();
+    properties.set_modified(later).unwrap();
+
+    assert!(
+        article::touched(&content) > written,
+        "the properties are the later write"
+    );
+}
+
+/// And an article that has none is not floated to the top by the absence —
+/// `stamp::of` answers `now` for a file it cannot stat.
+#[test]
+fn a_page_with_no_properties_is_touched_by_its_content() {
+    let scratch = Scratch::new("article-no-properties");
+    let dir = article::dir(scratch.path()).join("1757000000000");
+    fs::create_dir_all(&dir).unwrap();
+    let content = article::content(&dir);
+    fs::write(&content, "").unwrap();
+
+    assert_eq!(article::touched(&content), stamp::of(&content));
 }

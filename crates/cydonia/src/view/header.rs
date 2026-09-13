@@ -41,6 +41,10 @@ pub(crate) enum Naming {
     /// In the board's identity panel, by id: a board is named by its name *and*
     /// its key, so one place edits both. See [`Cydonia::toggle_info`].
     Panel(String),
+    /// In the page itself: an article's title is the first line of the
+    /// document, so the pane already holds the field — see
+    /// [`crate::view::article`]. Nothing for the band to draw or offer.
+    Page,
 }
 
 impl Cydonia {
@@ -85,7 +89,7 @@ impl Cydonia {
                     entry: Some(Entry {
                         row: Row::Article { project, ix },
                         archived: article.archived,
-                        naming: Naming::Inline(Renaming::Article(article.path.clone())),
+                        naming: Naming::Page,
                     }),
                 }
             }

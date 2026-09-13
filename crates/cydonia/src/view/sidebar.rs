@@ -30,7 +30,7 @@ use bezel::{
         widgets::{Buttons, Layout},
     },
 };
-use std::{cell::RefCell, cmp::Reverse, ops::Range, path::PathBuf, rc::Rc, time::Duration};
+use std::{cell::RefCell, cmp::Reverse, ops::Range, rc::Rc, time::Duration};
 
 /// What the sidebar needs of a session to draw its row, read out of the model
 /// before the row is built: a turn in flight puts a thinking orb in the mark's
@@ -170,13 +170,15 @@ fn shown(row: Row, features: &Features) -> bool {
 
 /// What the sidebar's name field is attached to. One field for all of them,
 /// because only one row can be being named at a time. Each entry is held by
-/// what identifies it — a file, a session, a table's key — never by an index:
-/// that moves the moment a neighbour is made or dropped, and the field would
-/// follow it onto whichever entry slid underneath.
+/// what identifies it — a session, a table's key — never by an index: that
+/// moves the moment a neighbour is made or dropped, and the field would follow
+/// it onto whichever entry slid underneath.
+///
+/// No article here: its title is the first line of its own page, which is
+/// where it is written — see [`crate::view::article`].
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) enum Renaming {
     Session(u64),
-    Article(PathBuf),
     Table(String),
     /// A lane on the open board. The one entry here that no row in the sidebar
     /// stands for — the field is drawn in the column's own header instead,
@@ -1130,12 +1132,17 @@ impl Cydonia {
             true => Item::action("Unarchive").with_icon(icons::files::Archive),
             false => Item::action("Archive").with_icon(icons::files::Archive),
         };
-        // A board's name in the band is itself the way into its identity panel,
-        // so the menu does not offer a second route to it — `../desktop`'s rule
-        // for what a `···` may carry: only commands with no affordance on the
-        // object. Everywhere else the name is display-only and this is the way.
+        // `../desktop`'s rule for what a `···` may carry: only commands with no
+        // affordance on the object. An article's title is the head of its own
+        // page and a board's name in the band opens its identity panel, so
+        // neither is offered a second route here. Everywhere else the name is
+        // display-only and this is the way.
         let header = at == Menu::Header;
-        let named = !(header && matches!(entry, Row::Board { .. }));
+        let named = match entry {
+            Row::Article { .. } => false,
+            Row::Board { .. } => !header,
+            _ => true,
+        };
         let mut rows = vec![menu::row(put, move |this, _, cx| {
             this.archive_entry(entry, !archived, cx)
         })];
@@ -1180,14 +1187,13 @@ impl Cydonia {
         cx.notify();
     }
 
-    /// Put the name field on an entry's row, whichever kind it is. Each is
-    /// addressed by what identifies it, so the field cannot slide onto its
-    /// neighbour if the list reorders under it.
+    /// Put the name field on an entry's row, for the kinds named that way.
+    /// Each is addressed by what identifies it, so the field cannot slide onto
+    /// its neighbour if the list reorders under it.
     ///
-    /// A board is the exception and has no field here: it is named by two
-    /// things at once, so it opens its identity panel instead — which lives
-    /// under the band, so the board is brought to the front first. One way to
-    /// name a board, wherever you asked from.
+    /// A board is named by two things at once, so it opens its identity panel
+    /// instead — which lives under the band, so the board is brought to the
+    /// front first. One way to name a board, wherever you asked from.
     fn rename_entry(&mut self, entry: Row, window: &mut Window, cx: &mut Context<Self>) {
         if let Row::Board { project, ix } = entry {
             let id = self
@@ -1206,17 +1212,14 @@ impl Cydonia {
         let workspace = self.workspace.read(cx);
         let what = match entry {
             Row::Session { id, .. } => Some(Renaming::Session(id)),
-            Row::Article { project, ix } => workspace
-                .projects
-                .get(project)
-                .and_then(|open| open.articles.get(ix))
-                .map(|article| Renaming::Article(article.path.clone())),
             Row::Table { project, ix } => workspace
                 .projects
                 .get(project)
                 .and_then(|open| open.tables.get(ix))
                 .map(|table| Renaming::Table(table.key.clone())),
-            Row::Board { .. } | Row::Project(_) | Row::Archive(_) => None,
+            // An article is named in its own page, and the two that are not
+            // entries have no name to take.
+            Row::Article { .. } | Row::Board { .. } | Row::Project(_) | Row::Archive(_) => None,
         };
         if let Some(what) = what {
             self.start_rename(what, window, cx);
@@ -1298,13 +1301,6 @@ impl Cydonia {
                 .session(*id)
                 .map(ChatSession::label)
                 .unwrap_or_default(),
-            Renaming::Article(path) => workspace
-                .projects
-                .iter()
-                .flat_map(|open| open.articles.iter())
-                .find(|article| article.path == *path)
-                .map(|article| article.title.clone())
-                .unwrap_or_default(),
             Renaming::Table(key) => workspace
                 .projects
                 .iter()
@@ -1334,7 +1330,6 @@ impl Cydonia {
         let name = self.name_field.read(cx).content().to_string();
         self.workspace.update(cx, |workspace, cx| match what {
             Renaming::Session(id) => workspace.rename_session(id, name, cx),
-            Renaming::Article(path) => workspace.rename_article(&path, name, cx),
             Renaming::Table(key) => workspace.rename_table(&key, name, cx),
             Renaming::Column(id) => workspace.rename_column(&id, name, cx),
         });
