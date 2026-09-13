@@ -1,0 +1,518 @@
+//! The tools an agent works a board through.
+//!
+//! Every one is a named operation on [`artifact::board::Board`] with
+//! addressing in front of it and a rendering behind: the pane calls the same
+//! functions, which is the whole reason they were moved out of the view.
+//!
+//! Every tool takes the project it is about, as the path of the directory the
+//! work lives in — there is one server for the whole app and no notion in it of
+//! which project is in front, so the call says.
+//!
+//! Addressing inside one is what a person would say out loud — a key, a handle,
+//! a column name — because what the model is holding came out of a conversation
+//! and not out of a file. Ids work everywhere a name does, for the caller that
+//! kept one.
+//!
+//! A refusal always says what *is* there. A model that guessed the name wrong
+//! can then fix it without spending a second call finding out, which is the
+//! difference between a tool that costs one turn and one that costs three.
+
+use crate::{
+    tool::{Answer, Args, Outcome, Tool, Trouble},
+    tools::{PROJECT, fields, root},
+};
+use artifact::{
+    board::Board,
+    project::{Project, fs},
+};
+use serde_json::{Value, json};
+
+const BOARD: &str = "The board: its key (ROAD), its name, or its id.";
+const CARD: &str = "The card: its handle (ROAD-12), or its id.";
+const COLUMN: &str = "The column: its name, or its id.";
+
+pub static TOOLS: [Tool; 9] = [
+    Tool {
+        name: "board_list",
+        description: "List the project's boards, with how much is on each.",
+        schema: |bound| fields(bound, &[("project", PROJECT)]),
+        writes: false,
+        call: list,
+    },
+    Tool {
+        name: "board_read",
+        description: "Read one board: its columns, and the cards under them by handle.",
+        schema: |bound| fields(bound, &[("project", PROJECT), ("board", BOARD)]),
+        writes: false,
+        call: read,
+    },
+    Tool {
+        name: "board_add_card",
+        description: "Put a new card at the end of a column, and answer its handle.",
+        schema: |bound| {
+            fields(
+                bound,
+                &[
+                    ("project", PROJECT),
+                    ("board", BOARD),
+                    ("column", COLUMN),
+                    ("text", "What the card says."),
+                ],
+            )
+        },
+        writes: true,
+        call: add_card,
+    },
+    Tool {
+        name: "board_rewrite_card",
+        description: "Replace what a card says.",
+        schema: |bound| {
+            fields(
+                bound,
+                &[
+                    ("project", PROJECT),
+                    ("card", CARD),
+                    ("text", "What the card should say now."),
+                ],
+            )
+        },
+        writes: true,
+        call: rewrite_card,
+    },
+    Tool {
+        name: "board_move_card",
+        description: "Carry a card to the end of another column on the same board.",
+        schema: |bound| {
+            fields(
+                bound,
+                &[("project", PROJECT), ("card", CARD), ("column", COLUMN)],
+            )
+        },
+        writes: true,
+        call: move_card,
+    },
+    Tool {
+        name: "board_remove_card",
+        description: "Take a card off its board for good.",
+        schema: |bound| fields(bound, &[("project", PROJECT), ("card", CARD)]),
+        writes: true,
+        call: remove_card,
+    },
+    Tool {
+        name: "board_add_column",
+        description: "Add a column at the right-hand end of a board.",
+        schema: |bound| {
+            fields(
+                bound,
+                &[
+                    ("project", PROJECT),
+                    ("board", BOARD),
+                    ("name", "What the column is called."),
+                ],
+            )
+        },
+        writes: true,
+        call: add_column,
+    },
+    Tool {
+        name: "board_rename_column",
+        description: "Rename a column. Cards keep the handles they already have.",
+        schema: |bound| {
+            fields(
+                bound,
+                &[
+                    ("project", PROJECT),
+                    ("board", BOARD),
+                    ("column", COLUMN),
+                    ("name", "What the column should be called now."),
+                ],
+            )
+        },
+        writes: true,
+        call: rename_column,
+    },
+    Tool {
+        name: "board_remove_column",
+        description: "Drop an empty column. A column holding cards is refused — empty it first.",
+        schema: |bound| {
+            fields(
+                bound,
+                &[("project", PROJECT), ("board", BOARD), ("column", COLUMN)],
+            )
+        },
+        writes: true,
+        call: remove_column,
+    },
+];
+
+// ── the tools ────────────────────────────────────────────────────
+
+fn list(args: Args<'_>) -> Outcome {
+    let project = &store(&args)?;
+    let boards = project.boards();
+    if boards.is_empty() {
+        return Ok(Answer::said("this project has no boards"));
+    }
+    let data = boards
+        .iter()
+        .map(|board| {
+            json!({
+                "id": board.id,
+                "key": board.key,
+                "name": board.name,
+                "archived": board.archived,
+                "columns": board.columns.len(),
+                "cards": count(board),
+            })
+        })
+        .collect::<Vec<_>>();
+    Ok(Answer::said(listing(&boards)).with(json!({ "boards": data })))
+}
+
+fn read(args: Args<'_>) -> Outcome {
+    let project = &store(&args)?;
+    let board = board(project, args.text("board")?)?;
+    Ok(Answer::said(outline(&board)).with(shape(&board)))
+}
+
+fn add_card(args: Args<'_>) -> Outcome {
+    let project = &store(&args)?;
+    let mut board = board(project, args.text("board")?)?;
+    let column = column(&board, args.text("column")?)?;
+    let text = args.text("text")?.to_owned();
+    let name = board.column(&column).map(|column| column.name.clone());
+    let card = board
+        .add_card(&column, text)
+        .cloned()
+        .expect("the column was resolved a line ago");
+    let handle = board.handle_of(&card).unwrap_or_else(|| card.id.clone());
+    project.save_board(&mut board);
+    Ok(
+        Answer::said(format!("{handle} added to {}", name.unwrap_or_default()))
+            .with(json!({ "id": card.id, "handle": handle })),
+    )
+}
+
+fn rewrite_card(args: Args<'_>) -> Outcome {
+    let project = &store(&args)?;
+    let (mut board, id) = locate(project, args.text("card")?)?;
+    let text = args.text("text")?;
+    let handle = named(&board, &id);
+    board.rewrite_card(&id, text);
+    project.save_board(&mut board);
+    Ok(Answer::said(format!("{handle} now reads: {}", line(text))))
+}
+
+fn move_card(args: Args<'_>) -> Outcome {
+    let project = &store(&args)?;
+    let (mut board, id) = locate(project, args.text("card")?)?;
+    let to = column(&board, args.text("column")?)?;
+    let handle = named(&board, &id);
+    let name = board.column(&to).map(|column| column.name.clone());
+    if !board.move_card(&id, &to) {
+        return Err(Trouble::Refused(format!("{handle} would not move")));
+    }
+    project.save_board(&mut board);
+    Ok(Answer::said(format!(
+        "{handle} moved to {}",
+        name.unwrap_or_default()
+    )))
+}
+
+fn remove_card(args: Args<'_>) -> Outcome {
+    let project = &store(&args)?;
+    let (mut board, id) = locate(project, args.text("card")?)?;
+    let handle = named(&board, &id);
+    let card = board
+        .remove_card(&id)
+        .expect("the card was located a line ago");
+    project.save_board(&mut board);
+    Ok(Answer::said(format!(
+        "{handle} removed — {}",
+        line(&card.text)
+    )))
+}
+
+fn add_column(args: Args<'_>) -> Outcome {
+    let project = &store(&args)?;
+    let mut board = board(project, args.text("board")?)?;
+    let name = args.text("name")?;
+    let id = board.add_column(name).id.clone();
+    let label = board.label().to_owned();
+    project.save_board(&mut board);
+    Ok(Answer::said(format!("{name} added to {label}")).with(json!({ "id": id })))
+}
+
+fn rename_column(args: Args<'_>) -> Outcome {
+    let project = &store(&args)?;
+    let mut board = board(project, args.text("board")?)?;
+    let id = column(&board, args.text("column")?)?;
+    let name = args.text("name")?;
+    let was = board
+        .column(&id)
+        .map(|column| column.name.clone())
+        .unwrap_or_default();
+    board.rename_column(&id, name);
+    project.save_board(&mut board);
+    Ok(Answer::said(format!("{was} is now {name}")))
+}
+
+fn remove_column(args: Args<'_>) -> Outcome {
+    let project = &store(&args)?;
+    let mut board = board(project, args.text("board")?)?;
+    let id = column(&board, args.text("column")?)?;
+    let name = board
+        .column(&id)
+        .map(|column| column.name.clone())
+        .unwrap_or_default();
+    let label = board.label().to_owned();
+    // The refusal is the board's, not this tool's: a column is only where work
+    // sits, so dropping one has no reading that means "and the cards in it".
+    if !board.remove_column(&id) {
+        return Err(Trouble::Refused(format!(
+            "{name} still holds cards — a column is only where work sits, so move them out first"
+        )));
+    }
+    project.save_board(&mut board);
+    Ok(Answer::said(format!("{name} removed from {label}")))
+}
+
+// ── addressing ───────────────────────────────────────────────────
+
+/// The project a call is about, as the store that holds its boards.
+fn store(args: &Args<'_>) -> Result<fs::Project, Trouble> {
+    Ok(fs::Project::new(root(args)?))
+}
+
+/// The board a needle names: its id, its key, or its name, in that order —
+/// which is least ambiguous first, since only the id is guaranteed unique.
+fn board(project: &dyn Project, needle: &str) -> Result<Board, Trouble> {
+    let boards = project.boards();
+    let found = boards
+        .iter()
+        .position(|board| board.id == needle)
+        .or_else(|| boards.iter().position(|board| same(&board.key, needle)))
+        .or_else(|| boards.iter().position(|board| same(&board.name, needle)));
+    match found {
+        Some(at) => Ok(boards.into_iter().nth(at).expect("just found")),
+        None => Err(Trouble::Refused(format!(
+            "no board {needle} — this project has {}",
+            keys(&boards)
+        ))),
+    }
+}
+
+/// The board a card is on, and the card's id on it. A handle names one card
+/// across the whole project, so the board is an answer here rather than an
+/// argument.
+fn locate(project: &dyn Project, needle: &str) -> Result<(Board, String), Trouble> {
+    let boards = project.boards();
+    // `ROA2-5` is card 5 on board ROA2, so the split is the *last* dash — a
+    // key may carry a digit, and boards.md settled which side it falls on.
+    if let Some((key, number)) = needle.rsplit_once('-')
+        && let Ok(handle) = number.parse::<u64>()
+        && let Some(at) = boards.iter().position(|board| same(&board.key, key))
+    {
+        let board = boards.into_iter().nth(at).expect("just found");
+        let found = board
+            .columns
+            .iter()
+            .flat_map(|column| &column.cards)
+            .find(|card| card.handle == Some(handle))
+            .map(|card| card.id.clone());
+        return match found {
+            Some(id) => Ok((board, id)),
+            None => Err(Trouble::Refused(format!(
+                "no {needle} on {}",
+                board.label()
+            ))),
+        };
+    }
+    // Not a handle, so it is an id — and an id is not scoped to one board.
+    for board in boards {
+        if board.card(needle).is_some() {
+            return Ok((board, needle.to_owned()));
+        }
+    }
+    Err(Trouble::Refused(format!(
+        "no card {needle} in this project"
+    )))
+}
+
+/// The id of the column a needle names. Nothing stops two columns sharing a
+/// name, so a name that hits twice is refused rather than guessed at — the
+/// caller is one `get_board` away from the ids.
+fn column(board: &Board, needle: &str) -> Result<String, Trouble> {
+    if let Some(found) = board.column(needle) {
+        return Ok(found.id.clone());
+    }
+    let mut named = board
+        .columns
+        .iter()
+        .filter(|column| same(&column.name, needle));
+    let Some(first) = named.next() else {
+        return Err(Trouble::Refused(format!(
+            "no column {needle} on {} — it has {}",
+            board.label(),
+            columns(board)
+        )));
+    };
+    match named.next() {
+        None => Ok(first.id.clone()),
+        Some(_) => Err(Trouble::Refused(format!(
+            "{} has two columns called {needle} — name the one you mean by its id",
+            board.label()
+        ))),
+    }
+}
+
+/// What to call a card out loud, falling back to its id on a board that has no
+/// key to build a handle from.
+fn named(board: &Board, id: &str) -> String {
+    board
+        .card(id)
+        .and_then(|card| board.handle_of(card))
+        .unwrap_or_else(|| id.to_owned())
+}
+
+/// Names are typed by a person or read back out of a sentence, so they match
+/// however they were capitalised. Ids never reach here.
+fn same(held: &str, needle: &str) -> bool {
+    held.eq_ignore_ascii_case(needle)
+}
+
+// ── rendering ────────────────────────────────────────────────────
+
+/// One board, as a person would have written it down.
+fn outline(board: &Board) -> String {
+    let mut out = match board.key.is_empty() {
+        true => board.label().to_owned(),
+        false => format!("{} ({})", board.label(), board.key),
+    };
+    if board.archived {
+        out.push_str(" — archived");
+    }
+    if board.columns.is_empty() {
+        out.push_str("\n\nno columns yet");
+        return out;
+    }
+    let width = board
+        .columns
+        .iter()
+        .flat_map(|column| &column.cards)
+        .filter_map(|card| board.handle_of(card))
+        .map(|handle| handle.chars().count())
+        .max()
+        .unwrap_or(0);
+    for column in &board.columns {
+        out.push_str(&format!("\n\n{}", column.name));
+        if column.cards.is_empty() {
+            out.push_str("\n  (empty)");
+        }
+        for card in &column.cards {
+            let handle = board.handle_of(card).unwrap_or_else(|| card.id.clone());
+            out.push_str(&format!("\n  {handle:<width$}  {}", line(&card.text)));
+            // What the card was handed to, which is what ▶ and 💬 are drawn
+            // off. Whether that session is *running* is the app's to know.
+            if card.session.is_some() {
+                out.push_str("  (dispatched)");
+            }
+        }
+    }
+    out
+}
+
+/// Every board, one to a line.
+fn listing(boards: &[Board]) -> String {
+    let key = boards
+        .iter()
+        .map(|board| board.key.chars().count())
+        .max()
+        .unwrap_or(0);
+    let name = boards
+        .iter()
+        .map(|board| board.label().chars().count())
+        .max()
+        .unwrap_or(0);
+    boards
+        .iter()
+        .map(|board| {
+            let held = match (board.columns.len(), count(board)) {
+                (0, _) => "no columns".to_owned(),
+                (columns, 0) => format!("{columns} columns, empty"),
+                (columns, cards) => format!("{columns} columns, {cards} cards"),
+            };
+            let archived = match board.archived {
+                true => " — archived",
+                false => "",
+            };
+            format!(
+                "{:<key$}  {:<name$}  {held}{archived}",
+                board.key,
+                board.label()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The same board as fields, for a client that renders rather than reads.
+fn shape(board: &Board) -> Value {
+    json!({
+        "id": board.id,
+        "key": board.key,
+        "name": board.name,
+        "archived": board.archived,
+        "columns": board
+            .columns
+            .iter()
+            .map(|column| json!({
+                "id": column.id,
+                "name": column.name,
+                "cards": column
+                    .cards
+                    .iter()
+                    .map(|card| json!({
+                        "id": card.id,
+                        "handle": board.handle_of(card),
+                        "text": card.text,
+                        "session": card.session,
+                    }))
+                    .collect::<Vec<_>>(),
+            }))
+            .collect::<Vec<_>>(),
+    })
+}
+
+/// A card is one line in an outline however many it has. The whole of it is in
+/// `structuredContent`, for the caller that wants the rest.
+fn line(text: &str) -> &str {
+    text.lines().next().unwrap_or("")
+}
+
+fn count(board: &Board) -> usize {
+    board.columns.iter().map(|column| column.cards.len()).sum()
+}
+
+fn keys(boards: &[Board]) -> String {
+    match boards.is_empty() {
+        true => "none at all".to_owned(),
+        false => boards
+            .iter()
+            .map(|board| format!("{} ({})", board.key, board.label()))
+            .collect::<Vec<_>>()
+            .join(", "),
+    }
+}
+
+fn columns(board: &Board) -> String {
+    match board.columns.is_empty() {
+        true => "no columns at all".to_owned(),
+        false => board
+            .columns
+            .iter()
+            .map(|column| column.name.clone())
+            .collect::<Vec<_>>()
+            .join(", "),
+    }
+}

@@ -27,6 +27,7 @@ futures.workspace = true
 image.workspace = true
 lru.workspace = true
 markdown.workspace = true
+mcp.workspace = true
 notify.workspace = true
 rusqlite.workspace = true
 serde.workspace = true

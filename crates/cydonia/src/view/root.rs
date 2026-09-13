@@ -105,6 +105,21 @@ pub(crate) fn composer_disc() -> f32 {
 /// How far the floating composer stands off the column's bottom edge.
 pub(crate) const COMPOSER_BOTTOM: f32 = 20.;
 
+/// How wide the composer's column runs before it stops growing, and the air it
+/// keeps either side of itself inside that.
+pub(crate) const COMPOSER_COLUMN: f32 = 720.;
+pub(crate) const COMPOSER_MARGIN: f32 = 24.;
+
+/// What the composer itself is at its widest — the column, less its own air.
+///
+/// The `/` picker is capped at this. Its rows carry a sentence each and the
+/// card sizes to the longest of them, so on a wide window it opened as far as
+/// the window allowed: a menu reaching past the box it came out of stops
+/// reading as that box's menu.
+pub(crate) fn composer_width() -> f32 {
+    COMPOSER_COLUMN - 2. * COMPOSER_MARGIN
+}
+
 /// The sidebar's fill. Opaque, it takes the chrome tone: the light palette's
 /// `surface` is the grey the content plane's white sits inside, and falling
 /// back to the panel would leave the two columns one flat sheet.

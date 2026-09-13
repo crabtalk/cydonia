@@ -9,7 +9,7 @@ use bezel::{
 };
 use cydonia::{
     memory,
-    model::{settings, state, workspace},
+    model::{media, settings, state, workspace},
     view::{article, board, component::composer, create, info, menubar, root, table},
 };
 
@@ -54,6 +54,8 @@ fn main() -> Result<()> {
         focus::init(cx);
         composer::init(cx);
         editor::init(cx);
+        // Where a pasted screenshot's bytes go, which is the app's to say.
+        media::init(cx);
         article::init(cx);
         board::init(cx);
         info::init(cx);

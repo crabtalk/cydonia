@@ -25,15 +25,47 @@ pub struct Settings {
     /// table below — `[[agents]]` is the one that follows.
     #[serde(default)]
     pub features: Features,
+    /// The tool server this app answers on. A table, so it sits between the
+    /// two that are already here and never above a bare key.
+    #[serde(default)]
+    pub mcp: Mcp,
     #[serde(default)]
     pub agents: Vec<Agent>,
 }
 
+/// Cydonia as an MCP server: the tools an agent reaches a project's boards
+/// through.
+///
+/// On by default, and still opens nothing until `sessions` is on — the only
+/// caller is an agent, and that switch is what decides whether any run. This
+/// one is for saying no to the port while still running them.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Mcp {
+    pub serve: bool,
+    /// Whether the tools that change a project are offered at all. Off is a
+    /// server an agent can read a board through and not touch it — the tools
+    /// are left out of the list rather than refused on the call, because a
+    /// tool an agent can see is one it will spend a turn trying.
+    pub write: bool,
+}
+
+impl Default for Mcp {
+    fn default() -> Self {
+        Self {
+            serve: true,
+            write: false,
+        }
+    }
+}
+
 /// The surfaces a project can hold, minus articles — the one thing the app is
-/// for, and so not something to be able to switch off. Every one of these is
-/// off until it is asked for, which makes a fresh install articles and
-/// nothing else.
-#[derive(Debug, Default, Serialize, Deserialize)]
+/// for, and so not something to be able to switch off.
+///
+/// Boards are on to begin with: a board is files in the project and nothing
+/// runs to hold one, so a fresh install is a place to write and a place to
+/// plan. The other two are off until they are asked for.
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Features {
     /// Whether sessions may be opened. A session is the only thing that starts
@@ -42,6 +74,16 @@ pub struct Features {
     pub sessions: bool,
     pub boards: bool,
     pub tables: bool,
+}
+
+impl Default for Features {
+    fn default() -> Self {
+        Self {
+            sessions: false,
+            boards: true,
+            tables: false,
+        }
+    }
 }
 
 /// One switchable surface, named rather than reached as a field so the settings
@@ -147,6 +189,7 @@ impl Default for Settings {
             cover_memory: cover_memory(),
             watch_bounce: watch_bounce(),
             features: Features::default(),
+            mcp: Mcp::default(),
             agents: vec![
                 npx("claude", "@agentclientprotocol/claude-agent-acp@0.73.0"),
                 npx("codex", "@agentclientprotocol/codex-acp@1.8.0"),
@@ -225,6 +268,23 @@ pub fn set_feature(feature: Feature, on: bool) -> Result<()> {
     };
     features.set_implicit(false);
     features[feature.key()] = toml_edit::value(on);
+    std::fs::write(&path, doc.to_string())?;
+    Ok(())
+}
+
+/// Write one key of `[mcp]`. The same `toml_edit` round trip as
+/// [`set_feature`], and for the same reason: the comments survive it.
+pub fn set_mcp(key: &str, on: bool) -> Result<()> {
+    let path = dir()?.join("settings.toml");
+    let body = std::fs::read_to_string(&path).unwrap_or_default();
+    let mut doc: toml_edit::DocumentMut =
+        body.parse().context("settings.toml is not valid toml")?;
+    let mcp = doc["mcp"].or_insert(toml_edit::table());
+    let Some(mcp) = mcp.as_table_mut() else {
+        anyhow::bail!("`mcp` in settings.toml is not a table");
+    };
+    mcp.set_implicit(false);
+    mcp[key] = toml_edit::value(on);
     std::fs::write(&path, doc.to_string())?;
     Ok(())
 }

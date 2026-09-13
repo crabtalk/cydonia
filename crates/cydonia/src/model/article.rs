@@ -11,7 +11,7 @@
 //! disagreeing — and a path already handed to an agent is not one we can
 //! rewrite the way a vault rewrites its own links.
 
-use crate::model::{cover, workspace::Workspace};
+use crate::model::{cover, media, workspace::Workspace};
 use artifact::{article as layout, article::properties};
 use bezel::{
     gpui::{App, AppContext as _, Context, Entity, ScrollHandle},
@@ -63,6 +63,10 @@ pub struct Article {
     /// Put away: listed under the divider rather than gone. Cached beside
     /// [`Article::touched`], and for the same reason.
     pub archived: bool,
+    /// Set across the pane rather than in the reading column. Cached like
+    /// [`Article::archived`]: the frame reads it, and a frame is not somewhere
+    /// to open a file.
+    pub full_width: bool,
     /// The file moved under an open document that has edits of its own — see
     /// [`Article::adopt`]. Runtime only: what it marks is a disagreement
     /// between the buffer and the disk, and reopening the app ends it by
@@ -77,6 +81,7 @@ impl Article {
             title: properties::title(&path),
             touched: layout::touched(&path),
             archived: properties::archived(&path),
+            full_width: properties::full_width(&path),
             path,
             field: None,
             editor: None,
@@ -91,6 +96,12 @@ impl Article {
         properties::set_archived(&self.path, archived);
     }
 
+    /// Set the page across the pane, or back in the column.
+    pub fn set_full_width(&mut self, wide: bool) {
+        self.full_width = wide;
+        properties::set_full_width(&self.path, wide);
+    }
+
     /// The sidebar's label.
     pub fn label(&self) -> &str {
         match self.title.is_empty() {
@@ -102,6 +113,10 @@ impl Article {
     /// Put a field over the title and an editor over the content. Idempotent —
     /// reopening an article is what keeps its undo history and its scroll.
     pub fn open(&mut self, cx: &mut Context<Workspace>) {
+        // Whichever document is opened is the one a pasted picture belongs to,
+        // so this is above the early return: coming back to an article is how
+        // you reach one whose editor is already built. See [`media::aim`].
+        media::aim(Some(&self.path));
         if self.editor.is_some() {
             return;
         }
@@ -191,6 +206,7 @@ impl Article {
     pub fn adopt(&mut self, fresh: &Self, cx: &mut Context<Workspace>) -> bool {
         self.cover = fresh.cover.clone();
         self.archived = fresh.archived;
+        self.full_width = fresh.full_width;
         self.touched = fresh.touched;
         // Never opened: the label is the whole of what is held, and the file
         // is where it came from.
@@ -224,6 +240,7 @@ impl Article {
         self.touched = layout::touched(&self.path);
         self.cover = cover::of(&self.path);
         self.archived = properties::archived(&self.path);
+        self.full_width = properties::full_width(&self.path);
         self.field = None;
         self.editor = None;
         self.open(cx);

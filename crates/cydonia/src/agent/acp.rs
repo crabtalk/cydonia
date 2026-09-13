@@ -8,18 +8,21 @@
 //! - The connection runs on its own tokio runtime. cacp spawns its read and
 //!   write loops with `tokio::spawn`, and gpui's executor is smol's.
 
-use crate::{agent::mcp, model::settings};
+use crate::{
+    agent::{mcp, serve},
+    model::settings,
+};
 use anyhow::{Result, anyhow};
 use cacp::{
     AgentConn, Client, Direction, Error, Tap,
     schema::{
         AuthenticateRequest, CancelNotification, ClientCapabilities, ContentBlock, EnvVariable,
-        FileSystemCapabilities, InitializeRequest, InitializeResponse, LoadSessionRequest,
-        McpServer, McpServerHttp, McpServerStdio, NewSessionRequest, NewSessionResponse,
-        PromptRequest, ReadTextFileRequest, ReadTextFileResponse, RequestPermissionRequest,
-        RequestPermissionResponse, SessionConfigOptionValue, SessionId, SessionNotification,
-        SessionUpdate, SetSessionConfigOptionRequest, SetSessionModeRequest, StopReason,
-        WriteTextFileRequest, WriteTextFileResponse,
+        FileSystemCapabilities, HttpHeader, InitializeRequest, InitializeResponse,
+        LoadSessionRequest, McpServer, McpServerHttp, McpServerStdio, NewSessionRequest,
+        NewSessionResponse, PromptRequest, ReadTextFileRequest, ReadTextFileResponse,
+        RequestPermissionRequest, RequestPermissionResponse, SessionConfigOptionValue, SessionId,
+        SessionNotification, SessionUpdate, SetSessionConfigOptionRequest, SetSessionModeRequest,
+        StopReason, WriteTextFileRequest, WriteTextFileResponse,
     },
 };
 use std::process::Stdio;
@@ -37,6 +40,10 @@ use tokio::{
 /// Where the protocol tap writes, and the switch that leaves an agent's stderr
 /// where it can be read.
 const DEBUG: &str = "CYDONIA_DEBUG";
+
+/// What our own tool server is called to an agent. Also the namespace every
+/// tool of ours comes back under, so the two are read from one place.
+const SERVER: &str = "cydonia";
 
 /// How long a `session/cancel` already on the wire is given to land before the
 /// process is killed under it.
@@ -203,7 +210,7 @@ impl Session {
 
         // Only now are the agent's MCP capabilities known, so remote
         // servers can be dropped for agents that can't reach them.
-        let mcp_servers = acp_mcp_servers(&configured, &init);
+        let mcp_servers = acp_mcp_servers(&configured, &init, &cwd);
 
         let mut loaded = false;
         let mut response = None;
@@ -417,35 +424,64 @@ const _: () = {
 /// The enabled servers an agent can actually reach, in ACP's shape.
 /// Remote servers are dropped for agents that don't advertise HTTP MCP
 /// rather than being sent and failing.
-fn acp_mcp_servers(configured: &[mcp::McpServer], init: &InitializeResponse) -> Vec<McpServer> {
+///
+/// Cydonia's own door goes first, when the agent can reach it. It is not in
+/// `mcp.toml` and must not be — that file is the servers the user added, and
+/// this one is not the user's to remove.
+fn acp_mcp_servers(
+    configured: &[mcp::McpServer],
+    init: &InitializeResponse,
+    cwd: &std::path::Path,
+) -> Vec<McpServer> {
     let http = init.agent_capabilities.mcp_capabilities.http;
-    configured
-        .iter()
-        .filter(|server| server.enabled)
-        .filter_map(|server| match (&server.command, &server.url) {
-            (Some(command), _) => Some(McpServer::Stdio(McpServerStdio {
-                name: server.name.clone(),
-                command: command.into(),
-                args: server.args.clone(),
-                env: server
-                    .env
-                    .iter()
-                    .map(|(name, value)| EnvVariable {
-                        name: name.clone(),
-                        value: value.clone(),
-                        meta: None,
-                    })
-                    .collect(),
-                meta: None,
-            })),
-            (None, Some(url)) if http => Some(McpServer::Http(McpServerHttp {
-                name: server.name.clone(),
-                url: url.clone(),
-                headers: Vec::new(),
-                meta: None,
-            })),
-            _ => None,
+    let ours = http.then(serve::url).flatten().map(|url| {
+        McpServer::Http(McpServerHttp {
+            name: SERVER.to_owned(),
+            url,
+            // Which project this session is. The tools then take no directory
+            // at all — one a session's model had to supply is one it could
+            // supply wrongly, about something already known here.
+            headers: vec![{
+                let (name, value) = serve::project(cwd);
+                HttpHeader {
+                    name: name.to_owned(),
+                    value,
+                    meta: None,
+                }
+            }],
+            meta: None,
         })
+    });
+    ours.into_iter()
+        .chain(
+            configured
+                .iter()
+                .filter(|server| server.enabled)
+                .filter_map(|server| match (&server.command, &server.url) {
+                    (Some(command), _) => Some(McpServer::Stdio(McpServerStdio {
+                        name: server.name.clone(),
+                        command: command.into(),
+                        args: server.args.clone(),
+                        env: server
+                            .env
+                            .iter()
+                            .map(|(name, value)| EnvVariable {
+                                name: name.clone(),
+                                value: value.clone(),
+                                meta: None,
+                            })
+                            .collect(),
+                        meta: None,
+                    })),
+                    (None, Some(url)) if http => Some(McpServer::Http(McpServerHttp {
+                        name: server.name.clone(),
+                        url: url.clone(),
+                        headers: Vec::new(),
+                        meta: None,
+                    })),
+                    _ => None,
+                }),
+        )
         .collect()
 }
 
