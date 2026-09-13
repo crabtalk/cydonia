@@ -22,7 +22,7 @@ use bezel::{
     },
     theme::{TextStyle, Theme, Typeset},
     ui::{
-        icons,
+        icons::{self, Icon},
         menu::Item,
         popover,
         surface::Surfaced as _,
@@ -39,7 +39,7 @@ struct SessionRow {
     project: usize,
     id: u64,
     label: String,
-    icon: Option<&'static [u8]>,
+    icon: Option<Icon>,
     /// The turn in flight, as the orb needs it: which of the twelve, how long
     /// it has been running, and the buffer it paints into. `None` when nothing
     /// is in flight, which is what puts the agent's own mark back.
@@ -998,7 +998,7 @@ impl Cydonia {
             transcript::orb(working.state, working.since, &working.frame, cx)
         } else {
             match session.icon {
-                Some(glyph) => icons::icon(glyph)
+                Some(icon) => icons::icon(icon)
                     .size(px(14.))
                     .text_color(tint)
                     .into_any_element(),

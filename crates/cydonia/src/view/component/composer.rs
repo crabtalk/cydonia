@@ -12,7 +12,7 @@ use bezel::{
     },
     theme::{self, Glass, SurfaceStyle, TextStyle, Theme, Typeset},
     ui::{
-        icons,
+        icons::{self, Icon},
         input::{self, Shape, TextField},
         menu::{self, Cursor, Hit, Item},
         popover,
@@ -61,12 +61,12 @@ pub fn init(cx: &mut App) {
 
 /// One agent on offer: what to call it, and the registry's mark for it when
 /// the catalog knows it. The mark is downloaded rather than compiled in — see
-/// [`crate::agent::icons`] — but reaches here as the same bytes a bezel glyph
-/// is, because that is what a menu row takes.
+/// [`crate::agent::icons`] — but reaches here as an [`Icon`] like any glyph,
+/// because that is what a menu row takes.
 #[derive(Clone, PartialEq)]
 pub struct Agent {
     pub name: SharedString,
-    pub icon: Option<&'static [u8]>,
+    pub icon: Option<Icon>,
 }
 
 /// Which request a [`Switch`] is, since the agent offers two shapes of the
@@ -445,7 +445,7 @@ impl Composer {
             .cursor_pointer()
             .hover(|button| button.bg(theme.element_hover))
             .child(match agent.icon {
-                Some(glyph) => icons::icon(glyph)
+                Some(icon) => icons::icon(icon)
                     .size(mark)
                     .text_color(theme.text_muted)
                     .into_any_element(),
@@ -517,7 +517,7 @@ impl Composer {
             .enumerate()
             .map(|(ix, agent)| {
                 let row = Item::action(agent.name.clone()).checked(Some(ix) == self.agent);
-                match agent.icon {
+                match agent.icon.clone() {
                     Some(mark) => row.with_icon(mark),
                     None => row,
                 }

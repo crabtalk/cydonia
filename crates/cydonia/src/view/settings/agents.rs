@@ -6,7 +6,7 @@ use crate::{
     view::settings::SettingsWindow,
 };
 use bezel::{
-    gpui::{AnyElement, Context, Focusable as _, SharedString, div, prelude::*, px, svg},
+    gpui::{AnyElement, Context, Focusable as _, SharedString, div, prelude::*, px},
     motion::{Fade, Painter},
     theme::{TextStyle, Theme, Typeset},
     ui::{
@@ -233,13 +233,11 @@ impl SettingsWindow {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .children(listing.icon.clone().map(|path| {
-                        svg()
-                            .path(path)
-                            .size(px(16.))
-                            .flex_none()
-                            .text_color(theme.text_muted)
-                    })),
+                    .children(
+                        listing.icon.clone().map(|icon| {
+                            icons::icon(icon).size(px(16.)).text_color(theme.text_muted)
+                        }),
+                    ),
             )
             .child(
                 div()

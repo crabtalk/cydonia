@@ -218,7 +218,7 @@ impl SettingsWindow {
             .children(Section::ALL.into_iter().enumerate().map(|(ix, section)| {
                 theme
                     .nav_row(
-                        Some(section.glyph()),
+                        Some(section.glyph().into()),
                         section.title(),
                         section == self.section,
                         Fade::new(painter, format!("section-{ix}")),
