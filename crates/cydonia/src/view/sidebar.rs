@@ -1155,6 +1155,26 @@ impl Cydonia {
                 ),
             );
         }
+        // A page's measure, from the header alone — it is about the document
+        // filling the window, and in the sidebar the row under the pointer is
+        // whichever one you stopped on rather than the one you are reading. An
+        // article is never `named`, so nothing it could sit above is here.
+        if header && matches!(entry, Row::Article { .. }) {
+            let wide = self
+                .workspace
+                .read(cx)
+                .active_article()
+                .is_some_and(|article| article.full_width);
+            rows.insert(
+                0,
+                menu::row(
+                    Item::action("Full width")
+                        .with_icon(icons::layout::UnfoldHorizontal)
+                        .checked(wide),
+                    move |this, _, cx| this.set_full_width(!wide, cx),
+                ),
+            );
+        }
         if header {
             rows.push(menu::row(
                 Item::action("Delete").with_icon(icons::files::Trash),

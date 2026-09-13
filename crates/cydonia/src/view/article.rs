@@ -11,8 +11,8 @@ use crate::{
 };
 use bezel::{
     gpui::{
-        self, AnyElement, App, Context, CursorStyle, Entity, Focusable as _, KeyBinding, ObjectFit,
-        PathPromptOptions, SharedString, Window, actions, div, img, prelude::*, px,
+        self, AnyElement, App, Context, CursorStyle, Div, Entity, Focusable as _, KeyBinding,
+        ObjectFit, PathPromptOptions, SharedString, Window, actions, div, img, prelude::*, px,
     },
     motion::{Fade, Painter},
     theme::{ControlSize, Sizing as _, TextStyle, Theme, Typeset},
@@ -36,12 +36,18 @@ pub fn init(cx: &mut App) {
     ]);
 }
 
-/// The column the document is set in, matching the transcript's.
+/// The column the document is set in, matching the transcript's. Off, for a
+/// page set to [`article::Article::full_width`], the pane's own width is the
+/// measure — see [`column`].
 const CONTENT_MAX_WIDTH: f32 = 720.;
 
 /// How tall the cover band is, with a picture in it or without: half the 5:2 a
 /// cover is cut at, taken at the column's width. The picture is centred in the
 /// band, so what shows is the middle of it.
+///
+/// Fixed, and not re-derived from the measure a wide page is set to: the band
+/// is the same height either way, so setting a page across the pane widens the
+/// picture without moving a line of the document under it.
 const COVER_HEIGHT: f32 = CONTENT_MAX_WIDTH / 5.;
 
 /// The column's own inset. What the title adds to it is the editor's
@@ -50,6 +56,31 @@ const COVER_HEIGHT: f32 = CONTENT_MAX_WIDTH / 5.;
 /// somewhere to sit, and the title takes the same measure to line up with the
 /// first paragraph.
 const COLUMN_INSET: f32 = 24.;
+
+/// What a wide page is held off the edge of the pane by. Twice the column's,
+/// because the column has white space either side of it standing in for a
+/// margin and a page filling the pane has none — at the column's own inset the
+/// text runs into the border, and the drag handle has nowhere left to sit.
+const WIDE_INSET: f32 = COLUMN_INSET * 2.;
+
+/// The box the page is set in: the reading column, or the pane itself. The
+/// title and the document both take it, since two boxes made conditional apart
+/// drift apart the first time one of them is touched.
+fn column(wide: bool) -> Div {
+    let band = div().w_full();
+    match wide {
+        true => band,
+        false => band.max_w(px(CONTENT_MAX_WIDTH)),
+    }
+}
+
+/// How far that box holds its text off its own edge.
+fn inset(wide: bool) -> f32 {
+    match wide {
+        true => WIDE_INSET,
+        false => COLUMN_INSET,
+    }
+}
 
 impl Cydonia {
     // ── mutations ────────────────────────────────────────────────
@@ -125,6 +156,15 @@ impl Cydonia {
         if let Some(editor) = editor {
             window.focus(&editor.focus_handle(cx), cx);
         }
+    }
+
+    /// Set the open page across the pane, or back in the reading column — the
+    /// header menu's Full width. The open one, since that is the page the menu
+    /// was asked from.
+    pub(crate) fn set_full_width(&mut self, wide: bool, cx: &mut Context<Self>) {
+        self.workspace
+            .update(cx, |workspace, cx| workspace.set_full_width(wide, cx));
+        cx.notify();
     }
 
     /// Cut the open article a new cover. Adding the first one comes through
@@ -210,6 +250,7 @@ impl Cydonia {
         let field = article.field.clone()?;
         let editor = article.editor.clone()?;
         let cover = article.cover.clone();
+        let wide = article.full_width;
         let stale = article.stale.then(|| article.path.clone());
         let document = div()
             .id("article")
@@ -221,7 +262,7 @@ impl Cydonia {
             .track_scroll(&article.scroll)
             .flex()
             .flex_col()
-            .child(self.header(cover, field, cx))
+            .child(self.header(cover, field, wide, cx))
             // Its own height, not the box's share of one: a long document
             // overflows and scrolls instead of being squashed and clipped,
             // and `min_h_full` is what leaves the band something to scroll
@@ -240,10 +281,8 @@ impl Cydonia {
                         // cannot type in: the floor is what makes a click
                         // down there land a caret, and the I-beam is what
                         // says so before the click.
-                        div()
-                            .w_full()
-                            .max_w(px(CONTENT_MAX_WIDTH))
-                            .px(px(COLUMN_INSET))
+                        column(wide)
+                            .px(px(inset(wide)))
                             .py(px(20.))
                             .flex()
                             .cursor(CursorStyle::IBeam)
@@ -307,6 +346,7 @@ impl Cydonia {
         &self,
         cover: Option<PathBuf>,
         field: Entity<TextField>,
+        wide: bool,
         cx: &Context<Self>,
     ) -> impl IntoElement + use<> {
         div()
@@ -317,11 +357,9 @@ impl Cydonia {
             .child(self.cover_band(cover, cx))
             .child(
                 div().w_full().flex().justify_center().child(
-                    div()
-                        .w_full()
-                        .max_w(px(CONTENT_MAX_WIDTH))
-                        .pl(px(COLUMN_INSET + editor::Layout::of(cx).text_inset))
-                        .pr(px(COLUMN_INSET))
+                    column(wide)
+                        .pl(px(inset(wide) + editor::Layout::of(cx).text_inset))
+                        .pr(px(inset(wide)))
                         .pt(px(20.))
                         .child(field),
                 ),

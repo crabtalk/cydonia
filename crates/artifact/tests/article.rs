@@ -98,3 +98,44 @@ fn a_page_with_no_properties_is_touched_by_its_content() {
 
     assert_eq!(article::touched(&content), stamp::of(&content));
 }
+
+/// The measure a page is set to lives beside it, so it is the same page for
+/// whoever opens the project rather than a setting on one machine.
+#[test]
+fn a_page_remembers_that_it_is_wide() {
+    let scratch = Scratch::new("article-full-width");
+    let dir = article::dir(scratch.path()).join("1757000000000");
+    fs::create_dir_all(&dir).unwrap();
+    let content = article::content(&dir);
+    fs::write(&content, "").unwrap();
+
+    assert!(
+        !article::properties::full_width(&content),
+        "the column is the default"
+    );
+    article::properties::set_full_width(&content, true);
+    assert!(article::properties::full_width(&content));
+}
+
+/// And back in the column is the absence of the key, not a `false` beside every
+/// page that was ever widened once.
+#[test]
+fn a_page_put_back_in_the_column_keeps_no_key() {
+    let scratch = Scratch::new("article-column-again");
+    let dir = article::dir(scratch.path()).join("1757000000000");
+    fs::create_dir_all(&dir).unwrap();
+    let content = article::content(&dir);
+    fs::write(&content, "").unwrap();
+
+    article::properties::set_title(&content, "Roadmap");
+    article::properties::set_full_width(&content, true);
+    article::properties::set_full_width(&content, false);
+
+    let properties = article::properties::path(&content).unwrap();
+    let text = fs::read_to_string(&properties).unwrap();
+    assert!(
+        !text.contains("full_width"),
+        "the key goes with the setting: {text}"
+    );
+    assert!(text.contains("Roadmap"), "and takes nothing else with it");
+}
