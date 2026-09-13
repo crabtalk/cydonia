@@ -13,7 +13,7 @@ use bezel::{
     theme::{self, Glass, SurfaceStyle, TextStyle, Theme, Typeset},
     ui::{
         icons::{self, Icon},
-        input::{self, Shape, TextField},
+        input::{self, FieldEvent, Shape, TextField},
         menu::{self, Cursor, Hit, Item},
         popover,
         surface::Surfaced as _,
@@ -166,8 +166,19 @@ impl Composer {
                 .with_key_context(KEY_CONTEXT)
                 .with_placeholder("message the agent…")
         });
-        cx.observe(&field, |composer: &mut Self, _, cx| composer.reread(cx))
-            .detach();
+        // Subscribed rather than observed. A field notifies on its own caret
+        // blink, and `reread` refilters — which re-enters the list at the top,
+        // so the highlight walked back to the first row twice a second while
+        // the pointer sat on another one. `Changed` and `Moved` between them
+        // are every reason the picker has to be re-read, and neither of them
+        // is a blink.
+        cx.subscribe(
+            &field,
+            |composer: &mut Self, _, event: &FieldEvent, cx| match event {
+                FieldEvent::Changed | FieldEvent::Moved => composer.reread(cx),
+            },
+        )
+        .detach();
         Self {
             field,
             command: None,
@@ -414,6 +425,10 @@ impl Composer {
                 },
             )
             .id("composer-commands-list")
+            // The card sizes to its widest row, and a row is a sentence — so
+            // without this it opens as wide as the window lets it. See
+            // [`root::composer_width`].
+            .max_w(px(root::composer_width()))
             .max_h(px(PICKER_HEIGHT))
             .overflow_y_scroll()
             .track_scroll(&self.scroll)

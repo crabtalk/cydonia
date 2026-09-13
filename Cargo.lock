@@ -1933,7 +1933,7 @@ dependencies = [
 
 [[package]]
 name = "cydonia"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "bezel",
@@ -1961,7 +1961,7 @@ dependencies = [
 
 [[package]]
 name = "cydonia-artifact"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "cacp",
  "serde",
@@ -1973,7 +1973,7 @@ dependencies = [
 
 [[package]]
 name = "cydonia-mcp"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "axum",
  "cydonia-artifact",

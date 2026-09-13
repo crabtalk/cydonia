@@ -330,8 +330,8 @@ impl Cydonia {
                         .child(
                             div()
                                 .w_full()
-                                .max_w(px(720.))
-                                .px(px(24.))
+                                .max_w(px(root::COMPOSER_COLUMN))
+                                .px(px(root::COMPOSER_MARGIN))
                                 .flex()
                                 .flex_col()
                                 .gap(px(8.))
