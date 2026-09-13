@@ -27,6 +27,7 @@ use std::{
 
 pub mod acp;
 pub mod mcp;
+pub mod serve;
 
 /// Where the fetched catalog and the icons beside it are kept — a cache under
 /// the config directory, not among the files a person edits.

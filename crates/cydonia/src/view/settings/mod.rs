@@ -29,6 +29,7 @@ use std::collections::HashSet;
 mod agents;
 mod features;
 mod general;
+mod mcp;
 mod performance;
 mod theme;
 mod typography;
@@ -56,15 +57,19 @@ pub enum Section {
     // sessions off, nothing installed under Agents can be launched.
     Features,
     Agents,
+    // After Agents, because tools come after the things that use them — the
+    // same reading that puts Features before it.
+    Mcp,
     Performance,
 }
 
 impl Section {
-    const ALL: [Self; 5] = [
+    const ALL: [Self; 6] = [
         Self::General,
         Self::Appearance,
         Self::Features,
         Self::Agents,
+        Self::Mcp,
         Self::Performance,
     ];
 
@@ -74,6 +79,7 @@ impl Section {
             Self::Appearance => "Appearance",
             Self::Features => "Features",
             Self::Agents => "Agents",
+            Self::Mcp => "MCP",
             Self::Performance => "Performance",
         }
     }
@@ -84,6 +90,9 @@ impl Section {
     fn subtitle(self) -> Option<&'static str> {
         match self {
             Self::Features => Some("Parts of cydonia that stay off until you ask for them."),
+            Self::Mcp => {
+                Some("The tools cydonia offers the agents it runs, over a port on this machine.")
+            }
             Self::General | Self::Appearance | Self::Agents | Self::Performance => None,
         }
     }
@@ -95,6 +104,7 @@ impl Section {
             Self::Appearance => icons::weather::Sun,
             Self::Features => icons::account::SlidersHorizontal,
             Self::Agents => icons::layout::LayoutGrid,
+            Self::Mcp => icons::development::Plug,
             Self::Performance => icons::devices::Cpu,
         }
     }
@@ -192,7 +202,11 @@ impl SettingsWindow {
         self.section = section;
         match section {
             Section::Agents => self.load(cx),
-            Section::General | Section::Appearance | Section::Features | Section::Performance => {}
+            Section::General
+            | Section::Appearance
+            | Section::Features
+            | Section::Mcp
+            | Section::Performance => {}
         }
         cx.notify();
     }
@@ -281,6 +295,7 @@ impl Render for SettingsWindow {
                                 Section::Appearance => self.appearance_body(cx),
                                 Section::Features => self.features_body(cx),
                                 Section::Agents => self.agents_body(cx),
+                                Section::Mcp => self.mcp_body(cx),
                                 Section::Performance => self.performance_body(cx),
                             }),
                     ),

@@ -13,6 +13,7 @@ homepage = "https://cydonia.sh"
 [workspace.dependencies]
 artifact = { version = "0.1.2", path = "crates/artifact", package = "cydonia-artifact" }
 anyhow = "1"
+axum = "0.8"
 bezel = { version = "0.1.11", features = ["platform"] }
 cacp = { version = "0.1.0", default-features = false }
 cacp-agents = "0.1.0"
@@ -28,7 +29,7 @@ rusqlite = { version = "0.40", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 syntax = { version = "0.1.11", package = "bezel-syntax" }
-tokio = { version = "1", features = ["process", "rt-multi-thread", "sync", "time"] }
+tokio = { version = "1", features = ["net", "process", "rt-multi-thread", "sync", "time"] }
 toml = "0.8"
 toml_edit = "0.22"
 ureq = "3"

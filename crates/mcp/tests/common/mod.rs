@@ -13,7 +13,6 @@ use cydonia_mcp::{
 use std::{
     fs,
     path::{Path, PathBuf},
-    sync::Arc,
 };
 
 pub struct Scratch(PathBuf);
@@ -35,10 +34,16 @@ impl Scratch {
         project::fs::Project::new(&self.0)
     }
 
-    /// A server on this project with the board tools mounted — the same call
-    /// the app makes once the features have said yes.
+    /// Put a board in it, the way the app's own store does.
+    pub fn store_create(&self, name: &str, key: &str) -> Option<artifact::board::Board> {
+        use artifact::project::Project as _;
+        self.store().create_board(name, key)
+    }
+
+    /// A server with the board tools on it — the same call the app makes, and
+    /// holding no project, because a call says which one it is about.
     pub fn server(&self) -> Server {
-        Server::new(Arc::new(self.store())).mount(&tools::board::TOOLS)
+        Server::new().mount(&tools::board::TOOLS)
     }
 }
 

@@ -114,6 +114,7 @@ impl Workspace {
         }
         this.open_last_entry(cx);
         this.load_agent_icons(cx);
+        this.refresh_door();
         // Temporary dev hook: `CYDONIA_TEST_PROMPT` sends a prompt on launch
         // so a turn can be verified without a composer. Here rather than on
         // connect, which a resume would fire again.
@@ -216,7 +217,44 @@ impl Workspace {
             return;
         }
         feature.set(&mut self.settings.features, on);
+        // `sessions` is half of what decides whether the door is open: the
+        // only caller is an agent, and that switch is whether any run.
+        self.refresh_door();
         cx.notify();
+    }
+
+    // ── the tool server ──────────────────────────────────────────
+
+    /// Open or close the door to match the two switches that decide it. One
+    /// place, called from launch and from either of them.
+    fn refresh_door(&self) {
+        agent::serve::serve(self.settings.mcp.serve && self.settings.features.sessions);
+        agent::serve::set_write(self.settings.mcp.write);
+    }
+
+    pub fn set_mcp_serve(&mut self, on: bool, cx: &mut Context<Self>) {
+        if settings::set_mcp("serve", on).is_err() {
+            return;
+        }
+        self.settings.mcp.serve = on;
+        self.refresh_door();
+        cx.notify();
+    }
+
+    /// Offer the tools that change a project, or withhold them. No rebind —
+    /// what is offered is read off the switch on every call.
+    pub fn set_mcp_write(&mut self, on: bool, cx: &mut Context<Self>) {
+        if settings::set_mcp("write", on).is_err() {
+            return;
+        }
+        self.settings.mcp.write = on;
+        self.refresh_door();
+        cx.notify();
+    }
+
+    /// Where the tools answer, while they do.
+    pub fn mcp_url(&self) -> Option<String> {
+        agent::serve::url()
     }
 
     /// Move the cover ceiling. Written through to `settings.toml` first, for

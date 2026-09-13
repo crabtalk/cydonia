@@ -4,18 +4,27 @@
 //! addressing in front of it and a rendering behind: the pane calls the same
 //! functions, which is the whole reason they were moved out of the view.
 //!
-//! Addressing is what a person would say out loud — a key, a handle, a column
-//! name — because what the model is holding came out of a conversation and not
-//! out of a file. Ids work everywhere a name does, for the caller that kept one.
+//! Every tool takes the project it is about, as the path of the directory the
+//! work lives in — there is one server for the whole app and no notion in it of
+//! which project is in front, so the call says.
+//!
+//! Addressing inside one is what a person would say out loud — a key, a handle,
+//! a column name — because what the model is holding came out of a conversation
+//! and not out of a file. Ids work everywhere a name does, for the caller that
+//! kept one.
 //!
 //! A refusal always says what *is* there. A model that guessed the name wrong
 //! can then fix it without spending a second call finding out, which is the
 //! difference between a tool that costs one turn and one that costs three.
 
 use crate::tool::{Answer, Args, Outcome, Tool, Trouble};
-use artifact::{board::Board, project::Project};
+use artifact::{
+    board::Board,
+    project::{Project, fs},
+};
 use serde_json::{Value, json};
 
+const PROJECT: &str = "The project: the path of the directory the work is in.";
 const BOARD: &str = "The board: its key (ROAD), its name, or its id.";
 const CARD: &str = "The card: its handle (ROAD-12), or its id.";
 const COLUMN: &str = "The column: its name, or its id.";
@@ -24,13 +33,15 @@ pub static TOOLS: [Tool; 9] = [
     Tool {
         name: "list_boards",
         description: "List the project's boards, with how much is on each.",
-        schema: || fields(&[]),
+        schema: || fields(&[("project", PROJECT)]),
+        writes: false,
         call: list_boards,
     },
     Tool {
         name: "get_board",
         description: "Read one board: its columns, and the cards under them by handle.",
-        schema: || fields(&[("board", BOARD)]),
+        schema: || fields(&[("project", PROJECT), ("board", BOARD)]),
+        writes: false,
         call: get_board,
     },
     Tool {
@@ -38,35 +49,53 @@ pub static TOOLS: [Tool; 9] = [
         description: "Put a new card at the end of a column, and answer its handle.",
         schema: || {
             fields(&[
+                ("project", PROJECT),
                 ("board", BOARD),
                 ("column", COLUMN),
                 ("text", "What the card says."),
             ])
         },
+        writes: true,
         call: add_card,
     },
     Tool {
         name: "rewrite_card",
         description: "Replace what a card says.",
-        schema: || fields(&[("card", CARD), ("text", "What the card should say now.")]),
+        schema: || {
+            fields(&[
+                ("project", PROJECT),
+                ("card", CARD),
+                ("text", "What the card should say now."),
+            ])
+        },
+        writes: true,
         call: rewrite_card,
     },
     Tool {
         name: "move_card",
         description: "Carry a card to the end of another column on the same board.",
-        schema: || fields(&[("card", CARD), ("column", COLUMN)]),
+        schema: || fields(&[("project", PROJECT), ("card", CARD), ("column", COLUMN)]),
+        writes: true,
         call: move_card,
     },
     Tool {
         name: "remove_card",
         description: "Take a card off its board for good.",
-        schema: || fields(&[("card", CARD)]),
+        schema: || fields(&[("project", PROJECT), ("card", CARD)]),
+        writes: true,
         call: remove_card,
     },
     Tool {
         name: "add_column",
         description: "Add a column at the right-hand end of a board.",
-        schema: || fields(&[("board", BOARD), ("name", "What the column is called.")]),
+        schema: || {
+            fields(&[
+                ("project", PROJECT),
+                ("board", BOARD),
+                ("name", "What the column is called."),
+            ])
+        },
+        writes: true,
         call: add_column,
     },
     Tool {
@@ -74,24 +103,28 @@ pub static TOOLS: [Tool; 9] = [
         description: "Rename a column. Cards keep the handles they already have.",
         schema: || {
             fields(&[
+                ("project", PROJECT),
                 ("board", BOARD),
                 ("column", COLUMN),
                 ("name", "What the column should be called now."),
             ])
         },
+        writes: true,
         call: rename_column,
     },
     Tool {
         name: "remove_column",
         description: "Drop an empty column. A column holding cards is refused — empty it first.",
-        schema: || fields(&[("board", BOARD), ("column", COLUMN)]),
+        schema: || fields(&[("project", PROJECT), ("board", BOARD), ("column", COLUMN)]),
+        writes: true,
         call: remove_column,
     },
 ];
 
 // ── the tools ────────────────────────────────────────────────────
 
-fn list_boards(project: &dyn Project, _args: Args<'_>) -> Outcome {
+fn list_boards(args: Args<'_>) -> Outcome {
+    let project = &store(&args)?;
     let boards = project.boards();
     if boards.is_empty() {
         return Ok(Answer::said("this project has no boards"));
@@ -112,12 +145,14 @@ fn list_boards(project: &dyn Project, _args: Args<'_>) -> Outcome {
     Ok(Answer::said(listing(&boards)).with(json!({ "boards": data })))
 }
 
-fn get_board(project: &dyn Project, args: Args<'_>) -> Outcome {
+fn get_board(args: Args<'_>) -> Outcome {
+    let project = &store(&args)?;
     let board = board(project, args.text("board")?)?;
     Ok(Answer::said(outline(&board)).with(shape(&board)))
 }
 
-fn add_card(project: &dyn Project, args: Args<'_>) -> Outcome {
+fn add_card(args: Args<'_>) -> Outcome {
+    let project = &store(&args)?;
     let mut board = board(project, args.text("board")?)?;
     let column = column(&board, args.text("column")?)?;
     let text = args.text("text")?.to_owned();
@@ -134,7 +169,8 @@ fn add_card(project: &dyn Project, args: Args<'_>) -> Outcome {
     )
 }
 
-fn rewrite_card(project: &dyn Project, args: Args<'_>) -> Outcome {
+fn rewrite_card(args: Args<'_>) -> Outcome {
+    let project = &store(&args)?;
     let (mut board, id) = locate(project, args.text("card")?)?;
     let text = args.text("text")?;
     let handle = named(&board, &id);
@@ -143,7 +179,8 @@ fn rewrite_card(project: &dyn Project, args: Args<'_>) -> Outcome {
     Ok(Answer::said(format!("{handle} now reads: {}", line(text))))
 }
 
-fn move_card(project: &dyn Project, args: Args<'_>) -> Outcome {
+fn move_card(args: Args<'_>) -> Outcome {
+    let project = &store(&args)?;
     let (mut board, id) = locate(project, args.text("card")?)?;
     let to = column(&board, args.text("column")?)?;
     let handle = named(&board, &id);
@@ -158,7 +195,8 @@ fn move_card(project: &dyn Project, args: Args<'_>) -> Outcome {
     )))
 }
 
-fn remove_card(project: &dyn Project, args: Args<'_>) -> Outcome {
+fn remove_card(args: Args<'_>) -> Outcome {
+    let project = &store(&args)?;
     let (mut board, id) = locate(project, args.text("card")?)?;
     let handle = named(&board, &id);
     let card = board
@@ -171,7 +209,8 @@ fn remove_card(project: &dyn Project, args: Args<'_>) -> Outcome {
     )))
 }
 
-fn add_column(project: &dyn Project, args: Args<'_>) -> Outcome {
+fn add_column(args: Args<'_>) -> Outcome {
+    let project = &store(&args)?;
     let mut board = board(project, args.text("board")?)?;
     let name = args.text("name")?;
     let id = board.add_column(name).id.clone();
@@ -180,7 +219,8 @@ fn add_column(project: &dyn Project, args: Args<'_>) -> Outcome {
     Ok(Answer::said(format!("{name} added to {label}")).with(json!({ "id": id })))
 }
 
-fn rename_column(project: &dyn Project, args: Args<'_>) -> Outcome {
+fn rename_column(args: Args<'_>) -> Outcome {
+    let project = &store(&args)?;
     let mut board = board(project, args.text("board")?)?;
     let id = column(&board, args.text("column")?)?;
     let name = args.text("name")?;
@@ -193,7 +233,8 @@ fn rename_column(project: &dyn Project, args: Args<'_>) -> Outcome {
     Ok(Answer::said(format!("{was} is now {name}")))
 }
 
-fn remove_column(project: &dyn Project, args: Args<'_>) -> Outcome {
+fn remove_column(args: Args<'_>) -> Outcome {
+    let project = &store(&args)?;
     let mut board = board(project, args.text("board")?)?;
     let id = column(&board, args.text("column")?)?;
     let name = board
@@ -213,6 +254,17 @@ fn remove_column(project: &dyn Project, args: Args<'_>) -> Outcome {
 }
 
 // ── addressing ───────────────────────────────────────────────────
+
+/// The project a call is about. A directory, and it has to be one — a path
+/// with a typo in it would otherwise read as a project with no boards, which
+/// is a thing a model would believe.
+fn store(args: &Args<'_>) -> Result<fs::Project, Trouble> {
+    let path = args.text("project")?;
+    match std::path::Path::new(path).is_dir() {
+        true => Ok(fs::Project::new(path)),
+        false => Err(Trouble::Refused(format!("no directory at {path}"))),
+    }
+}
 
 /// The board a needle names: its id, its key, or its name, in that order —
 /// which is least ambiguous first, since only the id is guaranteed unique.

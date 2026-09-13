@@ -4,7 +4,6 @@
 //! `static` slice and mounting one costs nothing at all — see
 //! [`crate::Server::mount`].
 
-use artifact::project::Project;
 use serde_json::Value;
 
 pub struct Tool {
@@ -18,7 +17,11 @@ pub struct Tool {
     /// held in a `static` would want a lock or a lazy, for a list that is
     /// rebuilt once per `tools/list`.
     pub schema: fn() -> Value,
-    pub call: fn(&dyn Project, Args<'_>) -> Outcome,
+    /// Whether calling this changes the project. What the write switch reads,
+    /// and a property of the tool rather than a second list somewhere that
+    /// could disagree with it.
+    pub writes: bool,
+    pub call: fn(Args<'_>) -> Outcome,
 }
 
 pub type Outcome = Result<Answer, Trouble>;

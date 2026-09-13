@@ -12,5 +12,7 @@ categories = ["development-tools"]
 
 [dependencies]
 artifact.workspace = true
+axum.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+tokio.workspace = true
