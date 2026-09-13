@@ -5,7 +5,7 @@ use crate::{
     model::{
         session::ChatSession,
         settings::Settings,
-        state::State,
+        state::{self, State},
         workspace::{Reloaded, Workspace},
     },
     view::{
@@ -15,6 +15,7 @@ use crate::{
             menu::Menu,
             meter,
         },
+        confirm, create, info,
         settings::{self, Section, SettingsWindow},
         sidebar::{Filter, Renaming, Row},
         table,
@@ -229,6 +230,18 @@ pub enum Pane {
     Table,
 }
 
+impl Pane {
+    /// The pane a remembered entry is read in — see [`Workspace::landing`].
+    fn of(kind: state::Kind) -> Self {
+        match kind {
+            state::Kind::Session => Self::Chat,
+            state::Kind::Board => Self::Board,
+            state::Kind::Article => Self::Article,
+            state::Kind::Table => Self::Table,
+        }
+    }
+}
+
 /// One step from `at` through `len` entries, wrapping — a list of none has
 /// nowhere to land.
 fn stepped(at: Option<usize>, len: usize, step: isize) -> Option<usize> {
@@ -253,6 +266,19 @@ pub struct Cydonia {
     /// What the table pane's field is attached to, and the field itself.
     pub(crate) cell: Option<table::Cell>,
     pub(crate) cell_field: Entity<TextField>,
+    /// The delete waiting to be agreed to, and the name to ask about. Held
+    /// with its label rather than looked up when the dialog draws: what is
+    /// being asked about must not change wording under the question.
+    pub(crate) confirming: Option<confirm::Confirming>,
+    /// The board identity panel, while it is open — see [`header::BoardInfo`].
+    pub(crate) info: Option<info::BoardInfo>,
+    /// The board that has been asked for and not yet made — see
+    /// [`create::Making`].
+    pub(crate) making: Option<create::Making>,
+    /// Whether the press now being handled landed on the name of the board
+    /// whose panel is open — read by [`Cydonia::toggle_info`] and nothing else,
+    /// the way [`Cydonia::menu_pressed`] is read by `toggle_menu`.
+    pub(crate) info_pressed: bool,
     pub(crate) menu: Option<Menu>,
     /// Which of the open menu's rows is live. Held here rather than in the
     /// card, which is rebuilt every frame: the pointer moves the cursor, and
@@ -311,14 +337,14 @@ impl Cydonia {
         cx.observe(&workspace, |this, _, cx| this.sync_composer(cx))
             .detach();
         // A re-read replaced what a pane is showing — see
-        // [`Workspace::reload_project`]. The card and the cell are addressed by
-        // where they sit, so filing them now would file them into whatever slid
-        // under the index; the edit is dropped instead, and the field with it.
-        // The caret follows the document, which is a new editor entity.
+        // [`Workspace::reload_project`]. The card is held by id, so it comes
+        // through unless what it names is gone; the cell is still addressed by
+        // where it sits, so filing it now would file it into whatever slid
+        // under the index, and it is dropped. The caret follows the document,
+        // which is a new editor entity.
         cx.subscribe_in(&workspace, window, |this, _, _: &Reloaded, window, cx| {
-            this.editing = None;
+            this.drop_stale_edit(cx);
             this.cell = None;
-            this.card_field.update(cx, |field, cx| field.clear(cx));
             this.cell_field.update(cx, |field, cx| field.clear(cx));
             this.follow_article(window, cx);
             cx.notify();
@@ -338,6 +364,10 @@ impl Cydonia {
             card_field,
             cell: None,
             cell_field,
+            confirming: None,
+            info: None,
+            making: None,
+            info_pressed: false,
             menu: None,
             menu_cursor: Cursor::default(),
             menu_pressed: false,
@@ -363,6 +393,9 @@ impl Cydonia {
             }
         })
         .detach();
+        // The window comes back on the entry it was left on — the whole point
+        // of [`state::Entry`], and the pane the entry is read in is half of it.
+        this.land(cx);
         this.sync_composer(cx);
         // Where the caret starts. The composer is drawn only over a chat it can
         // send to, and focus on an element no frame draws is focus nowhere.
@@ -457,6 +490,19 @@ impl Cydonia {
         self.commit(cx);
         self.workspace
             .update(cx, |workspace, cx| workspace.select_project(ix, cx));
+        self.land(cx);
+    }
+
+    /// Put the pane on what the project coming forward was last showing.
+    ///
+    /// Without this the pane is whatever the last project was read in, and
+    /// [`Self::showing`] falls back through the four in a fixed order — so a
+    /// project with a board open from earlier in the session lands on the
+    /// board however recently the article beside it was read.
+    fn land(&mut self, cx: &mut Context<Self>) {
+        if let Some(kind) = self.workspace.read(cx).landing() {
+            self.pane = Pane::of(kind);
+        }
     }
 
     pub(crate) fn close_project(&mut self, ix: usize, cx: &mut Context<Self>) {
@@ -595,7 +641,7 @@ impl Cydonia {
         let painter = Painter::of(cx);
         theme
             .empty_state(
-                icons::files::FOLDER,
+                icons::files::Folder,
                 "No project open",
                 "An agent runs in a directory. Pick one to start.",
             )
@@ -631,6 +677,10 @@ impl Render for Cydonia {
             .on_action(cx.listener(Self::commit_cell_action))
             .on_action(cx.listener(Self::dismiss_cell))
             .on_action(cx.listener(Self::commit_name))
+            .on_action(cx.listener(Self::commit_info))
+            .on_action(cx.listener(Self::dismiss_info))
+            .on_action(cx.listener(Self::make_board))
+            .on_action(cx.listener(Self::dismiss_new_board))
             .on_action(cx.listener(Self::dismiss_name))
             // Everything the menu bar names, and only under the conditions
             // that keep its items honest.
@@ -667,5 +717,9 @@ impl Render for Cydonia {
                     .meter
                     .then(|| meter::panel("app-meter", &self.meter_at, &self.meter, window)),
             )
+            // Over every column and every floating control: nothing behind it
+            // is answerable while it is asking.
+            .children(self.confirm_delete(cx))
+            .children(self.new_board_dialog(cx))
     }
 }

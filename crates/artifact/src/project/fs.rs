@@ -14,13 +14,14 @@
 //! the person who can see the file does.
 
 use crate::{
-    board::{self, Board},
+    board::{self, Board, key},
     id,
     session::record::Record,
     stamp,
 };
 use std::{
     cmp::Reverse,
+    collections::HashSet,
     path::{Path, PathBuf},
 };
 
@@ -90,9 +91,9 @@ impl Project {
         let mut board: Board = toml::from_str(&body).ok()?;
         board.touched = stamp::of(path);
         // A board written before ids existed already has one — the name of the
-        // file it is in. Taken in memory and not written back: `boards` runs on
-        // every re-read, and a write from inside one is an event the watch
-        // would answer by re-reading again.
+        // file it is in. Its columns and cards have none at all, and filling
+        // those is [`Board::mint_ids`], which `boards` calls once it has the
+        // whole list.
         if board.id.is_empty() {
             board.id = stem(path);
         }
@@ -140,13 +141,49 @@ impl super::Project for Project {
             .filter(|path| path.extension().is_some_and(|ext| ext == "toml"))
             .filter_map(|path| self.read_board(&path))
             .collect();
+        // A key is unique among a project's boards, so it is settled here,
+        // where the whole list is in hand and nothing else can be holding one.
+        let mut keys: HashSet<String> = boards
+            .iter()
+            .map(|board| board.key.clone())
+            .filter(|key| !key.is_empty())
+            .collect();
+        // Anything short of ids is written back now rather than left for the
+        // next save. Two reads of the same id-less board mint two different
+        // sets, so a board that stayed unwritten would never compare equal to
+        // itself and every re-read would report a change nobody made. The
+        // write costs one watch event, which finds nothing left to mint.
+        for board in &mut boards {
+            let keyed = board.key.is_empty();
+            if keyed {
+                board.key = key::derive(&board.name, &keys);
+                keys.insert(board.key.clone());
+            }
+            if board.mint_ids() || keyed {
+                super::Project::save_board(self, board);
+            }
+        }
         boards.sort_by_key(|board| Reverse(board.touched));
         boards
     }
-    fn create_board(&self) -> Option<Board> {
+    fn create_board(&self, name: &str, key: &str) -> Option<Board> {
         let dir = self.init().ok()?.join(BOARDS);
         std::fs::create_dir_all(&dir).ok()?;
-        let mut board = Board::new(stem(&free(&dir, stamp::now())), board::NAMED);
+        let mut board = Board::new(stem(&free(&dir, stamp::now())), name);
+        board.key = match key::normalize(key) {
+            Some(key) => key,
+            // Nothing given, so it is derived from the name — against what the
+            // project's other boards are already keyed, so it is clear of
+            // them. Reading them is also what settles any key they are still
+            // missing.
+            None => {
+                let taken: HashSet<String> = super::Project::boards(self)
+                    .into_iter()
+                    .map(|board| board.key)
+                    .collect();
+                key::derive(&board.name, &taken)
+            }
+        };
         super::Project::save_board(self, &mut board);
         Some(board)
     }

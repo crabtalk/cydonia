@@ -1,5 +1,34 @@
 [
   {
+    "version": "0.1.2",
+    "date": "2026-09-13",
+    "summary": "Boards are yours to shape: name the columns, address every card by a handle you can say out loud, and read what a pane is showing off a header that carries its own controls.",
+    "media": {
+      "poster": "pics/cydonia/v0.1.2.jpg",
+      "alt": "…",
+      "w": 1280,
+      "h": 900
+    },
+    "new": [
+      "Name a board's columns, and add or drop them as the work changes",
+      "Give every card a handle, ROAD-12, from a board key you can edit",
+      "Open a board's name and key together from its name in the header",
+      "Put a header on every pane: what it is showing, and what to do to it",
+      "Ask before a delete, naming the file that goes with it",
+      "Move a card's delete into its own menu, off the row of one-press controls",
+      "Keep the session a card was dispatched to across a quit",
+      "Move to bezel 0.1.11 and the Lucide icon set",
+      "Come back to the entry the window was left on, in the pane it is read in"
+    ],
+    "fixed": [
+      "Stop a re-read of a project dropping the card being written",
+      "Stop a sidebar row's menu opening the header's with it",
+      "Leave a card's last session alone when a dispatch is refused",
+      "Name a page from one place, so a rename cannot land on half of it",
+      "Stamp an article by both the files it is written to, so renaming one stops sinking it down the list"
+    ]
+  },
+  {
     "version": "0.1.1",
     "date": "2026-09-09",
     "summary": "The turn in flight carries a name and what it spends, the agent's model and mode move into its menu, and an open project reconciles whatever lands in .cydonia.",

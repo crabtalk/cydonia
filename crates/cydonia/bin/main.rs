@@ -8,15 +8,15 @@ use bezel::{
     ui::{self, focus, input},
 };
 use cydonia::{
-    assets, memory,
+    memory,
     model::{settings, state, workspace},
-    view::{article, board, component::composer, menubar, root, table},
+    view::{article, board, component::composer, create, info, menubar, root, table},
 };
 
 fn main() -> Result<()> {
     let settings = settings::load()?;
     let state = state::restore();
-    let app = gpui_platform::application().with_assets(assets::Assets);
+    let app = gpui_platform::application();
     // The Dock icon and a second launch both land here. ⌘W leaves the app
     // running with no window, as it does in every other mac app, so this is
     // the way back to one.
@@ -56,6 +56,8 @@ fn main() -> Result<()> {
         editor::init(cx);
         article::init(cx);
         board::init(cx);
+        info::init(cx);
+        create::init(cx);
         table::init(cx);
         root::init(cx);
         // Last: it reads every binding above off the keymap to put the

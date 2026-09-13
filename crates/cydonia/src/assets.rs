@@ -1,15 +1,8 @@
-//! What `svg()` and `img()` can reach by name: bezel's shipped icons, plus the
-//! agent icons [`crate::agent`] has cached.
-//!
-//! A cached icon's asset path is its own path on disk, so the fallback is a
-//! read rather than a table — there is nothing to keep in sync.
+//! The app's own art, by path. There is no `AssetSource`: every picture cydonia
+//! paints is a file on disk — a cover, a cached agent mark, the logo — and both
+//! `img(PathBuf)` and `Icon::file` read one directly.
 
-use anyhow::Result;
-use bezel::{
-    gpui::{AssetSource, SharedString},
-    ui::icons,
-};
-use std::{borrow::Cow, path::PathBuf};
+use std::path::PathBuf;
 
 /// The app's own mark, wherever this build keeps it: beside the binary in a
 /// bundle, in the source tree under `cargo run`.
@@ -26,19 +19,4 @@ pub fn mark() -> Option<PathBuf> {
     let bundled = exe.parent()?.parent()?.join("Resources").join("icon.png");
     let source = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/icon.png"));
     [bundled, source].into_iter().find(|path| path.is_file())
-}
-
-pub struct Assets;
-
-impl AssetSource for Assets {
-    fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
-        if let Some(bytes) = icons::Assets.load(path)? {
-            return Ok(Some(bytes));
-        }
-        Ok(std::fs::read(path).ok().map(Cow::Owned))
-    }
-
-    fn list(&self, path: &str) -> Result<Vec<SharedString>> {
-        icons::Assets.list(path)
-    }
 }

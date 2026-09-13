@@ -26,26 +26,26 @@ use bezel::{
 fn copy(
     feature: Feature,
 ) -> (
-    &'static str,
+    &'static [u8],
     &'static str,
     &'static str,
     Option<&'static str>,
 ) {
     match feature {
         Feature::Sessions => (
-            icons::system::CHAT_ROUND_LINE,
+            icons::social::MessageCircle,
             "Sessions",
             "Runs an agent — a package this machine downloads and executes.",
             None,
         ),
         Feature::Boards => (
-            icons::editing::LIST,
+            icons::text::List,
             "Boards",
             "Cards in columns, one board to a file.",
             Some("Preview"),
         ),
         Feature::Tables => (
-            icons::system::WIDGET,
+            icons::layout::LayoutGrid,
             "Tables",
             "Structured records in the project's store.",
             Some("Preview"),

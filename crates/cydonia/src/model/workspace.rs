@@ -26,9 +26,9 @@ use artifact::{
     project::{Project as _, fs},
 };
 use bezel::{
-    gpui::{App, ClipboardItem, Context, EntityId, EventEmitter, SharedString, Window},
+    gpui::{App, ClipboardItem, Context, EntityId, EventEmitter, Window},
     theme::{self, Brand, Theme, Tint, appearance::AppearanceMode},
-    ui::input,
+    ui::{icons::Icon, input},
 };
 use cacp::schema::SessionConfigOptionValue;
 use std::{
@@ -83,7 +83,7 @@ pub struct Workspace {
     pub meter: bool,
     /// The registry's mark for each configured agent, by name. Empty until the
     /// catalog lands, and stays empty offline.
-    agent_icons: HashMap<String, SharedString>,
+    agent_icons: HashMap<String, Icon>,
     /// What each project was last showing, by project path — where a launch
     /// puts you back.
     last: BTreeMap<PathBuf, state::Entry>,
@@ -164,7 +164,7 @@ impl Workspace {
     }
 
     /// The registry's mark for whatever this session runs on.
-    pub fn agent_icon(&self, name: &str) -> Option<SharedString> {
+    pub fn agent_icon(&self, name: &str) -> Option<Icon> {
         self.agent_icons.get(name).cloned()
     }
 
@@ -418,6 +418,14 @@ impl Workspace {
         cx.notify();
     }
 
+    /// What the active project was last showing, by kind. What the window puts
+    /// its pane on when it lands here — [`Self::open_last_entry`] opens the
+    /// entry, and this is how the view learns which one of the four it was.
+    pub fn landing(&self) -> Option<state::Kind> {
+        let open = self.active_project()?;
+        self.last.get(&open.path).map(|entry| entry.kind)
+    }
+
     /// Remember the entry a project is now showing, so the next launch lands on
     /// it. Every way of opening one arrives here.
     fn remember(&mut self, project: usize, kind: state::Kind, id: String) {
@@ -665,6 +673,27 @@ impl Workspace {
         self.projects.iter().find_map(|project| project.session(id))
     }
 
+    /// The session filed under this id, wherever it is — how a card finds the
+    /// agent it was handed to after a launch that renumbered every session.
+    /// [`ChatSession::id`] is minted per launch and means nothing on disk;
+    /// this is the name that keeps.
+    pub fn session_by_record(&self, record: &str) -> Option<&ChatSession> {
+        self.projects
+            .iter()
+            .flat_map(|project| project.sessions.iter())
+            .find(|chat| chat.record.as_deref() == Some(record))
+    }
+
+    /// The id a session is filed under, minted if it has none — what a
+    /// dispatched card writes down.
+    pub fn mint_record(&mut self, id: u64) -> Option<String> {
+        self.projects
+            .iter_mut()
+            .find_map(|project| project.session_mut(id))?
+            .mint_record()
+            .map(str::to_owned)
+    }
+
     /// Run `f` on the session (when it still exists) and repaint.
     pub fn with_session(
         &mut self,
@@ -744,17 +773,41 @@ impl Workspace {
 
     // ── boards ───────────────────────────────────────────────────────
 
-    /// A fresh board in the active project, opened as it lands. Gated here as
-    /// well as in the menus that call it: this is where a board is born.
-    pub fn new_board(&mut self, cx: &mut Context<Self>) -> Option<usize> {
+    /// A board in `project`, called and keyed as the dialog that asked for it
+    /// has them, and opened as it lands. Gated here as well as in the menus
+    /// that call it: this is where a board is born.
+    ///
+    /// Answers what is wrong rather than making the board anyway — a key that
+    /// is taken is something the dialog stays open to say, the way
+    /// [`Self::edit_board`] does.
+    pub fn new_board(
+        &mut self,
+        project: usize,
+        name: String,
+        key: &str,
+        cx: &mut Context<Self>,
+    ) -> Result<usize, String> {
         if !self.settings.features.boards {
-            return None;
+            return Err("Boards are switched off.".to_owned());
         }
-        let project = self.active?;
-        let board = self.projects[project].store().create_board()?;
-        self.projects[project].boards.insert(0, board);
+        let key = artifact::board::key::normalize(key)
+            .ok_or("A key needs at least one letter or digit.".to_owned())?;
+        let open = self
+            .projects
+            .get_mut(project)
+            .ok_or("That project is not open.".to_owned())?;
+        // The same reach as [`Self::edit_board`]: a handle is heard by an agent
+        // running in this project, so that is as far as it has to carry.
+        if open.boards.iter().any(|board| board.key == key) {
+            return Err(format!("{key} is another board's key here."));
+        }
+        let board = open
+            .store()
+            .create_board(name.trim(), &key)
+            .ok_or("The board could not be written.".to_owned())?;
+        open.boards.insert(0, board);
         self.open_board(project, 0, cx);
-        Some(0)
+        Ok(0)
     }
 
     /// Every project's boards are on show, so picking one brings its project
@@ -789,12 +842,48 @@ impl Workspace {
         cx.notify();
     }
 
-    pub fn rename_board(&mut self, id: &str, name: String, cx: &mut Context<Self>) {
-        self.with_board(id, |store, board| {
+    /// Take the board's identity whole, as the header's panel gives it: what it
+    /// is called, and the key its handles carry.
+    ///
+    /// Answers what is wrong rather than quietly keeping the old one — a key
+    /// that is taken is something the panel stays open to say.
+    ///
+    /// Re-keying renames every handle on the board: `ROAD-12` becomes
+    /// `BACK-12`. That is the cost of letting the key be edited at all, and it
+    /// is the caller's to accept — the number is what does not move.
+    pub fn edit_board(
+        &mut self,
+        id: &str,
+        name: String,
+        key: &str,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        let key = artifact::board::key::normalize(key)
+            .ok_or("A key needs at least one letter or digit.".to_owned())?;
+        let Some(open) = self
+            .projects
+            .iter_mut()
+            .find(|open| open.boards.iter().any(|board| board.id == id))
+        else {
+            return Ok(());
+        };
+        // Among this project's boards and no further: a handle is heard by an
+        // agent running in this project, so that is as far as it has to carry.
+        if open
+            .boards
+            .iter()
+            .any(|board| board.id != id && board.key == key)
+        {
+            return Err(format!("{key} is another board's key here."));
+        }
+        let store = open.store();
+        if let Some(board) = open.boards.iter_mut().find(|board| board.id == id) {
             board.name = name.trim().to_owned();
+            board.key = key;
             store.save_board(board);
-        });
+        }
         cx.notify();
+        Ok(())
     }
 
     pub fn archive_board(&mut self, id: &str, archived: bool, cx: &mut Context<Self>) {
@@ -837,6 +926,41 @@ impl Workspace {
 
     /// Reach a board wherever it is open, with the store that holds it — the
     /// project it is in, and the only thing that can write it back.
+    /// A lane on the open board, answered by its id so the pane can open it
+    /// straight into its name.
+    pub fn new_column(&mut self, cx: &mut Context<Self>) -> Option<String> {
+        let id = self
+            .active_board_mut()?
+            .add_column(artifact::board::column::NAMED)
+            .id
+            .clone();
+        self.save_board();
+        cx.notify();
+        Some(id)
+    }
+
+    pub fn rename_column(&mut self, id: &str, name: String, cx: &mut Context<Self>) {
+        let renamed = self
+            .active_board_mut()
+            .is_some_and(|board| board.rename_column(id, name.trim()));
+        if renamed {
+            self.save_board();
+        }
+        cx.notify();
+    }
+
+    /// Drop a lane, which a board refuses while it still holds cards — see
+    /// [`Board::remove_column`].
+    pub fn remove_column(&mut self, id: &str, cx: &mut Context<Self>) {
+        let gone = self
+            .active_board_mut()
+            .is_some_and(|board| board.remove_column(id));
+        if gone {
+            self.save_board();
+        }
+        cx.notify();
+    }
+
     fn with_board(&mut self, id: &str, edit: impl FnOnce(&fs::Project, &mut Board)) {
         for open in &mut self.projects {
             let store = open.store();
@@ -870,15 +994,6 @@ impl Workspace {
         self.projects[project].articles.insert(0, article);
         self.open_article(project, 0, cx);
         Some(0)
-    }
-
-    pub fn rename_article(&mut self, path: &Path, name: String, cx: &mut Context<Self>) {
-        let Some(article) = self.article_at_mut(path) else {
-            return;
-        };
-        let name = name.trim().to_owned();
-        article.rename(&name, cx);
-        cx.notify();
     }
 
     pub fn archive_article(&mut self, path: &Path, archived: bool, cx: &mut Context<Self>) {

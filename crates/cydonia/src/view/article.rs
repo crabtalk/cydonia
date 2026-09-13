@@ -6,7 +6,7 @@ use crate::{
     view::{
         component::menu::Menu,
         root::{Cydonia, NewArticle, Pane},
-        sidebar::{self, Renaming, Row},
+        sidebar::{self, Row},
     },
 };
 use bezel::{
@@ -426,40 +426,38 @@ impl Cydonia {
             .get(project)
             .and_then(|open| open.articles.get(ix));
         let archived = article.is_some_and(|article| article.archived);
-        let path = article.map(|article| &article.path);
-        let renaming = matches!(&self.renaming, Some(Renaming::Article(at)) if Some(at) == path);
         let tint = sidebar::tint(selected, archived, &theme);
         let id = SharedString::from(format!("article-{project}-{ix}"));
 
         sidebar::row(id, "article-row", selected, &theme)
             .child(
-                icons::icon(icons::files::DOCUMENT)
+                icons::icon(icons::files::FileText)
                     .size(px(14.))
                     .flex_none()
                     .text_color(tint),
             )
-            .child(match renaming {
-                true => self.name_field(cx),
-                false => div()
+            // Display-only: the title is written at the head of the page, and
+            // this row is never a second field for it.
+            .child(
+                div()
                     .flex_1()
                     .min_w_0()
                     .truncate()
                     .text_style(TextStyle::Body)
                     .text_color(tint)
-                    .child(title)
-                    .into_any_element(),
-            })
+                    .child(title),
+            )
             .child(
                 self.menu_button(
                     ("article-menu", ix),
-                    "article-row",
-                    icons::icon(icons::system::MENU_DOTS)
+                    Some("article-row"),
+                    icons::icon(icons::layout::Ellipsis)
                         .size(px(14.))
                         .text_color(theme.text_faint),
                     Menu::Entry(entry),
                     cx,
                 )
-                .children(self.entry_menu(entry, archived, cx)),
+                .children(self.entry_menu(Menu::Entry(entry), entry, archived, cx)),
             )
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.open_article(project, ix, window, cx);

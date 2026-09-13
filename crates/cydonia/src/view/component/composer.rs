@@ -8,11 +8,11 @@ use crate::{
 use bezel::{
     gpui::{
         self, AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, KeyBinding,
-        Render, ScrollHandle, SharedString, Window, actions, div, prelude::*, px, svg,
+        Render, ScrollHandle, SharedString, Window, actions, div, prelude::*, px,
     },
     theme::{self, Glass, SurfaceStyle, TextStyle, Theme, Typeset},
     ui::{
-        icons,
+        icons::{self, Icon},
         input::{self, Shape, TextField},
         menu::{self, Cursor, Hit, Item},
         popover,
@@ -60,11 +60,13 @@ pub fn init(cx: &mut App) {
 }
 
 /// One agent on offer: what to call it, and the registry's mark for it when
-/// the catalog knows it.
+/// the catalog knows it. The mark is downloaded rather than compiled in — see
+/// [`crate::agent::icons`] — but reaches here as an [`Icon`] like any glyph,
+/// because that is what a menu row takes.
 #[derive(Clone, PartialEq)]
 pub struct Agent {
     pub name: SharedString,
-    pub icon: Option<SharedString>,
+    pub icon: Option<Icon>,
 }
 
 /// Which request a [`Switch`] is, since the agent offers two shapes of the
@@ -443,14 +445,12 @@ impl Composer {
             .cursor_pointer()
             .hover(|button| button.bg(theme.element_hover))
             .child(match agent.icon {
-                Some(path) => svg()
-                    .path(path)
+                Some(icon) => icons::icon(icon)
                     .size(mark)
-                    .flex_none()
                     .text_color(theme.text_muted)
                     .into_any_element(),
                 // A slot the catalog has no mark for still has to open the menu.
-                None => icons::icon(icons::system::WIDGET)
+                None => icons::icon(icons::layout::LayoutGrid)
                     .size(mark)
                     .text_color(theme.text_muted)
                     .into_any_element(),
@@ -528,7 +528,7 @@ impl Composer {
         if !agents.is_empty() {
             agents.push(Item::Separator);
         }
-        agents.push(Item::action("Install an agent…").with_icon(icons::files::DOWNLOAD));
+        agents.push(Item::action("Install an agent…").with_icon(icons::files::Download));
         let mut items = vec![Item::submenu(
             set_to("Agent", current.map(|agent| agent.name.clone())),
             agents,
@@ -665,9 +665,9 @@ impl Composer {
         let streaming = self.streaming;
         let ready = streaming || !self.is_empty(cx);
         let glyph = if streaming {
-            icons::media::STOP
+            icons::multimedia::CircleStop
         } else {
-            icons::arrows::ARROW_UP
+            icons::arrows::ArrowUp
         };
         let glyph_size = px(root::composer_disc() / 2.);
         let disc = div()

@@ -12,13 +12,13 @@
 //!
 //! Every icon the registry publishes is a `currentColor` glyph, so it carries
 //! no colour of its own: rasterised as an image it comes out black, on a dark
-//! theme against a dark row. They are cached to disk and drawn through
-//! [`crate::assets`] as svg elements instead, which paint the shape's alpha in
-//! whatever `text_color` the row already sets — the same path every other icon
-//! in the app takes.
+//! theme against a dark row. They are cached to disk and handed to
+//! [`Icon::file`] as svg elements instead, which paint the shape's alpha
+//! in whatever `text_color` the row already sets — the same path every other
+//! icon in the app takes.
 
 use crate::model::settings::{self, Agent};
-use bezel::gpui::SharedString;
+use bezel::ui::icons::Icon;
 use cacp_agents::{Distribution, Installed, registry};
 use std::{
     collections::HashMap,
@@ -34,12 +34,12 @@ pub fn cache_dir() -> Option<PathBuf> {
     settings::dir().ok().map(|dir| dir.join("cache"))
 }
 
-/// Icon asset paths by configured agent name.
+/// The registry's mark for each configured agent, by name.
 ///
 /// Blocking: this reaches the network on a cold cache. Call it off the UI
 /// thread. An empty map is the honest answer offline — every caller falls
 /// back to what it drew before.
-pub fn icons(configured: &[settings::Agent]) -> HashMap<String, SharedString> {
+pub fn icons(configured: &[settings::Agent]) -> HashMap<String, Icon> {
     let Some(cache) = cache_dir() else {
         return HashMap::new();
     };
@@ -79,14 +79,12 @@ pub fn icons(configured: &[settings::Agent]) -> HashMap<String, SharedString> {
                     .find_map(|arg| by_package.get(cacp_agents::package_name(arg)).copied())?,
             };
             let path = fetch(&dir, id, icons.get(id)?)?;
-            Some((entry.name.clone(), SharedString::from(path)))
+            Some((entry.name.clone(), Icon::file(path)))
         })
         .collect()
 }
 
-/// The icon on disk, downloading it once. The asset path is the file's own
-/// path — [`crate::assets`] reads it back by that name, so nothing has to keep
-/// a second table mapping one to the other.
+/// The icon on disk, downloading it once.
 fn fetch(dir: &Path, id: &str, url: &str) -> Option<String> {
     if let Some(path) = cached(dir, id) {
         return Some(path);
@@ -135,7 +133,7 @@ pub struct Listing {
     pub agent: registry::Agent,
     /// The version on disk, when it is installed.
     pub installed: Option<String>,
-    pub icon: Option<SharedString>,
+    pub icon: Option<Icon>,
 }
 
 /// The whole catalog with each entry's local state. Blocking on the registry,
@@ -156,7 +154,7 @@ pub fn listings() -> Vec<Listing> {
         .filter(listed)
         .map(|agent| {
             let installed = Installed::find(&data, &agent.id).map(|found| found.version);
-            let icon = cached(&dir, &agent.id).map(SharedString::from);
+            let icon = cached(&dir, &agent.id).map(Icon::file);
             Listing {
                 agent,
                 installed,

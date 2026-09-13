@@ -1,38 +1,16 @@
 //! Every entry comes back named, including one written before ids existed.
 
-use cydonia_artifact::{
-    project::{self, Project as _},
-    session::record::Record,
-};
+use cydonia_artifact::{project::Project as _, session::record::Record};
 use std::fs;
 
-/// A scratch project, torn down when the test ends.
-struct Scratch(std::path::PathBuf);
+mod common;
 
-impl Scratch {
-    fn new(name: &str) -> Self {
-        let dir = std::env::temp_dir().join(format!("cydonia-{name}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        Self(dir)
-    }
-
-    /// The store under it, which is what holds the entries.
-    fn store(&self) -> project::fs::Project {
-        project::fs::Project::new(&self.0)
-    }
-}
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
-    }
-}
+use common::Scratch;
 
 #[test]
 fn a_new_board_is_named_when_it_is_made() {
     let scratch = Scratch::new("board-new");
-    let board = scratch.store().create_board().expect("made");
+    let board = scratch.store().create_board("Roadmap", "").expect("made");
     assert!(!board.id.is_empty());
     assert_eq!(scratch.store().boards()[0].id, board.id);
 }
@@ -52,15 +30,17 @@ fn a_board_written_before_ids_takes_the_name_of_its_file() {
     assert_eq!(boards[0].name, "Roadmap");
 }
 
-/// Reading must not write. `list` runs on every re-read of a project, and a
-/// write from inside one is an event the watch answers by re-reading again.
+/// Reading writes back only what it minted. A board already carrying
+/// everything — its id, its key, its counter — is left alone: `boards` runs on
+/// every re-read of a project, and a write from inside one is an event the
+/// watch answers by re-reading again.
 #[test]
-fn reading_an_old_board_leaves_the_file_alone() {
+fn reading_a_settled_board_leaves_the_file_alone() {
     let scratch = Scratch::new("board-quiet");
     let dir = scratch.store().init().unwrap().join("boards");
     fs::create_dir_all(&dir).unwrap();
     let file = dir.join("1757000000000.toml");
-    let before = "name = \"Roadmap\"\n";
+    let before = "id = \"1757000000000\"\narchived = false\nname = \"Roadmap\"\nkey = \"ROA\"\nnext_handle = 1\ncolumns = []\n";
     fs::write(&file, before).unwrap();
 
     scratch.store().boards();

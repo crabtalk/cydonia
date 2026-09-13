@@ -16,7 +16,7 @@
 
 pub mod properties;
 
-use crate::project::fs;
+use crate::{project::fs, stamp};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use url::Url;
@@ -64,6 +64,23 @@ pub fn init(project: &Path) -> std::io::Result<PathBuf> {
 /// The document inside one article's directory — the path an agent is given.
 pub fn content(article: &Path) -> PathBuf {
     article.join(CONTENT)
+}
+
+/// When the article was last written, whichever of its files took the write.
+///
+/// Both of them, because naming a page *is* writing it and the name lives in
+/// the properties: ordered on the markdown alone, an article renamed and never
+/// otherwise touched sinks back down the list the moment it is re-read.
+///
+/// The properties are only asked about when they are there — [`stamp::of`]
+/// answers `now` for a file it cannot stat, which would float every article
+/// that has never had a property to the top and keep it moving.
+pub fn touched(content: &Path) -> u128 {
+    let written = stamp::of(content);
+    match properties::path(content).filter(|path| path.is_file()) {
+        Some(properties) => written.max(stamp::of(&properties)),
+        None => written,
+    }
 }
 
 /// This millisecond's directory, or the first after it that is not taken. Two

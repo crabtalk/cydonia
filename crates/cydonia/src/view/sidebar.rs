@@ -18,11 +18,11 @@ use bezel::{
     gpui::{
         self, AnyElement, App, Bounds, Context, Div, Empty, Entity, Focusable as _, FontWeight,
         Hsla, MouseButton, Pixels, Point, ScrollStrategy, SharedString, Stateful,
-        UniformListDecoration, Window, div, prelude::*, px, svg, uniform_list,
+        UniformListDecoration, Window, div, prelude::*, px, uniform_list,
     },
     theme::{TextStyle, Theme, Typeset},
     ui::{
-        icons,
+        icons::{self, Icon},
         menu::Item,
         popover,
         surface::Surfaced as _,
@@ -30,7 +30,7 @@ use bezel::{
         widgets::{Buttons, Layout},
     },
 };
-use std::{cell::RefCell, cmp::Reverse, ops::Range, path::PathBuf, rc::Rc, time::Duration};
+use std::{cell::RefCell, cmp::Reverse, ops::Range, rc::Rc, time::Duration};
 
 /// What the sidebar needs of a session to draw its row, read out of the model
 /// before the row is built: a turn in flight puts a thinking orb in the mark's
@@ -39,7 +39,7 @@ struct SessionRow {
     project: usize,
     id: u64,
     label: String,
-    icon: Option<SharedString>,
+    icon: Option<Icon>,
     /// The turn in flight, as the orb needs it: which of the twelve, how long
     /// it has been running, and the buffer it paints into. `None` when nothing
     /// is in flight, which is what puts the agent's own mark back.
@@ -133,13 +133,13 @@ impl Filter {
         }
     }
 
-    fn icon(self) -> &'static str {
+    fn icon(self) -> &'static [u8] {
         match self {
-            Self::All => icons::arrows::SORT_VERTICAL,
-            Self::Sessions => icons::system::CHAT_ROUND_LINE,
-            Self::Boards => icons::editing::LIST,
-            Self::Articles => icons::files::DOCUMENT,
-            Self::Tables => icons::system::WIDGET,
+            Self::All => icons::arrows::ArrowUpDown,
+            Self::Sessions => icons::social::MessageCircle,
+            Self::Boards => icons::text::List,
+            Self::Articles => icons::files::FileText,
+            Self::Tables => icons::layout::LayoutGrid,
         }
     }
 
@@ -170,15 +170,20 @@ fn shown(row: Row, features: &Features) -> bool {
 
 /// What the sidebar's name field is attached to. One field for all of them,
 /// because only one row can be being named at a time. Each entry is held by
-/// what identifies it — a file, a session, a table's key — never by an index:
-/// that moves the moment a neighbour is made or dropped, and the field would
-/// follow it onto whichever entry slid underneath.
+/// what identifies it — a session, a table's key — never by an index: that
+/// moves the moment a neighbour is made or dropped, and the field would follow
+/// it onto whichever entry slid underneath.
+///
+/// No article here: its title is the first line of its own page, which is
+/// where it is written — see [`crate::view::article`].
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) enum Renaming {
     Session(u64),
-    Board(String),
-    Article(PathBuf),
     Table(String),
+    /// A lane on the open board. The one entry here that no row in the sidebar
+    /// stands for — the field is drawn in the column's own header instead,
+    /// which works because only one thing is ever being named.
+    Column(String),
 }
 
 /// What an entry's row is written in: the one on screen at full strength, one
@@ -269,14 +274,6 @@ pub(crate) fn row(
         // painting it over the selection would dim what the pointer is on.
         .when(!selected, |el| el.hover(|el| el.bg(theme.element_hover)))
 }
-
-/// The inset [`Buttons::control_group`] holds its controls at, mirrored here
-/// because the height below is measured from it and bezel keeps it private.
-const CLUSTER_PAD: f32 = 2.;
-
-/// The floating cluster's height, half of which is the pill's radius: a ghost
-/// button's box — a 14pt glyph in 4pt of padding — inside that inset.
-const CLUSTER_HEIGHT: f32 = 14. + 2. * 4. + 2. * CLUSTER_PAD;
 
 /// A row's name. The line height is what the field pins itself to: left to
 /// gpui's default the label's box is φ×13, and renaming would resize the row
@@ -384,7 +381,7 @@ impl Cydonia {
                                 Tooltip::with_keystroke("Settings", "⌘,", window, cx)
                             })
                             .child(
-                                icons::icon(icons::system::SETTINGS_MINIMALISTIC)
+                                icons::icon(icons::account::Settings)
                                     .size(px(13.))
                                     .text_color(theme.text_faint),
                             )
@@ -408,7 +405,7 @@ impl Cydonia {
                                         Tooltip::with_keystroke("New project", "⌘O", window, cx)
                                     })
                                     .child(
-                                        icons::icon(icons::files::DOCUMENT_ADD)
+                                        icons::icon(icons::files::FilePlus)
                                             .size(px(13.))
                                             .text_color(theme.text_faint),
                                     )
@@ -420,45 +417,14 @@ impl Cydonia {
             )
     }
 
-    /// The fold toggle once the sidebar is away, as a glass pill over the
-    /// content. Out of flow and hugging the one control it holds: a band would
-    /// take a row off every pane to carry a single button, and the column under
-    /// it is what the button is for. Only the fold — adding a project acts on
-    /// the list you are looking at, and with the list gone it is chrome for
-    /// somewhere you are not. Its tone is the strong one, because the plate
-    /// floats over whatever the pane shows, which can be a picture we did not
-    /// choose.
-    pub(crate) fn fold_cluster(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
-        let theme = Theme::of(cx).clone();
-        theme
-            .control_group()
-            .absolute()
-            .top(px((root::HEADER_HEIGHT - CLUSTER_HEIGHT) / 2.))
-            // Full screen takes the lights away, and the room they needed
-            // would be left as a hole.
-            .left(px(if window.is_fullscreen() {
-                root::HEADER_INSET
-            } else {
-                root::TOOLBAR_INSET
-            }))
-            .h(px(CLUSTER_HEIGHT))
-            // A pill, where the group's own corner is cut for a row of square
-            // buttons. Before the glass, which reads the corners off the box.
-            .rounded(px(CLUSTER_HEIGHT / 2.))
-            .items_center()
-            .child(self.fold_toggle(theme.text, cx))
-            // The same glass bezel's own floating bar mounts on. Its
-            // `control_bar` is the shipped container, and it refuses this case
-            // on purpose: a fixed 56pt tall, and sized by its caller rather
-            // than by what it holds.
-            .surface(&theme, theme.popover_surface)
-            .into_any_element()
-    }
-
     /// The control that folds the sidebar away and brings it back. It belongs
     /// to whichever column runs along the window's left edge, so it changes
     /// strip across the collapse — and takes that strip's tone with it.
-    fn fold_toggle(&self, tint: Hsla, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    pub(crate) fn fold_toggle(
+        &self,
+        tint: Hsla,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
         let label = if self.sidebar_open {
             "Hide sidebar"
@@ -470,7 +436,7 @@ impl Cydonia {
             .p(px(4.))
             .tooltip(move |window, cx| Tooltip::text(label, window, cx))
             .child(
-                icons::icon(icons::system::SIDEBAR_MINIMALISTIC_LEFT)
+                icons::icon(icons::layout::PanelLeft)
                     .size(px(14.))
                     .text_color(tint),
             )
@@ -572,13 +538,32 @@ impl Cydonia {
             .flex()
             .flex_row()
             .items_center()
-            .gap(px(4.))
+            .gap(px(6.))
             .cursor_pointer()
             // On the head, not the label: a name's colour is fixed when
             // its text is laid out, and only this div is stateful enough
             // to carry the hover that far.
             .text_color(theme.text_faint)
             .hover(|el| el.text_color(theme.text))
+            .child(
+                theme
+                    .ghost(("project-fold", ix))
+                    .flex_none()
+                    .p(px(2.))
+                    .child(
+                        icons::icon(match expanded {
+                            true => icons::files::FolderOpen,
+                            false => icons::files::Folder,
+                        })
+                        .size(px(14.))
+                        .text_color(theme.text_faint)
+                        .group_hover("project-head", |el| el.text_color(theme.text)),
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.toggle_project(ix, cx);
+                    })),
+            )
             .child(
                 div()
                     .flex_1()
@@ -591,8 +576,8 @@ impl Cydonia {
             .child(
                 self.menu_button(
                     ("project-add", ix),
-                    "project-head",
-                    icons::icon(icons::system::PLUS)
+                    Some("project-head"),
+                    icons::icon(icons::math::Plus)
                         .size(px(12.))
                         .text_color(theme.text_faint)
                         .group_hover("project-head", |el| el.text_color(theme.text)),
@@ -601,24 +586,6 @@ impl Cydonia {
                 )
                 .children(self.add_menu(ix, cx)),
             )
-            .child(
-                theme
-                    .ghost(("project-fold", ix))
-                    .flex_none()
-                    .p(px(3.))
-                    .invisible()
-                    .group_hover("project-head", |el| el.visible())
-                    .child(
-                        theme
-                            .disclosure(expanded)
-                            .text_color(theme.text_faint)
-                            .group_hover("project-head", |el| el.text_color(theme.text)),
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        cx.stop_propagation();
-                        this.toggle_project(ix, cx);
-                    })),
-            )
             .children(self.project_menu(ix, cx))
             .on_mouse_down(
                 MouseButton::Right,
@@ -626,8 +593,8 @@ impl Cydonia {
             )
             // A press on the copy is a press on where it came from: the list
             // goes back to the heading it is standing in for, rather than
-            // folding away the project you are reading. Its own chevron still
-            // folds — that press stops before it reaches here.
+            // folding away the project you are reading. Its own folder mark
+            // still folds — that press stops before it reaches here.
             .on_click(cx.listener(move |this, _, _, cx| match pinned {
                 true => this.scroll_to_project(ix, cx),
                 false => this.toggle_project(ix, cx),
@@ -958,7 +925,7 @@ impl Cydonia {
         let mut rows = Vec::new();
         if sessions {
             rows.push(menu::row(
-                Item::action("New session").with_icon(icons::system::CHAT_ROUND_LINE),
+                Item::action("New session").with_icon(icons::social::MessageCircle),
                 move |this, window, cx| {
                     this.select_project(ix, cx);
                     this.new_session_action(&NewSession, window, cx);
@@ -967,17 +934,17 @@ impl Cydonia {
         }
         if boards {
             rows.push(menu::row(
-                Item::action("New board").with_icon(icons::editing::LIST),
-                move |this, _, cx| this.new_board(ix, cx),
+                Item::action("New board").with_icon(icons::text::List),
+                move |this, window, cx| this.ask_new_board(ix, window, cx),
             ));
         }
         rows.push(menu::row(
-            Item::action("New article").with_icon(icons::files::DOCUMENT_ADD),
+            Item::action("New article").with_icon(icons::files::FilePlus),
             move |this, window, cx| this.new_article(ix, window, cx),
         ));
         if tables {
             rows.push(menu::row(
-                Item::action("New table").with_icon(icons::system::WIDGET),
+                Item::action("New table").with_icon(icons::layout::LayoutGrid),
                 move |this, _, cx| this.new_table(ix, cx),
             ));
         }
@@ -996,7 +963,7 @@ impl Cydonia {
             return None;
         }
         let rows = vec![menu::row(
-            Item::action("Remove project").with_icon(icons::files::TRASH_BIN_MINIMALISTIC),
+            Item::action("Remove project").with_icon(icons::files::Trash),
             move |this, _, cx| this.close_project(ix, cx),
         )];
         let id = SharedString::from(format!("project-menu-{ix}"));
@@ -1031,17 +998,20 @@ impl Cydonia {
             transcript::orb(working.state, working.since, &working.frame, cx)
         } else {
             match session.icon {
-                Some(path) => svg()
-                    .path(path)
+                Some(icon) => icons::icon(icon)
                     .size(px(14.))
-                    .flex_none()
                     .text_color(tint)
                     .into_any_element(),
                 None => Empty.into_any_element(),
             }
         };
 
-        let label = match self.renaming == Some(Renaming::Session(id)) {
+        // The band draws the field when it is showing this entry — see
+        // [`Cydonia::header_renaming`], which is what keeps one field from
+        // being claimed by two places at once.
+        let label = match self.renaming == Some(Renaming::Session(id))
+            && self.header_renaming(cx).is_none()
+        {
             true => self.name_field(cx),
             false => row_label(session.label, tint),
         };
@@ -1060,14 +1030,19 @@ impl Cydonia {
             .child(
                 self.menu_button(
                     ("session-menu", id),
-                    "session-row",
-                    icons::icon(icons::system::MENU_DOTS)
+                    Some("session-row"),
+                    icons::icon(icons::layout::Ellipsis)
                         .size(px(14.))
                         .text_color(theme.text_faint),
                     Menu::Entry(entry),
                     cx,
                 )
-                .children(self.entry_menu(entry, session.archived, cx)),
+                .children(self.entry_menu(
+                    Menu::Entry(entry),
+                    entry,
+                    session.archived,
+                    cx,
+                )),
             )
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.select_session(id, cx);
@@ -1097,13 +1072,10 @@ impl Cydonia {
             .get(project)
             .and_then(|open| open.boards.get(ix));
         let archived = board.is_some_and(|board| board.archived);
-        let id = board.map(|board| &board.id);
-        let renaming = matches!(&self.renaming, Some(Renaming::Board(at)) if Some(at) == id);
         let tint = tint(selected, archived, &theme);
-        let label = match renaming {
-            true => self.name_field(cx),
-            false => row_label(name, tint),
-        };
+        // No inline field on a board's row, ever: a board is named by its panel
+        // — see [`Self::rename_entry`].
+        let label = row_label(name, tint);
 
         row(
             SharedString::from(format!("board-{project}-{ix}")),
@@ -1112,7 +1084,7 @@ impl Cydonia {
             &theme,
         )
         .child(
-            icons::icon(icons::editing::LIST)
+            icons::icon(icons::text::List)
                 .size(px(14.))
                 .flex_none()
                 .text_color(tint),
@@ -1121,44 +1093,78 @@ impl Cydonia {
         .child(
             self.menu_button(
                 SharedString::from(format!("board-menu-{project}-{ix}")),
-                "board-row",
-                icons::icon(icons::system::MENU_DOTS)
+                Some("board-row"),
+                icons::icon(icons::layout::Ellipsis)
                     .size(px(14.))
                     .text_color(theme.text_faint),
                 Menu::Entry(entry),
                 cx,
             )
-            .children(self.entry_menu(entry, archived, cx)),
+            .children(self.entry_menu(Menu::Entry(entry), entry, archived, cx)),
         )
         .on_click(cx.listener(move |this, _, _, cx| this.open_board(project, ix, cx)))
         .into_any_element()
     }
 
-    /// The `···` on any entry: the same two things whichever kind it is, and
-    /// no third — nothing here deletes.
+    /// The `···` on any entry: the same things whichever kind it is.
+    ///
+    /// Delete is offered from the header and not from a row. In the sidebar you
+    /// are running a pointer down a list and the row under it is whichever one
+    /// you stopped on; in the header there is one thing it could mean, and it
+    /// is the thing filling the window. `../desktop` draws the line in the same
+    /// place — its row menus archive, its `PostActions` in the title bar
+    /// deletes.
+    /// `at` is the trigger that would have opened it — the row's own
+    /// [`Menu::Entry`], or the header's [`Menu::Header`]. The same entry is
+    /// drawn in both places, so the trigger and not the entry is what says
+    /// which menu is open.
     pub(crate) fn entry_menu(
         &self,
+        at: Menu,
         entry: Row,
         archived: bool,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        if self.menu != Some(Menu::Entry(entry)) {
+        if self.menu.as_ref() != Some(&at) {
             return None;
         }
         let put = match archived {
-            true => Item::action("Unarchive").with_icon(icons::files::ARCHIVE_MINIMALISTIC),
-            false => Item::action("Archive").with_icon(icons::files::ARCHIVE_MINIMALISTIC),
+            true => Item::action("Unarchive").with_icon(icons::files::Archive),
+            false => Item::action("Archive").with_icon(icons::files::Archive),
         };
-        let rows = vec![
-            menu::row(
-                Item::action("Rename").with_icon(icons::editing::PEN_NEW_SQUARE),
-                move |this, window, cx| this.rename_entry(entry, window, cx),
-            ),
-            menu::row(put, move |this, _, cx| {
-                this.archive_entry(entry, !archived, cx)
-            }),
-        ];
-        let id = SharedString::from(format!("entry-menu-{}", key_of(entry)));
+        // `../desktop`'s rule for what a `···` may carry: only commands with no
+        // affordance on the object. An article's title is the head of its own
+        // page and a board's name in the band opens its identity panel, so
+        // neither is offered a second route here. Everywhere else the name is
+        // display-only and this is the way.
+        let header = at == Menu::Header;
+        let named = match entry {
+            Row::Article { .. } => false,
+            Row::Board { .. } => !header,
+            _ => true,
+        };
+        let mut rows = vec![menu::row(put, move |this, _, cx| {
+            this.archive_entry(entry, !archived, cx)
+        })];
+        if named {
+            rows.insert(
+                0,
+                menu::row(
+                    Item::action("Rename").with_icon(icons::text::SquarePen),
+                    move |this, window, cx| this.rename_entry(entry, window, cx),
+                ),
+            );
+        }
+        if header {
+            rows.push(menu::row(
+                Item::action("Delete").with_icon(icons::files::Trash),
+                move |this, _, cx| this.ask_delete(entry, cx),
+            ));
+        }
+        let id = match header {
+            true => SharedString::from("header-menu-card"),
+            false => SharedString::from(format!("entry-menu-{}", key_of(entry))),
+        };
         Some(popover::anchored_menu_below(
             id.clone(),
             self.menu_card(id, rows, cx),
@@ -1166,29 +1172,54 @@ impl Cydonia {
         ))
     }
 
-    /// Put the name field on an entry's row, whichever kind it is. Each is
-    /// addressed by what identifies it, so the field cannot slide onto its
-    /// neighbour if the list reorders under it.
+    /// Drop the entry the header is showing, file and all. The pane it was
+    /// filling falls back to the front door, which is what every one of these
+    /// leaves behind when it clears the index it was open at.
+    pub(crate) fn delete_entry(&mut self, entry: Row, cx: &mut Context<Self>) {
+        self.commit(cx);
+        self.workspace.update(cx, |workspace, cx| match entry {
+            Row::Session { id, .. } => workspace.close_session(id, cx),
+            Row::Board { project, ix } => workspace.delete_board(project, ix, cx),
+            Row::Article { project, ix } => workspace.delete_article(project, ix, cx),
+            Row::Table { project, ix } => workspace.delete_table(project, ix, cx),
+            Row::Project(_) | Row::Archive(_) => {}
+        });
+        cx.notify();
+    }
+
+    /// Put the name field on an entry's row, for the kinds named that way.
+    /// Each is addressed by what identifies it, so the field cannot slide onto
+    /// its neighbour if the list reorders under it.
+    ///
+    /// A board is named by two things at once, so it opens its identity panel
+    /// instead — which lives under the band, so the board is brought to the
+    /// front first. One way to name a board, wherever you asked from.
     fn rename_entry(&mut self, entry: Row, window: &mut Window, cx: &mut Context<Self>) {
-        let workspace = self.workspace.read(cx);
-        let what = match entry {
-            Row::Session { id, .. } => Some(Renaming::Session(id)),
-            Row::Board { project, ix } => workspace
+        if let Row::Board { project, ix } = entry {
+            let id = self
+                .workspace
+                .read(cx)
                 .projects
                 .get(project)
                 .and_then(|open| open.boards.get(ix))
-                .map(|board| Renaming::Board(board.id.clone())),
-            Row::Article { project, ix } => workspace
-                .projects
-                .get(project)
-                .and_then(|open| open.articles.get(ix))
-                .map(|article| Renaming::Article(article.path.clone())),
+                .map(|board| board.id.clone());
+            if let Some(id) = id {
+                self.open_board(project, ix, cx);
+                self.open_info(&id, window, cx);
+            }
+            return;
+        }
+        let workspace = self.workspace.read(cx);
+        let what = match entry {
+            Row::Session { id, .. } => Some(Renaming::Session(id)),
             Row::Table { project, ix } => workspace
                 .projects
                 .get(project)
                 .and_then(|open| open.tables.get(ix))
                 .map(|table| Renaming::Table(table.key.clone())),
-            Row::Project(_) | Row::Archive(_) => None,
+            // An article is named in its own page, and the two that are not
+            // entries have no name to take.
+            Row::Article { .. } | Row::Board { .. } | Row::Project(_) | Row::Archive(_) => None,
         };
         if let Some(what) = what {
             self.start_rename(what, window, cx);
@@ -1258,23 +1289,17 @@ impl Cydonia {
             .into_any_element()
     }
 
-    fn start_rename(&mut self, what: Renaming, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn start_rename(
+        &mut self,
+        what: Renaming,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let workspace = self.workspace.read(cx);
         let label = match &what {
             Renaming::Session(id) => workspace
                 .session(*id)
                 .map(ChatSession::label)
-                .unwrap_or_default(),
-            Renaming::Board(id) => workspace
-                .board_at(id)
-                .map(|board| board.name.clone())
-                .unwrap_or_default(),
-            Renaming::Article(path) => workspace
-                .projects
-                .iter()
-                .flat_map(|open| open.articles.iter())
-                .find(|article| article.path == *path)
-                .map(|article| article.title.clone())
                 .unwrap_or_default(),
             Renaming::Table(key) => workspace
                 .projects
@@ -1283,9 +1308,16 @@ impl Cydonia {
                 .find(|table| table.key == *key)
                 .map(|table| table.name.clone())
                 .unwrap_or_default(),
+            Renaming::Column(id) => workspace
+                .active_board()
+                .and_then(|board| board.column(id))
+                .map(|column| column.name.clone())
+                .unwrap_or_default(),
         };
         self.name_field
             .update(cx, |field, cx| field.set_content(label, cx));
+        // See [`Cydonia::open_info`] — the other way round.
+        self.info = None;
         self.renaming = Some(what);
         window.focus(&self.name_field.read(cx).focus_handle(cx), cx);
         cx.notify();
@@ -1298,9 +1330,8 @@ impl Cydonia {
         let name = self.name_field.read(cx).content().to_string();
         self.workspace.update(cx, |workspace, cx| match what {
             Renaming::Session(id) => workspace.rename_session(id, name, cx),
-            Renaming::Board(id) => workspace.rename_board(&id, name, cx),
-            Renaming::Article(path) => workspace.rename_article(&path, name, cx),
             Renaming::Table(key) => workspace.rename_table(&key, name, cx),
+            Renaming::Column(id) => workspace.rename_column(&id, name, cx),
         });
         cx.notify();
     }

@@ -75,7 +75,7 @@ impl Article {
         Self {
             cover: cover::of(&path),
             title: properties::title(&path),
-            touched: artifact::stamp::of(&path),
+            touched: layout::touched(&path),
             archived: properties::archived(&path),
             path,
             field: None,
@@ -89,17 +89,6 @@ impl Article {
     pub fn archive(&mut self, archived: bool) {
         self.archived = archived;
         properties::set_archived(&self.path, archived);
-    }
-
-    /// Name it from outside the pane. The open title field is written too, or
-    /// the next keystroke in the article would file the old name back.
-    pub fn rename(&mut self, title: &str, cx: &mut App) {
-        self.title = title.to_owned();
-        self.touched = artifact::stamp::now();
-        properties::set_title(&self.path, title);
-        if let Some(field) = &self.field {
-            field.update(cx, |field, cx| field.set_content(title.to_owned(), cx));
-        }
     }
 
     /// The sidebar's label.
@@ -232,7 +221,7 @@ impl Article {
     /// keep it: it is a history of a document this one no longer is.
     pub fn revert(&mut self, cx: &mut Context<Workspace>) {
         self.title = properties::title(&self.path);
-        self.touched = artifact::stamp::of(&self.path);
+        self.touched = layout::touched(&self.path);
         self.cover = cover::of(&self.path);
         self.archived = properties::archived(&self.path);
         self.field = None;

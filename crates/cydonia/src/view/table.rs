@@ -295,7 +295,7 @@ impl Cydonia {
                         .ghost("add-column")
                         .p(px(3.))
                         .child(
-                            icons::icon(icons::system::PLUS)
+                            icons::icon(icons::math::Plus)
                                 .size(px(12.))
                                 .text_color(theme.text_faint),
                         )
@@ -339,7 +339,7 @@ impl Cydonia {
                                 .py(px(7.))
                                 .gap(px(6.))
                                 .child(
-                                    icons::icon(icons::system::PLUS)
+                                    icons::icon(icons::math::Plus)
                                         .size(px(12.))
                                         .text_color(theme.text_faint),
                                 )
@@ -396,8 +396,8 @@ impl Cydonia {
             .child(
                 self.menu_button(
                     ("column-menu", ix),
-                    "grid-head",
-                    icons::icon(icons::system::MENU_DOTS)
+                    Some("grid-head"),
+                    icons::icon(icons::layout::Ellipsis)
                         .size(px(14.))
                         .text_color(theme.text_faint),
                     Menu::Column(ix),
@@ -429,7 +429,7 @@ impl Cydonia {
             })
             .collect();
         rows.push(menu::row(
-            Item::action("Delete column").with_icon(icons::files::TRASH_BIN_MINIMALISTIC),
+            Item::action("Delete column").with_icon(icons::files::Trash),
             move |this, _, cx| this.delete_column(ix, cx),
         ));
         let id = SharedString::from(format!("column-menu-{ix}"));
@@ -475,7 +475,7 @@ impl Cydonia {
             .group_hover("grid-row", |el| el.visible())
             .p(px(3.))
             .child(
-                icons::icon(icons::files::TRASH_BIN_MINIMALISTIC)
+                icons::icon(icons::files::Trash)
                     .size(px(12.))
                     .text_color(theme.text_faint),
             )
@@ -509,7 +509,11 @@ impl Cydonia {
             .and_then(|open| open.tables.get(ix));
         let archived = table.is_some_and(|table| table.archived);
         let key = table.map(|table| &table.key);
-        let renaming = matches!(&self.renaming, Some(Renaming::Table(at)) if Some(at) == key);
+        // The band draws the field when it is showing this entry — see
+        // [`Cydonia::header_renaming`], which is what keeps one field from
+        // being claimed by two places at once.
+        let renaming = matches!(&self.renaming, Some(Renaming::Table(at)) if Some(at) == key)
+            && self.header_renaming(cx).is_none();
         let tone = sidebar::tint(selected, archived, &theme);
 
         sidebar::row(
@@ -519,7 +523,7 @@ impl Cydonia {
             &theme,
         )
         .child(
-            icons::icon(icons::system::WIDGET)
+            icons::icon(icons::layout::LayoutGrid)
                 .size(px(14.))
                 .flex_none()
                 .text_color(tone),
@@ -538,14 +542,14 @@ impl Cydonia {
         .child(
             self.menu_button(
                 ("table-menu", ix),
-                "table-row",
-                icons::icon(icons::system::MENU_DOTS)
+                Some("table-row"),
+                icons::icon(icons::layout::Ellipsis)
                     .size(px(14.))
                     .text_color(theme.text_faint),
                 Menu::Entry(entry),
                 cx,
             )
-            .children(self.entry_menu(entry, archived, cx)),
+            .children(self.entry_menu(Menu::Entry(entry), entry, archived, cx)),
         )
         .on_click(cx.listener(move |this, _, _, cx| {
             this.open_table(project, ix, cx);
@@ -555,12 +559,12 @@ impl Cydonia {
 
 /// The mark for what a column holds. A menu of four bare labels asks you to
 /// read where a glyph would have told you.
-fn glyph(kind: ColType) -> &'static str {
+fn glyph(kind: ColType) -> &'static [u8] {
     match kind {
-        ColType::Text => icons::editing::TEXT,
-        ColType::Number => icons::editing::HASHTAG,
-        ColType::Date => icons::system::CALENDAR,
-        ColType::Check => icons::editing::CHECKLIST,
+        ColType::Text => icons::text::Type,
+        ColType::Number => icons::text::Hash,
+        ColType::Date => icons::time::Calendar,
+        ColType::Check => icons::text::ListChecks,
     }
 }
 

@@ -19,9 +19,11 @@ pub trait Project {
     /// This project's boards, most recently written first.
     fn boards(&self) -> Vec<Board>;
 
-    /// Mint a board and file it. Nothing for a project that cannot be written
-    /// to at all.
-    fn create_board(&self) -> Option<Board>;
+    /// Mint a board and file it, called and keyed as the caller has them.
+    /// An empty key is derived from the name, clear of the keys the project's
+    /// other boards hold — see [`crate::board::key`]. Nothing for a project
+    /// that cannot be written to at all.
+    fn create_board(&self, name: &str, key: &str) -> Option<Board>;
 
     /// Write a board back, and take the time it was written at — the key the
     /// sidebar orders on, which only the backend knows.
