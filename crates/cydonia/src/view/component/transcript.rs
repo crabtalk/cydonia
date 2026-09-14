@@ -6,7 +6,10 @@
 //! what stops a model's thinking-out-loud being presented as its reply.
 
 use crate::{
-    model::{session::ChatSession, workspace::Workspace},
+    model::{
+        session::{ChatSession, nothing_said},
+        workspace::Workspace,
+    },
     view::root,
 };
 use artifact::session::chat::{ChatItem, ToolStatus};
@@ -164,6 +167,11 @@ fn turns(items: &[ChatItem]) -> Vec<Turn> {
         if ix < items.len() && !matches!(items[ix], ChatItem::User(_)) {
             continue;
         }
+        // Startup stderr is not a conversation turn and has no rail mark.
+        if nothing_said(&items[start..ix]) {
+            start = ix;
+            continue;
+        }
         let interim =
             |item: &ChatItem| matches!(item, ChatItem::Tool { .. } | ChatItem::Thinking { .. });
         let answer_from = items[start..ix]
@@ -172,11 +180,62 @@ fn turns(items: &[ChatItem]) -> Vec<Turn> {
             .map_or(start, |last| start + last + 1);
         turns.push(Turn {
             range: start..ix,
-            answer_from: answer_from.max(start + 1),
+            answer_from: answer_from
+                .max(start + usize::from(matches!(items[start], ChatItem::User(_)))),
         });
         start = ix;
     }
     turns
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn startup() -> ChatItem {
+        ChatItem::Process {
+            command: "agent".into(),
+            output: "startup warning".into(),
+        }
+    }
+
+    #[test]
+    fn startup_logs_do_not_create_a_turn() {
+        assert!(turns(&[]).is_empty());
+        assert!(turns(&[startup()]).is_empty());
+        let turns = turns(&[
+            startup(),
+            ChatItem::User("hello".into()),
+            ChatItem::Agent("hi".into()),
+        ]);
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].range, 1..3);
+        assert_eq!(turns[0].answer_from, 2);
+    }
+
+    #[test]
+    fn a_failure_before_the_first_prompt_is_visible() {
+        let turns = turns(&[ChatItem::Notice {
+            text: "connection failed".into(),
+            failed: true,
+        }]);
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].answer_from, 0);
+    }
+
+    #[test]
+    fn startup_tool_failures_are_included_in_the_work() {
+        let turns = turns(&[ChatItem::Tool {
+            id: "startup".into(),
+            kind: ToolKind::Other,
+            label: "MCP startup".into(),
+            status: ToolStatus::Failure,
+            output: "connection failed".into(),
+        }]);
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].range, 0..1);
+        assert_eq!(turns[0].answer_from, 1);
+    }
 }
 
 /// What the session has to say for itself, in the strip its severity earns.
@@ -369,7 +428,8 @@ fn zone(
 ) -> AnyElement {
     let theme = Theme::of(cx).clone();
     let first = turn.range.start;
-    let body = (first + 1).min(turn.range.end)..turn.answer_from;
+    let body =
+        (first + usize::from(matches!(chat.items[first], ChatItem::User(_))))..turn.answer_from;
     let steps = chat.items[body.clone()]
         .iter()
         .filter(|item| matches!(item, ChatItem::Tool { .. }))
