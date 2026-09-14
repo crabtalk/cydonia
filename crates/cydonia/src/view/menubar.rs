@@ -185,11 +185,19 @@ fn menus(cx: &App) -> Vec<Menu> {
 }
 
 /// Run `f` on the window in front. A window command means whichever window
-/// that is: ⌘M over settings minimises settings.
-fn front(cx: &mut App, f: impl FnOnce(&mut Window)) {
-    if let Some(window) = cx.active_window() {
+/// that is: ⌘M over settings minimises settings, and ⌘W closes it.
+///
+/// Left to the next turn, and that is the whole of why it arrives at all: a
+/// global handler runs inside the front window's own update, which holds that
+/// window out of the app while it runs, so asking for it here and now finds
+/// nothing and the command is dropped on the floor. Deferred, it is back.
+fn front(cx: &mut App, f: impl FnOnce(&mut Window) + 'static) {
+    let Some(window) = cx.active_window() else {
+        return;
+    };
+    cx.defer(move |cx| {
         let _ = window.update(cx, |_, window, _| f(window));
-    }
+    });
 }
 
 /// Run `f` on the workspace window, brought forward first. Looked up rather
