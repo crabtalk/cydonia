@@ -1,4 +1,5 @@
-import { readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 import sharp from 'sharp';
@@ -8,6 +9,28 @@ const at = (path) => fileURLToPath(new URL(path, import.meta.url));
 const svg = (body, width = 1200, height = 630) => Buffer.from(
 	`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">${body}</svg>`
 );
+// Inter's variable TTF, pinned to a google/fonts commit. Pango wants the font
+// on disk, so the download is cached rather than committed to the repository.
+const FONT = {
+	url: 'https://cdn.jsdelivr.net/gh/google/fonts@e1d6480102fed30739fead0faee463101f892c8f/ofl/inter/Inter%5Bopsz,wght%5D.ttf',
+	sha256: '29160a80ff49ddcab2c97711247e08b1fab27a484a329ce8b813d820dc559031'
+};
+const digest = (buffer) => createHash('sha256').update(buffer).digest('hex');
+
+/** The cached Inter, downloaded and checksummed on a miss. */
+async function inter() {
+	const path = at('../.cache/Inter.ttf');
+	const cached = await readFile(path).catch(() => null);
+	if (cached && digest(cached) === FONT.sha256) return path;
+	const response = await fetch(FONT.url, { signal: AbortSignal.timeout(30_000) });
+	if (!response.ok) throw new Error(`OG image: ${response.status} fetching Inter`);
+	const font = Buffer.from(await response.arrayBuffer());
+	if (digest(font) !== FONT.sha256) throw new Error('OG image: Inter failed its checksum');
+	await mkdir(at('../.cache'), { recursive: true });
+	await writeFile(path, font);
+	return path;
+}
+
 const escape = (text) => text.replace(/[&<>"']/g, (char) => ({
 	'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;'
 })[char]);
@@ -32,11 +55,12 @@ export async function generateOg(latest) {
 		.composite([{ input: svg('<rect width="1080" height="704" rx="16" fill="white"/>', 1080, 352), blend: 'dest-in' }])
 		.png().toBuffer();
 
+	const fontfile = await inter();
 	const text = async (value, size, weight = '', color = '#0b0b0c') => sharp({
 		text: {
 			text: `<span foreground="${color}">${escape(value)}</span>`,
 			font: `Inter ${weight} ${size}`,
-			fontfile: at('./fonts/Inter.ttf'),
+			fontfile,
 			rgba: true,
 			dpi: 72
 		}

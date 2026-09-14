@@ -12,6 +12,4 @@ The 1200 × 630 template wraps the upper half of the screenshot below the
 Cydonia wordmark and headline. Both pages use a release-version query string
 on the image URL so a new release has a new share-image URL.
 
-Inter is bundled in `fonts/` for consistent rendering and is licensed under
-the SIL Open Font License in `fonts/OFL.txt`. Font source:
-https://github.com/google/fonts/tree/main/ofl/inter
+Inter is downloaded from jsDelivr on the first run, pinned to a `google/fonts` commit and checked against a SHA-256 digest, then cached in `www/.cache/Inter.ttf`. Delete that file to force a re-download. The font is under the SIL Open Font License: https://github.com/google/fonts/tree/main/ofl/inter
