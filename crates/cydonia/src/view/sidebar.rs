@@ -137,11 +137,11 @@ impl Filter {
 
     fn icon(self) -> &'static [u8] {
         match self {
-            Self::All => icons::arrows::ArrowUpDown,
+            Self::All => icons::text::ListFilter,
             Self::Sessions => icons::social::MessageCircle,
-            Self::Boards => icons::text::List,
+            Self::Boards => icons::development::SquareKanban,
             Self::Articles => icons::files::FileText,
-            Self::Tables => icons::layout::LayoutGrid,
+            Self::Tables => icons::files::Table2,
         }
     }
 
@@ -418,15 +418,15 @@ impl Cydonia {
                                     .py(px(6.))
                                     .tooltip(move |window, cx| match open_chord.clone() {
                                         Some(chord) => Tooltip::with_keystroke(
-                                            "New project",
+                                            "Open project",
                                             chord,
                                             window,
                                             cx,
                                         ),
-                                        None => Tooltip::text("New project", window, cx),
+                                        None => Tooltip::text("Open project", window, cx),
                                     })
                                     .child(
-                                        icons::icon(icons::files::FilePlus)
+                                        icons::icon(icons::files::FolderPlus)
                                             .size(px(13.))
                                             .text_color(theme.text_faint),
                                     )
@@ -508,9 +508,13 @@ impl Cydonia {
             .p(px(4.))
             .tooltip(move |window, cx| Tooltip::text(label, window, cx))
             .child(
-                icons::icon(icons::layout::PanelLeft)
-                    .size(px(14.))
-                    .text_color(tint),
+                icons::icon(if self.sidebar_open {
+                    icons::layout::PanelLeftClose
+                } else {
+                    icons::layout::PanelLeftOpen
+                })
+                .size(px(14.))
+                .text_color(tint),
             )
             .on_click(cx.listener(|this, _, _, cx| this.toggle_sidebar(cx)))
     }
@@ -934,9 +938,7 @@ impl Cydonia {
         });
     }
 
-    /// The kind picker: a button in the footer, carrying the mark of whatever
-    /// it is narrowed to, so the column says what it is showing without a line
-    /// of its own to say it in.
+    /// The kind picker keeps a stable filter icon, accented when narrowed to a type.
     fn filter_button(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let label = self.filter.label();
@@ -947,9 +949,13 @@ impl Cydonia {
             .py(px(6.))
             .tooltip(move |window, cx| Tooltip::text(format!("Showing {label}"), window, cx))
             .child(
-                icons::icon(self.filter.icon())
+                icons::icon(icons::text::ListFilter)
                     .size(px(13.))
-                    .text_color(theme.text_faint),
+                    .text_color(if self.filter == Filter::All {
+                        theme.text_faint
+                    } else {
+                        theme.accent
+                    }),
             )
             .on_click(cx.listener(|this, _, _, cx| {
                 cx.stop_propagation();
@@ -1020,12 +1026,12 @@ impl Cydonia {
                 .collect();
             rows.push(menu::submenu(
                 "New session",
-                icons::social::MessageCircle,
+                icons::social::MessageCirclePlus,
                 picks,
             ));
         } else if sessions {
             rows.push(menu::row(
-                Item::action("New session").with_icon(icons::social::MessageCircle),
+                Item::action("New session").with_icon(icons::social::MessageCirclePlus),
                 move |this, window, cx| {
                     this.select_project(ix, cx);
                     this.new_session_action(&NewSession, window, cx);
@@ -1034,7 +1040,7 @@ impl Cydonia {
         }
         if boards {
             rows.push(menu::row(
-                Item::action("New board").with_icon(icons::text::List),
+                Item::action("New board").with_icon(icons::development::SquareKanban),
                 move |this, window, cx| this.ask_new_board(ix, window, cx),
             ));
         }
@@ -1044,7 +1050,7 @@ impl Cydonia {
         ));
         if tables {
             rows.push(menu::row(
-                Item::action("New table").with_icon(icons::layout::LayoutGrid),
+                Item::action("New table").with_icon(icons::files::Table2),
                 move |this, _, cx| this.new_table(ix, cx),
             ));
         }
@@ -1063,7 +1069,7 @@ impl Cydonia {
             return None;
         }
         let rows = vec![menu::row(
-            Item::action("Remove project").with_icon(icons::files::Trash),
+            Item::action("Remove project").with_icon(icons::files::FolderMinus),
             move |this, _, cx| this.close_project(ix, cx),
         )];
         let id = SharedString::from(format!("project-menu-{ix}"));
@@ -1184,7 +1190,7 @@ impl Cydonia {
             &theme,
         )
         .child(
-            icons::icon(icons::text::List)
+            icons::icon(icons::development::SquareKanban)
                 .size(px(14.))
                 .flex_none()
                 .text_color(tint),
@@ -1229,7 +1235,7 @@ impl Cydonia {
             return None;
         }
         let put = match archived {
-            true => Item::action("Unarchive").with_icon(icons::files::Archive),
+            true => Item::action("Unarchive").with_icon(icons::files::ArchiveRestore),
             false => Item::action("Archive").with_icon(icons::files::Archive),
         };
         // `../desktop`'s rule for what a `···` may carry: only commands with no

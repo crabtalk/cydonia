@@ -526,7 +526,7 @@ impl Cydonia {
             rows.push(self.make_row(
                 "session",
                 "New session",
-                icons::social::MessageCircle,
+                icons::social::MessageCirclePlus,
                 cx,
                 move |this, window, cx| this.new_session_action(&NewSession, window, cx),
             ));
@@ -535,7 +535,7 @@ impl Cydonia {
             rows.push(self.make_row(
                 "board",
                 "New board",
-                icons::text::List,
+                icons::development::SquareKanban,
                 cx,
                 move |this, window, cx| this.ask_new_board(ix, window, cx),
             ));
@@ -551,7 +551,7 @@ impl Cydonia {
             rows.push(self.make_row(
                 "table",
                 "New table",
-                icons::layout::LayoutGrid,
+                icons::files::Table2,
                 cx,
                 move |this, _, cx| this.new_table(ix, cx),
             ));

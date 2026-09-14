@@ -444,7 +444,7 @@ impl SettingsWindow {
         if listings.is_empty() {
             return theme
                 .empty_state(
-                    icons::layout::LayoutGrid,
+                    icons::development::Bot,
                     "No catalogue",
                     "The agent registry could not be reached.",
                 )

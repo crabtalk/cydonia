@@ -130,7 +130,7 @@ impl Section {
             Self::Appearance => icons::weather::Sun,
             Self::Shortcuts => icons::development::Command,
             Self::Features => icons::account::SlidersHorizontal,
-            Self::Agents => icons::layout::LayoutGrid,
+            Self::Agents => icons::development::Bot,
             Self::Mcp => icons::development::Plug,
             Self::Performance => icons::devices::Cpu,
             Self::Developer => icons::development::Wrench,

@@ -472,7 +472,7 @@ impl Composer {
                     .text_color(theme.text_muted)
                     .into_any_element(),
                 // A slot the catalog has no mark for still has to open the menu.
-                None => icons::icon(icons::layout::LayoutGrid)
+                None => icons::icon(icons::development::Bot)
                     .size(mark)
                     .text_color(theme.text_muted)
                     .into_any_element(),
@@ -688,7 +688,7 @@ impl Composer {
             return None;
         }
         let glyph = if streaming {
-            icons::multimedia::CircleStop
+            icons::multimedia::Square
         } else {
             icons::arrows::ArrowUp
         };
