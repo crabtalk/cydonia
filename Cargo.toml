@@ -20,39 +20,24 @@ strip = "symbols"
 artifact = { version = "0.1.3", path = "crates/artifact", package = "cydonia-artifact" }
 anyhow = "1"
 axum = "0.8"
-bezel = { version = "0.1.12", features = ["platform"] }
+bezel = { version = "0.1.13", features = ["platform"] }
 cacp = { version = "0.1.0", default-features = false }
 cacp-agents = "0.1.0"
 dirs = "6"
-editor = { version = "0.1.12", package = "bezel-editor" }
+editor = { version = "0.1.13", package = "bezel-editor" }
 futures = "0.3"
 global-hotkey = "0.8"
 image = "0.25"
 lru = "0.18"
-markdown = { version = "0.1.12", package = "bezel-markdown" }
+markdown = { version = "0.1.13", package = "bezel-markdown" }
 mcp = { version = "0.1.3", path = "crates/mcp", package = "cydonia-mcp" }
 notify = "8"
 rusqlite = { version = "0.40", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-syntax = { version = "0.1.12", package = "bezel-syntax" }
+syntax = { version = "0.1.13", package = "bezel-syntax" }
 tokio = { version = "1", features = ["net", "process", "rt-multi-thread", "sync", "time"] }
 toml = "0.8"
 toml_edit = "0.22"
 ureq = "3"
 url = { version = "2", features = ["serde"] }
-
-# Local bezel while the drag-selection fix is being tested — a drag that leaves
-# a field's box has to keep selecting. Every workspace crate at once: patching
-# one alone would put a second copy of `bezel-theme` in the graph. Take this out
-# before the fix is released.
-[patch.crates-io]
-bezel = { path = "../bezel/crates/bezel" }
-bezel-agent = { path = "../bezel/crates/agent" }
-bezel-editor = { path = "../bezel/crates/editor" }
-bezel-icons = { path = "../bezel/crates/icons" }
-bezel-markdown = { path = "../bezel/crates/markdown" }
-bezel-motion = { path = "../bezel/crates/motion" }
-bezel-syntax = { path = "../bezel/crates/syntax" }
-bezel-theme = { path = "../bezel/crates/theme" }
-bezel-ui = { path = "../bezel/crates/ui" }
