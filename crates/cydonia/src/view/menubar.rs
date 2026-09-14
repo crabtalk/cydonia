@@ -24,8 +24,7 @@ use crate::{
         article::TogglePlainText,
         root::{
             CloseProject, Cydonia, NewArticle, NewBoard, NewSession, NewTable, NextEntry,
-            OpenProject, OpenSettings, Pane, PrevEntry, ShowArticle, ShowBoard, ShowChat,
-            ShowTable, ToggleSidebar,
+            OpenProject, OpenSettings, Pane, PrevEntry, ToggleSidebar,
         },
     },
 };
@@ -181,11 +180,6 @@ fn menus(cx: &App) -> Vec<Menu> {
         Menu::new("View").items([
             MenuItem::action("Toggle Sidebar", ToggleSidebar),
             MenuItem::separator(),
-            MenuItem::action("Chat", ShowChat),
-            MenuItem::action("Board", ShowBoard),
-            MenuItem::action("Article", ShowArticle),
-            MenuItem::action("Table", ShowTable),
-            MenuItem::separator(),
             // Drawn ⌥⌘→ and ⌥⌘←, which is why those are bound first: the
             // `ctrl-tab` pair these also answer to is a chord gpui cannot
             // hand macOS, and an item that named it would teach ⌃T.
@@ -195,7 +189,7 @@ fn menus(cx: &App) -> Vec<Menu> {
             // Here rather than left to the pane's own `···`, because ⌘E is the
             // editor's inline code and only a key equivalent on the bar takes
             // a chord before the focused surface is offered it — see
-            // [`crate::view::article::init`].
+            // [`crate::view::keymap::Command::PlainText`].
             MenuItem::action("Plain Text", TogglePlainText),
             MenuItem::separator(),
             MenuItem::action("Enter Full Screen", ToggleFullScreen),
@@ -256,8 +250,6 @@ impl Cydonia {
         let features = &workspace.settings.features;
         let (sessions, boards, tables) = (features.sessions, features.boards, features.tables);
         let project = workspace.active.is_some();
-        let panes = [Pane::Chat, Pane::Board, Pane::Article, Pane::Table]
-            .map(|pane| self.has_pane(pane, cx));
         // Nothing on screen is nothing to step from — the launch view is not
         // an entry, and its neighbour is not another one.
         let showing = self.showing(cx);
@@ -279,22 +271,10 @@ impl Cydonia {
                         root.on_action(cx.listener(Self::new_table_action))
                     })
             })
-            .when(panes[0], |root| {
-                root.on_action(cx.listener(Self::show_chat))
-            })
-            .when(panes[1], |root| {
-                root.on_action(cx.listener(Self::show_board))
-            })
-            .when(panes[2], |root| {
-                root.on_action(cx.listener(Self::show_article))
-            })
             // Only where a document is the thing on screen: the chord acts on
             // the open page, and the item greys itself everywhere else.
             .when(showing == Some(Pane::Article), |root| {
                 root.on_action(cx.listener(Self::toggle_plain_text))
-            })
-            .when(panes[3], |root| {
-                root.on_action(cx.listener(Self::show_table))
             })
             .when(entries, |root| {
                 root.on_action(cx.listener(Self::next_entry))

@@ -148,12 +148,13 @@ pub fn formats(formatting: &Formatting) -> Vec<Format> {
 ///
 /// Bold has none, and that is the whole reason this bar is reachable at all.
 /// `cmd-b` is the sidebar's here — the menu bar carries it, so AppKit takes
-/// the chord before the window is offered it, see [`crate::view::root::init`]
-/// — and the editor's own bold is never reached. A tooltip printing ⌘B would
-/// be documenting a lie.
+/// the chord before the window is offered it, see
+/// [`crate::view::keymap::Command`] — and the editor's own bold is never
+/// reached. A tooltip printing ⌘B would be documenting a lie.
 ///
-/// Code is the second one spent that way: ⌘E is Plain text here, see
-/// [`crate::view::article::init`].
+/// Code is the second one spent that way: ⌘E is Plain text here. Both are
+/// chords the reader can move, so what a moved one leaves behind is the
+/// editor's own mark, reachable from this bar either way.
 pub fn keystroke(mark: &Mark) -> Option<&'static str> {
     match mark {
         Mark::Italic => Some("⌘I"),

@@ -25,7 +25,7 @@ use crate::{
         create, info, menubar,
         root::{
             self, CloseProject, NewArticle, NewBoard, NewSession, NewTable, NextEntry, OpenProject,
-            OpenSettings, PrevEntry, ShowArticle, ShowBoard, ShowChat, ShowTable, ToggleSidebar,
+            OpenSettings, PrevEntry, ToggleSidebar,
         },
         table,
     },
@@ -56,10 +56,6 @@ pub enum Command {
     OpenProject,
     CloseProject,
     ToggleSidebar,
-    ShowChat,
-    ShowBoard,
-    ShowArticle,
-    ShowTable,
     NextEntry,
     PrevEntry,
     PlainText,
@@ -88,7 +84,7 @@ impl Menu {
 }
 
 impl Command {
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 11] = [
         Self::OpenSettings,
         Self::NewSession,
         Self::NewBoard,
@@ -97,10 +93,6 @@ impl Command {
         Self::OpenProject,
         Self::CloseProject,
         Self::ToggleSidebar,
-        Self::ShowChat,
-        Self::ShowBoard,
-        Self::ShowArticle,
-        Self::ShowTable,
         Self::NextEntry,
         Self::PrevEntry,
         Self::PlainText,
@@ -117,10 +109,6 @@ impl Command {
             Self::OpenProject => "open_project",
             Self::CloseProject => "close_project",
             Self::ToggleSidebar => "toggle_sidebar",
-            Self::ShowChat => "show_chat",
-            Self::ShowBoard => "show_board",
-            Self::ShowArticle => "show_article",
-            Self::ShowTable => "show_table",
             Self::NextEntry => "next_entry",
             Self::PrevEntry => "prev_entry",
             Self::PlainText => "plain_text",
@@ -138,10 +126,6 @@ impl Command {
             Self::OpenProject => "Open Project…",
             Self::CloseProject => "Close Project",
             Self::ToggleSidebar => "Toggle Sidebar",
-            Self::ShowChat => "Chat",
-            Self::ShowBoard => "Board",
-            Self::ShowArticle => "Article",
-            Self::ShowTable => "Table",
             Self::NextEntry => "Next Entry",
             Self::PrevEntry => "Previous Entry",
             Self::PlainText => "Plain Text",
@@ -157,14 +141,7 @@ impl Command {
             | Self::NewTable
             | Self::OpenProject
             | Self::CloseProject => Menu::File,
-            Self::ToggleSidebar
-            | Self::ShowChat
-            | Self::ShowBoard
-            | Self::ShowArticle
-            | Self::ShowTable
-            | Self::NextEntry
-            | Self::PrevEntry
-            | Self::PlainText => Menu::View,
+            Self::ToggleSidebar | Self::NextEntry | Self::PrevEntry | Self::PlainText => Menu::View,
         }
     }
 
@@ -181,15 +158,6 @@ impl Command {
             Self::OpenProject => "cmd-o",
             // What every app with a sidebar binds it to.
             Self::ToggleSidebar => "cmd-b",
-            // Unbound, and ⌘1–⌘4 is what they used to be. Three of the four are
-            // dead on a fresh install — sessions, boards and tables all ship
-            // off — and the ring [`Self::NextEntry`] steps is at most four
-            // long, one entry per kind, so stepping reaches any of them in
-            // three presses. Four of the best keys on the board for two
-            // keystrokes, on a chord that means "go to tab N" in every other
-            // app. They stay in the View menu and in Settings › Shortcuts,
-            // where anyone who wants them can say so.
-            Self::ShowChat | Self::ShowBoard | Self::ShowArticle | Self::ShowTable => return None,
             // The pair the View menu draws. `ctrl-tab` reaches these too and
             // is not movable: gpui has no macOS equivalent for `tab`, so an
             // item naming it would print ⌃T — see [`root::bindings`].
@@ -212,10 +180,6 @@ impl Command {
             Self::OpenProject => KeyBinding::new(chord, OpenProject, None),
             Self::CloseProject => KeyBinding::new(chord, CloseProject, None),
             Self::ToggleSidebar => KeyBinding::new(chord, ToggleSidebar, None),
-            Self::ShowChat => KeyBinding::new(chord, ShowChat, None),
-            Self::ShowBoard => KeyBinding::new(chord, ShowBoard, None),
-            Self::ShowArticle => KeyBinding::new(chord, ShowArticle, None),
-            Self::ShowTable => KeyBinding::new(chord, ShowTable, None),
             Self::NextEntry => KeyBinding::new(chord, NextEntry, None),
             Self::PrevEntry => KeyBinding::new(chord, PrevEntry, None),
             Self::PlainText => KeyBinding::new(chord, TogglePlainText, None),

@@ -54,10 +54,6 @@ actions!(
         CloseProject,
         OpenSettings,
         ToggleSidebar,
-        ShowChat,
-        ShowBoard,
-        ShowArticle,
-        ShowTable,
         CommitName,
         DismissName,
         NextEntry,
@@ -599,22 +595,6 @@ impl Cydonia {
             return;
         };
         self.close_project(ix, cx);
-    }
-
-    pub(crate) fn show_chat(&mut self, _: &ShowChat, _: &mut Window, cx: &mut Context<Self>) {
-        self.show_pane(Pane::Chat, cx);
-    }
-
-    pub(crate) fn show_board(&mut self, _: &ShowBoard, _: &mut Window, cx: &mut Context<Self>) {
-        self.show_pane(Pane::Board, cx);
-    }
-
-    pub(crate) fn show_article(&mut self, _: &ShowArticle, _: &mut Window, cx: &mut Context<Self>) {
-        self.show_pane(Pane::Article, cx);
-    }
-
-    pub(crate) fn show_table(&mut self, _: &ShowTable, _: &mut Window, cx: &mut Context<Self>) {
-        self.show_pane(Pane::Table, cx);
     }
 
     pub(crate) fn open_settings(&mut self, section: Section, cx: &mut Context<Self>) {

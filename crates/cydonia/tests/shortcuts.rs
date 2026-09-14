@@ -22,23 +22,21 @@ fn a_command_nobody_moved_keeps_its_default() {
     assert_eq!(keymap::chord(Command::NewBoard, &held), None);
 }
 
-/// The four panes ship unbound on purpose — see [`Command::default`]. A chord
-/// creeping back onto one of them is a regression, not a decision.
+/// Stepping is the whole of how a pane is reached by key. The four commands
+/// that jumped straight to one are gone — the ring is at most four long, one
+/// entry per kind, so there was never more than three presses in it.
 #[test]
 fn stepping_between_panes_is_the_only_chord_that_ships_for_it() {
     let bare = Shortcuts::default();
-    for command in [
-        Command::ShowChat,
-        Command::ShowBoard,
-        Command::ShowArticle,
-        Command::ShowTable,
-    ] {
-        assert_eq!(keymap::chord(command, &bare), None, "{}", command.title());
-    }
     assert_eq!(
         keymap::chord(Command::NextEntry, &bare),
         Some("alt-cmd-right")
     );
+    assert_eq!(
+        keymap::chord(Command::PrevEntry, &bare),
+        Some("alt-cmd-left")
+    );
+    assert!(!Command::ALL.iter().any(|command| command.title() == "Chat"));
 }
 
 #[test]
