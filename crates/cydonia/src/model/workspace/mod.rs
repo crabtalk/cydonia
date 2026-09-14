@@ -266,6 +266,20 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Move a command's chord, or take it back to its default.
+    ///
+    /// The file and this copy only. Putting the keymap back together is the
+    /// caller's — see [`crate::view::keymap::rebind`], which the settings
+    /// window runs once the write has landed: a model that reached into the
+    /// keymap would be a model that knows what the app's actions are.
+    pub fn set_shortcut(&mut self, key: &str, chord: Option<&str>, cx: &mut Context<Self>) {
+        if settings::set_shortcut(key, chord).is_err() {
+            return;
+        }
+        self.settings.shortcuts.set(key, chord);
+        cx.notify();
+    }
+
     // ── the tool server ──────────────────────────────────────────
 
     /// Open or close the door to match the two switches that decide it. One

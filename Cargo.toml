@@ -26,6 +26,7 @@ cacp-agents = "0.1.0"
 dirs = "6"
 editor = { version = "0.1.12", package = "bezel-editor" }
 futures = "0.3"
+global-hotkey = "0.8"
 image = "0.25"
 lru = "0.18"
 markdown = { version = "0.1.12", package = "bezel-markdown" }

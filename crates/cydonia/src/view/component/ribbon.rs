@@ -23,7 +23,7 @@ use crate::view::{
 };
 use bezel::{
     gpui::{
-        self, Anchor, AnyElement, App, Bounds, Context, Entity, Focusable as _, KeyBinding, Pixels,
+        self, Anchor, AnyElement, Bounds, Context, Entity, Focusable as _, KeyBinding, Pixels,
         Point, SharedString, Window, actions, div, point, prelude::*, px,
     },
     motion,
@@ -46,12 +46,12 @@ actions!(cydonia_ribbon, [ConfirmLink, DismissLink]);
 /// drops it. Everywhere else those two stay a newline and nothing.
 pub const LINK_CONTEXT: &str = "CydoniaArticleLink";
 
-pub fn init(cx: &mut App) {
+pub fn bindings() -> Vec<KeyBinding> {
     let ctx = Some(LINK_CONTEXT);
-    cx.bind_keys([
+    vec![
         KeyBinding::new("enter", ConfirmLink, ctx),
         KeyBinding::new("escape", DismissLink, ctx),
-    ]);
+    ]
 }
 
 /// How far the bar stands off the line it belongs to.

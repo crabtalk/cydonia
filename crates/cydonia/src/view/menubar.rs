@@ -2,10 +2,10 @@
 //! that decides which of them are live.
 //!
 //! An item carries an action and a name, never a shortcut. `set_menus` reads
-//! the equivalent off the keymap, so the `bind_keys` in each view's `init`
-//! stays the one place a chord is written — at the price of two rules:
+//! the equivalent off the keymap, so [`crate::view::keymap`] stays the one
+//! place a chord is written — at the price of two rules:
 //!
-//! * every `init` runs before this module does, or an item is built for an
+//! * the keymap is bound before this module runs, or an item is built for an
 //!   action whose binding is not registered yet and shows no shortcut at all;
 //! * an action bound inside a key context does not belong here. AppKit claims
 //!   a key equivalent before gpui sees the keystroke and dispatches it straight
@@ -51,18 +51,23 @@ actions!(
     ]
 );
 
-pub fn init(cx: &mut App) {
-    // A nib gives an app these; there is no nib here, and an item whose action
-    // nothing has bound shows no shortcut and answers to none — ⌘Q included.
-    cx.bind_keys([
+/// The window and application chords, which are not the reader's to move: they
+/// are where macOS puts them for every app, and an app that let you move them
+/// would be the only one you had to remember. Bound at all because a nib gives
+/// an app these and there is no nib here — an item whose action nothing has
+/// bound shows no shortcut and answers to none, ⌘Q included.
+pub fn bindings() -> Vec<KeyBinding> {
+    vec![
         KeyBinding::new("cmd-q", Quit, None),
         KeyBinding::new("cmd-h", Hide, None),
         KeyBinding::new("alt-cmd-h", HideOthers, None),
         KeyBinding::new("cmd-w", CloseWindow, None),
         KeyBinding::new("cmd-m", Minimize, None),
         KeyBinding::new("ctrl-cmd-f", ToggleFullScreen, None),
-    ]);
+    ]
+}
 
+pub fn init(cx: &mut App) {
     cx.on_action(|_: &Quit, cx: &mut App| cx.quit());
     cx.on_action(|_: &Hide, cx: &mut App| cx.hide());
     cx.on_action(|_: &HideOthers, cx: &mut App| cx.hide_other_apps());
@@ -103,6 +108,16 @@ pub fn init(cx: &mut App) {
         });
     }
 
+    refresh(cx);
+}
+
+/// Build the tree again and hand it over, so every item carries the chord the
+/// keymap holds *now*.
+///
+/// Called at launch and after a rebind. It has to be both: AppKit keeps the
+/// key equivalent it was given and claims the chord before gpui sees it, so a
+/// moved shortcut that left the menus alone would leave the old chord firing.
+pub fn refresh(cx: &mut App) {
     let menus = menus(cx);
     cx.set_menus(menus);
 }

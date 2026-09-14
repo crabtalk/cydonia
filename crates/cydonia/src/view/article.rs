@@ -31,18 +31,18 @@ actions!(cydonia_article, [LeaveTitle, TogglePlainText]);
 /// `enter` and `down` in the title move to the content. Bound on the field's
 /// own context, which is the only thing deep enough to beat the field itself.
 ///
-/// `cmd-e` is claimed app-wide, and the View menu carries it so AppKit takes
-/// the chord before the window is offered it — the same way `cmd-b` is the
-/// sidebar's. The editor's own `cmd-e` — inline code — is not reached while
-/// this one is on the bar, so the ribbon's code button advertises no chord;
-/// see [`crate::view::component::ribbon::keystroke`].
-pub fn init(cx: &mut App) {
+/// [`TogglePlainText`] is not here: it is a command a person may move, so it
+/// is bound from [`crate::view::keymap`] with the rest of them. What it does
+/// to the editor is the same either way — the View menu carries it, so AppKit
+/// takes the chord before the window is offered it and the editor's own `⌘E`,
+/// inline code, is never reached. That is why the ribbon's code button
+/// advertises no chord; see [`crate::view::component::ribbon::keystroke`].
+pub fn bindings() -> Vec<KeyBinding> {
     let ctx = Some(article::TITLE_CONTEXT);
-    cx.bind_keys([
+    vec![
         KeyBinding::new("enter", LeaveTitle, ctx),
         KeyBinding::new("down", LeaveTitle, ctx),
-        KeyBinding::new("cmd-e", TogglePlainText, None),
-    ]);
+    ]
 }
 
 /// The column the document is set in, matching the transcript's. Off, for a

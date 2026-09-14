@@ -32,6 +32,7 @@ mod features;
 mod general;
 mod mcp;
 mod performance;
+mod shortcuts;
 mod theme;
 mod typography;
 
@@ -54,6 +55,9 @@ const CONTENT_MAX_WIDTH: f32 = 860.;
 pub enum Section {
     General,
     Appearance,
+    // With Appearance, because the two answer the same question — how the app
+    // meets you — and before the three that answer what it does.
+    Shortcuts,
     // Before Agents, because it is what decides whether agents matter: with
     // sessions off, nothing installed under Agents can be launched.
     Features,
@@ -67,9 +71,10 @@ pub enum Section {
 }
 
 impl Section {
-    const ALL: [Self; 7] = [
+    const ALL: [Self; 8] = [
         Self::General,
         Self::Appearance,
+        Self::Shortcuts,
         Self::Features,
         Self::Agents,
         Self::Mcp,
@@ -92,6 +97,7 @@ impl Section {
         match self {
             Self::General => "General",
             Self::Appearance => "Appearance",
+            Self::Shortcuts => "Shortcuts",
             Self::Features => "Features",
             Self::Agents => "Agents",
             Self::Mcp => "MCP",
@@ -105,6 +111,9 @@ impl Section {
     /// and the gap under the whole block is the same either way.
     fn subtitle(self) -> Option<&'static str> {
         match self {
+            Self::Shortcuts => {
+                Some("Press a chord to record it. ⎋ leaves it alone, ⌫ takes it away.")
+            }
             Self::Features => Some("Parts of cydonia you can put away, and ones to ask for."),
             Self::Mcp => {
                 Some("The tools cydonia offers the agents it runs, over a port on this machine.")
@@ -119,6 +128,7 @@ impl Section {
             // The gear macOS itself puts on General.
             Self::General => icons::account::Settings,
             Self::Appearance => icons::weather::Sun,
+            Self::Shortcuts => icons::development::Command,
             Self::Features => icons::account::SlidersHorizontal,
             Self::Agents => icons::layout::LayoutGrid,
             Self::Mcp => icons::development::Plug,
@@ -142,6 +152,9 @@ pub struct SettingsWindow {
     search: Entity<TextField>,
     /// The cover ceiling's field, while its dialog is up.
     editing: Option<Entity<TextField>>,
+    /// The shortcut row taking keys, while one is — see
+    /// [`shortcuts::Recording`].
+    recording: Option<shortcuts::Recording>,
     error: Option<SharedString>,
 }
 
@@ -208,9 +221,19 @@ pub fn open(
                     busy: HashSet::new(),
                     search,
                     editing: None,
+                    recording: None,
                     error: None,
                 };
                 this.load(cx);
+                // The keymap is emptied while a chord is being recorded, so a
+                // window shut in the middle of that has to put it back — see
+                // [`shortcuts`].
+                cx.on_release(|this: &mut SettingsWindow, cx| {
+                    if this.recording.is_some() {
+                        shortcuts::restore(&this.workspace, cx);
+                    }
+                })
+                .detach();
                 this
             })
         },
@@ -346,6 +369,7 @@ impl SettingsWindow {
             Section::Agents => self.load(cx),
             Section::General
             | Section::Appearance
+            | Section::Shortcuts
             | Section::Features
             | Section::Mcp
             | Section::Performance
@@ -442,6 +466,7 @@ impl Render for SettingsWindow {
                             .child(match self.section {
                                 Section::General => self.general_body(cx),
                                 Section::Appearance => self.appearance_body(cx),
+                                Section::Shortcuts => self.shortcuts_body(cx),
                                 Section::Features => self.features_body(cx),
                                 Section::Agents => self.agents_body(cx),
                                 Section::Mcp => self.mcp_body(cx),

@@ -38,6 +38,10 @@ pub struct Settings {
     /// keep belonging to the document rather than to it.
     #[serde(default)]
     pub appearance: Appearance,
+    /// The chords the app answers to. A table, and empty in a fresh file —
+    /// see [`Shortcuts`].
+    #[serde(default)]
+    pub shortcuts: Shortcuts,
     /// What the app will show. Every bare key has to go above it, and every
     /// table below — `[[agents]]` is the one that follows.
     #[serde(default)]
@@ -109,6 +113,51 @@ impl Default for Appearance {
             // nothing scrolls a fence back to a caret typed off its right
             // edge — that is the cost, and the switch is the way back.
             wrap_code: false,
+        }
+    }
+}
+
+/// The chords, by the key the command is written under — see
+/// [`crate::view::keymap::Command`].
+///
+/// Sparse: only what differs from the default is kept, so a default that moves
+/// between releases moves for everyone who never said otherwise. An absent
+/// table is every default, which is why the install that predates this needs
+/// no migration.
+///
+/// A map rather than a field per command, because the command list is
+/// [`crate::view::keymap`]'s to know and this file only stores what it is told.
+/// A key naming no command is left where it is rather than dropped: a typo is
+/// worth being able to see and fix.
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Shortcuts(BTreeMap<String, String>);
+
+impl Shortcuts {
+    /// The one key here that is not a command: the chord the *system* holds,
+    /// which brings the app forward from inside whatever else you are using.
+    /// Absent means nothing is held — a key claimed across the whole desktop
+    /// is one to be asked for, so a fresh install claims none.
+    pub const ACTIVATE: &'static str = "activate";
+
+    pub fn get(&self, key: &str) -> Option<&str> {
+        self.0.get(key).map(String::as_str)
+    }
+
+    pub fn activate(&self) -> Option<&str> {
+        self.get(Self::ACTIVATE)
+    }
+
+    /// Move one key in memory, to match what [`set_shortcut`] put in the file.
+    /// `None` is back to the default, which is the key's absence.
+    pub fn set(&mut self, key: &str, chord: Option<&str>) {
+        match chord {
+            Some(chord) => {
+                self.0.insert(key.to_owned(), chord.to_owned());
+            }
+            None => {
+                self.0.remove(key);
+            }
         }
     }
 }
@@ -267,6 +316,7 @@ impl Default for Settings {
             watch_bounce: watch_bounce(),
             auto_update: auto_update(),
             appearance: Appearance::default(),
+            shortcuts: Shortcuts::default(),
             features: Features::default(),
             mcp: Mcp::default(),
             // None, and named by nobody but the person who put one here.
@@ -411,6 +461,24 @@ pub fn set_appearance(appearance: &Appearance) -> Result<()> {
 pub fn set_feature(feature: Feature, on: bool) -> Result<()> {
     edit(|doc| {
         table(doc, "features")?[feature.key()] = toml_edit::value(on);
+        Ok(true)
+    })
+}
+
+/// Write one chord into `[shortcuts]`, or take it back out.
+///
+/// `None` removes the key rather than writing a default in its place: the
+/// table says what differs, and a command sitting on its default differs in
+/// nothing.
+pub fn set_shortcut(key: &str, chord: Option<&str>) -> Result<()> {
+    edit(|doc| {
+        let held = table(doc, "shortcuts")?;
+        match chord {
+            Some(chord) => held[key] = toml_edit::value(chord),
+            None => {
+                held.remove(key);
+            }
+        }
         Ok(true)
     })
 }

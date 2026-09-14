@@ -5,16 +5,12 @@ use bezel::{
     gpui::App,
     gpui_platform,
     theme::{self, Tint, appearance},
-    ui::{self, focus, input},
+    ui::{self, input},
 };
 use cydonia::{
     agent, memory,
     model::{media, migrate, settings, state, update, workspace},
-    view::{
-        article, board,
-        component::{composer, ribbon},
-        create, info, menubar, root, table,
-    },
+    view::{hotkey, keymap, menubar, root},
 };
 
 fn main() -> Result<()> {
@@ -63,19 +59,16 @@ fn main() -> Result<()> {
             syntax::lang::LANGS.iter().map(|lang| lang.name),
         );
         memory::init(settings.cover_memory * 1_000_000, cx);
-        input::init(cx);
-        focus::init(cx);
-        composer::init(cx);
-        editor::init(cx);
+        // Every chord in the app, bezel's included — see
+        // [`cydonia::view::keymap`]. One call rather than an `init` per
+        // surface, because the reader can move some of them and moving one
+        // means putting the whole keymap back together.
+        keymap::bind_all(&settings.shortcuts, cx);
+        // And the one key the app does not hold itself, which is nothing at
+        // all until somebody asks for one — see [`cydonia::view::hotkey`].
+        hotkey::apply(settings.shortcuts.activate(), cx);
         // Where a pasted screenshot's bytes go, which is the app's to say.
         media::init(cx);
-        article::init(cx);
-        ribbon::init(cx);
-        board::init(cx);
-        info::init(cx);
-        create::init(cx);
-        table::init(cx);
-        root::init(cx);
         // Ahead of the menu bar, which asks whether this build has an updater
         // at all before it puts an item there for one.
         update::init(settings.auto_update, cx);

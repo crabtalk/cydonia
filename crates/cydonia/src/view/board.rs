@@ -56,13 +56,13 @@ const CARD_EDITOR_MAX_ROWS: usize = 512;
 /// as a heading, in a lane 272 wide rather than on a page.
 const CARD_TEXT_SCALE: f32 = TextStyle::Callout.size() / TextStyle::Body.size();
 
-pub fn init(cx: &mut App) {
+pub fn bindings() -> Vec<KeyBinding> {
     let ctx = Some(KEY_CONTEXT);
-    cx.bind_keys([
+    vec![
         KeyBinding::new("enter", CommitCard, ctx),
         KeyBinding::new("shift-enter", input::InsertNewline, ctx),
         KeyBinding::new("escape", DismissCard, ctx),
-    ]);
+    ]
 }
 
 /// The board's one text field — whichever card is being written or rewritten.
