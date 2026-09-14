@@ -10,7 +10,7 @@ use bezel::{
         self, AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, KeyBinding,
         Render, ScrollHandle, SharedString, Window, actions, div, prelude::*, px,
     },
-    theme::{self, Glass, SurfaceStyle, TextStyle, Theme, Typeset},
+    theme::{Glass, SurfaceStyle, TextStyle, Theme, Typeset},
     ui::{
         icons::{self, Icon},
         input::{self, FieldEvent, Shape, TextField},
@@ -673,12 +673,12 @@ impl Composer {
             .into_any_element()
     }
 
-    /// Send, as the disc inside the pill's trailing end — a stop square while a
-    /// turn is in flight, and inert when there is nothing to send. Quietened so
-    /// the glyph stays legible and nothing invites a press.
-    fn button(&self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
+    /// Show Send only for a draft; keep Stop available throughout a turn.
+    fn button(&self, theme: &Theme, cx: &mut Context<Self>) -> Option<AnyElement> {
         let streaming = self.streaming;
-        let ready = streaming || !self.is_empty(cx);
+        if !streaming && self.is_empty(cx) {
+            return None;
+        }
         let glyph = if streaming {
             icons::multimedia::CircleStop
         } else {
@@ -691,39 +691,44 @@ impl Composer {
             .rounded_full()
             .flex()
             .items_center()
-            .justify_center();
-        let disc = if ready {
-            disc.bg(if streaming { theme.danger } else { theme.solid })
-                .cursor_pointer()
-                .hover(|s| s.opacity(0.9))
-                .child(
-                    icons::icon(glyph)
-                        .size(glyph_size)
-                        .text_color(if streaming {
-                            theme.on_accent
-                        } else {
-                            theme.on_solid
-                        }),
-                )
-        } else {
-            disc.bg(theme::ink(0.06)).child(
+            .justify_center()
+            .bg(if streaming { theme.danger } else { theme.solid })
+            .cursor_pointer()
+            .hover(|s| s.opacity(0.9))
+            .child(
                 icons::icon(glyph)
                     .size(glyph_size)
-                    .text_color(theme.text_faint),
-            )
-        };
-        div()
-            .id("composer-send")
-            .flex_none()
-            .on_click(cx.listener(|composer, _, _, cx| {
-                if composer.streaming {
-                    cx.emit(ComposerEvent::Cancel);
-                } else {
-                    composer.submit(cx);
-                }
-            }))
-            .child(disc)
-            .into_any_element()
+                    .text_color(if streaming {
+                        theme.on_accent
+                    } else {
+                        theme.on_solid
+                    }),
+            );
+        Some(
+            div()
+                .id("composer-send")
+                .flex_none()
+                .tooltip(move |window, cx| {
+                    Tooltip::text(
+                        if streaming {
+                            "Stop response"
+                        } else {
+                            "Send message (Enter)"
+                        },
+                        window,
+                        cx,
+                    )
+                })
+                .on_click(cx.listener(|composer, _, _, cx| {
+                    if composer.streaming {
+                        cx.emit(ComposerEvent::Cancel);
+                    } else {
+                        composer.submit(cx);
+                    }
+                }))
+                .child(disc)
+                .into_any_element(),
+        )
     }
 
     fn body(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -746,7 +751,7 @@ impl Composer {
                     // The capsule and the disc hold the last line as the field
                     // grows up past them.
                     .items_end()
-                    .gap(px(root::COMPOSER_INSET))
+                    .gap(px(10.))
                     .children(self.chip(&theme, cx))
                     .child(
                         // The pill's positioning parent, as with the agent
@@ -761,7 +766,13 @@ impl Composer {
                                 div()
                                     .w_full()
                                     .rounded(radius)
-                                    .p(px(root::COMPOSER_INSET))
+                                    .py(px(root::COMPOSER_INSET))
+                                    .pl(px(12.))
+                                    .pr(px(if self.streaming || !self.is_empty(cx) {
+                                        root::COMPOSER_INSET
+                                    } else {
+                                        12.
+                                    }))
                                     .flex()
                                     .flex_row()
                                     .items_end()
@@ -775,7 +786,7 @@ impl Composer {
                                             .items_center()
                                             .child(self.field.clone()),
                                     )
-                                    .child(self.button(&theme, cx))
+                                    .children(self.button(&theme, cx))
                                     .surface(&theme, SURFACE),
                             )
                             .children(picker),

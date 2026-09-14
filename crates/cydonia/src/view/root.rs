@@ -91,12 +91,12 @@ pub(crate) fn composer_height() -> f32 {
 }
 
 /// The room the pill keeps above and below its content.
-pub(crate) const COMPOSER_INSET: f32 = 8.;
+pub(crate) const COMPOSER_INSET: f32 = 4.;
 
 /// Keep the send target comfortable at small text sizes, and grow with the
 /// line box when the text-size setting needs more room.
 pub(crate) fn composer_disc() -> f32 {
-    TextStyle::Body.painted_line_height().max(32.)
+    TextStyle::Body.painted_line_height().max(24.)
 }
 
 /// How far the floating composer stands off the column's bottom edge.
