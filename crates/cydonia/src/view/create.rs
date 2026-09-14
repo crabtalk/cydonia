@@ -30,11 +30,11 @@ const CREATE_CONTEXT: &str = "CydoniaNewBoard";
 /// panel's measure — the dialog asks for the same two things.
 const LABEL_WIDTH: f32 = 34.;
 
-pub fn init(cx: &mut App) {
-    cx.bind_keys([
+pub fn bindings() -> Vec<KeyBinding> {
+    vec![
         KeyBinding::new("enter", CommitBoard, Some(CREATE_CONTEXT)),
         KeyBinding::new("escape", DismissBoard, Some(CREATE_CONTEXT)),
-    ]);
+    ]
 }
 
 /// A board that has been asked for and not yet made. Nothing is on disk until

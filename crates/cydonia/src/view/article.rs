@@ -12,7 +12,8 @@ use crate::{
 use bezel::{
     gpui::{
         self, AnyElement, App, Context, CursorStyle, Div, Entity, Focusable as _, KeyBinding,
-        ObjectFit, PathPromptOptions, SharedString, Window, actions, div, img, prelude::*, px,
+        MouseButton, ObjectFit, PathPromptOptions, SharedString, Window, actions, div, img,
+        prelude::*, px,
     },
     motion::{Fade, Painter},
     theme::{ControlSize, Sizing as _, TextStyle, Theme, Typeset},
@@ -22,23 +23,31 @@ use bezel::{
         widgets::{ButtonStyle, Buttons as _, Status as _},
     },
 };
+use editor::Mode;
 use std::path::{Path, PathBuf};
 
-actions!(cydonia_article, [LeaveTitle]);
+actions!(cydonia_article, [LeaveTitle, TogglePlainText]);
 
 /// `enter` and `down` in the title move to the content. Bound on the field's
 /// own context, which is the only thing deep enough to beat the field itself.
-pub fn init(cx: &mut App) {
+///
+/// [`TogglePlainText`] is not here: it is a command a person may move, so it
+/// is bound from [`crate::view::keymap`] with the rest of them. What it does
+/// to the editor is the same either way — the View menu carries it, so AppKit
+/// takes the chord before the window is offered it and the editor's own `⌘E`,
+/// inline code, is never reached. That is why the ribbon's code button
+/// advertises no chord; see [`crate::view::component::ribbon::keystroke`].
+pub fn bindings() -> Vec<KeyBinding> {
     let ctx = Some(article::TITLE_CONTEXT);
-    cx.bind_keys([
+    vec![
         KeyBinding::new("enter", LeaveTitle, ctx),
         KeyBinding::new("down", LeaveTitle, ctx),
-    ]);
+    ]
 }
 
 /// The column the document is set in, matching the transcript's. Off, for a
-/// page set to [`article::Article::full_width`], the pane's own width is the
-/// measure — see [`column`].
+/// page that reads wide under [`article::Article::wide`], the pane's own width
+/// is the measure — see [`column`].
 const CONTENT_MAX_WIDTH: f32 = 720.;
 
 /// How tall the cover band is, with a picture in it or without: half the 5:2 a
@@ -158,10 +167,49 @@ impl Cydonia {
         }
     }
 
+    /// Swap the document for the markdown it spells, and back — the header
+    /// menu's Plain text and its ⌘E.
+    ///
+    /// The focus goes back to the document afterwards: the switch carries the
+    /// caret across, and a caret in a surface nobody is typing in is a caret
+    /// that has to be clicked back into.
+    pub(crate) fn toggle_plain_text(
+        &mut self,
+        _: &TogglePlainText,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(mode) = self.plain_text(cx) else {
+            return;
+        };
+        let mode = match mode {
+            true => Mode::Blocks,
+            false => Mode::Source,
+        };
+        self.workspace
+            .update(cx, |workspace, cx| workspace.set_article_mode(mode, cx));
+        let editor = self
+            .workspace
+            .read(cx)
+            .active_article()
+            .and_then(|article| article.editor.clone());
+        if let Some(editor) = editor {
+            window.focus(&editor.focus_handle(cx), cx);
+        }
+        cx.notify();
+    }
+
+    /// Whether the open document is being edited as markdown, or `None` where
+    /// there is no document to be in either form.
+    pub(crate) fn plain_text(&self, cx: &App) -> Option<bool> {
+        let article = self.workspace.read(cx).active_article()?;
+        Some(article.mode(cx) == Mode::Source)
+    }
+
     /// Set the open page across the pane, or back in the reading column — the
-    /// header menu's Full width. The open one, since that is the page the menu
-    /// was asked from.
-    pub(crate) fn set_full_width(&mut self, wide: bool, cx: &mut Context<Self>) {
+    /// header menu's Full width, and `None` for its Use default width. The
+    /// open one, since that is the page the menu was asked from.
+    pub(crate) fn set_full_width(&mut self, wide: Option<bool>, cx: &mut Context<Self>) {
         self.workspace
             .update(cx, |workspace, cx| workspace.set_full_width(wide, cx));
         cx.notify();
@@ -245,16 +293,30 @@ impl Cydonia {
 
     /// The document. Same frame as [`Cydonia::board`]: the body of the content
     /// card, with the composer stack still pinned under it.
-    pub(crate) fn article(&self, cx: &Context<Self>) -> Option<AnyElement> {
+    pub(crate) fn article(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         let article = self.workspace.read(cx).active_article()?;
         let field = article.field.clone()?;
         let editor = article.editor.clone()?;
         let cover = article.cover.clone();
-        let wide = article.full_width;
+        let wide = article.wide(self.workspace.read(cx).wide_pages);
         let stale = article.stale.then(|| article.path.clone());
         let document = div()
             .id("article")
             .on_action(cx.listener(Self::leave_title))
+            // What the ribbon reads to keep out of a drag — see
+            // [`crate::view::component::ribbon`]. Taken in the capture phase
+            // and on the way out as well as in, so a release past the pane's
+            // edge still ends the gesture.
+            .capture_any_mouse_down(cx.listener(|this, _, _, cx| this.set_selecting(true, cx)))
+            .capture_any_mouse_up(cx.listener(|this, _, _, cx| this.set_selecting(false, cx)))
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| this.set_selecting(false, cx)),
+            )
             .flex_1()
             .min_h_0()
             .w_full()
@@ -301,6 +363,9 @@ impl Cydonia {
                 // pane, and it is about the document as a whole.
                 .children(stale.map(|path| self.stale_notice(path, cx)))
                 .child(document)
+                // Last, and floated over the document from where the
+                // selection ends — the bar is chrome the page runs under.
+                .children(self.ribbon(window, cx))
                 .into_any_element(),
         )
     }

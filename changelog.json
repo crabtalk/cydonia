@@ -1,5 +1,45 @@
 [
   {
+    "version": "0.1.4",
+    "date": "2026-09-14",
+    "summary": "The app keeps itself current and the keys are yours: a release is found and staged quietly and swapped on the way out of one click, every command's chord is Settings' to move, and one of them brings cydonia forward from inside anything else.",
+    "media": {
+      "poster": "pics/cydonia/v0.1.4.jpg",
+      "src": "videos/cydonia/v0.1.4.mp4",
+      "alt": "…",
+      "w": 1280,
+      "h": 900
+    },
+    "new": [
+      "Take the next release without leaving the app: found and fetched quietly, staged beside this one, and swapped as the process exits",
+      "Say whether to look for releases at all, and read what is waiting, from Settings > General",
+      "Watch an install rather than wait on it: a spinner while it runs, the step it has reached beside the name, and what it printed when it fails",
+      "Move any command's chord from Settings > Shortcuts, recorded off the keyboard rather than typed",
+      "Bring cydonia forward from inside another app, on a chord macOS holds on its behalf",
+      "Format a run of selected text from a ribbon that arrives with it: bold, italic, strikethrough, code and a link",
+      "Read a page as the markdown it is on ⌘E, and write it there",
+      "Set the width every page defaults to, rather than answering it page by page",
+      "Wrap a long line inside a code block, or leave it to scroll sideways, from Settings > Appearance",
+      "Open and close a project from an agent, making the directory if it is not there",
+      "Read a card's text as the markdown it is",
+      "Spawn an agent off the PATH a shell would give it, whichever way the app was launched, and read the stderr of one that will not start",
+      "Hold the window opaque in light, where there is no frost to keep",
+      "Keep every preference in settings.toml, leaving state.toml the bookkeeping it is named for"
+    ],
+    "fixed": [
+      "Keep the transparency the appearance asks for when the theme is moved to System, rather than holding the one the pinned mode left",
+      "Hold the settings window opaque when the palette goes frosted around it",
+      "Hold a session to the agent's registry id rather than its name, so an agent the publisher renames stops stranding every session opened under the old one",
+      "Keep a new session's empty state, and its file unwritten, when all the agent has done is clear its throat on stderr",
+      "Reach an agent installed after the session that names it, rather than holding the placeholder until a relaunch",
+      "Name no agent on a fresh install, and stop opening a project starting one nobody configured",
+      "Put a notice where the blank pane was when there is no agent to run, and stop a new session taking a stale one",
+      "Copy a card's text to the clipboard as the text it is, and let the lane scroll while a card in it is being written",
+      "Stop a sideways gesture over the lanes being read as a vertical one",
+      "Send a window command to the window in front rather than the one that owned the menu"
+    ]
+  },
+  {
     "version": "0.1.3",
     "date": "2026-09-13",
     "summary": "cydonia answers as a server of its own now: the boards and articles a project holds are tools the agents you run can reach, behind one door on this machine at an address that is the same every launch.",

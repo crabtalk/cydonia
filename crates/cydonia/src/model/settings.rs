@@ -3,8 +3,12 @@
 
 use crate::{memory, model::watch};
 use anyhow::{Context, Result};
+use bezel::theme::{TextStyle, appearance::AppearanceMode};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::PathBuf};
+
+/// What the file is called inside [`dir`].
+const FILE: &str = "settings.toml";
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Settings {
@@ -30,6 +34,14 @@ pub struct Settings {
     /// picked — see [`crate::model::update`].
     #[serde(default = "auto_update")]
     pub auto_update: bool,
+    /// How the interface is painted. The first table, so the bare keys above
+    /// keep belonging to the document rather than to it.
+    #[serde(default)]
+    pub appearance: Appearance,
+    /// The chords the app answers to. A table, and empty in a fresh file —
+    /// see [`Shortcuts`].
+    #[serde(default)]
+    pub shortcuts: Shortcuts,
     /// What the app will show. Every bare key has to go above it, and every
     /// table below — `[[agents]]` is the one that follows.
     #[serde(default)]
@@ -40,6 +52,114 @@ pub struct Settings {
     pub mcp: Mcp,
     #[serde(default)]
     pub agents: Vec<Agent>,
+}
+
+/// What the body size may be set to, in points: the ladder's smallest measured
+/// role to Title3's, so bezel's fixed chrome heights hold at either end. Read
+/// on the way in as well as by the control, because a size out of range paints
+/// an interface nobody can read the settings window to fix.
+pub const TEXT_SIZE: (f32, f32) = (11., 17.);
+
+/// How the interface is painted — the reader's own answers, every one of them
+/// a switch in Settings.
+///
+/// Here rather than in `state.toml` because these are preferences and not
+/// bookkeeping: worth hand-editing, worth carrying to another machine, and
+/// nothing to do with which projects happened to be open. `state.toml` keeps
+/// what only this machine can answer — see [`crate::model::state`], and
+/// [`crate::model::migrate`] for the move.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Appearance {
+    /// Light, dark, or whatever the OS is doing.
+    pub mode: AppearanceMode,
+    /// Whether the window is held opaque, and nothing at all for the person
+    /// who has never said — the frost is then the appearance's own answer.
+    /// See [`bezel::theme::Vibrancy`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub opaque: Option<bool>,
+    /// Whether the text caret blinks. Off holds it lit.
+    pub cursor_blink: bool,
+    /// The body size the type ladder is scaled against, in points. Clamped to
+    /// [`TEXT_SIZE`] on the way in: this file is edited by hand, and a size
+    /// out of range paints an interface nobody can read to fix it.
+    pub text_size: f32,
+    /// The greys' oklch hue in degrees, and how much of it they carry. Zero
+    /// chroma is the shipped neutral, whatever the hue says.
+    pub hue: f32,
+    pub chroma: f32,
+    /// How wide a page with nothing of its own to say is set. A page that
+    /// *has* been decided about carries the decision in its own
+    /// `properties.toml` and ignores this.
+    pub wide_pages: bool,
+    /// Whether a line too long for a code block wraps rather than scrolling
+    /// sideways inside it — `markdown::Layout::wrap_code`.
+    pub wrap_code: bool,
+}
+
+impl Default for Appearance {
+    fn default() -> Self {
+        Self {
+            mode: AppearanceMode::default(),
+            opaque: None,
+            cursor_blink: true,
+            text_size: TextStyle::Body.size(),
+            hue: 0.,
+            chroma: 0.,
+            wide_pages: false,
+            // Off, the way every code editor ships it: indentation is
+            // structure, and wrapping loses the left column that makes nesting
+            // scannable. Against bezel's own default, which wraps because
+            // nothing scrolls a fence back to a caret typed off its right
+            // edge — that is the cost, and the switch is the way back.
+            wrap_code: false,
+        }
+    }
+}
+
+/// The chords, by the key the command is written under — see
+/// [`crate::view::keymap::Command`].
+///
+/// Sparse: only what differs from the default is kept, so a default that moves
+/// between releases moves for everyone who never said otherwise. An absent
+/// table is every default, which is why the install that predates this needs
+/// no migration.
+///
+/// A map rather than a field per command, because the command list is
+/// [`crate::view::keymap`]'s to know and this file only stores what it is told.
+/// A key naming no command is left where it is rather than dropped: a typo is
+/// worth being able to see and fix.
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Shortcuts(BTreeMap<String, String>);
+
+impl Shortcuts {
+    /// The one key here that is not a command: the chord the *system* holds,
+    /// which brings the app forward from inside whatever else you are using.
+    /// Absent means nothing is held — a key claimed across the whole desktop
+    /// is one to be asked for, so a fresh install claims none.
+    pub const ACTIVATE: &'static str = "activate";
+
+    pub fn get(&self, key: &str) -> Option<&str> {
+        self.0.get(key).map(String::as_str)
+    }
+
+    pub fn activate(&self) -> Option<&str> {
+        self.get(Self::ACTIVATE)
+    }
+
+    /// Move one key in memory, to match what [`set_shortcut`] put in the file.
+    /// `None` is back to the default, which is the key's absence.
+    pub fn set(&mut self, key: &str, chord: Option<&str>) {
+        match chord {
+            Some(chord) => {
+                self.0.insert(key.to_owned(), chord.to_owned());
+            }
+            None => {
+                self.0.remove(key);
+            }
+        }
+    }
 }
 
 /// Cydonia as an MCP server: the tools an agent reaches a project's boards
@@ -191,25 +311,25 @@ impl Agent {
 
 impl Default for Settings {
     fn default() -> Self {
-        let npx = |name: &str, pkg: &str| Agent {
-            name: name.into(),
-            id: None,
-            command: "npx".into(),
-            args: vec!["-y".into(), pkg.into()],
-            env: BTreeMap::new(),
-        };
-        // `npx` resolves a dist-tag against the npm registry on every launch,
-        // so these carry the version the ACP registry pins.
         Self {
             cover_memory: cover_memory(),
             watch_bounce: watch_bounce(),
             auto_update: auto_update(),
+            appearance: Appearance::default(),
+            shortcuts: Shortcuts::default(),
             features: Features::default(),
             mcp: Mcp::default(),
-            agents: vec![
-                npx("claude", "@agentclientprotocol/claude-agent-acp@0.73.0"),
-                npx("codex", "@agentclientprotocol/codex-acp@1.8.0"),
-            ],
+            // None, and named by nobody but the person who put one here.
+            //
+            // A fresh install used to ship `npx` lines for claude and codex,
+            // which claimed two integrations this machine had never been asked
+            // for: the picker offered them, and the first one opened a session
+            // that fetched a package off npm and ran it. Settings › Agents is
+            // where an agent arrives — see [`crate::agent::install`], which
+            // writes the entry — and until one does, this list is empty and
+            // nothing here can spawn. [`crate::model::migrate::v0_1_4`] takes
+            // the two lines back out of a file that already has them.
+            agents: Vec::new(),
         }
     }
 }
@@ -245,9 +365,14 @@ pub fn dir() -> Result<PathBuf> {
         .join("cydonia"))
 }
 
+/// `~/.config/cydonia/settings.toml`.
+pub(crate) fn path() -> Result<PathBuf> {
+    Ok(dir()?.join(FILE))
+}
+
 pub fn load() -> Result<Settings> {
     let dir = dir()?;
-    let path = dir.join("settings.toml");
+    let path = dir.join(FILE);
     if !path.exists() {
         let settings = Settings::default();
         std::fs::create_dir_all(&dir)?;
@@ -264,78 +389,130 @@ pub fn load() -> Result<Settings> {
     // A floating tag is a different program on every launch. The line stays in
     // the file, where it can be read and fixed; it just never launches.
     settings.agents.retain(Agent::pinned);
+    settings.appearance.text_size = settings
+        .appearance
+        .text_size
+        .clamp(TEXT_SIZE.0, TEXT_SIZE.1);
     Ok(settings)
 }
 
-/// Switch a feature on or off in the file.
+/// Read `settings.toml`, hand it to `change`, and write it back when `change`
+/// says there is something to write.
 ///
-/// Edited with `toml_edit` for the reason [`put_agent`] is: the file is meant
-/// to be opened by hand, and a round trip would drop every comment in it. The
-/// table is put in explicitly rather than sprung from the index, because a
-/// table that arrives that way is implicit and prints no header of its own.
-pub fn set_feature(feature: Feature, on: bool) -> Result<()> {
-    let path = dir()?.join("settings.toml");
+/// Edited with `toml_edit` rather than re-serialised: the file is meant to be
+/// opened and changed by hand, and a round trip through a value tree would
+/// silently delete every comment in it.
+fn edit(change: impl FnOnce(&mut toml_edit::DocumentMut) -> Result<bool>) -> Result<()> {
+    let path = path()?;
     let body = std::fs::read_to_string(&path).unwrap_or_default();
     let mut doc: toml_edit::DocumentMut =
         body.parse().context("settings.toml is not valid toml")?;
-    let features = doc["features"].or_insert(toml_edit::table());
-    let Some(features) = features.as_table_mut() else {
-        anyhow::bail!("`features` in settings.toml is not a table");
-    };
-    features.set_implicit(false);
-    features[feature.key()] = toml_edit::value(on);
+    if !change(&mut doc)? {
+        return Ok(());
+    }
     std::fs::write(&path, doc.to_string())?;
     Ok(())
 }
 
-/// Write one key of `[mcp]`. The same `toml_edit` round trip as
-/// [`set_feature`], and for the same reason: the comments survive it.
-pub fn set_mcp(key: &str, on: bool) -> Result<()> {
-    let path = dir()?.join("settings.toml");
-    let body = std::fs::read_to_string(&path).unwrap_or_default();
-    let mut doc: toml_edit::DocumentMut =
-        body.parse().context("settings.toml is not valid toml")?;
-    let mcp = doc["mcp"].or_insert(toml_edit::table());
-    let Some(mcp) = mcp.as_table_mut() else {
-        anyhow::bail!("`mcp` in settings.toml is not a table");
+/// One named table of the document, made if it is not there. Put in explicitly
+/// rather than sprung from the index, because a table that arrives that way is
+/// implicit and prints no header of its own.
+fn table<'a>(doc: &'a mut toml_edit::DocumentMut, name: &str) -> Result<&'a mut toml_edit::Table> {
+    let item = doc[name].or_insert(toml_edit::table());
+    let Some(held) = item.as_table_mut() else {
+        anyhow::bail!("`{name}` in settings.toml is not a table");
     };
-    mcp.set_implicit(false);
-    mcp[key] = toml_edit::value(on);
-    std::fs::write(&path, doc.to_string())?;
-    Ok(())
+    held.set_implicit(false);
+    Ok(held)
+}
+
+/// Write the whole of `[appearance]`.
+///
+/// One call rather than a setter per key: the window holds all eight live and
+/// any of them can move in a frame. Key by key through [`table`] all the same,
+/// so a comment somebody wrote beside one of them survives the write.
+pub fn set_appearance(appearance: &Appearance) -> Result<()> {
+    edit(|doc| {
+        let held = table(doc, "appearance")?;
+        held["mode"] = toml_edit::value(match appearance.mode {
+            AppearanceMode::System => "system",
+            AppearanceMode::Light => "light",
+            AppearanceMode::Dark => "dark",
+        });
+        // Never said is the absence of the key, not a `false` that would hand
+        // this reader a frosted light mode they never asked for.
+        match appearance.opaque {
+            Some(opaque) => held["opaque"] = toml_edit::value(opaque),
+            None => {
+                held.remove("opaque");
+            }
+        }
+        held["cursor_blink"] = toml_edit::value(appearance.cursor_blink);
+        held["text_size"] = toml_edit::value(f64::from(appearance.text_size));
+        held["hue"] = toml_edit::value(f64::from(appearance.hue));
+        held["chroma"] = toml_edit::value(f64::from(appearance.chroma));
+        held["wide_pages"] = toml_edit::value(appearance.wide_pages);
+        held["wrap_code"] = toml_edit::value(appearance.wrap_code);
+        Ok(true)
+    })
+}
+
+/// Switch a feature on or off in the file.
+pub fn set_feature(feature: Feature, on: bool) -> Result<()> {
+    edit(|doc| {
+        table(doc, "features")?[feature.key()] = toml_edit::value(on);
+        Ok(true)
+    })
+}
+
+/// Write one chord into `[shortcuts]`, or take it back out.
+///
+/// `None` removes the key rather than writing a default in its place: the
+/// table says what differs, and a command sitting on its default differs in
+/// nothing.
+pub fn set_shortcut(key: &str, chord: Option<&str>) -> Result<()> {
+    edit(|doc| {
+        let held = table(doc, "shortcuts")?;
+        match chord {
+            Some(chord) => held[key] = toml_edit::value(chord),
+            None => {
+                held.remove(key);
+            }
+        }
+        Ok(true)
+    })
+}
+
+/// Write one key of `[mcp]`.
+pub fn set_mcp(key: &str, on: bool) -> Result<()> {
+    edit(|doc| {
+        table(doc, "mcp")?[key] = toml_edit::value(on);
+        Ok(true)
+    })
 }
 
 /// Move the cover ceiling in the file, in megabytes.
 pub fn set_cover_memory(mb: u64) -> Result<()> {
-    let path = dir()?.join("settings.toml");
-    let body = std::fs::read_to_string(&path).unwrap_or_default();
-    let mut doc: toml_edit::DocumentMut =
-        body.parse().context("settings.toml is not valid toml")?;
-    doc["cover_memory"] = toml_edit::value(mb as i64);
-    std::fs::write(&path, doc.to_string())?;
-    Ok(())
+    edit(|doc| {
+        doc["cover_memory"] = toml_edit::value(mb as i64);
+        Ok(true)
+    })
 }
 
 /// Move the watch's bounce in the file, in milliseconds.
 pub fn set_watch_bounce(ms: u64) -> Result<()> {
-    let path = dir()?.join("settings.toml");
-    let body = std::fs::read_to_string(&path).unwrap_or_default();
-    let mut doc: toml_edit::DocumentMut =
-        body.parse().context("settings.toml is not valid toml")?;
-    doc["watch_bounce"] = toml_edit::value(ms as i64);
-    std::fs::write(&path, doc.to_string())?;
-    Ok(())
+    edit(|doc| {
+        doc["watch_bounce"] = toml_edit::value(ms as i64);
+        Ok(true)
+    })
 }
 
 /// Switch the release check on or off in the file.
 pub fn set_auto_update(on: bool) -> Result<()> {
-    let path = dir()?.join("settings.toml");
-    let body = std::fs::read_to_string(&path).unwrap_or_default();
-    let mut doc: toml_edit::DocumentMut =
-        body.parse().context("settings.toml is not valid toml")?;
-    doc["auto_update"] = toml_edit::value(on);
-    std::fs::write(&path, doc.to_string())?;
-    Ok(())
+    edit(|doc| {
+        doc["auto_update"] = toml_edit::value(on);
+        Ok(true)
+    })
 }
 
 /// Put `agent` in the file, replacing whichever entry already launches it.
@@ -344,105 +521,94 @@ pub fn set_auto_update(on: bool) -> Result<()> {
 /// install claims the hand-written `@latest` entry that shipped as a default
 /// instead of sitting next to it. A replaced entry keeps its own `name`: the
 /// person who wrote it chose that, and only the command underneath has moved.
-///
-/// Edited in place with `toml_edit` rather than re-serialised: this file is
-/// meant to be opened and changed by hand, and a round trip through a value
-/// tree would silently delete every comment in it.
 pub fn put_agent(agent: &Agent, supersedes: Option<&str>) -> Result<()> {
-    let path = dir()?.join("settings.toml");
-    let body = std::fs::read_to_string(&path).unwrap_or_default();
-    let mut doc: toml_edit::DocumentMut =
-        body.parse().context("settings.toml is not valid toml")?;
+    edit(|doc| {
+        let agents = doc["agents"].or_insert(toml_edit::Item::ArrayOfTables(
+            toml_edit::ArrayOfTables::new(),
+        ));
+        let Some(agents) = agents.as_array_of_tables_mut() else {
+            anyhow::bail!("`agents` in settings.toml is not a list of tables");
+        };
+        let existing = agents
+            .iter()
+            .position(|table| claims(table, agent, supersedes));
+        let name = existing
+            .and_then(|ix| agents.get(ix))
+            .and_then(|table| table.get("name"))
+            .and_then(|n| n.as_str())
+            .unwrap_or(&agent.name)
+            .to_owned();
+        // Whatever preceded the entry — the file's header, a note the user left
+        // above it — is trivia hanging off the table, and replacing the table
+        // throws it away unless it is carried across by hand.
+        let decor = existing
+            .and_then(|ix| agents.get(ix))
+            .map(|table| table.decor().clone());
 
-    let agents = doc["agents"].or_insert(toml_edit::Item::ArrayOfTables(
-        toml_edit::ArrayOfTables::new(),
-    ));
-    let Some(agents) = agents.as_array_of_tables_mut() else {
-        anyhow::bail!("`agents` in settings.toml is not a list of tables");
-    };
-    let existing = agents
-        .iter()
-        .position(|table| claims(table, agent, supersedes));
-    let name = existing
-        .and_then(|ix| agents.get(ix))
-        .and_then(|table| table.get("name"))
-        .and_then(|n| n.as_str())
-        .unwrap_or(&agent.name)
-        .to_owned();
-    // Whatever preceded the entry — the file's header, a note the user left
-    // above it — is trivia hanging off the table, and replacing the table
-    // throws it away unless it is carried across by hand.
-    let decor = existing
-        .and_then(|ix| agents.get(ix))
-        .map(|table| table.decor().clone());
-
-    let mut entry = toml_edit::Table::new();
-    entry["name"] = toml_edit::value(name);
-    if let Some(id) = &agent.id {
-        entry["id"] = toml_edit::value(id.clone());
-    }
-    entry["command"] = toml_edit::value(agent.command.clone());
-    let mut args = toml_edit::Array::new();
-    for arg in &agent.args {
-        args.push(arg.as_str());
-    }
-    entry["args"] = toml_edit::value(args);
-    if !agent.env.is_empty() {
-        let mut env = toml_edit::InlineTable::new();
-        for (key, value) in &agent.env {
-            env.insert(key, value.as_str().into());
+        let mut entry = toml_edit::Table::new();
+        entry["name"] = toml_edit::value(name);
+        if let Some(id) = &agent.id {
+            entry["id"] = toml_edit::value(id.clone());
         }
-        entry["env"] = toml_edit::value(env);
-    }
-
-    match existing {
-        Some(ix) => {
-            if let Some(decor) = decor {
-                *entry.decor_mut() = decor;
+        entry["command"] = toml_edit::value(agent.command.clone());
+        let mut args = toml_edit::Array::new();
+        for arg in &agent.args {
+            args.push(arg.as_str());
+        }
+        entry["args"] = toml_edit::value(args);
+        if !agent.env.is_empty() {
+            let mut env = toml_edit::InlineTable::new();
+            for (key, value) in &agent.env {
+                env.insert(key, value.as_str().into());
             }
-            *agents.get_mut(ix).expect("position is in range") = entry;
+            entry["env"] = toml_edit::value(env);
         }
-        None => agents.push(entry),
-    }
-    std::fs::write(&path, doc.to_string())?;
-    Ok(())
+
+        match existing {
+            Some(ix) => {
+                if let Some(decor) = decor {
+                    *entry.decor_mut() = decor;
+                }
+                *agents.get_mut(ix).expect("position is in range") = entry;
+            }
+            None => agents.push(entry),
+        }
+        Ok(true)
+    })
 }
 
 /// Drop the entry installed from registry agent `id`.
 pub fn remove_agent(id: &str) -> Result<()> {
-    let path = dir()?.join("settings.toml");
-    let body = std::fs::read_to_string(&path).unwrap_or_default();
-    let mut doc: toml_edit::DocumentMut =
-        body.parse().context("settings.toml is not valid toml")?;
-    let Some(agents) = doc
-        .get_mut("agents")
-        .and_then(|a| a.as_array_of_tables_mut())
-    else {
-        return Ok(());
-    };
-    let Some(ix) = agents
-        .iter()
-        .position(|table| table.get("id").and_then(|i| i.as_str()) == Some(id))
-    else {
-        return Ok(());
-    };
-    // The file's header hangs off whichever entry comes first. If that is the
-    // one being dropped, the header has to move down onto its successor or it
-    // leaves with it.
-    let prefix = agents
-        .get(ix)
-        .and_then(|table| table.decor().prefix().cloned());
-    agents.remove(ix);
-    if ix == 0
-        && let Some(prefix) = prefix
-    {
-        match agents.get_mut(0) {
-            Some(first) => first.decor_mut().set_prefix(prefix),
-            None => doc.as_table_mut().decor_mut().set_prefix(prefix),
+    edit(|doc| {
+        let Some(agents) = doc
+            .get_mut("agents")
+            .and_then(|a| a.as_array_of_tables_mut())
+        else {
+            return Ok(false);
+        };
+        let Some(ix) = agents
+            .iter()
+            .position(|table| table.get("id").and_then(|i| i.as_str()) == Some(id))
+        else {
+            return Ok(false);
+        };
+        // The file's header hangs off whichever entry comes first. If that is the
+        // one being dropped, the header has to move down onto its successor or it
+        // leaves with it.
+        let prefix = agents
+            .get(ix)
+            .and_then(|table| table.decor().prefix().cloned());
+        agents.remove(ix);
+        if ix == 0
+            && let Some(prefix) = prefix
+        {
+            match agents.get_mut(0) {
+                Some(first) => first.decor_mut().set_prefix(prefix),
+                None => doc.as_table_mut().decor_mut().set_prefix(prefix),
+            }
         }
-    }
-    std::fs::write(&path, doc.to_string())?;
-    Ok(())
+        Ok(true)
+    })
 }
 
 /// Whether an existing entry is the one this install replaces: the same

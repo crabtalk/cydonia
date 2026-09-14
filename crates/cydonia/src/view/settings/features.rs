@@ -7,14 +7,14 @@
 //! are not the same: sessions run a program on this machine, and boards and
 //! tables are finished work held back to keep the first release one thing.
 
-use crate::{model::settings::Feature, view::settings::SettingsWindow};
+use crate::{
+    model::settings::Feature,
+    view::settings::{SettingsWindow, Switch},
+};
 use bezel::{
-    gpui::{AnyElement, Context, div, prelude::*, px},
-    theme::{TextStyle, Theme, Typeset},
-    ui::{
-        icons,
-        widgets::{Content, Controls, Scaffolding},
-    },
+    gpui::{AnyElement, Context, prelude::*},
+    theme::Theme,
+    ui::{icons, widgets::Scaffolding},
 };
 
 /// What a row says for itself: its mark, its name, what turning it on means,
@@ -70,56 +70,19 @@ impl SettingsWindow {
     }
 
     fn feature_row(&self, ix: usize, feature: Feature, cx: &Context<Self>) -> AnyElement {
-        let theme = Theme::of(cx).clone();
         let (glyph, title, blurb, badge) = copy(feature);
         let on = feature.on(&self.workspace.read(cx).settings.features);
-        theme
-            .card_row(ix == 0)
-            .child(
-                div()
-                    .flex_none()
-                    .size(px(18.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(
-                        icons::icon(glyph)
-                            .size(px(16.))
-                            .flex_none()
-                            .text_color(theme.text_muted),
-                    ),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .child(theme.row_title(title))
-                    .child(
-                        div()
-                            .mt(px(4.))
-                            // One line, whatever the window is doing: a row
-                            // that grows a second one moves every switch below
-                            // it down the column.
-                            .truncate()
-                            .text_style(TextStyle::Subheadline)
-                            .text_color(theme.text_muted)
-                            .child(blurb),
-                    ),
-            )
-            .children(badge.map(|label| theme.badge(label)))
-            .child(
-                div()
-                    .id(("feature", ix))
-                    .cursor_pointer()
-                    .child(theme.toggle(on))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.workspace
-                            .update(cx, |workspace, cx| workspace.set_feature(feature, !on, cx));
-                        cx.notify();
-                    })),
-            )
-            .into_any_element()
+        self.switch_row(
+            Switch::new(("feature", ix), title, blurb, on)
+                .first(ix == 0)
+                .glyph(glyph)
+                .truncate()
+                .badge(badge),
+            cx,
+            move |this, cx| {
+                this.workspace
+                    .update(cx, |workspace, cx| workspace.set_feature(feature, !on, cx));
+            },
+        )
     }
 }

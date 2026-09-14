@@ -11,8 +11,8 @@ use crate::{
 use artifact::board::Card;
 use bezel::{
     gpui::{
-        self, AnyElement, App, Context, Div, Entity, Focusable as _, FontWeight, KeyBinding,
-        SharedString, Stateful, Window, actions, div, prelude::*, px,
+        self, AnyElement, App, ClipboardItem, Context, Div, Entity, Focusable as _, FontWeight,
+        KeyBinding, SharedString, Stateful, Window, actions, div, prelude::*, px,
     },
     motion::Painter,
     theme::{TextStyle, Theme, Typeset},
@@ -22,6 +22,7 @@ use bezel::{
         loaders,
         menu::Item,
         popover,
+        scroll::{self, Axes},
         widgets::Buttons,
     },
 };
@@ -39,19 +40,29 @@ const COLUMN_WIDTH: f32 = 272.;
 /// does not fit in this much of a lane is read by opening it.
 const CARD_MAX_HEIGHT: f32 = 140.;
 
+/// Where the card editor would start scrolling inside itself. Set past any
+/// card worth a lane, which is to say never: a scroll box inside a scrolling
+/// column is two wheels for one gesture, and a run dragged into the half that
+/// is not showing cannot be reached. The lane is the scroller, and the editor
+/// grows until the lane has to move — which is where GitHub's boards draw the
+/// same line.
+///
+/// A number rather than no cap, because [`Shape::Grow`] takes one.
+const CARD_EDITOR_MAX_ROWS: usize = 512;
+
 /// What the document ladder is brought down to on a card — `Callout` over
 /// `Body`, which is the size a card's prose was set at when it was one flat
 /// string. Every role moves together, so a `#` heading on a card still reads
 /// as a heading, in a lane 272 wide rather than on a page.
 const CARD_TEXT_SCALE: f32 = TextStyle::Callout.size() / TextStyle::Body.size();
 
-pub fn init(cx: &mut App) {
+pub fn bindings() -> Vec<KeyBinding> {
     let ctx = Some(KEY_CONTEXT);
-    cx.bind_keys([
+    vec![
         KeyBinding::new("enter", CommitCard, ctx),
         KeyBinding::new("shift-enter", input::InsertNewline, ctx),
         KeyBinding::new("escape", DismissCard, ctx),
-    ]);
+    ]
 }
 
 /// The board's one text field — whichever card is being written or rewritten.
@@ -60,7 +71,10 @@ pub fn init(cx: &mut App) {
 pub fn field(cx: &mut App) -> Entity<TextField> {
     cx.new(|cx| {
         TextField::new(cx)
-            .with_shape(Shape::Grow { min: 2, max: 8 })
+            .with_shape(Shape::Grow {
+                min: 2,
+                max: CARD_EDITOR_MAX_ROWS,
+            })
             .with_key_context(KEY_CONTEXT)
             .with_placeholder("what needs doing…")
     })
@@ -160,6 +174,7 @@ impl Cydonia {
     /// leaving a blank on the board.
     pub(crate) fn commit(&mut self, cx: &mut Context<Self>) {
         self.commit_cell(cx);
+        self.rest_ribbon(cx);
         let Some(at) = self.editing.take() else {
             return;
         };
@@ -272,6 +287,22 @@ impl Cydonia {
         cx.notify();
     }
 
+    /// The card's markdown, as it was written. The source and not what the lane
+    /// paints: a card is a document, and the text is what somebody would paste
+    /// into the next one.
+    fn copy_card(&mut self, card: &str, cx: &mut Context<Self>) {
+        let Some(text) = self
+            .workspace
+            .read(cx)
+            .active_board()
+            .and_then(|board| board.card(card))
+            .map(|card| card.text.clone())
+        else {
+            return;
+        };
+        cx.write_to_clipboard(ClipboardItem::new_string(text));
+    }
+
     /// Hand the card to an agent: a session of its own, opened in the project
     /// with the card's text as its first prompt.
     ///
@@ -316,11 +347,20 @@ impl Cydonia {
         if self.menu.as_ref() != Some(&Menu::Card(card.to_owned())) {
             return None;
         }
-        let doomed = card.to_owned();
-        let rows = vec![menu::row(
-            Item::action("Delete").with_icon(icons::files::Trash),
-            move |this, _, cx| this.ask_delete_card(&doomed, cx),
-        )];
+        let (copied, doomed) = (card.to_owned(), card.to_owned());
+        // The card at rest is a rendered document, not a run of text somebody
+        // can drag over — so without this there is no way to get a card's words
+        // back out of it short of opening the editor and selecting them.
+        let rows = vec![
+            menu::row(
+                Item::action("Copy text").with_icon(icons::text::Copy),
+                move |this, _, cx| this.copy_card(&copied, cx),
+            ),
+            menu::row(
+                Item::action("Delete").with_icon(icons::files::Trash),
+                move |this, _, cx| this.ask_delete_card(&doomed, cx),
+            ),
+        ];
         let id = SharedString::from(format!("card-menu-card-{card}"));
         Some(popover::anchored_menu_below(
             id.clone(),
@@ -360,10 +400,8 @@ impl Cydonia {
             .on_action(cx.listener(Self::commit_card))
             .on_action(cx.listener(Self::dismiss_card))
             .child(
-                div()
-                    .id("board")
+                scroll::pane("board", Axes::Horizontal)
                     .size_full()
-                    .overflow_x_scroll()
                     .flex()
                     .flex_row()
                     .gap(px(10.))
@@ -416,11 +454,9 @@ impl Cydonia {
             .gap(px(8.))
             .child(self.column_header(&id, name, cards.len(), cx))
             .child(
-                div()
-                    .id(SharedString::from(format!("column-{id}")))
+                scroll::pane(SharedString::from(format!("column-{id}")), Axes::Vertical)
                     .flex_1()
                     .min_h_0()
-                    .overflow_y_scroll()
                     .flex()
                     .flex_col()
                     .gap(px(8.))

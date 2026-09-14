@@ -109,18 +109,37 @@ fn a_page_remembers_that_it_is_wide() {
     let content = article::content(&dir);
     fs::write(&content, "").unwrap();
 
-    assert!(
-        !article::properties::full_width(&content),
-        "the column is the default"
+    assert_eq!(
+        article::properties::full_width(&content),
+        None,
+        "a page nobody has decided about answers with nothing"
     );
-    article::properties::set_full_width(&content, true);
-    assert!(article::properties::full_width(&content));
+    article::properties::set_full_width(&content, Some(true));
+    assert_eq!(article::properties::full_width(&content), Some(true));
 }
 
-/// And back in the column is the absence of the key, not a `false` beside every
-/// page that was ever widened once.
+/// A page can be held in the column against a default that is not — so `false`
+/// is written down, and is not the same answer as never having been asked.
 #[test]
-fn a_page_put_back_in_the_column_keeps_no_key() {
+fn a_page_held_in_the_column_says_so() {
+    let scratch = Scratch::new("article-column-pinned");
+    let dir = article::dir(scratch.path()).join("1757000000000");
+    fs::create_dir_all(&dir).unwrap();
+    let content = article::content(&dir);
+    fs::write(&content, "").unwrap();
+
+    article::properties::set_full_width(&content, Some(false));
+    assert_eq!(article::properties::full_width(&content), Some(false));
+
+    let properties = article::properties::path(&content).unwrap();
+    let text = fs::read_to_string(&properties).unwrap();
+    assert!(text.contains("full_width"), "written down: {text}");
+}
+
+/// Handing a page back to the reader's default is the absence of the key, not
+/// a value beside every page that was ever widened once.
+#[test]
+fn a_page_given_back_to_the_default_keeps_no_key() {
     let scratch = Scratch::new("article-column-again");
     let dir = article::dir(scratch.path()).join("1757000000000");
     fs::create_dir_all(&dir).unwrap();
@@ -128,8 +147,8 @@ fn a_page_put_back_in_the_column_keeps_no_key() {
     fs::write(&content, "").unwrap();
 
     article::properties::set_title(&content, "Roadmap");
-    article::properties::set_full_width(&content, true);
-    article::properties::set_full_width(&content, false);
+    article::properties::set_full_width(&content, Some(true));
+    article::properties::set_full_width(&content, None);
 
     let properties = article::properties::path(&content).unwrap();
     let text = fs::read_to_string(&properties).unwrap();

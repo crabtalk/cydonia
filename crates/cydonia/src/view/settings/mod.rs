@@ -12,8 +12,8 @@ use crate::{
 };
 use bezel::{
     gpui::{
-        App, Bounds, Context, Entity, Render, SharedString, TitlebarOptions, Window,
-        WindowBackgroundAppearance, WindowBounds, WindowHandle, WindowOptions, div, point,
+        AnyElement, App, Bounds, Context, ElementId, Entity, Render, SharedString, TitlebarOptions,
+        Window, WindowBackgroundAppearance, WindowBounds, WindowHandle, WindowOptions, div, point,
         prelude::*, px, size,
     },
     motion::{Fade, Painter},
@@ -21,10 +21,10 @@ use bezel::{
     ui::{
         icons,
         input::{FieldEvent, Shape, TextField},
-        widgets::{Layout, Scaffolding},
+        widgets::{Content, Controls, Layout, Scaffolding},
     },
 };
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 mod agents;
 mod developer;
@@ -32,6 +32,7 @@ mod features;
 mod general;
 mod mcp;
 mod performance;
+mod shortcuts;
 mod theme;
 mod typography;
 
@@ -54,6 +55,9 @@ const CONTENT_MAX_WIDTH: f32 = 860.;
 pub enum Section {
     General,
     Appearance,
+    // With Appearance, because the two answer the same question — how the app
+    // meets you — and before the three that answer what it does.
+    Shortcuts,
     // Before Agents, because it is what decides whether agents matter: with
     // sessions off, nothing installed under Agents can be launched.
     Features,
@@ -67,9 +71,10 @@ pub enum Section {
 }
 
 impl Section {
-    const ALL: [Self; 7] = [
+    const ALL: [Self; 8] = [
         Self::General,
         Self::Appearance,
+        Self::Shortcuts,
         Self::Features,
         Self::Agents,
         Self::Mcp,
@@ -92,6 +97,7 @@ impl Section {
         match self {
             Self::General => "General",
             Self::Appearance => "Appearance",
+            Self::Shortcuts => "Shortcuts",
             Self::Features => "Features",
             Self::Agents => "Agents",
             Self::Mcp => "MCP",
@@ -105,6 +111,9 @@ impl Section {
     /// and the gap under the whole block is the same either way.
     fn subtitle(self) -> Option<&'static str> {
         match self {
+            Self::Shortcuts => {
+                Some("Press a chord to record it. ⎋ leaves it alone, ⌫ takes it away.")
+            }
             Self::Features => Some("Parts of cydonia you can put away, and ones to ask for."),
             Self::Mcp => {
                 Some("The tools cydonia offers the agents it runs, over a port on this machine.")
@@ -119,6 +128,7 @@ impl Section {
             // The gear macOS itself puts on General.
             Self::General => icons::account::Settings,
             Self::Appearance => icons::weather::Sun,
+            Self::Shortcuts => icons::development::Command,
             Self::Features => icons::account::SlidersHorizontal,
             Self::Agents => icons::layout::LayoutGrid,
             Self::Mcp => icons::development::Plug,
@@ -136,12 +146,19 @@ pub struct SettingsWindow {
     listings: Option<Vec<Listing>>,
     /// Agents with an install or a removal running.
     busy: HashSet<String>,
+    /// What the installer has printed for each of them, newest last: the tail
+    /// is the row's status while it runs, and the whole of it is all a failure
+    /// has to explain itself with — see [`crate::agent::record`].
+    output: HashMap<String, Vec<String>>,
     /// What the agents section is being searched for. Held by the window
     /// rather than made where it is drawn: what has been typed has to outlive
     /// the frame, and a section is drawn afresh on every one.
     search: Entity<TextField>,
     /// The cover ceiling's field, while its dialog is up.
     editing: Option<Entity<TextField>>,
+    /// The shortcut row taking keys, while one is — see
+    /// [`shortcuts::Recording`].
+    recording: Option<shortcuts::Recording>,
     error: Option<SharedString>,
 }
 
@@ -179,6 +196,10 @@ pub fn open(
         },
         |window, cx| {
             appearance::observe_window(window, cx).detach();
+            // And opaque it stays: bezel pushes the palette's own background
+            // onto every window on each appearance switch, which is what keeps
+            // the main window's frost alive and would frost this one with it.
+            appearance::keep_background(window, cx);
             cx.new(|cx| {
                 let search = cx.new(|cx| {
                     TextField::new(cx)
@@ -206,16 +227,145 @@ pub fn open(
                     section,
                     listings: None,
                     busy: HashSet::new(),
+                    output: HashMap::new(),
                     search,
                     editing: None,
+                    recording: None,
                     error: None,
                 };
                 this.load(cx);
+                // The keymap is emptied while a chord is being recorded, so a
+                // window shut in the middle of that has to put it back — see
+                // [`shortcuts`].
+                cx.on_release(|this: &mut SettingsWindow, cx| {
+                    if this.recording.is_some() {
+                        shortcuts::restore(&this.workspace, cx);
+                    }
+                })
+                .detach();
                 this
             })
         },
     )
     .ok()
+}
+
+/// One row of a settings group that carries a switch: an optional icon, a
+/// title over a line of explanation, and the toggle on the right.
+///
+/// Six sections built this row by hand and they had drifted apart in nothing
+/// but their copy, so it lives here and they pass what differs.
+pub(super) struct Switch {
+    id: ElementId,
+    title: SharedString,
+    blurb: SharedString,
+    on: bool,
+    first: bool,
+    glyph: Option<&'static [u8]>,
+    truncate: bool,
+    badge: Option<SharedString>,
+}
+
+impl Switch {
+    pub(super) fn new(
+        id: impl Into<ElementId>,
+        title: impl Into<SharedString>,
+        blurb: impl Into<SharedString>,
+        on: bool,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            title: title.into(),
+            blurb: blurb.into(),
+            on,
+            first: false,
+            glyph: None,
+            truncate: false,
+            badge: None,
+        }
+    }
+
+    /// Whether this is the first row of its group box — `card_row` draws no
+    /// divider above that one.
+    pub(super) fn first(mut self, first: bool) -> Self {
+        self.first = first;
+        self
+    }
+
+    /// The mark down the left, which the dense lists carry and a row standing
+    /// on its own does not.
+    pub(super) fn glyph(mut self, glyph: &'static [u8]) -> Self {
+        self.glyph = Some(glyph);
+        self
+    }
+
+    /// Hold the blurb to one line, whatever the window is doing: a row that
+    /// grows a second one moves every switch below it down the column.
+    pub(super) fn truncate(mut self) -> Self {
+        self.truncate = true;
+        self
+    }
+
+    pub(super) fn badge(mut self, badge: Option<impl Into<SharedString>>) -> Self {
+        self.badge = badge.map(Into::into);
+        self
+    }
+}
+
+impl SettingsWindow {
+    /// Paint a [`Switch`], calling `flip` when it is pressed.
+    pub(super) fn switch_row(
+        &self,
+        switch: Switch,
+        cx: &Context<Self>,
+        flip: impl Fn(&mut Self, &mut Context<Self>) + 'static,
+    ) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        theme
+            .card_row(switch.first)
+            .children(switch.glyph.map(|glyph| {
+                div()
+                    .flex_none()
+                    .size(px(18.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        icons::icon(glyph)
+                            .size(px(16.))
+                            .flex_none()
+                            .text_color(theme.text_muted),
+                    )
+            }))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .child(theme.row_title(switch.title))
+                    .child(
+                        div()
+                            .mt(px(4.))
+                            .when(switch.truncate, |el| el.truncate())
+                            .text_style(TextStyle::Subheadline)
+                            .text_color(theme.text_muted)
+                            .child(switch.blurb),
+                    ),
+            )
+            .children(switch.badge.map(|label| theme.badge(label)))
+            .child(
+                div()
+                    .id(switch.id)
+                    .cursor_pointer()
+                    .child(theme.toggle(switch.on))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        flip(this, cx);
+                        cx.notify();
+                    })),
+            )
+            .into_any_element()
+    }
 }
 
 impl SettingsWindow {
@@ -228,6 +378,7 @@ impl SettingsWindow {
             Section::Agents => self.load(cx),
             Section::General
             | Section::Appearance
+            | Section::Shortcuts
             | Section::Features
             | Section::Mcp
             | Section::Performance
@@ -324,6 +475,7 @@ impl Render for SettingsWindow {
                             .child(match self.section {
                                 Section::General => self.general_body(cx),
                                 Section::Appearance => self.appearance_body(cx),
+                                Section::Shortcuts => self.shortcuts_body(cx),
                                 Section::Features => self.features_body(cx),
                                 Section::Agents => self.agents_body(cx),
                                 Section::Mcp => self.mcp_body(cx),

@@ -12,7 +12,7 @@ export const tagline =
 
 /** Where the demo clips and stills live. A changelog entry names a path under
     it rather than repeating the host in every release. */
-export const cdn = 'https://cdn.crabtalk.ai';
+export { cdn } from './media.js';
 
 /** The other way in, for anyone who would rather build it. */
 export const install = 'cargo install cydonia';

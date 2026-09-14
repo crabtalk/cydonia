@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sveltekit } from '@sveltejs/kit/vite';
+import { generateOg } from './scripts/generate-og.mjs';
 
 const at = (path) => fileURLToPath(new URL(path, import.meta.url));
 
@@ -27,6 +28,11 @@ if (newest?.version !== version) {
 // a dev server started before a version bump keeps serving the old one.
 const release = {
 	name: 'watch-release-inputs',
+	async configResolved(config) {
+		// SvelteKit also starts an SSR build; only the client build needs to
+		// write the static asset. Dev restarts regenerate it on release edits.
+		if (!config.build.ssr && !config.isPreview) await generateOg(newest);
+	},
 	configureServer(server) {
 		const watched = [resolve(at('../Cargo.toml')), resolve(at('../changelog.json'))];
 		server.watcher.add(watched);

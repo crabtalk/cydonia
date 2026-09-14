@@ -5,15 +5,22 @@ use bezel::{
     gpui::App,
     gpui_platform,
     theme::{self, Tint, appearance},
-    ui::{self, focus, input},
+    ui::{self, input},
 };
 use cydonia::{
-    memory,
-    model::{media, settings, state, update, workspace},
-    view::{article, board, component::composer, create, info, menubar, root, table},
+    agent, memory,
+    model::{media, migrate, settings, state, update, workspace},
+    view::{hotkey, keymap, menubar, root},
 };
 
 fn main() -> Result<()> {
+    // First of all, and while this is still the only thread: it writes the
+    // process environment, and everything downstream of it — an agent spawned
+    // by name, an `npm` the installer runs — resolves against what it leaves.
+    agent::path::adopt();
+    // Ahead of both readers: it moves keys between the two files, and either
+    // one read first would be read from before the move.
+    migrate::run();
     let settings = settings::load()?;
     let state = state::restore();
     let app = gpui_platform::application();
@@ -37,31 +44,31 @@ fn main() -> Result<()> {
         if let Err(err) = ui::register_fonts(cx) {
             eprintln!("font registration failed: {err:?}");
         }
-        appearance::init(state.appearance, cx);
+        let look = settings.appearance;
+        appearance::init(look.mode, cx);
         // Before the window is opened: it reads its background appearance
         // on the way up, and vibrancy is what decides that.
-        workspace::apply_transparency(state.reduce_transparency, cx);
-        workspace::apply_tint(Tint::new(state.hue, state.chroma), cx);
-        input::set_caret_blink(state.cursor_blink, cx);
-        theme::set_base_text_size(state.text_size, cx);
+        workspace::apply_transparency(look.opaque, cx);
+        workspace::apply_tint(Tint::new(look.hue, look.chroma), cx);
+        input::set_caret_blink(look.cursor_blink, cx);
+        theme::set_base_text_size(look.text_size, cx);
+        workspace::apply_wrap_code(look.wrap_code, cx);
         markdown::set_highlighter(
             cx,
             |language, code| syntax::highlight(code, language),
             syntax::lang::LANGS.iter().map(|lang| lang.name),
         );
         memory::init(settings.cover_memory * 1_000_000, cx);
-        input::init(cx);
-        focus::init(cx);
-        composer::init(cx);
-        editor::init(cx);
+        // Every chord in the app, bezel's included — see
+        // [`cydonia::view::keymap`]. One call rather than an `init` per
+        // surface, because the reader can move some of them and moving one
+        // means putting the whole keymap back together.
+        keymap::bind_all(&settings.shortcuts, cx);
+        // And the one key the app does not hold itself, which is nothing at
+        // all until somebody asks for one — see [`cydonia::view::hotkey`].
+        hotkey::apply(settings.shortcuts.activate(), cx);
         // Where a pasted screenshot's bytes go, which is the app's to say.
         media::init(cx);
-        article::init(cx);
-        board::init(cx);
-        info::init(cx);
-        create::init(cx);
-        table::init(cx);
-        root::init(cx);
         // Ahead of the menu bar, which asks whether this build has an updater
         // at all before it puts an item there for one.
         update::init(settings.auto_update, cx);

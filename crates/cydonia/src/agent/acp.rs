@@ -32,13 +32,14 @@ use std::{
     time::Duration,
 };
 use tokio::{
-    process::{Child, Command},
+    io::{AsyncBufReadExt, BufReader},
+    process::{Child, ChildStderr, Command},
     runtime::Runtime,
     sync::{mpsc, oneshot},
 };
 
-/// Where the protocol tap writes, and the switch that leaves an agent's stderr
-/// where it can be read.
+/// Where the protocol tap writes, and the switch that echoes an agent's stderr
+/// to ours on the way past — it reaches the transcript either way.
 const DEBUG: &str = "CYDONIA_DEBUG";
 
 /// What our own tool server is called to an agent. Also the namespace every
@@ -65,6 +66,10 @@ pub enum Event {
     Update(SessionUpdate),
     /// The agent asks the user to authorize a tool call.
     Permission(RequestPermissionRequest, Reply<RequestPermissionResponse>),
+    /// One line the agent wrote to its stderr. Not protocol — the runtime
+    /// under it talking, or the shell that could not start it — so it arrives
+    /// off its own task and only approximately in step with the rest.
+    Stderr(String),
     /// The prompt turn settled: its stop reason, or the agent's error.
     TurnDone(Result<StopReason, Error>),
     /// The agent's read loop ended — the process died or closed its stdout.
@@ -73,10 +78,22 @@ pub enum Event {
     Closed,
 }
 
-/// The frontend's receiving end, handed back beside the [`Session`] so an
-/// event loop can poll it while the session handle stays borrowable for
-/// `prompt`/`cancel`.
+/// The frontend's receiving end.
 pub type Events = mpsc::UnboundedReceiver<Event>;
+
+/// The agent side's sending end.
+pub type Sender = mpsc::UnboundedSender<Event>;
+
+/// Open the channel a session runs on.
+///
+/// The caller holds both halves and lends the sender to [`Session::spawn`],
+/// rather than being given the pair back by it. A launch that fails is why:
+/// the process can write to its stderr and die without ever answering
+/// `initialize`, and a receiver created inside the launch would be dropped
+/// with the error, taking the only account of what went wrong with it.
+pub fn channel() -> (Sender, Events) {
+    mpsc::unbounded_channel()
+}
 
 /// The answer half of a request the frontend has to make. Dropping it
 /// declines the request rather than hanging the agent.
@@ -105,9 +122,6 @@ pub struct Session {
     pub loaded: bool,
 }
 
-/// Progress reporter for the steps before the frontend is up.
-pub type StatusFn = Box<dyn Fn(&str) + Send + Sync>;
-
 /// How to open a session.
 #[derive(Default)]
 pub struct Launch {
@@ -115,9 +129,6 @@ pub struct Launch {
     pub cwd: PathBuf,
     /// A session to load instead of starting fresh.
     pub previous: Option<String>,
-    /// Progress for the steps before the frontend is up — notably
-    /// authentication, which can block on a browser sign-in.
-    pub status: Option<StatusFn>,
 }
 
 impl Launch {
@@ -125,12 +136,6 @@ impl Launch {
         Self {
             cwd,
             ..Default::default()
-        }
-    }
-
-    fn say(&self, message: &str) {
-        if let Some(status) = &self.status {
-            status(message);
         }
     }
 }
@@ -142,50 +147,33 @@ impl Session {
     /// With [`Launch::previous`] set and the agent capable, `session/load`
     /// replays that session's history instead of starting fresh; a failed
     /// load (stale id, agent restart) falls back to a new session.
-    pub async fn spawn(entry: &settings::Agent, launch: Launch) -> Result<(Self, Events)> {
+    pub async fn spawn(entry: &settings::Agent, launch: Launch, tx: Sender) -> Result<Self> {
         let mut command = Command::new(&entry.command);
         command.args(&entry.args).envs(&entry.env);
-        // An agent's diagnostics are not this app's. cacp leaves the choice to
-        // the caller — "a TUI usually wants it captured and a CLI usually does
-        // not" — and a desktop app that inherits them sprays a node SDK's
-        // teardown chatter over whichever terminal happened to launch it, about
-        // a shutdown the user asked for. `CYDONIA_DEBUG`, which already
-        // redirects the protocol tap, is what hands them back.
-        if std::env::var_os(DEBUG).is_none() {
-            command.stderr(Stdio::null());
-        }
+        // An agent's diagnostics are not this app's to print. cacp leaves the
+        // choice to the caller — "a TUI usually wants it captured and a CLI
+        // usually does not" — and a desktop app that inherits them sprays a
+        // node SDK's teardown chatter over whichever terminal happened to
+        // launch it, about a shutdown the user asked for.
+        //
+        // Captured rather than discarded, though, because it is the only
+        // account of a process that dies without ever speaking protocol: the
+        // `#!/usr/bin/env node` shim that found no node, the package that
+        // would not resolve. It reaches the transcript as the execution it is
+        // — see [`Event::Stderr`]. `CYDONIA_DEBUG`, which already redirects
+        // the protocol tap, still echoes the lines where a developer looks.
+        command.stderr(Stdio::piped());
 
         let configured = mcp::servers();
 
-        let (tx, mut events) = mpsc::unbounded_channel();
-        let (conn, child) = cacp::spawn(&mut command, Arc::new(Frontend(tx.clone())), debug_tap())
-            .map_err(|e| anyhow!("failed to start {}: {}", entry.command, error_text(&e)))?;
-
-        let echo = tx.clone();
-        let session = Self::open(conn, child, tx, launch, configured).await?;
-        // `session/load` replays the whole conversation before it answers, and
-        // the client is holding that transcript already: the replay is spent
-        // here rather than arriving as a second copy of what is on screen.
-        // Only updates can be queued at this point — nothing else is sent
-        // until we prompt.
-        if session.loaded {
-            // All but the one thing in the replay that is state rather than
-            // transcript: what the conversation has already spent. Nothing in
-            // ACP asks for that — it arrives as a notification or not at all —
-            // so spending it here is what leaves a resumed session reading
-            // empty until its next turn. The last one wins, and goes back on
-            // the channel the frontend is about to read.
-            let mut usage = None;
-            while let Ok(event) = events.try_recv() {
-                if let Event::Update(SessionUpdate::UsageUpdate(update)) = event {
-                    usage = Some(update);
-                }
-            }
-            if let Some(update) = usage {
-                let _ = echo.send(Event::Update(SessionUpdate::UsageUpdate(update)));
-            }
+        let (conn, mut child) =
+            cacp::spawn(&mut command, Arc::new(Frontend(tx.clone())), debug_tap())
+                .map_err(|e| anyhow!("failed to start {}: {}", entry.command, error_text(&e)))?;
+        if let Some(stderr) = child.stderr.take() {
+            runtime().spawn(drain(stderr, tx.clone()));
         }
-        Ok((session, events))
+
+        Self::open(conn, child, tx, launch, configured).await
     }
 
     async fn open(
@@ -225,7 +213,7 @@ impl Session {
             };
             let result = match conn.load_session(load()).await {
                 Err(e) if e.is_auth_required() => {
-                    authenticate(&conn, &init, &launch).await?;
+                    authenticate(&conn, &init).await?;
                     conn.load_session(load()).await
                 }
                 other => other,
@@ -253,7 +241,7 @@ impl Session {
                 match conn.new_session(new_session()).await {
                     Ok(response) => response,
                     Err(e) if e.is_auth_required() => {
-                        authenticate(&conn, &init, &launch).await?;
+                        authenticate(&conn, &init).await?;
                         conn.new_session(new_session()).await.map_err(|e| {
                             anyhow!(
                                 "session/new failed after authentication: {}",
@@ -385,8 +373,8 @@ impl Client for Frontend {
 ///
 /// `cacp::spawn` sets `kill_on_drop`, so letting the child field drop on its own
 /// is an immediate SIGKILL — mid-request, if the agent was answering one.
-/// [`ChatSession::close`] sends `session/cancel` ahead of this, and the pause
-/// here is what gives that notification time to be read.
+/// [`crate::model::session::ChatSession::close`] sends `session/cancel` ahead
+/// of this, and the pause here is what gives that notification time to be read.
 ///
 /// It is not a clean shutdown, and cannot be until cacp can close an agent's
 /// stdin: its read loop is handed a `Peer` by value, so the write loop holding
@@ -489,7 +477,7 @@ fn acp_mcp_servers(
 /// (API keys read from the agent's env) fail fast when unset;
 /// interactive ones (OAuth) block until the user completes the flow in
 /// the browser the agent opens.
-async fn authenticate(conn: &AgentConn, init: &InitializeResponse, launch: &Launch) -> Result<()> {
+async fn authenticate(conn: &AgentConn, init: &InitializeResponse) -> Result<()> {
     if init.auth_methods.is_empty() {
         return Err(anyhow!(
             "authentication required, but the agent advertises no auth methods"
@@ -497,12 +485,6 @@ async fn authenticate(conn: &AgentConn, init: &InitializeResponse, launch: &Laun
     }
     let mut failures = Vec::new();
     for method in &init.auth_methods {
-        // Interactive methods (OAuth) block here until the user
-        // finishes signing in, so say so rather than looking hung.
-        launch.say(&format!(
-            "authenticating — {} (finish any sign-in your browser opens)",
-            method.name()
-        ));
         let request = AuthenticateRequest {
             method_id: method.id().clone(),
             meta: None,
@@ -513,6 +495,60 @@ async fn authenticate(conn: &AgentConn, init: &InitializeResponse, launch: &Laun
         }
     }
     Err(anyhow!("authentication failed — {}", failures.join("; ")))
+}
+
+/// Read the agent's stderr to its end, a line at a time, onto the channel the
+/// rest of the session runs on.
+///
+/// Ends when the pipe closes, which a dead process is what does — so this
+/// task is also what lets the channel close behind a launch that failed, and
+/// the caller stop waiting on it.
+async fn drain(stderr: ChildStderr, tx: Sender) {
+    let echo = std::env::var_os(DEBUG).is_some();
+    let mut lines = BufReader::new(stderr).lines();
+    while let Ok(Some(line)) = lines.next_line().await {
+        if echo {
+            eprintln!("{line}");
+        }
+        if tx.send(Event::Stderr(line)).is_err() {
+            return;
+        }
+    }
+}
+
+/// Spend a loaded session's replay, keeping only what is state rather than
+/// transcript.
+///
+/// `session/load` replays the whole conversation before it answers, and the
+/// client is holding that transcript already — the replay would arrive as a
+/// second copy of what is on screen. Only updates can be queued at this point,
+/// because nothing else is sent until we prompt.
+///
+/// What survives is the one thing in a replay that is not transcript: what the
+/// conversation has already spent. Nothing in ACP asks for that — it arrives
+/// as a notification or not at all — so dropping it with the rest is what
+/// leaves a resumed session reading empty until its next turn. The last one
+/// wins, and goes back on the channel the frontend is about to read.
+///
+/// Stderr is left where it is. It is not part of any replay: it is this
+/// launch's own process talking, and it has as much right to the transcript
+/// here as anywhere.
+pub fn spend_replay(events: &mut Events, tx: &Sender) {
+    let mut usage = None;
+    let mut kept = Vec::new();
+    while let Ok(event) = events.try_recv() {
+        match event {
+            Event::Update(SessionUpdate::UsageUpdate(update)) => usage = Some(update),
+            Event::Update(_) => {}
+            other => kept.push(other),
+        }
+    }
+    if let Some(update) = usage {
+        let _ = tx.send(Event::Update(SessionUpdate::UsageUpdate(update)));
+    }
+    for event in kept {
+        let _ = tx.send(event);
+    }
 }
 
 /// One-line rendering of a JSON-RPC error (`Display` dumps a JSON blob).

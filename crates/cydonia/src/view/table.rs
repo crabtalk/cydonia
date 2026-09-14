@@ -42,12 +42,12 @@ const LINE: f32 = 18.;
 /// header. Declared with the data columns so both halves line up.
 const ACTIONS: f32 = 44.;
 
-pub fn init(cx: &mut App) {
+pub fn bindings() -> Vec<KeyBinding> {
     let ctx = Some(KEY_CONTEXT);
-    cx.bind_keys([
+    vec![
         KeyBinding::new("enter", CommitCell, ctx),
         KeyBinding::new("escape", DismissCell, ctx),
-    ]);
+    ]
 }
 
 /// The pane's one text field — whichever cell, heading or title is being

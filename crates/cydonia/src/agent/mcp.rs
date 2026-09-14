@@ -97,14 +97,6 @@ pub fn remove(name: &str) -> Result<()> {
     save(servers)
 }
 
-pub fn set_enabled(name: &str, enabled: bool) -> Result<()> {
-    let mut servers = servers();
-    if let Some(server) = servers.iter_mut().find(|server| server.name == name) {
-        server.enabled = enabled;
-    }
-    save(servers)
-}
-
 /// Put the server where an agent can reach it and name it in `mcp.toml`.
 /// Blocking: an npm-distributed server is installed here.
 pub fn install(server: &registry::Server) -> Result<()> {
@@ -122,24 +114,4 @@ pub fn install(server: &registry::Server) -> Result<()> {
         url,
         id: Some(server.id.clone()),
     })
-}
-
-/// A server typed in by hand. The two shapes the wire has are stdio and HTTP,
-/// so the address decides which this is rather than a control asking.
-pub fn from_address(name: String, address: &str) -> McpServer {
-    let address = address.trim();
-    let remote = address.starts_with("http://") || address.starts_with("https://");
-    let mut words = address.split_whitespace().map(str::to_owned);
-    McpServer {
-        name,
-        enabled: true,
-        command: (!remote).then(|| words.next().unwrap_or_default()),
-        args: match remote {
-            true => Vec::new(),
-            false => words.collect(),
-        },
-        env: BTreeMap::new(),
-        url: remote.then(|| address.to_owned()),
-        id: None,
-    }
 }

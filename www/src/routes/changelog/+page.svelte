@@ -1,8 +1,9 @@
 <script>
+	import ShareImage from '$lib/ShareImage.svelte';
 	import { Download, Tag } from 'lucide-static';
 	import { anchor, day, groups, media, releases } from '$lib/changelog.js';
 	import Media from '$lib/Media.svelte';
-	import { dmgFor, releaseFor, site } from '$lib/meta.js';
+	import { dmgFor, releaseFor } from '$lib/meta.js';
 
 	const description =
 		'Every release of Cydonia — what is new, what changed and what is fixed in each version.';
@@ -14,9 +15,9 @@
 	<meta property="og:title" content="Cydonia — changelog" />
 	<meta property="og:description" content={description} />
 	<meta property="og:type" content="website" />
-	<meta property="og:image" content="{site}/og.png" />
-	<meta name="twitter:card" content="summary_large_image" />
 </svelte:head>
+
+<ShareImage />
 
 <section class="log">
 	<h1>Changelog</h1>

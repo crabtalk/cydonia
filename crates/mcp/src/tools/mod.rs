@@ -17,13 +17,16 @@ pub mod article;
 pub mod board;
 pub mod project;
 
-use crate::tool::{Args, Trouble};
+use crate::tool::{Arg, Args, Trouble};
 use serde_json::{Value, json};
 use std::path::Path;
 
 /// What every tool takes first. One server answers for the whole app, so which
 /// directory a call is about is the call's to say.
-pub(crate) const PROJECT: &str = "The project: the path of the directory the work is in.";
+pub(crate) const PROJECT: Arg = Arg {
+    name: "project",
+    about: "The project: the path of the directory the work is in.",
+};
 
 /// The directory a call is about: the one the caller was opened in, or the one
 /// it named.
@@ -38,7 +41,7 @@ pub(crate) const PROJECT: &str = "The project: the path of the directory the wor
 pub(crate) fn root<'a>(args: &Args<'a>) -> Result<&'a Path, Trouble> {
     let path = match args.at() {
         Some(at) => at,
-        None => Path::new(args.text("project")?),
+        None => Path::new(args.text(PROJECT)?),
     };
     match path.is_dir() {
         true => Ok(path),
@@ -56,27 +59,27 @@ pub(crate) fn root<'a>(args: &Args<'a>) -> Result<&'a Path, Trouble> {
 /// `bound` is whether the caller already has a project, in which case the
 /// argument that names one is left out: an argument a model must supply and
 /// the server will ignore is an argument that costs a turn to get wrong.
-pub(crate) fn fields(bound: bool, args: &[(&str, &str)]) -> Value {
-    let args: Vec<(&str, &str)> = match bound {
+pub(crate) fn fields(bound: bool, args: &[Arg]) -> Value {
+    let args: Vec<Arg> = match bound {
         true => args
             .iter()
-            .filter(|(name, _)| *name != "project")
+            .filter(|arg| arg.name != PROJECT.name)
             .copied()
             .collect(),
         false => args.to_vec(),
     };
     let properties = args
         .iter()
-        .map(|(name, about)| {
+        .map(|arg| {
             (
-                (*name).to_owned(),
-                json!({ "type": "string", "description": about }),
+                arg.name.to_owned(),
+                json!({ "type": "string", "description": arg.about }),
             )
         })
         .collect::<serde_json::Map<_, _>>();
     json!({
         "type": "object",
         "properties": properties,
-        "required": args.iter().map(|(name, _)| *name).collect::<Vec<_>>(),
+        "required": args.iter().map(|arg| arg.name).collect::<Vec<_>>(),
     })
 }

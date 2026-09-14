@@ -24,6 +24,7 @@ cacp-agents.workspace = true
 dirs.workspace = true
 editor.workspace = true
 futures.workspace = true
+global-hotkey.workspace = true
 image.workspace = true
 lru.workspace = true
 markdown.workspace = true
@@ -38,15 +39,3 @@ toml.workspace = true
 toml_edit.workspace = true
 ureq.workspace = true
 url.workspace = true
-
-# The workspace root's release profile, written a second time because a
-# published crate is the root of its own workspace and the root manifest is not
-# published — so this is the table `cargo install cydonia` builds with, and
-# without it an installed binary is the one cargo's defaults produce. Cargo
-# warns that a member's profiles are ignored; here they are, on every local
-# command, and the root's copy is what answers for those.
-[profile.release]
-opt-level = "z"
-lto = "fat"
-codegen-units = 1
-strip = "symbols"

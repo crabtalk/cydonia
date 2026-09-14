@@ -15,6 +15,7 @@ use crate::{
             composer::{Composer, ComposerEvent},
             menu::Menu,
             meter,
+            ribbon::Ribbon,
         },
         confirm, create, info,
         settings::{self, Section, SettingsWindow},
@@ -53,10 +54,6 @@ actions!(
         CloseProject,
         OpenSettings,
         ToggleSidebar,
-        ShowChat,
-        ShowBoard,
-        ShowArticle,
-        ShowTable,
         CommitName,
         DismissName,
         NextEntry,
@@ -172,31 +169,19 @@ pub(crate) const TOOLBAR_INSET: f32 = if cfg!(target_os = "macos") {
     HEADER_INSET
 };
 
-pub fn init(cx: &mut App) {
-    cx.bind_keys([
-        KeyBinding::new("cmd-n", NewSession, None),
-        KeyBinding::new("cmd-o", OpenProject, None),
-        // What macOS binds Preferences to in every other app.
-        KeyBinding::new("cmd-,", OpenSettings, None),
-        // What every app with a sidebar binds it to. It is claimed app-wide:
-        // the menu item carries it, so AppKit takes the chord before the
-        // window is offered it, and the editor's own `cmd-b` — bold — is not
-        // reached while this one is on the bar.
-        KeyBinding::new("cmd-b", ToggleSidebar, None),
-        KeyBinding::new("cmd-1", ShowChat, None),
-        KeyBinding::new("cmd-2", ShowBoard, None),
-        KeyBinding::new("cmd-3", ShowArticle, None),
-        KeyBinding::new("cmd-4", ShowTable, None),
-        // Bound ahead of the `tab` pair below because the menu draws the first
-        // chord a command was given, and `tab` is the one it cannot draw: gpui
-        // has no macOS key equivalent for it, so AppKit is handed the word
-        // where the API takes one character and shows ⌃T. These are what the
-        // View menu carries.
-        KeyBinding::new("alt-cmd-right", NextEntry, None),
-        KeyBinding::new("alt-cmd-left", PrevEntry, None),
-        // What a browser binds its tabs to. Global, because the point is to
-        // move between documents without taking the hand out of the editor —
-        // where `tab` itself is indent.
+/// The chords the window keeps whatever the reader says — the commands it also
+/// answers to are bound from [`crate::view::keymap`], which is where they can
+/// be moved.
+pub fn bindings() -> Vec<KeyBinding> {
+    vec![
+        // What a browser binds its tabs to, and an alternate rather than a
+        // command: it is the one chord the menu bar cannot draw — gpui has no
+        // macOS equivalent for `tab`, so AppKit is handed the word where the
+        // API takes one character and shows ⌃T. ⌥⌘→ and ⌥⌘← are the pair the
+        // View menu carries and the pair a person may move.
+        //
+        // Global, because the point is to move between documents without
+        // taking the hand out of the editor — where `tab` itself is indent.
         KeyBinding::new("ctrl-tab", NextEntry, None),
         KeyBinding::new("ctrl-shift-tab", PrevEntry, None),
         // Claimed app-wide and answered last: an editor and a field bind copy
@@ -206,7 +191,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-c", CopySelection, None),
         KeyBinding::new("enter", CommitName, Some(RENAME_CONTEXT)),
         KeyBinding::new("escape", DismissName, Some(RENAME_CONTEXT)),
-    ]);
+    ]
 }
 
 /// Open the workspace window. Called at launch, and again when the Dock
@@ -277,6 +262,14 @@ pub struct Cydonia {
     pub(crate) composer: Entity<Composer>,
     settings_window: Option<WindowHandle<SettingsWindow>>,
     pub(crate) pane: Pane,
+    /// Whether a session has been asked for with no agent to open one on.
+    ///
+    /// The chat pane then stands over the notice — see [`Cydonia::no_agent`] —
+    /// rather than a ⌘N throwing the settings window up in front of a window
+    /// that has said nothing about why. Runtime only, and read through
+    /// [`Cydonia::has_pane`], which drops it the moment an agent is there: a
+    /// flag left set behind an install would keep an empty pane on offer.
+    pub(crate) asked_session: bool,
     pub(crate) editing: Option<Editing>,
     pub(crate) card_field: Entity<TextField>,
     /// What the table pane's field is attached to, and the field itself.
@@ -303,6 +296,9 @@ pub struct Cydonia {
     /// Whether the press now being handled landed on the open menu's own
     /// trigger — read by [`Cydonia::toggle_menu`] and nothing else.
     pub(crate) menu_pressed: bool,
+    /// The formatting bar over the open document's selection, and the URL
+    /// field it puts up — see [`crate::view::component::ribbon`].
+    pub(crate) ribbon: Ribbon,
     /// Which kinds the sidebar is listing.
     pub(crate) filter: Filter,
     /// What the name field is attached to, and the field itself.
@@ -366,6 +362,7 @@ impl Cydonia {
         // which is a new editor entity.
         cx.subscribe_in(&workspace, window, |this, _, _: &Reloaded, window, cx| {
             this.drop_stale_edit(cx);
+            this.rest_ribbon(cx);
             this.cell = None;
             this.cell_field.update(cx, |field, cx| field.clear(cx));
             this.follow_article(window, cx);
@@ -382,6 +379,7 @@ impl Cydonia {
             composer,
             settings_window: None,
             pane: Pane::Chat,
+            asked_session: false,
             editing: None,
             card_field,
             cell: None,
@@ -393,6 +391,7 @@ impl Cydonia {
             menu: None,
             menu_cursor: Cursor::default(),
             menu_pressed: false,
+            ribbon: Ribbon::new(cx),
             filter: Filter::default(),
             renaming: None,
             name_field,
@@ -431,23 +430,45 @@ impl Cydonia {
         this
     }
 
+    /// Open a session on whichever agent the last one ran on, or on the first
+    /// one configured.
+    ///
+    /// With none configured there is nothing to open a session *on*, and a
+    /// chat pane switched to over no session is a blank one. A fresh install
+    /// names no agent — see [`crate::model::settings::Settings::default`] — so
+    /// this is where most people meet the feature: it sends them to the
+    /// section that installs one, the same place the composer's own
+    /// `Install an agent…` goes.
     pub(crate) fn new_session_action(
         &mut self,
         _: &NewSession,
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let asked = self.workspace.read(cx).preferred_agent();
+        // Nothing to open one on: the pane says so and offers the install,
+        // which is the same notice a session whose agent has gone stands
+        // under. The window jumping to Settings on its own answered a question
+        // it had not been asked yet.
+        self.asked_session = asked.is_none();
         self.show_pane(Pane::Chat, cx);
-        self.workspace.update(cx, |workspace, cx| {
-            if let Some(entry) = workspace.preferred_agent() {
-                workspace.new_session(entry, None, cx);
-            }
-        });
+        if let Some(entry) = asked {
+            self.workspace
+                .update(cx, |workspace, cx| workspace.new_session(entry, None, cx));
+        }
     }
 
     /// Copy what the transcript has selected. Bound app-wide and reached only
     /// where nothing nearer to the focus claimed the chord.
+    ///
+    /// Only while the transcript is the pane in front. The selection belongs to
+    /// the active session whichever pane is showing, so without this a ⌘C over
+    /// a board copies a run out of a chat nobody is looking at — which reads as
+    /// the chord doing nothing, right up until it is pasted.
     fn copy_selection(&mut self, _: &CopySelection, _: &mut Window, cx: &mut Context<Self>) {
+        if self.showing(cx) != Some(Pane::Chat) {
+            return;
+        }
         self.workspace
             .update(cx, |workspace, cx| workspace.copy_selection(cx));
     }
@@ -576,22 +597,6 @@ impl Cydonia {
         self.close_project(ix, cx);
     }
 
-    pub(crate) fn show_chat(&mut self, _: &ShowChat, _: &mut Window, cx: &mut Context<Self>) {
-        self.show_pane(Pane::Chat, cx);
-    }
-
-    pub(crate) fn show_board(&mut self, _: &ShowBoard, _: &mut Window, cx: &mut Context<Self>) {
-        self.show_pane(Pane::Board, cx);
-    }
-
-    pub(crate) fn show_article(&mut self, _: &ShowArticle, _: &mut Window, cx: &mut Context<Self>) {
-        self.show_pane(Pane::Article, cx);
-    }
-
-    pub(crate) fn show_table(&mut self, _: &ShowTable, _: &mut Window, cx: &mut Context<Self>) {
-        self.show_pane(Pane::Table, cx);
-    }
-
     pub(crate) fn open_settings(&mut self, section: Section, cx: &mut Context<Self>) {
         let workspace = self.workspace.clone();
         self.settings_window = settings::open(workspace, self.settings_window, section, cx);
@@ -649,7 +654,14 @@ impl Cydonia {
     pub(crate) fn has_pane(&self, pane: Pane, cx: &App) -> bool {
         let workspace = self.workspace.read(cx);
         match pane {
-            Pane::Chat => workspace.active_session().is_some(),
+            // A pane with no session in it, where one was asked for and there
+            // is no agent to open it on — [`Self::asked_session`]. Conditioned
+            // on the agent as well as on the flag, so an install is all it
+            // takes to put the pane back to what it is for.
+            Pane::Chat => {
+                workspace.active_session().is_some()
+                    || (self.asked_session && workspace.preferred_agent().is_none())
+            }
             Pane::Board => workspace.active_board().is_some(),
             Pane::Article => workspace.active_article().is_some(),
             Pane::Table => workspace.active_table().is_some(),

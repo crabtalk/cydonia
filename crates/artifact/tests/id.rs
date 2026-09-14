@@ -84,6 +84,7 @@ fn record(id: &str) -> Record {
     Record {
         id: id.to_owned(),
         agent: "claude".into(),
+        agent_id: None,
         session: None,
         title: "Ship it".into(),
         name: None,

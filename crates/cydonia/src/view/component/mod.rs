@@ -4,4 +4,5 @@
 pub mod composer;
 pub mod menu;
 pub mod meter;
+pub mod ribbon;
 pub mod transcript;

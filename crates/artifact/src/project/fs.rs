@@ -117,9 +117,7 @@ impl Project {
         super::Project::save_board(self, &mut board);
         let _ = std::fs::remove_file(old);
     }
-}
 
-impl Project {
     fn sessions_dir(&self) -> PathBuf {
         self.cydonia().join(SESSIONS)
     }

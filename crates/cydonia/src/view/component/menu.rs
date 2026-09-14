@@ -36,6 +36,9 @@ pub(crate) enum Menu {
     Filter,
     /// The `···` on a table's column heading.
     Column(usize),
+    /// The block picker on the article ribbon — see
+    /// [`crate::view::component::ribbon`].
+    Turn,
     /// The `···` on a card, by card id.
     Card(String),
 }

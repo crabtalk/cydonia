@@ -220,8 +220,8 @@ impl Project {
     }
 
     /// Where this project's work is kept. The filesystem, for this app —
-    /// [`artifact::backend`] is what a different one would be, and nothing above
-    /// here names a file.
+    /// [`artifact::project::Project`] is what a different one would answer, and
+    /// nothing above here names a file.
     pub fn store(&self) -> fs::Project {
         fs::Project::new(&self.path)
     }

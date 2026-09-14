@@ -23,11 +23,11 @@ const INFO_CONTEXT: &str = "CydoniaBoardInfo";
 /// How wide the labels run, so the two fields start on one edge.
 const LABEL_WIDTH: f32 = 34.;
 
-pub fn init(cx: &mut App) {
-    cx.bind_keys([
+pub fn bindings() -> Vec<KeyBinding> {
+    vec![
         KeyBinding::new("enter", CommitInfo, Some(INFO_CONTEXT)),
         KeyBinding::new("escape", DismissInfo, Some(INFO_CONTEXT)),
-    ]);
+    ]
 }
 
 /// A board's identity, open for editing: its name and the key its handles

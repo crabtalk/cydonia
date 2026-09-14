@@ -6,6 +6,7 @@ use crate::{
     view::{
         component::{composer, transcript},
         root::{self, Cydonia, NewSession, Pane},
+        settings::Section,
     },
 };
 use artifact::session::chat::PlanStatus;
@@ -18,7 +19,7 @@ use bezel::{
     theme::{TextStyle, Theme, Typeset},
     ui::{
         icons, surface,
-        widgets::{ButtonStyle, Buttons, Content, Controls},
+        widgets::{ButtonStyle, Buttons, Content, Controls, Status},
     },
 };
 use cacp::schema::{
@@ -131,7 +132,7 @@ fn shown_path(path: &Path) -> String {
 
 /// One of the two answers a permission request comes down to, with the *once*
 /// and *always* forms of it read as one.
-struct Verdict<'a> {
+pub struct Verdict<'a> {
     /// What the button says: the once-form's own label, whatever the checkbox
     /// is set to. Agents word the always-form as a sentence — "Yes, and allow
     /// access to repos/ and ls commands" — and a sentence is not a button.
@@ -144,7 +145,7 @@ impl Verdict<'_> {
     /// The option id this answer sends with the checkbox in that state. An
     /// always with no form to send falls back to the once: an agent offering
     /// "allow always" and no "reject always" still has to be refusable.
-    fn id(&self, always: bool) -> String {
+    pub fn id(&self, always: bool) -> String {
         match always {
             true => self.always.unwrap_or(self.once).to_owned(),
             false => self.once.to_owned(),
@@ -160,7 +161,7 @@ impl Verdict<'_> {
 /// for every option the agent sent: the count is what catches a second option
 /// of a kind already taken, and a kind we do not know. Dropping something the
 /// agent asked about is not ours to do, so anything else falls to the stack.
-fn alert(options: &[Choice]) -> Option<(Verdict<'_>, Verdict<'_>)> {
+pub fn alert(options: &[Choice]) -> Option<(Verdict<'_>, Verdict<'_>)> {
     let deny = verdict(options, false)?;
     let allow = verdict(options, true)?;
     let covered = 2 + usize::from(deny.always.is_some()) + usize::from(allow.always.is_some());
@@ -187,6 +188,48 @@ fn verdict(options: &[Choice], allow: bool) -> Option<Verdict<'_>> {
         once: &once.id,
         always: of(ever).map(|option| option.id.as_str()),
     })
+}
+
+/// What is left to do where there is no agent to reach — the line under
+/// [`agent_missing`]. `agent` is the one the session was opened on, and
+/// nothing where a session was asked for and never opened; `others` is whether
+/// `settings.toml` names any agent at all.
+///
+/// Three states with three ways out, and the shortest is worth saying. A
+/// session whose own agent has gone while another is still here is the only
+/// thing stranded, and opening one on that agent beats a download. Alone, it
+/// is the install. Asked for on a machine with nothing on it, there is no
+/// session yet to be stranded and the install is the whole of it.
+pub fn adrift(agent: Option<&str>, others: bool) -> &'static str {
+    match (agent, others) {
+        (Some(_), true) => "Open a session on an agent that is, or install this one again.",
+        (Some(_), false) => "No other agent is installed either.",
+        (None, _) => "Install one to open a session here.",
+    }
+}
+
+/// The title over it: which agent is missing, or that none is here at all — a
+/// session asked for on a machine with nothing installed has no agent to name.
+pub fn agent_missing(agent: Option<&str>) -> String {
+    match agent {
+        Some(agent) => format!("{agent} is not installed"),
+        None => "No agent installed".to_owned(),
+    }
+}
+
+/// The same said in one line, for the strip that stands under a transcript.
+///
+/// It names the place, where [`adrift`] does not: the empty state has a button
+/// under it and the strip has only itself, so the destination has to be in the
+/// words rather than on a control beneath them.
+pub fn adrift_line(agent: &str, others: bool) -> String {
+    let missing = agent_missing(Some(agent));
+    match others {
+        true => format!(
+            "{missing} — open a session on an agent that is, or install it again in Settings › Agents."
+        ),
+        false => format!("{missing} — install one in Settings › Agents."),
+    }
 }
 
 impl Cydonia {
@@ -275,11 +318,7 @@ impl Cydonia {
         let theme = Theme::of(cx).clone();
         // Nothing to send to: no session at all, or one whose agent has gone
         // from settings.toml, leaving nothing to reconnect it to.
-        let live = self
-            .workspace
-            .read(cx)
-            .active_session()
-            .is_some_and(ChatSession::resumable);
+        let live = self.workspace.read(cx).reachable();
         let showing = self.showing(cx);
         let body = match showing {
             None => self.launch(cx),
@@ -288,7 +327,7 @@ impl Cydonia {
             // An entry can be named and not yet loaded — an article holds no
             // editor until it is opened. The front door stands in for the
             // moment in between.
-            Some(Pane::Article) => self.article(cx).unwrap_or_else(|| self.launch(cx)),
+            Some(Pane::Article) => self.article(window, cx).unwrap_or_else(|| self.launch(cx)),
             Some(Pane::Table) => self.table(cx).unwrap_or_else(|| self.launch(cx)),
         };
 
@@ -318,31 +357,44 @@ impl Cydonia {
             .child(self.pane_header(window, cx))
             // Out of flow so the transcript runs under it: the composer's glass
             // has something to bend only where the messages reach its edge.
-            .when(live && showing == Some(Pane::Chat), |column| {
-                column.child(
+            //
+            // A chat with nowhere to send stands the reason there in its place
+            // — the slot is what the eye goes to for what happens next, and a
+            // composer simply withheld leaves it answering nothing.
+            .when(showing == Some(Pane::Chat), |column| match live {
+                true => column.child(footer(
                     div()
-                        .absolute()
-                        .bottom(px(root::COMPOSER_BOTTOM))
-                        .left_0()
-                        .right_0()
                         .flex()
-                        .justify_center()
-                        .child(
-                            div()
-                                .w_full()
-                                .max_w(px(root::COMPOSER_COLUMN))
-                                .px(px(root::COMPOSER_MARGIN))
-                                .flex()
-                                .flex_col()
-                                .gap(px(8.))
-                                .children(self.plan(cx))
-                                .children(self.permission(cx))
-                                .children(self.queue(cx))
-                                .child(self.composer.clone()),
-                        ),
-                )
+                        .flex_col()
+                        .gap(px(8.))
+                        .children(self.plan(cx))
+                        .children(self.permission(cx))
+                        .children(self.queue(cx))
+                        .child(self.composer.clone()),
+                )),
+                false => column.children(self.adrift_strip(cx).map(footer)),
             })
     }
+}
+
+/// Where the composer floats, and where anything standing in for it goes: out
+/// of flow at the column's foot, held to the composer's own width so the two
+/// land on the same edges.
+fn footer(inner: impl IntoElement) -> impl IntoElement {
+    div()
+        .absolute()
+        .bottom(px(root::COMPOSER_BOTTOM))
+        .left_0()
+        .right_0()
+        .flex()
+        .justify_center()
+        .child(
+            div()
+                .w_full()
+                .max_w(px(root::COMPOSER_COLUMN))
+                .px(px(root::COMPOSER_MARGIN))
+                .child(inner),
+        )
 }
 
 /// The invitation's rows as one block: left-aligned so every glyph lands on the
@@ -474,21 +526,30 @@ impl Cydonia {
         let theme = Theme::of(cx).clone();
         let workspace = self.workspace.read(cx);
         let Some(chat) = workspace.active_session() else {
-            return div().flex_1().into_any_element();
+            // No session, and the pane showing regardless: one was asked for
+            // with no agent to open it on — see [`Cydonia::asked_session`].
+            return match self.asked_session {
+                true => self.no_agent(None, false, cx),
+                false => div().flex_1().into_any_element(),
+            };
         };
         // Nothing has been said yet, so what the session has to show for
         // itself is the directory the agent was started in.
-        if chat.items.is_empty() {
+        if chat.unsaid() {
+            let agent = chat.entry.name.clone();
             let cwd = workspace
                 .active_project()
                 .map(|project| shown_path(&project.path))
                 .unwrap_or_default();
+            // Except where the agent is not here to be started in it. A
+            // transcript that has nothing to show *and* nowhere to send is the
+            // whole pane, so the way out goes here rather than under it.
+            let others = !workspace.settings.agents.is_empty();
+            if !workspace.reachable() {
+                return self.no_agent(Some(&agent), others, cx);
+            }
             return theme
-                .empty_state(
-                    icons::files::Folder,
-                    cwd,
-                    format!("{} runs here", chat.entry.name),
-                )
+                .empty_state(icons::files::Folder, cwd, format!("{agent} runs here"))
                 .flex_1()
                 .into_any_element();
         }
@@ -498,6 +559,62 @@ impl Cydonia {
                 Some(chat) => transcript::render(chat, window, cx),
                 None => div().flex_1().into_any_element(),
             })
+    }
+
+    /// No agent to say anything to: what is missing, and the way to put it
+    /// there. The whole pane, because there is nothing else in it.
+    ///
+    /// Two ways in. A session with nothing said in it whose agent has gone —
+    /// uninstalled while it was still on the rail — which before this drew
+    /// blank: a transcript with no messages, under a composer withheld for
+    /// having nowhere to send, which together are nothing at all. And a
+    /// session asked for on a machine with no agent on it, which has no
+    /// transcript of its own to stand over and names none.
+    fn no_agent(&self, agent: Option<&str>, others: bool, cx: &mut Context<Self>) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        let painter = Painter::of(cx);
+        theme
+            .empty_state(
+                icons::files::Download,
+                agent_missing(agent),
+                adrift(agent, others),
+            )
+            .flex_1()
+            .child(
+                theme
+                    .button(
+                        "Install an agent…",
+                        ButtonStyle::Prominent,
+                        Some(Fade::new(painter, "install-agent-empty")),
+                    )
+                    .id("install-agent-empty")
+                    .on_click(
+                        cx.listener(|this, _, _, cx| this.open_settings(Section::Agents, cx)),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    /// What stands where the composer would be over a transcript there is no
+    /// longer anywhere to answer into. The strip is the click: it names where
+    /// the agent is installed, and going there is all it has to offer.
+    ///
+    /// Nothing at all where the session has said nothing — [`Self::no_agent`]
+    /// is the whole pane then, and this under it would say it twice.
+    fn adrift_strip(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let theme = Theme::of(cx).clone();
+        let workspace = self.workspace.read(cx);
+        let chat = workspace.active_session().filter(|chat| !chat.unsaid())?;
+        let message = adrift_line(&chat.entry.name, !workspace.settings.agents.is_empty());
+        Some(
+            theme
+                .warning_strip(message)
+                .id("adrift")
+                .mt(px(0.))
+                .cursor_pointer()
+                .on_click(cx.listener(|this, _, _, cx| this.open_settings(Section::Agents, cx)))
+                .into_any_element(),
+        )
     }
 
     /// The agent's plan, while it still has something left to do.
@@ -752,65 +869,5 @@ impl Cydonia {
                     )
             }),
         ))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{Choice, PermissionOptionKind, alert};
-
-    fn choice(id: &str, kind: PermissionOptionKind) -> Choice {
-        Choice {
-            id: id.to_owned(),
-            name: id.to_owned(),
-            kind,
-        }
-    }
-
-    /// The set every agent sends: two answers, one of them rememberable.
-    #[test]
-    fn a_yes_a_no_and_a_forever_is_an_alert() {
-        let options = vec![
-            choice("yes", PermissionOptionKind::AllowOnce),
-            choice("yes-always", PermissionOptionKind::AllowAlways),
-            choice("no", PermissionOptionKind::RejectOnce),
-        ];
-        let (deny, allow) = alert(&options).expect("two sides, all three covered");
-        assert_eq!(allow.id(false), "yes");
-        assert_eq!(allow.id(true), "yes-always");
-        // No always-form to send: the refusal stands for this call either way.
-        assert_eq!(deny.id(true), "no");
-    }
-
-    /// An option neither side accounts for is an option the alert would drop.
-    #[test]
-    fn a_kind_of_the_agents_own_falls_to_the_stack() {
-        let options = vec![
-            choice("yes", PermissionOptionKind::AllowOnce),
-            choice("no", PermissionOptionKind::RejectOnce),
-            choice("edit", PermissionOptionKind::Other("edit_first".into())),
-        ];
-        assert!(alert(&options).is_none());
-    }
-
-    /// So is a second option of a kind one side has already taken.
-    #[test]
-    fn a_repeated_kind_falls_to_the_stack() {
-        let options = vec![
-            choice("yes", PermissionOptionKind::AllowOnce),
-            choice("yes-too", PermissionOptionKind::AllowOnce),
-            choice("no", PermissionOptionKind::RejectOnce),
-        ];
-        assert!(alert(&options).is_none());
-    }
-
-    /// An alert needs both answers — a lone side has nothing to sit opposite.
-    #[test]
-    fn one_sided_falls_to_the_stack() {
-        let options = vec![
-            choice("yes", PermissionOptionKind::AllowOnce),
-            choice("yes-always", PermissionOptionKind::AllowAlways),
-        ];
-        assert!(alert(&options).is_none());
     }
 }

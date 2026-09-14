@@ -2,12 +2,12 @@
 
 use crate::{
     model::workspace::Workspace,
-    view::settings::{self, SettingsWindow},
+    view::settings::{self, SettingsWindow, Switch},
 };
 use bezel::{
     gpui::{AnyElement, Context, DragMoveEvent, Empty, div, prelude::*, px},
     theme::{
-        TextStyle, Theme, Tint, Typeset,
+        Appearance, TextStyle, Theme, Tint, Typeset,
         appearance::{self, AppearanceMode},
     },
     ui::widgets::{self, Controls, Scaffolding, SliderDrag},
@@ -132,79 +132,107 @@ impl SettingsWindow {
             .flex_col()
             .gap(px(settings::LABEL_GAP))
             .child(theme.field_label("Editor"))
-            .child(theme.group_box().child(self.cursor_row(cx)))
+            .child(
+                theme
+                    .group_box()
+                    .child(self.cursor_row(cx))
+                    .child(self.pages_row(cx))
+                    .child(self.wrap_row(cx)),
+            )
             .into_any_element()
+    }
+
+    /// What a line too long for a code block does.
+    ///
+    /// Every document at once, an article's fences and a transcript's alike:
+    /// the renderer takes one answer for the app. Off is what an editor
+    /// usually does, and the cost of it here is that nothing scrolls a fence
+    /// back to a caret typed off its right edge — the page follows the caret
+    /// down, but a block's own sideways scroll is the reader's to drag.
+    pub(super) fn wrap_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let on = self.workspace.read(cx).wrap_code;
+        self.switch_row(
+            Switch::new(
+                "wrap-code",
+                "Wrap long lines in code",
+                "Off scrolls a long line sideways inside the block instead.",
+                on,
+            ),
+            cx,
+            move |this, cx| {
+                this.workspace
+                    .update(cx, |workspace, cx| workspace.set_wrap_code(!on, cx));
+            },
+        )
+    }
+
+    /// How wide a page is set when it has not been told otherwise.
+    ///
+    /// The default alone. A page's own `···` menu writes the measure into its
+    /// `properties.toml`, and one written down there is the document's — it
+    /// stays what its author made it whatever this switch says, which is what
+    /// the menu's Use default width hands back.
+    pub(super) fn pages_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let on = self.workspace.read(cx).wide_pages;
+        self.switch_row(
+            Switch::new(
+                "wide-pages",
+                "Full width pages",
+                "Set articles across the pane rather than in a reading column.",
+                on,
+            ),
+            cx,
+            move |this, cx| {
+                this.workspace
+                    .update(cx, |workspace, cx| workspace.set_wide_pages(!on, cx));
+            },
+        )
     }
 
     /// The app's own reduce-transparency switch, so the vibrancy can go without
     /// turning the system setting on for every other app.
-    pub(super) fn transparency_row(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
-        let theme = Theme::of(cx).clone();
-        let on = self.workspace.read(cx).reduce_transparency;
-        theme
-            .card_row(true)
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .child(theme.row_title("Reduce transparency"))
-                    .child(
-                        div()
-                            .mt(px(4.))
-                            .text_style(TextStyle::Subheadline)
-                            .text_color(theme.text_muted)
-                            .child("Replace translucent surfaces with opaque backgrounds."),
-                    ),
+    ///
+    /// Shown where the window actually is, which for the person who has never
+    /// pressed it is the appearance's own answer: on in light, off in dark.
+    /// The first press makes it theirs in both — see
+    /// [`crate::model::workspace::vibrancy`].
+    pub(super) fn transparency_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let light = matches!(Theme::of(cx).appearance, Appearance::Light);
+        let on = self.workspace.read(cx).opaque.unwrap_or(light);
+        self.switch_row(
+            Switch::new(
+                "reduce-transparency",
+                "Reduce transparency",
+                "Replace translucent surfaces with opaque backgrounds.",
+                on,
             )
-            .child(
-                div()
-                    .id("reduce-transparency")
-                    .cursor_pointer()
-                    .child(theme.toggle(on))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.workspace.update(cx, |workspace, cx| {
-                            workspace.set_reduce_transparency(!on, cx)
-                        });
-                        cx.notify();
-                    })),
-            )
+            .first(true),
+            cx,
+            move |this, cx| {
+                this.workspace
+                    .update(cx, |workspace, cx| workspace.set_opaque(!on, cx));
+            },
+        )
     }
 
     /// Whether the caret blinks. bezel holds the caret, so the switch sets it
     /// there rather than keeping a second copy of the answer.
-    pub(super) fn cursor_row(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
-        let theme = Theme::of(cx).clone();
+    pub(super) fn cursor_row(&self, cx: &mut Context<Self>) -> AnyElement {
         let on = self.workspace.read(cx).cursor_blink;
-        theme
-            .card_row(true)
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .child(theme.row_title("Blink the cursor"))
-                    .child(
-                        div()
-                            .mt(px(4.))
-                            .text_style(TextStyle::Subheadline)
-                            .text_color(theme.text_muted)
-                            .child("Off holds the text caret lit while it has focus."),
-                    ),
+        self.switch_row(
+            Switch::new(
+                "cursor-blink",
+                "Blink the cursor",
+                "Off holds the text caret lit while it has focus.",
+                on,
             )
-            .child(
-                div()
-                    .id("cursor-blink")
-                    .cursor_pointer()
-                    .child(theme.toggle(on))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.workspace
-                            .update(cx, |workspace, cx| workspace.set_cursor_blink(!on, cx));
-                        cx.notify();
-                    })),
-            )
+            .first(true),
+            cx,
+            move |this, cx| {
+                this.workspace
+                    .update(cx, |workspace, cx| workspace.set_cursor_blink(!on, cx));
+            },
+        )
     }
 
     /// The hue every grey carries, and how much of it. Two rows because they

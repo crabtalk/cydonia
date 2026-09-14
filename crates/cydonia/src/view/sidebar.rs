@@ -5,10 +5,12 @@
 use crate::{
     model::{session::ChatSession, settings::Features, update},
     view::{
+        article::TogglePlainText,
         component::{
             menu::{self, Menu},
             transcript,
         },
+        keymap::{self, Command},
         root::{self, CommitName, Cydonia, DismissName, NewSession, OpenProject, Pane},
         settings::Section,
     },
@@ -319,6 +321,11 @@ impl UniformListDecoration for PinnedHead {
 impl Cydonia {
     pub(crate) fn sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
+        // Taken here, where the workspace is already open, because the two
+        // tooltips below are built inside closures that outlive this borrow.
+        let shortcuts = &self.workspace.read(cx).settings.shortcuts;
+        let settings_chord = keymap::label(Command::OpenSettings, shortcuts);
+        let open_chord = keymap::label(Command::OpenProject, shortcuts);
         let rows = self.rows(cx);
         let count = rows.len();
         div()
@@ -378,8 +385,15 @@ impl Cydonia {
                             // The mark alone, like every other control on this
                             // line. What it opens is said in the tooltip, which
                             // is where the two beside it say theirs.
-                            .tooltip(|window, cx| {
-                                Tooltip::with_keystroke("Settings", "⌘,", window, cx)
+                            // The chord read off the table the keymap was
+                            // built from rather than typed beside the label:
+                            // it is the reader's to move, and a tooltip naming
+                            // the one it used to be is a lie nothing catches.
+                            .tooltip(move |window, cx| match settings_chord.clone() {
+                                Some(chord) => {
+                                    Tooltip::with_keystroke("Settings", chord, window, cx)
+                                }
+                                None => Tooltip::text("Settings", window, cx),
                             })
                             .child(
                                 icons::icon(icons::account::Settings)
@@ -402,8 +416,14 @@ impl Cydonia {
                                     .ghost("open-project")
                                     .px(px(8.))
                                     .py(px(6.))
-                                    .tooltip(|window, cx| {
-                                        Tooltip::with_keystroke("New project", "⌘O", window, cx)
+                                    .tooltip(move |window, cx| match open_chord.clone() {
+                                        Some(chord) => Tooltip::with_keystroke(
+                                            "New project",
+                                            chord,
+                                            window,
+                                            cx,
+                                        ),
+                                        None => Tooltip::text("New project", window, cx),
                                     })
                                     .child(
                                         icons::icon(icons::files::FilePlus)
@@ -1212,18 +1232,45 @@ impl Cydonia {
         // whichever one you stopped on rather than the one you are reading. An
         // article is never `named`, so nothing it could sit above is here.
         if header && matches!(entry, Row::Article { .. }) {
-            let wide = self
-                .workspace
-                .read(cx)
+            let workspace = self.workspace.read(cx);
+            let plain_chord = keymap::label(Command::PlainText, &workspace.settings.shortcuts)
+                .unwrap_or_default();
+            let held = workspace
                 .active_article()
-                .is_some_and(|article| article.full_width);
+                .and_then(|article| article.full_width);
+            let wide = held.unwrap_or(workspace.wide_pages);
+            // Only for a page carrying a measure of its own. On every other
+            // page it is already what is happening, and a row that undoes
+            // nothing is a row nobody can read the point of.
+            if held.is_some() {
+                rows.insert(
+                    0,
+                    menu::row(
+                        Item::action("Use default width").with_icon(icons::layout::Columns2),
+                        move |this, _, cx| this.set_full_width(None, cx),
+                    ),
+                );
+            }
             rows.insert(
                 0,
                 menu::row(
                     Item::action("Full width")
                         .with_icon(icons::layout::UnfoldHorizontal)
                         .checked(wide),
-                    move |this, _, cx| this.set_full_width(!wide, cx),
+                    move |this, _, cx| this.set_full_width(Some(!wide), cx),
+                ),
+            );
+            // The markdown itself, for the times the document is in the way of
+            // it. Above the width, which is about the page rather than what is
+            // being edited on it.
+            rows.insert(
+                0,
+                menu::row(
+                    Item::action("Plain text")
+                        .with_icon(icons::text::Code)
+                        .with_keystroke(plain_chord)
+                        .checked(self.plain_text(cx).unwrap_or_default()),
+                    move |this, window, cx| this.toggle_plain_text(&TogglePlainText, window, cx),
                 ),
             );
         }

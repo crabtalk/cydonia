@@ -6,7 +6,7 @@
 //! whole scale.
 
 use crate::{
-    model::state,
+    model::settings as config,
     view::settings::{self, SettingsWindow},
 };
 use bezel::{
@@ -78,7 +78,7 @@ impl SettingsWindow {
         } else {
             ("size-up".into(), "+".into())
         };
-        let next = (size + by).clamp(state::TEXT_SIZE.0, state::TEXT_SIZE.1);
+        let next = (size + by).clamp(config::TEXT_SIZE.0, config::TEXT_SIZE.1);
         theme
             .ghost(id)
             .px(px(8.))

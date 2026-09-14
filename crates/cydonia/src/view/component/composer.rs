@@ -46,9 +46,9 @@ const WARN_AT: f32 = 0.8;
 /// of it.
 const PICKER_HEIGHT: f32 = 320.;
 
-pub fn init(cx: &mut App) {
+pub fn bindings() -> Vec<KeyBinding> {
     let ctx = Some(KEY_CONTEXT);
-    cx.bind_keys([
+    vec![
         KeyBinding::new("enter", Send, ctx),
         // Bound explicitly: the field's own `enter` is what usually inserts a
         // newline, and the composer has just taken it.
@@ -56,7 +56,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("down", CommandNext, ctx),
         KeyBinding::new("up", CommandPrevious, ctx),
         KeyBinding::new("escape", CommandDismiss, ctx),
-    ]);
+    ]
 }
 
 /// One agent on offer: what to call it, and the registry's mark for it when

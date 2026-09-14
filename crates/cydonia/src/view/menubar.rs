@@ -2,10 +2,10 @@
 //! that decides which of them are live.
 //!
 //! An item carries an action and a name, never a shortcut. `set_menus` reads
-//! the equivalent off the keymap, so the `bind_keys` in each view's `init`
-//! stays the one place a chord is written — at the price of two rules:
+//! the equivalent off the keymap, so [`crate::view::keymap`] stays the one
+//! place a chord is written — at the price of two rules:
 //!
-//! * every `init` runs before this module does, or an item is built for an
+//! * the keymap is bound before this module runs, or an item is built for an
 //!   action whose binding is not registered yet and shows no shortcut at all;
 //! * an action bound inside a key context does not belong here. AppKit claims
 //!   a key equivalent before gpui sees the keystroke and dispatches it straight
@@ -20,9 +20,12 @@
 
 use crate::{
     model::update,
-    view::root::{
-        CloseProject, Cydonia, NewArticle, NewBoard, NewSession, NewTable, NextEntry, OpenProject,
-        OpenSettings, Pane, PrevEntry, ShowArticle, ShowBoard, ShowChat, ShowTable, ToggleSidebar,
+    view::{
+        article::TogglePlainText,
+        root::{
+            CloseProject, Cydonia, NewArticle, NewBoard, NewSession, NewTable, NextEntry,
+            OpenProject, OpenSettings, Pane, PrevEntry, ToggleSidebar,
+        },
     },
 };
 use bezel::{
@@ -47,18 +50,23 @@ actions!(
     ]
 );
 
-pub fn init(cx: &mut App) {
-    // A nib gives an app these; there is no nib here, and an item whose action
-    // nothing has bound shows no shortcut and answers to none — ⌘Q included.
-    cx.bind_keys([
+/// The window and application chords, which are not the reader's to move: they
+/// are where macOS puts them for every app, and an app that let you move them
+/// would be the only one you had to remember. Bound at all because a nib gives
+/// an app these and there is no nib here — an item whose action nothing has
+/// bound shows no shortcut and answers to none, ⌘Q included.
+pub fn bindings() -> Vec<KeyBinding> {
+    vec![
         KeyBinding::new("cmd-q", Quit, None),
         KeyBinding::new("cmd-h", Hide, None),
         KeyBinding::new("alt-cmd-h", HideOthers, None),
         KeyBinding::new("cmd-w", CloseWindow, None),
         KeyBinding::new("cmd-m", Minimize, None),
         KeyBinding::new("ctrl-cmd-f", ToggleFullScreen, None),
-    ]);
+    ]
+}
 
+pub fn init(cx: &mut App) {
     cx.on_action(|_: &Quit, cx: &mut App| cx.quit());
     cx.on_action(|_: &Hide, cx: &mut App| cx.hide());
     cx.on_action(|_: &HideOthers, cx: &mut App| cx.hide_other_apps());
@@ -99,6 +107,16 @@ pub fn init(cx: &mut App) {
         });
     }
 
+    refresh(cx);
+}
+
+/// Build the tree again and hand it over, so every item carries the chord the
+/// keymap holds *now*.
+///
+/// Called at launch and after a rebind. It has to be both: AppKit keeps the
+/// key equivalent it was given and claims the chord before gpui sees it, so a
+/// moved shortcut that left the menus alone would leave the old chord firing.
+pub fn refresh(cx: &mut App) {
     let menus = menus(cx);
     cx.set_menus(menus);
 }
@@ -162,16 +180,17 @@ fn menus(cx: &App) -> Vec<Menu> {
         Menu::new("View").items([
             MenuItem::action("Toggle Sidebar", ToggleSidebar),
             MenuItem::separator(),
-            MenuItem::action("Chat", ShowChat),
-            MenuItem::action("Board", ShowBoard),
-            MenuItem::action("Article", ShowArticle),
-            MenuItem::action("Table", ShowTable),
-            MenuItem::separator(),
             // Drawn ⌥⌘→ and ⌥⌘←, which is why those are bound first: the
             // `ctrl-tab` pair these also answer to is a chord gpui cannot
             // hand macOS, and an item that named it would teach ⌃T.
             MenuItem::action("Next Entry", NextEntry),
             MenuItem::action("Previous Entry", PrevEntry),
+            MenuItem::separator(),
+            // Here rather than left to the pane's own `···`, because ⌘E is the
+            // editor's inline code and only a key equivalent on the bar takes
+            // a chord before the focused surface is offered it — see
+            // [`crate::view::keymap::Command::PlainText`].
+            MenuItem::action("Plain Text", TogglePlainText),
             MenuItem::separator(),
             MenuItem::action("Enter Full Screen", ToggleFullScreen),
         ]),
@@ -231,11 +250,10 @@ impl Cydonia {
         let features = &workspace.settings.features;
         let (sessions, boards, tables) = (features.sessions, features.boards, features.tables);
         let project = workspace.active.is_some();
-        let panes = [Pane::Chat, Pane::Board, Pane::Article, Pane::Table]
-            .map(|pane| self.has_pane(pane, cx));
         // Nothing on screen is nothing to step from — the launch view is not
         // an entry, and its neighbour is not another one.
-        let entries = self.showing(cx).is_some();
+        let showing = self.showing(cx);
+        let entries = showing.is_some();
 
         root.on_action(cx.listener(Self::toggle_sidebar_action))
             .on_action(cx.listener(Self::open_project_action))
@@ -253,17 +271,10 @@ impl Cydonia {
                         root.on_action(cx.listener(Self::new_table_action))
                     })
             })
-            .when(panes[0], |root| {
-                root.on_action(cx.listener(Self::show_chat))
-            })
-            .when(panes[1], |root| {
-                root.on_action(cx.listener(Self::show_board))
-            })
-            .when(panes[2], |root| {
-                root.on_action(cx.listener(Self::show_article))
-            })
-            .when(panes[3], |root| {
-                root.on_action(cx.listener(Self::show_table))
+            // Only where a document is the thing on screen: the chord acts on
+            // the open page, and the item greys itself everywhere else.
+            .when(showing == Some(Pane::Article), |root| {
+                root.on_action(cx.listener(Self::toggle_plain_text))
             })
             .when(entries, |root| {
                 root.on_action(cx.listener(Self::next_entry))
