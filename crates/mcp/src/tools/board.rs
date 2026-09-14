@@ -18,7 +18,7 @@
 //! difference between a tool that costs one turn and one that costs three.
 
 use crate::{
-    tool::{Answer, Args, Outcome, Tool, Trouble},
+    tool::{Answer, Arg, Args, Outcome, Tool, Trouble},
     tools::{PROJECT, fields, root},
 };
 use artifact::{
@@ -27,119 +27,100 @@ use artifact::{
 };
 use serde_json::{Value, json};
 
-const BOARD: &str = "The board: its key (ROAD), its name, or its id.";
-const CARD: &str = "The card: its handle (ROAD-12), or its id.";
-const COLUMN: &str = "The column: its name, or its id.";
+const BOARD: Arg = Arg {
+    name: "board",
+    about: "The board: its key (ROAD), its name, or its id.",
+};
+const CARD: Arg = Arg {
+    name: "card",
+    about: "The card: its handle (ROAD-12), or its id.",
+};
+const COLUMN: Arg = Arg {
+    name: "column",
+    about: "The column: its name, or its id.",
+};
+
+/// The two `text` arguments and the two `name` ones carry the same key and a
+/// different line: what a card says when it is made is not what it should say
+/// now. A const each, so the tool that takes one names the one it takes.
+const TEXT: Arg = Arg {
+    name: "text",
+    about: "What the card says.",
+};
+const TEXT_NOW: Arg = Arg {
+    name: "text",
+    about: "What the card should say now.",
+};
+const NAME: Arg = Arg {
+    name: "name",
+    about: "What the column is called.",
+};
+const NAME_NOW: Arg = Arg {
+    name: "name",
+    about: "What the column should be called now.",
+};
 
 pub static TOOLS: [Tool; 9] = [
     Tool {
         name: "board_list",
         description: "List the project's boards, with how much is on each.",
-        schema: |bound| fields(bound, &[("project", PROJECT)]),
+        schema: |bound| fields(bound, &[PROJECT]),
         writes: false,
         call: list,
     },
     Tool {
         name: "board_read",
         description: "Read one board: its columns, and the cards under them by handle.",
-        schema: |bound| fields(bound, &[("project", PROJECT), ("board", BOARD)]),
+        schema: |bound| fields(bound, &[PROJECT, BOARD]),
         writes: false,
         call: read,
     },
     Tool {
         name: "board_add_card",
         description: "Put a new card at the end of a column, and answer its handle.",
-        schema: |bound| {
-            fields(
-                bound,
-                &[
-                    ("project", PROJECT),
-                    ("board", BOARD),
-                    ("column", COLUMN),
-                    ("text", "What the card says."),
-                ],
-            )
-        },
+        schema: |bound| fields(bound, &[PROJECT, BOARD, COLUMN, TEXT]),
         writes: true,
         call: add_card,
     },
     Tool {
         name: "board_rewrite_card",
         description: "Replace what a card says.",
-        schema: |bound| {
-            fields(
-                bound,
-                &[
-                    ("project", PROJECT),
-                    ("card", CARD),
-                    ("text", "What the card should say now."),
-                ],
-            )
-        },
+        schema: |bound| fields(bound, &[PROJECT, CARD, TEXT_NOW]),
         writes: true,
         call: rewrite_card,
     },
     Tool {
         name: "board_move_card",
         description: "Carry a card to the end of another column on the same board.",
-        schema: |bound| {
-            fields(
-                bound,
-                &[("project", PROJECT), ("card", CARD), ("column", COLUMN)],
-            )
-        },
+        schema: |bound| fields(bound, &[PROJECT, CARD, COLUMN]),
         writes: true,
         call: move_card,
     },
     Tool {
         name: "board_remove_card",
         description: "Take a card off its board for good.",
-        schema: |bound| fields(bound, &[("project", PROJECT), ("card", CARD)]),
+        schema: |bound| fields(bound, &[PROJECT, CARD]),
         writes: true,
         call: remove_card,
     },
     Tool {
         name: "board_add_column",
         description: "Add a column at the right-hand end of a board.",
-        schema: |bound| {
-            fields(
-                bound,
-                &[
-                    ("project", PROJECT),
-                    ("board", BOARD),
-                    ("name", "What the column is called."),
-                ],
-            )
-        },
+        schema: |bound| fields(bound, &[PROJECT, BOARD, NAME]),
         writes: true,
         call: add_column,
     },
     Tool {
         name: "board_rename_column",
         description: "Rename a column. Cards keep the handles they already have.",
-        schema: |bound| {
-            fields(
-                bound,
-                &[
-                    ("project", PROJECT),
-                    ("board", BOARD),
-                    ("column", COLUMN),
-                    ("name", "What the column should be called now."),
-                ],
-            )
-        },
+        schema: |bound| fields(bound, &[PROJECT, BOARD, COLUMN, NAME_NOW]),
         writes: true,
         call: rename_column,
     },
     Tool {
         name: "board_remove_column",
         description: "Drop an empty column. A column holding cards is refused — empty it first.",
-        schema: |bound| {
-            fields(
-                bound,
-                &[("project", PROJECT), ("board", BOARD), ("column", COLUMN)],
-            )
-        },
+        schema: |bound| fields(bound, &[PROJECT, BOARD, COLUMN]),
         writes: true,
         call: remove_column,
     },
@@ -171,15 +152,15 @@ fn list(args: Args<'_>) -> Outcome {
 
 fn read(args: Args<'_>) -> Outcome {
     let project = &store(&args)?;
-    let board = board(project, args.text("board")?)?;
+    let board = board(project, args.text(BOARD)?)?;
     Ok(Answer::said(outline(&board)).with(shape(&board)))
 }
 
 fn add_card(args: Args<'_>) -> Outcome {
     let project = &store(&args)?;
-    let mut board = board(project, args.text("board")?)?;
-    let column = column(&board, args.text("column")?)?;
-    let text = args.text("text")?.to_owned();
+    let mut board = board(project, args.text(BOARD)?)?;
+    let column = column(&board, args.text(COLUMN)?)?;
+    let text = args.text(TEXT)?.to_owned();
     let name = board.column(&column).map(|column| column.name.clone());
     let card = board
         .add_card(&column, text)
@@ -195,8 +176,8 @@ fn add_card(args: Args<'_>) -> Outcome {
 
 fn rewrite_card(args: Args<'_>) -> Outcome {
     let project = &store(&args)?;
-    let (mut board, id) = locate(project, args.text("card")?)?;
-    let text = args.text("text")?;
+    let (mut board, id) = locate(project, args.text(CARD)?)?;
+    let text = args.text(TEXT_NOW)?;
     let handle = named(&board, &id);
     board.rewrite_card(&id, text);
     project.save_board(&mut board);
@@ -205,8 +186,8 @@ fn rewrite_card(args: Args<'_>) -> Outcome {
 
 fn move_card(args: Args<'_>) -> Outcome {
     let project = &store(&args)?;
-    let (mut board, id) = locate(project, args.text("card")?)?;
-    let to = column(&board, args.text("column")?)?;
+    let (mut board, id) = locate(project, args.text(CARD)?)?;
+    let to = column(&board, args.text(COLUMN)?)?;
     let handle = named(&board, &id);
     let name = board.column(&to).map(|column| column.name.clone());
     if !board.move_card(&id, &to) {
@@ -221,7 +202,7 @@ fn move_card(args: Args<'_>) -> Outcome {
 
 fn remove_card(args: Args<'_>) -> Outcome {
     let project = &store(&args)?;
-    let (mut board, id) = locate(project, args.text("card")?)?;
+    let (mut board, id) = locate(project, args.text(CARD)?)?;
     let handle = named(&board, &id);
     let card = board
         .remove_card(&id)
@@ -235,8 +216,8 @@ fn remove_card(args: Args<'_>) -> Outcome {
 
 fn add_column(args: Args<'_>) -> Outcome {
     let project = &store(&args)?;
-    let mut board = board(project, args.text("board")?)?;
-    let name = args.text("name")?;
+    let mut board = board(project, args.text(BOARD)?)?;
+    let name = args.text(NAME)?;
     let id = board.add_column(name).id.clone();
     let label = board.label().to_owned();
     project.save_board(&mut board);
@@ -245,9 +226,9 @@ fn add_column(args: Args<'_>) -> Outcome {
 
 fn rename_column(args: Args<'_>) -> Outcome {
     let project = &store(&args)?;
-    let mut board = board(project, args.text("board")?)?;
-    let id = column(&board, args.text("column")?)?;
-    let name = args.text("name")?;
+    let mut board = board(project, args.text(BOARD)?)?;
+    let id = column(&board, args.text(COLUMN)?)?;
+    let name = args.text(NAME_NOW)?;
     let was = board
         .column(&id)
         .map(|column| column.name.clone())
@@ -259,8 +240,8 @@ fn rename_column(args: Args<'_>) -> Outcome {
 
 fn remove_column(args: Args<'_>) -> Outcome {
     let project = &store(&args)?;
-    let mut board = board(project, args.text("board")?)?;
-    let id = column(&board, args.text("column")?)?;
+    let mut board = board(project, args.text(BOARD)?)?;
+    let id = column(&board, args.text(COLUMN)?)?;
     let name = board
         .column(&id)
         .map(|column| column.name.clone())

@@ -29,6 +29,19 @@ pub struct Tool {
     pub call: fn(Args<'_>) -> Outcome,
 }
 
+/// One argument a tool takes: the key it arrives under, and the line the model
+/// reads to fill it in.
+///
+/// Named as a const and used by both sides — the schema that declares it and
+/// the handler that reads it back. They used to be two string literals in two
+/// files, which compiled just as happily when one of them was renamed and the
+/// other was not.
+#[derive(Clone, Copy)]
+pub struct Arg {
+    pub name: &'static str,
+    pub about: &'static str,
+}
+
 pub type Outcome = Result<Answer, Trouble>;
 
 /// What a tool answers with: the lines a model reads, and the shape a client
@@ -93,14 +106,17 @@ impl<'a> Args<'a> {
         self.at
     }
 
-    pub fn text(&self, name: &str) -> Result<&'a str, Trouble> {
-        match self.arguments.get(name).and_then(Value::as_str) {
+    pub fn text(&self, arg: Arg) -> Result<&'a str, Trouble> {
+        match self.arguments.get(arg.name).and_then(Value::as_str) {
             Some(text) => Ok(text),
-            None => Err(Trouble::Invalid(format!("{name} is required, as a string"))),
+            None => Err(Trouble::Invalid(format!(
+                "{} is required, as a string",
+                arg.name
+            ))),
         }
     }
 
-    pub fn maybe(&self, name: &str) -> Option<&'a str> {
-        self.arguments.get(name).and_then(Value::as_str)
+    pub fn maybe(&self, arg: Arg) -> Option<&'a str> {
+        self.arguments.get(arg.name).and_then(Value::as_str)
     }
 }

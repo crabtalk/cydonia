@@ -13,7 +13,7 @@
 //! workspace, and an agent that wanted it wanted a person to make it.
 
 use crate::{
-    tool::{Answer, Args, Outcome, Tool, Trouble},
+    tool::{Answer, Arg, Args, Outcome, Tool, Trouble},
     tools::{PROJECT, fields, root},
 };
 use artifact::{
@@ -23,68 +23,64 @@ use artifact::{
 use serde_json::json;
 use std::path::{Path, PathBuf};
 
-const ARTICLE: &str = "The article: its title, or its id.";
+const ARTICLE: Arg = Arg {
+    name: "article",
+    about: "The article: its title, or its id.",
+};
+
+/// `title` and `text` each carry one line when the article is written and
+/// another when it is rewritten, so there is a const for each rather than one
+/// wording made to cover both.
+const TITLE: Arg = Arg {
+    name: "title",
+    about: "What the article is called.",
+};
+const TITLE_NOW: Arg = Arg {
+    name: "title",
+    about: "What it should be called now.",
+};
+const MARKDOWN: Arg = Arg {
+    name: "text",
+    about: "Its markdown.",
+};
+const MARKDOWN_NOW: Arg = Arg {
+    name: "text",
+    about: "The markdown it should hold now.",
+};
 
 pub static TOOLS: [Tool; 5] = [
     Tool {
         name: "article_list",
         description: "List the project's articles, most recently written first.",
-        schema: |bound| fields(bound, &[("project", PROJECT)]),
+        schema: |bound| fields(bound, &[PROJECT]),
         writes: false,
         call: list,
     },
     Tool {
         name: "article_read",
         description: "Read one article's markdown.",
-        schema: |bound| fields(bound, &[("project", PROJECT), ("article", ARTICLE)]),
+        schema: |bound| fields(bound, &[PROJECT, ARTICLE]),
         writes: false,
         call: read,
     },
     Tool {
         name: "article_add",
         description: "Write a new article, and answer the id it is filed under.",
-        schema: |bound| {
-            fields(
-                bound,
-                &[
-                    ("project", PROJECT),
-                    ("title", "What the article is called."),
-                    ("text", "Its markdown."),
-                ],
-            )
-        },
+        schema: |bound| fields(bound, &[PROJECT, TITLE, MARKDOWN]),
         writes: true,
         call: add,
     },
     Tool {
         name: "article_rewrite",
         description: "Replace an article's markdown. The title is left alone.",
-        schema: |bound| {
-            fields(
-                bound,
-                &[
-                    ("project", PROJECT),
-                    ("article", ARTICLE),
-                    ("text", "The markdown it should hold now."),
-                ],
-            )
-        },
+        schema: |bound| fields(bound, &[PROJECT, ARTICLE, MARKDOWN_NOW]),
         writes: true,
         call: rewrite,
     },
     Tool {
         name: "article_rename",
         description: "Rename an article. What it is filed under does not change.",
-        schema: |bound| {
-            fields(
-                bound,
-                &[
-                    ("project", PROJECT),
-                    ("article", ARTICLE),
-                    ("title", "What it should be called now."),
-                ],
-            )
-        },
+        schema: |bound| fields(bound, &[PROJECT, ARTICLE, TITLE_NOW]),
         writes: true,
         call: rename,
     },
@@ -112,7 +108,7 @@ fn list(args: Args<'_>) -> Outcome {
 }
 
 fn read(args: Args<'_>) -> Outcome {
-    let found = locate(root(&args)?, args.text("article")?)?;
+    let found = locate(root(&args)?, args.text(ARTICLE)?)?;
     let text = std::fs::read_to_string(&found.content)
         .map_err(|e| Trouble::Refused(format!("{} cannot be read — {e}", found.label())))?;
     Ok(Answer::said(text).with(json!({ "id": found.id, "title": found.title })))
@@ -120,8 +116,8 @@ fn read(args: Args<'_>) -> Outcome {
 
 fn add(args: Args<'_>) -> Outcome {
     let project = root(&args)?;
-    let title = args.text("title")?;
-    let text = args.text("text")?;
+    let title = args.text(TITLE)?;
+    let text = args.text(MARKDOWN)?;
     let dir = article::init(project).map_err(|e| {
         Trouble::Refused(format!("{} cannot be written to — {e}", project.display()))
     })?;
@@ -138,16 +134,16 @@ fn add(args: Args<'_>) -> Outcome {
 }
 
 fn rewrite(args: Args<'_>) -> Outcome {
-    let found = locate(root(&args)?, args.text("article")?)?;
-    let text = args.text("text")?;
+    let found = locate(root(&args)?, args.text(ARTICLE)?)?;
+    let text = args.text(MARKDOWN_NOW)?;
     std::fs::write(&found.content, text)
         .map_err(|e| Trouble::Refused(format!("{} cannot be written — {e}", found.label())))?;
     Ok(Answer::said(format!("{} rewritten", found.label())))
 }
 
 fn rename(args: Args<'_>) -> Outcome {
-    let found = locate(root(&args)?, args.text("article")?)?;
-    let title = args.text("title")?;
+    let found = locate(root(&args)?, args.text(ARTICLE)?)?;
+    let title = args.text(TITLE_NOW)?;
     properties::set_title(&found.content, title);
     Ok(Answer::said(format!("{} is now {title}", found.label())))
 }

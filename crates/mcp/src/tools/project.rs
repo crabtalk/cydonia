@@ -17,21 +17,24 @@
 
 use crate::{
     rail::{self, Change},
-    tool::{Answer, Args, Outcome, Tool, Trouble},
+    tool::{Answer, Arg, Args, Outcome, Tool, Trouble},
     tools::fields,
 };
 use serde_json::json;
 use std::path::{Path, PathBuf};
 
-const PATH: &str = "The project's directory, as a whole path — or one relative \
-to the project this session is already in.";
+const PATH: Arg = Arg {
+    name: "path",
+    about: "The project's directory, as a whole path — or one relative \
+to the project this session is already in.",
+};
 
 pub static TOOLS: [Tool; 2] = [
     Tool {
         name: "project_open",
         description: "Open a directory as a project in cydonia, making the \
             directory first if it is not there yet.",
-        schema: |bound| fields(bound, &[("path", PATH)]),
+        schema: |bound| fields(bound, &[PATH]),
         writes: true,
         call: open,
     },
@@ -39,7 +42,7 @@ pub static TOOLS: [Tool; 2] = [
         name: "project_close",
         description: "Close a project in cydonia: it leaves the sidebar and its \
             agents stop. Nothing on disk is touched.",
-        schema: |bound| fields(bound, &[("path", PATH)]),
+        schema: |bound| fields(bound, &[PATH]),
         writes: true,
         call: close,
     },
@@ -48,7 +51,7 @@ pub static TOOLS: [Tool; 2] = [
 // ── the tools ────────────────────────────────────────────────────
 
 fn open(args: Args<'_>) -> Outcome {
-    let path = whole(&args, args.text("path")?)?;
+    let path = whole(&args, args.text(PATH)?)?;
     let made = !path.is_dir();
     if made {
         // A path that is something other than a directory is a mistake worth
@@ -82,7 +85,7 @@ fn open(args: Args<'_>) -> Outcome {
 }
 
 fn close(args: Args<'_>) -> Outcome {
-    let path = settled(whole(&args, args.text("path")?)?);
+    let path = settled(whole(&args, args.text(PATH)?)?);
     if !rail::is_open(&path) {
         return Err(Trouble::Refused(match held() {
             None => format!(
