@@ -48,6 +48,7 @@ actions!(
     cydonia,
     [
         NewSession,
+        NewSessionNext,
         NewBoard,
         NewArticle,
         NewTable,
@@ -62,6 +63,18 @@ actions!(
         CopySelection
     ]
 );
+
+/// File › New Session With: a session on the agent it names. By name, because
+/// that is what the menu was built from — an index would open the wrong agent
+/// the moment one was installed ahead of it and the bar not yet rebuilt.
+///
+/// No JSON: the menu is the only thing that dispatches it, and nobody writes
+/// an agent's name into a keymap.
+#[derive(Clone, Debug, PartialEq, gpui::Action)]
+#[action(namespace = cydonia, no_json)]
+pub struct NewSessionWith {
+    pub agent: String,
+}
 
 /// Claimed on the rename field so `enter` files the name and `escape` drops it.
 const RENAME_CONTEXT: &str = "CydoniaSessionName";
@@ -470,6 +483,47 @@ impl Cydonia {
             self.workspace
                 .update(cx, |workspace, cx| workspace.new_session(entry, None, cx));
         }
+    }
+
+    /// Open a session on the agent the menu named, if it is still installed.
+    pub(crate) fn new_session_with_action(
+        &mut self,
+        action: &NewSessionWith,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let at = self
+            .workspace
+            .read(cx)
+            .settings
+            .agents
+            .iter()
+            .position(|agent| agent.name == action.agent);
+        if let Some(at) = at {
+            self.pick_agent(at, cx);
+        }
+    }
+
+    /// Open a session on the agent after the one ⌘N would pick, wrapping — with
+    /// two installed, that is always the other one.
+    ///
+    /// With none installed it is ⌘N, which is what says so.
+    pub(crate) fn new_session_next_action(
+        &mut self,
+        _: &NewSessionNext,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let workspace = self.workspace.read(cx);
+        let agents = &workspace.settings.agents;
+        if agents.is_empty() {
+            return self.new_session_action(&NewSession, window, cx);
+        }
+        let at = workspace
+            .preferred_agent()
+            .and_then(|preferred| agents.iter().position(|agent| agent.name == preferred.name))
+            .map_or(0, |ix| (ix + 1) % agents.len());
+        self.pick_agent(at, cx);
     }
 
     /// Copy what the transcript has selected. Bound app-wide and reached only

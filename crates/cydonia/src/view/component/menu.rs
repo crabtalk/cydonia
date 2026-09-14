@@ -6,13 +6,15 @@ use bezel::{
     gpui::{self, AnyElement, Context, Div, SharedString, Stateful, Window, prelude::*, px},
     theme::Theme,
     ui::{
+        icons::Icon,
         menu::{self, Hit, Item},
         widgets::Buttons,
     },
 };
 
-/// What a row does when it is picked.
-type Act = Box<dyn Fn(&mut Cydonia, &mut Window, &mut Context<Cydonia>)>;
+/// What a row does when it is picked, handed the rest of the path — which of a
+/// submenu's rows it was, and empty for a row that opens nothing.
+type Act = Box<dyn Fn(&mut Cydonia, &[usize], &mut Window, &mut Context<Cydonia>)>;
 
 /// Which menu is open. One field rather than a flag each, so opening one
 /// closes the rest by construction.
@@ -48,7 +50,29 @@ pub(crate) fn row(
     item: Item,
     act: impl Fn(&mut Cydonia, &mut Window, &mut Context<Cydonia>) + 'static,
 ) -> (Item, Act) {
-    (item, Box::new(act))
+    (
+        item,
+        Box::new(move |this, _, window, cx| act(this, window, cx)),
+    )
+}
+
+/// A row that drops a panel of rows of its own. Picking one of those is what
+/// acts; the submenu row itself only opens.
+pub(crate) fn submenu(
+    label: impl Into<SharedString>,
+    icon: impl Into<Icon>,
+    rows: Vec<(Item, Act)>,
+) -> (Item, Act) {
+    let (items, acts): (Vec<Item>, Vec<Act>) = rows.into_iter().unzip();
+    let item = Item::submenu(label, items).with_icon(icon);
+    let act: Act = Box::new(move |this, path, window, cx| {
+        if let Some((&at, rest)) = path.split_first()
+            && let Some(act) = acts.get(at)
+        {
+            act(this, rest, window, cx);
+        }
+    });
+    (item, act)
 }
 
 impl Cydonia {
@@ -149,10 +173,12 @@ impl Cydonia {
                     }
                 }
                 Hit::Choose(path) => {
-                    let [row] = path[..] else { return };
+                    let Some((&row, rest)) = path.split_first() else {
+                        return;
+                    };
                     this.shut_menu();
                     if let Some(act) = acts.get(row) {
-                        act(this, window, cx);
+                        act(this, rest, window, cx);
                     }
                     cx.notify();
                 }

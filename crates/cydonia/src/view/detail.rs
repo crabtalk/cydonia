@@ -18,7 +18,8 @@ use bezel::{
     motion::{Fade, Painter},
     theme::{TextStyle, Theme, Typeset},
     ui::{
-        icons, surface,
+        icons::{self, Icon},
+        surface,
         widgets::{ButtonStyle, Buttons, Content, Controls, Status},
     },
 };
@@ -438,8 +439,28 @@ impl Cydonia {
             .get(ix)
             .map(|project| shown_path(&project.path))
             .unwrap_or_default();
+        let agents: Vec<(String, Option<Icon>)> = workspace
+            .settings
+            .agents
+            .iter()
+            .map(|entry| (entry.name.clone(), workspace.agent_icon(&entry.name)))
+            .collect();
         let mut rows: Vec<AnyElement> = Vec::new();
-        if sessions {
+        // One row per agent once there is a choice to make: a single "New
+        // session" opens on whichever agent is first, and nothing on this
+        // screen would say which.
+        if sessions && agents.len() > 1 {
+            for (at, (name, icon)) in agents.into_iter().enumerate() {
+                let icon = icon.unwrap_or_else(|| icons::social::MessageCircle.into());
+                rows.push(self.make_row(
+                    format!("session-{at}"),
+                    format!("New {name} session"),
+                    icon,
+                    cx,
+                    move |this, _, cx| this.pick_agent(at, cx),
+                ));
+            }
+        } else if sessions {
             rows.push(self.make_row(
                 "session",
                 "New session",
@@ -483,20 +504,21 @@ impl Cydonia {
     /// One line of the invitation: a glyph, a label, and what it makes.
     fn make_row(
         &self,
-        id: &'static str,
-        label: &'static str,
-        glyph: &'static [u8],
+        id: impl Into<SharedString>,
+        label: impl Into<SharedString>,
+        glyph: impl Into<Icon>,
         cx: &mut Context<Self>,
         make: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
     ) -> AnyElement {
         let theme = Theme::of(cx).clone();
+        let (id, label) = (id.into(), label.into());
         // An svg paints in its own `text_color` and inherits none, so the glyph
         // cannot ride the row's hover. Both halves take the row's group instead,
         // which lights them together — the group is named per row so hovering
         // one does not light the rest.
         div()
-            .id(id)
-            .group(id)
+            .id(id.clone())
+            .group(id.clone())
             .flex()
             .items_center()
             .gap(px(8.))
@@ -507,7 +529,7 @@ impl Cydonia {
                     .size(px(14.))
                     .flex_none()
                     .text_color(theme.text_muted)
-                    .group_hover(id, |el| el.text_color(theme.text)),
+                    .group_hover(id.clone(), |el| el.text_color(theme.text)),
             )
             .child(
                 div()

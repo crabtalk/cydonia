@@ -19,12 +19,13 @@
 //! for, and why a greyed item's shortcut still reaches the keymap underneath.
 
 use crate::{
-    model::update,
+    model::{settings, update},
     view::{
         article::TogglePlainText,
         root::{
-            CloseProject, Cydonia, NewArticle, NewBoard, NewSession, NewTable, NextEntry,
-            OpenProject, OpenSettings, Pane, PrevEntry, ToggleSidebar,
+            CloseProject, Cydonia, NewArticle, NewBoard, NewSession, NewSessionNext,
+            NewSessionWith, NewTable, NextEntry, OpenProject, OpenSettings, Pane, PrevEntry,
+            ToggleSidebar,
         },
     },
 };
@@ -111,10 +112,11 @@ pub fn init(cx: &mut App) {
 }
 
 /// Build the tree again and hand it over, so every item carries the chord the
-/// keymap holds *now*.
+/// keymap holds *now*, and File names the agents installed *now*.
 ///
-/// Called at launch and after a rebind. It has to be both: AppKit keeps the
-/// key equivalent it was given and claims the chord before gpui sees it, so a
+/// Called at launch, after a rebind, and after an agent is installed or
+/// removed. The rebind is the one that has to be: AppKit keeps the key
+/// equivalent it was given and claims the chord before gpui sees it, so a
 /// moved shortcut that left the menus alone would leave the old chord firing.
 pub fn refresh(cx: &mut App) {
     let menus = menus(cx);
@@ -144,21 +146,12 @@ fn menus(cx: &App) -> Vec<Menu> {
         MenuItem::separator(),
         MenuItem::action("Quit cydonia", Quit),
     ]);
+    let file = file_menu();
     vec![
         // Titled for the unbundled binary alone — a bundle takes the first
         // menu's name from `CFBundleName`, which is this same lowercase word.
         Menu::new("cydonia").items(app),
-        Menu::new("File").items([
-            MenuItem::action("New Session", NewSession),
-            MenuItem::action("New Board", NewBoard),
-            MenuItem::action("New Article", NewArticle),
-            MenuItem::action("New Table", NewTable),
-            MenuItem::separator(),
-            MenuItem::action("Open Project…", OpenProject),
-            MenuItem::action("Close Project", CloseProject),
-            MenuItem::separator(),
-            MenuItem::action("Close Window", CloseWindow),
-        ]),
+        Menu::new("File").items(file),
         // The text field's actions, which the article's editor does not answer
         // to: it keeps a vocabulary of its own that this crate cannot name. Its
         // ⌘C is its own and reaches it, because macOS leaves a greyed item's
@@ -201,6 +194,40 @@ fn menus(cx: &App) -> Vec<Menu> {
             MenuItem::action("Zoom", Zoom),
         ]),
     ]
+}
+
+/// File, whose session items depend on what is installed: one agent is one
+/// "New Session", and a second is what brings in the rest. The agents are read
+/// off `settings.toml` rather than the workspace, which at launch has no window
+/// yet to be read from.
+fn file_menu() -> Vec<MenuItem> {
+    let agents = settings::load()
+        .map(|settings| settings.agents)
+        .unwrap_or_default();
+    let mut file = vec![MenuItem::action("New Session", NewSession)];
+    if agents.len() > 1 {
+        file.push(MenuItem::submenu(Menu::new("New Session With").items(
+            agents.into_iter().map(|agent| {
+                MenuItem::action(agent.name.clone(), NewSessionWith { agent: agent.name })
+            }),
+        )));
+        file.push(MenuItem::action(
+            "New Session on Next Agent",
+            NewSessionNext,
+        ));
+    }
+    file.extend([
+        MenuItem::separator(),
+        MenuItem::action("New Board", NewBoard),
+        MenuItem::action("New Article", NewArticle),
+        MenuItem::action("New Table", NewTable),
+        MenuItem::separator(),
+        MenuItem::action("Open Project…", OpenProject),
+        MenuItem::action("Close Project", CloseProject),
+        MenuItem::separator(),
+        MenuItem::action("Close Window", CloseWindow),
+    ]);
+    file
 }
 
 /// Run `f` on the window in front. A window command means whichever window
@@ -263,6 +290,8 @@ impl Cydonia {
                     .on_action(cx.listener(Self::new_article_action))
                     .when(sessions, |root| {
                         root.on_action(cx.listener(Self::new_session_action))
+                            .on_action(cx.listener(Self::new_session_with_action))
+                            .on_action(cx.listener(Self::new_session_next_action))
                     })
                     .when(boards, |root| {
                         root.on_action(cx.listener(Self::new_board_action))

@@ -988,14 +988,42 @@ impl Cydonia {
     }
 
     /// What the `+` starts here. Session first: it is what the sidebar is for.
+    ///
+    /// With more than one agent installed the session row asks which, since
+    /// the one `⌘N` would pick is whoever the project last talked to — which
+    /// leaves every other agent with no way in.
     fn add_menu(&self, ix: usize, cx: &mut Context<Self>) -> Option<AnyElement> {
         if self.menu != Some(Menu::Add(ix)) {
             return None;
         }
-        let features = &self.workspace.read(cx).settings.features;
+        let workspace = self.workspace.read(cx);
+        let features = &workspace.settings.features;
         let (sessions, boards, tables) = (features.sessions, features.boards, features.tables);
+        let agents: Vec<(String, Option<Icon>)> = workspace
+            .settings
+            .agents
+            .iter()
+            .map(|entry| (entry.name.clone(), workspace.agent_icon(&entry.name)))
+            .collect();
         let mut rows = Vec::new();
-        if sessions {
+        if sessions && agents.len() > 1 {
+            let picks = agents
+                .into_iter()
+                .enumerate()
+                .map(|(at, (name, icon))| {
+                    let icon = icon.unwrap_or_else(|| icons::social::MessageCircle.into());
+                    menu::row(Item::action(name).with_icon(icon), move |this, _, cx| {
+                        this.select_project(ix, cx);
+                        this.pick_agent(at, cx);
+                    })
+                })
+                .collect();
+            rows.push(menu::submenu(
+                "New session",
+                icons::social::MessageCircle,
+                picks,
+            ));
+        } else if sessions {
             rows.push(menu::row(
                 Item::action("New session").with_icon(icons::social::MessageCircle),
                 move |this, window, cx| {

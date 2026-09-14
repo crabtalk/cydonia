@@ -516,16 +516,19 @@ impl Composer {
         ))
     }
 
-    /// The menu's rows: the agent first, then whatever the live session
-    /// offers. Each carries the value it is on in its own name — the reason to
-    /// open one of these is as often to read what it is set to as to change
-    /// it, and a submenu row has one line to say both on.
+    /// The menu's rows: the agents first, then whatever the live session
+    /// offers. Each switch carries the value it is on in its own name — the
+    /// reason to open one of these is as often to read what it is set to as to
+    /// change it, and a submenu row has one line to say both on.
+    ///
+    /// The agents are the exception. Picking one opens a session beside this
+    /// one rather than swapping it, so the row says that, and the check inside
+    /// is what says which agent this session is on.
     ///
     /// No leading glyphs here: these rows are words, and one icon among them
     /// would open an empty gutter down the menu's left. The agents inside the
     /// first panel keep their marks, where every row has one.
     fn menu_items(&self) -> Vec<Item> {
-        let current = self.agent.and_then(|ix| self.agents.get(ix));
         let mut agents: Vec<Item> = self
             .agents
             .iter()
@@ -544,10 +547,7 @@ impl Composer {
             agents.push(Item::Separator);
         }
         agents.push(Item::action("Install an agent…").with_icon(icons::files::Download));
-        let mut items = vec![Item::submenu(
-            set_to("Agent", current.map(|agent| agent.name.clone())),
-            agents,
-        )];
+        let mut items = vec![Item::submenu("New session with", agents)];
         items.extend(self.switches.iter().map(|switch| {
             Item::submenu(
                 set_to(&switch.name, self.value_of(switch)),

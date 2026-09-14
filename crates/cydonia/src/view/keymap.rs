@@ -24,8 +24,8 @@ use crate::{
         component::{composer, ribbon},
         create, info, menubar,
         root::{
-            self, CloseProject, NewArticle, NewBoard, NewSession, NewTable, NextEntry, OpenProject,
-            OpenSettings, PrevEntry, ToggleSidebar,
+            self, CloseProject, NewArticle, NewBoard, NewSession, NewSessionNext, NewTable,
+            NextEntry, OpenProject, OpenSettings, PrevEntry, ToggleSidebar,
         },
         table,
     },
@@ -50,6 +50,7 @@ use bezel::{
 pub enum Command {
     OpenSettings,
     NewSession,
+    NewSessionNext,
     NewBoard,
     NewArticle,
     NewTable,
@@ -84,9 +85,10 @@ impl Menu {
 }
 
 impl Command {
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 12] = [
         Self::OpenSettings,
         Self::NewSession,
+        Self::NewSessionNext,
         Self::NewBoard,
         Self::NewArticle,
         Self::NewTable,
@@ -103,6 +105,7 @@ impl Command {
         match self {
             Self::OpenSettings => "open_settings",
             Self::NewSession => "new_session",
+            Self::NewSessionNext => "new_session_next",
             Self::NewBoard => "new_board",
             Self::NewArticle => "new_article",
             Self::NewTable => "new_table",
@@ -120,6 +123,7 @@ impl Command {
         match self {
             Self::OpenSettings => "Settings…",
             Self::NewSession => "New Session",
+            Self::NewSessionNext => "New Session on Next Agent",
             Self::NewBoard => "New Board",
             Self::NewArticle => "New Article",
             Self::NewTable => "New Table",
@@ -136,6 +140,7 @@ impl Command {
         match self {
             Self::OpenSettings => Menu::App,
             Self::NewSession
+            | Self::NewSessionNext
             | Self::NewBoard
             | Self::NewArticle
             | Self::NewTable
@@ -154,6 +159,9 @@ impl Command {
             // What macOS binds Preferences to in every other app.
             Self::OpenSettings => "cmd-,",
             Self::NewSession => "cmd-n",
+            // ⌘N's other agent: the chord a second agent needs, since ⌘N
+            // stays with whoever the project last talked to.
+            Self::NewSessionNext => "alt-cmd-n",
             Self::NewBoard | Self::NewArticle | Self::NewTable | Self::CloseProject => return None,
             Self::OpenProject => "cmd-o",
             // What every app with a sidebar binds it to.
@@ -174,6 +182,7 @@ impl Command {
         Some(match self {
             Self::OpenSettings => KeyBinding::new(chord, OpenSettings, None),
             Self::NewSession => KeyBinding::new(chord, NewSession, None),
+            Self::NewSessionNext => KeyBinding::new(chord, NewSessionNext, None),
             Self::NewBoard => KeyBinding::new(chord, NewBoard, None),
             Self::NewArticle => KeyBinding::new(chord, NewArticle, None),
             Self::NewTable => KeyBinding::new(chord, NewTable, None),
