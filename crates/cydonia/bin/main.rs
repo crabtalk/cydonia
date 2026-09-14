@@ -8,7 +8,7 @@ use bezel::{
     ui::{self, focus, input},
 };
 use cydonia::{
-    memory,
+    agent, memory,
     model::{media, migrate, settings, state, update, workspace},
     view::{
         article, board,
@@ -18,6 +18,10 @@ use cydonia::{
 };
 
 fn main() -> Result<()> {
+    // First of all, and while this is still the only thread: it writes the
+    // process environment, and everything downstream of it — an agent spawned
+    // by name, an `npm` the installer runs — resolves against what it leaves.
+    agent::path::adopt();
     // Ahead of both readers: it moves keys between the two files, and either
     // one read first would be read from before the move.
     migrate::run();

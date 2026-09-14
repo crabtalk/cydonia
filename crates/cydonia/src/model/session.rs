@@ -38,6 +38,12 @@ use std::{
 
 const STREAM_FRAME: Duration = Duration::from_millis(120);
 
+/// How much of an agent's stderr one block keeps. An agent that logs a line a
+/// second all afternoon must not be what grows the transcript without end, and
+/// the tail is the half worth keeping: what a process said last is what it
+/// said about dying.
+const STDERR_KEEP: usize = 16 * 1024;
+
 /// How much of the context window the conversation has taken, as the agent
 /// counts it.
 ///
@@ -472,6 +478,7 @@ impl ChatSession {
         match event {
             Event::Update(update) => self.apply_update(update),
             Event::Permission(request, reply) => self.open_permission(request, reply),
+            Event::Stderr(line) => self.stderr(line),
             Event::TurnDone(result) => {
                 self.finish_thinking();
                 self.streaming = false;
@@ -660,6 +667,26 @@ impl ChatSession {
         });
     }
 
+    /// Add one line of the agent's own stderr to the block that carries it.
+    ///
+    /// One block per run of lines, coalesced the way a message chunk is: the
+    /// process talks in lines but it is one execution, and a block per line
+    /// would be a transcript of nothing else. A run that something else
+    /// interrupts starts a new one, which is what keeps the output next to
+    /// whatever it was complaining about.
+    pub(crate) fn stderr(&mut self, line: String) {
+        if let Some(ChatItem::Process { output, .. }) = self.items.last_mut() {
+            output.push('\n');
+            output.push_str(&line);
+            trim_front(output, STDERR_KEEP);
+            return;
+        }
+        self.items.push(ChatItem::Process {
+            command: command_line(&self.entry),
+            output: line,
+        });
+    }
+
     pub(crate) fn notice(&mut self, failed: bool, text: &str) {
         self.items.push(ChatItem::Notice {
             text: text.to_owned(),
@@ -682,6 +709,40 @@ impl ChatSession {
             }
         }
     }
+}
+
+/// What was run, as a command line — the head of the block its output fills.
+pub fn command_line(entry: &settings::Agent) -> String {
+    std::iter::once(entry.command.as_str())
+        .chain(entry.args.iter().map(String::as_str))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Hold `text` to `keep` bytes by dropping whole lines off the front.
+///
+/// Whole lines, and on a char boundary either way: half a line of output reads
+/// as a different error than the one that was printed.
+pub fn trim_front(text: &mut String, keep: usize) {
+    if text.len() <= keep {
+        return;
+    }
+    // Where the overflow ends — walked forward to a boundary before anything
+    // is sliced at it, because the byte `keep` lands on can be the middle of a
+    // character and slicing there is a panic, not a short read. The end of the
+    // string is always a boundary, so this terminates.
+    let mut from = text.len() - keep;
+    while !text.is_char_boundary(from) {
+        from += 1;
+    }
+    let cut = match text[from..].find('\n') {
+        Some(at) => from + at + 1,
+        // One line longer than the whole budget, so there is no line break to
+        // cut at. Its tail is still the part that matters, and `from` is a
+        // boundary already.
+        None => from,
+    };
+    text.drain(..cut);
 }
 
 fn tool_status(status: ToolCallStatus) -> ToolStatus {
@@ -725,6 +786,10 @@ fn pump(
     cx: &mut Context<Workspace>,
 ) -> Task<()> {
     let entry = entry.clone();
+    // Ours, not the launch's — a launch that fails still wrote to its stderr,
+    // and a receiver the launch owned would be dropped with the error.
+    let (tx, mut events) = acp::channel();
+    let echo = tx.clone();
     let conn = acp::runtime().spawn(async move {
         Session::spawn(
             &entry,
@@ -732,6 +797,7 @@ fn pump(
                 previous,
                 ..Launch::new(cwd)
             },
+            tx,
         )
         .await
     });
@@ -740,18 +806,38 @@ fn pump(
         let opened = conn
             .await
             .unwrap_or_else(|e| Err(anyhow!("the connection task panicked: {e}")));
-        let (session, mut events) = match opened {
-            Ok(pair) => pair,
+        let session = match opened {
+            Ok(session) => session,
             Err(e) => {
+                // The process is already dead — its `Child` is killed on the
+                // way out of `spawn` — but the task reading its stderr is on
+                // the other runtime and its last line may still be in flight.
+                // One frame is what that costs, on a path that has nothing
+                // left to be quick for.
+                cx.background_executor().timer(STREAM_FRAME).await;
+                let mut said = Vec::new();
+                while let Ok(event) = events.try_recv() {
+                    if let Event::Stderr(line) = event {
+                        said.push(line);
+                    }
+                }
                 let _ = this.update(cx, |workspace, cx| {
                     workspace.with_session(id, cx, |chat| {
                         chat.connection = Connection::Lost;
+                        // What it said before the verdict, then the verdict.
+                        for line in said {
+                            chat.stderr(line);
+                        }
                         chat.notice(true, &format!("connection failed: {e:#}"));
                     });
                 });
                 return;
             }
         };
+        if session.loaded {
+            acp::spend_replay(&mut events, &echo);
+        }
+        drop(echo);
 
         if this
             .update(cx, |workspace, cx| {

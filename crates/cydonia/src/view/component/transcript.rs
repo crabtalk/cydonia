@@ -419,6 +419,10 @@ fn zone(
         zone = zone.child(match &chat.items[ix] {
             ChatItem::Agent(text) => prose(chat, ix, text, window, cx),
             ChatItem::Notice { text, failed } => notice(&theme, text, *failed),
+            ChatItem::Process { command, output } => {
+                let (command, output) = (command.clone(), output.clone());
+                process(chat, ix, &command, &output, cx)
+            }
             _ => div().into_any_element(),
         });
     }
@@ -614,6 +618,56 @@ fn tool(chat: &ChatSession, ix: usize, first: bool, cx: &mut Context<Workspace>)
         })
         .when(open && !output.is_empty(), |el| {
             el.child(theme.step_output(("tool-output", ix), output.clone()))
+        })
+        .into_any_element()
+}
+
+/// The agent process itself, and what it printed.
+///
+/// The same two elements a tool call gets, because it is the same thing to
+/// read: something was executed, and this is what came back. Not folded in
+/// with the tool calls, though — those belong to a turn and collapse with it,
+/// and this belongs to the process the whole session is running on.
+fn process(
+    chat: &ChatSession,
+    ix: usize,
+    command: &str,
+    output: &str,
+    cx: &mut Context<Workspace>,
+) -> AnyElement {
+    let theme = Theme::of(cx).clone();
+    let id = chat.id;
+    let open = chat.transcript.output.contains(&ix);
+    let (name, rest, full) = title(command);
+    div()
+        .child(
+            theme
+                .step_row(
+                    tool_icon(ToolKind::Execute),
+                    name,
+                    rest,
+                    None,
+                    false,
+                    (!output.is_empty() || full.is_some()).then_some(open),
+                )
+                .hover(|el| el.bg(theme.element_hover))
+                .id(("process", ix))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.with_session(id, cx, |chat| {
+                        if !chat.transcript.output.insert(ix) {
+                            chat.transcript.output.remove(&ix);
+                        }
+                    });
+                })),
+        )
+        .when_some(full.filter(|_| open), |el, full| {
+            el.child(theme.step_output(("process-title", ix), full))
+        })
+        .when(open && !output.is_empty(), |el| {
+            el.child(theme.step_output(
+                ("process-output", ix),
+                SharedString::from(output.to_owned()),
+            ))
         })
         .into_any_element()
 }

@@ -44,4 +44,12 @@ pub enum ChatItem {
         text: String,
         failed: bool,
     },
+    /// What the agent process wrote to its stderr rather than said in
+    /// protocol — a warning from the runtime under it, or the reason it never
+    /// got as far as speaking at all. An execution and its output, so it is
+    /// kept as one: `command` is what was run, `output` what came back.
+    Process {
+        command: String,
+        output: String,
+    },
 }
