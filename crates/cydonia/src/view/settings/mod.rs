@@ -232,6 +232,7 @@ pub(super) struct Switch {
     glyph: Option<&'static [u8]>,
     truncate: bool,
     badge: Option<SharedString>,
+    locked: bool,
 }
 
 impl Switch {
@@ -250,7 +251,16 @@ impl Switch {
             glyph: None,
             truncate: false,
             badge: None,
+            locked: false,
         }
+    }
+
+    /// The app is holding this one where it is, so the switch shows the state
+    /// and does not take a press. The row says why in its own blurb — a
+    /// control that cannot be moved and will not say why reads as broken.
+    pub(super) fn locked(mut self, locked: bool) -> Self {
+        self.locked = locked;
+        self
     }
 
     /// Whether this is the first row of its group box — `card_row` draws no
@@ -322,16 +332,23 @@ impl SettingsWindow {
                     ),
             )
             .children(switch.badge.map(|label| theme.badge(label)))
-            .child(
-                div()
+            .child(match switch.locked {
+                // Shown at half, and taking no press: the row's blurb is where
+                // it says who is holding it.
+                true => div()
+                    .opacity(0.5)
+                    .child(theme.toggle(switch.on))
+                    .into_any_element(),
+                false => div()
                     .id(switch.id)
                     .cursor_pointer()
                     .child(theme.toggle(switch.on))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         flip(this, cx);
                         cx.notify();
-                    })),
-            )
+                    }))
+                    .into_any_element(),
+            })
             .into_any_element()
     }
 }

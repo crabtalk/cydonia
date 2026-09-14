@@ -41,6 +41,9 @@ fn main() -> Result<()> {
         // Before the window is opened: it reads its background appearance
         // on the way up, and vibrancy is what decides that.
         workspace::apply_transparency(state.reduce_transparency, cx);
+        // And keeps it there: the OS can switch appearance at sunset, which
+        // reaches nothing of ours on its own.
+        workspace::watch_appearance(cx).detach();
         workspace::apply_tint(Tint::new(state.hue, state.chroma), cx);
         input::set_caret_blink(state.cursor_blink, cx);
         theme::set_base_text_size(state.text_size, cx);

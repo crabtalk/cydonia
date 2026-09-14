@@ -7,7 +7,7 @@ use crate::{
 use bezel::{
     gpui::{AnyElement, Context, DragMoveEvent, Empty, div, prelude::*, px},
     theme::{
-        TextStyle, Theme, Tint, Typeset,
+        Appearance, TextStyle, Theme, Tint, Typeset,
         appearance::{self, AppearanceMode},
     },
     ui::widgets::{self, Controls, Scaffolding, SliderDrag},
@@ -138,16 +138,23 @@ impl SettingsWindow {
 
     /// The app's own reduce-transparency switch, so the vibrancy can go without
     /// turning the system setting on for every other app.
+    ///
+    /// Held on in light, where there is no vibrancy to reduce — see
+    /// [`crate::model::workspace::watch_appearance`]. The switch keeps showing
+    /// the state the window is actually in rather than the preference behind
+    /// it: a control reading "off" over an opaque window is the one thing worse
+    /// than one that cannot be pressed.
     pub(super) fn transparency_row(&self, cx: &mut Context<Self>) -> AnyElement {
-        let on = self.workspace.read(cx).reduce_transparency;
+        let light = matches!(Theme::of(cx).appearance, Appearance::Light);
+        let on = light || self.workspace.read(cx).reduce_transparency;
+        let blurb = match light {
+            true => "Light mode is always opaque. This is what dark mode does.",
+            false => "Replace translucent surfaces with opaque backgrounds.",
+        };
         self.switch_row(
-            Switch::new(
-                "reduce-transparency",
-                "Reduce transparency",
-                "Replace translucent surfaces with opaque backgrounds.",
-                on,
-            )
-            .first(true),
+            Switch::new("reduce-transparency", "Reduce transparency", blurb, on)
+                .first(true)
+                .locked(light),
             cx,
             move |this, cx| {
                 this.workspace.update(cx, |workspace, cx| {
