@@ -73,13 +73,14 @@ fn code_is_named_for_what_it_would_make() {
     assert_eq!(formats(&fenceable)[3].label, "Code block");
 }
 
-/// `cmd-b` is the sidebar's in this app, so the editor's bold is never reached
-/// and the button must not claim otherwise.
+/// `cmd-b` is the sidebar's in this app and `cmd-e` is Plain text's, so the
+/// editor's bold and code are never reached and the buttons must not claim
+/// otherwise.
 #[test]
-fn bold_advertises_no_chord() {
+fn the_two_chords_this_app_spent_elsewhere_are_not_advertised() {
     assert_eq!(keystroke(&Mark::Bold), None);
+    assert_eq!(keystroke(&Mark::Code), None);
     assert_eq!(keystroke(&Mark::Italic), Some("⌘I"));
-    assert_eq!(keystroke(&Mark::Code), Some("⌘E"));
     assert_eq!(keystroke(&Mark::Strike), Some("⇧⌘X"));
 }
 

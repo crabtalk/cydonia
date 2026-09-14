@@ -23,17 +23,25 @@ use bezel::{
         widgets::{ButtonStyle, Buttons as _, Status as _},
     },
 };
+use editor::Mode;
 use std::path::{Path, PathBuf};
 
-actions!(cydonia_article, [LeaveTitle]);
+actions!(cydonia_article, [LeaveTitle, TogglePlainText]);
 
 /// `enter` and `down` in the title move to the content. Bound on the field's
 /// own context, which is the only thing deep enough to beat the field itself.
+///
+/// `cmd-e` is claimed app-wide, and the View menu carries it so AppKit takes
+/// the chord before the window is offered it — the same way `cmd-b` is the
+/// sidebar's. The editor's own `cmd-e` — inline code — is not reached while
+/// this one is on the bar, so the ribbon's code button advertises no chord;
+/// see [`crate::view::component::ribbon::keystroke`].
 pub fn init(cx: &mut App) {
     let ctx = Some(article::TITLE_CONTEXT);
     cx.bind_keys([
         KeyBinding::new("enter", LeaveTitle, ctx),
         KeyBinding::new("down", LeaveTitle, ctx),
+        KeyBinding::new("cmd-e", TogglePlainText, None),
     ]);
 }
 
@@ -157,6 +165,45 @@ impl Cydonia {
         if let Some(editor) = editor {
             window.focus(&editor.focus_handle(cx), cx);
         }
+    }
+
+    /// Swap the document for the markdown it spells, and back — the header
+    /// menu's Plain text and its ⌘E.
+    ///
+    /// The focus goes back to the document afterwards: the switch carries the
+    /// caret across, and a caret in a surface nobody is typing in is a caret
+    /// that has to be clicked back into.
+    pub(crate) fn toggle_plain_text(
+        &mut self,
+        _: &TogglePlainText,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(mode) = self.plain_text(cx) else {
+            return;
+        };
+        let mode = match mode {
+            true => Mode::Blocks,
+            false => Mode::Source,
+        };
+        self.workspace
+            .update(cx, |workspace, cx| workspace.set_article_mode(mode, cx));
+        let editor = self
+            .workspace
+            .read(cx)
+            .active_article()
+            .and_then(|article| article.editor.clone());
+        if let Some(editor) = editor {
+            window.focus(&editor.focus_handle(cx), cx);
+        }
+        cx.notify();
+    }
+
+    /// Whether the open document is being edited as markdown, or `None` where
+    /// there is no document to be in either form.
+    pub(crate) fn plain_text(&self, cx: &App) -> Option<bool> {
+        let article = self.workspace.read(cx).active_article()?;
+        Some(article.mode(cx) == Mode::Source)
     }
 
     /// Set the open page across the pane, or back in the reading column — the

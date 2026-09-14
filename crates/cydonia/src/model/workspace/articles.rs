@@ -116,6 +116,14 @@ impl Workspace {
         }
     }
 
+    /// Put the open document into the other form — see [`Article::set_mode`].
+    pub fn set_article_mode(&mut self, mode: Mode, cx: &mut Context<Self>) {
+        if let Some(article) = self.article_mut() {
+            article.set_mode(mode, cx);
+            cx.notify();
+        }
+    }
+
     /// Cut the open article a new cover — see [`Article::shuffle_cover`].
     pub fn shuffle_cover(&mut self, cx: &mut Context<Self>) {
         if let Some(article) = self.article_mut() {

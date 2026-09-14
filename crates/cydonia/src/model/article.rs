@@ -17,7 +17,7 @@ use bezel::{
     gpui::{App, AppContext as _, Context, Entity, ScrollHandle},
     ui::input::{Shape, TextField},
 };
-use editor::Editor;
+use editor::{Editor, Mode};
 use markdown::Typography;
 use std::{
     cmp::Reverse,
@@ -53,6 +53,10 @@ pub struct Article {
     /// The pane's scroll box, shared with the editor so typing follows the
     /// caret down.
     pub scroll: ScrollHandle,
+    /// Which form the document is edited in — see [`Article::set_mode`]. Held
+    /// beside the editor rather than only in it, because a re-read builds a
+    /// new editor and somebody reading the markdown did not ask to leave it.
+    mode: Mode,
     /// What is on disk. The editor notifies on caret moves too, so without
     /// this every arrow key would rewrite the file.
     saved: String,
@@ -88,6 +92,7 @@ impl Article {
             field: None,
             editor: None,
             scroll: ScrollHandle::new(),
+            mode: Mode::default(),
             saved: String::new(),
             stale: false,
         }
@@ -109,6 +114,26 @@ impl Article {
     /// One answer, so the pane and the menu that toggles it cannot disagree.
     pub fn wide(&self, default: bool) -> bool {
         self.full_width.unwrap_or(default)
+    }
+
+    /// Edit the markdown itself, or the document it spells. Runtime only: the
+    /// form somebody is reading in is not a property of the file, and nothing
+    /// on disk changes either way.
+    pub fn set_mode(&mut self, mode: Mode, cx: &mut Context<Workspace>) {
+        self.mode = mode;
+        if let Some(editor) = &self.editor {
+            editor.update(cx, |editor, cx| editor.set_mode(mode, cx));
+        }
+    }
+
+    /// Which form the document is in. The editor's answer where there is one:
+    /// an undo can step back over a switch, and the field here would not hear
+    /// about it.
+    pub fn mode(&self, cx: &App) -> Mode {
+        match &self.editor {
+            Some(editor) => editor.read(cx).mode(),
+            None => self.mode,
+        }
     }
 
     /// The sidebar's label.
@@ -152,7 +177,11 @@ impl Article {
 
         self.saved = std::fs::read_to_string(&self.path).unwrap_or_default();
         let scroll = self.scroll.clone();
-        let editor = cx.new(|cx| Editor::new(&self.saved, cx).with_scroll(scroll));
+        let editor = cx.new(|cx| {
+            Editor::new(&self.saved, cx)
+                .with_scroll(scroll)
+                .with_mode(self.mode)
+        });
         cx.observe(&editor, |workspace, editor, cx| {
             workspace.write_article(editor.entity_id(), cx);
         })
@@ -245,6 +274,9 @@ impl Article {
     /// The undo history goes with the old editor. There is no honest way to
     /// keep it: it is a history of a document this one no longer is.
     pub fn revert(&mut self, cx: &mut Context<Workspace>) {
+        // Carried over, since the surfaces are not: a file that moved under
+        // the document is not somebody asking to leave the markdown.
+        self.mode = self.mode(cx);
         let held = properties::all(&self.path);
         self.title = held.title;
         self.touched = layout::touched(&self.path);

@@ -151,10 +151,12 @@ pub fn formats(formatting: &Formatting) -> Vec<Format> {
 /// the chord before the window is offered it, see [`crate::view::root::init`]
 /// — and the editor's own bold is never reached. A tooltip printing ⌘B would
 /// be documenting a lie.
+///
+/// Code is the second one spent that way: ⌘E is Plain text here, see
+/// [`crate::view::article::init`].
 pub fn keystroke(mark: &Mark) -> Option<&'static str> {
     match mark {
         Mark::Italic => Some("⌘I"),
-        Mark::Code => Some("⌘E"),
         Mark::Strike => Some("⇧⌘X"),
         _ => None,
     }

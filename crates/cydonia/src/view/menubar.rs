@@ -20,9 +20,13 @@
 
 use crate::{
     model::update,
-    view::root::{
-        CloseProject, Cydonia, NewArticle, NewBoard, NewSession, NewTable, NextEntry, OpenProject,
-        OpenSettings, Pane, PrevEntry, ShowArticle, ShowBoard, ShowChat, ShowTable, ToggleSidebar,
+    view::{
+        article::TogglePlainText,
+        root::{
+            CloseProject, Cydonia, NewArticle, NewBoard, NewSession, NewTable, NextEntry,
+            OpenProject, OpenSettings, Pane, PrevEntry, ShowArticle, ShowBoard, ShowChat,
+            ShowTable, ToggleSidebar,
+        },
     },
 };
 use bezel::{
@@ -173,6 +177,12 @@ fn menus(cx: &App) -> Vec<Menu> {
             MenuItem::action("Next Entry", NextEntry),
             MenuItem::action("Previous Entry", PrevEntry),
             MenuItem::separator(),
+            // Here rather than left to the pane's own `···`, because ⌘E is the
+            // editor's inline code and only a key equivalent on the bar takes
+            // a chord before the focused surface is offered it — see
+            // [`crate::view::article::init`].
+            MenuItem::action("Plain Text", TogglePlainText),
+            MenuItem::separator(),
             MenuItem::action("Enter Full Screen", ToggleFullScreen),
         ]),
         // Named exactly this: `setWindowsMenu:` is hung off the title, and it
@@ -235,7 +245,8 @@ impl Cydonia {
             .map(|pane| self.has_pane(pane, cx));
         // Nothing on screen is nothing to step from — the launch view is not
         // an entry, and its neighbour is not another one.
-        let entries = self.showing(cx).is_some();
+        let showing = self.showing(cx);
+        let entries = showing.is_some();
 
         root.on_action(cx.listener(Self::toggle_sidebar_action))
             .on_action(cx.listener(Self::open_project_action))
@@ -261,6 +272,11 @@ impl Cydonia {
             })
             .when(panes[2], |root| {
                 root.on_action(cx.listener(Self::show_article))
+            })
+            // Only where a document is the thing on screen: the chord acts on
+            // the open page, and the item greys itself everywhere else.
+            .when(showing == Some(Pane::Article), |root| {
+                root.on_action(cx.listener(Self::toggle_plain_text))
             })
             .when(panes[3], |root| {
                 root.on_action(cx.listener(Self::show_table))

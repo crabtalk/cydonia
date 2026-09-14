@@ -5,6 +5,7 @@
 use crate::{
     model::{session::ChatSession, settings::Features, update},
     view::{
+        article::TogglePlainText,
         component::{
             menu::{self, Menu},
             transcript,
@@ -1236,6 +1237,19 @@ impl Cydonia {
                         .with_icon(icons::layout::UnfoldHorizontal)
                         .checked(wide),
                     move |this, _, cx| this.set_full_width(Some(!wide), cx),
+                ),
+            );
+            // The markdown itself, for the times the document is in the way of
+            // it. Above the width, which is about the page rather than what is
+            // being edited on it.
+            rows.insert(
+                0,
+                menu::row(
+                    Item::action("Plain text")
+                        .with_icon(icons::text::Code)
+                        .with_keystroke("⌘E")
+                        .checked(self.plain_text(cx).unwrap_or_default()),
+                    move |this, window, cx| this.toggle_plain_text(&TogglePlainText, window, cx),
                 ),
             );
         }

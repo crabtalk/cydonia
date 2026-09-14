@@ -32,6 +32,7 @@ use bezel::{
     ui::{icons::Icon, input},
 };
 use cacp::schema::SessionConfigOptionValue;
+use editor::Mode;
 use futures::{StreamExt as _, channel::mpsc};
 use mcp::rail::{self, Change};
 use std::{
