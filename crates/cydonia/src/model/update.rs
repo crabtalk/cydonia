@@ -95,6 +95,11 @@ pub enum Status {
     Checking,
     /// The feed was read and this copy is the newest there is.
     Current,
+    /// A release is out, and this build is not one it can stand in for — a
+    /// working copy, a `cargo install` binary, an architecture no image is cut
+    /// for. News rather than a thing to press: the site is where it is picked
+    /// up, and [`supported`] is what tells the two apart.
+    Available(SharedString),
     Downloading(SharedString),
     /// A verified bundle is staged. The version is what to say; the path is
     /// what the swap moves, and the two travel together so that a `Ready`
@@ -166,9 +171,12 @@ pub fn of(cx: &App) -> Option<Entity<Updater>> {
 }
 
 /// Whether a release could actually replace this build: a bundle, on the
-/// architecture an image is cut for. What the menu item and the Updates box in
-/// settings hang off — a build this is false for shows neither, rather than
-/// showing a control that would decline.
+/// architecture an image is cut for. What the menu item hangs off — a build
+/// this is false for gets no item, rather than one that would decline.
+///
+/// Settings shows the Updates box either way and reads this for what to say in
+/// it: looking is worth doing in any build, and a release that has to be
+/// downloaded by hand is still one to hear about.
 pub fn supported(cx: &App) -> bool {
     cx.try_global::<Handle>()
         .is_some_and(|handle| handle.0.read(cx).app.is_some())
@@ -215,9 +223,6 @@ impl Updater {
     /// "could not check" sitting in settings for the rest of the session — and
     /// the menu item's check says what went wrong.
     pub fn check(&mut self, manual: bool, cx: &mut Context<Self>) {
-        let Some(app) = self.app.clone() else {
-            return;
-        };
         // Already looking, already fetching, or already holding one: none of
         // those are improved by a second pass.
         if matches!(
@@ -226,6 +231,10 @@ impl Updater {
         ) {
             return;
         }
+        // `None` is a build nothing can be staged beside. It still looks — what
+        // release is out is worth knowing in any build, and settings says so —
+        // it just stops at knowing.
+        let app = self.app.clone();
         self.status = Status::Checking;
         cx.notify();
         cx.spawn(async move |this, cx| {
@@ -242,6 +251,10 @@ impl Updater {
                 }
             };
             let version = SharedString::from(release.clone());
+            let Some(app) = app else {
+                let _ = this.update(cx, |this, cx| this.settle(Status::Available(version), cx));
+                return;
+            };
             if this
                 .update(cx, |this, cx| {
                     this.settle(Status::Downloading(version.clone()), cx)
@@ -299,7 +312,8 @@ impl Updater {
     }
 
     /// The loop: a check after launch, then one every few hours until there is
-    /// a release in hand, which is the last thing there is to find.
+    /// a release in hand — or, in a build that can hold none, until the feed
+    /// names one. Either way that is the last thing there is to find.
     fn poll(&mut self, cx: &mut Context<Self>) {
         self.poll = Some(cx.spawn(async move |this, cx| {
             let mut delay = FIRST;
@@ -308,7 +322,7 @@ impl Updater {
                 delay = EVERY;
                 let looking = this.update(cx, |this, cx| {
                     this.check(false, cx);
-                    !matches!(this.status, Status::Ready { .. })
+                    !matches!(this.status, Status::Ready { .. } | Status::Available(_))
                 });
                 if !matches!(looking, Ok(true)) {
                     return;

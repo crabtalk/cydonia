@@ -25,6 +25,11 @@ const COMMIT: &str = env!("CYDONIA_COMMIT");
 /// Where the people using this talk to each other.
 const COMMUNITY: &str = "https://discord.gg/yGZDYnwbx6";
 
+/// And where a release is picked up by hand, for the builds that cannot take
+/// one on their own. The site, not the tag: it hands out the image for the
+/// machine asking, which is the part this build got wrong by not being it.
+const HOMEPAGE: &str = env!("CARGO_PKG_HOMEPAGE");
+
 /// The mark over the rows. An About panel's measure — big enough to be the
 /// picture of the app, small enough that the two lines under it are still what
 /// the section is.
@@ -85,16 +90,23 @@ impl SettingsWindow {
     }
 
     /// Releases: whether the app looks for one itself, and where the looking has
-    /// got to. Absent whole on a build no release could replace — see
-    /// [`crate::model::update`], which is also what decides whether the menu bar
-    /// carries a check.
+    /// got to.
+    ///
+    /// Here in every build, including the ones no release can replace — see
+    /// [`crate::model::update`]. Which release is out is worth knowing whether
+    /// or not this copy can swap itself for it, and a section that hid the
+    /// question left a person with nowhere to ask it. What changes is the
+    /// answer: those builds are told where to pick it up rather than offered a
+    /// restart, and the menu bar still carries no check for them.
     fn updates(&self, cx: &Context<Self>) -> Option<AnyElement> {
-        if !update::supported(cx) {
-            return None;
-        }
         let updater = update::of(cx)?;
         let theme = Theme::of(cx).clone();
         let auto = self.workspace.read(cx).settings.auto_update;
+        let blurb = if update::supported(cx) {
+            "Look for a release, and fetch it ready to restart into."
+        } else {
+            "Look for a release. This copy is picked up from the site."
+        };
         Some(
             div()
                 .flex()
@@ -120,10 +132,7 @@ impl SettingsWindow {
                                                 .truncate()
                                                 .text_style(TextStyle::Subheadline)
                                                 .text_color(theme.text_muted)
-                                                .child(
-                                                    "Look for a release, and fetch it ready to \
-                                                     restart into.",
-                                                ),
+                                                .child(blurb),
                                         ),
                                 )
                                 .child(
@@ -155,7 +164,14 @@ impl SettingsWindow {
         let (line, detail): (SharedString, Option<SharedString>) = match &status {
             Status::Idle => ("Releases".into(), Some("Nothing asked for yet.".into())),
             Status::Checking => ("Looking for a release…".into(), None),
-            Status::Current => ("cydonia is up to date".into(), None),
+            Status::Current => (
+                "cydonia is up to date".into(),
+                Some(format!("{VERSION} is the newest release there is.").into()),
+            ),
+            Status::Available(version) => (
+                format!("cydonia {version} is out").into(),
+                Some("This copy cannot swap itself for it — the site has the image.".into()),
+            ),
             Status::Downloading(version) => (format!("Fetching cydonia {version}…").into(), None),
             Status::Ready { version, .. } => (
                 format!("cydonia {version} is ready").into(),
@@ -165,6 +181,7 @@ impl SettingsWindow {
         };
         let working = matches!(status, Status::Checking | Status::Downloading(_));
         let ready = matches!(status, Status::Ready { .. });
+        let elsewhere = matches!(status, Status::Available(_));
         let updater = updater.clone();
         theme
             .card_row(false)
@@ -190,6 +207,16 @@ impl SettingsWindow {
                     .text_style(TextStyle::Callout)
                     .text_color(theme.text_faint)
                     .child("working…")
+                    .into_any_element()
+            } else if elsewhere {
+                // Prominent for the same reason the restart is: it is the one
+                // control here that moves the app on rather than reporting on
+                // it. Away from the app, but on all the same.
+                theme
+                    .button("Get cydonia", ButtonStyle::Prominent, None)
+                    .id("get-release")
+                    .flex_none()
+                    .on_click(|_, _, cx| cx.open_url(HOMEPAGE))
                     .into_any_element()
             } else if ready {
                 theme
