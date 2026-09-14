@@ -1,4 +1,5 @@
 <script>
+	import ShareImage from '$lib/ShareImage.svelte';
 	import { siApple, siGithub } from 'simple-icons';
 	import { Check, Copy, Download } from 'lucide-static';
 	import Brand from '$lib/Brand.svelte';
@@ -97,10 +98,10 @@
 	<meta property="og:title" content="Cydonia — a workspace for the agents you run" />
 	<meta property="og:description" content={description} />
 	<meta property="og:type" content="website" />
-	<meta property="og:image" content="{site}/og.png" />
-	<meta name="twitter:card" content="summary_large_image" />
 	{@html jsonLdHtml}
 </svelte:head>
+
+<ShareImage />
 
 <section class="hero">
 	<div class="say">
