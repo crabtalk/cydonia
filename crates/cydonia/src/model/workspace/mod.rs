@@ -95,6 +95,9 @@ pub struct Workspace {
     /// How wide a page that has not been set either way is drawn — see
     /// [`crate::model::state::State::wide_pages`].
     pub wide_pages: bool,
+    /// Whether a long line in a code block wraps rather than scrolling — see
+    /// [`apply_wrap_code`].
+    pub wrap_code: bool,
     /// Whether the window is showing the frame meter. Runtime only — a switch
     /// you left on is not a preference worth restoring.
     pub meter: bool,
@@ -111,16 +114,18 @@ impl Workspace {
         let projects: Vec<Project> = state.projects.into_iter().map(Project::new).collect();
         let active = (!projects.is_empty()).then_some(state.active);
         let restore: Vec<usize> = (0..projects.len()).collect();
+        let look = settings.appearance;
         let mut this = Self {
             settings,
             projects,
             active,
-            appearance: state.appearance,
-            opaque: state.opaque,
-            cursor_blink: state.cursor_blink,
-            text_size: state.text_size,
-            tint: Tint::new(state.hue, state.chroma),
-            wide_pages: state.wide_pages,
+            appearance: look.mode,
+            opaque: look.opaque,
+            cursor_blink: look.cursor_blink,
+            text_size: look.text_size,
+            tint: Tint::new(look.hue, look.chroma),
+            wide_pages: look.wide_pages,
+            wrap_code: look.wrap_code,
             meter: false,
             next_id: 0,
             agent_icons: HashMap::new(),
@@ -158,14 +163,24 @@ impl Workspace {
         state::save(&State {
             projects: self.paths(),
             active: self.active.unwrap_or_default(),
-            appearance: self.appearance,
+            last: self.last.clone(),
+        });
+    }
+
+    /// The other half of [`Self::save`]: the preferences, into the file a
+    /// person edits. Split because the two move on different clocks — opening
+    /// a project rewrites the bookkeeping and must not touch `settings.toml`,
+    /// where somebody's comments live.
+    fn save_appearance(&self) {
+        let _ = settings::set_appearance(&settings::Appearance {
+            mode: self.appearance,
             opaque: self.opaque,
             cursor_blink: self.cursor_blink,
             text_size: self.text_size,
             hue: self.tint.hue,
             chroma: self.tint.chroma,
             wide_pages: self.wide_pages,
-            last: self.last.clone(),
+            wrap_code: self.wrap_code,
         });
     }
 
@@ -212,12 +227,12 @@ impl Workspace {
         cx.notify();
     }
 
-    /// The settings window's choice. bezel repaints on `set_mode`; the state
-    /// file is what makes it survive a relaunch.
+    /// The settings window's choice. bezel repaints on `set_mode`;
+    /// `settings.toml` is what makes it survive a relaunch.
     pub fn set_appearance(&mut self, mode: AppearanceMode, cx: &mut Context<Self>) {
         self.appearance = mode;
         bezel::theme::appearance::set_mode(mode, cx);
-        self.save();
+        self.save_appearance();
         cx.notify();
     }
 
@@ -227,7 +242,7 @@ impl Workspace {
     pub fn set_opaque(&mut self, opaque: bool, cx: &mut Context<Self>) {
         self.opaque = Some(opaque);
         apply_transparency(self.opaque, cx);
-        self.save();
+        self.save_appearance();
         cx.notify();
     }
 
@@ -336,14 +351,14 @@ impl Workspace {
     pub fn set_cursor_blink(&mut self, blink: bool, cx: &mut Context<Self>) {
         self.cursor_blink = blink;
         input::set_caret_blink(blink, cx);
-        self.save();
+        self.save_appearance();
         cx.notify();
     }
 
     pub fn set_text_size(&mut self, points: f32, cx: &mut Context<Self>) {
         self.text_size = points;
         theme::set_base_text_size(points, cx);
-        self.save();
+        self.save_appearance();
         cx.notify();
     }
 
@@ -352,14 +367,21 @@ impl Workspace {
     /// the rest follow this.
     pub fn set_wide_pages(&mut self, wide: bool, cx: &mut Context<Self>) {
         self.wide_pages = wide;
-        self.save();
+        self.save_appearance();
+        cx.notify();
+    }
+
+    pub fn set_wrap_code(&mut self, wrap: bool, cx: &mut Context<Self>) {
+        self.wrap_code = wrap;
+        apply_wrap_code(wrap, cx);
+        self.save_appearance();
         cx.notify();
     }
 
     pub fn set_tint(&mut self, tint: Tint, cx: &mut Context<Self>) {
         self.tint = tint;
         apply_tint(tint, cx);
-        self.save();
+        self.save_appearance();
         cx.notify();
     }
 
@@ -410,6 +432,16 @@ pub fn vibrancy(opaque: Option<bool>) -> Vibrancy {
         Some(true) => Vibrancy::Off,
         Some(false) => Vibrancy::On,
     }
+}
+
+/// How a fence breaks its lines, handed to the renderer that paints one.
+///
+/// Every document at once, the article's and the transcript's alike: one
+/// answer is installed for the app, the way the highlighter and the type
+/// ladder are. There is nowhere narrower to put it — a fence is painted by
+/// `markdown::render`, which takes no per-surface layout.
+pub fn apply_wrap_code(wrap: bool, cx: &mut App) {
+    markdown::set_layout(cx, markdown::Layout { wrap_code: wrap });
 }
 
 /// Hand the answer to bezel, which reapplies it on every light/dark switch

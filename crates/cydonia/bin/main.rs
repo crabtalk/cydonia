@@ -9,7 +9,7 @@ use bezel::{
 };
 use cydonia::{
     memory,
-    model::{media, settings, state, update, workspace},
+    model::{media, migrate, settings, state, update, workspace},
     view::{
         article, board,
         component::{composer, ribbon},
@@ -18,6 +18,9 @@ use cydonia::{
 };
 
 fn main() -> Result<()> {
+    // Ahead of both readers: it moves keys between the two files, and either
+    // one read first would be read from before the move.
+    migrate::run();
     let settings = settings::load()?;
     let state = state::restore();
     let app = gpui_platform::application();
@@ -41,13 +44,15 @@ fn main() -> Result<()> {
         if let Err(err) = ui::register_fonts(cx) {
             eprintln!("font registration failed: {err:?}");
         }
-        appearance::init(state.appearance, cx);
+        let look = settings.appearance;
+        appearance::init(look.mode, cx);
         // Before the window is opened: it reads its background appearance
         // on the way up, and vibrancy is what decides that.
-        workspace::apply_transparency(state.opaque, cx);
-        workspace::apply_tint(Tint::new(state.hue, state.chroma), cx);
-        input::set_caret_blink(state.cursor_blink, cx);
-        theme::set_base_text_size(state.text_size, cx);
+        workspace::apply_transparency(look.opaque, cx);
+        workspace::apply_tint(Tint::new(look.hue, look.chroma), cx);
+        input::set_caret_blink(look.cursor_blink, cx);
+        theme::set_base_text_size(look.text_size, cx);
+        workspace::apply_wrap_code(look.wrap_code, cx);
         markdown::set_highlighter(
             cx,
             |language, code| syntax::highlight(code, language),

@@ -1,11 +1,15 @@
-//! What the app remembers between launches: the projects that were open, and
-//! the appearance the user picked.
+//! What the app remembers between launches: which projects were open, which
+//! was in front, and what each of them was last showing.
 //!
-//! Machine-written, unlike `settings.toml` — nothing here is worth hand
-//! editing, and rewriting it must never cost a user their own comments.
+//! Bookkeeping and nothing else. Machine-written, unlike `settings.toml` —
+//! nothing here is worth hand editing, and rewriting it must never cost a user
+//! their own comments. That is also why the preferences that used to sit here
+//! no longer do: they are worth editing, and worth carrying to another
+//! machine, which the absolute paths below are not. See
+//! [`crate::model::settings::Appearance`], and [`crate::model::migrate`] for
+//! the move.
 
 use crate::model::settings;
-use bezel::theme::{TextStyle, appearance::AppearanceMode};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::PathBuf};
 
@@ -29,38 +33,13 @@ pub struct Entry {
     pub id: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct State {
     #[serde(default)]
     pub projects: Vec<PathBuf>,
     #[serde(default)]
     pub active: usize,
-    #[serde(default)]
-    pub appearance: AppearanceMode,
-    /// Whether the window is held opaque, and nothing at all for the person
-    /// who has never said — the frost is then the appearance's own answer,
-    /// which is dark's alone. See [`bezel::theme::Vibrancy`].
-    ///
-    /// Named apart from the `reduce_transparency` this replaces on purpose.
-    /// That key was written into every state file that has ever been saved, so
-    /// reading it back would tell us every existing person had chosen `false`
-    /// — and hand them a frosted light mode none of them asked for.
-    #[serde(default)]
-    pub opaque: Option<bool>,
-    /// Whether the text caret blinks. Off holds it lit.
-    pub cursor_blink: bool,
-    /// The body size the type ladder is scaled against, in points.
-    pub text_size: f32,
-    /// The greys' oklch hue in degrees, and how much of it they carry. Zero
-    /// chroma is the shipped neutral, whatever the hue says.
-    pub hue: f32,
-    pub chroma: f32,
-    /// How wide a page with nothing of its own to say is set. The reader's
-    /// answer, so it lives here and not in any article's `properties.toml` —
-    /// a page that *has* been decided about carries the decision itself and
-    /// ignores this.
-    pub wide_pages: bool,
     /// What each project was last showing, by project path. Last in the struct
     /// because a map renders as TOML tables, and a bare key after one of those
     /// belongs to it.
@@ -68,32 +47,8 @@ pub struct State {
     pub last: BTreeMap<PathBuf, Entry>,
 }
 
-/// What the body size may be set to, in points: the ladder's smallest measured
-/// role to Title3's, so bezel's fixed chrome heights hold at either end. Read
-/// on the way in as well as by the control, because a size out of range paints
-/// an interface nobody can read the settings window to fix.
-pub const TEXT_SIZE: (f32, f32) = (11., 17.);
-
-/// Hand-written because a zeroed `text_size` is a font nobody can read, and a
-/// missing state file resolves every field through here.
-impl Default for State {
-    fn default() -> Self {
-        Self {
-            projects: Vec::new(),
-            active: 0,
-            appearance: AppearanceMode::default(),
-            opaque: None,
-            cursor_blink: true,
-            text_size: TextStyle::Body.size(),
-            hue: 0.,
-            chroma: 0.,
-            wide_pages: false,
-            last: BTreeMap::new(),
-        }
-    }
-}
-
-fn path() -> Option<PathBuf> {
+/// `~/.config/cydonia/state.toml`, beside the settings it is not.
+pub(crate) fn path() -> Option<PathBuf> {
     settings::dir().ok().map(|dir| dir.join("state.toml"))
 }
 
@@ -117,13 +72,6 @@ pub fn restore() -> State {
     State {
         projects,
         active,
-        appearance: stored.appearance,
-        opaque: stored.opaque,
-        cursor_blink: stored.cursor_blink,
-        text_size: stored.text_size.clamp(TEXT_SIZE.0, TEXT_SIZE.1),
-        hue: stored.hue,
-        chroma: stored.chroma,
-        wide_pages: stored.wide_pages,
         last: stored.last,
     }
 }

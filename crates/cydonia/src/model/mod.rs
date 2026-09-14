@@ -5,6 +5,7 @@
 pub mod article;
 pub mod cover;
 pub mod media;
+pub mod migrate;
 pub mod project;
 pub mod session;
 pub mod settings;

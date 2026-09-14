@@ -3,8 +3,12 @@
 
 use crate::{memory, model::watch};
 use anyhow::{Context, Result};
+use bezel::theme::{TextStyle, appearance::AppearanceMode};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::PathBuf};
+
+/// What the file is called inside [`dir`].
+const FILE: &str = "settings.toml";
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Settings {
@@ -30,6 +34,10 @@ pub struct Settings {
     /// picked — see [`crate::model::update`].
     #[serde(default = "auto_update")]
     pub auto_update: bool,
+    /// How the interface is painted. The first table, so the bare keys above
+    /// keep belonging to the document rather than to it.
+    #[serde(default)]
+    pub appearance: Appearance,
     /// What the app will show. Every bare key has to go above it, and every
     /// table below — `[[agents]]` is the one that follows.
     #[serde(default)]
@@ -40,6 +48,69 @@ pub struct Settings {
     pub mcp: Mcp,
     #[serde(default)]
     pub agents: Vec<Agent>,
+}
+
+/// What the body size may be set to, in points: the ladder's smallest measured
+/// role to Title3's, so bezel's fixed chrome heights hold at either end. Read
+/// on the way in as well as by the control, because a size out of range paints
+/// an interface nobody can read the settings window to fix.
+pub const TEXT_SIZE: (f32, f32) = (11., 17.);
+
+/// How the interface is painted — the reader's own answers, every one of them
+/// a switch in Settings.
+///
+/// Here rather than in `state.toml` because these are preferences and not
+/// bookkeeping: worth hand-editing, worth carrying to another machine, and
+/// nothing to do with which projects happened to be open. `state.toml` keeps
+/// what only this machine can answer — see [`crate::model::state`], and
+/// [`crate::model::migrate`] for the move.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Appearance {
+    /// Light, dark, or whatever the OS is doing.
+    pub mode: AppearanceMode,
+    /// Whether the window is held opaque, and nothing at all for the person
+    /// who has never said — the frost is then the appearance's own answer.
+    /// See [`bezel::theme::Vibrancy`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub opaque: Option<bool>,
+    /// Whether the text caret blinks. Off holds it lit.
+    pub cursor_blink: bool,
+    /// The body size the type ladder is scaled against, in points. Clamped to
+    /// [`TEXT_SIZE`] on the way in: this file is edited by hand, and a size
+    /// out of range paints an interface nobody can read to fix it.
+    pub text_size: f32,
+    /// The greys' oklch hue in degrees, and how much of it they carry. Zero
+    /// chroma is the shipped neutral, whatever the hue says.
+    pub hue: f32,
+    pub chroma: f32,
+    /// How wide a page with nothing of its own to say is set. A page that
+    /// *has* been decided about carries the decision in its own
+    /// `properties.toml` and ignores this.
+    pub wide_pages: bool,
+    /// Whether a line too long for a code block wraps rather than scrolling
+    /// sideways inside it — `markdown::Layout::wrap_code`.
+    pub wrap_code: bool,
+}
+
+impl Default for Appearance {
+    fn default() -> Self {
+        Self {
+            mode: AppearanceMode::default(),
+            opaque: None,
+            cursor_blink: true,
+            text_size: TextStyle::Body.size(),
+            hue: 0.,
+            chroma: 0.,
+            wide_pages: false,
+            // Off, the way every code editor ships it: indentation is
+            // structure, and wrapping loses the left column that makes nesting
+            // scannable. Against bezel's own default, which wraps because
+            // nothing scrolls a fence back to a caret typed off its right
+            // edge — that is the cost, and the switch is the way back.
+            wrap_code: false,
+        }
+    }
 }
 
 /// Cydonia as an MCP server: the tools an agent reaches a project's boards
@@ -204,6 +275,7 @@ impl Default for Settings {
             cover_memory: cover_memory(),
             watch_bounce: watch_bounce(),
             auto_update: auto_update(),
+            appearance: Appearance::default(),
             features: Features::default(),
             mcp: Mcp::default(),
             agents: vec![
@@ -245,9 +317,14 @@ pub fn dir() -> Result<PathBuf> {
         .join("cydonia"))
 }
 
+/// `~/.config/cydonia/settings.toml`.
+pub(crate) fn path() -> Result<PathBuf> {
+    Ok(dir()?.join(FILE))
+}
+
 pub fn load() -> Result<Settings> {
     let dir = dir()?;
-    let path = dir.join("settings.toml");
+    let path = dir.join(FILE);
     if !path.exists() {
         let settings = Settings::default();
         std::fs::create_dir_all(&dir)?;
@@ -264,6 +341,10 @@ pub fn load() -> Result<Settings> {
     // A floating tag is a different program on every launch. The line stays in
     // the file, where it can be read and fixed; it just never launches.
     settings.agents.retain(Agent::pinned);
+    settings.appearance.text_size = settings
+        .appearance
+        .text_size
+        .clamp(TEXT_SIZE.0, TEXT_SIZE.1);
     Ok(settings)
 }
 
@@ -274,7 +355,7 @@ pub fn load() -> Result<Settings> {
 /// opened and changed by hand, and a round trip through a value tree would
 /// silently delete every comment in it.
 fn edit(change: impl FnOnce(&mut toml_edit::DocumentMut) -> Result<bool>) -> Result<()> {
-    let path = dir()?.join("settings.toml");
+    let path = path()?;
     let body = std::fs::read_to_string(&path).unwrap_or_default();
     let mut doc: toml_edit::DocumentMut =
         body.parse().context("settings.toml is not valid toml")?;
@@ -295,6 +376,37 @@ fn table<'a>(doc: &'a mut toml_edit::DocumentMut, name: &str) -> Result<&'a mut 
     };
     held.set_implicit(false);
     Ok(held)
+}
+
+/// Write the whole of `[appearance]`.
+///
+/// One call rather than a setter per key: the window holds all eight live and
+/// any of them can move in a frame. Key by key through [`table`] all the same,
+/// so a comment somebody wrote beside one of them survives the write.
+pub fn set_appearance(appearance: &Appearance) -> Result<()> {
+    edit(|doc| {
+        let held = table(doc, "appearance")?;
+        held["mode"] = toml_edit::value(match appearance.mode {
+            AppearanceMode::System => "system",
+            AppearanceMode::Light => "light",
+            AppearanceMode::Dark => "dark",
+        });
+        // Never said is the absence of the key, not a `false` that would hand
+        // this reader a frosted light mode they never asked for.
+        match appearance.opaque {
+            Some(opaque) => held["opaque"] = toml_edit::value(opaque),
+            None => {
+                held.remove("opaque");
+            }
+        }
+        held["cursor_blink"] = toml_edit::value(appearance.cursor_blink);
+        held["text_size"] = toml_edit::value(f64::from(appearance.text_size));
+        held["hue"] = toml_edit::value(f64::from(appearance.hue));
+        held["chroma"] = toml_edit::value(f64::from(appearance.chroma));
+        held["wide_pages"] = toml_edit::value(appearance.wide_pages);
+        held["wrap_code"] = toml_edit::value(appearance.wrap_code);
+        Ok(true)
+    })
 }
 
 /// Switch a feature on or off in the file.

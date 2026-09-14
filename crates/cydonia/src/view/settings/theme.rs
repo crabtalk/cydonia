@@ -136,9 +136,34 @@ impl SettingsWindow {
                 theme
                     .group_box()
                     .child(self.cursor_row(cx))
-                    .child(self.pages_row(cx)),
+                    .child(self.pages_row(cx))
+                    .child(self.wrap_row(cx)),
             )
             .into_any_element()
+    }
+
+    /// What a line too long for a code block does.
+    ///
+    /// Every document at once, an article's fences and a transcript's alike:
+    /// the renderer takes one answer for the app. Off is what an editor
+    /// usually does, and the cost of it here is that nothing scrolls a fence
+    /// back to a caret typed off its right edge — the page follows the caret
+    /// down, but a block's own sideways scroll is the reader's to drag.
+    pub(super) fn wrap_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let on = self.workspace.read(cx).wrap_code;
+        self.switch_row(
+            Switch::new(
+                "wrap-code",
+                "Wrap long lines in code",
+                "Off scrolls a long line sideways inside the block instead.",
+                on,
+            ),
+            cx,
+            move |this, cx| {
+                this.workspace
+                    .update(cx, |workspace, cx| workspace.set_wrap_code(!on, cx));
+            },
+        )
     }
 
     /// How wide a page is set when it has not been told otherwise.
