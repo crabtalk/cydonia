@@ -192,6 +192,10 @@ pub fn open(
         },
         |window, cx| {
             appearance::observe_window(window, cx).detach();
+            // And opaque it stays: bezel pushes the palette's own background
+            // onto every window on each appearance switch, which is what keeps
+            // the main window's frost alive and would frost this one with it.
+            appearance::keep_background(window, cx);
             cx.new(|cx| {
                 let search = cx.new(|cx| {
                     TextField::new(cx)
