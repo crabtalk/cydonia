@@ -38,9 +38,16 @@ pub struct State {
     pub active: usize,
     #[serde(default)]
     pub appearance: AppearanceMode,
-    /// Whether the vibrancy is off — bezel composites the window opaque.
+    /// Whether the window is held opaque, and nothing at all for the person
+    /// who has never said — the frost is then the appearance's own answer,
+    /// which is dark's alone. See [`bezel::theme::Vibrancy`].
+    ///
+    /// Named apart from the `reduce_transparency` this replaces on purpose.
+    /// That key was written into every state file that has ever been saved, so
+    /// reading it back would tell us every existing person had chosen `false`
+    /// — and hand them a frosted light mode none of them asked for.
     #[serde(default)]
-    pub reduce_transparency: bool,
+    pub opaque: Option<bool>,
     /// Whether the text caret blinks. Off holds it lit.
     pub cursor_blink: bool,
     /// The body size the type ladder is scaled against, in points.
@@ -70,7 +77,7 @@ impl Default for State {
             projects: Vec::new(),
             active: 0,
             appearance: AppearanceMode::default(),
-            reduce_transparency: false,
+            opaque: None,
             cursor_blink: true,
             text_size: TextStyle::Body.size(),
             hue: 0.,
@@ -105,7 +112,7 @@ pub fn restore() -> State {
         projects,
         active,
         appearance: stored.appearance,
-        reduce_transparency: stored.reduce_transparency,
+        opaque: stored.opaque,
         cursor_blink: stored.cursor_blink,
         text_size: stored.text_size.clamp(TEXT_SIZE.0, TEXT_SIZE.1),
         hue: stored.hue,

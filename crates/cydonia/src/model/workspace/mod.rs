@@ -27,8 +27,8 @@ use artifact::{
     project::{Project as _, fs},
 };
 use bezel::{
-    gpui::{App, ClipboardItem, Context, EntityId, EventEmitter, Global, Subscription, Window},
-    theme::{self, Appearance, Brand, Theme, Tint, appearance::AppearanceMode},
+    gpui::{App, ClipboardItem, Context, EntityId, EventEmitter, Window},
+    theme::{self, Brand, Tint, Vibrancy, appearance::AppearanceMode},
     ui::{icons::Icon, input},
 };
 use cacp::schema::SessionConfigOptionValue;
@@ -81,7 +81,9 @@ pub struct Workspace {
     pub projects: Vec<Project>,
     pub active: Option<usize>,
     pub appearance: AppearanceMode,
-    pub reduce_transparency: bool,
+    /// Whether the window is held opaque, or nothing for the appearance's
+    /// own answer — see [`vibrancy`].
+    pub opaque: Option<bool>,
     pub cursor_blink: bool,
     /// Session ids are minted here and never reused, so a card's link to the
     /// session it opened stays unambiguous for the life of the process.
@@ -111,7 +113,7 @@ impl Workspace {
             projects,
             active,
             appearance: state.appearance,
-            reduce_transparency: state.reduce_transparency,
+            opaque: state.opaque,
             cursor_blink: state.cursor_blink,
             text_size: state.text_size,
             tint: Tint::new(state.hue, state.chroma),
@@ -153,7 +155,7 @@ impl Workspace {
             projects: self.paths(),
             active: self.active.unwrap_or_default(),
             appearance: self.appearance,
-            reduce_transparency: self.reduce_transparency,
+            opaque: self.opaque,
             cursor_blink: self.cursor_blink,
             text_size: self.text_size,
             hue: self.tint.hue,
@@ -215,9 +217,11 @@ impl Workspace {
     }
 
     /// The same window's other choice.
-    pub fn set_reduce_transparency(&mut self, reduce: bool, cx: &mut Context<Self>) {
-        self.reduce_transparency = reduce;
-        apply_transparency(reduce, cx);
+    /// The switch, which from the first press is the answer in both
+    /// appearances rather than the one bezel would have resolved.
+    pub fn set_opaque(&mut self, opaque: bool, cx: &mut Context<Self>) {
+        self.opaque = Some(opaque);
+        apply_transparency(self.opaque, cx);
         self.save();
         cx.notify();
     }
@@ -381,71 +385,27 @@ pub fn apply_tint(tint: Tint, cx: &mut App) {
     );
 }
 
-/// What the person asked for, kept apart from what is in effect.
+/// What the switch asks of the brand.
 ///
-/// Light mode holds the window opaque whatever this says, so the switch has to
-/// be remembered somewhere the forcing cannot overwrite — otherwise going back
-/// to dark would restore a preference nobody expressed.
-struct Reduce(bool);
-
-impl Global for Reduce {}
-
-/// Note the switch, and put the window where it and the appearance together
-/// say it goes.
-pub fn apply_transparency(reduce: bool, cx: &mut App) {
-    cx.set_global(Reduce(reduce));
-    sync_transparency(cx);
-}
-
-/// Keep the vibrancy in step with the appearance for as long as the app runs.
-///
-/// Three things move the resolved appearance: launch, the settings window, and
-/// the OS switching at sunset while the mode is System. Only the first two are
-/// ours — the third happens inside bezel's own window observer and offers no
-/// callback. So this watches what all three end at instead: every one of them
-/// reinstalls [`Theme`], which is a gpui global.
-///
-/// The subscription has to outlive the app, so the caller detaches it.
-pub fn watch_appearance(cx: &mut App) -> Subscription {
-    cx.observe_global::<Theme>(sync_transparency)
-}
-
-/// Whether the window composites opaque: what the switch asked for, and light,
-/// which has no vibrancy to keep.
-///
-/// Light glass is 85% opaque wherever bezel paints it — a translucent white
-/// tint left text ghosting over whatever sat behind it, so the light palette
-/// was tuned back towards the page until almost none of the blur showed
-/// through. It pays for the frost and shows none of it, so the frost is dark's
-/// alone and the switch is about dark.
-pub fn opaque(reduce: bool, appearance: Appearance) -> bool {
-    reduce || matches!(appearance, Appearance::Light)
-}
-
-/// Two answers, because bezel asks two questions: the window stops compositing
-/// translucent, and the tint over it goes opaque. Chrome keeps its layers —
-/// `glass` is untouched here, and an opaque window carrying it is what this
-/// setting asks for and what the system's own does not do.
-///
-/// **Re-entrant by construction.** `set_brand` reinstalls the theme, which
-/// lands back in [`watch_appearance`] and here again — so the write is skipped
-/// when the answer has not moved, and that second pass is what ends it.
-fn sync_transparency(cx: &mut App) {
-    let Some(theme) = cx.try_global::<Theme>() else {
-        return;
-    };
-    let reduce = cx.try_global::<Reduce>().is_some_and(|held| held.0);
-    let opaque = opaque(reduce, theme.appearance);
-    let alpha = if opaque { 1.0 } else { Theme::VIBRANCY_ALPHA };
-    let brand = theme::brand(cx);
-    if brand.vibrancy == !opaque && brand.vibrancy_alpha == alpha {
-        return;
+/// Nothing said is not the same as "no" — it is the answer bezel resolves per
+/// appearance, opaque in light and frosted in dark. Once a person presses the
+/// switch it is theirs in both, which is what the `Some` is for.
+pub fn vibrancy(opaque: Option<bool>) -> Vibrancy {
+    match opaque {
+        None => Vibrancy::Auto,
+        Some(true) => Vibrancy::Off,
+        Some(false) => Vibrancy::On,
     }
+}
+
+/// Hand the answer to bezel, which reapplies it on every light/dark switch
+/// from then on — including the one the OS makes at sunset, which reaches
+/// nothing of ours.
+pub fn apply_transparency(opaque: Option<bool>, cx: &mut App) {
     theme::set_brand(
         Brand {
-            vibrancy_alpha: alpha,
-            vibrancy: !opaque,
-            ..brand
+            vibrancy: vibrancy(opaque),
+            ..theme::brand(cx)
         },
         cx,
     );
