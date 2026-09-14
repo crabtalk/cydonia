@@ -212,10 +212,23 @@ impl Workspace {
 
     /// Which agent an unasked-for session runs on: whoever the project is
     /// already talking to, else the first one configured.
+    ///
+    /// Read out of `settings.toml` in both cases, never off the session. A
+    /// session keeps its own copy of the entry it was opened on and the file
+    /// moves under it — an agent uninstalled leaves a session pointing at a
+    /// command that is gone, and handing that back opens a second session
+    /// that cannot start either.
     pub fn preferred_agent(&self) -> Option<settings::Agent> {
         self.active_session()
-            .map(|chat| chat.entry.clone())
-            .or_else(|| self.settings.agents.first().cloned())
+            .and_then(|chat| self.agent_named(&chat.entry.name))
+            .or_else(|| self.settings.agents.first())
+            .cloned()
+    }
+
+    /// The entry `settings.toml` files under this name, which is how a session
+    /// names the agent it runs on — see [`Self::restore_sessions`].
+    fn agent_named(&self, name: &str) -> Option<&settings::Agent> {
+        self.settings.agents.iter().find(|entry| entry.name == name)
     }
 
     /// Re-read `settings.toml`. Installing an agent writes that file, and

@@ -281,4 +281,25 @@ impl Workspace {
     pub fn active_id(&self) -> Option<u64> {
         self.active_project().and_then(|project| project.active)
     }
+
+    /// Whether the session in front has anywhere to send: it is talking to an
+    /// agent already, or `settings.toml` still names the one it would start.
+    ///
+    /// Stronger than [`ChatSession::resumable`], which asks only whether the
+    /// session was handed a command. A session outlives the agent it was
+    /// opened on — uninstalled in Settings › Agents, or edited out of the
+    /// file — and the copy of the entry it is holding says nothing about
+    /// whether that command is still on this machine. What is left reads back
+    /// and cannot be answered into, which is what the composer's absence has
+    /// to mean.
+    ///
+    /// A live session is reachable whatever the file says. It is running: the
+    /// agent was uninstalled out from under a conversation, and taking the
+    /// composer away mid-turn would strand it.
+    pub fn reachable(&self) -> bool {
+        let Some(chat) = self.active_session() else {
+            return false;
+        };
+        chat.live() || (chat.resumable() && self.agent_named(&chat.entry.name).is_some())
+    }
 }

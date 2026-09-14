@@ -2,7 +2,10 @@
 //! stack of buttons instead.
 
 use cacp::schema::PermissionOptionKind;
-use cydonia::{model::session::Choice, view::detail::alert};
+use cydonia::{
+    model::session::Choice,
+    view::detail::{adrift, adrift_line, agent_missing, alert},
+};
 
 fn choice(id: &str, kind: PermissionOptionKind) -> Choice {
     Choice {
@@ -57,4 +60,57 @@ fn one_sided_falls_to_the_stack() {
         choice("yes-always", PermissionOptionKind::AllowAlways),
     ];
     assert!(alert(&options).is_none());
+}
+
+// ── a session with no agent to reach ─────────────────────────────
+
+/// The pane says which agent is missing, by the name the session was filed
+/// under — not "no agent", which is a state and not the thing to fix.
+#[test]
+fn the_missing_agent_is_named() {
+    assert_eq!(agent_missing(Some("claude")), "claude is not installed");
+}
+
+/// Except where a session was asked for and never opened. There is no agent
+/// to name then, and naming none is the honest title.
+#[test]
+fn a_session_never_opened_names_no_agent() {
+    assert_eq!(agent_missing(None), "No agent installed");
+}
+
+/// With another agent on the machine, opening a session on it is the shorter
+/// way back than a download, so that is what the line offers first.
+#[test]
+fn another_agent_installed_is_the_shorter_way_out() {
+    let line = adrift(Some("claude"), true);
+    assert!(line.contains("Open a session"), "{line}");
+    assert!(line.contains("install"), "the download is still offered");
+}
+
+/// With none there is nothing to open a session on, and offering it would be
+/// pointing at a menu with no rows.
+#[test]
+fn nothing_installed_offers_no_session_to_open() {
+    let line = adrift(Some("claude"), false);
+    assert!(!line.contains("Open a session"), "{line}");
+}
+
+/// A ⌘N on a machine with nothing installed has no session behind it, so the
+/// line is about the install and says nothing of what is stranded.
+#[test]
+fn a_first_session_is_offered_the_install_alone() {
+    let line = adrift(None, false);
+    assert!(line.contains("Install one"), "{line}");
+    assert!(!line.contains("either"), "nothing was stranded: {line}");
+}
+
+/// The strip under a transcript carries no button, so the line has to say
+/// where the install is.
+#[test]
+fn the_strip_names_where_to_go() {
+    for others in [true, false] {
+        let line = adrift_line("claude", others);
+        assert!(line.starts_with("claude is not installed"), "{line}");
+        assert!(line.contains("Settings › Agents"), "{line}");
+    }
 }
