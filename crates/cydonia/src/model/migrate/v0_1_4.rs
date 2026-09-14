@@ -1,11 +1,19 @@
-//! 0.1.4 — the presentation preferences out of `state.toml`.
+//! 0.1.4 — two carry-overs, both onto `settings.toml`.
 //!
-//! Up to 0.1.3 the theme, the caret's blink, the type size, the greys' tint
-//! and the page width were written into `state.toml` beside the list of open
-//! projects. `state.toml` is machine-written bookkeeping full of absolute
-//! paths: not worth hand-editing, and not portable to another machine. Those
-//! preferences are both. They live in `settings.toml` under `[appearance]`
-//! now — see [`crate::model::settings::Appearance`].
+//! **The presentation preferences, out of `state.toml`.** Up to 0.1.3 the
+//! theme, the caret's blink, the type size, the greys' tint and the page width
+//! were written into `state.toml` beside the list of open projects.
+//! `state.toml` is machine-written bookkeeping full of absolute paths: not
+//! worth hand-editing, and not portable to another machine. Those preferences
+//! are both. They live in `settings.toml` under `[appearance]` now — see
+//! [`crate::model::settings::Appearance`].
+//!
+//! **The agents nobody installed, out of `settings.toml`.** Up to 0.1.3 a
+//! fresh install wrote an `npx` line for claude and one for codex, and opening
+//! a project started a session on the first of them. Neither was ever on the
+//! machine: the line alone was enough to offer the agent in the picker and to
+//! fetch and run its package on npm. Agents arrive through Settings › Agents
+//! now and nowhere else, so the two lines come back out.
 //!
 //! Retire this once nobody upgrading can still be on 0.1.3 or earlier. See
 //! [`super`].
@@ -37,23 +45,30 @@ fn renamed(key: &str) -> &str {
     }
 }
 
-/// Carry the presentation preferences out of `state.toml` into
-/// `settings.toml`. Best effort — see [`super::run`].
+/// Perform both carry-overs. Best effort — see [`super::run`].
+///
+/// `settings.toml` is the one file both halves write, so both are decided
+/// before it is written once. A `state.toml` that is missing or unreadable is
+/// not a reason to skip the agents: a person who never ran 0.1.3 long enough
+/// to have one can still have the two lines.
 pub fn run() {
-    let (Some(state_path), Ok(settings_path)) = (state::path(), settings::path()) else {
-        return;
-    };
-    let Ok(state_body) = std::fs::read_to_string(&state_path) else {
+    let Ok(settings_path) = settings::path() else {
         return;
     };
     let settings_body = std::fs::read_to_string(&settings_path).unwrap_or_default();
-    let (Ok(mut state), Ok(mut settings)) = (
-        state_body.parse::<DocumentMut>(),
-        settings_body.parse::<DocumentMut>(),
-    ) else {
+    let Ok(mut settings) = settings_body.parse::<DocumentMut>() else {
         return;
     };
-    if !carry_appearance(&mut state, &mut settings) {
+    let state_path = state::path();
+    let mut state = state_path
+        .as_ref()
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .and_then(|body| body.parse::<DocumentMut>().ok());
+    let carried = state
+        .as_mut()
+        .is_some_and(|state| carry_appearance(state, &mut settings));
+    let dropped = drop_default_agents(&mut settings);
+    if !carried && !dropped {
         return;
     }
     // Settings first. Written the other way round, a crash between the two
@@ -63,8 +78,9 @@ pub fn run() {
     if let Some(dir) = settings_path.parent()
         && std::fs::create_dir_all(dir).is_ok()
         && std::fs::write(&settings_path, settings.to_string()).is_ok()
+        && let (true, Some(path), Some(state)) = (carried, state_path, state)
     {
-        let _ = std::fs::write(&state_path, state.to_string());
+        let _ = std::fs::write(path, state.to_string());
     }
 }
 
@@ -97,4 +113,81 @@ pub fn carry_appearance(state: &mut DocumentMut, settings: &mut DocumentMut) -> 
         moved = true;
     }
     moved
+}
+
+/// The two entries a fresh install used to write, as the name and the npm
+/// package that were paired in it. The version moved from release to release —
+/// the pair did not, which is why the version is not part of the match.
+const DEFAULTED: [(&str, &str); 2] = [
+    ("claude", "@agentclientprotocol/claude-agent-acp"),
+    ("codex", "@agentclientprotocol/codex-acp"),
+];
+
+/// Take the agents nobody installed back out of `settings.toml`. Answers
+/// whether anything went.
+///
+/// Pure over the document for the same reason [`carry_appearance`] is.
+///
+/// Matched on the whole shape of the table rather than on the package alone,
+/// because an `npx` line does work — it fetches the package and runs it — and
+/// one somebody wrote on purpose is theirs to keep. What is dropped is
+/// byte-for-byte what cydonia wrote: the shipped name beside its own package,
+/// no `env`, and no `id`. That last is the one that carries the argument. An
+/// install through Settings › Agents *replaces* the line for its package and
+/// writes the registry id onto it — see [`crate::model::settings::put_agent`]
+/// — so an entry still without one is an entry no install ever stood behind.
+pub fn drop_default_agents(settings: &mut DocumentMut) -> bool {
+    let Some(agents) = settings
+        .get_mut("agents")
+        .and_then(|item| item.as_array_of_tables_mut())
+    else {
+        return false;
+    };
+    // The file's header hangs off whichever table comes first. If that is one
+    // of the two, the header has to move down onto its successor or it leaves
+    // with it — the same care [`crate::model::settings::remove_agent`] takes.
+    //
+    // Only where it says something: blank lines are the spacing around the
+    // entry being dropped, and carrying those down puts a gap where the entry
+    // was rather than closing it.
+    let prefix = agents
+        .get(0)
+        .filter(|table| defaulted(table))
+        .map(|table| table.decor().prefix())
+        .filter(|prefix| {
+            prefix.is_some_and(|held| held.as_str().is_some_and(|text| !text.trim().is_empty()))
+        })
+        .and_then(|prefix| prefix.cloned());
+    let before = agents.len();
+    agents.retain(|table| !defaulted(table));
+    if agents.len() == before {
+        return false;
+    }
+    if let Some(prefix) = prefix {
+        match agents.get_mut(0) {
+            Some(first) => first.decor_mut().set_prefix(prefix),
+            None => settings.as_table_mut().decor_mut().set_prefix(prefix),
+        }
+    }
+    true
+}
+
+/// Whether the table is one of the two, untouched since cydonia wrote it.
+fn defaulted(table: &toml_edit::Table) -> bool {
+    if table.contains_key("id") || table.contains_key("env") {
+        return false;
+    }
+    let field = |key| table.get(key).and_then(|value| value.as_str());
+    if field("command") != Some("npx") {
+        return false;
+    }
+    let Some(args) = table.get("args").and_then(|args| args.as_array()) else {
+        return false;
+    };
+    let args: Vec<&str> = args.iter().filter_map(|arg| arg.as_str()).collect();
+    let [flag, spec] = args[..] else {
+        return false;
+    };
+    let package = cacp_agents::package_name(spec);
+    flag == "-y" && DEFAULTED.contains(&(field("name").unwrap_or_default(), package))
 }

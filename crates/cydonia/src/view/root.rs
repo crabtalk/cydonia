@@ -437,18 +437,28 @@ impl Cydonia {
         this
     }
 
+    /// Open a session on whichever agent the last one ran on, or on the first
+    /// one configured.
+    ///
+    /// With none configured there is nothing to open a session *on*, and a
+    /// chat pane switched to over no session is a blank one. A fresh install
+    /// names no agent — see [`crate::model::settings::Settings::default`] — so
+    /// this is where most people meet the feature: it sends them to the
+    /// section that installs one, the same place the composer's own
+    /// `Install an agent…` goes.
     pub(crate) fn new_session_action(
         &mut self,
         _: &NewSession,
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let Some(entry) = self.workspace.read(cx).preferred_agent() else {
+            self.open_settings(Section::Agents, cx);
+            return;
+        };
         self.show_pane(Pane::Chat, cx);
-        self.workspace.update(cx, |workspace, cx| {
-            if let Some(entry) = workspace.preferred_agent() {
-                workspace.new_session(entry, None, cx);
-            }
-        });
+        self.workspace
+            .update(cx, |workspace, cx| workspace.new_session(entry, None, cx));
     }
 
     /// Copy what the transcript has selected. Bound app-wide and reached only

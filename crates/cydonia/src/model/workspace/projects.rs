@@ -42,8 +42,13 @@ impl Workspace {
         .detach();
     }
 
-    /// A project just added starts talking to an agent; one already on the
-    /// rail is only brought forward.
+    /// Put a project on the rail, or bring forward one already there.
+    ///
+    /// Whatever sessions it has on disk come back with it, and no more than
+    /// that: adding a project used to open one on the first configured agent,
+    /// which spawned a process — a download, on an `npx` line — for somebody
+    /// who had done nothing but name a folder. A session is opened where one is
+    /// asked for, and ⌘N is where.
     pub fn open_project(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         if let Some(ix) = self.projects.iter().position(|p| p.path == path) {
             self.select_project(ix, cx);
@@ -54,11 +59,6 @@ impl Workspace {
         self.restore_sessions(ix);
         self.watch_project(ix, cx);
         self.select_project(ix, cx);
-        if self.projects[ix].sessions.is_empty()
-            && let Some(entry) = self.settings.agents.first().cloned()
-        {
-            self.new_session(entry, None, cx);
-        }
     }
 
     pub fn select_project(&mut self, ix: usize, cx: &mut Context<Self>) {

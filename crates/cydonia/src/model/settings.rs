@@ -262,15 +262,6 @@ impl Agent {
 
 impl Default for Settings {
     fn default() -> Self {
-        let npx = |name: &str, pkg: &str| Agent {
-            name: name.into(),
-            id: None,
-            command: "npx".into(),
-            args: vec!["-y".into(), pkg.into()],
-            env: BTreeMap::new(),
-        };
-        // `npx` resolves a dist-tag against the npm registry on every launch,
-        // so these carry the version the ACP registry pins.
         Self {
             cover_memory: cover_memory(),
             watch_bounce: watch_bounce(),
@@ -278,10 +269,17 @@ impl Default for Settings {
             appearance: Appearance::default(),
             features: Features::default(),
             mcp: Mcp::default(),
-            agents: vec![
-                npx("claude", "@agentclientprotocol/claude-agent-acp@0.73.0"),
-                npx("codex", "@agentclientprotocol/codex-acp@1.8.0"),
-            ],
+            // None, and named by nobody but the person who put one here.
+            //
+            // A fresh install used to ship `npx` lines for claude and codex,
+            // which claimed two integrations this machine had never been asked
+            // for: the picker offered them, and the first one opened a session
+            // that fetched a package off npm and ran it. Settings › Agents is
+            // where an agent arrives — see [`crate::agent::install`], which
+            // writes the entry — and until one does, this list is empty and
+            // nothing here can spawn. [`crate::model::migrate::v0_1_4`] takes
+            // the two lines back out of a file that already has them.
+            agents: Vec::new(),
         }
     }
 }
