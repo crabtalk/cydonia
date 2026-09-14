@@ -160,6 +160,7 @@ impl Cydonia {
     /// leaving a blank on the board.
     pub(crate) fn commit(&mut self, cx: &mut Context<Self>) {
         self.commit_cell(cx);
+        self.rest_ribbon(cx);
         let Some(at) = self.editing.take() else {
             return;
         };

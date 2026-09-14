@@ -92,6 +92,9 @@ pub struct Workspace {
     pub text_size: f32,
     /// The hue the greys carry, and how much of it.
     pub tint: Tint,
+    /// How wide a page that has not been set either way is drawn — see
+    /// [`crate::model::state::State::wide_pages`].
+    pub wide_pages: bool,
     /// Whether the window is showing the frame meter. Runtime only — a switch
     /// you left on is not a preference worth restoring.
     pub meter: bool,
@@ -117,6 +120,7 @@ impl Workspace {
             cursor_blink: state.cursor_blink,
             text_size: state.text_size,
             tint: Tint::new(state.hue, state.chroma),
+            wide_pages: state.wide_pages,
             meter: false,
             next_id: 0,
             agent_icons: HashMap::new(),
@@ -160,6 +164,7 @@ impl Workspace {
             text_size: self.text_size,
             hue: self.tint.hue,
             chroma: self.tint.chroma,
+            wide_pages: self.wide_pages,
             last: self.last.clone(),
         });
     }
@@ -338,6 +343,15 @@ impl Workspace {
     pub fn set_text_size(&mut self, points: f32, cx: &mut Context<Self>) {
         self.text_size = points;
         theme::set_base_text_size(points, cx);
+        self.save();
+        cx.notify();
+    }
+
+    /// How wide a page with nothing of its own to say is set. Every open
+    /// article redraws: the ones carrying a width of their own keep it, and
+    /// the rest follow this.
+    pub fn set_wide_pages(&mut self, wide: bool, cx: &mut Context<Self>) {
+        self.wide_pages = wide;
         self.save();
         cx.notify();
     }

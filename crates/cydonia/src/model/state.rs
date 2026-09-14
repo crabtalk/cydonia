@@ -56,6 +56,11 @@ pub struct State {
     /// chroma is the shipped neutral, whatever the hue says.
     pub hue: f32,
     pub chroma: f32,
+    /// How wide a page with nothing of its own to say is set. The reader's
+    /// answer, so it lives here and not in any article's `properties.toml` —
+    /// a page that *has* been decided about carries the decision itself and
+    /// ignores this.
+    pub wide_pages: bool,
     /// What each project was last showing, by project path. Last in the struct
     /// because a map renders as TOML tables, and a bare key after one of those
     /// belongs to it.
@@ -82,6 +87,7 @@ impl Default for State {
             text_size: TextStyle::Body.size(),
             hue: 0.,
             chroma: 0.,
+            wide_pages: false,
             last: BTreeMap::new(),
         }
     }
@@ -117,6 +123,7 @@ pub fn restore() -> State {
         text_size: stored.text_size.clamp(TEXT_SIZE.0, TEXT_SIZE.1),
         hue: stored.hue,
         chroma: stored.chroma,
+        wide_pages: stored.wide_pages,
         last: stored.last,
     }
 }

@@ -63,10 +63,11 @@ pub struct Article {
     /// Put away: listed under the divider rather than gone. Cached beside
     /// [`Article::touched`], and for the same reason.
     pub archived: bool,
-    /// Set across the pane rather than in the reading column. Cached like
-    /// [`Article::archived`]: the frame reads it, and a frame is not somewhere
-    /// to open a file.
-    pub full_width: bool,
+    /// Set across the pane rather than in the reading column, and `None` for a
+    /// page nobody has decided about — which follows the app's own default,
+    /// see [`Article::wide`]. Cached like [`Article::archived`]: the frame
+    /// reads it, and a frame is not somewhere to open a file.
+    pub full_width: Option<bool>,
     /// The file moved under an open document that has edits of its own — see
     /// [`Article::adopt`]. Runtime only: what it marks is a disagreement
     /// between the buffer and the disk, and reopening the app ends it by
@@ -97,10 +98,17 @@ impl Article {
         properties::set_archived(&self.path, archived);
     }
 
-    /// Set the page across the pane, or back in the column.
-    pub fn set_full_width(&mut self, wide: bool) {
+    /// Set the page across the pane, or back in the column. `None` hands it
+    /// back to the reader's default and takes the key out of the file.
+    pub fn set_full_width(&mut self, wide: Option<bool>) {
         self.full_width = wide;
         properties::set_full_width(&self.path, wide);
+    }
+
+    /// How wide this page is actually drawn, against the app's own default.
+    /// One answer, so the pane and the menu that toggles it cannot disagree.
+    pub fn wide(&self, default: bool) -> bool {
+        self.full_width.unwrap_or(default)
     }
 
     /// The sidebar's label.

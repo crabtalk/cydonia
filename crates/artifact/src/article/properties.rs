@@ -17,6 +17,7 @@ const TITLE: &str = "title";
 const ARCHIVED: &str = "archived";
 
 /// Whether the page is set across the pane rather than in the reading column.
+/// Absent for a page that has never been told either way.
 const FULL_WIDTH: &str = "full_width";
 
 /// Where this article's properties live — beside its content, in the directory
@@ -35,7 +36,7 @@ pub fn path(content: &Path) -> Option<PathBuf> {
 pub struct Properties {
     pub title: String,
     pub archived: bool,
-    pub full_width: bool,
+    pub full_width: Option<bool>,
 }
 
 /// Read the whole file once and answer with all of it.
@@ -54,10 +55,7 @@ pub fn all(content: &Path) -> Properties {
             .get(ARCHIVED)
             .and_then(|archived| archived.as_bool())
             .unwrap_or_default(),
-        full_width: doc
-            .get(FULL_WIDTH)
-            .and_then(|wide| wide.as_bool())
-            .unwrap_or_default(),
+        full_width: doc.get(FULL_WIDTH).and_then(|wide| wide.as_bool()),
     }
 }
 
@@ -83,15 +81,20 @@ pub fn set_archived(content: &Path, archived: bool) {
     set(content, ARCHIVED, archived.then(|| toml_edit::value(true)));
 }
 
-/// Whether the page is set across the pane. A property of the document and not
-/// of this machine: a page of wide tables is wide for whoever opens the
-/// project, and the column is what every other page wants.
-pub fn full_width(content: &Path) -> bool {
+/// Whether the page is set across the pane, and `None` for a page nobody has
+/// decided about.
+///
+/// A property of the document and not of this machine, when it is written at
+/// all: a page of wide tables is wide for whoever opens the project. Unset is
+/// the other half of that — a page with nothing of its own to say is the
+/// reader's own default to answer, and the app is where that default is kept.
+pub fn full_width(content: &Path) -> Option<bool> {
     all(content).full_width
 }
 
-pub fn set_full_width(content: &Path, wide: bool) {
-    set(content, FULL_WIDTH, wide.then(|| toml_edit::value(true)));
+/// `None` takes the key out, handing the page back to the reader's default.
+pub fn set_full_width(content: &Path, wide: Option<bool>) {
+    set(content, FULL_WIDTH, wide.map(toml_edit::value));
 }
 
 /// Put a key in, or take it out when there is nothing to say. A properties file

@@ -132,8 +132,36 @@ impl SettingsWindow {
             .flex_col()
             .gap(px(settings::LABEL_GAP))
             .child(theme.field_label("Editor"))
-            .child(theme.group_box().child(self.cursor_row(cx)))
+            .child(
+                theme
+                    .group_box()
+                    .child(self.cursor_row(cx))
+                    .child(self.pages_row(cx)),
+            )
             .into_any_element()
+    }
+
+    /// How wide a page is set when it has not been told otherwise.
+    ///
+    /// The default alone. A page's own `···` menu writes the measure into its
+    /// `properties.toml`, and one written down there is the document's — it
+    /// stays what its author made it whatever this switch says, which is what
+    /// the menu's Use default width hands back.
+    pub(super) fn pages_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let on = self.workspace.read(cx).wide_pages;
+        self.switch_row(
+            Switch::new(
+                "wide-pages",
+                "Full width pages",
+                "Set articles across the pane rather than in a reading column.",
+                on,
+            ),
+            cx,
+            move |this, cx| {
+                this.workspace
+                    .update(cx, |workspace, cx| workspace.set_wide_pages(!on, cx));
+            },
+        )
     }
 
     /// The app's own reduce-transparency switch, so the vibrancy can go without

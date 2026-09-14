@@ -109,7 +109,7 @@ impl Workspace {
     /// Set the open page across the pane, or back in the column — see
     /// [`Article::set_full_width`]. The open one and not one the sidebar names:
     /// the width is asked for from the page you are looking at.
-    pub fn set_full_width(&mut self, wide: bool, cx: &mut Context<Self>) {
+    pub fn set_full_width(&mut self, wide: Option<bool>, cx: &mut Context<Self>) {
         if let Some(article) = self.article_mut() {
             article.set_full_width(wide);
             cx.notify();

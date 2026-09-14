@@ -1212,18 +1212,30 @@ impl Cydonia {
         // whichever one you stopped on rather than the one you are reading. An
         // article is never `named`, so nothing it could sit above is here.
         if header && matches!(entry, Row::Article { .. }) {
-            let wide = self
-                .workspace
-                .read(cx)
+            let workspace = self.workspace.read(cx);
+            let held = workspace
                 .active_article()
-                .is_some_and(|article| article.full_width);
+                .and_then(|article| article.full_width);
+            let wide = held.unwrap_or(workspace.wide_pages);
+            // Only for a page carrying a measure of its own. On every other
+            // page it is already what is happening, and a row that undoes
+            // nothing is a row nobody can read the point of.
+            if held.is_some() {
+                rows.insert(
+                    0,
+                    menu::row(
+                        Item::action("Use default width").with_icon(icons::layout::Columns2),
+                        move |this, _, cx| this.set_full_width(None, cx),
+                    ),
+                );
+            }
             rows.insert(
                 0,
                 menu::row(
                     Item::action("Full width")
                         .with_icon(icons::layout::UnfoldHorizontal)
                         .checked(wide),
-                    move |this, _, cx| this.set_full_width(!wide, cx),
+                    move |this, _, cx| this.set_full_width(Some(!wide), cx),
                 ),
             );
         }

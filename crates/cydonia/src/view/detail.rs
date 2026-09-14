@@ -288,7 +288,7 @@ impl Cydonia {
             // An entry can be named and not yet loaded — an article holds no
             // editor until it is opened. The front door stands in for the
             // moment in between.
-            Some(Pane::Article) => self.article(cx).unwrap_or_else(|| self.launch(cx)),
+            Some(Pane::Article) => self.article(window, cx).unwrap_or_else(|| self.launch(cx)),
             Some(Pane::Table) => self.table(cx).unwrap_or_else(|| self.launch(cx)),
         };
 

@@ -15,6 +15,7 @@ use crate::{
             composer::{Composer, ComposerEvent},
             menu::Menu,
             meter,
+            ribbon::Ribbon,
         },
         confirm, create, info,
         settings::{self, Section, SettingsWindow},
@@ -303,6 +304,9 @@ pub struct Cydonia {
     /// Whether the press now being handled landed on the open menu's own
     /// trigger — read by [`Cydonia::toggle_menu`] and nothing else.
     pub(crate) menu_pressed: bool,
+    /// The formatting bar over the open document's selection, and the URL
+    /// field it puts up — see [`crate::view::component::ribbon`].
+    pub(crate) ribbon: Ribbon,
     /// Which kinds the sidebar is listing.
     pub(crate) filter: Filter,
     /// What the name field is attached to, and the field itself.
@@ -366,6 +370,7 @@ impl Cydonia {
         // which is a new editor entity.
         cx.subscribe_in(&workspace, window, |this, _, _: &Reloaded, window, cx| {
             this.drop_stale_edit(cx);
+            this.rest_ribbon(cx);
             this.cell = None;
             this.cell_field.update(cx, |field, cx| field.clear(cx));
             this.follow_article(window, cx);
@@ -393,6 +398,7 @@ impl Cydonia {
             menu: None,
             menu_cursor: Cursor::default(),
             menu_pressed: false,
+            ribbon: Ribbon::new(cx),
             filter: Filter::default(),
             renaming: None,
             name_field,
