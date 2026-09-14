@@ -22,6 +22,7 @@ use bezel::{
         loaders,
         menu::Item,
         popover,
+        scroll::{self, Axes},
         widgets::Buttons,
     },
 };
@@ -399,10 +400,8 @@ impl Cydonia {
             .on_action(cx.listener(Self::commit_card))
             .on_action(cx.listener(Self::dismiss_card))
             .child(
-                div()
-                    .id("board")
+                scroll::pane("board", Axes::Horizontal)
                     .size_full()
-                    .overflow_x_scroll()
                     .flex()
                     .flex_row()
                     .gap(px(10.))
@@ -455,11 +454,9 @@ impl Cydonia {
             .gap(px(8.))
             .child(self.column_header(&id, name, cards.len(), cx))
             .child(
-                div()
-                    .id(SharedString::from(format!("column-{id}")))
+                scroll::pane(SharedString::from(format!("column-{id}")), Axes::Vertical)
                     .flex_1()
                     .min_h_0()
-                    .overflow_y_scroll()
                     .flex()
                     .flex_col()
                     .gap(px(8.))
