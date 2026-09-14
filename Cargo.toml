@@ -41,3 +41,15 @@ toml = "0.8"
 toml_edit = "0.22"
 ureq = "3"
 url = { version = "2", features = ["serde"] }
+
+# bezel and cydonia are worked on together, so the sibling checkout stands in
+# for every bezel crate the registry would serve — a change over there is in
+# this window's next build, with no version to bump between them. The facade's
+# own dependencies are path dependencies inside that workspace, so `ui`,
+# `theme`, `motion` and the rest follow without being named here. Drop this
+# block to build against the published crates.
+[patch.crates-io]
+bezel = { path = "../bezel/crates/bezel" }
+bezel-editor = { path = "../bezel/crates/editor" }
+bezel-markdown = { path = "../bezel/crates/markdown" }
+bezel-syntax = { path = "../bezel/crates/syntax" }

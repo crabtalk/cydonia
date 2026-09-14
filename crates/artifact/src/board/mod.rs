@@ -238,7 +238,24 @@ impl Board {
 
     /// Carry a card to the end of another lane, its session with it.
     pub fn move_card(&mut self, id: &str, to: &str) -> bool {
-        if self.column(to).is_none() {
+        self.move_card_before(id, to, None)
+    }
+
+    /// The same move, landing in front of `before` rather than at the end.
+    ///
+    /// An anchor card rather than a position, because a position means
+    /// whatever the lane looked like when it was counted: lifting the card out
+    /// renumbers everything under it, a re-read can renumber the rest, and the
+    /// drop lands beside a different card than the one it was aimed at. The
+    /// card it goes in front of is that card however the lane moved.
+    ///
+    /// An anchor the lane does not hold lands at the end, which is what a drop
+    /// with nothing under it already means. The card itself as the anchor is
+    /// the one refusal: a card asked to go in front of itself is a card
+    /// dropped where it already is, and putting it at the end instead would
+    /// make the shortest drag on the board the furthest move.
+    pub fn move_card_before(&mut self, id: &str, to: &str, before: Option<&str>) -> bool {
+        if before == Some(id) || self.column(to).is_none() {
             return false;
         }
         let Some(card) = self.remove_card(id) else {
@@ -246,7 +263,10 @@ impl Board {
         };
         match self.column_mut(to) {
             Some(column) => {
-                column.cards.push(card);
+                let at = before
+                    .and_then(|before| column.cards.iter().position(|card| card.id == before))
+                    .unwrap_or(column.cards.len());
+                column.cards.insert(at, card);
                 true
             }
             // Unreachable: `to` was here a moment ago and removing a card

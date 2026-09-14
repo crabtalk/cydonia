@@ -106,6 +106,75 @@ fn moving_a_card_takes_its_session_with_it() {
     );
 }
 
+/// Where a dragged card lands is said with the card it lands in front of, so
+/// that lifting it out — which renumbers everything under it — cannot move the
+/// answer.
+#[test]
+fn a_card_lands_in_front_of_the_one_it_was_aimed_at() {
+    let mut board = Board::new("1757000000000".into(), "Roadmap");
+    let todo = board.add_column("Todo").id.clone();
+    let doing = board.add_column("Doing").id.clone();
+    let names = ["First", "Second", "Third"];
+    let cards: Vec<String> = names
+        .iter()
+        .map(|name| board.add_card(&todo, (*name).into()).unwrap().id.clone())
+        .collect();
+
+    // Into another lane, in front of nothing: the end of it.
+    assert!(board.move_card_before(&cards[0], &doing, None));
+    assert_eq!(text_of(&board, &doing), ["First"]);
+
+    // Back, in front of the last one.
+    assert!(board.move_card_before(&cards[0], &todo, Some(&cards[2])));
+    assert_eq!(text_of(&board, &todo), ["Second", "First", "Third"]);
+
+    // Up its own lane, past the card it was already behind. The anchor is
+    // ahead of the hole the move opens, which is the case a position gets
+    // wrong by one.
+    assert!(board.move_card_before(&cards[2], &todo, Some(&cards[1])));
+    assert_eq!(text_of(&board, &todo), ["Third", "Second", "First"]);
+}
+
+/// Dropped on itself, or against a card that is not in the lane being dropped
+/// into: both are aims at nothing in particular, and the end of the lane is
+/// what a drop with no anchor already means.
+#[test]
+fn an_anchor_that_says_nothing_lands_at_the_end() {
+    let mut board = Board::new("1757000000000".into(), "Roadmap");
+    let todo = board.add_column("Todo").id.clone();
+    let doing = board.add_column("Doing").id.clone();
+    let first = board.add_card(&todo, "First".into()).unwrap().id.clone();
+    board.add_card(&todo, "Second".into());
+    let elsewhere = board
+        .add_card(&doing, "Elsewhere".into())
+        .unwrap()
+        .id
+        .clone();
+
+    // Its own anchor: dropped where it already is.
+    assert!(!board.move_card_before(&first, &todo, Some(&first)));
+    assert_eq!(text_of(&board, &todo), ["First", "Second"]);
+
+    // An anchor from another lane: the end of the one being dropped into.
+    assert!(board.move_card_before(&first, &todo, Some(&elsewhere)));
+    assert_eq!(text_of(&board, &todo), ["Second", "First"]);
+
+    // A lane that is not there is not a move at all, and the card stays put.
+    assert!(!board.move_card_before(&first, "nowhere", None));
+    assert_eq!(text_of(&board, &todo), ["Second", "First"]);
+}
+
+/// The cards of a lane, in the order they sit.
+fn text_of(board: &Board, column: &str) -> Vec<String> {
+    board
+        .column(column)
+        .unwrap()
+        .cards
+        .iter()
+        .map(|card| card.text.clone())
+        .collect()
+}
+
 /// A lane holding work cannot be dropped. The cards are the work and the
 /// column is only where they sit, so there is no reading of "delete this
 /// column" that means "and the cards in it".

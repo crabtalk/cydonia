@@ -27,9 +27,9 @@ use anyhow::Result;
 use bezel::{
     gpui::{
         self, AnyElement, App, Axis, Bounds, Context, DragMoveEvent, Empty, Entity, FocusHandle,
-        Hsla, KeyBinding, PathPromptOptions, Render, TitlebarOptions, UniformListScrollHandle,
-        Window, WindowBounds, WindowHandle, WindowOptions, actions, div, point, prelude::*, px,
-        size,
+        Hsla, KeyBinding, PathPromptOptions, Render, ScrollHandle, TitlebarOptions,
+        UniformListScrollHandle, Window, WindowBounds, WindowHandle, WindowOptions, actions, div,
+        point, prelude::*, px, size,
     },
     motion::{Fade, Painter},
     theme::{Material, TextStyle, Theme, Typeset, appearance},
@@ -38,6 +38,7 @@ use bezel::{
         icons,
         input::TextField,
         menu::Cursor,
+        scroll::DriftState,
         stats::Stats,
         widgets::{ButtonStyle, Buttons, Content, Layout, SPLIT_HANDLE_HIT, SplitDrag, SplitStyle},
     },
@@ -89,15 +90,13 @@ pub(crate) fn composer_height() -> f32 {
     composer_disc() + 2. * COMPOSER_INSET
 }
 
-/// The room the pill keeps around its content — the same 6 the height counts
-/// above and below the line box.
-pub(crate) const COMPOSER_INSET: f32 = 6.;
+/// The room the pill keeps above and below its content.
+pub(crate) const COMPOSER_INSET: f32 = 8.;
 
-/// The send disc, filling the pill inside that inset, which lands it on the
-/// line box it sits beside — the field's own box, so the two stay one height
-/// wherever the text-size setting puts it.
+/// Keep the send target comfortable at small text sizes, and grow with the
+/// line box when the text-size setting needs more room.
 pub(crate) fn composer_disc() -> f32 {
-    TextStyle::Body.painted_line_height()
+    TextStyle::Body.painted_line_height().max(32.)
 }
 
 /// How far the floating composer stands off the column's bottom edge.
@@ -272,6 +271,17 @@ pub struct Cydonia {
     pub(crate) asked_session: bool,
     pub(crate) editing: Option<Editing>,
     pub(crate) card_field: Entity<TextField>,
+    /// The board's own scroll, and the drift that carries a held card past the
+    /// edge of the window — a lane out of sight is one a drag cannot reach,
+    /// because reaching for it means letting go.
+    pub(crate) board_scroll: ScrollHandle,
+    pub(crate) board_drift: DriftState,
+    /// The same, per lane — see [`board::Lanes`].
+    pub(crate) lanes: board::Lanes,
+    /// Where the card now in the air would land. Written by the lanes and
+    /// cards the pointer crosses and read by the one that draws the mark —
+    /// see [`board::Landing`].
+    pub(crate) landing: Option<board::Landing>,
     /// What the table pane's field is attached to, and the field itself.
     pub(crate) cell: Option<table::Cell>,
     pub(crate) cell_field: Entity<TextField>,
@@ -382,6 +392,10 @@ impl Cydonia {
             asked_session: false,
             editing: None,
             card_field,
+            board_scroll: ScrollHandle::new(),
+            board_drift: DriftState::new(),
+            lanes: board::Lanes::default(),
+            landing: None,
             cell: None,
             cell_field,
             confirming: None,
