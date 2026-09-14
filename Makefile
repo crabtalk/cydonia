@@ -13,10 +13,11 @@
 VERSION  := $(shell sed -n '/^\[workspace.package\]/,/^\[/ s/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
 ARCH     := $(shell uname -m)
 # Which cargo profile the app is built with, and the directory that names.
-# `release` by default, so a local `make bundle` or `make open` carries the
-# Developer section and the switches in it. `make release` overrides it with
-# `prod`, which is the size-wound profile and the only one those are compiled
-# out of — see crates/cydonia/build.rs.
+# `release` everywhere, including `make release`: it is the size-wound profile
+# and the one `cargo install` lands on too, so what ships is what a bundle is.
+# `make bundle PROFILE=debug` is the way to a bundle that still lists the
+# Developer section, which is compiled out of a release build — see
+# crates/cydonia/src/view/settings/mod.rs.
 PROFILE  ?= release
 ICON     := assets/icon.png
 ICON_URL := https://cdn.crabtalk.ai/logos/cydonia.png
@@ -105,7 +106,7 @@ release:
 	  : $${APPLE_SIGNING_IDENTITY:?missing in .env.release}; \
 	  : $${APPLE_KEYCHAIN_PROFILE:?missing in .env.release}; \
 	  set -e; \
-	  $(MAKE) --no-print-directory dmg SIGN="$$APPLE_SIGNING_IDENTITY" PROFILE=prod; \
+	  $(MAKE) --no-print-directory dmg SIGN="$$APPLE_SIGNING_IDENTITY"; \
 	  xcrun notarytool submit $(DMG) --keychain-profile "$$APPLE_KEYCHAIN_PROFILE" --wait; \
 	  xcrun stapler staple $(DMG); \
 	  xcrun stapler validate $(DMG); \

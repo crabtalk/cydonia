@@ -49,12 +49,6 @@ pub(super) const LABEL_GAP: f32 = 8.;
 /// whatever the window gives it, up to this.
 const CONTENT_MAX_WIDTH: f32 = 860.;
 
-/// Whether this is the build that ships. The `prod` profile is the only thing
-/// that sets it — see `build.rs` — so `--release` is still a build with the
-/// Developer section in it, which is what makes `make bundle` worth opening:
-/// the updater runs in a bundle and nowhere else.
-pub(crate) const PROD: bool = cfg!(prod);
-
 /// Which section the sidebar has selected.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Section {
@@ -68,7 +62,7 @@ pub enum Section {
     // same reading that puts Features before it.
     Mcp,
     Performance,
-    // Last, and not in the build that ships — see [`Section::listed`].
+    // Last, and in a debug build alone — see [`Section::listed`].
     Developer,
 }
 
@@ -85,10 +79,13 @@ impl Section {
 
     /// Whether this build lists it in the sidebar. Developer holds switches for
     /// looking at what has not happened yet, which is not something to hand
-    /// somebody who installed the app — so it is absent from a `prod` build
-    /// rather than empty in one.
+    /// somebody who installed the app — so it is absent from a release build
+    /// rather than empty in one, and every build anyone installs is a release
+    /// one. `make bundle PROFILE=debug` is the bundle that still has it, which
+    /// is what the updater switches want: the updater runs in a bundle and
+    /// nowhere else.
     fn listed(self) -> bool {
-        !matches!(self, Self::Developer) || !PROD
+        !matches!(self, Self::Developer) || cfg!(debug_assertions)
     }
 
     fn title(self) -> &'static str {

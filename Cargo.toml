@@ -10,12 +10,10 @@ license = "MIT"
 repository = "https://github.com/crabtalk/cydonia"
 homepage = "https://cydonia.sh"
 
-# What ships: the release profile, wound down to size rather than speed, and the
-# only profile that compiles out the Developer section — see
-# `crates/cydonia/build.rs`. `make release` builds it; `make bundle` stays on
-# `release`, so a local bundle still carries the switches worth looking at.
-[profile.prod]
-inherits = "release"
+# What ships, and the only release profile there is: wound down to size rather
+# than speed. The same table is written again in crates/cydonia/Cargo.toml,
+# which is the one a `cargo install` builds with — see the note there.
+[profile.release]
 # `z` over `s`: no loop vectorisation either, which is the rest of what a binary
 # this size spends its pages on. A desktop app is waiting on the person using it
 # far more than on itself, and nothing in the frame path here is a hot numeric

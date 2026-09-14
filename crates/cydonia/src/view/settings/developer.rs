@@ -4,8 +4,8 @@
 //! Nothing here changes what the app does with a project, and nothing here is
 //! written to `settings.toml` — a switch for looking at something is not a
 //! preference, and a relaunch is the right way to put every one of them down.
-//! The section is absent from a `prod` build altogether; see
-//! [`super::PROD`].
+//! The section is absent from a release build altogether; see
+//! [`super::Section::listed`].
 
 use crate::{model::update, view::settings::SettingsWindow};
 use bezel::{
