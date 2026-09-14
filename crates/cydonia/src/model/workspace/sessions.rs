@@ -177,7 +177,9 @@ impl Workspace {
         }
         project.sessions.retain(|chat| chat.id != id);
         if project.active == Some(id) {
-            project.active = project.sessions.first().map(|chat| chat.id);
+            // The view chooses the next entry in sidebar order, across all
+            // kinds. Storage order can put an archived session first.
+            project.active = None;
         }
         cx.notify();
     }

@@ -1319,10 +1319,19 @@ impl Cydonia {
         ))
     }
 
-    /// Drop the entry the header is showing, file and all. The pane it was
-    /// filling falls back to the front door, which is what every one of these
-    /// leaves behind when it clears the index it was open at.
-    pub(crate) fn delete_entry(&mut self, entry: Row, cx: &mut Context<Self>) {
+    /// Drop an entry, file and all. Deleting the session on screen lands on
+    /// the first remaining entry in the sidebar's displayed order.
+    pub(crate) fn delete_entry(&mut self, entry: Row, window: &mut Window, cx: &mut Context<Self>) {
+        let landing_project = match entry {
+            Row::Session { project, id }
+                if self.showing(cx) == Some(Pane::Chat)
+                    && self.workspace.read(cx).active == Some(project)
+                    && self.workspace.read(cx).active_id() == Some(id) =>
+            {
+                Some(project)
+            }
+            _ => None,
+        };
         self.commit(cx);
         self.workspace.update(cx, |workspace, cx| match entry {
             Row::Session { id, .. } => workspace.close_session(id, cx),
@@ -1331,6 +1340,16 @@ impl Cydonia {
             Row::Table { project, ix } => workspace.delete_table(project, ix, cx),
             Row::Project(_) | Row::Archive(_) => {}
         });
+        if let Some(project) = landing_project {
+            if let Some(landing) = self
+                .entries(project, cx)
+                .into_iter()
+                .find(|row| !matches!(row, Row::Archive(_)))
+            {
+                self.open_row(landing, window, cx);
+                self.reveal(landing, cx);
+            }
+        }
         cx.notify();
     }
 

@@ -150,6 +150,17 @@ impl Session {
     pub async fn spawn(entry: &settings::Agent, launch: Launch, tx: Sender) -> Result<Self> {
         let mut command = Command::new(&entry.command);
         command.args(&entry.args).envs(&entry.env);
+        // HTTP clients can inherit a system proxy that does not exempt IP
+        // loopback addresses. Our MCP server must be reached directly. Merge
+        // both spellings because agents differ in which one they honor.
+        let bypass = loopback_bypass(["NO_PROXY", "no_proxy"].map(|key| {
+            entry
+                .env
+                .get(key)
+                .cloned()
+                .or_else(|| std::env::var(key).ok())
+        }));
+        command.env("NO_PROXY", &bypass).env("no_proxy", &bypass);
         // An agent's diagnostics are not this app's to print. cacp leaves the
         // choice to the caller — "a TUI usually wants it captured and a CLI
         // usually does not" — and a desktop app that inherits them sprays a
@@ -408,6 +419,52 @@ const _: () = {
     assert_send::<Session>();
     assert_send::<Event>();
 };
+
+fn loopback_bypass(existing: [Option<String>; 2]) -> String {
+    let mut entries = Vec::new();
+    for value in existing
+        .iter()
+        .flatten()
+        .map(String::as_str)
+        .chain(["localhost,127.0.0.1,::1"])
+    {
+        for entry in value
+            .split(',')
+            .map(str::trim)
+            .filter(|entry| !entry.is_empty())
+        {
+            if !entries.contains(&entry) {
+                entries.push(entry);
+            }
+        }
+    }
+    entries.join(",")
+}
+
+#[cfg(test)]
+mod proxy_tests {
+    use super::loopback_bypass;
+
+    #[test]
+    fn loopback_is_exempt_without_existing_bypasses() {
+        assert_eq!(loopback_bypass([None, None]), "localhost,127.0.0.1,::1");
+    }
+
+    #[test]
+    fn both_proxy_bypass_lists_are_preserved() {
+        assert_eq!(
+            loopback_bypass([
+                Some(" .example.com, localhost, ".into()),
+                Some("10.0.0.0/8,localhost".into()),
+            ]),
+            ".example.com,localhost,10.0.0.0/8,127.0.0.1,::1"
+        );
+        assert_eq!(
+            loopback_bypass([Some("*".into()), None]),
+            "*,localhost,127.0.0.1,::1"
+        );
+    }
+}
 
 /// The enabled servers an agent can actually reach, in ACP's shape.
 /// Remote servers are dropped for agents that don't advertise HTTP MCP
