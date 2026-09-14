@@ -19,9 +19,21 @@ pub struct Record {
     /// before ids existed — see [`crate::id`].
     #[serde(default)]
     pub id: String,
-    /// The agent it runs on, by the name `settings.toml` gives it. Resolving
-    /// that name against the settings is what lets the session reconnect.
+    /// The agent it runs on, by the name `settings.toml` gives it.
+    ///
+    /// Kept for a reader, and as the fallback for a record written before
+    /// [`Record::agent_id`] — a name is registry metadata and moves under the
+    /// session holding it, which is what the id is for.
     pub agent: String,
+    /// The agent's registry id — `claude-acp` — which is what actually names
+    /// it. Absent on a record written before this was stored; resolving falls
+    /// back to [`Record::agent`] there.
+    ///
+    /// A display name is the publisher's to change, and one that changed used
+    /// to strand every session opened under the old one: the agent was right
+    /// there in `settings.toml` under its new name and nothing matched it.
+    #[serde(default)]
+    pub agent_id: Option<String>,
     /// The agent's own id for the session, which is what `session/load`
     /// resumes. Absent when the session never reached an agent.
     #[serde(default)]

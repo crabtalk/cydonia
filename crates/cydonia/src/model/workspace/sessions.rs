@@ -91,19 +91,23 @@ impl Workspace {
         for stored in self.projects[ix].store().sessions() {
             let id = self.next_id;
             self.next_id += 1;
-            let entry = self
-                .settings
-                .agents
-                .iter()
-                .find(|agent| agent.name == stored.agent)
-                .cloned()
-                .unwrap_or_else(|| settings::Agent {
-                    name: stored.agent.clone(),
-                    id: None,
-                    command: String::new(),
-                    args: Vec::new(),
-                    env: Default::default(),
-                });
+            let entry = super::named(
+                &self.settings.agents,
+                stored.agent_id.as_deref(),
+                &stored.agent,
+            )
+            .cloned()
+            // Nothing on this machine answers to it. The placeholder is a
+            // name to show and no command to start, which is what
+            // `Workspace::reachable` reads as stranded — and it keeps the
+            // id, so the record is written back as findable as it arrived.
+            .unwrap_or_else(|| settings::Agent {
+                name: stored.agent.clone(),
+                id: stored.agent_id.clone(),
+                command: String::new(),
+                args: Vec::new(),
+                env: Default::default(),
+            });
             let chat = ChatSession::restore(id, path.clone(), entry, stored);
             self.projects[ix].sessions.push(chat);
         }
@@ -300,6 +304,6 @@ impl Workspace {
         let Some(chat) = self.active_session() else {
             return false;
         };
-        chat.live() || (chat.resumable() && self.agent_named(&chat.entry.name).is_some())
+        chat.live() || (chat.resumable() && self.agent_for(&chat.entry).is_some())
     }
 }

@@ -188,14 +188,35 @@ pub fn prefetch_icons() {
     }
 }
 
+/// How many of an installer's lines are kept. Enough that a failure's last
+/// words are all there, and not so many that a chatty `npm` is held in full.
+pub const OUTPUT_KEEP: usize = 40;
+
+/// Add one line to what an installer has printed, keeping the tail.
+///
+/// The end is what anybody wants: the step it has reached while it runs, and
+/// the words it failed with when it did. So a long install loses its opening
+/// rather than its last say — see [`install`], which prints these.
+pub fn record(held: &mut Vec<String>, line: String) {
+    held.push(line);
+    if held.len() > OUTPUT_KEEP {
+        held.remove(0);
+    }
+}
+
 /// Put the agent on disk and name it in `settings.toml`. Blocking: this runs
 /// `npm`, or unpacks a release archive.
 ///
 /// Both halves live here because only this function holds the registry entry,
 /// and the package inside it is what tells `settings` which hand-written
 /// `@latest` line this install supersedes.
-pub fn install(agent: &registry::Agent) -> anyhow::Result<()> {
-    let installed = agent.install(&settings::data_dir()?, |_| {})?;
+///
+/// `on_line` is handed each line the installer prints — `npm install <pkg>`,
+/// `downloaded 24 MB`, `unpacking` — which is the only account of a step that
+/// can run for a minute. It is called on whichever thread this is, so a caller
+/// on the background executor sends rather than paints.
+pub fn install(agent: &registry::Agent, on_line: impl FnMut(&str)) -> anyhow::Result<()> {
+    let installed = agent.install(&settings::data_dir()?, on_line)?;
     let entry = Agent {
         name: agent.name.clone(),
         id: Some(agent.id.clone()),

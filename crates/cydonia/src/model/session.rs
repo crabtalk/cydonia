@@ -246,6 +246,7 @@ impl ChatSession {
             // is a record to name there is a name for it.
             id: self.record.clone().unwrap_or_default(),
             agent: self.entry.name.clone(),
+            agent_id: self.entry.id.clone(),
             session: self.agent_session.clone(),
             title: self.title.clone(),
             name: self.name.clone(),
@@ -272,10 +273,16 @@ impl ChatSession {
         self.record.as_deref()
     }
 
+    /// Whether nothing has been said in it yet — see [`nothing_said`].
+    pub fn unsaid(&self) -> bool {
+        nothing_said(&self.items)
+    }
+
     /// Write the session out. The file is minted on the first write and not
-    /// before — opening a project must not put a `.cydonia/` in it.
+    /// before — opening a project must not put a `.cydonia/` in it, and an
+    /// agent that merely cleared its throat has not started one.
     pub fn flush(&mut self) {
-        if self.items.is_empty() {
+        if self.unsaid() {
             return;
         }
         let store = fs::Project::new(&self.cwd);
@@ -709,6 +716,23 @@ impl ChatSession {
             }
         }
     }
+}
+
+/// Whether nothing has been said in a transcript yet.
+///
+/// Not the same as holding no items. An agent writes to stderr as it starts —
+/// a deprecation warning, a runtime's banner — and every line of that is an
+/// item before anybody has typed a word. It is the process talking about
+/// itself rather than a conversation, so a session carrying only that is still
+/// one nothing has been said in: it keeps its empty state, and it mints no
+/// file.
+///
+/// A [`ChatItem::Notice`] does count. A connection that failed is the app
+/// saying so, and that is worth the transcript and the file both.
+pub fn nothing_said(items: &[ChatItem]) -> bool {
+    items
+        .iter()
+        .all(|item| matches!(item, ChatItem::Process { .. }))
 }
 
 /// What was run, as a command line — the head of the block its output fills.

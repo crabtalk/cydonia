@@ -24,7 +24,7 @@ use bezel::{
         widgets::{Content, Controls, Layout, Scaffolding},
     },
 };
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 mod agents;
 mod developer;
@@ -146,6 +146,10 @@ pub struct SettingsWindow {
     listings: Option<Vec<Listing>>,
     /// Agents with an install or a removal running.
     busy: HashSet<String>,
+    /// What the installer has printed for each of them, newest last: the tail
+    /// is the row's status while it runs, and the whole of it is all a failure
+    /// has to explain itself with — see [`crate::agent::record`].
+    output: HashMap<String, Vec<String>>,
     /// What the agents section is being searched for. Held by the window
     /// rather than made where it is drawn: what has been typed has to outlive
     /// the frame, and a section is drawn afresh on every one.
@@ -223,6 +227,7 @@ pub fn open(
                     section,
                     listings: None,
                     busy: HashSet::new(),
+                    output: HashMap::new(),
                     search,
                     editing: None,
                     recording: None,

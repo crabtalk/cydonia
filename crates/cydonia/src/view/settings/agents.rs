@@ -10,12 +10,13 @@ use bezel::{
     motion::{Fade, Painter},
     theme::{TextStyle, Theme, Typeset},
     ui::{
-        icons, popover,
+        icons, loaders, popover,
         tooltip::Tooltip,
         widgets::{ButtonStyle, Buttons, Content, Scaffolding, Status},
     },
 };
 use cacp_agents::{Distribution, registry};
+use tokio::sync::mpsc;
 
 /// An address that opens in the browser, shown as its own text.
 fn link(
@@ -147,16 +148,36 @@ impl SettingsWindow {
         };
         let id = agent.id.clone();
         self.busy.insert(id.clone());
+        self.output.remove(&id);
         self.error = None;
         cx.notify();
+        // The installer prints from the background executor, where there is no
+        // `cx` to notify with. The lines come back over a channel and are
+        // drained here instead — the same shape the agent's own stderr takes,
+        // see [`crate::model::session::pump`].
+        let (tx, mut lines) = mpsc::unbounded_channel();
+        let reading = id.clone();
         cx.spawn(async move |this, cx| {
-            let done = cx
-                .background_executor()
-                .spawn(async move { agent::install(&agent) })
-                .await;
+            let installing = cx.background_executor().spawn(async move {
+                agent::install(&agent, |line| {
+                    let _ = tx.send(line.to_owned());
+                })
+            });
+            // Ends when the install drops the sender, which is the install
+            // being over — so the result is waited for after, not raced with.
+            while let Some(line) = lines.recv().await {
+                let _ = this.update(cx, |this, cx| this.printed(&reading, line, cx));
+            }
+            let done = installing.await;
             let _ = this.update(cx, |this, cx| this.settled(id, done, cx));
         })
         .detach();
+    }
+
+    /// One line of the installer's account of itself.
+    fn printed(&mut self, id: &str, line: String, cx: &mut Context<Self>) {
+        agent::record(self.output.entry(id.to_owned()).or_default(), line);
+        cx.notify();
     }
 
     fn remove(&mut self, ix: usize, cx: &mut Context<Self>) {
@@ -188,10 +209,15 @@ impl SettingsWindow {
         self.busy.remove(&id);
         match done {
             Ok(()) => {
+                // Nothing left to explain, so the account of it goes with the
+                // spinner rather than sitting under a row that is now fine.
+                self.output.remove(&id);
                 self.workspace
                     .update(cx, |workspace, cx| workspace.reload_settings(cx));
                 self.load(cx);
             }
+            // The output stays: the message names what failed and the lines
+            // under it are the only place that says why.
             Err(err) => self.error = Some(format!("{err:#}").into()),
         }
         cx.notify();
@@ -204,11 +230,19 @@ impl SettingsWindow {
         ix: usize,
         listing: &Listing,
         first: bool,
-        cx: &Context<Self>,
+        cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let painter = Painter::of(cx);
         let busy = self.busy.contains(&listing.agent.id);
+        let status = busy
+            .then(|| {
+                self.output
+                    .get(&listing.agent.id)
+                    .and_then(|held| held.last())
+            })
+            .flatten()
+            .map(|line| SharedString::from(line.clone()));
         let installed = listing.installed.clone();
         // The version this row is about: what is on disk while there is
         // something on disk, and what the registry pins otherwise. The tag and
@@ -252,12 +286,24 @@ impl SettingsWindow {
                             .flex()
                             .gap(px(8.))
                             .overflow_hidden()
+                            .whitespace_nowrap()
                             .text_style(TextStyle::Caption)
                             .text_color(theme.text_faint)
-                            .children(
-                                source.map(|(label, url)| link(("source", ix), label, url, &theme)),
-                            )
-                            .children(repository.map(|url| repo_link(("repo", ix), url, &theme))),
+                            // While it runs, this line is the installer's. It
+                            // is the widest slot on the row and the links under
+                            // a name are not what is wanted mid-install — the
+                            // step it has reached is.
+                            .when_some(status, |el, status| el.child(status))
+                            .when(!busy, |el| {
+                                el.children(
+                                    source.map(|(label, url)| {
+                                        link(("source", ix), label, url, &theme)
+                                    }),
+                                )
+                                .children(
+                                    repository.map(|url| repo_link(("repo", ix), url, &theme)),
+                                )
+                            }),
                     ),
             )
             // Two columns rather than two trailing children: widths off the
@@ -272,13 +318,30 @@ impl SettingsWindow {
                     .child(theme.badge(format!("v{version}"))),
             )
             .child(
-                div().flex_none().w_20().flex().justify_end().child(
-                    match (busy, installed, listing.agent.installable()) {
+                div()
+                    .flex_none()
+                    .w_20()
+                    .flex()
+                    // A button fills the slot and ends where the card does, so
+                    // it hangs off the right. The spinner is a few pixels wide
+                    // and takes the middle instead — pushed to that same edge
+                    // it reads as having fallen off the row.
+                    .when(busy, |el| el.justify_center())
+                    .when(!busy, |el| el.justify_end())
+                    .child(match (busy, installed, listing.agent.installable()) {
+                        // A spinner, not a label: an install runs for as long
+                        // as `npm` does, and a word that never moves reads as a
+                        // row that has hung.
                         (true, _, _) => div()
                             .flex_none()
-                            .text_style(TextStyle::Callout)
-                            .text_color(theme.text_faint)
-                            .child("working…")
+                            .flex()
+                            .items_center()
+                            .child(loaders::mini_gradient_spinner(
+                                SharedString::from(format!("installing-{ix}")),
+                                2.5,
+                                painter,
+                                cx,
+                            ))
                             .into_any_element(),
                         (false, Some(_), _) => theme
                             .button(
@@ -307,8 +370,7 @@ impl SettingsWindow {
                             .text_color(theme.text_faint)
                             .child("unavailable")
                             .into_any_element(),
-                    },
-                ),
+                    }),
             )
             .into_any_element()
     }
@@ -319,15 +381,46 @@ impl SettingsWindow {
     /// The gate is not here. It is the `sessions` switch, which lives with the
     /// other surfaces: what may run is a question about the app, and this is
     /// the room where clients are put on and taken off.
-    pub(super) fn agents_body(&self, cx: &Context<Self>) -> AnyElement {
+    pub(super) fn agents_body(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         div()
             .flex()
             .flex_col()
             .gap(px(super::GROUP_GAP))
             .children(self.error.clone().map(|err| theme.error_strip(err)))
+            .children(self.failed_output(cx))
             .child(self.catalogue(cx))
             .into_any_element()
+    }
+
+    /// What the installer said on the way down, under the message naming what
+    /// failed.
+    ///
+    /// Only after a failure — [`Self::settled`] drops the lines of an install
+    /// that worked. The row's own status carries the last of them while it
+    /// runs, which is as much as anyone wants of a working install; this is the
+    /// one case where the rest of it is the answer.
+    fn failed_output(&self, cx: &Context<Self>) -> Option<AnyElement> {
+        let theme = Theme::of(cx).clone();
+        self.error.as_ref()?;
+        let held: Vec<String> = self.output.values().flatten().cloned().collect();
+        if held.is_empty() {
+            return None;
+        }
+        Some(
+            div()
+                .flex()
+                .flex_col()
+                .p(px(10.))
+                .rounded(px(Theme::surface_radius()))
+                .bg(theme.surface)
+                .border_1()
+                .border_color(theme.border)
+                .text_style(TextStyle::Caption)
+                .text_color(theme.text_muted)
+                .children(held.into_iter().map(|line| div().child(line)))
+                .into_any_element(),
+        )
     }
 
     /// What is on this machine, and what could be — once the registry has
@@ -337,7 +430,7 @@ impl SettingsWindow {
     /// title and it holds the clients this app has: a heading over it would
     /// name what is already plain, and with nothing installed there is no box
     /// at all rather than a labelled empty one.
-    fn catalogue(&self, cx: &Context<Self>) -> AnyElement {
+    fn catalogue(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let Some(listings) = self.listings.as_ref() else {
             return theme
@@ -385,7 +478,7 @@ impl SettingsWindow {
     /// What can still be put on this machine, headed by the query that narrows
     /// it: what is searched and what the search leaves are one box, because
     /// the second is the answer to the first.
-    fn supported(&self, rows: Vec<usize>, cx: &Context<Self>) -> AnyElement {
+    fn supported(&self, rows: Vec<usize>, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let empty = rows.is_empty();
         div()
@@ -452,7 +545,7 @@ impl SettingsWindow {
 
     /// The rows of one box. `heads` is whether the first of them opens the box
     /// — under the search line it does not, and the hairline stays.
-    fn agent_rows(&self, rows: Vec<usize>, heads: bool, cx: &Context<Self>) -> Vec<AnyElement> {
+    fn agent_rows(&self, rows: Vec<usize>, heads: bool, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let listings = self.listings.as_deref().unwrap_or_default();
         rows.into_iter()
             .enumerate()
@@ -463,7 +556,7 @@ impl SettingsWindow {
     }
 
     /// A quiet line where a row would be: still reading, or nothing to read.
-    fn note(&self, copy: &'static str, first: bool, cx: &Context<Self>) -> AnyElement {
+    fn note(&self, copy: &'static str, first: bool, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         theme
             .card_row(first)

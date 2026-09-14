@@ -535,7 +535,7 @@ impl Cydonia {
         };
         // Nothing has been said yet, so what the session has to show for
         // itself is the directory the agent was started in.
-        if chat.items.is_empty() {
+        if chat.unsaid() {
             let agent = chat.entry.name.clone();
             let cwd = workspace
                 .active_project()
@@ -604,9 +604,7 @@ impl Cydonia {
     fn adrift_strip(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let theme = Theme::of(cx).clone();
         let workspace = self.workspace.read(cx);
-        let chat = workspace
-            .active_session()
-            .filter(|chat| !chat.items.is_empty())?;
+        let chat = workspace.active_session().filter(|chat| !chat.unsaid())?;
         let message = adrift_line(&chat.entry.name, !workspace.settings.agents.is_empty());
         Some(
             theme

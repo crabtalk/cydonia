@@ -1,9 +1,18 @@
 //! The agent's own output, on its way into the block that carries it: what
 //! the block is headed with, and what is dropped when it will not all fit.
 
-use cydonia::model::session::{command_line, trim_front};
+use artifact::session::chat::ChatItem;
+use cydonia::model::session::{command_line, nothing_said, trim_front};
 use cydonia::model::settings::Agent;
 use std::collections::BTreeMap;
+
+/// A block of whatever the agent process wrote to its stderr.
+fn process(output: &str) -> ChatItem {
+    ChatItem::Process {
+        command: "claude-agent-acp".into(),
+        output: output.into(),
+    }
+}
 
 fn agent(command: &str, args: &[&str]) -> Agent {
     Agent {
@@ -133,4 +142,42 @@ fn a_launch_that_dies_still_hands_back_what_it_printed() {
         printed.expect("timed out waiting for the line"),
         Some("env: node: No such file or directory".to_owned())
     );
+}
+
+/// A session an agent has only cleared its throat in is a session nothing has
+/// been said in.
+///
+/// The agent is spawned when the session opens, not when the first message is
+/// sent, so anything it writes to stderr on the way up — a deprecation
+/// warning, a runtime's banner — was landing in the transcript before anybody
+/// had typed a word. That took the empty state away from a new session and
+/// minted a `.cydonia/` file for a conversation nobody had.
+#[test]
+fn an_agents_startup_noise_is_not_somebody_talking() {
+    assert!(nothing_said(&[]));
+    assert!(nothing_said(&[process("(node:1) DeprecationWarning: ...")]));
+    assert!(nothing_said(&[
+        process("first line"),
+        process("second line"),
+    ]));
+}
+
+/// What the app says for itself does count: a failed connection has to show,
+/// and the stderr above it is the reason.
+#[test]
+fn a_notice_is_worth_the_transcript_and_the_file() {
+    assert!(!nothing_said(&[
+        process("npm warn exec ..."),
+        ChatItem::Notice {
+            text: "connection failed".into(),
+            failed: true,
+        },
+    ]));
+}
+
+/// And so, obviously, does anything anybody typed.
+#[test]
+fn a_message_is_the_session_beginning() {
+    assert!(!nothing_said(&[ChatItem::User("what's up".into())]));
+    assert!(!nothing_said(&[ChatItem::Agent("not much".into())]));
 }

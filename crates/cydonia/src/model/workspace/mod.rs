@@ -220,15 +220,16 @@ impl Workspace {
     /// that cannot start either.
     pub fn preferred_agent(&self) -> Option<settings::Agent> {
         self.active_session()
-            .and_then(|chat| self.agent_named(&chat.entry.name))
+            .and_then(|chat| self.agent_for(&chat.entry))
             .or_else(|| self.settings.agents.first())
             .cloned()
     }
 
-    /// The entry `settings.toml` files under this name, which is how a session
-    /// names the agent it runs on — see [`Self::restore_sessions`].
-    fn agent_named(&self, name: &str) -> Option<&settings::Agent> {
-        self.settings.agents.iter().find(|entry| entry.name == name)
+    /// The entry `settings.toml` files for the agent this one is a copy of —
+    /// see [`named`], and [`Self::restore_sessions`] for where the copy comes
+    /// from.
+    pub(super) fn agent_for(&self, held: &settings::Agent) -> Option<&settings::Agent> {
+        named(&self.settings.agents, held.id.as_deref(), &held.name)
     }
 
     /// Re-read `settings.toml`. Installing an agent writes that file, and
@@ -237,8 +238,20 @@ impl Workspace {
     pub fn reload_settings(&mut self, cx: &mut Context<Self>) {
         if let Ok(settings) = settings::load() {
             self.settings = settings;
+            self.readopt_agents();
         }
         cx.notify();
+    }
+
+    /// Hand every session the file's copy of the agent it names — see
+    /// [`readopt`], which is the rule for one of them.
+    fn readopt_agents(&mut self) {
+        let agents = &self.settings.agents;
+        for project in &mut self.projects {
+            for chat in &mut project.sessions {
+                readopt(agents, &mut chat.entry);
+            }
+        }
     }
 
     /// The settings window's choice. bezel repaints on `set_mode`;
@@ -435,6 +448,41 @@ impl Workspace {
 }
 
 impl EventEmitter<Reloaded> for Workspace {}
+
+/// Point one session's entry at the file's copy of the agent it names.
+///
+/// A session carries its own copy, taken when it was opened, and one restored
+/// while its agent was not on the machine carries the placeholder
+/// [`Workspace::restore_sessions`] leaves in its place — a name and no command,
+/// which is not [`ChatSession::resumable`]. Installing that agent writes the
+/// entry the placeholder stood in for, so re-reading the file without this
+/// leaves the session reading as stranded with the agent sitting right there
+/// in Settings › Agents.
+///
+/// A session whose agent the file still does not name keeps what it has. That
+/// is the one nothing here can help, and it is what the notice is for.
+pub fn readopt(agents: &[settings::Agent], entry: &mut settings::Agent) {
+    if let Some(found) = named(agents, entry.id.as_deref(), &entry.name) {
+        *entry = found.clone();
+    }
+}
+
+/// Find the agent `id` names, falling back to `name`.
+///
+/// The id is the registry's — `claude-acp` — and is the only stable half: a
+/// display name is the publisher's to change, and one that changed used to
+/// strand every session opened under the old one, with the agent sitting in
+/// `settings.toml` under its new name and nothing matching it. The name is
+/// still tried, for a session written before the id was stored and for an
+/// entry somebody hand-wrote into the file, which carries no id at all.
+pub fn named<'a>(
+    agents: &'a [settings::Agent],
+    id: Option<&str>,
+    name: &str,
+) -> Option<&'a settings::Agent> {
+    id.and_then(|id| agents.iter().find(|agent| agent.id.as_deref() == Some(id)))
+        .or_else(|| agents.iter().find(|agent| agent.name == name))
+}
 
 /// Point bezel's tint at the preference. Free rather than a method
 /// because the window reads its background appearance while it is being opened,
