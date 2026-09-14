@@ -234,6 +234,43 @@ pub fn adrift_line(agent: &str, others: bool) -> String {
 }
 
 impl Cydonia {
+    pub(crate) fn show_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.showing(cx) != Some(Pane::Chat) {
+            return;
+        }
+        let Some(chat) = self.workspace.read(cx).active_session() else {
+            return;
+        };
+        let (id, cwd) = (chat.id, chat.cwd.clone());
+        let (_, terminal) = self.terminals.entry(id).or_insert_with(|| {
+            (
+                false,
+                cx.new(|cx| super::component::terminal::Terminal::new(&cwd, cx)),
+            )
+        });
+        window.focus(&terminal.focus_handle(cx), cx);
+        self.terminals.get_mut(&id).unwrap().0 = true;
+        cx.notify();
+    }
+
+    pub(crate) fn toggle_terminal(
+        &mut self,
+        _: &root::ToggleTerminal,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let id = self.workspace.read(cx).active_id();
+        if let Some((visible, _)) = id.and_then(|id| self.terminals.get_mut(&id))
+            && *visible
+        {
+            *visible = false;
+            window.focus(&self.composer_focus_handle(cx), cx);
+            cx.notify();
+        } else {
+            self.show_terminal(window, cx);
+        }
+    }
+
     pub fn composer_focus_handle(&self, cx: &App) -> FocusHandle {
         self.composer.focus_handle(cx)
     }
@@ -277,6 +314,8 @@ impl Cydonia {
     /// be swapped for.
     pub(crate) fn sync_composer(&mut self, cx: &mut Context<Self>) {
         let workspace = self.workspace.read(cx);
+        self.terminals
+            .retain(|id, _| workspace.session(*id).is_some());
         let agents: Vec<composer::Agent> = workspace
             .settings
             .agents
@@ -346,8 +385,9 @@ impl Cydonia {
             .pt(px(root::HEADER_HEIGHT))
             .child(body);
 
-        div()
+        let main = div()
             .flex_1()
+            .min_h_0()
             .min_w_0()
             .relative()
             .bg(root::content_bg(&theme))
@@ -374,7 +414,29 @@ impl Cydonia {
                         .child(self.composer.clone()),
                 )),
                 false => column.children(self.adrift_strip(cx).map(footer)),
-            })
+            });
+        let terminal = (showing == Some(Pane::Chat))
+            .then(|| self.workspace.read(cx).active_id())
+            .flatten()
+            .and_then(|id| self.terminals.get(&id))
+            .filter(|(visible, _)| *visible)
+            .map(|(_, terminal)| terminal.clone());
+        div()
+            .flex_1()
+            .min_w_0()
+            .min_h_0()
+            .flex()
+            .flex_col()
+            .child(main)
+            .children(terminal.map(|terminal| {
+                div()
+                    .h(px(240.))
+                    .max_h(bezel::gpui::relative(0.5))
+                    .flex_none()
+                    .border_t_1()
+                    .border_color(theme.border)
+                    .child(terminal)
+            }))
     }
 }
 

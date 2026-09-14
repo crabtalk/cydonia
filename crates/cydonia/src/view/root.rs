@@ -56,6 +56,7 @@ actions!(
         CloseProject,
         OpenSettings,
         ToggleSidebar,
+        ToggleTerminal,
         CommitName,
         DismissName,
         NextEntry,
@@ -272,6 +273,9 @@ pub struct Cydonia {
     pub(crate) sidebar_open: bool,
     pub(crate) sidebar_width: f32,
     pub(crate) composer: Entity<Composer>,
+    /// Visibility and shell per session; hiding a panel keeps its process alive.
+    pub(crate) terminals:
+        std::collections::HashMap<u64, (bool, Entity<super::component::terminal::Terminal>)>,
     settings_window: Option<WindowHandle<SettingsWindow>>,
     pub(crate) pane: Pane,
     /// Whether a session has been asked for with no agent to open one on.
@@ -345,11 +349,13 @@ impl Cydonia {
         cx: &mut Context<Self>,
     ) -> Self {
         let composer = cx.new(Composer::new);
-        cx.subscribe(
+        cx.subscribe_in(
             &composer,
-            |this, _, event: &ComposerEvent, cx| match event {
+            window,
+            |this, _, event: &ComposerEvent, window, cx| match event {
                 ComposerEvent::Submit(text) => this.submit(text.clone(), cx),
                 ComposerEvent::Cancel => this.cancel_turn(cx),
+                ComposerEvent::Terminal => this.show_terminal(window, cx),
                 ComposerEvent::Agent(ix) => this.pick_agent(*ix, cx),
                 ComposerEvent::Install => this.open_settings(Section::Agents, cx),
                 ComposerEvent::Switch(id, value) => this.switch(id, value, cx),
@@ -400,6 +406,7 @@ impl Cydonia {
             sidebar_open: true,
             sidebar_width: SIDEBAR_WIDTH,
             composer,
+            terminals: Default::default(),
             settings_window: None,
             pane: Pane::Chat,
             asked_session: false,

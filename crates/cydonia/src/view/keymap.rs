@@ -21,11 +21,11 @@ use crate::{
     view::{
         article::{self, TogglePlainText},
         board,
-        component::{composer, ribbon},
+        component::{composer, ribbon, terminal},
         create, info, menubar,
         root::{
             self, CloseProject, NewArticle, NewBoard, NewSession, NewSessionNext, NewTable,
-            NextEntry, OpenProject, OpenSettings, PrevEntry, ToggleSidebar,
+            NextEntry, OpenProject, OpenSettings, PrevEntry, ToggleSidebar, ToggleTerminal,
         },
         table,
     },
@@ -57,6 +57,7 @@ pub enum Command {
     OpenProject,
     CloseProject,
     ToggleSidebar,
+    ToggleTerminal,
     NextEntry,
     PrevEntry,
     PlainText,
@@ -85,7 +86,7 @@ impl Menu {
 }
 
 impl Command {
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 13] = [
         Self::OpenSettings,
         Self::NewSession,
         Self::NewSessionNext,
@@ -95,6 +96,7 @@ impl Command {
         Self::OpenProject,
         Self::CloseProject,
         Self::ToggleSidebar,
+        Self::ToggleTerminal,
         Self::NextEntry,
         Self::PrevEntry,
         Self::PlainText,
@@ -112,6 +114,7 @@ impl Command {
             Self::OpenProject => "open_project",
             Self::CloseProject => "close_project",
             Self::ToggleSidebar => "toggle_sidebar",
+            Self::ToggleTerminal => "toggle_terminal",
             Self::NextEntry => "next_entry",
             Self::PrevEntry => "prev_entry",
             Self::PlainText => "plain_text",
@@ -130,6 +133,7 @@ impl Command {
             Self::OpenProject => "Open Project…",
             Self::CloseProject => "Close Project",
             Self::ToggleSidebar => "Toggle Sidebar",
+            Self::ToggleTerminal => "Toggle Terminal",
             Self::NextEntry => "Next Entry",
             Self::PrevEntry => "Previous Entry",
             Self::PlainText => "Plain Text",
@@ -146,7 +150,11 @@ impl Command {
             | Self::NewTable
             | Self::OpenProject
             | Self::CloseProject => Menu::File,
-            Self::ToggleSidebar | Self::NextEntry | Self::PrevEntry | Self::PlainText => Menu::View,
+            Self::ToggleTerminal
+            | Self::ToggleSidebar
+            | Self::NextEntry
+            | Self::PrevEntry
+            | Self::PlainText => Menu::View,
         }
     }
 
@@ -166,6 +174,7 @@ impl Command {
             Self::OpenProject => "cmd-o",
             // What every app with a sidebar binds it to.
             Self::ToggleSidebar => "cmd-b",
+            Self::ToggleTerminal => "cmd-j",
             // The pair the View menu draws. `ctrl-tab` reaches these too and
             // is not movable: gpui has no macOS equivalent for `tab`, so an
             // item naming it would print ⌃T — see [`root::bindings`].
@@ -189,6 +198,7 @@ impl Command {
             Self::OpenProject => KeyBinding::new(chord, OpenProject, None),
             Self::CloseProject => KeyBinding::new(chord, CloseProject, None),
             Self::ToggleSidebar => KeyBinding::new(chord, ToggleSidebar, None),
+            Self::ToggleTerminal => KeyBinding::new(chord, ToggleTerminal, None),
             Self::NextEntry => KeyBinding::new(chord, NextEntry, None),
             Self::PrevEntry => KeyBinding::new(chord, PrevEntry, None),
             Self::PlainText => KeyBinding::new(chord, TogglePlainText, None),
@@ -275,6 +285,7 @@ pub fn bind_all(shortcuts: &Shortcuts, cx: &mut App) {
     cx.bind_keys(info::bindings());
     cx.bind_keys(ribbon::bindings());
     cx.bind_keys(table::bindings());
+    cx.bind_keys(terminal::bindings());
     cx.bind_keys(root::bindings());
     cx.bind_keys(menubar::bindings());
     // Last, and the only ones the reader can move.

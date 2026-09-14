@@ -13,3 +13,5 @@ pub mod state;
 pub mod update;
 pub mod watch;
 pub mod workspace;
+
+pub mod typography;

@@ -91,6 +91,8 @@ pub struct Workspace {
     next_id: u64,
     /// The body size the type ladder is scaled against, in points.
     pub text_size: f32,
+    pub article_font_size: Option<f32>,
+    pub terminal_font_size: f32,
     /// The hue the greys carry, and how much of it.
     pub tint: Tint,
     /// How wide a page that has not been set either way is drawn — see
@@ -116,6 +118,15 @@ impl Workspace {
         let active = (!projects.is_empty()).then_some(state.active);
         let restore: Vec<usize> = (0..projects.len()).collect();
         let look = settings.appearance;
+        editor::set_text_size(
+            cx,
+            editor::TextSize {
+                step: 1.,
+                min: settings::CONTENT_TEXT_SIZE.0,
+                max: settings::CONTENT_TEXT_SIZE.1,
+            },
+        );
+        crate::model::typography::set_terminal_size(look.terminal_font_size, cx);
         let mut this = Self {
             settings,
             projects,
@@ -124,6 +135,8 @@ impl Workspace {
             opaque: look.opaque,
             cursor_blink: look.cursor_blink,
             text_size: look.text_size,
+            article_font_size: look.article_font_size,
+            terminal_font_size: look.terminal_font_size,
             tint: Tint::new(look.hue, look.chroma),
             wide_pages: look.wide_pages,
             wrap_code: look.wrap_code,
@@ -178,6 +191,8 @@ impl Workspace {
             opaque: self.opaque,
             cursor_blink: self.cursor_blink,
             text_size: self.text_size,
+            article_font_size: self.article_font_size,
+            terminal_font_size: self.terminal_font_size,
             hue: self.tint.hue,
             chroma: self.tint.chroma,
             wide_pages: self.wide_pages,
@@ -399,6 +414,39 @@ impl Workspace {
     pub fn set_text_size(&mut self, points: f32, cx: &mut Context<Self>) {
         self.text_size = points;
         theme::set_base_text_size(points, cx);
+        if self.article_font_size.is_none() {
+            self.apply_article_font_size(cx);
+        }
+        self.save_appearance();
+        cx.notify();
+    }
+
+    pub fn article_font_size(&self) -> f32 {
+        self.article_font_size.unwrap_or(self.text_size)
+    }
+
+    fn apply_article_font_size(&self, cx: &mut Context<Self>) {
+        let points = self.article_font_size();
+        for editor in self
+            .projects
+            .iter()
+            .flat_map(|project| &project.articles)
+            .filter_map(|article| article.editor.as_ref())
+        {
+            editor.update(cx, |editor, cx| editor.set_text_size(points, cx));
+        }
+    }
+
+    pub fn set_article_font_size(&mut self, points: f32, cx: &mut Context<Self>) {
+        self.article_font_size = Some(settings::clamp_content_text_size(points));
+        self.apply_article_font_size(cx);
+        self.save_appearance();
+        cx.notify();
+    }
+
+    pub fn set_terminal_font_size(&mut self, points: f32, cx: &mut Context<Self>) {
+        self.terminal_font_size = settings::clamp_content_text_size(points);
+        crate::model::typography::set_terminal_size(self.terminal_font_size, cx);
         self.save_appearance();
         cx.notify();
     }

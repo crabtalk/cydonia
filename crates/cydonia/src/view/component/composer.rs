@@ -103,6 +103,7 @@ pub struct Switch {
 pub enum ComposerEvent {
     Submit(String),
     Cancel,
+    Terminal,
     /// Talk to this agent instead — an index into the configured agents.
     Agent(usize),
     /// Nothing here to pick: open settings where agents are installed.
@@ -148,6 +149,8 @@ pub struct Composer {
     usage: Option<Usage>,
     /// Whether the agent mark's menu is up.
     menu: bool,
+    tools_menu: bool,
+    tools_cursor: Cursor,
     /// Where that menu is being worked: which of its rows is live, and which
     /// of them has its own panel down. One cursor for both devices, so a
     /// submenu can only ever hang off the row the pointer is on.
@@ -191,6 +194,8 @@ impl Composer {
             switches: Vec::new(),
             usage: None,
             menu: false,
+            tools_menu: false,
+            tools_cursor: Cursor::default(),
             cursor: Cursor::default(),
         }
     }
@@ -348,7 +353,9 @@ impl Composer {
     /// menu, then the command picker, and the turn in flight once there is
     /// nothing left to close.
     fn command_dismiss(&mut self, _: &CommandDismiss, _: &mut Window, cx: &mut Context<Self>) {
-        if self.cursor.ascend() {
+        if self.tools_menu {
+            self.tools_menu = false;
+        } else if self.cursor.ascend() {
             // A submenu shuts before the menu holding it — one press, one level.
         } else if self.menu {
             self.close_menu();
@@ -471,6 +478,7 @@ impl Composer {
                     .into_any_element(),
             })
             .on_click(cx.listener(|composer, _, _, cx| {
+                composer.tools_menu = false;
                 composer.menu = !composer.menu;
                 composer.cursor.clear();
                 cx.notify();
@@ -731,7 +739,71 @@ impl Composer {
         )
     }
 
-    fn body(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn tools(&self, theme: &Theme, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+        let button = div()
+            .id("composer-tools")
+            .size(px(root::composer_height()))
+            .rounded_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .cursor_pointer()
+            .hover(|s| s.bg(theme.element_hover))
+            .tooltip(|window, cx| Tooltip::text("Session tools", window, cx))
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.tools_menu = !this.tools_menu;
+                this.close_menu();
+                this.tools_cursor.clear();
+                cx.notify();
+            }))
+            .child(
+                icons::icon(icons::math::Plus)
+                    .size(px(18.))
+                    .text_color(theme.text_muted),
+            )
+            .surface(theme, SURFACE);
+        let items = vec![
+            Item::action("Terminal")
+                .with_icon(icons::development::Terminal)
+                .with_shortcut(&root::ToggleTerminal, window),
+        ];
+        let rows = items.clone();
+        let popup = self.tools_menu.then(|| {
+            menu::card(
+                theme,
+                "composer-tools-menu",
+                &items,
+                &self.tools_cursor,
+                cx,
+                move |this, hit, _, cx| {
+                    match hit {
+                        Hit::Point(path) => {
+                            this.tools_cursor.point_at(&rows, &path);
+                        }
+                        Hit::Choose(_) => {
+                            this.tools_menu = false;
+                            cx.emit(ComposerEvent::Terminal);
+                        }
+                        Hit::Dismiss => this.tools_menu = false,
+                    }
+                    cx.notify();
+                },
+            )
+            .into_any_element()
+        });
+        div()
+            .relative()
+            .flex_none()
+            .child(button)
+            .children(
+                popup.map(|card| {
+                    popover::anchored_menu_above_end("composer-tools-menu", card, None)
+                }),
+            )
+            .into_any_element()
+    }
+
+    fn body(&mut self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::of(cx).clone();
         let picker = self.picker(&theme, cx);
         let radius = px(root::composer_height() / 2.);
@@ -790,7 +862,8 @@ impl Composer {
                                     .surface(&theme, SURFACE),
                             )
                             .children(picker),
-                    ),
+                    )
+                    .child(self.tools(&theme, window, cx)),
             )
     }
 }
@@ -802,7 +875,7 @@ impl Focusable for Composer {
 }
 
 impl Render for Composer {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.body(cx)
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.body(window, cx)
     }
 }

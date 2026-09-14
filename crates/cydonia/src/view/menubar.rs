@@ -25,7 +25,7 @@ use crate::{
         root::{
             CloseProject, Cydonia, NewArticle, NewBoard, NewSession, NewSessionNext,
             NewSessionWith, NewTable, NextEntry, OpenProject, OpenSettings, Pane, PrevEntry,
-            ToggleSidebar,
+            ToggleSidebar, ToggleTerminal,
         },
     },
 };
@@ -172,6 +172,7 @@ fn menus(cx: &App) -> Vec<Menu> {
         ]),
         Menu::new("View").items([
             MenuItem::action("Toggle Sidebar", ToggleSidebar),
+            MenuItem::action("Toggle Terminal", ToggleTerminal),
             MenuItem::separator(),
             // Drawn ⌥⌘→ and ⌥⌘←, which is why those are bound first: the
             // `ctrl-tab` pair these also answer to is a chord gpui cannot
@@ -300,8 +301,10 @@ impl Cydonia {
                         root.on_action(cx.listener(Self::new_table_action))
                     })
             })
-            // Only where a document is the thing on screen: the chord acts on
-            // the open page, and the item greys itself everywhere else.
+            // Pane-specific commands grey themselves everywhere else.
+            .when(showing == Some(Pane::Chat), |root| {
+                root.on_action(cx.listener(Self::toggle_terminal))
+            })
             .when(showing == Some(Pane::Article), |root| {
                 root.on_action(cx.listener(Self::toggle_plain_text))
             })

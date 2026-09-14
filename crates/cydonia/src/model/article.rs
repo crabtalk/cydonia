@@ -146,7 +146,7 @@ impl Article {
 
     /// Put a field over the title and an editor over the content. Idempotent —
     /// reopening an article is what keeps its undo history and its scroll.
-    pub fn open(&mut self, cx: &mut Context<Workspace>) {
+    pub fn open(&mut self, text_size: f32, cx: &mut Context<Workspace>) {
         // Whichever document is opened is the one a pasted picture belongs to,
         // so this is above the early return: coming back to an article is how
         // you reach one whose editor is already built. See [`media::aim`].
@@ -179,6 +179,7 @@ impl Article {
         let scroll = self.scroll.clone();
         let editor = cx.new(|cx| {
             Editor::new(&self.saved, cx)
+                .with_text_size(text_size)
                 .with_scroll(scroll)
                 .with_mode(self.mode)
         });
@@ -283,9 +284,14 @@ impl Article {
         self.cover = cover::of(&self.path);
         self.archived = held.archived;
         self.full_width = held.full_width;
+        let text_size = self
+            .editor
+            .as_ref()
+            .and_then(|editor| editor.read(cx).text_size())
+            .unwrap_or_else(bezel::theme::base_text_size);
         self.field = None;
         self.editor = None;
-        self.open(cx);
+        self.open(text_size, cx);
         self.stale = false;
     }
 
