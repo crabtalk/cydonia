@@ -7,12 +7,14 @@
 use artifact::project;
 use cydonia_mcp::{
     Server,
+    rail::{self, Change},
     tool::{Outcome, Trouble},
     tools,
 };
 use std::{
     fs,
     path::{Path, PathBuf},
+    sync::Mutex,
 };
 
 pub struct Scratch(PathBuf);
@@ -46,12 +48,40 @@ impl Scratch {
         Server::new()
             .mount(&tools::article::TOOLS)
             .mount(&tools::board::TOOLS)
+            .mount(&tools::project::TOOLS)
     }
 }
 
 impl Drop for Scratch {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+/// A rail with nobody's window behind it: what the tools asked for, in the
+/// order they asked, and whatever the app is meant to be holding.
+///
+/// A process-wide pair, which is what the rail is — so a test asserts about the
+/// paths it made itself rather than about the length of the list. Under
+/// `cargo nextest` each test has the statics to itself anyway.
+pub struct Rail;
+
+static ASKED: Mutex<Vec<Change>> = Mutex::new(Vec::new());
+
+impl Rail {
+    /// Install the recorder, and say what the app is holding.
+    pub fn holding(open: &[&Path]) -> Self {
+        rail::install(|change| ASKED.lock().unwrap().push(change));
+        rail::set_open(open.iter().map(PathBuf::from).collect());
+        Self
+    }
+
+    pub fn asked(&self) -> Vec<Change> {
+        ASKED.lock().unwrap().clone()
+    }
+
+    pub fn was_asked(&self, change: Change) -> bool {
+        self.asked().contains(&change)
     }
 }
 

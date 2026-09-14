@@ -73,10 +73,13 @@ pub fn project(cwd: &Path) -> (&'static str, String) {
     (mcp::http::PROJECT, mcp::http::encoded(cwd))
 }
 
-/// What is on it. Articles and boards; a tool set per surface as they arrive.
+/// What is on it. Articles and boards; a tool set per surface as they arrive,
+/// and the rail the app holds them on — see [`mcp::rail`], which the workspace
+/// is what answers.
 fn server() -> Server {
     Server::new()
         .mount(&tools::article::TOOLS)
         .mount(&tools::board::TOOLS)
+        .mount(&tools::project::TOOLS)
         .writable(write().clone())
 }

@@ -13,6 +13,7 @@
 
 pub mod http;
 pub mod proto;
+pub mod rail;
 pub mod tool;
 pub mod tools;
 
