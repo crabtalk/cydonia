@@ -463,7 +463,15 @@ impl Cydonia {
 
     /// Copy what the transcript has selected. Bound app-wide and reached only
     /// where nothing nearer to the focus claimed the chord.
+    ///
+    /// Only while the transcript is the pane in front. The selection belongs to
+    /// the active session whichever pane is showing, so without this a ⌘C over
+    /// a board copies a run out of a chat nobody is looking at — which reads as
+    /// the chord doing nothing, right up until it is pasted.
     fn copy_selection(&mut self, _: &CopySelection, _: &mut Window, cx: &mut Context<Self>) {
+        if self.showing(cx) != Some(Pane::Chat) {
+            return;
+        }
         self.workspace
             .update(cx, |workspace, cx| workspace.copy_selection(cx));
     }
