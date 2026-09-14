@@ -18,6 +18,7 @@ use crate::{
         session::ChatSession,
         settings::{self, Feature, Settings},
         state::{self, State},
+        update,
         watch::{self, Watch},
     },
 };
@@ -31,6 +32,8 @@ use bezel::{
     ui::{icons::Icon, input},
 };
 use cacp::schema::SessionConfigOptionValue;
+use futures::{StreamExt as _, channel::mpsc};
+use mcp::rail::{self, Change};
 use std::{
     collections::{BTreeMap, HashMap},
     path::{Path, PathBuf},
@@ -115,6 +118,7 @@ impl Workspace {
         this.open_last_entry(cx);
         this.load_agent_icons(cx);
         this.refresh_door();
+        this.take_rail(cx);
         // Temporary dev hook: `CYDONIA_TEST_PROMPT` sends a prompt on launch
         // so a turn can be verified without a composer. Here rather than on
         // connect, which a resume would fire again.
@@ -131,8 +135,13 @@ impl Workspace {
     }
 
     fn save(&self) {
+        // The tools' copy of the rail, pushed wherever the list is written
+        // down. A tool cannot read what is in memory here, and `state.toml` is
+        // rewritten whole from this one place — so reading the file back would
+        // be racing this line rather than avoiding it.
+        rail::set_open(self.paths());
         state::save(&State {
-            projects: self.projects.iter().map(|p| p.path.clone()).collect(),
+            projects: self.paths(),
             active: self.active.unwrap_or_default(),
             appearance: self.appearance,
             reduce_transparency: self.reduce_transparency,
@@ -257,6 +266,25 @@ impl Workspace {
         agent::serve::url()
     }
 
+    // ── releases ─────────────────────────────────────────────────
+
+    /// Look for releases on our own, or stop looking. The file is what the next
+    /// launch reads; the updater is what runs until then, so both are told.
+    ///
+    /// A release already staged is left alone: this switch is about the looking,
+    /// and throwing away a bundle that is downloaded and verified would be a
+    /// second thing under one name.
+    pub fn set_auto_update(&mut self, on: bool, cx: &mut Context<Self>) {
+        if settings::set_auto_update(on).is_err() {
+            return;
+        }
+        self.settings.auto_update = on;
+        if let Some(updater) = update::of(cx) {
+            updater.update(cx, |updater, cx| updater.set_auto(on, cx));
+        }
+        cx.notify();
+    }
+
     /// Move the cover ceiling. Written through to `settings.toml` first, for
     /// the reason [`Self::set_agents_enabled`] is, then applied to the cache
     /// that is already holding pictures under the old one.
@@ -330,6 +358,41 @@ impl Workspace {
 
     // ── projects ─────────────────────────────────────────────────────
 
+    /// The projects on the rail, in the order the sidebar lists them.
+    fn paths(&self) -> Vec<PathBuf> {
+        self.projects.iter().map(|open| open.path.clone()).collect()
+    }
+
+    /// Take what the tools ask of the rail — see [`mcp::rail`], where the other
+    /// half of this is written.
+    ///
+    /// Installed once and drained here rather than acted on where it arrives: a
+    /// tool call lands on whichever thread the door is serving from, and a
+    /// project can only be opened where the app's own state is. The channel is
+    /// what carries it across.
+    fn take_rail(&self, cx: &mut Context<Self>) {
+        let (asked, mut asks) = mpsc::unbounded();
+        rail::install(move |change| {
+            let _ = asked.unbounded_send(change);
+        });
+        rail::set_open(self.paths());
+        cx.spawn(async move |workspace, cx| {
+            while let Some(change) = asks.next().await {
+                let held = workspace
+                    .update(cx, |workspace, cx| match change {
+                        Change::Open(path) => workspace.open_project_at(path, cx),
+                        Change::Close(path) => workspace.close_project_at(&path, cx),
+                    })
+                    .is_ok();
+                // The workspace has gone, and there is no rail to move.
+                if !held {
+                    return;
+                }
+            }
+        })
+        .detach();
+    }
+
     /// A project just added starts talking to an agent; one already on the
     /// rail is only brought forward.
     pub fn open_project(&mut self, path: PathBuf, cx: &mut Context<Self>) {
@@ -376,6 +439,40 @@ impl Workspace {
         });
         self.save();
         cx.notify();
+    }
+
+    /// Whichever project is at `path`, by the path the sidebar holds it under
+    /// or by what that resolves to.
+    ///
+    /// The tools settle a path before handing it over and the directory picker
+    /// does not — see `mcp::tools::project` — so `/tmp/x` on the rail and
+    /// `/private/tmp/x` from a tool are one project, and opening the second
+    /// would otherwise list the same directory twice.
+    fn project_at(&self, path: &Path) -> Option<usize> {
+        self.projects.iter().position(|open| {
+            open.path == path
+                || open
+                    .path
+                    .canonicalize()
+                    .is_ok_and(|settled| settled == path)
+        })
+    }
+
+    /// Bring the project at `path` forward, opening it where it is not on the
+    /// rail at all. What the tools ask for; the sidebar names a row instead.
+    fn open_project_at(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        match self.project_at(&path) {
+            Some(ix) => self.select_project(ix, cx),
+            None => self.open_project(path, cx),
+        }
+    }
+
+    /// Close whichever project is at `path`, if one is.
+    fn close_project_at(&mut self, path: &Path, cx: &mut Context<Self>) {
+        let Some(ix) = self.project_at(path) else {
+            return;
+        };
+        self.close_project(ix, cx);
     }
 
     /// Drop the project: its sessions go with it, and each session's shutdown

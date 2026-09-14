@@ -7,7 +7,7 @@
 
 use crate::{
     agent::Listing,
-    model::workspace::Workspace,
+    model::{update, workspace::Workspace},
     view::root::{HEADER_HEIGHT, TRAFFIC_LIGHT_X, TRAFFIC_LIGHT_Y},
 };
 use bezel::{
@@ -27,6 +27,7 @@ use bezel::{
 use std::collections::HashSet;
 
 mod agents;
+mod developer;
 mod features;
 mod general;
 mod mcp;
@@ -61,17 +62,31 @@ pub enum Section {
     // same reading that puts Features before it.
     Mcp,
     Performance,
+    // Last, and in a debug build alone — see [`Section::listed`].
+    Developer,
 }
 
 impl Section {
-    const ALL: [Self; 6] = [
+    const ALL: [Self; 7] = [
         Self::General,
         Self::Appearance,
         Self::Features,
         Self::Agents,
         Self::Mcp,
         Self::Performance,
+        Self::Developer,
     ];
+
+    /// Whether this build lists it in the sidebar. Developer holds switches for
+    /// looking at what has not happened yet, which is not something to hand
+    /// somebody who installed the app — so it is absent from a release build
+    /// rather than empty in one, and every build anyone installs is a release
+    /// one. `make bundle PROFILE=debug` is the bundle that still has it, which
+    /// is what the updater switches want: the updater runs in a bundle and
+    /// nowhere else.
+    fn listed(self) -> bool {
+        !matches!(self, Self::Developer) || cfg!(debug_assertions)
+    }
 
     fn title(self) -> &'static str {
         match self {
@@ -81,6 +96,7 @@ impl Section {
             Self::Agents => "Agents",
             Self::Mcp => "MCP",
             Self::Performance => "Performance",
+            Self::Developer => "Developer",
         }
     }
 
@@ -93,6 +109,7 @@ impl Section {
             Self::Mcp => {
                 Some("The tools cydonia offers the agents it runs, over a port on this machine.")
             }
+            Self::Developer => Some("Switches for looking at what has not happened yet."),
             Self::General | Self::Appearance | Self::Agents | Self::Performance => None,
         }
     }
@@ -106,6 +123,7 @@ impl Section {
             Self::Agents => icons::layout::LayoutGrid,
             Self::Mcp => icons::development::Plug,
             Self::Performance => icons::devices::Cpu,
+            Self::Developer => icons::development::Wrench,
         }
     }
 }
@@ -177,6 +195,12 @@ pub fn open(
                     }
                 })
                 .detach();
+                // The general section reads the updater, which moves on its own
+                // — a check that lands while this window sits open has to reach
+                // the row that reports it.
+                if let Some(updater) = update::of(cx) {
+                    cx.observe(&updater, |_, _, cx| cx.notify()).detach();
+                }
                 let mut this = SettingsWindow {
                     workspace,
                     section,
@@ -206,7 +230,8 @@ impl SettingsWindow {
             | Section::Appearance
             | Section::Features
             | Section::Mcp
-            | Section::Performance => {}
+            | Section::Performance
+            | Section::Developer => {}
         }
         cx.notify();
     }
@@ -229,17 +254,23 @@ impl SettingsWindow {
             // Clears the traffic lights, which have no strip of their own.
             // Set after the shorthand — `p` writes every side.
             .pt(px(HEADER_HEIGHT))
-            .children(Section::ALL.into_iter().enumerate().map(|(ix, section)| {
-                theme
-                    .nav_row(
-                        Some(section.glyph().into()),
-                        section.title(),
-                        section == self.section,
-                        Fade::new(painter, format!("section-{ix}")),
-                    )
-                    .id(("section", ix))
-                    .on_click(cx.listener(move |this, _, _, cx| this.show(section, cx)))
-            }))
+            .children(
+                Section::ALL
+                    .into_iter()
+                    .filter(|section| section.listed())
+                    .enumerate()
+                    .map(|(ix, section)| {
+                        theme
+                            .nav_row(
+                                Some(section.glyph().into()),
+                                section.title(),
+                                section == self.section,
+                                Fade::new(painter, format!("section-{ix}")),
+                            )
+                            .id(("section", ix))
+                            .on_click(cx.listener(move |this, _, _, cx| this.show(section, cx)))
+                    }),
+            )
     }
 }
 
@@ -297,6 +328,7 @@ impl Render for SettingsWindow {
                                 Section::Agents => self.agents_body(cx),
                                 Section::Mcp => self.mcp_body(cx),
                                 Section::Performance => self.performance_body(cx),
+                                Section::Developer => self.developer_body(cx),
                             }),
                     ),
             )

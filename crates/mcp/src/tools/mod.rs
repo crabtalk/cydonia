@@ -15,6 +15,7 @@
 
 pub mod article;
 pub mod board;
+pub mod project;
 
 use crate::tool::{Args, Trouble};
 use serde_json::{Value, json};

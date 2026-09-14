@@ -1,8 +1,6 @@
-//! What the general section shows beside the version: the commit this binary
-//! was built from.
-//!
-//! Asked here rather than at runtime because the app that ships has no
-//! repository to ask — a bundle in `/Applications` is a binary and an icon —
+//! The one thing the binary cannot work out for itself: the commit it was built
+//! from. It is asked here rather than at runtime because the app that ships has
+//! no repository to ask — a bundle in `/Applications` is a binary and an icon —
 //! so the answer is compiled in or it does not exist.
 
 use std::process::Command;

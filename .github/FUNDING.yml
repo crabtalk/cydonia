@@ -1,0 +1,4 @@
+# The Sponsor button on the repository page. `github` takes the accounts with a
+# sponsors listing — the org's own, which covers every maintainer working under
+# it, rather than naming them one at a time.
+github: crabtalk

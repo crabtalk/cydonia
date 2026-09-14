@@ -284,7 +284,7 @@ impl Cydonia {
         let body = match showing {
             None => self.launch(cx),
             Some(Pane::Chat) => self.conversation(window, cx),
-            Some(Pane::Board) => self.board(cx),
+            Some(Pane::Board) => self.board(window, cx),
             // An entry can be named and not yet loaded — an article holds no
             // editor until it is opened. The front door stands in for the
             // moment in between.

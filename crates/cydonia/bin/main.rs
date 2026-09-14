@@ -9,7 +9,7 @@ use bezel::{
 };
 use cydonia::{
     memory,
-    model::{media, settings, state, workspace},
+    model::{media, settings, state, update, workspace},
     view::{article, board, component::composer, create, info, menubar, root, table},
 };
 
@@ -62,6 +62,9 @@ fn main() -> Result<()> {
         create::init(cx);
         table::init(cx);
         root::init(cx);
+        // Ahead of the menu bar, which asks whether this build has an updater
+        // at all before it puts an item there for one.
+        update::init(settings.auto_update, cx);
         // Last: it reads every binding above off the keymap to put the
         // shortcuts beside its items.
         menubar::init(cx);

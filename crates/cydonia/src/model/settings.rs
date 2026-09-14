@@ -21,6 +21,15 @@ pub struct Settings {
     /// by hand, and the ends of the range are what a hand cannot reach past.
     #[serde(default = "watch_bounce")]
     pub watch_bounce: u64,
+    /// Whether cydonia looks for a new release on its own. Bare, so it belongs
+    /// above `features` for the reason above.
+    ///
+    /// What this switches is the looking and the fetching, not the swap: a
+    /// staged release waits for the restart to be asked for. Off is an app
+    /// that reaches the network for a version only when the menu item is
+    /// picked — see [`crate::model::update`].
+    #[serde(default = "auto_update")]
+    pub auto_update: bool,
     /// What the app will show. Every bare key has to go above it, and every
     /// table below — `[[agents]]` is the one that follows.
     #[serde(default)]
@@ -151,6 +160,12 @@ fn watch_bounce() -> u64 {
     watch::BOUNCE
 }
 
+/// Whether a fresh install looks for releases. On: an app that cannot tell you
+/// it is out of date leaves you reading a changelog to find out.
+fn auto_update() -> bool {
+    true
+}
+
 /// The launchers that resolve a package name on every run. An installed
 /// agent's command is a path to an unpacked executable, which resolves nothing.
 const RUNNERS: [&str; 3] = ["npx", "bunx", "pnpx"];
@@ -188,6 +203,7 @@ impl Default for Settings {
         Self {
             cover_memory: cover_memory(),
             watch_bounce: watch_bounce(),
+            auto_update: auto_update(),
             features: Features::default(),
             mcp: Mcp::default(),
             agents: vec![
@@ -307,6 +323,17 @@ pub fn set_watch_bounce(ms: u64) -> Result<()> {
     let mut doc: toml_edit::DocumentMut =
         body.parse().context("settings.toml is not valid toml")?;
     doc["watch_bounce"] = toml_edit::value(ms as i64);
+    std::fs::write(&path, doc.to_string())?;
+    Ok(())
+}
+
+/// Switch the release check on or off in the file.
+pub fn set_auto_update(on: bool) -> Result<()> {
+    let path = dir()?.join("settings.toml");
+    let body = std::fs::read_to_string(&path).unwrap_or_default();
+    let mut doc: toml_edit::DocumentMut =
+        body.parse().context("settings.toml is not valid toml")?;
+    doc["auto_update"] = toml_edit::value(on);
     std::fs::write(&path, doc.to_string())?;
     Ok(())
 }

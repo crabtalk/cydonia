@@ -3,7 +3,7 @@
 //! this draws on it.
 
 use crate::{
-    model::{session::ChatSession, settings::Features},
+    model::{session::ChatSession, settings::Features, update},
     view::{
         component::{
             menu::{self, Menu},
@@ -27,7 +27,7 @@ use bezel::{
         popover,
         surface::Surfaced as _,
         tooltip::Tooltip,
-        widgets::{Buttons, Layout},
+        widgets::{Buttons, Content, Layout},
     },
 };
 use std::{cell::RefCell, cmp::Reverse, ops::Range, rc::Rc, time::Duration};
@@ -360,6 +360,7 @@ impl Cydonia {
                 .flex_1()
                 .min_h_0(),
             )
+            .children(self.restart_notice(cx))
             .child(
                 div()
                     .flex_none()
@@ -415,6 +416,57 @@ impl Cydonia {
                             ),
                     ),
             )
+    }
+
+    /// The one place outside settings that says a release is in hand: a line at
+    /// the foot of the sidebar, over the controls, that restarts into it.
+    ///
+    /// Here rather than in the header because it is news and not a control for
+    /// what is on screen — and the foot of this column is already where the
+    /// things that are about the app itself live. It takes a row rather than
+    /// floating over one, so nothing it appears in front of is ever covered.
+    ///
+    /// Nothing shows here until a bundle is staged and verified, which on most
+    /// days is never — see [`crate::model::update`], and the Developer section
+    /// for the switch that puts it on screen without one.
+    fn restart_notice(&self, cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
+        let updater = update::of(cx)?;
+        let version = updater.read(cx).ready()?;
+        let theme = Theme::of(cx).clone();
+        let ready = SharedString::from(format!("cydonia {version} is ready"));
+        Some(
+            theme
+                .ghost("restart-to-update")
+                .flex_none()
+                .mx(px(8.))
+                .mb(px(8.))
+                .px(px(8.))
+                .py(px(6.))
+                .gap(px(6.))
+                // No plate under it: `ghost` paints one on hover, and anything
+                // at rest would have to be quieter than that to leave the hover
+                // anything to say. What gives the line its weight is the mark,
+                // which is the only accent-coloured thing in the column.
+                .tooltip(move |window, cx| Tooltip::text(ready.clone(), window, cx))
+                .child(
+                    icons::icon(icons::development::CircleFadingArrowUp)
+                        .size(px(13.))
+                        .flex_none()
+                        .text_color(theme.accent),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .text_style(TextStyle::Footnote)
+                        .child("Restart to update"),
+                )
+                .child(theme.badge(version))
+                .on_click(cx.listener(move |_, _, _, cx| {
+                    updater.update(cx, |updater, cx| updater.restart(cx));
+                })),
+        )
     }
 
     /// The control that folds the sidebar away and brings it back. It belongs

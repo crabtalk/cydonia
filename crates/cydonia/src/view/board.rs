@@ -25,6 +25,7 @@ use bezel::{
         widgets::Buttons,
     },
 };
+use markdown::Typography;
 
 actions!(cydonia_board, [CommitCard, DismissCard]);
 
@@ -33,6 +34,16 @@ actions!(cydonia_board, [CommitCard, DismissCard]);
 const KEY_CONTEXT: &str = "CydoniaCard";
 
 const COLUMN_WIDTH: f32 = 272.;
+
+/// How much of a card is shown before it is cut off. A card is a card: what
+/// does not fit in this much of a lane is read by opening it.
+const CARD_MAX_HEIGHT: f32 = 140.;
+
+/// What the document ladder is brought down to on a card — `Callout` over
+/// `Body`, which is the size a card's prose was set at when it was one flat
+/// string. Every role moves together, so a `#` heading on a card still reads
+/// as a heading, in a lane 272 wide rather than on a page.
+const CARD_TEXT_SCALE: f32 = TextStyle::Callout.size() / TextStyle::Body.size();
 
 pub fn init(cx: &mut App) {
     let ctx = Some(KEY_CONTEXT);
@@ -53,6 +64,30 @@ pub fn field(cx: &mut App) -> Entity<TextField> {
             .with_key_context(KEY_CONTEXT)
             .with_placeholder("what needs doing…")
     })
+}
+
+/// A card's text, read as the document it is. Somebody writing `- [ ] ship it`
+/// on a card meant a box to tick, not three characters of punctuation — and the
+/// field that writes the card is one click away, which is where the source
+/// belongs.
+///
+/// The document renderer rather than a pass over the inline marks: a card takes
+/// whatever was typed on it, and a list, a fence or a link is no less a card for
+/// being one. What does not fit is cut off by [`CARD_MAX_HEIGHT`], the same as a
+/// long paragraph.
+fn card_body(text: &str, window: &mut Window, cx: &mut App) -> AnyElement {
+    markdown::render_with(
+        &markdown::parse(text),
+        markdown::Editing {
+            // A picture in a lane this narrow is a picture. Its alt text spelled
+            // out underneath would be most of the card.
+            caption: markdown::Caption::Hidden,
+            typography: Some(Typography::of(cx).scaled(CARD_TEXT_SCALE)),
+            ..Default::default()
+        },
+        window,
+        cx,
+    )
 }
 
 /// What the field is attached to. By id, never by position: a re-read
@@ -305,7 +340,7 @@ impl Cydonia {
 
     /// The lanes. A board opens with none, so the lane that makes one is
     /// always drawn — on an empty board it is the whole pane.
-    pub fn board(&self, cx: &mut Context<Self>) -> AnyElement {
+    pub fn board(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let Some(board) = self.workspace.read(cx).active_board() else {
             return div().flex_1().into_any_element();
         };
@@ -316,7 +351,9 @@ impl Cydonia {
             .iter()
             .map(|column| column.id.clone())
             .collect();
-        let columns: Vec<AnyElement> = (0..ids.len()).map(|ix| self.column(&ids, ix, cx)).collect();
+        let columns: Vec<AnyElement> = (0..ids.len())
+            .map(|ix| self.column(&ids, ix, window, cx))
+            .collect();
         div()
             .flex_1()
             .min_h_0()
@@ -338,7 +375,13 @@ impl Cydonia {
             .into_any_element()
     }
 
-    fn column(&self, ids: &[String], ix: usize, cx: &mut Context<Self>) -> AnyElement {
+    fn column(
+        &self,
+        ids: &[String],
+        ix: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let id = ids[ix].clone();
         let Some((name, cards)) = self
@@ -358,7 +401,7 @@ impl Cydonia {
         let right = ids.get(ix + 1).cloned();
         let mut rows: Vec<AnyElement> = cards
             .iter()
-            .map(|card| self.card(card, left.as_deref(), right.as_deref(), cx))
+            .map(|card| self.card(card, left.as_deref(), right.as_deref(), window, cx))
             .collect();
         if matches!(&self.editing, Some(Editing::New(at)) if *at == id) {
             rows.push(self.card_editor(cx));
@@ -500,6 +543,7 @@ impl Cydonia {
         id: &str,
         left: Option<&str>,
         right: Option<&str>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         if matches!(&self.editing, Some(Editing::Card(at)) if at == id) {
@@ -558,11 +602,9 @@ impl Cydonia {
                         div()
                             .flex_1()
                             .min_w_0()
-                            .max_h(px(140.))
+                            .max_h(px(CARD_MAX_HEIGHT))
                             .overflow_hidden()
-                            .text_style(TextStyle::Callout)
-                            .text_color(theme.text)
-                            .child(text),
+                            .child(card_body(&text, window, cx)),
                     )
                     // What is done *to* the card. The row underneath carries
                     // the moves and the run — one press each, all reversible.
