@@ -190,12 +190,15 @@ fn articles(project: &Path) -> Vec<Held> {
         .flatten()
         .map(|entry| article::content(&entry.path()))
         .filter(|content| content.is_file())
-        .map(|content| Held {
-            id: article::id_of(&content),
-            title: properties::title(&content),
-            archived: properties::archived(&content),
-            touched: article::touched(&content),
-            content,
+        .map(|content| {
+            let held = properties::all(&content);
+            Held {
+                id: article::id_of(&content),
+                title: held.title,
+                archived: held.archived,
+                touched: article::touched(&content),
+                content,
+            }
         })
         .collect();
     held.sort_by_key(|article| std::cmp::Reverse(article.touched));
@@ -206,9 +209,9 @@ fn articles(project: &Path) -> Vec<Held> {
 /// refused rather than guessed at — nothing stops two articles sharing one, and
 /// the caller is one `list_articles` away from the ids.
 fn locate(project: &Path, needle: &str) -> Result<Held, Trouble> {
-    let held = articles(project);
+    let mut held = articles(project);
     if let Some(at) = held.iter().position(|article| article.id == needle) {
-        return Ok(held.into_iter().nth(at).expect("just found"));
+        return Ok(held.swap_remove(at));
     }
     let titled: Vec<usize> = held
         .iter()
@@ -217,7 +220,7 @@ fn locate(project: &Path, needle: &str) -> Result<Held, Trouble> {
         .map(|(at, _)| at)
         .collect();
     match titled.as_slice() {
-        [at] => Ok(held.into_iter().nth(*at).expect("just found")),
+        [at] => Ok(held.swap_remove(*at)),
         [] => Err(Trouble::Refused(format!(
             "no article {needle} — this project has {}",
             titles(&held)

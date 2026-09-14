@@ -25,16 +25,45 @@ pub fn path(content: &Path) -> Option<PathBuf> {
     Some(content.with_file_name(FILE))
 }
 
+/// Everything a listing reads off one article, in one pass over the file.
+///
+/// The fields have accessors of their own and every one of them opens and
+/// parses `properties.toml`, so a caller that wants two of them pays twice —
+/// which is what listing a project used to cost, three reads an article. A
+/// caller after a single field still reaches for the accessor.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct Properties {
+    pub title: String,
+    pub archived: bool,
+    pub full_width: bool,
+}
+
+/// Read the whole file once and answer with all of it.
+pub fn all(content: &Path) -> Properties {
+    let Some(path) = path(content) else {
+        return Properties::default();
+    };
+    let doc = read(&path);
+    Properties {
+        title: doc
+            .get(TITLE)
+            .and_then(|title| title.as_str())
+            .unwrap_or_default()
+            .to_owned(),
+        archived: doc
+            .get(ARCHIVED)
+            .and_then(|archived| archived.as_bool())
+            .unwrap_or_default(),
+        full_width: doc
+            .get(FULL_WIDTH)
+            .and_then(|wide| wide.as_bool())
+            .unwrap_or_default(),
+    }
+}
+
 /// The article's title, or nothing for one that has never been given a name.
 pub fn title(content: &Path) -> String {
-    let Some(path) = path(content) else {
-        return String::new();
-    };
-    read(&path)
-        .get(TITLE)
-        .and_then(|title| title.as_str())
-        .unwrap_or_default()
-        .to_owned()
+    all(content).title
 }
 
 pub fn set_title(content: &Path, title: &str) {
@@ -47,13 +76,7 @@ pub fn set_title(content: &Path, title: &str) {
 
 /// Whether the article has been put away.
 pub fn archived(content: &Path) -> bool {
-    let Some(path) = path(content) else {
-        return false;
-    };
-    read(&path)
-        .get(ARCHIVED)
-        .and_then(|archived| archived.as_bool())
-        .unwrap_or_default()
+    all(content).archived
 }
 
 pub fn set_archived(content: &Path, archived: bool) {
@@ -64,13 +87,7 @@ pub fn set_archived(content: &Path, archived: bool) {
 /// of this machine: a page of wide tables is wide for whoever opens the
 /// project, and the column is what every other page wants.
 pub fn full_width(content: &Path) -> bool {
-    let Some(path) = path(content) else {
-        return false;
-    };
-    read(&path)
-        .get(FULL_WIDTH)
-        .and_then(|wide| wide.as_bool())
-        .unwrap_or_default()
+    all(content).full_width
 }
 
 pub fn set_full_width(content: &Path, wide: bool) {

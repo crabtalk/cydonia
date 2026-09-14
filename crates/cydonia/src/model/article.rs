@@ -76,12 +76,13 @@ pub struct Article {
 
 impl Article {
     fn new(path: PathBuf) -> Self {
+        let held = properties::all(&path);
         Self {
             cover: cover::of(&path),
-            title: properties::title(&path),
+            title: held.title,
             touched: layout::touched(&path),
-            archived: properties::archived(&path),
-            full_width: properties::full_width(&path),
+            archived: held.archived,
+            full_width: held.full_width,
             path,
             field: None,
             editor: None,
@@ -236,11 +237,12 @@ impl Article {
     /// The undo history goes with the old editor. There is no honest way to
     /// keep it: it is a history of a document this one no longer is.
     pub fn revert(&mut self, cx: &mut Context<Workspace>) {
-        self.title = properties::title(&self.path);
+        let held = properties::all(&self.path);
+        self.title = held.title;
         self.touched = layout::touched(&self.path);
         self.cover = cover::of(&self.path);
-        self.archived = properties::archived(&self.path);
-        self.full_width = properties::full_width(&self.path);
+        self.archived = held.archived;
+        self.full_width = held.full_width;
         self.field = None;
         self.editor = None;
         self.open(cx);

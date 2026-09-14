@@ -286,15 +286,15 @@ fn store(args: &Args<'_>) -> Result<fs::Project, Trouble> {
 
 /// The board a needle names: its id, its key, or its name, in that order —
 /// which is least ambiguous first, since only the id is guaranteed unique.
-fn board(project: &dyn Project, needle: &str) -> Result<Board, Trouble> {
-    let boards = project.boards();
+fn board(project: &impl Project, needle: &str) -> Result<Board, Trouble> {
+    let mut boards = project.boards();
     let found = boards
         .iter()
         .position(|board| board.id == needle)
         .or_else(|| boards.iter().position(|board| same(&board.key, needle)))
         .or_else(|| boards.iter().position(|board| same(&board.name, needle)));
     match found {
-        Some(at) => Ok(boards.into_iter().nth(at).expect("just found")),
+        Some(at) => Ok(boards.swap_remove(at)),
         None => Err(Trouble::Refused(format!(
             "no board {needle} — this project has {}",
             keys(&boards)
@@ -305,15 +305,15 @@ fn board(project: &dyn Project, needle: &str) -> Result<Board, Trouble> {
 /// The board a card is on, and the card's id on it. A handle names one card
 /// across the whole project, so the board is an answer here rather than an
 /// argument.
-fn locate(project: &dyn Project, needle: &str) -> Result<(Board, String), Trouble> {
-    let boards = project.boards();
+fn locate(project: &impl Project, needle: &str) -> Result<(Board, String), Trouble> {
+    let mut boards = project.boards();
     // `ROA2-5` is card 5 on board ROA2, so the split is the *last* dash — a
     // key may carry a digit, and boards.md settled which side it falls on.
     if let Some((key, number)) = needle.rsplit_once('-')
         && let Ok(handle) = number.parse::<u64>()
         && let Some(at) = boards.iter().position(|board| same(&board.key, key))
     {
-        let board = boards.into_iter().nth(at).expect("just found");
+        let board = boards.swap_remove(at);
         let found = board
             .columns
             .iter()

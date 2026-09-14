@@ -8,14 +8,14 @@
 
 use crate::{
     model::{cover, watch, workspace::Resident},
-    view::settings::{self, SettingsWindow},
+    view::settings::{self, SettingsWindow, Switch},
 };
 use bezel::{
     gpui::{AnyElement, Context, Focusable as _, Window, div, prelude::*, px},
     theme::{TextStyle, Theme, Typeset},
     ui::{
         input::{Shape, TextField},
-        widgets::{ButtonStyle, Buttons, Controls, Scaffolding},
+        widgets::{ButtonStyle, Buttons, Scaffolding},
     },
 };
 
@@ -62,39 +62,24 @@ impl SettingsWindow {
             .into_any_element()
     }
 
-    fn meter_row(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
-        let theme = Theme::of(cx).clone();
+    fn meter_row(&self, cx: &mut Context<Self>) -> AnyElement {
         let on = self.workspace.read(cx).meter;
-        theme
-            .card_row(true)
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .child(theme.row_title("Frame meter"))
-                    .child(
-                        div()
-                            .mt(px(4.))
-                            .text_style(TextStyle::Subheadline)
-                            .text_color(theme.text_muted)
-                            .child("What this window draws while you use it."),
-                    ),
+        self.switch_row(
+            Switch::new(
+                "meter",
+                "Frame meter",
+                "What this window draws while you use it.",
+                on,
             )
-            .child(
-                div()
-                    .id("meter")
-                    .cursor_pointer()
-                    .child(theme.toggle(on))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.workspace.update(cx, |workspace, cx| {
-                            workspace.meter = !workspace.meter;
-                            cx.notify();
-                        });
-                        cx.notify();
-                    })),
-            )
+            .first(true),
+            cx,
+            |this, cx| {
+                this.workspace.update(cx, |workspace, cx| {
+                    workspace.meter = !workspace.meter;
+                    cx.notify();
+                });
+            },
+        )
     }
 
     /// The ceiling decoded covers run under. Typed rather than stepped: the

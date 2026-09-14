@@ -2,7 +2,7 @@
 
 use crate::{
     model::workspace::Workspace,
-    view::settings::{self, SettingsWindow},
+    view::settings::{self, SettingsWindow, Switch},
 };
 use bezel::{
     gpui::{AnyElement, Context, DragMoveEvent, Empty, div, prelude::*, px},
@@ -138,73 +138,43 @@ impl SettingsWindow {
 
     /// The app's own reduce-transparency switch, so the vibrancy can go without
     /// turning the system setting on for every other app.
-    pub(super) fn transparency_row(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
-        let theme = Theme::of(cx).clone();
+    pub(super) fn transparency_row(&self, cx: &mut Context<Self>) -> AnyElement {
         let on = self.workspace.read(cx).reduce_transparency;
-        theme
-            .card_row(true)
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .child(theme.row_title("Reduce transparency"))
-                    .child(
-                        div()
-                            .mt(px(4.))
-                            .text_style(TextStyle::Subheadline)
-                            .text_color(theme.text_muted)
-                            .child("Replace translucent surfaces with opaque backgrounds."),
-                    ),
+        self.switch_row(
+            Switch::new(
+                "reduce-transparency",
+                "Reduce transparency",
+                "Replace translucent surfaces with opaque backgrounds.",
+                on,
             )
-            .child(
-                div()
-                    .id("reduce-transparency")
-                    .cursor_pointer()
-                    .child(theme.toggle(on))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.workspace.update(cx, |workspace, cx| {
-                            workspace.set_reduce_transparency(!on, cx)
-                        });
-                        cx.notify();
-                    })),
-            )
+            .first(true),
+            cx,
+            move |this, cx| {
+                this.workspace.update(cx, |workspace, cx| {
+                    workspace.set_reduce_transparency(!on, cx)
+                });
+            },
+        )
     }
 
     /// Whether the caret blinks. bezel holds the caret, so the switch sets it
     /// there rather than keeping a second copy of the answer.
-    pub(super) fn cursor_row(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
-        let theme = Theme::of(cx).clone();
+    pub(super) fn cursor_row(&self, cx: &mut Context<Self>) -> AnyElement {
         let on = self.workspace.read(cx).cursor_blink;
-        theme
-            .card_row(true)
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .child(theme.row_title("Blink the cursor"))
-                    .child(
-                        div()
-                            .mt(px(4.))
-                            .text_style(TextStyle::Subheadline)
-                            .text_color(theme.text_muted)
-                            .child("Off holds the text caret lit while it has focus."),
-                    ),
+        self.switch_row(
+            Switch::new(
+                "cursor-blink",
+                "Blink the cursor",
+                "Off holds the text caret lit while it has focus.",
+                on,
             )
-            .child(
-                div()
-                    .id("cursor-blink")
-                    .cursor_pointer()
-                    .child(theme.toggle(on))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.workspace
-                            .update(cx, |workspace, cx| workspace.set_cursor_blink(!on, cx));
-                        cx.notify();
-                    })),
-            )
+            .first(true),
+            cx,
+            move |this, cx| {
+                this.workspace
+                    .update(cx, |workspace, cx| workspace.set_cursor_blink(!on, cx));
+            },
+        )
     }
 
     /// The hue every grey carries, and how much of it. Two rows because they

@@ -7,14 +7,14 @@
 //! The section is absent from a release build altogether; see
 //! [`super::Section::listed`].
 
-use crate::{model::update, view::settings::SettingsWindow};
+use crate::{
+    model::update,
+    view::settings::{SettingsWindow, Switch},
+};
 use bezel::{
     gpui::{AnyElement, Context, div, prelude::*, px},
-    theme::{TextStyle, Theme, Typeset},
-    ui::{
-        icons,
-        widgets::{Controls, Scaffolding},
-    },
+    theme::Theme,
+    ui::{icons, widgets::Scaffolding},
 };
 
 impl SettingsWindow {
@@ -44,50 +44,22 @@ impl SettingsWindow {
             theme
                 .group_box()
                 .child(
-                    theme
-                        .card_row(true)
-                        .child(
-                            div()
-                                .flex_none()
-                                .size(px(18.))
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .child(
-                                    icons::icon(icons::development::CircleFadingArrowUp)
-                                        .size(px(16.))
-                                        .flex_none()
-                                        .text_color(theme.text_muted),
-                                ),
+                    self.switch_row(
+                        Switch::new(
+                            "preview-notifier",
+                            "Update notifier",
+                            "Put the restart notice at the foot of the sidebar, where a release \
+                         would.",
+                            on,
                         )
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .flex()
-                                .flex_col()
-                                .child(theme.row_title("Update notifier"))
-                                .child(
-                                    div()
-                                        .mt(px(4.))
-                                        .truncate()
-                                        .text_style(TextStyle::Subheadline)
-                                        .text_color(theme.text_muted)
-                                        .child(
-                                            "Put the restart notice at the foot of the sidebar, \
-                                             where a release would.",
-                                        ),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .id("preview-notifier")
-                                .cursor_pointer()
-                                .child(theme.toggle(on))
-                                .on_click(cx.listener(move |_, _, _, cx| {
-                                    updater.update(cx, |updater, cx| updater.set_preview(!on, cx));
-                                })),
-                        ),
+                        .first(true)
+                        .glyph(icons::development::CircleFadingArrowUp)
+                        .truncate(),
+                        cx,
+                        move |_, cx| {
+                            updater.update(cx, |updater, cx| updater.set_preview(!on, cx));
+                        },
+                    ),
                 )
                 .into_any_element(),
         )

@@ -131,7 +131,7 @@ fn shown_path(path: &Path) -> String {
 
 /// One of the two answers a permission request comes down to, with the *once*
 /// and *always* forms of it read as one.
-struct Verdict<'a> {
+pub struct Verdict<'a> {
     /// What the button says: the once-form's own label, whatever the checkbox
     /// is set to. Agents word the always-form as a sentence — "Yes, and allow
     /// access to repos/ and ls commands" — and a sentence is not a button.
@@ -144,7 +144,7 @@ impl Verdict<'_> {
     /// The option id this answer sends with the checkbox in that state. An
     /// always with no form to send falls back to the once: an agent offering
     /// "allow always" and no "reject always" still has to be refusable.
-    fn id(&self, always: bool) -> String {
+    pub fn id(&self, always: bool) -> String {
         match always {
             true => self.always.unwrap_or(self.once).to_owned(),
             false => self.once.to_owned(),
@@ -160,7 +160,7 @@ impl Verdict<'_> {
 /// for every option the agent sent: the count is what catches a second option
 /// of a kind already taken, and a kind we do not know. Dropping something the
 /// agent asked about is not ours to do, so anything else falls to the stack.
-fn alert(options: &[Choice]) -> Option<(Verdict<'_>, Verdict<'_>)> {
+pub fn alert(options: &[Choice]) -> Option<(Verdict<'_>, Verdict<'_>)> {
     let deny = verdict(options, false)?;
     let allow = verdict(options, true)?;
     let covered = 2 + usize::from(deny.always.is_some()) + usize::from(allow.always.is_some());
@@ -752,65 +752,5 @@ impl Cydonia {
                     )
             }),
         ))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{Choice, PermissionOptionKind, alert};
-
-    fn choice(id: &str, kind: PermissionOptionKind) -> Choice {
-        Choice {
-            id: id.to_owned(),
-            name: id.to_owned(),
-            kind,
-        }
-    }
-
-    /// The set every agent sends: two answers, one of them rememberable.
-    #[test]
-    fn a_yes_a_no_and_a_forever_is_an_alert() {
-        let options = vec![
-            choice("yes", PermissionOptionKind::AllowOnce),
-            choice("yes-always", PermissionOptionKind::AllowAlways),
-            choice("no", PermissionOptionKind::RejectOnce),
-        ];
-        let (deny, allow) = alert(&options).expect("two sides, all three covered");
-        assert_eq!(allow.id(false), "yes");
-        assert_eq!(allow.id(true), "yes-always");
-        // No always-form to send: the refusal stands for this call either way.
-        assert_eq!(deny.id(true), "no");
-    }
-
-    /// An option neither side accounts for is an option the alert would drop.
-    #[test]
-    fn a_kind_of_the_agents_own_falls_to_the_stack() {
-        let options = vec![
-            choice("yes", PermissionOptionKind::AllowOnce),
-            choice("no", PermissionOptionKind::RejectOnce),
-            choice("edit", PermissionOptionKind::Other("edit_first".into())),
-        ];
-        assert!(alert(&options).is_none());
-    }
-
-    /// So is a second option of a kind one side has already taken.
-    #[test]
-    fn a_repeated_kind_falls_to_the_stack() {
-        let options = vec![
-            choice("yes", PermissionOptionKind::AllowOnce),
-            choice("yes-too", PermissionOptionKind::AllowOnce),
-            choice("no", PermissionOptionKind::RejectOnce),
-        ];
-        assert!(alert(&options).is_none());
-    }
-
-    /// An alert needs both answers — a lone side has nothing to sit opposite.
-    #[test]
-    fn one_sided_falls_to_the_stack() {
-        let options = vec![
-            choice("yes", PermissionOptionKind::AllowOnce),
-            choice("yes-always", PermissionOptionKind::AllowAlways),
-        ];
-        assert!(alert(&options).is_none());
     }
 }

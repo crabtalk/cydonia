@@ -105,9 +105,6 @@ pub struct Session {
     pub loaded: bool,
 }
 
-/// Progress reporter for the steps before the frontend is up.
-pub type StatusFn = Box<dyn Fn(&str) + Send + Sync>;
-
 /// How to open a session.
 #[derive(Default)]
 pub struct Launch {
@@ -115,9 +112,6 @@ pub struct Launch {
     pub cwd: PathBuf,
     /// A session to load instead of starting fresh.
     pub previous: Option<String>,
-    /// Progress for the steps before the frontend is up — notably
-    /// authentication, which can block on a browser sign-in.
-    pub status: Option<StatusFn>,
 }
 
 impl Launch {
@@ -125,12 +119,6 @@ impl Launch {
         Self {
             cwd,
             ..Default::default()
-        }
-    }
-
-    fn say(&self, message: &str) {
-        if let Some(status) = &self.status {
-            status(message);
         }
     }
 }
@@ -225,7 +213,7 @@ impl Session {
             };
             let result = match conn.load_session(load()).await {
                 Err(e) if e.is_auth_required() => {
-                    authenticate(&conn, &init, &launch).await?;
+                    authenticate(&conn, &init).await?;
                     conn.load_session(load()).await
                 }
                 other => other,
@@ -253,7 +241,7 @@ impl Session {
                 match conn.new_session(new_session()).await {
                     Ok(response) => response,
                     Err(e) if e.is_auth_required() => {
-                        authenticate(&conn, &init, &launch).await?;
+                        authenticate(&conn, &init).await?;
                         conn.new_session(new_session()).await.map_err(|e| {
                             anyhow!(
                                 "session/new failed after authentication: {}",
@@ -385,8 +373,8 @@ impl Client for Frontend {
 ///
 /// `cacp::spawn` sets `kill_on_drop`, so letting the child field drop on its own
 /// is an immediate SIGKILL — mid-request, if the agent was answering one.
-/// [`ChatSession::close`] sends `session/cancel` ahead of this, and the pause
-/// here is what gives that notification time to be read.
+/// [`crate::model::session::ChatSession::close`] sends `session/cancel` ahead
+/// of this, and the pause here is what gives that notification time to be read.
 ///
 /// It is not a clean shutdown, and cannot be until cacp can close an agent's
 /// stdin: its read loop is handed a `Peer` by value, so the write loop holding
@@ -489,7 +477,7 @@ fn acp_mcp_servers(
 /// (API keys read from the agent's env) fail fast when unset;
 /// interactive ones (OAuth) block until the user completes the flow in
 /// the browser the agent opens.
-async fn authenticate(conn: &AgentConn, init: &InitializeResponse, launch: &Launch) -> Result<()> {
+async fn authenticate(conn: &AgentConn, init: &InitializeResponse) -> Result<()> {
     if init.auth_methods.is_empty() {
         return Err(anyhow!(
             "authentication required, but the agent advertises no auth methods"
@@ -497,12 +485,6 @@ async fn authenticate(conn: &AgentConn, init: &InitializeResponse, launch: &Laun
     }
     let mut failures = Vec::new();
     for method in &init.auth_methods {
-        // Interactive methods (OAuth) block here until the user
-        // finishes signing in, so say so rather than looking hung.
-        launch.say(&format!(
-            "authenticating — {} (finish any sign-in your browser opens)",
-            method.name()
-        ));
         let request = AuthenticateRequest {
             method_id: method.id().clone(),
             meta: None,

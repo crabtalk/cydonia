@@ -12,8 +12,8 @@ use crate::{
 };
 use bezel::{
     gpui::{
-        App, Bounds, Context, Entity, Render, SharedString, TitlebarOptions, Window,
-        WindowBackgroundAppearance, WindowBounds, WindowHandle, WindowOptions, div, point,
+        AnyElement, App, Bounds, Context, ElementId, Entity, Render, SharedString, TitlebarOptions,
+        Window, WindowBackgroundAppearance, WindowBounds, WindowHandle, WindowOptions, div, point,
         prelude::*, px, size,
     },
     motion::{Fade, Painter},
@@ -21,7 +21,7 @@ use bezel::{
     ui::{
         icons,
         input::{FieldEvent, Shape, TextField},
-        widgets::{Layout, Scaffolding},
+        widgets::{Content, Controls, Layout, Scaffolding},
     },
 };
 use std::collections::HashSet;
@@ -216,6 +216,124 @@ pub fn open(
         },
     )
     .ok()
+}
+
+/// One row of a settings group that carries a switch: an optional icon, a
+/// title over a line of explanation, and the toggle on the right.
+///
+/// Six sections built this row by hand and they had drifted apart in nothing
+/// but their copy, so it lives here and they pass what differs.
+pub(super) struct Switch {
+    id: ElementId,
+    title: SharedString,
+    blurb: SharedString,
+    on: bool,
+    first: bool,
+    glyph: Option<&'static [u8]>,
+    truncate: bool,
+    badge: Option<SharedString>,
+}
+
+impl Switch {
+    pub(super) fn new(
+        id: impl Into<ElementId>,
+        title: impl Into<SharedString>,
+        blurb: impl Into<SharedString>,
+        on: bool,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            title: title.into(),
+            blurb: blurb.into(),
+            on,
+            first: false,
+            glyph: None,
+            truncate: false,
+            badge: None,
+        }
+    }
+
+    /// Whether this is the first row of its group box — `card_row` draws no
+    /// divider above that one.
+    pub(super) fn first(mut self, first: bool) -> Self {
+        self.first = first;
+        self
+    }
+
+    /// The mark down the left, which the dense lists carry and a row standing
+    /// on its own does not.
+    pub(super) fn glyph(mut self, glyph: &'static [u8]) -> Self {
+        self.glyph = Some(glyph);
+        self
+    }
+
+    /// Hold the blurb to one line, whatever the window is doing: a row that
+    /// grows a second one moves every switch below it down the column.
+    pub(super) fn truncate(mut self) -> Self {
+        self.truncate = true;
+        self
+    }
+
+    pub(super) fn badge(mut self, badge: Option<impl Into<SharedString>>) -> Self {
+        self.badge = badge.map(Into::into);
+        self
+    }
+}
+
+impl SettingsWindow {
+    /// Paint a [`Switch`], calling `flip` when it is pressed.
+    pub(super) fn switch_row(
+        &self,
+        switch: Switch,
+        cx: &Context<Self>,
+        flip: impl Fn(&mut Self, &mut Context<Self>) + 'static,
+    ) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        theme
+            .card_row(switch.first)
+            .children(switch.glyph.map(|glyph| {
+                div()
+                    .flex_none()
+                    .size(px(18.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        icons::icon(glyph)
+                            .size(px(16.))
+                            .flex_none()
+                            .text_color(theme.text_muted),
+                    )
+            }))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .child(theme.row_title(switch.title))
+                    .child(
+                        div()
+                            .mt(px(4.))
+                            .when(switch.truncate, |el| el.truncate())
+                            .text_style(TextStyle::Subheadline)
+                            .text_color(theme.text_muted)
+                            .child(switch.blurb),
+                    ),
+            )
+            .children(switch.badge.map(|label| theme.badge(label)))
+            .child(
+                div()
+                    .id(switch.id)
+                    .cursor_pointer()
+                    .child(theme.toggle(switch.on))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        flip(this, cx);
+                        cx.notify();
+                    })),
+            )
+            .into_any_element()
+    }
 }
 
 impl SettingsWindow {

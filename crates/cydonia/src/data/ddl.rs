@@ -71,43 +71,6 @@ impl Data {
         data::columns_of(&self.writer, &key)
     }
 
-    /// Put the columns in this order.
-    ///
-    /// Column order is the one ordering in a table that is real and not a
-    /// query: SQL has no `ORDER BY` for it and no statement that changes it, so
-    /// it costs the same rebuild a retype does. Row order gets no such method
-    /// on purpose — rows are ordered by what you sort them on, and giving them
-    /// a stored position would mean a column in the person's data they never
-    /// asked for and every agent insert would have to maintain.
-    ///
-    /// `order` must name exactly the columns the table has. A caller that
-    /// dropped one would otherwise rebuild the table without it, which is a
-    /// column of data deleted by a drag.
-    pub fn reorder_columns(&mut self, table: &str, order: &[String]) -> Result<Vec<Column>> {
-        let key = self.resolve(table)?;
-        let existing = data::columns_of(&self.writer, &key)?;
-        if order.len() != existing.len()
-            || !order
-                .iter()
-                .all(|name| existing.iter().any(|col| &col.name == name))
-        {
-            bail!("that ordering is not this table's columns");
-        }
-        let next: Vec<Column> = order
-            .iter()
-            .filter_map(|name| existing.iter().find(|col| &col.name == name).cloned())
-            .collect();
-        if next
-            .iter()
-            .map(|col| &col.name)
-            .eq(existing.iter().map(|col| &col.name))
-        {
-            return Ok(existing);
-        }
-        self.rebuild(&key, &next)?;
-        data::columns_of(&self.writer, &key)
-    }
-
     /// Retype by rebuilding the table around the new declaration, which is the
     /// only way SQLite changes a column's type.
     ///

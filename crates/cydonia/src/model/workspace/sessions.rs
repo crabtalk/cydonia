@@ -1,0 +1,284 @@
+//! The agent sessions running in a project, and what a turn does to one.
+//!
+//! A continuation of [`Workspace`]'s one `impl`, which is why it opens on
+//! `use super::*`: these methods work on the same struct and reach the same
+//! names as the rest of it.
+use super::*;
+
+impl Workspace {
+    /// Open a session in the active project. `seed` is its first prompt, sent
+    /// as soon as the agent is up — what a dispatched card rides in on.
+    ///
+    /// The one place a session is born, so it is where the sessions switch
+    /// bites: nothing spawns an agent until it has been turned on.
+    pub fn new_session(
+        &mut self,
+        entry: settings::Agent,
+        seed: Option<String>,
+        cx: &mut Context<Self>,
+    ) -> Option<u64> {
+        if !self.settings.features.sessions {
+            return None;
+        }
+        let ix = self.active?;
+        let id = self.next_id;
+        self.next_id += 1;
+        let chat = ChatSession::connect(id, entry, self.projects[ix].path.clone(), seed, cx);
+        let project = &mut self.projects[ix];
+        project.sessions.push(chat);
+        project.active = Some(id);
+        cx.notify();
+        Some(id)
+    }
+
+    /// Every project's sessions are on show, so picking one brings its project
+    /// forward with it.
+    pub fn select_session(&mut self, id: u64, cx: &mut Context<Self>) {
+        let Some(ix) = self.project_of(id) else {
+            return;
+        };
+        self.projects[ix].active = Some(id);
+        self.active = Some(ix);
+        // A session has no file until its first turn is written, so one that
+        // has said nothing is not yet somewhere to come back to.
+        if let Some(record) = self.projects[ix]
+            .session(id)
+            .and_then(|chat| chat.record.clone())
+        {
+            self.remember(ix, state::Kind::Session, record);
+        }
+        self.wake_session(id, cx);
+        cx.notify();
+    }
+
+    /// Point a session at an agent, if it has none and could have one.
+    ///
+    /// Called where a session is brought *forward* rather than where one is
+    /// created: the session you are looking at is the one you are about to work
+    /// in, and what an agent reports on connect — its modes, its model — is
+    /// what the composer needs before the first prompt rather than after it.
+    ///
+    /// Only ever the one in front. Every other session a project holds stays
+    /// idle, which is what still keeps a launch from starting an agent per
+    /// transcript. An archived one stays where it was put.
+    pub(super) fn wake_session(&mut self, id: u64, cx: &mut Context<Self>) {
+        if !self.settings.features.sessions {
+            return;
+        }
+        let found = self
+            .projects
+            .iter_mut()
+            .find_map(|project| project.session_mut(id))
+            .filter(|chat| chat.idle() && chat.resumable() && !chat.closed);
+        if let Some(chat) = found {
+            chat.resume(cx);
+            cx.notify();
+        }
+    }
+
+    fn project_of(&self, id: u64) -> Option<usize> {
+        self.projects
+            .iter()
+            .position(|project| project.session(id).is_some())
+    }
+
+    /// Read the project's filed sessions back, minting an id for each — ids
+    /// mean nothing across a launch, so a reloaded one is as new as any. The
+    /// agent is resolved by name; a session whose agent has since left
+    /// `settings.toml` comes back readable but cannot reconnect.
+    pub(super) fn restore_sessions(&mut self, ix: usize) {
+        let path = self.projects[ix].path.clone();
+        for stored in self.projects[ix].store().sessions() {
+            let id = self.next_id;
+            self.next_id += 1;
+            let entry = self
+                .settings
+                .agents
+                .iter()
+                .find(|agent| agent.name == stored.agent)
+                .cloned()
+                .unwrap_or_else(|| settings::Agent {
+                    name: stored.agent.clone(),
+                    id: None,
+                    command: String::new(),
+                    args: Vec::new(),
+                    env: Default::default(),
+                });
+            let chat = ChatSession::restore(id, path.clone(), entry, stored);
+            self.projects[ix].sessions.push(chat);
+        }
+    }
+
+    /// Send to a session, starting an agent for it when it has none — typing
+    /// into a session read back from disk is what picks it up again.
+    pub fn send(&mut self, id: u64, content: String, cx: &mut Context<Self>) {
+        // Read before `chat` borrows the projects. This is the second place an
+        // agent process starts, so it is the second half of the gate.
+        let enabled = self.settings.features.sessions;
+        let found = self
+            .projects
+            .iter_mut()
+            .find_map(|project| project.session_mut(id));
+        let Some(chat) = found else {
+            return;
+        };
+        // Said out loud rather than queued: with no agent to drain it, a
+        // prompt pushed onto the queue reads as a message that went nowhere.
+        if !enabled && !chat.live() {
+            chat.notice(
+                true,
+                "sessions are off — turn them on in Settings › Features",
+            );
+            cx.notify();
+            return;
+        }
+        if chat.idle() && chat.resumable() {
+            chat.resume(cx);
+        }
+        chat.send(content);
+        let record = chat.record.clone();
+        if let (Some(record), Some(ix)) = (record, self.project_of(id)) {
+            self.remember(ix, state::Kind::Session, record);
+        }
+        cx.notify();
+    }
+
+    /// Close the connection and keep the transcript. The row stays where it
+    /// was, readable, and typing into it opens an agent again.
+    /// Put a session away, or bring it back. Closing tears the agent down and
+    /// keeps the transcript; opening it again is what reconnects.
+    pub fn archive_session(&mut self, id: u64, archived: bool, cx: &mut Context<Self>) {
+        self.with_session(id, cx, |chat| match archived {
+            true => chat.close(),
+            false => chat.closed = false,
+        });
+    }
+
+    pub fn rename_session(&mut self, id: u64, name: String, cx: &mut Context<Self>) {
+        self.with_session(id, cx, |chat| {
+            let name = name.trim();
+            chat.name = (!name.is_empty()).then(|| name.to_owned());
+            chat.flush();
+        });
+    }
+
+    pub fn close_session(&mut self, id: u64, cx: &mut Context<Self>) {
+        let Some(project) = self.project_of(id).map(|ix| &mut self.projects[ix]) else {
+            return;
+        };
+        // Closing a session is what deletes it: leaving the file would put
+        // the row back on the next launch.
+        if let Some(record) = project.session(id).and_then(|chat| chat.record.clone()) {
+            project.store().remove_session(&record);
+        }
+        project.sessions.retain(|chat| chat.id != id);
+        if project.active == Some(id) {
+            project.active = project.sessions.first().map(|chat| chat.id);
+        }
+        cx.notify();
+    }
+
+    /// Any session, in whichever project holds it — the pump that feeds a
+    /// session knows only its id, and must not care which tab it sits behind.
+    pub fn session(&self, id: u64) -> Option<&ChatSession> {
+        self.projects.iter().find_map(|project| project.session(id))
+    }
+
+    /// The session filed under this id, wherever it is — how a card finds the
+    /// agent it was handed to after a launch that renumbered every session.
+    /// [`ChatSession::id`] is minted per launch and means nothing on disk;
+    /// this is the name that keeps.
+    pub fn session_by_record(&self, record: &str) -> Option<&ChatSession> {
+        self.projects
+            .iter()
+            .flat_map(|project| project.sessions.iter())
+            .find(|chat| chat.record.as_deref() == Some(record))
+    }
+
+    /// The id a session is filed under, minted if it has none — what a
+    /// dispatched card writes down.
+    pub fn mint_record(&mut self, id: u64) -> Option<String> {
+        self.projects
+            .iter_mut()
+            .find_map(|project| project.session_mut(id))?
+            .mint_record()
+            .map(str::to_owned)
+    }
+
+    /// Run `f` on the session (when it still exists) and repaint.
+    pub fn with_session(
+        &mut self,
+        id: u64,
+        cx: &mut Context<Self>,
+        f: impl FnOnce(&mut ChatSession),
+    ) {
+        let found = self
+            .projects
+            .iter_mut()
+            .find_map(|project| project.session_mut(id));
+        if let Some(chat) = found {
+            f(chat);
+            cx.notify();
+        }
+    }
+
+    /// Put what the transcript has selected on the clipboard — see
+    /// [`crate::view::component::transcript::State::copied`].
+    ///
+    /// Answers whether there was anything, so a `cmd-c` that finds no selection
+    /// can be left to whatever else wanted it.
+    pub fn copy_selection(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(text) = self
+            .active_session()
+            .and_then(|chat| chat.transcript.copied(chat))
+        else {
+            return false;
+        };
+        cx.write_to_clipboard(ClipboardItem::new_string(text));
+        true
+    }
+
+    /// Switch a session's mode — what the composer's mode picker reports.
+    /// See [`ChatSession::set_mode`].
+    pub fn set_session_mode(&mut self, id: u64, mode_id: String, cx: &mut Context<Self>) {
+        self.with_session(id, cx, |chat| chat.set_mode(&mode_id));
+    }
+
+    /// The same for a config option, which is where the model lives.
+    pub fn set_session_config(
+        &mut self,
+        id: u64,
+        config_id: String,
+        value: SessionConfigOptionValue,
+        cx: &mut Context<Self>,
+    ) {
+        self.with_session(id, cx, |chat| chat.set_config(&config_id, value));
+    }
+
+    /// The session reached an agent: send it whatever was typed while it had
+    /// none, and write the agent's own id down so a later launch can load the
+    /// conversation back.
+    pub fn session_connected(&mut self, id: u64, cx: &mut Context<Self>) {
+        self.with_session(id, cx, |chat| {
+            chat.drain();
+            chat.flush();
+        });
+        cx.notify();
+    }
+
+    /// The session the chat pane would show. Gated, and it is the gate that
+    /// matters most: sessions are read back off disk when a project opens,
+    /// whatever the switch says, so without this a filed transcript would put
+    /// the pane on screen with no composer under it.
+    pub fn active_session(&self) -> Option<&ChatSession> {
+        self.settings
+            .features
+            .sessions
+            .then(|| self.active_project()?.active_session())
+            .flatten()
+    }
+
+    pub fn active_id(&self) -> Option<u64> {
+        self.active_project().and_then(|project| project.active)
+    }
+}

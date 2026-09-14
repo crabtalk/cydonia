@@ -267,75 +267,74 @@ pub fn load() -> Result<Settings> {
     Ok(settings)
 }
 
-/// Switch a feature on or off in the file.
+/// Read `settings.toml`, hand it to `change`, and write it back when `change`
+/// says there is something to write.
 ///
-/// Edited with `toml_edit` for the reason [`put_agent`] is: the file is meant
-/// to be opened by hand, and a round trip would drop every comment in it. The
-/// table is put in explicitly rather than sprung from the index, because a
-/// table that arrives that way is implicit and prints no header of its own.
-pub fn set_feature(feature: Feature, on: bool) -> Result<()> {
+/// Edited with `toml_edit` rather than re-serialised: the file is meant to be
+/// opened and changed by hand, and a round trip through a value tree would
+/// silently delete every comment in it.
+fn edit(change: impl FnOnce(&mut toml_edit::DocumentMut) -> Result<bool>) -> Result<()> {
     let path = dir()?.join("settings.toml");
     let body = std::fs::read_to_string(&path).unwrap_or_default();
     let mut doc: toml_edit::DocumentMut =
         body.parse().context("settings.toml is not valid toml")?;
-    let features = doc["features"].or_insert(toml_edit::table());
-    let Some(features) = features.as_table_mut() else {
-        anyhow::bail!("`features` in settings.toml is not a table");
-    };
-    features.set_implicit(false);
-    features[feature.key()] = toml_edit::value(on);
+    if !change(&mut doc)? {
+        return Ok(());
+    }
     std::fs::write(&path, doc.to_string())?;
     Ok(())
 }
 
-/// Write one key of `[mcp]`. The same `toml_edit` round trip as
-/// [`set_feature`], and for the same reason: the comments survive it.
-pub fn set_mcp(key: &str, on: bool) -> Result<()> {
-    let path = dir()?.join("settings.toml");
-    let body = std::fs::read_to_string(&path).unwrap_or_default();
-    let mut doc: toml_edit::DocumentMut =
-        body.parse().context("settings.toml is not valid toml")?;
-    let mcp = doc["mcp"].or_insert(toml_edit::table());
-    let Some(mcp) = mcp.as_table_mut() else {
-        anyhow::bail!("`mcp` in settings.toml is not a table");
+/// One named table of the document, made if it is not there. Put in explicitly
+/// rather than sprung from the index, because a table that arrives that way is
+/// implicit and prints no header of its own.
+fn table<'a>(doc: &'a mut toml_edit::DocumentMut, name: &str) -> Result<&'a mut toml_edit::Table> {
+    let item = doc[name].or_insert(toml_edit::table());
+    let Some(held) = item.as_table_mut() else {
+        anyhow::bail!("`{name}` in settings.toml is not a table");
     };
-    mcp.set_implicit(false);
-    mcp[key] = toml_edit::value(on);
-    std::fs::write(&path, doc.to_string())?;
-    Ok(())
+    held.set_implicit(false);
+    Ok(held)
+}
+
+/// Switch a feature on or off in the file.
+pub fn set_feature(feature: Feature, on: bool) -> Result<()> {
+    edit(|doc| {
+        table(doc, "features")?[feature.key()] = toml_edit::value(on);
+        Ok(true)
+    })
+}
+
+/// Write one key of `[mcp]`.
+pub fn set_mcp(key: &str, on: bool) -> Result<()> {
+    edit(|doc| {
+        table(doc, "mcp")?[key] = toml_edit::value(on);
+        Ok(true)
+    })
 }
 
 /// Move the cover ceiling in the file, in megabytes.
 pub fn set_cover_memory(mb: u64) -> Result<()> {
-    let path = dir()?.join("settings.toml");
-    let body = std::fs::read_to_string(&path).unwrap_or_default();
-    let mut doc: toml_edit::DocumentMut =
-        body.parse().context("settings.toml is not valid toml")?;
-    doc["cover_memory"] = toml_edit::value(mb as i64);
-    std::fs::write(&path, doc.to_string())?;
-    Ok(())
+    edit(|doc| {
+        doc["cover_memory"] = toml_edit::value(mb as i64);
+        Ok(true)
+    })
 }
 
 /// Move the watch's bounce in the file, in milliseconds.
 pub fn set_watch_bounce(ms: u64) -> Result<()> {
-    let path = dir()?.join("settings.toml");
-    let body = std::fs::read_to_string(&path).unwrap_or_default();
-    let mut doc: toml_edit::DocumentMut =
-        body.parse().context("settings.toml is not valid toml")?;
-    doc["watch_bounce"] = toml_edit::value(ms as i64);
-    std::fs::write(&path, doc.to_string())?;
-    Ok(())
+    edit(|doc| {
+        doc["watch_bounce"] = toml_edit::value(ms as i64);
+        Ok(true)
+    })
 }
 
 /// Switch the release check on or off in the file.
 pub fn set_auto_update(on: bool) -> Result<()> {
-    let path = dir()?.join("settings.toml");
-    let body = std::fs::read_to_string(&path).unwrap_or_default();
-    let mut doc: toml_edit::DocumentMut =
-        body.parse().context("settings.toml is not valid toml")?;
-    doc["auto_update"] = toml_edit::value(on);
-    std::fs::write(&path, doc.to_string())?;
-    Ok(())
+    edit(|doc| {
+        doc["auto_update"] = toml_edit::value(on);
+        Ok(true)
+    })
 }
 
 /// Put `agent` in the file, replacing whichever entry already launches it.
@@ -344,105 +343,94 @@ pub fn set_auto_update(on: bool) -> Result<()> {
 /// install claims the hand-written `@latest` entry that shipped as a default
 /// instead of sitting next to it. A replaced entry keeps its own `name`: the
 /// person who wrote it chose that, and only the command underneath has moved.
-///
-/// Edited in place with `toml_edit` rather than re-serialised: this file is
-/// meant to be opened and changed by hand, and a round trip through a value
-/// tree would silently delete every comment in it.
 pub fn put_agent(agent: &Agent, supersedes: Option<&str>) -> Result<()> {
-    let path = dir()?.join("settings.toml");
-    let body = std::fs::read_to_string(&path).unwrap_or_default();
-    let mut doc: toml_edit::DocumentMut =
-        body.parse().context("settings.toml is not valid toml")?;
+    edit(|doc| {
+        let agents = doc["agents"].or_insert(toml_edit::Item::ArrayOfTables(
+            toml_edit::ArrayOfTables::new(),
+        ));
+        let Some(agents) = agents.as_array_of_tables_mut() else {
+            anyhow::bail!("`agents` in settings.toml is not a list of tables");
+        };
+        let existing = agents
+            .iter()
+            .position(|table| claims(table, agent, supersedes));
+        let name = existing
+            .and_then(|ix| agents.get(ix))
+            .and_then(|table| table.get("name"))
+            .and_then(|n| n.as_str())
+            .unwrap_or(&agent.name)
+            .to_owned();
+        // Whatever preceded the entry — the file's header, a note the user left
+        // above it — is trivia hanging off the table, and replacing the table
+        // throws it away unless it is carried across by hand.
+        let decor = existing
+            .and_then(|ix| agents.get(ix))
+            .map(|table| table.decor().clone());
 
-    let agents = doc["agents"].or_insert(toml_edit::Item::ArrayOfTables(
-        toml_edit::ArrayOfTables::new(),
-    ));
-    let Some(agents) = agents.as_array_of_tables_mut() else {
-        anyhow::bail!("`agents` in settings.toml is not a list of tables");
-    };
-    let existing = agents
-        .iter()
-        .position(|table| claims(table, agent, supersedes));
-    let name = existing
-        .and_then(|ix| agents.get(ix))
-        .and_then(|table| table.get("name"))
-        .and_then(|n| n.as_str())
-        .unwrap_or(&agent.name)
-        .to_owned();
-    // Whatever preceded the entry — the file's header, a note the user left
-    // above it — is trivia hanging off the table, and replacing the table
-    // throws it away unless it is carried across by hand.
-    let decor = existing
-        .and_then(|ix| agents.get(ix))
-        .map(|table| table.decor().clone());
-
-    let mut entry = toml_edit::Table::new();
-    entry["name"] = toml_edit::value(name);
-    if let Some(id) = &agent.id {
-        entry["id"] = toml_edit::value(id.clone());
-    }
-    entry["command"] = toml_edit::value(agent.command.clone());
-    let mut args = toml_edit::Array::new();
-    for arg in &agent.args {
-        args.push(arg.as_str());
-    }
-    entry["args"] = toml_edit::value(args);
-    if !agent.env.is_empty() {
-        let mut env = toml_edit::InlineTable::new();
-        for (key, value) in &agent.env {
-            env.insert(key, value.as_str().into());
+        let mut entry = toml_edit::Table::new();
+        entry["name"] = toml_edit::value(name);
+        if let Some(id) = &agent.id {
+            entry["id"] = toml_edit::value(id.clone());
         }
-        entry["env"] = toml_edit::value(env);
-    }
-
-    match existing {
-        Some(ix) => {
-            if let Some(decor) = decor {
-                *entry.decor_mut() = decor;
+        entry["command"] = toml_edit::value(agent.command.clone());
+        let mut args = toml_edit::Array::new();
+        for arg in &agent.args {
+            args.push(arg.as_str());
+        }
+        entry["args"] = toml_edit::value(args);
+        if !agent.env.is_empty() {
+            let mut env = toml_edit::InlineTable::new();
+            for (key, value) in &agent.env {
+                env.insert(key, value.as_str().into());
             }
-            *agents.get_mut(ix).expect("position is in range") = entry;
+            entry["env"] = toml_edit::value(env);
         }
-        None => agents.push(entry),
-    }
-    std::fs::write(&path, doc.to_string())?;
-    Ok(())
+
+        match existing {
+            Some(ix) => {
+                if let Some(decor) = decor {
+                    *entry.decor_mut() = decor;
+                }
+                *agents.get_mut(ix).expect("position is in range") = entry;
+            }
+            None => agents.push(entry),
+        }
+        Ok(true)
+    })
 }
 
 /// Drop the entry installed from registry agent `id`.
 pub fn remove_agent(id: &str) -> Result<()> {
-    let path = dir()?.join("settings.toml");
-    let body = std::fs::read_to_string(&path).unwrap_or_default();
-    let mut doc: toml_edit::DocumentMut =
-        body.parse().context("settings.toml is not valid toml")?;
-    let Some(agents) = doc
-        .get_mut("agents")
-        .and_then(|a| a.as_array_of_tables_mut())
-    else {
-        return Ok(());
-    };
-    let Some(ix) = agents
-        .iter()
-        .position(|table| table.get("id").and_then(|i| i.as_str()) == Some(id))
-    else {
-        return Ok(());
-    };
-    // The file's header hangs off whichever entry comes first. If that is the
-    // one being dropped, the header has to move down onto its successor or it
-    // leaves with it.
-    let prefix = agents
-        .get(ix)
-        .and_then(|table| table.decor().prefix().cloned());
-    agents.remove(ix);
-    if ix == 0
-        && let Some(prefix) = prefix
-    {
-        match agents.get_mut(0) {
-            Some(first) => first.decor_mut().set_prefix(prefix),
-            None => doc.as_table_mut().decor_mut().set_prefix(prefix),
+    edit(|doc| {
+        let Some(agents) = doc
+            .get_mut("agents")
+            .and_then(|a| a.as_array_of_tables_mut())
+        else {
+            return Ok(false);
+        };
+        let Some(ix) = agents
+            .iter()
+            .position(|table| table.get("id").and_then(|i| i.as_str()) == Some(id))
+        else {
+            return Ok(false);
+        };
+        // The file's header hangs off whichever entry comes first. If that is the
+        // one being dropped, the header has to move down onto its successor or it
+        // leaves with it.
+        let prefix = agents
+            .get(ix)
+            .and_then(|table| table.decor().prefix().cloned());
+        agents.remove(ix);
+        if ix == 0
+            && let Some(prefix) = prefix
+        {
+            match agents.get_mut(0) {
+                Some(first) => first.decor_mut().set_prefix(prefix),
+                None => doc.as_table_mut().decor_mut().set_prefix(prefix),
+            }
         }
-    }
-    std::fs::write(&path, doc.to_string())?;
-    Ok(())
+        Ok(true)
+    })
 }
 
 /// Whether an existing entry is the one this install replaces: the same

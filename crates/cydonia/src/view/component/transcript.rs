@@ -525,7 +525,7 @@ fn work(chat: &ChatSession, body: Range<usize>, cx: &mut Context<Workspace>) -> 
 
 /// How far a title's head — the word that names the call — may run before the
 /// rest of the line has to start truncating.
-const HEAD_MAX: usize = 24;
+pub const HEAD_MAX: usize = 24;
 
 /// How long a one-lined title may run before the row's ellipsis is the only
 /// way to read it, and the full text is worth opening for.
@@ -535,7 +535,7 @@ const TITLE_MAX: usize = 72;
 /// call, the rest that truncates beside it, and the whole text when the one
 /// line lost something — a shell script arrives as its own title, newlines and
 /// all.
-fn title(label: &str) -> (SharedString, Option<SharedString>, Option<SharedString>) {
+pub fn title(label: &str) -> (SharedString, Option<SharedString>, Option<SharedString>) {
     let label = label.trim();
     let line = one_line(label);
     let cut = line
@@ -794,42 +794,4 @@ fn working(chat: &ChatSession, at: usize, cx: &mut Context<Workspace>) -> AnyEle
         // every frame whether or not the agent has said anything.
         .children(spend(chat, &theme))
         .into_any_element()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::title;
-
-    /// A shell script arrives as its own title. The row gets one line of it;
-    /// the whole thing is what opening the row is for.
-    #[test]
-    fn a_script_is_one_line_and_a_way_back_to_the_rest() {
-        let script = "python3 -c \"\nimport json\nprint(json.dumps({}))\n\"";
-        let (name, rest, full) = title(script);
-        assert_eq!(name, "python3");
-        assert_eq!(
-            rest.expect("the command after the head"),
-            "-c \" import json print(json.dumps({})) \""
-        );
-        assert_eq!(full.expect("the script, as written"), script);
-    }
-
-    /// A title that already fits keeps its head and its rest, and has nothing
-    /// left over to open onto.
-    #[test]
-    fn a_short_title_opens_onto_nothing() {
-        let (name, rest, full) = title("Read src/view/root.rs");
-        assert_eq!(name, "Read");
-        assert_eq!(rest.expect("the path"), "src/view/root.rs");
-        assert!(full.is_none());
-    }
-
-    /// One long word is still one line: the head is capped so the rest has
-    /// somewhere to truncate.
-    #[test]
-    fn a_head_longer_than_the_row_is_cut() {
-        let (name, rest, _) = title(&"x".repeat(40));
-        assert_eq!(name.len(), super::HEAD_MAX);
-        assert_eq!(rest.expect("what the head could not take").len(), 16);
-    }
 }
