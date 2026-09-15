@@ -15,5 +15,5 @@ artifact.workspace = true
 axum.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-skills.workspace = true
+prompts.workspace = true
 tokio.workspace = true

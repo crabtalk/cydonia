@@ -29,31 +29,6 @@ use tool::{Answer, Args, Tool, Trouble};
 /// What the server calls itself in `initialize`.
 const NAME: &str = "cydonia";
 
-/// What it tells a model it is holding, once, instead of in every description.
-/// What it tells a model it is holding, once, instead of in every description.
-///
-/// The last line is the one that earns its place. A coding agent sitting in
-/// the directory will otherwise open `.cydonia/boards/*.toml` and write TOML
-/// into it, and a card written that way has no id and no handle until
-/// something reads it back — so the tools exist and are quietly routed around.
-/// Nothing here can enforce that; it can only say it.
-const BOUND: &str = "\
-The articles and boards cydonia keeps for the project you are working in. A \
-board is named by its key (ROAD), its name or its id; a card by its handle \
-(ROAD-12) or its id; a column by its name or its id; an article by its title \
-or its id. Do not read or write anything under .cydonia/ directly — these \
-tools are what keep the ids and handles straight.";
-
-/// The same, for a caller that is not in a project: every tool takes the one
-/// it is about as a path.
-const LOOSE: &str = "\
-The articles and boards cydonia keeps for a project, which is any directory. \
-Every tool takes the project it is about as a path. Within one, a board is \
-named by its key (ROAD), its name or its id; a card by its handle (ROAD-12) \
-or its id; a column by its name or its id; an article by its title or its id. \
-Do not read or write anything under .cydonia/ directly — these tools are what \
-keep the ids and handles straight.";
-
 pub struct Server {
     /// Mounted rather than compiled in. A surface the user has switched off is
     /// one the agent must not be told about at all — a tool that is listed and
@@ -144,11 +119,10 @@ impl Server {
     }
 
     fn initialize(&self, at: Option<&Path>) -> Value {
-        let mut instructions = if at.is_some() { BOUND } else { LOOSE }.to_owned();
-        if self.offered().any(|tool| tool.name == "skill_read") {
-            instructions.push_str("\n\n");
-            instructions.push_str(&tools::skill::instructions());
-        }
+        let instructions = prompts::tool_context(
+            at.is_some(),
+            self.offered().any(|tool| tool.name == "skill_read"),
+        );
         json!({
             "protocolVersion": proto::VERSION,
             // `listChanged` is a promise to send a notification, and this

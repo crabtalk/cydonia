@@ -294,7 +294,15 @@ impl Session {
     /// Send a prompt turn with explicit content blocks (text plus
     /// embedded resources). Same result path as [`Self::prompt`].
     pub fn prompt_blocks(&self, blocks: Vec<ContentBlock>) {
-        let blocks = super::context::prompt(&self.cwd, self.built_in_mcp, blocks);
+        let blocks = super::context::prompt(
+            &self.cwd,
+            self.built_in_mcp,
+            self.init
+                .agent_capabilities
+                .prompt_capabilities
+                .embedded_context,
+            blocks,
+        );
         let request = PromptRequest::new(self.session_id.clone(), blocks);
         let conn = self.conn();
         let tx = self.tx.clone();

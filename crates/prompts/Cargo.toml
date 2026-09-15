@@ -1,6 +1,6 @@
 [package]
-name = "cydonia-skills"
-description = "Built-in agent skills for Cydonia"
+name = "cydonia-prompts"
+description = "Shared agent instructions and built-in skills for Cydonia"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

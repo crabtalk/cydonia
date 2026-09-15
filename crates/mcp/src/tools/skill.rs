@@ -18,18 +18,11 @@ pub static TOOLS: [Tool; 1] = [Tool {
 
 fn read(args: Args<'_>) -> Outcome {
     let name = args.text(NAME)?;
-    let skill = skills::read(name).ok_or_else(|| {
+    let skill = prompts::skills::read(name).ok_or_else(|| {
         Trouble::Refused(format!(
             "no built-in skill {name}; available skills:\n{}",
-            skills::catalog()
+            prompts::skills::catalog()
         ))
     })?;
     Ok(Answer::said(skill.content))
-}
-
-pub fn instructions() -> String {
-    format!(
-        "Built-in Cydonia skills:\n{}\nWhen a task matches a skill's description, call skill_read with its name before proceeding.",
-        skills::catalog(),
-    )
 }

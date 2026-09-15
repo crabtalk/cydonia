@@ -2014,7 +2014,7 @@ dependencies = [
  "cacp-agents",
  "cydonia-artifact",
  "cydonia-mcp",
- "cydonia-skills",
+ "cydonia-prompts",
  "dirs 6.0.0",
  "futures",
  "global-hotkey",
@@ -2050,14 +2050,14 @@ version = "0.1.5"
 dependencies = [
  "axum",
  "cydonia-artifact",
- "cydonia-skills",
+ "cydonia-prompts",
  "serde",
  "serde_json",
  "tokio",
 ]
 
 [[package]]
-name = "cydonia-skills"
+name = "cydonia-prompts"
 version = "0.1.5"
 dependencies = [
  "serde",

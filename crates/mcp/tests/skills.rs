@@ -21,7 +21,7 @@ fn skills_are_discoverable_and_readable_without_a_project_in_read_only_mode() {
         hello["instructions"]
             .as_str()
             .unwrap()
-            .contains(&skills::catalog())
+            .contains(&prompts::skills::catalog())
     );
     let listed = request(&server, "tools/list", json!({}));
     let tool = &listed["tools"][0];
@@ -35,7 +35,7 @@ fn skills_are_discoverable_and_readable_without_a_project_in_read_only_mode() {
     );
     assert_eq!(
         result["content"][0]["text"],
-        skills::read("cydonia-markdown").unwrap().content
+        prompts::skills::read("cydonia-markdown").unwrap().content
     );
 }
 
@@ -52,7 +52,7 @@ fn unknown_skills_return_a_recoverable_error_and_catalog() {
         result["content"][0]["text"]
             .as_str()
             .unwrap()
-            .contains(&skills::catalog())
+            .contains(&prompts::skills::catalog())
     );
 }
 
