@@ -73,6 +73,16 @@ const COLUMN_INSET: f32 = 24.;
 /// text runs into the border, and the drag handle has nowhere left to sit.
 const WIDE_INSET: f32 = COLUMN_INSET * 2.;
 
+/// Plain-text styling, resolved against the active theme on every paint.
+pub fn source_style(theme: &Theme) -> markdown::SourceStyle {
+    markdown::SourceStyle {
+        line_numbers: true,
+        gutter_min_digits: 1,
+        gutter_gap: 1.0,
+        gutter_color: Some(theme.text_faint),
+    }
+}
+
 /// The box the page is set in: the reading column, or the pane itself. The
 /// title and the document both take it, since two boxes made conditional apart
 /// drift apart the first time one of them is touched.

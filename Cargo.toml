@@ -43,3 +43,15 @@ toml = "0.8"
 toml_edit = "0.22"
 ureq = "3"
 url = { version = "2", features = ["serde"] }
+
+[patch.crates-io]
+bezel-agent = { path = "../bezel/crates/agent" }
+bezel = { path = "../bezel/crates/bezel" }
+bezel-editor = { path = "../bezel/crates/editor" }
+bezel-icons = { path = "../bezel/crates/icons" }
+bezel-markdown = { path = "../bezel/crates/markdown" }
+bezel-motion = { path = "../bezel/crates/motion" }
+bezel-syntax = { path = "../bezel/crates/syntax" }
+bezel-terminal = { path = "../bezel/crates/terminal" }
+bezel-theme = { path = "../bezel/crates/theme" }
+bezel-ui = { path = "../bezel/crates/ui" }
