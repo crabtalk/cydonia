@@ -520,6 +520,7 @@ impl Cydonia {
             SharedString::from(format!("table-{project}-{ix}")),
             "table-row",
             selected,
+            workspace.indent_project_rows,
             &theme,
         )
         .child(

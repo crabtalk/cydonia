@@ -43,6 +43,7 @@ impl SettingsWindow {
             .child(theme.group_box().child(self.theme_row(cx)))
             .child(self.colors_group(cx))
             .child(self.typography_group(cx))
+            .child(self.sidebar_group(cx))
             .child(self.editor_group(cx))
             .into_any_element()
     }
@@ -120,6 +121,36 @@ impl SettingsWindow {
                     .child(self.transparency_row(cx))
                     .child(self.hue_row(cx))
                     .child(self.intensity_row(cx)),
+            )
+            .into_any_element()
+    }
+
+    fn sidebar_group(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        let on = self.workspace.read(cx).indent_project_rows;
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(settings::LABEL_GAP))
+            .child(theme.field_label("Sidebar"))
+            .child(
+                theme.group_box().child(
+                    self.switch_row(
+                        Switch::new(
+                            "indent-project-rows",
+                            "Indent project rows",
+                            "Inset items below each project heading by one icon width.",
+                            on,
+                        )
+                        .first(true),
+                        cx,
+                        move |this, cx| {
+                            this.workspace.update(cx, |workspace, cx| {
+                                workspace.set_indent_project_rows(!on, cx);
+                            });
+                        },
+                    ),
+                ),
             )
             .into_any_element()
     }

@@ -532,38 +532,44 @@ impl Cydonia {
         let tint = sidebar::tint(selected, archived, &theme);
         let id = SharedString::from(format!("article-{project}-{ix}"));
 
-        sidebar::row(id, "article-row", selected, &theme)
-            .child(
-                icons::icon(icons::files::FileText)
+        sidebar::row(
+            id,
+            "article-row",
+            selected,
+            workspace.indent_project_rows,
+            &theme,
+        )
+        .child(
+            icons::icon(icons::files::FileText)
+                .size(px(14.))
+                .flex_none()
+                .text_color(tint),
+        )
+        // Display-only: the title is written at the head of the page, and
+        // this row is never a second field for it.
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .truncate()
+                .text_style(TextStyle::Body)
+                .text_color(tint)
+                .child(title),
+        )
+        .child(
+            self.menu_button(
+                ("article-menu", ix),
+                Some("article-row"),
+                icons::icon(icons::layout::Ellipsis)
                     .size(px(14.))
-                    .flex_none()
-                    .text_color(tint),
+                    .text_color(theme.text_faint),
+                Menu::Entry(entry),
+                cx,
             )
-            // Display-only: the title is written at the head of the page, and
-            // this row is never a second field for it.
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .truncate()
-                    .text_style(TextStyle::Body)
-                    .text_color(tint)
-                    .child(title),
-            )
-            .child(
-                self.menu_button(
-                    ("article-menu", ix),
-                    Some("article-row"),
-                    icons::icon(icons::layout::Ellipsis)
-                        .size(px(14.))
-                        .text_color(theme.text_faint),
-                    Menu::Entry(entry),
-                    cx,
-                )
-                .children(self.entry_menu(Menu::Entry(entry), entry, archived, cx)),
-            )
-            .on_click(cx.listener(move |this, _, window, cx| {
-                this.open_article(project, ix, window, cx);
-            }))
+            .children(self.entry_menu(Menu::Entry(entry), entry, archived, cx)),
+        )
+        .on_click(cx.listener(move |this, _, window, cx| {
+            this.open_article(project, ix, window, cx);
+        }))
     }
 }

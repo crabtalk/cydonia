@@ -98,6 +98,7 @@ pub struct Workspace {
     /// How wide a page that has not been set either way is drawn — see
     /// [`crate::model::state::State::wide_pages`].
     pub wide_pages: bool,
+    pub indent_project_rows: bool,
     /// Whether a long line in a code block wraps rather than scrolling — see
     /// [`apply_wrap_code`].
     pub wrap_code: bool,
@@ -139,6 +140,7 @@ impl Workspace {
             terminal_font_size: look.terminal_font_size,
             tint: Tint::new(look.hue, look.chroma),
             wide_pages: look.wide_pages,
+            indent_project_rows: look.indent_project_rows,
             wrap_code: look.wrap_code,
             meter: false,
             next_id: 0,
@@ -196,6 +198,7 @@ impl Workspace {
             hue: self.tint.hue,
             chroma: self.tint.chroma,
             wide_pages: self.wide_pages,
+            indent_project_rows: self.indent_project_rows,
             wrap_code: self.wrap_code,
         });
     }
@@ -456,6 +459,12 @@ impl Workspace {
     /// the rest follow this.
     pub fn set_wide_pages(&mut self, wide: bool, cx: &mut Context<Self>) {
         self.wide_pages = wide;
+        self.save_appearance();
+        cx.notify();
+    }
+
+    pub fn set_indent_project_rows(&mut self, indent: bool, cx: &mut Context<Self>) {
+        self.indent_project_rows = indent;
         self.save_appearance();
         cx.notify();
     }

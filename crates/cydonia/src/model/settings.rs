@@ -107,6 +107,8 @@ pub struct Appearance {
     /// *has* been decided about carries the decision in its own
     /// `properties.toml` and ignores this.
     pub wide_pages: bool,
+    /// Indent sidebar items beneath project headings by one icon width.
+    pub indent_project_rows: bool,
     /// Whether a line too long for a code block wraps rather than scrolling
     /// sideways inside it — `markdown::Layout::wrap_code`.
     pub wrap_code: bool,
@@ -124,6 +126,7 @@ impl Default for Appearance {
             hue: 0.,
             chroma: 0.,
             wide_pages: false,
+            indent_project_rows: false,
             // Off, the way every code editor ships it: indentation is
             // structure, and wrapping loses the left column that makes nesting
             // scannable. Against bezel's own default, which wraps because
@@ -492,6 +495,7 @@ fn write_appearance(doc: &mut toml_edit::DocumentMut, appearance: &Appearance) -
     held["hue"] = toml_edit::value(f64::from(appearance.hue));
     held["chroma"] = toml_edit::value(f64::from(appearance.chroma));
     held["wide_pages"] = toml_edit::value(appearance.wide_pages);
+    held["indent_project_rows"] = toml_edit::value(appearance.indent_project_rows);
     held["wrap_code"] = toml_edit::value(appearance.wrap_code);
     Ok(())
 }
