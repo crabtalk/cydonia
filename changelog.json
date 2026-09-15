@@ -1,5 +1,34 @@
 [
   {
+    "version": "0.1.5",
+    "date": "2026-09-15",
+    "summary": "Git diffs and terminals in sessions, draggable board cards, and configurable font sizes.",
+    "media": {
+      "poster": "pics/cydonia/v0.1.5.jpg",
+      "src": "videos/cydonia/v0.1.5.mp4",
+      "alt": "…",
+      "w": 1280,
+      "h": 900
+    },
+    "new": [
+      "Review Git changes in a resizable panel with syntax highlighting, wrapped code, and collapsible hunks",
+      "Open a terminal from the session composer",
+      "Choose the agent when creating a session",
+      "Drag board cards to reorder them or move them between columns",
+      "Configure UI, article, and terminal font sizes"
+    ],
+    "changed": [
+      "Upgrade Bezel to 0.1.14"
+    ],
+    "fixed": [
+      "Save agent-assigned session titles as they arrive",
+      "Bypass proxies for local MCP connections",
+      "Preserve sidebar order when deleting entries",
+      "Ignore startup logs when updating the transcript",
+      "Improve composer spacing, action icons, and sidebar states"
+    ]
+  },
+  {
     "version": "0.1.4",
     "date": "2026-09-14",
     "summary": "The app keeps itself current and the keys are yours: a release is found and staged quietly and swapped on the way out of one click, every command's chord is Settings' to move, and one of them brings cydonia forward from inside anything else.",

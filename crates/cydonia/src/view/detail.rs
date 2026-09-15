@@ -35,10 +35,17 @@ use surface::Surfaced as _;
 /// Separate from the sidebar's payload so its resize listener stays idle.
 struct ChangesResize;
 
+struct TerminalResize;
+
 /// Reserve 240px for chat, or split narrow windows evenly.
 fn panel_width(preferred: f32, available: f32) -> f32 {
     let min = 240.0_f32.min(available / 2.);
     preferred.clamp(min, (available - 240.).max(min))
+}
+
+fn panel_height(preferred: f32, available: f32) -> f32 {
+    let min = 120.0_f32.min(available / 2.);
+    preferred.clamp(min, (available - 160.).max(min))
 }
 
 /// What the live session can be switched between, flattened to the one shape
@@ -439,15 +446,31 @@ impl Cydonia {
                 0.
             };
         let width = panel_width(self.changes_width, available.max(0.));
+        let height = panel_height(
+            self.terminal_height,
+            f32::from(window.viewport_size().height),
+        );
         div()
+            .id("session-panels")
+            .relative()
             .flex_1()
             .min_w_0()
             .min_h_0()
             .flex()
             .flex_col()
+            .on_drag_move(
+                cx.listener(|this, event: &DragMoveEvent<TerminalResize>, _, cx| {
+                    this.terminal_height = panel_height(
+                        f32::from(event.bounds.bottom() - event.event.position.y),
+                        f32::from(event.bounds.size.height),
+                    );
+                    cx.notify();
+                }),
+            )
             .child(
                 div()
                     .id("session-detail")
+                    .relative()
                     .flex_1()
                     .min_h_0()
                     .flex()
@@ -471,26 +494,38 @@ impl Cydonia {
                             .border_l_1()
                             .border_color(theme.border)
                             .child(panel)
-                            .child(
-                                theme
-                                    .split_handle(Axis::Horizontal, SplitStyle::Ghost)
-                                    .id("changes-split")
-                                    .absolute()
-                                    .top_0()
-                                    .left(px(-SPLIT_HANDLE_HIT / 2.))
-                                    .on_drag(ChangesResize, |_, _, _, cx| cx.new(|_| Empty)),
-                            )
-                    })),
+                    }))
+                    .when(self.changes.is_some(), |row| {
+                        row.child(
+                            theme
+                                .split_handle(Axis::Horizontal, SplitStyle::Ghost)
+                                .id("changes-split")
+                                .absolute()
+                                .top_0()
+                                .right(px(width - SPLIT_HANDLE_HIT / 2.))
+                                .on_drag(ChangesResize, |_, _, _, cx| cx.new(|_| Empty)),
+                        )
+                    }),
             )
-            .children(terminal.map(|terminal| {
+            .children(terminal.clone().map(|terminal| {
                 div()
-                    .h(px(240.))
-                    .max_h(bezel::gpui::relative(0.5))
+                    .h(px(height))
                     .flex_none()
                     .border_t_1()
                     .border_color(theme.border)
                     .child(terminal)
             }))
+            .when(terminal.is_some(), |column| {
+                column.child(
+                    theme
+                        .split_handle(Axis::Vertical, SplitStyle::Ghost)
+                        .id("terminal-split")
+                        .absolute()
+                        .left_0()
+                        .bottom(px(height - SPLIT_HANDLE_HIT / 2.))
+                        .on_drag(TerminalResize, |_, _, _, cx| cx.new(|_| Empty)),
+                )
+            })
     }
 }
 
