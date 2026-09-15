@@ -3,7 +3,7 @@
 
 use crate::{
     agent::{self, Listing},
-    view::settings::SettingsWindow,
+    view::{menubar, settings::SettingsWindow},
 };
 use bezel::{
     gpui::{AnyElement, Context, Focusable as _, SharedString, div, prelude::*, px},
@@ -214,6 +214,9 @@ impl SettingsWindow {
                 self.output.remove(&id);
                 self.workspace
                     .update(cx, |workspace, cx| workspace.reload_settings(cx));
+                // File lists the agents by name, and AppKit holds the tree it
+                // was handed until it is handed another.
+                menubar::refresh(cx);
                 self.load(cx);
             }
             // The output stays: the message names what failed and the lines
@@ -441,7 +444,7 @@ impl SettingsWindow {
         if listings.is_empty() {
             return theme
                 .empty_state(
-                    icons::layout::LayoutGrid,
+                    icons::development::Bot,
                     "No catalogue",
                     "The agent registry could not be reached.",
                 )

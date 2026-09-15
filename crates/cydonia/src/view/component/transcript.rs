@@ -6,7 +6,10 @@
 //! what stops a model's thinking-out-loud being presented as its reply.
 
 use crate::{
-    model::{session::ChatSession, workspace::Workspace},
+    model::{
+        session::{ChatSession, nothing_said},
+        workspace::Workspace,
+    },
     view::root,
 };
 use artifact::session::chat::{ChatItem, ToolStatus};
@@ -164,6 +167,11 @@ fn turns(items: &[ChatItem]) -> Vec<Turn> {
         if ix < items.len() && !matches!(items[ix], ChatItem::User(_)) {
             continue;
         }
+        // Startup stderr is not a conversation turn and has no rail mark.
+        if nothing_said(&items[start..ix]) {
+            start = ix;
+            continue;
+        }
         let interim =
             |item: &ChatItem| matches!(item, ChatItem::Tool { .. } | ChatItem::Thinking { .. });
         let answer_from = items[start..ix]
@@ -172,7 +180,8 @@ fn turns(items: &[ChatItem]) -> Vec<Turn> {
             .map_or(start, |last| start + last + 1);
         turns.push(Turn {
             range: start..ix,
-            answer_from: answer_from.max(start + 1),
+            answer_from: answer_from
+                .max(start + usize::from(matches!(items[start], ChatItem::User(_)))),
         });
         start = ix;
     }
@@ -369,7 +378,8 @@ fn zone(
 ) -> AnyElement {
     let theme = Theme::of(cx).clone();
     let first = turn.range.start;
-    let body = (first + 1).min(turn.range.end)..turn.answer_from;
+    let body =
+        (first + usize::from(matches!(chat.items[first], ChatItem::User(_))))..turn.answer_from;
     let steps = chat.items[body.clone()]
         .iter()
         .filter(|item| matches!(item, ChatItem::Tool { .. }))
@@ -849,3 +859,7 @@ fn working(chat: &ChatSession, at: usize, cx: &mut Context<Workspace>) -> AnyEle
         .children(spend(chat, &theme))
         .into_any_element()
 }
+
+#[cfg(test)]
+#[path = "../../../tests/unit/transcript_turns.rs"]
+mod tests;

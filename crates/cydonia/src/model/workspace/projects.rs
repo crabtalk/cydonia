@@ -159,6 +159,7 @@ impl Workspace {
             return;
         };
         let (kind, id) = (entry.kind, entry.id.clone());
+        let text_size = self.article_font_size();
         let Some(project) = self.projects.get_mut(ix) else {
             return;
         };
@@ -180,7 +181,7 @@ impl Workspace {
                     .iter()
                     .position(|article| at(Some(&article.path)));
                 if let Some(at) = project.article {
-                    project.articles[at].open(cx);
+                    project.articles[at].open(text_size, cx);
                 }
             }
             state::Kind::Table => {

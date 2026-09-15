@@ -194,11 +194,11 @@ impl Cydonia {
                                     theme
                                         .button("Delete", ButtonStyle::Prominent, None)
                                         .id("delete-confirm")
-                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                        .on_click(cx.listener(move |this, _, window, cx| {
                                             this.confirming = None;
                                             match &doomed {
                                                 Doomed::Entry(entry) => {
-                                                    this.delete_entry(*entry, cx)
+                                                    this.delete_entry(*entry, window, cx)
                                                 }
                                                 Doomed::Card(card) => this.delete_card(card, cx),
                                             }

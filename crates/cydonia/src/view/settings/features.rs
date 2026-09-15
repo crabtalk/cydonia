@@ -39,13 +39,13 @@ fn copy(
             None,
         ),
         Feature::Boards => (
-            icons::text::List,
+            icons::development::SquareKanban,
             "Boards",
             "Cards in columns, one board to a file.",
             Some("Preview"),
         ),
         Feature::Tables => (
-            icons::layout::LayoutGrid,
+            icons::files::Table2,
             "Tables",
             "Structured records in the project's store.",
             Some("Preview"),

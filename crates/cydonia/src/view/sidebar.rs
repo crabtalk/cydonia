@@ -137,11 +137,11 @@ impl Filter {
 
     fn icon(self) -> &'static [u8] {
         match self {
-            Self::All => icons::arrows::ArrowUpDown,
+            Self::All => icons::text::ListFilter,
             Self::Sessions => icons::social::MessageCircle,
-            Self::Boards => icons::text::List,
+            Self::Boards => icons::development::SquareKanban,
             Self::Articles => icons::files::FileText,
-            Self::Tables => icons::layout::LayoutGrid,
+            Self::Tables => icons::files::Table2,
         }
     }
 
@@ -418,15 +418,15 @@ impl Cydonia {
                                     .py(px(6.))
                                     .tooltip(move |window, cx| match open_chord.clone() {
                                         Some(chord) => Tooltip::with_keystroke(
-                                            "New project",
+                                            "Open project",
                                             chord,
                                             window,
                                             cx,
                                         ),
-                                        None => Tooltip::text("New project", window, cx),
+                                        None => Tooltip::text("Open project", window, cx),
                                     })
                                     .child(
-                                        icons::icon(icons::files::FilePlus)
+                                        icons::icon(icons::files::FolderPlus)
                                             .size(px(13.))
                                             .text_color(theme.text_faint),
                                     )
@@ -508,9 +508,13 @@ impl Cydonia {
             .p(px(4.))
             .tooltip(move |window, cx| Tooltip::text(label, window, cx))
             .child(
-                icons::icon(icons::layout::PanelLeft)
-                    .size(px(14.))
-                    .text_color(tint),
+                icons::icon(if self.sidebar_open {
+                    icons::layout::PanelLeftClose
+                } else {
+                    icons::layout::PanelLeftOpen
+                })
+                .size(px(14.))
+                .text_color(tint),
             )
             .on_click(cx.listener(|this, _, _, cx| this.toggle_sidebar(cx)))
     }
@@ -934,9 +938,7 @@ impl Cydonia {
         });
     }
 
-    /// The kind picker: a button in the footer, carrying the mark of whatever
-    /// it is narrowed to, so the column says what it is showing without a line
-    /// of its own to say it in.
+    /// The kind picker keeps a stable filter icon, accented when narrowed to a type.
     fn filter_button(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let label = self.filter.label();
@@ -947,9 +949,13 @@ impl Cydonia {
             .py(px(6.))
             .tooltip(move |window, cx| Tooltip::text(format!("Showing {label}"), window, cx))
             .child(
-                icons::icon(self.filter.icon())
+                icons::icon(icons::text::ListFilter)
                     .size(px(13.))
-                    .text_color(theme.text_faint),
+                    .text_color(if self.filter == Filter::All {
+                        theme.text_faint
+                    } else {
+                        theme.accent
+                    }),
             )
             .on_click(cx.listener(|this, _, _, cx| {
                 cx.stop_propagation();
@@ -988,16 +994,44 @@ impl Cydonia {
     }
 
     /// What the `+` starts here. Session first: it is what the sidebar is for.
+    ///
+    /// With more than one agent installed the session row asks which, since
+    /// the one `⌘N` would pick is whoever the project last talked to — which
+    /// leaves every other agent with no way in.
     fn add_menu(&self, ix: usize, cx: &mut Context<Self>) -> Option<AnyElement> {
         if self.menu != Some(Menu::Add(ix)) {
             return None;
         }
-        let features = &self.workspace.read(cx).settings.features;
+        let workspace = self.workspace.read(cx);
+        let features = &workspace.settings.features;
         let (sessions, boards, tables) = (features.sessions, features.boards, features.tables);
+        let agents: Vec<(String, Option<Icon>)> = workspace
+            .settings
+            .agents
+            .iter()
+            .map(|entry| (entry.name.clone(), workspace.agent_icon(&entry.name)))
+            .collect();
         let mut rows = Vec::new();
-        if sessions {
+        if sessions && agents.len() > 1 {
+            let picks = agents
+                .into_iter()
+                .enumerate()
+                .map(|(at, (name, icon))| {
+                    let icon = icon.unwrap_or_else(|| icons::social::MessageCircle.into());
+                    menu::row(Item::action(name).with_icon(icon), move |this, _, cx| {
+                        this.select_project(ix, cx);
+                        this.pick_agent(at, cx);
+                    })
+                })
+                .collect();
+            rows.push(menu::submenu(
+                "New session",
+                icons::social::MessageCirclePlus,
+                picks,
+            ));
+        } else if sessions {
             rows.push(menu::row(
-                Item::action("New session").with_icon(icons::social::MessageCircle),
+                Item::action("New session").with_icon(icons::social::MessageCirclePlus),
                 move |this, window, cx| {
                     this.select_project(ix, cx);
                     this.new_session_action(&NewSession, window, cx);
@@ -1006,7 +1040,7 @@ impl Cydonia {
         }
         if boards {
             rows.push(menu::row(
-                Item::action("New board").with_icon(icons::text::List),
+                Item::action("New board").with_icon(icons::development::SquareKanban),
                 move |this, window, cx| this.ask_new_board(ix, window, cx),
             ));
         }
@@ -1016,7 +1050,7 @@ impl Cydonia {
         ));
         if tables {
             rows.push(menu::row(
-                Item::action("New table").with_icon(icons::layout::LayoutGrid),
+                Item::action("New table").with_icon(icons::files::Table2),
                 move |this, _, cx| this.new_table(ix, cx),
             ));
         }
@@ -1035,7 +1069,7 @@ impl Cydonia {
             return None;
         }
         let rows = vec![menu::row(
-            Item::action("Remove project").with_icon(icons::files::Trash),
+            Item::action("Remove project").with_icon(icons::files::FolderMinus),
             move |this, _, cx| this.close_project(ix, cx),
         )];
         let id = SharedString::from(format!("project-menu-{ix}"));
@@ -1156,7 +1190,7 @@ impl Cydonia {
             &theme,
         )
         .child(
-            icons::icon(icons::text::List)
+            icons::icon(icons::development::SquareKanban)
                 .size(px(14.))
                 .flex_none()
                 .text_color(tint),
@@ -1201,7 +1235,7 @@ impl Cydonia {
             return None;
         }
         let put = match archived {
-            true => Item::action("Unarchive").with_icon(icons::files::Archive),
+            true => Item::action("Unarchive").with_icon(icons::files::ArchiveRestore),
             false => Item::action("Archive").with_icon(icons::files::Archive),
         };
         // `../desktop`'s rule for what a `···` may carry: only commands with no
@@ -1291,10 +1325,19 @@ impl Cydonia {
         ))
     }
 
-    /// Drop the entry the header is showing, file and all. The pane it was
-    /// filling falls back to the front door, which is what every one of these
-    /// leaves behind when it clears the index it was open at.
-    pub(crate) fn delete_entry(&mut self, entry: Row, cx: &mut Context<Self>) {
+    /// Drop an entry, file and all. Deleting the session on screen lands on
+    /// the first remaining entry in the sidebar's displayed order.
+    pub(crate) fn delete_entry(&mut self, entry: Row, window: &mut Window, cx: &mut Context<Self>) {
+        let landing_project = match entry {
+            Row::Session { project, id }
+                if self.showing(cx) == Some(Pane::Chat)
+                    && self.workspace.read(cx).active == Some(project)
+                    && self.workspace.read(cx).active_id() == Some(id) =>
+            {
+                Some(project)
+            }
+            _ => None,
+        };
         self.commit(cx);
         self.workspace.update(cx, |workspace, cx| match entry {
             Row::Session { id, .. } => workspace.close_session(id, cx),
@@ -1303,6 +1346,16 @@ impl Cydonia {
             Row::Table { project, ix } => workspace.delete_table(project, ix, cx),
             Row::Project(_) | Row::Archive(_) => {}
         });
+        if let Some(project) = landing_project {
+            if let Some(landing) = self
+                .entries(project, cx)
+                .into_iter()
+                .find(|row| !matches!(row, Row::Archive(_)))
+            {
+                self.open_row(landing, window, cx);
+                self.reveal(landing, cx);
+            }
+        }
         cx.notify();
     }
 

@@ -60,6 +60,17 @@ pub struct Settings {
 /// an interface nobody can read the settings window to fix.
 pub const TEXT_SIZE: (f32, f32) = (11., 17.);
 
+/// Article and terminal sizes have a wider range than interface chrome.
+pub const CONTENT_TEXT_SIZE: (f32, f32) = (8., 40.);
+
+pub fn clamp_content_text_size(points: f32) -> f32 {
+    if points.is_finite() {
+        points.clamp(CONTENT_TEXT_SIZE.0, CONTENT_TEXT_SIZE.1)
+    } else {
+        terminal::view::TERM_FONT_SIZE
+    }
+}
+
 /// How the interface is painted — the reader's own answers, every one of them
 /// a switch in Settings.
 ///
@@ -84,6 +95,10 @@ pub struct Appearance {
     /// [`TEXT_SIZE`] on the way in: this file is edited by hand, and a size
     /// out of range paints an interface nobody can read to fix it.
     pub text_size: f32,
+    /// Unset keeps existing articles following the UI's base size.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub article_font_size: Option<f32>,
+    pub terminal_font_size: f32,
     /// The greys' oklch hue in degrees, and how much of it they carry. Zero
     /// chroma is the shipped neutral, whatever the hue says.
     pub hue: f32,
@@ -104,6 +119,8 @@ impl Default for Appearance {
             opaque: None,
             cursor_blink: true,
             text_size: TextStyle::Body.size(),
+            article_font_size: None,
+            terminal_font_size: terminal::view::TERM_FONT_SIZE,
             hue: 0.,
             chroma: 0.,
             wide_pages: false,
@@ -114,6 +131,19 @@ impl Default for Appearance {
             // edge — that is the cost, and the switch is the way back.
             wrap_code: false,
         }
+    }
+}
+
+impl Appearance {
+    /// Hand-edited sizes must remain finite and usable before layout sees them.
+    pub fn normalize(&mut self) {
+        self.text_size = if self.text_size.is_finite() {
+            self.text_size.clamp(TEXT_SIZE.0, TEXT_SIZE.1)
+        } else {
+            Self::default().text_size
+        };
+        self.article_font_size = self.article_font_size.map(clamp_content_text_size);
+        self.terminal_font_size = clamp_content_text_size(self.terminal_font_size);
     }
 }
 
@@ -389,10 +419,7 @@ pub fn load() -> Result<Settings> {
     // A floating tag is a different program on every launch. The line stays in
     // the file, where it can be read and fixed; it just never launches.
     settings.agents.retain(Agent::pinned);
-    settings.appearance.text_size = settings
-        .appearance
-        .text_size
-        .clamp(TEXT_SIZE.0, TEXT_SIZE.1);
+    settings.appearance.normalize();
     Ok(settings)
 }
 
@@ -428,33 +455,45 @@ fn table<'a>(doc: &'a mut toml_edit::DocumentMut, name: &str) -> Result<&'a mut 
 
 /// Write the whole of `[appearance]`.
 ///
-/// One call rather than a setter per key: the window holds all eight live and
+/// One call rather than a setter per key: the window holds these live and
 /// any of them can move in a frame. Key by key through [`table`] all the same,
 /// so a comment somebody wrote beside one of them survives the write.
 pub fn set_appearance(appearance: &Appearance) -> Result<()> {
     edit(|doc| {
-        let held = table(doc, "appearance")?;
-        held["mode"] = toml_edit::value(match appearance.mode {
-            AppearanceMode::System => "system",
-            AppearanceMode::Light => "light",
-            AppearanceMode::Dark => "dark",
-        });
-        // Never said is the absence of the key, not a `false` that would hand
-        // this reader a frosted light mode they never asked for.
-        match appearance.opaque {
-            Some(opaque) => held["opaque"] = toml_edit::value(opaque),
-            None => {
-                held.remove("opaque");
-            }
-        }
-        held["cursor_blink"] = toml_edit::value(appearance.cursor_blink);
-        held["text_size"] = toml_edit::value(f64::from(appearance.text_size));
-        held["hue"] = toml_edit::value(f64::from(appearance.hue));
-        held["chroma"] = toml_edit::value(f64::from(appearance.chroma));
-        held["wide_pages"] = toml_edit::value(appearance.wide_pages);
-        held["wrap_code"] = toml_edit::value(appearance.wrap_code);
+        write_appearance(doc, appearance)?;
         Ok(true)
     })
+}
+
+fn write_appearance(doc: &mut toml_edit::DocumentMut, appearance: &Appearance) -> Result<()> {
+    let held = table(doc, "appearance")?;
+    held["mode"] = toml_edit::value(match appearance.mode {
+        AppearanceMode::System => "system",
+        AppearanceMode::Light => "light",
+        AppearanceMode::Dark => "dark",
+    });
+    // Never said is the absence of the key, not a `false` that would hand
+    // this reader a frosted light mode they never asked for.
+    match appearance.opaque {
+        Some(opaque) => held["opaque"] = toml_edit::value(opaque),
+        None => {
+            held.remove("opaque");
+        }
+    }
+    held["cursor_blink"] = toml_edit::value(appearance.cursor_blink);
+    held["text_size"] = toml_edit::value(f64::from(appearance.text_size));
+    match appearance.article_font_size {
+        Some(size) => held["article_font_size"] = toml_edit::value(f64::from(size)),
+        None => {
+            held.remove("article_font_size");
+        }
+    }
+    held["terminal_font_size"] = toml_edit::value(f64::from(appearance.terminal_font_size));
+    held["hue"] = toml_edit::value(f64::from(appearance.hue));
+    held["chroma"] = toml_edit::value(f64::from(appearance.chroma));
+    held["wide_pages"] = toml_edit::value(appearance.wide_pages);
+    held["wrap_code"] = toml_edit::value(appearance.wrap_code);
+    Ok(())
 }
 
 /// Switch a feature on or off in the file.
@@ -629,4 +668,48 @@ fn claims(table: &toml_edit::Table, agent: &Agent, supersedes: Option<&str>) -> 
                 .filter_map(|v| v.as_str())
                 .any(|arg| cacp_agents::package_name(arg) == package)
         })
+}
+
+#[cfg(test)]
+mod typography_tests {
+    use super::*;
+
+    #[test]
+    fn old_settings_keep_article_inheritance_and_terminal_default() {
+        let look: Appearance = toml::from_str("text_size = 16.0").unwrap();
+        assert_eq!(look.article_font_size, None);
+        assert_eq!(look.terminal_font_size, 13.);
+        assert_eq!(look.text_size, 16.);
+    }
+
+    #[test]
+    fn sizes_round_trip_without_losing_comments_or_unrelated_settings() {
+        let mut doc: toml_edit::DocumentMut = "# My settings\n[appearance]\n# Preferred terminal size\nterminal_font_size = 13.0\ncustom_setting = true\n".parse().unwrap();
+        let look = Appearance {
+            article_font_size: Some(18.),
+            terminal_font_size: 15.,
+            ..Appearance::default()
+        };
+        write_appearance(&mut doc, &look).unwrap();
+        let body = doc.to_string();
+        assert!(body.contains("# My settings"));
+        assert!(body.contains("# Preferred terminal size"));
+        assert!(body.contains("custom_setting = true"));
+        let read: Settings = toml::from_str(&body).unwrap();
+        assert_eq!(read.appearance, look);
+    }
+
+    #[test]
+    fn invalid_font_sizes_are_normalized_before_layout() {
+        let mut look: Appearance =
+            toml::from_str("text_size = nan\narticle_font_size = -2.0\nterminal_font_size = inf")
+                .unwrap();
+        look.normalize();
+        assert!(look.text_size.is_finite());
+        assert_eq!(look.article_font_size, Some(CONTENT_TEXT_SIZE.0));
+        assert_eq!(look.terminal_font_size, 13.);
+        look.terminal_font_size = 1000.;
+        look.normalize();
+        assert_eq!(look.terminal_font_size, CONTENT_TEXT_SIZE.1);
+    }
 }

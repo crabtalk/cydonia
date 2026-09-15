@@ -27,9 +27,9 @@ use anyhow::Result;
 use bezel::{
     gpui::{
         self, AnyElement, App, Axis, Bounds, Context, DragMoveEvent, Empty, Entity, FocusHandle,
-        Hsla, KeyBinding, PathPromptOptions, Render, TitlebarOptions, UniformListScrollHandle,
-        Window, WindowBounds, WindowHandle, WindowOptions, actions, div, point, prelude::*, px,
-        size,
+        Hsla, KeyBinding, PathPromptOptions, Render, ScrollHandle, TitlebarOptions,
+        UniformListScrollHandle, Window, WindowBounds, WindowHandle, WindowOptions, actions, div,
+        point, prelude::*, px, size,
     },
     motion::{Fade, Painter},
     theme::{Material, TextStyle, Theme, Typeset, appearance},
@@ -38,6 +38,7 @@ use bezel::{
         icons,
         input::TextField,
         menu::Cursor,
+        scroll::DriftState,
         stats::Stats,
         widgets::{ButtonStyle, Buttons, Content, Layout, SPLIT_HANDLE_HIT, SplitDrag, SplitStyle},
     },
@@ -47,6 +48,7 @@ actions!(
     cydonia,
     [
         NewSession,
+        NewSessionNext,
         NewBoard,
         NewArticle,
         NewTable,
@@ -54,6 +56,8 @@ actions!(
         CloseProject,
         OpenSettings,
         ToggleSidebar,
+        ToggleTerminal,
+        ToggleChanges,
         CommitName,
         DismissName,
         NextEntry,
@@ -61,6 +65,18 @@ actions!(
         CopySelection
     ]
 );
+
+/// File › New Session With: a session on the agent it names. By name, because
+/// that is what the menu was built from — an index would open the wrong agent
+/// the moment one was installed ahead of it and the bar not yet rebuilt.
+///
+/// No JSON: the menu is the only thing that dispatches it, and nobody writes
+/// an agent's name into a keymap.
+#[derive(Clone, Debug, PartialEq, gpui::Action)]
+#[action(namespace = cydonia, no_json)]
+pub struct NewSessionWith {
+    pub agent: String,
+}
 
 /// Claimed on the rename field so `enter` files the name and `escape` drops it.
 const RENAME_CONTEXT: &str = "CydoniaSessionName";
@@ -89,15 +105,13 @@ pub(crate) fn composer_height() -> f32 {
     composer_disc() + 2. * COMPOSER_INSET
 }
 
-/// The room the pill keeps around its content — the same 6 the height counts
-/// above and below the line box.
-pub(crate) const COMPOSER_INSET: f32 = 6.;
+/// The room the pill keeps above and below its content.
+pub(crate) const COMPOSER_INSET: f32 = 4.;
 
-/// The send disc, filling the pill inside that inset, which lands it on the
-/// line box it sits beside — the field's own box, so the two stay one height
-/// wherever the text-size setting puts it.
+/// Keep the send target comfortable at small text sizes, and grow with the
+/// line box when the text-size setting needs more room.
 pub(crate) fn composer_disc() -> f32 {
-    TextStyle::Body.painted_line_height()
+    TextStyle::Body.painted_line_height().max(24.)
 }
 
 /// How far the floating composer stands off the column's bottom edge.
@@ -260,6 +274,13 @@ pub struct Cydonia {
     pub(crate) sidebar_open: bool,
     pub(crate) sidebar_width: f32,
     pub(crate) composer: Entity<Composer>,
+    /// Visibility and shell per session; hiding a panel keeps its process alive.
+    pub(crate) terminals:
+        std::collections::HashMap<u64, (bool, Entity<super::component::terminal::Terminal>)>,
+    pub(crate) changes_open: bool,
+    pub(crate) changes_width: f32,
+    pub(crate) terminal_height: f32,
+    pub(crate) changes: Option<Entity<super::component::changes::Changes>>,
     settings_window: Option<WindowHandle<SettingsWindow>>,
     pub(crate) pane: Pane,
     /// Whether a session has been asked for with no agent to open one on.
@@ -272,6 +293,17 @@ pub struct Cydonia {
     pub(crate) asked_session: bool,
     pub(crate) editing: Option<Editing>,
     pub(crate) card_field: Entity<TextField>,
+    /// The board's own scroll, and the drift that carries a held card past the
+    /// edge of the window — a lane out of sight is one a drag cannot reach,
+    /// because reaching for it means letting go.
+    pub(crate) board_scroll: ScrollHandle,
+    pub(crate) board_drift: DriftState,
+    /// The same, per lane — see [`board::Lanes`].
+    pub(crate) lanes: board::Lanes,
+    /// Where the card now in the air would land. Written by the lanes and
+    /// cards the pointer crosses and read by the one that draws the mark —
+    /// see [`board::Landing`].
+    pub(crate) landing: Option<board::Landing>,
     /// What the table pane's field is attached to, and the field itself.
     pub(crate) cell: Option<table::Cell>,
     pub(crate) cell_field: Entity<TextField>,
@@ -322,11 +354,14 @@ impl Cydonia {
         cx: &mut Context<Self>,
     ) -> Self {
         let composer = cx.new(Composer::new);
-        cx.subscribe(
+        cx.subscribe_in(
             &composer,
-            |this, _, event: &ComposerEvent, cx| match event {
+            window,
+            |this, _, event: &ComposerEvent, window, cx| match event {
                 ComposerEvent::Submit(text) => this.submit(text.clone(), cx),
                 ComposerEvent::Cancel => this.cancel_turn(cx),
+                ComposerEvent::Terminal => this.show_terminal(window, cx),
+                ComposerEvent::Changes => this.show_changes(cx),
                 ComposerEvent::Agent(ix) => this.pick_agent(*ix, cx),
                 ComposerEvent::Install => this.open_settings(Section::Agents, cx),
                 ComposerEvent::Switch(id, value) => this.switch(id, value, cx),
@@ -377,11 +412,20 @@ impl Cydonia {
             sidebar_open: true,
             sidebar_width: SIDEBAR_WIDTH,
             composer,
+            terminals: Default::default(),
+            changes_open: false,
+            changes_width: 440.,
+            terminal_height: 240.,
+            changes: None,
             settings_window: None,
             pane: Pane::Chat,
             asked_session: false,
             editing: None,
             card_field,
+            board_scroll: ScrollHandle::new(),
+            board_drift: DriftState::new(),
+            lanes: board::Lanes::default(),
+            landing: None,
             cell: None,
             cell_field,
             confirming: None,
@@ -456,6 +500,47 @@ impl Cydonia {
             self.workspace
                 .update(cx, |workspace, cx| workspace.new_session(entry, None, cx));
         }
+    }
+
+    /// Open a session on the agent the menu named, if it is still installed.
+    pub(crate) fn new_session_with_action(
+        &mut self,
+        action: &NewSessionWith,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let at = self
+            .workspace
+            .read(cx)
+            .settings
+            .agents
+            .iter()
+            .position(|agent| agent.name == action.agent);
+        if let Some(at) = at {
+            self.pick_agent(at, cx);
+        }
+    }
+
+    /// Open a session on the agent after the one ⌘N would pick, wrapping — with
+    /// two installed, that is always the other one.
+    ///
+    /// With none installed it is ⌘N, which is what says so.
+    pub(crate) fn new_session_next_action(
+        &mut self,
+        _: &NewSessionNext,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let workspace = self.workspace.read(cx);
+        let agents = &workspace.settings.agents;
+        if agents.is_empty() {
+            return self.new_session_action(&NewSession, window, cx);
+        }
+        let at = workspace
+            .preferred_agent()
+            .and_then(|preferred| agents.iter().position(|agent| agent.name == preferred.name))
+            .map_or(0, |ix| (ix + 1) % agents.len());
+        self.pick_agent(at, cx);
     }
 
     /// Copy what the transcript has selected. Bound app-wide and reached only
@@ -698,6 +783,7 @@ impl Cydonia {
 
 impl Render for Cydonia {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.sync_changes(cx);
         let theme = Theme::of(cx).clone();
         div()
             .size_full()
@@ -707,6 +793,7 @@ impl Render for Cydonia {
             .font_family(theme.font_sans.clone())
             .text_color(theme.text)
             .text_style(TextStyle::Body)
+            .on_action(cx.listener(Self::toggle_changes))
             .on_action(cx.listener(Self::copy_selection))
             .on_action(cx.listener(Self::commit_cell_action))
             .on_action(cx.listener(Self::dismiss_cell))

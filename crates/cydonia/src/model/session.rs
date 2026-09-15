@@ -588,11 +588,19 @@ impl ChatSession {
                     *status = tool_status(new_status);
                 }
             }
-            SessionUpdate::SessionInfoUpdate(info) => match info.title {
-                MaybeUndefined::Value(title) => self.title = title,
-                MaybeUndefined::Null => self.title.clear(),
-                MaybeUndefined::Undefined => {}
-            },
+            SessionUpdate::SessionInfoUpdate(info) => {
+                let title = match info.title {
+                    MaybeUndefined::Value(title) => title,
+                    MaybeUndefined::Null => String::new(),
+                    MaybeUndefined::Undefined => return,
+                };
+                // Written now: agents name a session after the turn that
+                // settled it, so no later flush is sure to carry it.
+                if title != self.title {
+                    self.title = title;
+                    self.flush();
+                }
+            }
             SessionUpdate::AvailableCommandsUpdate(cmds) => {
                 self.commands = cmds
                     .available_commands

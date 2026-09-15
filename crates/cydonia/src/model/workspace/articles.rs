@@ -38,6 +38,7 @@ impl Workspace {
     /// Every project's articles are on show, so picking one brings its project
     /// forward with it.
     pub fn open_article(&mut self, project: usize, ix: usize, cx: &mut Context<Self>) {
+        let text_size = self.article_font_size();
         let Some(article) = self
             .projects
             .get_mut(project)
@@ -45,7 +46,7 @@ impl Workspace {
         else {
             return;
         };
-        article.open(cx);
+        article.open(text_size, cx);
         self.projects[project].article = Some(ix);
         let id = self.projects[project].articles[ix]
             .path

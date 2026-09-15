@@ -12,14 +12,17 @@ use crate::{
 use artifact::session::chat::PlanStatus;
 use bezel::{
     gpui::{
-        AnyElement, App, Context, FocusHandle, Focusable as _, SharedString, Window, div,
-        prelude::*, px,
+        AnyElement, App, Axis, Context, DragMoveEvent, Empty, FocusHandle, Focusable as _,
+        SharedString, Window, div, prelude::*, px,
     },
     motion::{Fade, Painter},
     theme::{TextStyle, Theme, Typeset},
     ui::{
-        icons, surface,
-        widgets::{ButtonStyle, Buttons, Content, Controls, Status},
+        icons::{self, Icon},
+        surface,
+        widgets::{
+            ButtonStyle, Buttons, Content, Controls, Layout, SPLIT_HANDLE_HIT, SplitStyle, Status,
+        },
     },
 };
 use cacp::schema::{
@@ -28,6 +31,22 @@ use cacp::schema::{
 };
 use std::path::Path;
 use surface::Surfaced as _;
+
+/// Separate from the sidebar's payload so its resize listener stays idle.
+struct ChangesResize;
+
+struct TerminalResize;
+
+/// Reserve 240px for chat, or split narrow windows evenly.
+fn panel_width(preferred: f32, available: f32) -> f32 {
+    let min = 240.0_f32.min(available / 2.);
+    preferred.clamp(min, (available - 240.).max(min))
+}
+
+fn panel_height(preferred: f32, available: f32) -> f32 {
+    let min = 120.0_f32.min(available / 2.);
+    preferred.clamp(min, (available - 160.).max(min))
+}
 
 /// What the live session can be switched between, flattened to the one shape
 /// the composer draws: its config options, then its modes.
@@ -233,6 +252,43 @@ pub fn adrift_line(agent: &str, others: bool) -> String {
 }
 
 impl Cydonia {
+    pub(crate) fn show_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.showing(cx) != Some(Pane::Chat) {
+            return;
+        }
+        let Some(chat) = self.workspace.read(cx).active_session() else {
+            return;
+        };
+        let (id, cwd) = (chat.id, chat.cwd.clone());
+        let (_, terminal) = self.terminals.entry(id).or_insert_with(|| {
+            (
+                false,
+                cx.new(|cx| super::component::terminal::Terminal::new(&cwd, cx)),
+            )
+        });
+        window.focus(&terminal.focus_handle(cx), cx);
+        self.terminals.get_mut(&id).unwrap().0 = true;
+        cx.notify();
+    }
+
+    pub(crate) fn toggle_terminal(
+        &mut self,
+        _: &root::ToggleTerminal,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let id = self.workspace.read(cx).active_id();
+        if let Some((visible, _)) = id.and_then(|id| self.terminals.get_mut(&id))
+            && *visible
+        {
+            *visible = false;
+            window.focus(&self.composer_focus_handle(cx), cx);
+            cx.notify();
+        } else {
+            self.show_terminal(window, cx);
+        }
+    }
+
     pub fn composer_focus_handle(&self, cx: &App) -> FocusHandle {
         self.composer.focus_handle(cx)
     }
@@ -276,6 +332,8 @@ impl Cydonia {
     /// be swapped for.
     pub(crate) fn sync_composer(&mut self, cx: &mut Context<Self>) {
         let workspace = self.workspace.read(cx);
+        self.terminals
+            .retain(|id, _| workspace.session(*id).is_some());
         let agents: Vec<composer::Agent> = workspace
             .settings
             .agents
@@ -345,8 +403,9 @@ impl Cydonia {
             .pt(px(root::HEADER_HEIGHT))
             .child(body);
 
-        div()
+        let main = div()
             .flex_1()
+            .min_h_0()
             .min_w_0()
             .relative()
             .bg(root::content_bg(&theme))
@@ -373,6 +432,99 @@ impl Cydonia {
                         .child(self.composer.clone()),
                 )),
                 false => column.children(self.adrift_strip(cx).map(footer)),
+            });
+        let terminal = (showing == Some(Pane::Chat))
+            .then(|| self.workspace.read(cx).active_id())
+            .flatten()
+            .and_then(|id| self.terminals.get(&id))
+            .filter(|(visible, _)| *visible)
+            .map(|(_, terminal)| terminal.clone());
+        let available = f32::from(window.viewport_size().width)
+            - if self.sidebar_open {
+                self.sidebar_width
+            } else {
+                0.
+            };
+        let width = panel_width(self.changes_width, available.max(0.));
+        let height = panel_height(
+            self.terminal_height,
+            f32::from(window.viewport_size().height),
+        );
+        div()
+            .id("session-panels")
+            .relative()
+            .flex_1()
+            .min_w_0()
+            .min_h_0()
+            .flex()
+            .flex_col()
+            .on_drag_move(
+                cx.listener(|this, event: &DragMoveEvent<TerminalResize>, _, cx| {
+                    this.terminal_height = panel_height(
+                        f32::from(event.bounds.bottom() - event.event.position.y),
+                        f32::from(event.bounds.size.height),
+                    );
+                    cx.notify();
+                }),
+            )
+            .child(
+                div()
+                    .id("session-detail")
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .flex_row()
+                    .on_drag_move(cx.listener(
+                        |this, event: &DragMoveEvent<ChangesResize>, _, cx| {
+                            this.changes_width = panel_width(
+                                f32::from(event.bounds.right() - event.event.position.x),
+                                f32::from(event.bounds.size.width),
+                            );
+                            cx.notify();
+                        },
+                    ))
+                    .child(main)
+                    .children(self.changes.clone().map(|panel| {
+                        div()
+                            .relative()
+                            .w(px(width))
+                            .min_w_0()
+                            .flex_none()
+                            .border_l_1()
+                            .border_color(theme.border)
+                            .child(panel)
+                    }))
+                    .when(self.changes.is_some(), |row| {
+                        row.child(
+                            theme
+                                .split_handle(Axis::Horizontal, SplitStyle::Ghost)
+                                .id("changes-split")
+                                .absolute()
+                                .top_0()
+                                .right(px(width - SPLIT_HANDLE_HIT / 2.))
+                                .on_drag(ChangesResize, |_, _, _, cx| cx.new(|_| Empty)),
+                        )
+                    }),
+            )
+            .children(terminal.clone().map(|terminal| {
+                div()
+                    .h(px(height))
+                    .flex_none()
+                    .border_t_1()
+                    .border_color(theme.border)
+                    .child(terminal)
+            }))
+            .when(terminal.is_some(), |column| {
+                column.child(
+                    theme
+                        .split_handle(Axis::Vertical, SplitStyle::Ghost)
+                        .id("terminal-split")
+                        .absolute()
+                        .left_0()
+                        .bottom(px(height - SPLIT_HANDLE_HIT / 2.))
+                        .on_drag(TerminalResize, |_, _, _, cx| cx.new(|_| Empty)),
+                )
             })
     }
 }
@@ -438,12 +590,32 @@ impl Cydonia {
             .get(ix)
             .map(|project| shown_path(&project.path))
             .unwrap_or_default();
+        let agents: Vec<(String, Option<Icon>)> = workspace
+            .settings
+            .agents
+            .iter()
+            .map(|entry| (entry.name.clone(), workspace.agent_icon(&entry.name)))
+            .collect();
         let mut rows: Vec<AnyElement> = Vec::new();
-        if sessions {
+        // One row per agent once there is a choice to make: a single "New
+        // session" opens on whichever agent is first, and nothing on this
+        // screen would say which.
+        if sessions && agents.len() > 1 {
+            for (at, (name, icon)) in agents.into_iter().enumerate() {
+                let icon = icon.unwrap_or_else(|| icons::social::MessageCircle.into());
+                rows.push(self.make_row(
+                    format!("session-{at}"),
+                    format!("New {name} session"),
+                    icon,
+                    cx,
+                    move |this, _, cx| this.pick_agent(at, cx),
+                ));
+            }
+        } else if sessions {
             rows.push(self.make_row(
                 "session",
                 "New session",
-                icons::social::MessageCircle,
+                icons::social::MessageCirclePlus,
                 cx,
                 move |this, window, cx| this.new_session_action(&NewSession, window, cx),
             ));
@@ -452,7 +624,7 @@ impl Cydonia {
             rows.push(self.make_row(
                 "board",
                 "New board",
-                icons::text::List,
+                icons::development::SquareKanban,
                 cx,
                 move |this, window, cx| this.ask_new_board(ix, window, cx),
             ));
@@ -468,7 +640,7 @@ impl Cydonia {
             rows.push(self.make_row(
                 "table",
                 "New table",
-                icons::layout::LayoutGrid,
+                icons::files::Table2,
                 cx,
                 move |this, _, cx| this.new_table(ix, cx),
             ));
@@ -483,20 +655,21 @@ impl Cydonia {
     /// One line of the invitation: a glyph, a label, and what it makes.
     fn make_row(
         &self,
-        id: &'static str,
-        label: &'static str,
-        glyph: &'static [u8],
+        id: impl Into<SharedString>,
+        label: impl Into<SharedString>,
+        glyph: impl Into<Icon>,
         cx: &mut Context<Self>,
         make: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
     ) -> AnyElement {
         let theme = Theme::of(cx).clone();
+        let (id, label) = (id.into(), label.into());
         // An svg paints in its own `text_color` and inherits none, so the glyph
         // cannot ride the row's hover. Both halves take the row's group instead,
         // which lights them together — the group is named per row so hovering
         // one does not light the rest.
         div()
-            .id(id)
-            .group(id)
+            .id(id.clone())
+            .group(id.clone())
             .flex()
             .items_center()
             .gap(px(8.))
@@ -507,7 +680,7 @@ impl Cydonia {
                     .size(px(14.))
                     .flex_none()
                     .text_color(theme.text_muted)
-                    .group_hover(id, |el| el.text_color(theme.text)),
+                    .group_hover(id.clone(), |el| el.text_color(theme.text)),
             )
             .child(
                 div()

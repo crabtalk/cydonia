@@ -523,7 +523,7 @@ impl Cydonia {
             &theme,
         )
         .child(
-            icons::icon(icons::layout::LayoutGrid)
+            icons::icon(icons::files::Table2)
                 .size(px(14.))
                 .flex_none()
                 .text_color(tone),

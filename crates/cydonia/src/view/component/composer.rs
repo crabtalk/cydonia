@@ -10,7 +10,7 @@ use bezel::{
         self, AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, KeyBinding,
         Render, ScrollHandle, SharedString, Window, actions, div, prelude::*, px,
     },
-    theme::{self, Glass, SurfaceStyle, TextStyle, Theme, Typeset},
+    theme::{Glass, SurfaceStyle, TextStyle, Theme, Typeset},
     ui::{
         icons::{self, Icon},
         input::{self, FieldEvent, Shape, TextField},
@@ -103,6 +103,8 @@ pub struct Switch {
 pub enum ComposerEvent {
     Submit(String),
     Cancel,
+    Terminal,
+    Changes,
     /// Talk to this agent instead — an index into the configured agents.
     Agent(usize),
     /// Nothing here to pick: open settings where agents are installed.
@@ -148,6 +150,8 @@ pub struct Composer {
     usage: Option<Usage>,
     /// Whether the agent mark's menu is up.
     menu: bool,
+    tools_menu: bool,
+    tools_cursor: Cursor,
     /// Where that menu is being worked: which of its rows is live, and which
     /// of them has its own panel down. One cursor for both devices, so a
     /// submenu can only ever hang off the row the pointer is on.
@@ -191,6 +195,8 @@ impl Composer {
             switches: Vec::new(),
             usage: None,
             menu: false,
+            tools_menu: false,
+            tools_cursor: Cursor::default(),
             cursor: Cursor::default(),
         }
     }
@@ -348,7 +354,9 @@ impl Composer {
     /// menu, then the command picker, and the turn in flight once there is
     /// nothing left to close.
     fn command_dismiss(&mut self, _: &CommandDismiss, _: &mut Window, cx: &mut Context<Self>) {
-        if self.cursor.ascend() {
+        if self.tools_menu {
+            self.tools_menu = false;
+        } else if self.cursor.ascend() {
             // A submenu shuts before the menu holding it — one press, one level.
         } else if self.menu {
             self.close_menu();
@@ -465,12 +473,13 @@ impl Composer {
                     .text_color(theme.text_muted)
                     .into_any_element(),
                 // A slot the catalog has no mark for still has to open the menu.
-                None => icons::icon(icons::layout::LayoutGrid)
+                None => icons::icon(icons::development::Bot)
                     .size(mark)
                     .text_color(theme.text_muted)
                     .into_any_element(),
             })
             .on_click(cx.listener(|composer, _, _, cx| {
+                composer.tools_menu = false;
                 composer.menu = !composer.menu;
                 composer.cursor.clear();
                 cx.notify();
@@ -516,16 +525,19 @@ impl Composer {
         ))
     }
 
-    /// The menu's rows: the agent first, then whatever the live session
-    /// offers. Each carries the value it is on in its own name — the reason to
-    /// open one of these is as often to read what it is set to as to change
-    /// it, and a submenu row has one line to say both on.
+    /// The menu's rows: the agents first, then whatever the live session
+    /// offers. Each switch carries the value it is on in its own name — the
+    /// reason to open one of these is as often to read what it is set to as to
+    /// change it, and a submenu row has one line to say both on.
+    ///
+    /// The agents are the exception. Picking one opens a session beside this
+    /// one rather than swapping it, so the row says that, and the check inside
+    /// is what says which agent this session is on.
     ///
     /// No leading glyphs here: these rows are words, and one icon among them
     /// would open an empty gutter down the menu's left. The agents inside the
     /// first panel keep their marks, where every row has one.
     fn menu_items(&self) -> Vec<Item> {
-        let current = self.agent.and_then(|ix| self.agents.get(ix));
         let mut agents: Vec<Item> = self
             .agents
             .iter()
@@ -544,10 +556,7 @@ impl Composer {
             agents.push(Item::Separator);
         }
         agents.push(Item::action("Install an agent…").with_icon(icons::files::Download));
-        let mut items = vec![Item::submenu(
-            set_to("Agent", current.map(|agent| agent.name.clone())),
-            agents,
-        )];
+        let mut items = vec![Item::submenu("New session with", agents)];
         items.extend(self.switches.iter().map(|switch| {
             Item::submenu(
                 set_to(&switch.name, self.value_of(switch)),
@@ -673,14 +682,14 @@ impl Composer {
             .into_any_element()
     }
 
-    /// Send, as the disc inside the pill's trailing end — a stop square while a
-    /// turn is in flight, and inert when there is nothing to send. Quietened so
-    /// the glyph stays legible and nothing invites a press.
-    fn button(&self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
+    /// Show Send only for a draft; keep Stop available throughout a turn.
+    fn button(&self, theme: &Theme, cx: &mut Context<Self>) -> Option<AnyElement> {
         let streaming = self.streaming;
-        let ready = streaming || !self.is_empty(cx);
+        if !streaming && self.is_empty(cx) {
+            return None;
+        }
         let glyph = if streaming {
-            icons::multimedia::CircleStop
+            icons::multimedia::Square
         } else {
             icons::arrows::ArrowUp
         };
@@ -691,42 +700,118 @@ impl Composer {
             .rounded_full()
             .flex()
             .items_center()
-            .justify_center();
-        let disc = if ready {
-            disc.bg(if streaming { theme.danger } else { theme.solid })
-                .cursor_pointer()
-                .hover(|s| s.opacity(0.9))
-                .child(
-                    icons::icon(glyph)
-                        .size(glyph_size)
-                        .text_color(if streaming {
-                            theme.on_accent
-                        } else {
-                            theme.on_solid
-                        }),
-                )
-        } else {
-            disc.bg(theme::ink(0.06)).child(
+            .justify_center()
+            .bg(if streaming { theme.danger } else { theme.solid })
+            .cursor_pointer()
+            .hover(|s| s.opacity(0.9))
+            .child(
                 icons::icon(glyph)
                     .size(glyph_size)
-                    .text_color(theme.text_faint),
-            )
-        };
-        div()
-            .id("composer-send")
-            .flex_none()
-            .on_click(cx.listener(|composer, _, _, cx| {
-                if composer.streaming {
-                    cx.emit(ComposerEvent::Cancel);
-                } else {
-                    composer.submit(cx);
-                }
+                    .text_color(if streaming {
+                        theme.on_accent
+                    } else {
+                        theme.on_solid
+                    }),
+            );
+        Some(
+            div()
+                .id("composer-send")
+                .flex_none()
+                .tooltip(move |window, cx| {
+                    Tooltip::text(
+                        if streaming {
+                            "Stop response"
+                        } else {
+                            "Send message (Enter)"
+                        },
+                        window,
+                        cx,
+                    )
+                })
+                .on_click(cx.listener(|composer, _, _, cx| {
+                    if composer.streaming {
+                        cx.emit(ComposerEvent::Cancel);
+                    } else {
+                        composer.submit(cx);
+                    }
+                }))
+                .child(disc)
+                .into_any_element(),
+        )
+    }
+
+    fn tools(&self, theme: &Theme, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+        let button = div()
+            .id("composer-tools")
+            .size(px(root::composer_height()))
+            .rounded_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .cursor_pointer()
+            .hover(|s| s.bg(theme.element_hover))
+            .tooltip(|window, cx| Tooltip::text("Session tools", window, cx))
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.tools_menu = !this.tools_menu;
+                this.close_menu();
+                this.tools_cursor.clear();
+                cx.notify();
             }))
-            .child(disc)
+            .child(
+                icons::icon(icons::math::Plus)
+                    .size(px(18.))
+                    .text_color(theme.text_muted),
+            )
+            .surface(theme, SURFACE);
+        let items = vec![
+            Item::action("Terminal")
+                .with_icon(icons::development::Terminal)
+                .with_shortcut(&root::ToggleTerminal, window),
+            Item::action("Git changes")
+                .with_icon(icons::development::GitCompare)
+                .with_shortcut(&root::ToggleChanges, window),
+        ];
+        let rows = items.clone();
+        let popup = self.tools_menu.then(|| {
+            menu::card(
+                theme,
+                "composer-tools-menu",
+                &items,
+                &self.tools_cursor,
+                cx,
+                move |this, hit, _, cx| {
+                    match hit {
+                        Hit::Point(path) => {
+                            this.tools_cursor.point_at(&rows, &path);
+                        }
+                        Hit::Choose(path) => {
+                            this.tools_menu = false;
+                            match path.as_slice() {
+                                [0] => cx.emit(ComposerEvent::Terminal),
+                                [1] => cx.emit(ComposerEvent::Changes),
+                                _ => {}
+                            }
+                        }
+                        Hit::Dismiss => this.tools_menu = false,
+                    }
+                    cx.notify();
+                },
+            )
+            .into_any_element()
+        });
+        div()
+            .relative()
+            .flex_none()
+            .child(button)
+            .children(
+                popup.map(|card| {
+                    popover::anchored_menu_above_end("composer-tools-menu", card, None)
+                }),
+            )
             .into_any_element()
     }
 
-    fn body(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn body(&mut self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::of(cx).clone();
         let picker = self.picker(&theme, cx);
         let radius = px(root::composer_height() / 2.);
@@ -746,7 +831,7 @@ impl Composer {
                     // The capsule and the disc hold the last line as the field
                     // grows up past them.
                     .items_end()
-                    .gap(px(root::COMPOSER_INSET))
+                    .gap(px(10.))
                     .children(self.chip(&theme, cx))
                     .child(
                         // The pill's positioning parent, as with the agent
@@ -761,7 +846,13 @@ impl Composer {
                                 div()
                                     .w_full()
                                     .rounded(radius)
-                                    .p(px(root::COMPOSER_INSET))
+                                    .py(px(root::COMPOSER_INSET))
+                                    .pl(px(12.))
+                                    .pr(px(if self.streaming || !self.is_empty(cx) {
+                                        root::COMPOSER_INSET
+                                    } else {
+                                        12.
+                                    }))
                                     .flex()
                                     .flex_row()
                                     .items_end()
@@ -775,11 +866,12 @@ impl Composer {
                                             .items_center()
                                             .child(self.field.clone()),
                                     )
-                                    .child(self.button(&theme, cx))
+                                    .children(self.button(&theme, cx))
                                     .surface(&theme, SURFACE),
                             )
                             .children(picker),
-                    ),
+                    )
+                    .child(self.tools(&theme, window, cx)),
             )
     }
 }
@@ -791,7 +883,7 @@ impl Focusable for Composer {
 }
 
 impl Render for Composer {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.body(cx)
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.body(window, cx)
     }
 }
