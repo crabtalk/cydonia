@@ -303,12 +303,20 @@ impl Cydonia {
             .update(cx, |workspace, cx| workspace.with_session(id, cx, f));
     }
 
-    pub(crate) fn submit(&mut self, text: String, cx: &mut Context<Self>) {
+    pub(crate) fn submit(
+        &mut self,
+        text: String,
+        attachments: Vec<crate::model::media::Attachment>,
+        cx: &mut Context<Self>,
+    ) {
         let Some(id) = self.workspace.read(cx).active_id() else {
             return;
         };
         self.workspace
-            .update(cx, |workspace, cx| workspace.send(id, text, cx));
+            .update(cx, |workspace, cx| match attachments.is_empty() {
+                true => workspace.send(id, text, cx),
+                false => workspace.send_attached(id, text, &attachments, cx),
+            });
     }
 
     pub(crate) fn cancel_turn(&mut self, cx: &mut Context<Self>) {
@@ -426,17 +434,25 @@ impl Cydonia {
             // — the slot is what the eye goes to for what happens next, and a
             // composer simply withheld leaves it answering nothing.
             .when(showing == Some(Pane::Chat), |column| match live {
-                true => column.child(footer(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(8.))
-                        .children(self.plan(cx))
-                        .children(self.permission(cx))
-                        .children(self.queue(cx))
-                        .child(self.composer.clone()),
-                    footer_height.clone(),
-                )),
+                // The whole pane takes a dropped picture for the composer.
+                true => column
+                    .on_drop(
+                        cx.listener(|this, paths: &bezel::gpui::ExternalPaths, _, cx| {
+                            this.composer
+                                .update(cx, |composer, cx| composer.drop_paths(paths, cx));
+                        }),
+                    )
+                    .child(footer(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(8.))
+                            .children(self.plan(cx))
+                            .children(self.permission(cx))
+                            .children(self.queue(cx))
+                            .child(self.composer.clone()),
+                        footer_height.clone(),
+                    )),
                 false => column.children(
                     self.adrift_strip(cx)
                         .map(|strip| footer(strip, footer_height.clone())),

@@ -2,14 +2,18 @@
 //! commands behind `/`.
 
 use crate::{
-    model::session::{Command, Usage},
+    model::{
+        media::Attachment,
+        session::{Command, Usage},
+    },
     view::root,
 };
 use bezel::ui::scroll as scrollbars;
 use bezel::{
     gpui::{
-        self, AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, KeyBinding,
-        Render, ScrollHandle, SharedString, Window, actions, div, prelude::*, px,
+        self, AnyElement, App, ClipboardEntry, Context, Entity, EventEmitter, ExternalPaths,
+        FocusHandle, Focusable, KeyBinding, ObjectFit, Render, ScrollHandle, SharedString, Window,
+        actions, div, img, prelude::*, px,
     },
     theme::{Glass, SurfaceStyle, TextStyle, Theme, Typeset},
     ui::{
@@ -22,6 +26,7 @@ use bezel::{
         widgets::Controls as _,
     },
 };
+use std::sync::Arc;
 
 actions!(
     cydonia_composer,
@@ -46,6 +51,9 @@ const WARN_AT: f32 = 0.8;
 /// catalog would otherwise open a card taller than the window and off the top
 /// of it.
 const PICKER_HEIGHT: f32 = 320.;
+
+/// The side of a picture waiting in the composer.
+const THUMB: f32 = 56.;
 
 pub fn bindings() -> Vec<KeyBinding> {
     let ctx = Some(KEY_CONTEXT);
@@ -102,7 +110,8 @@ pub struct Switch {
 }
 
 pub enum ComposerEvent {
-    Submit(String),
+    /// The message, and the pictures going with it.
+    Submit(String, Vec<Attachment>),
     Cancel,
     Terminal,
     Changes,
@@ -126,6 +135,8 @@ fn set_to(name: &str, value: Option<SharedString>) -> SharedString {
 
 pub struct Composer {
     field: Entity<TextField>,
+    /// Pictures pasted or dropped, sent with the next message.
+    attachments: Vec<Attachment>,
     /// Byte offset of the `/` being typed, or `None` when no picker is open.
     /// Derived from the text on every change rather than stored as a flag: a
     /// backspace over the `/` has to close the picker, and a flag would have to
@@ -186,6 +197,7 @@ impl Composer {
         .detach();
         Self {
             field,
+            attachments: Vec::new(),
             command: None,
             filter: popover::Filter::new(Vec::new()),
             commands: Vec::new(),
@@ -271,7 +283,105 @@ impl Composer {
     }
 
     pub fn is_empty(&self, cx: &App) -> bool {
-        self.field.read(cx).content().trim().is_empty()
+        self.attachments.is_empty() && self.field.read(cx).content().trim().is_empty()
+    }
+
+    /// Take pictures off the clipboard ahead of the field, which would paste
+    /// only the text beside them — a file copied in Finder is its name.
+    /// A clipboard with no picture on it is left to the field.
+    fn paste(&mut self, _: &input::Paste, _: &mut Window, cx: &mut Context<Self>) {
+        let Some(item) = cx.read_from_clipboard() else {
+            return;
+        };
+        let before = self.attachments.len();
+        for entry in item.entries() {
+            match entry {
+                ClipboardEntry::Image(image) => self
+                    .attachments
+                    .push(Attachment::Bytes(Arc::new(image.clone()))),
+                ClipboardEntry::ExternalPaths(paths) => self.attach(paths),
+                _ => {}
+            }
+        }
+        if self.attachments.len() > before {
+            cx.stop_propagation();
+            cx.notify();
+        }
+    }
+
+    /// Take the pictures among dropped files. Called by the session pane, whose
+    /// whole area is the drop target — the composer alone is a narrow strip to
+    /// aim a drag at.
+    pub fn drop_paths(&mut self, paths: &ExternalPaths, cx: &mut Context<Self>) {
+        self.attach(paths);
+        cx.notify();
+    }
+
+    fn attach(&mut self, paths: &ExternalPaths) {
+        self.attachments.extend(
+            paths
+                .paths()
+                .iter()
+                .filter(|path| markdown::is_image(&path.to_string_lossy()))
+                .cloned()
+                .map(Attachment::File),
+        );
+    }
+
+    /// The pictures waiting to go with the message, each with a way to take it
+    /// back off.
+    fn tray(&self, theme: &Theme, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if self.attachments.is_empty() {
+            return None;
+        }
+        let thumbs = self.attachments.iter().enumerate().map(|(ix, attachment)| {
+            let picture = match attachment {
+                Attachment::Bytes(image) => img(image.clone()),
+                Attachment::File(path) => img(path.clone()),
+            };
+            div()
+                .relative()
+                .size(px(THUMB))
+                .rounded(px(Theme::button_radius()))
+                .overflow_hidden()
+                .border_1()
+                .border_color(theme.border)
+                .child(picture.size_full().object_fit(ObjectFit::Cover))
+                .child(
+                    div()
+                        .id(("composer-attachment-remove", ix))
+                        .absolute()
+                        .top(px(3.))
+                        .right(px(3.))
+                        .size(px(16.))
+                        .rounded_full()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .bg(theme.solid)
+                        .cursor_pointer()
+                        .child(
+                            icons::icon(icons::notifications::X)
+                                .size(px(10.))
+                                .text_color(theme.on_solid),
+                        )
+                        .on_click(cx.listener(move |composer, _, _, cx| {
+                            if ix < composer.attachments.len() {
+                                composer.attachments.remove(ix);
+                            }
+                            cx.notify();
+                        })),
+                )
+        });
+        Some(
+            div()
+                .flex()
+                .flex_row()
+                .flex_wrap()
+                .gap(px(6.))
+                .children(thumbs)
+                .into_any_element(),
+        )
     }
 
     /// The picker trigger, and it is a *read* of the text rather than a key
@@ -317,12 +427,15 @@ impl Composer {
             return;
         }
         let content = self.field.read(cx).content().clone();
-        if content.trim().is_empty() {
+        if content.trim().is_empty() && self.attachments.is_empty() {
             return;
         }
         self.field.update(cx, |field, cx| field.clear(cx));
         self.command = None;
-        cx.emit(ComposerEvent::Submit(content.to_string()));
+        cx.emit(ComposerEvent::Submit(
+            content.to_string(),
+            std::mem::take(&mut self.attachments),
+        ));
         cx.notify();
     }
 
@@ -824,9 +937,12 @@ impl Composer {
     fn body(&mut self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::of(cx).clone();
         let picker = self.picker(&theme, cx);
+        let tray = self.tray(&theme, cx);
         let radius = px(root::composer_height() / 2.);
 
         div()
+            // Ahead of the field's own paste, which only knows text.
+            .capture_action(cx.listener(Self::paste))
             .on_action(cx.listener(Self::send))
             .on_action(cx.listener(Self::command_next))
             .on_action(cx.listener(Self::command_previous))
@@ -864,19 +980,26 @@ impl Composer {
                                         12.
                                     }))
                                     .flex()
-                                    .flex_row()
-                                    .items_end()
+                                    .flex_col()
                                     .gap(px(root::COMPOSER_INSET))
+                                    .children(tray)
                                     .child(
                                         div()
-                                            .flex_1()
-                                            .min_w_0()
-                                            .min_h(px(root::composer_disc()))
                                             .flex()
-                                            .items_center()
-                                            .child(self.field.clone()),
+                                            .flex_row()
+                                            .items_end()
+                                            .gap(px(root::COMPOSER_INSET))
+                                            .child(
+                                                div()
+                                                    .flex_1()
+                                                    .min_w_0()
+                                                    .min_h(px(root::composer_disc()))
+                                                    .flex()
+                                                    .items_center()
+                                                    .child(self.field.clone()),
+                                            )
+                                            .children(self.button(&theme, cx)),
                                     )
-                                    .children(self.button(&theme, cx))
                                     .surface(&theme, SURFACE),
                             )
                             .children(picker),

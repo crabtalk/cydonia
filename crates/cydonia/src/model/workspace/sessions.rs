@@ -147,6 +147,37 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Send a message with pictures. Each is kept in the project's assets and
+    /// written into the message as a line of its own, which is what the
+    /// transcript paints and what the prompt reads back out for the agent.
+    pub fn send_attached(
+        &mut self,
+        id: u64,
+        text: String,
+        attachments: &[crate::model::media::Attachment],
+        cx: &mut Context<Self>,
+    ) {
+        use crate::model::media;
+        let Some(ix) = self.project_of(id) else {
+            return;
+        };
+        let project = artifact::project::fs::Project::new(&self.projects[ix].path);
+        let mut parts = vec![text.trim_end().to_owned()];
+        if project.init().is_ok() {
+            let dir = project.assets();
+            parts.extend(
+                attachments
+                    .iter()
+                    .filter_map(|attachment| media::keep_attachment(&dir, attachment))
+                    .map(|path| media::line(&path)),
+            );
+        }
+        parts.retain(|part| !part.is_empty());
+        if !parts.is_empty() {
+            self.send(id, parts.join("\n\n"), cx);
+        }
+    }
+
     /// Close the connection and keep the transcript. The row stays where it
     /// was, readable, and typing into it opens an agent again.
     /// Put a session away, or bring it back. Closing tears the agent down and

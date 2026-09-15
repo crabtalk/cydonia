@@ -20,6 +20,7 @@ strip = "symbols"
 artifact = { version = "0.1.6", path = "crates/artifact", package = "cydonia-artifact" }
 anyhow = "1"
 axum = "0.8"
+base64 = "0.22"
 bezel = { version = "0.1.15", features = ["platform"] }
 cacp = { version = "0.1.0", default-features = false }
 cacp-agents = "0.1.0"

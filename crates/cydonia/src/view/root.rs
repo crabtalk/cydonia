@@ -359,7 +359,9 @@ impl Cydonia {
             &composer,
             window,
             |this, _, event: &ComposerEvent, window, cx| match event {
-                ComposerEvent::Submit(text) => this.submit(text.clone(), cx),
+                ComposerEvent::Submit(text, attachments) => {
+                    this.submit(text.clone(), attachments.clone(), cx)
+                }
                 ComposerEvent::Cancel => this.cancel_turn(cx),
                 ComposerEvent::Terminal => this.show_terminal(window, cx),
                 ComposerEvent::Changes => this.show_changes(cx),

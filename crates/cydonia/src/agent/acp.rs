@@ -10,14 +10,14 @@
 
 use crate::{
     agent::{mcp, serve},
-    model::settings,
+    model::{media, settings},
 };
 use anyhow::{Result, anyhow};
 use cacp::{
     AgentConn, Client, Direction, Error, Tap,
     schema::{
         AuthenticateRequest, CancelNotification, ClientCapabilities, ContentBlock, EnvVariable,
-        FileSystemCapabilities, HttpHeader, InitializeRequest, InitializeResponse,
+        FileSystemCapabilities, HttpHeader, ImageContent, InitializeRequest, InitializeResponse,
         LoadSessionRequest, McpServer, McpServerHttp, McpServerStdio, NewSessionRequest,
         NewSessionResponse, PromptRequest, ReadTextFileRequest, ReadTextFileResponse,
         RequestPermissionRequest, RequestPermissionResponse, SessionConfigOptionValue, SessionId,
@@ -287,26 +287,48 @@ impl Session {
 
     /// Send a prompt turn. Its result arrives as [`Event::TurnDone`] —
     /// including a failure to send it at all.
+    ///
+    /// Pictures the message points at go along as image blocks when the agent
+    /// takes them, read and encoded off the UI thread. An agent that does not
+    /// still has their paths in the text.
     pub fn prompt(&self, content: &str) {
-        self.prompt_blocks(vec![content.to_owned().into()]);
-    }
-
-    /// Send a prompt turn with explicit content blocks (text plus
-    /// embedded resources). Same result path as [`Self::prompt`].
-    pub fn prompt_blocks(&self, blocks: Vec<ContentBlock>) {
-        let blocks = super::context::prompt(
+        let capabilities = &self.init.agent_capabilities.prompt_capabilities;
+        let pictures = match capabilities.image {
+            true => media::attached(content),
+            false => Vec::new(),
+        };
+        let mut blocks = super::context::prompt(
             &self.cwd,
             self.built_in_mcp,
-            self.init
-                .agent_capabilities
-                .prompt_capabilities
-                .embedded_context,
-            blocks,
+            capabilities.embedded_context,
+            vec![content.to_owned().into()],
         );
-        let request = PromptRequest::new(self.session_id.clone(), blocks);
+        let session_id = self.session_id.clone();
         let conn = self.conn();
         let tx = self.tx.clone();
         runtime().spawn(async move {
+            if !pictures.is_empty() {
+                let images = tokio::task::spawn_blocking(move || {
+                    pictures
+                        .iter()
+                        .filter_map(|path| media::encode(path))
+                        .map(|(data, mime)| {
+                            ContentBlock::Image(ImageContent {
+                                data,
+                                mime_type: mime.to_owned(),
+                                uri: None,
+                                annotations: None,
+                                meta: None,
+                            })
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .await
+                .unwrap_or_default();
+                // After the message, ahead of the app's context at the end.
+                blocks.splice(1..1, images);
+            }
+            let request = PromptRequest::new(session_id, blocks);
             let done = conn
                 .prompt(request)
                 .await

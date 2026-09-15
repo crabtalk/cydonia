@@ -18,6 +18,7 @@ path = "bin/main.rs"
 [dependencies]
 artifact.workspace = true
 anyhow.workspace = true
+base64.workspace = true
 bezel.workspace = true
 cacp = { workspace = true, features = ["client"] }
 cacp-agents.workspace = true

@@ -2023,6 +2023,7 @@ name = "cydonia"
 version = "0.1.6"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "bezel",
  "bezel-editor",
  "bezel-gpui",
