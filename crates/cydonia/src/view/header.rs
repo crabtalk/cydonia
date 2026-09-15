@@ -16,17 +16,11 @@ use bezel::{
     theme::{TextStyle, Theme, Typeset},
     ui::icons,
 };
-fn title_with_number(number: Option<u64>, title: &str) -> String {
-    match number {
-        Some(number) => format!("{title} #{number}"),
-        None => title.to_owned(),
-    }
-}
-
 /// What a pane puts in the band.
 pub(crate) struct Toolbar {
     /// What the pane is showing, by the name the sidebar would list it under.
     pub title: String,
+    pub number: Option<u64>,
     /// The entry that name belongs to. Every pane has one today; the field is
     /// an option because a pane standing in for something not yet made — see
     /// [`Cydonia::launch`] — has a band and nothing to act on.
@@ -65,7 +59,8 @@ impl Cydonia {
             Pane::Chat => {
                 let chat = workspace.active_session()?;
                 Toolbar {
-                    title: title_with_number(chat.number, &chat.label()),
+                    title: chat.label(),
+                    number: chat.number,
                     entry: Some(Entry {
                         row: Row::Session {
                             project,
@@ -80,7 +75,8 @@ impl Cydonia {
                 let ix = open.board?;
                 let board = open.boards.get(ix)?;
                 Toolbar {
-                    title: title_with_number(board.number, board.label()),
+                    title: board.label().to_owned(),
+                    number: board.number,
                     entry: Some(Entry {
                         row: Row::Board { project, ix },
                         archived: board.archived,
@@ -92,7 +88,8 @@ impl Cydonia {
                 let ix = open.article?;
                 let article = open.articles.get(ix)?;
                 Toolbar {
-                    title: title_with_number(article.number, article.label()),
+                    title: article.label().to_owned(),
+                    number: article.number,
                     entry: Some(Entry {
                         row: Row::Article { project, ix },
                         archived: article.archived,
@@ -104,7 +101,8 @@ impl Cydonia {
                 let ix = open.table?;
                 let table = open.tables.get(ix)?;
                 Toolbar {
-                    title: title_with_number(table.number, &table.name),
+                    title: table.name.clone(),
+                    number: table.number,
                     entry: Some(Entry {
                         row: Row::Table { project, ix },
                         archived: table.archived,
@@ -221,6 +219,16 @@ impl Cydonia {
                                                 ))
                                         }),
                                 )
+                                .children(toolbar.number.map(|number| {
+                                    div()
+                                        .id("header-entry-number")
+                                        .flex_none()
+                                        .ml(px(6.))
+                                        .text_style(TextStyle::Caption)
+                                        .font_weight(FontWeight::NORMAL)
+                                        .text_color(theme.text_muted)
+                                        .child(format!("#{number}"))
+                                }))
                                 .children(board.as_deref().and_then(|id| self.info_panel(id, cx))),
                         )
                         .children(toolbar.entry.map(|entry| {
