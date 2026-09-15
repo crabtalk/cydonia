@@ -109,9 +109,51 @@ pub struct Appearance {
     pub wide_pages: bool,
     /// Indent sidebar items beneath project headings by one icon width.
     pub indent_project_rows: bool,
+    pub scrollbars: Scrollbars,
+    pub sidebar_scrollbars: Scrollbars,
     /// Whether a line too long for a code block wraps rather than scrolling
     /// sideways inside it — `markdown::Layout::wrap_code`.
     pub wrap_code: bool,
+}
+
+/// When overflowing panes show their scrollbars.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Scrollbars {
+    #[default]
+    Scrolling,
+    Always,
+    Never,
+}
+
+impl From<Scrollbars> for bezel::ui::scroll::Visibility {
+    fn from(value: Scrollbars) -> Self {
+        match value {
+            Scrollbars::Scrolling => Self::Scrolling,
+            Scrollbars::Always => Self::Always,
+            Scrollbars::Never => Self::Never,
+        }
+    }
+}
+
+impl Scrollbars {
+    pub const ALL: [Self; 3] = [Self::Scrolling, Self::Always, Self::Never];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Scrolling => "While scrolling",
+            Self::Always => "Always",
+            Self::Never => "Never",
+        }
+    }
+
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Scrolling => "scrolling",
+            Self::Always => "always",
+            Self::Never => "never",
+        }
+    }
 }
 
 impl Default for Appearance {
@@ -127,6 +169,8 @@ impl Default for Appearance {
             chroma: 0.,
             wide_pages: false,
             indent_project_rows: true,
+            scrollbars: Scrollbars::default(),
+            sidebar_scrollbars: Scrollbars::default(),
             // Off, the way every code editor ships it: indentation is
             // structure, and wrapping loses the left column that makes nesting
             // scannable. Against bezel's own default, which wraps because
@@ -496,6 +540,8 @@ fn write_appearance(doc: &mut toml_edit::DocumentMut, appearance: &Appearance) -
     held["chroma"] = toml_edit::value(f64::from(appearance.chroma));
     held["wide_pages"] = toml_edit::value(appearance.wide_pages);
     held["indent_project_rows"] = toml_edit::value(appearance.indent_project_rows);
+    held["scrollbars"] = toml_edit::value(appearance.scrollbars.key());
+    held["sidebar_scrollbars"] = toml_edit::value(appearance.sidebar_scrollbars.key());
     held["wrap_code"] = toml_edit::value(appearance.wrap_code);
     Ok(())
 }

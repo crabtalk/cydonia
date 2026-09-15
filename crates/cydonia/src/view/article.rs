@@ -9,6 +9,7 @@ use crate::{
         sidebar::{self, Row},
     },
 };
+use bezel::ui::scroll as scrollbars;
 use bezel::{
     gpui::{
         self, AnyElement, App, Context, CursorStyle, Div, Entity, Focusable as _, KeyBinding,
@@ -362,7 +363,20 @@ impl Cydonia {
                 // enough to scroll would carry the notice off the top of the
                 // pane, and it is about the document as a whole.
                 .children(stale.map(|path| self.stale_notice(path, cx)))
-                .child(document)
+                .child(
+                    div()
+                        .relative()
+                        .flex_1()
+                        .min_h_0()
+                        .flex()
+                        .flex_col()
+                        .child(document)
+                        .child(scrollbars::Overlay::new(
+                            "article-bar",
+                            &article.scroll,
+                            bezel::gpui::Axis::Vertical,
+                        )),
+                )
                 // Last, and floated over the document from where the
                 // selection ends — the bar is chrome the page runs under.
                 .children(self.ribbon(window, cx))

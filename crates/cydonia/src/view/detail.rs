@@ -403,6 +403,11 @@ impl Cydonia {
             .pt(px(root::HEADER_HEIGHT))
             .child(body);
 
+        let footer_height = self
+            .workspace
+            .read(cx)
+            .active_session()
+            .map(|chat| chat.transcript.footer_height.clone());
         let main = div()
             .flex_1()
             .min_h_0()
@@ -430,8 +435,12 @@ impl Cydonia {
                         .children(self.permission(cx))
                         .children(self.queue(cx))
                         .child(self.composer.clone()),
+                    footer_height.clone(),
                 )),
-                false => column.children(self.adrift_strip(cx).map(footer)),
+                false => column.children(
+                    self.adrift_strip(cx)
+                        .map(|strip| footer(strip, footer_height.clone())),
+                ),
             });
         let terminal = (showing == Some(Pane::Chat))
             .then(|| self.workspace.read(cx).active_id())
@@ -532,7 +541,10 @@ impl Cydonia {
 /// Where the composer floats, and where anything standing in for it goes: out
 /// of flow at the column's foot, held to the composer's own width so the two
 /// land on the same edges.
-fn footer(inner: impl IntoElement) -> impl IntoElement {
+fn footer(
+    inner: impl IntoElement,
+    height: Option<std::rc::Rc<std::cell::Cell<bezel::gpui::Pixels>>>,
+) -> impl IntoElement {
     div()
         .absolute()
         .bottom(px(root::COMPOSER_BOTTOM))
@@ -545,7 +557,24 @@ fn footer(inner: impl IntoElement) -> impl IntoElement {
                 .w_full()
                 .max_w(px(root::COMPOSER_COLUMN))
                 .px(px(root::COMPOSER_MARGIN))
-                .child(inner),
+                .relative()
+                .child(inner)
+                .child(
+                    bezel::gpui::canvas(
+                        move |bounds, window, _| {
+                            if let Some(height) = &height {
+                                if (height.replace(bounds.size.height) - bounds.size.height).abs()
+                                    > px(0.5)
+                                {
+                                    window.refresh();
+                                }
+                            }
+                        },
+                        |_, _, _, _| {},
+                    )
+                    .absolute()
+                    .size_full(),
+                ),
         )
 }
 

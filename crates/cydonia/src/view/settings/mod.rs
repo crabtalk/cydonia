@@ -10,6 +10,7 @@ use crate::{
     model::{update, workspace::Workspace},
     view::root::{HEADER_HEIGHT, TRAFFIC_LIGHT_X, TRAFFIC_LIGHT_Y},
 };
+use bezel::ui::scroll as scrollbars;
 use bezel::{
     gpui::{
         AnyElement, App, Bounds, Context, ElementId, Entity, Render, SharedString, TitlebarOptions,
@@ -482,7 +483,15 @@ impl Render for SettingsWindow {
                                 Section::Performance => self.performance_body(cx),
                                 Section::Developer => self.developer_body(cx),
                             }),
-                    ),
+                    )
+                    .map(|pane| {
+                        scrollbars::Viewport::new(
+                            "settings-scroll",
+                            pane,
+                            bezel::gpui::Axis::Vertical,
+                        )
+                        .fill()
+                    }),
             )
             .children(self.cover_dialog(cx))
     }

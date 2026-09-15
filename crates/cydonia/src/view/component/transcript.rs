@@ -13,6 +13,7 @@ use crate::{
     view::root,
 };
 use artifact::session::chat::{ChatItem, ToolStatus};
+use bezel::ui::scroll as scrollbars;
 use bezel::{
     agent::orbs::{OrbSize, OrbState, engine::Frame, orb_element},
     gpui::{
@@ -33,7 +34,7 @@ use markdown::{
     selectable::{self, Pointer},
 };
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::{HashMap, HashSet, hash_map::DefaultHasher},
     hash::{Hash, Hasher},
     ops::Range,
@@ -74,6 +75,7 @@ const ORB_STILL: f32 = 0.6;
 #[derive(Default)]
 pub struct State {
     scroll: ScrollHandle,
+    pub(crate) footer_height: Rc<Cell<Pixels>>,
     follow: FollowState,
     /// Keyed by the turn's first item index.
     work: HashMap<usize, Takeover>,
@@ -287,7 +289,10 @@ pub fn render(chat: &ChatSession, window: &mut Window, cx: &mut Context<Workspac
                         .track_scroll(&chat.transcript.scroll)
                         .px(px(24.))
                         .pt(px(PAD))
-                        .pb(px(PAD + root::composer_height() + root::COMPOSER_BOTTOM))
+                        .pb(px(PAD
+                            + f32::from(chat.transcript.footer_height.get())
+                                .max(root::composer_height())
+                            + root::COMPOSER_BOTTOM))
                         .flex()
                         .flex_col()
                         .children(zones),
@@ -296,6 +301,20 @@ pub fn render(chat: &ChatSession, window: &mut Window, cx: &mut Context<Workspac
                     &chat.transcript.scroll,
                     &chat.transcript.follow,
                 )),
+        )
+        .child(
+            scrollbars::Overlay::new(
+                format!("transcript-bar-{id}"),
+                &chat.transcript.scroll,
+                bezel::gpui::Axis::Vertical,
+            )
+            .end_inset(
+                chat.transcript
+                    .footer_height
+                    .get()
+                    .max(px(root::composer_height()))
+                    + px(root::COMPOSER_BOTTOM),
+            ),
         )
         .child(rail(
             chat,

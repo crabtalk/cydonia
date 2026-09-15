@@ -15,6 +15,7 @@ use crate::{
         settings::Section,
     },
 };
+use bezel::ui::scroll as scrollbars;
 use bezel::{
     agent::orbs::{OrbState, engine::Frame},
     gpui::{
@@ -353,17 +354,37 @@ impl Cydonia {
                     .child(self.fold_toggle(theme.text_faint, cx)),
             )
             .child(
-                uniform_list(
-                    "project-list",
-                    count,
-                    cx.processor(move |this, range: Range<usize>, _, cx| {
-                        range.map(|ix| this.sidebar_row(rows[ix], cx)).collect()
-                    }),
-                )
-                .track_scroll(&self.rail)
-                .with_decoration(PinnedHead(cx.entity()))
-                .flex_1()
-                .min_h_0(),
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .child(
+                        uniform_list(
+                            "project-list",
+                            count,
+                            cx.processor(move |this, range: Range<usize>, _, cx| {
+                                range.map(|ix| this.sidebar_row(rows[ix], cx)).collect()
+                            }),
+                        )
+                        .track_scroll(&self.rail)
+                        .with_decoration(PinnedHead(cx.entity()))
+                        .size_full(),
+                    )
+                    .child(
+                        scrollbars::Overlay::new(
+                            "sidebar-bar",
+                            &self.rail.0.borrow().base_handle,
+                            bezel::gpui::Axis::Vertical,
+                        )
+                        .visibility(
+                            self.workspace
+                                .read(cx)
+                                .settings
+                                .appearance
+                                .sidebar_scrollbars
+                                .into(),
+                        ),
+                    ),
             )
             .children(self.restart_notice(cx))
             .child(

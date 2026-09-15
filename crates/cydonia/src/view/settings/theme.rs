@@ -44,6 +44,7 @@ impl SettingsWindow {
             .child(self.colors_group(cx))
             .child(self.typography_group(cx))
             .child(self.sidebar_group(cx))
+            .child(theme.group_box().child(self.scrollbars_row(false, cx)))
             .child(self.editor_group(cx))
             .into_any_element()
     }
@@ -125,6 +126,58 @@ impl SettingsWindow {
             .into_any_element()
     }
 
+    fn scrollbars_row(&self, sidebar: bool, cx: &mut Context<Self>) -> AnyElement {
+        use crate::model::settings::Scrollbars;
+        let theme = Theme::of(cx).clone();
+        let look = self.workspace.read(cx).settings.appearance;
+        let current = if sidebar {
+            look.sidebar_scrollbars
+        } else {
+            look.scrollbars
+        };
+        theme
+            .card_row(!sidebar)
+            .child(div().flex_1().min_w_0().child(theme.row_title(if sidebar {
+                "Sidebar scrollbars"
+            } else {
+                "Content scrollbars"
+            })))
+            .child(
+                div()
+                    .flex()
+                    .gap(px(2.))
+                    .children(Scrollbars::ALL.into_iter().enumerate().map(|(ix, value)| {
+                        div()
+                            .id((
+                                if sidebar {
+                                    "sidebar-scrollbars"
+                                } else {
+                                    "content-scrollbars"
+                                },
+                                ix,
+                            ))
+                            .px(px(8.))
+                            .py(px(4.))
+                            .rounded(px(Theme::control_radius()))
+                            .text_style(TextStyle::Callout)
+                            .cursor_pointer()
+                            .when(current == value, |el| el.bg(theme.element_active))
+                            .when(current != value, |el| {
+                                el.text_color(theme.text_muted)
+                                    .hover(|el| el.bg(theme.element_hover))
+                            })
+                            .child(value.label())
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.workspace.update(cx, |workspace, cx| {
+                                    workspace.set_scrollbars(value, sidebar, cx)
+                                });
+                                cx.notify();
+                            }))
+                    })),
+            )
+            .into_any_element()
+    }
+
     fn sidebar_group(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let on = self.workspace.read(cx).indent_project_rows;
@@ -134,23 +187,26 @@ impl SettingsWindow {
             .gap(px(settings::LABEL_GAP))
             .child(theme.field_label("Sidebar"))
             .child(
-                theme.group_box().child(
-                    self.switch_row(
-                        Switch::new(
-                            "indent-project-rows",
-                            "Indent project rows",
-                            "Inset items below each project heading by one icon width.",
-                            on,
-                        )
-                        .first(true),
-                        cx,
-                        move |this, cx| {
-                            this.workspace.update(cx, |workspace, cx| {
-                                workspace.set_indent_project_rows(!on, cx);
-                            });
-                        },
-                    ),
-                ),
+                theme
+                    .group_box()
+                    .child(
+                        self.switch_row(
+                            Switch::new(
+                                "indent-project-rows",
+                                "Indent project rows",
+                                "Inset items below each project heading by one icon width.",
+                                on,
+                            )
+                            .first(true),
+                            cx,
+                            move |this, cx| {
+                                this.workspace.update(cx, |workspace, cx| {
+                                    workspace.set_indent_project_rows(!on, cx);
+                                });
+                            },
+                        ),
+                    )
+                    .child(self.scrollbars_row(true, cx)),
             )
             .into_any_element()
     }

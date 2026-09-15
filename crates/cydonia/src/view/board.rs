@@ -9,6 +9,7 @@ use crate::{
     },
 };
 use artifact::board::Card;
+use bezel::ui::scroll as scrollbars;
 use bezel::{
     gpui::{
         self, AnyElement, App, ClipboardItem, Context, Div, DragMoveEvent, Entity, Focusable as _,
@@ -520,11 +521,16 @@ impl Cydonia {
                     .flex_row()
                     .gap(px(10.))
                     .px(px(16.))
-                    .py(px(16.))
+                    .pt(px(16.))
                     .track_scroll(&self.board_scroll)
                     .children(columns)
                     .child(self.new_column_lane(cx)),
             )
+            .child(scrollbars::Overlay::new(
+                "board-bar",
+                &self.board_scroll,
+                bezel::gpui::Axis::Horizontal,
+            ))
             // A lane off the side of the window is one a drag cannot reach:
             // reaching for it would mean letting go.
             .child(scroll::drift(
@@ -570,6 +576,7 @@ impl Cydonia {
         let lane = id.clone();
         let taken = id.clone();
         let (scroll, drift) = self.lanes.of(&id);
+        let bar_id = format!("lane-bar-{id}");
         div()
             .flex_none()
             .w(px(COLUMN_WIDTH))
@@ -642,7 +649,12 @@ impl Cydonia {
                     )
                     // The lane's own half of the gesture: a card held at the
                     // foot of a full lane brings the rest of it up.
-                    .child(scroll::drift(&scroll, &drift, Axes::Vertical)),
+                    .child(scroll::drift(&scroll, &drift, Axes::Vertical))
+                    .child(scrollbars::Overlay::new(
+                        bar_id,
+                        &scroll,
+                        bezel::gpui::Axis::Vertical,
+                    )),
             )
             .into_any_element()
     }

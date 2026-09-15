@@ -11,6 +11,7 @@ use crate::{
         sidebar::{self, Renaming, Row},
     },
 };
+use bezel::ui::scroll as scrollbars;
 use bezel::{
     gpui::{
         self, AnyElement, App, Context, Div, Entity, Focusable as _, KeyBinding, SharedString,
@@ -352,7 +353,15 @@ impl Cydonia {
                                 .on_click(
                                     cx.listener(|this, _, window, cx| this.add_row(window, cx)),
                                 ),
-                        ),
+                        )
+                        .map(|pane| {
+                            scrollbars::Viewport::new(
+                                "table-scroll",
+                                pane,
+                                bezel::gpui::Axis::Vertical,
+                            )
+                            .fill()
+                        }),
                 )
                 .into_any_element(),
         )
