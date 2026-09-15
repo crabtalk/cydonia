@@ -86,11 +86,7 @@ pub enum Trouble {
 /// The `arguments` object of a `tools/call`, and the project the caller is
 /// working in when it has one.
 ///
-/// Every argument this surface takes is a required string — an address, or a
-/// line of text. The project is the exception, and the reason is that it is
-/// not really an argument: a session is opened in a directory and the client
-/// was told which, so asking its model to repeat it back is asking it to guess
-/// at something already known.
+/// A bound session supplies its project separately from the tool arguments.
 pub struct Args<'a> {
     arguments: &'a Value,
     at: Option<&'a Path>,
@@ -118,5 +114,13 @@ impl<'a> Args<'a> {
 
     pub fn maybe(&self, arg: Arg) -> Option<&'a str> {
         self.arguments.get(arg.name).and_then(Value::as_str)
+    }
+
+    pub fn boolean(&self, arg: Arg, default: bool) -> Result<bool, Trouble> {
+        match self.arguments.get(arg.name) {
+            None => Ok(default),
+            Some(Value::Bool(value)) => Ok(*value),
+            Some(_) => Err(Trouble::Invalid(format!("{} must be a boolean", arg.name))),
+        }
     }
 }

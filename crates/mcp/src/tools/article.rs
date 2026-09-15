@@ -48,7 +48,20 @@ const MARKDOWN_NOW: Arg = Arg {
     about: "The markdown it should hold now.",
 };
 
-pub static TOOLS: [Tool; 5] = [
+const OLD_STRING: Arg = Arg {
+    name: "old_string",
+    about: "The exact text to replace, including whitespace. Include surrounding text to identify a unique occurrence. Must not be empty.",
+};
+const NEW_STRING: Arg = Arg {
+    name: "new_string",
+    about: "The replacement text. Use an empty string to delete the matched text.",
+};
+const REPLACE_ALL: Arg = Arg {
+    name: "replace_all",
+    about: "Replace every non-overlapping occurrence. Defaults to false, requiring exactly one match.",
+};
+
+pub static TOOLS: [Tool; 6] = [
     Tool {
         name: "article_list",
         description: "List the project's articles, most recently written first.",
@@ -76,6 +89,22 @@ pub static TOOLS: [Tool; 5] = [
         schema: |bound| fields(bound, &[PROJECT, ARTICLE, MARKDOWN_NOW]),
         writes: true,
         call: rewrite,
+    },
+    Tool {
+        name: "article_edit",
+        description: "Edit an article's markdown by exact string replacement. Read it first. Missing or ambiguous matches leave it unchanged; include more context to target one occurrence, or set replace_all to change all. The title is left alone.",
+        schema: |bound| {
+            let mut schema = fields(bound, &[PROJECT, ARTICLE, OLD_STRING, NEW_STRING]);
+            schema["properties"][REPLACE_ALL.name] = json!({
+                "type": "boolean",
+                "description": REPLACE_ALL.about,
+                "default": false,
+            });
+            schema["properties"][OLD_STRING.name]["minLength"] = json!(1);
+            schema
+        },
+        writes: true,
+        call: edit,
     },
     Tool {
         name: "article_rename",
@@ -139,6 +168,37 @@ fn rewrite(args: Args<'_>) -> Outcome {
     std::fs::write(&found.content, text)
         .map_err(|e| Trouble::Refused(format!("{} cannot be written — {e}", found.label())))?;
     Ok(Answer::said(format!("{} rewritten", found.label())))
+}
+
+fn edit(args: Args<'_>) -> Outcome {
+    let old = args.text(OLD_STRING)?;
+    let new = args.text(NEW_STRING)?;
+    let all = args.boolean(REPLACE_ALL, false)?;
+    if old.is_empty() {
+        return Err(Trouble::Invalid("old_string must not be empty".to_owned()));
+    }
+    let found = locate(root(&args)?, args.text(ARTICLE)?)?;
+    let text = std::fs::read_to_string(&found.content)
+        .map_err(|e| Trouble::Refused(format!("{} cannot be read — {e}", found.label())))?;
+    let count = text.matches(old).count();
+    if count == 0 {
+        return Err(Trouble::Refused(
+            "old_string was not found; read the article and provide exact text, including whitespace"
+                .to_owned(),
+        ));
+    }
+    if count > 1 && !all {
+        return Err(Trouble::Refused(format!(
+            "old_string matches {count} occurrences; include more surrounding text for a unique match, or set replace_all to true"
+        )));
+    }
+    let edited = text.replacen(old, new, count);
+    std::fs::write(&found.content, edited)
+        .map_err(|e| Trouble::Refused(format!("{} cannot be written — {e}", found.label())))?;
+    Ok(
+        Answer::said(format!("{} edited: {count} replacement(s)", found.label()))
+            .with(json!({ "id": found.id, "replacements": count })),
+    )
 }
 
 fn rename(args: Args<'_>) -> Outcome {
