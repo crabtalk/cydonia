@@ -285,7 +285,7 @@ impl Render for Changes {
         let count = self.repository.as_ref().map_or(0, |repo| repo.files.len());
         let message = self.error.clone().or_else(|| {
             if !self.ready {
-                Some("Loading Git changes…".into())
+                Some("Loading review…".into())
             } else if self.repository.is_none() {
                 Some("This directory is not in a Git repository.".into())
             } else if count == 0 {
@@ -315,24 +315,17 @@ impl Render for Changes {
                     .border_b_1()
                     .border_color(theme.border)
                     .text_style(TextStyle::Subheadline)
-                    .child(div().flex_1().child("Git changes"))
+                    .child(div().flex_1().child("Review"))
                     .child(
                         tool(
                             &theme,
-                            "git-refresh",
-                            "Refresh changes",
-                            icons::arrows::RefreshCw,
+                            "git-close",
+                            "Collapse review",
+                            icons::layout::PanelLeftClose,
                         )
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            if !this.loading {
-                                this.refresh(cx);
-                            }
-                        })),
-                    )
-                    .child(
-                        tool(&theme, "git-close", "Close changes", icons::math::CircleX).on_click(
-                            |_, window, cx| window.dispatch_action(Box::new(ToggleChanges), cx),
-                        ),
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(Box::new(ToggleChanges), cx)
+                        }),
                     ),
             )
             .children(root.map(|root| {

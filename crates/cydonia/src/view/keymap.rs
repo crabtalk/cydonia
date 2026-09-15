@@ -138,7 +138,7 @@ impl Command {
             Self::CloseProject => "Close Project",
             Self::ToggleSidebar => "Toggle Sidebar",
             Self::ToggleTerminal => "Toggle Terminal",
-            Self::ToggleChanges => "Toggle Git Changes",
+            Self::ToggleChanges => "Toggle Review",
             Self::NextEntry => "Next Entry",
             Self::PrevEntry => "Previous Entry",
             Self::PlainText => "Plain Text",

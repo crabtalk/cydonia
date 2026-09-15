@@ -975,7 +975,7 @@ impl Composer {
             Item::action("Terminal")
                 .with_icon(icons::development::Terminal)
                 .with_shortcut(&root::ToggleTerminal, window),
-            Item::action("Git changes")
+            Item::action("Review")
                 .with_icon(icons::development::GitCompare)
                 .with_shortcut(&root::ToggleChanges, window),
         ];
