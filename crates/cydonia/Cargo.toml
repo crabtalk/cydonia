@@ -51,3 +51,6 @@ gpui = { version = "0.3.10", package = "bezel-gpui", features = ["test-support"]
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 # Headless UI tests do not require the Metal compiler toolchain.
 gpui_platform = { version = "0.3.10", package = "bezel-gpui-platform", features = ["runtime_shaders"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2"

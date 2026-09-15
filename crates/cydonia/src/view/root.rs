@@ -276,7 +276,7 @@ pub struct Cydonia {
     pub(crate) composer: Entity<Composer>,
     /// Visibility and shell per session; hiding a panel keeps its process alive.
     pub(crate) terminals:
-        std::collections::HashMap<u64, (bool, Entity<super::component::terminal::Terminal>)>,
+        std::collections::HashMap<u64, (bool, Entity<super::component::terminal::TerminalPanel>)>,
     pub(crate) changes_open: bool,
     pub(crate) changes_width: f32,
     pub(crate) terminal_height: f32,

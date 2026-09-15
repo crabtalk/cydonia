@@ -261,10 +261,27 @@ impl Cydonia {
         };
         let (id, cwd) = (chat.id, chat.cwd.clone());
         let (_, terminal) = self.terminals.entry(id).or_insert_with(|| {
-            (
-                false,
-                cx.new(|cx| super::component::terminal::Terminal::new(&cwd, cx)),
+            let panel =
+                cx.new(|cx| super::component::terminal::TerminalPanel::new(&cwd, window, cx));
+            cx.subscribe_in(
+                &panel,
+                window,
+                move |this, _, _: &super::component::terminal::Empty, window, cx| {
+                    let visible = this
+                        .terminals
+                        .remove(&id)
+                        .is_some_and(|(visible, _)| visible);
+                    if visible
+                        && this.workspace.read(cx).active_id() == Some(id)
+                        && this.showing(cx) == Some(Pane::Chat)
+                    {
+                        window.focus(&this.composer_focus_handle(cx), cx);
+                    }
+                    cx.notify();
+                },
             )
+            .detach();
+            (false, panel)
         });
         window.focus(&terminal.focus_handle(cx), cx);
         self.terminals.get_mut(&id).unwrap().0 = true;
