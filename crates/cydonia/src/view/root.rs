@@ -321,6 +321,7 @@ pub struct Cydonia {
     /// the way [`Cydonia::menu_pressed`] is read by `toggle_menu`.
     pub(crate) info_pressed: bool,
     pub(crate) menu: Option<Menu>,
+    pub(crate) sidebar_hovered: Option<Menu>,
     /// Which of the open menu's rows is live. Held here rather than in the
     /// card, which is rebuilt every frame: the pointer moves the cursor, and
     /// a cursor made afresh each paint would light nothing.
@@ -433,6 +434,7 @@ impl Cydonia {
             making: None,
             info_pressed: false,
             menu: None,
+            sidebar_hovered: None,
             menu_cursor: Cursor::default(),
             menu_pressed: false,
             ribbon: Ribbon::new(cx),

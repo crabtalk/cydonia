@@ -133,8 +133,15 @@ impl Cydonia {
             .when_some(
                 group.filter(|_| self.menu.as_ref() != Some(&menu)),
                 |el, group| {
-                    // Keep layout stable: hover can change between prepaint and paint.
-                    el.invisible().group_hover(group, |el| el.visible())
+                    if matches!(menu, Menu::Add(_) | Menu::Entry(_)) {
+                        // Resolve layout during render, never in a hover style:
+                        // GPUI can resolve hover differently in prepaint and paint.
+                        el.when(self.sidebar_hovered.as_ref() != Some(&menu), |el| {
+                            el.hidden()
+                        })
+                    } else {
+                        el.invisible().group_hover(group, |el| el.visible())
+                    }
                 },
             )
             .p(px(3.))

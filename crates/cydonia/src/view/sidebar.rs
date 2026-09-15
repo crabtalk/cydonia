@@ -318,6 +318,20 @@ impl UniformListDecoration for PinnedHead {
 }
 
 impl Cydonia {
+    fn sidebar_hover(&mut self, menu: Menu, hovered: bool, cx: &mut Context<Self>) {
+        if hovered {
+            if self.sidebar_hovered.as_ref() == Some(&menu) {
+                return;
+            }
+            self.sidebar_hovered = Some(menu);
+        } else if self.sidebar_hovered.as_ref() == Some(&menu) {
+            self.sidebar_hovered = None;
+        } else {
+            return;
+        }
+        cx.notify();
+    }
+
     pub(crate) fn sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
         // Taken here, where the workspace is already open, because the two
@@ -612,6 +626,9 @@ impl Cydonia {
         let head = div()
             .id(("project", ix))
             .group("project-head")
+            .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
+                this.sidebar_hover(Menu::Add(ix), *hovered, cx);
+            }))
             // Pinned it runs edge to edge, and past the band it shows in at
             // the top and the bottom — see [`PINNED_BLEED`]. The label keeps
             // the x the pill's own margin and padding put it at.
@@ -881,6 +898,12 @@ impl Cydonia {
             }
         };
         div()
+            .id(SharedString::from(format!("sidebar-hover-{}", key_of(row))))
+            .when(!matches!(row, Row::Project(_) | Row::Archive(_)), |el| {
+                el.on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
+                    this.sidebar_hover(Menu::Entry(row), *hovered, cx);
+                }))
+            })
             .h(px(ROW_HEIGHT))
             .py(px(1.))
             .child(inner)
