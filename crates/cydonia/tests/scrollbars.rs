@@ -1,13 +1,10 @@
 use cydonia::model::settings::{Appearance, Scrollbars, Settings};
 
 #[test]
-fn existing_settings_gain_transient_scrollbars() {
+fn existing_settings_default_to_hidden_sidebar_scrollbars() {
     let settings: Settings = toml::from_str("[appearance]\nindent_project_rows = false\n").unwrap();
     assert_eq!(settings.appearance.scrollbars, Scrollbars::Scrolling);
-    assert_eq!(
-        settings.appearance.sidebar_scrollbars,
-        Scrollbars::Scrolling
-    );
+    assert_eq!(settings.appearance.sidebar_scrollbars, Scrollbars::Never);
     assert!(!settings.appearance.indent_project_rows);
 }
 

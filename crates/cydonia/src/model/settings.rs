@@ -170,7 +170,7 @@ impl Default for Appearance {
             wide_pages: false,
             indent_project_rows: true,
             scrollbars: Scrollbars::default(),
-            sidebar_scrollbars: Scrollbars::default(),
+            sidebar_scrollbars: Scrollbars::Never,
             // Off, the way every code editor ships it: indentation is
             // structure, and wrapping loses the left column that makes nesting
             // scannable. Against bezel's own default, which wraps because
