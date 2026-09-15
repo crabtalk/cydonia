@@ -21,7 +21,7 @@ use bezel::{
         input::{self, FieldEvent, Shape, TextField},
         menu::{self, Cursor, Hit, Item},
         popover,
-        surface::Surfaced as _,
+        surface::{self, Surfaced as _},
         tooltip::Tooltip,
         widgets::Controls as _,
     },
@@ -53,7 +53,40 @@ const WARN_AT: f32 = 0.8;
 const PICKER_HEIGHT: f32 = 320.;
 
 /// The side of a picture waiting in the composer.
-const THUMB: f32 = 56.;
+const THUMB: f32 = 64.;
+
+/// The side of a thumb's remove button, which sits centred on its corner.
+const REMOVE: f32 = 18.;
+
+/// How much of the window an opened picture may take, either way.
+const PREVIEW_SHARE: f32 = 0.8;
+
+/// A solid round button with a ✕ on it. Solid because it sits over a picture,
+/// where a bare glyph can land on anything.
+fn disc(theme: &Theme, id: impl Into<gpui::ElementId>, side: f32) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(id)
+        .size(px(side))
+        .rounded_full()
+        .flex()
+        .items_center()
+        .justify_center()
+        .bg(theme.solid)
+        .cursor_pointer()
+        .hover(|button| button.opacity(0.85))
+        .child(
+            icons::icon(icons::notifications::X)
+                .size(px(side * 0.6))
+                .text_color(theme.on_solid),
+        )
+}
+
+fn picture(attachment: &Attachment) -> gpui::Img {
+    match attachment {
+        Attachment::Bytes(image) => img(image.clone()),
+        Attachment::File(path) => img(path.clone()),
+    }
+}
 
 pub fn bindings() -> Vec<KeyBinding> {
     let ctx = Some(KEY_CONTEXT);
@@ -137,6 +170,8 @@ pub struct Composer {
     field: Entity<TextField>,
     /// Pictures pasted or dropped, sent with the next message.
     attachments: Vec<Attachment>,
+    /// Which of them is open in the lightbox.
+    preview: Option<usize>,
     /// Byte offset of the `/` being typed, or `None` when no picker is open.
     /// Derived from the text on every change rather than stored as a flag: a
     /// backspace over the `/` has to close the picker, and a flag would have to
@@ -198,6 +233,7 @@ impl Composer {
         Self {
             field,
             attachments: Vec::new(),
+            preview: None,
             command: None,
             filter: popover::Filter::new(Vec::new()),
             commands: Vec::new(),
@@ -335,50 +371,54 @@ impl Composer {
             return None;
         }
         let thumbs = self.attachments.iter().enumerate().map(|(ix, attachment)| {
-            let picture = match attachment {
-                Attachment::Bytes(image) => img(image.clone()),
-                Attachment::File(path) => img(path.clone()),
-            };
+            // Unclipped, so the remove button can sit on the corner: half on
+            // the picture, half off it.
             div()
                 .relative()
                 .size(px(THUMB))
-                .rounded(px(Theme::button_radius()))
-                .overflow_hidden()
-                .border_1()
-                .border_color(theme.border)
-                .child(picture.size_full().object_fit(ObjectFit::Cover))
                 .child(
                     div()
-                        .id(("composer-attachment-remove", ix))
-                        .absolute()
-                        .top(px(3.))
-                        .right(px(3.))
-                        .size(px(16.))
-                        .rounded_full()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .bg(theme.solid)
+                        .id(("composer-attachment", ix))
+                        .size_full()
+                        .rounded(px(12.))
+                        .overflow_hidden()
+                        .border_1()
+                        .border_color(theme.border)
                         .cursor_pointer()
-                        .child(
-                            icons::icon(icons::notifications::X)
-                                .size(px(10.))
-                                .text_color(theme.on_solid),
-                        )
+                        .on_click(cx.listener(move |composer, _, _, cx| {
+                            composer.preview = Some(ix);
+                            cx.notify();
+                        }))
+                        .child(picture(attachment).size_full().object_fit(ObjectFit::Cover)),
+                )
+                // Its own layer: inside the glass card every primitive shares
+                // one draw order, and a picture paints over quads and icons.
+                .child(surface::layered(
+                    disc(theme, ("composer-attachment-remove", ix), REMOVE)
+                        .absolute()
+                        .top(px(-REMOVE / 2.))
+                        .right(px(-REMOVE / 2.))
+                        .tooltip(|window, cx| Tooltip::text("Remove image", window, cx))
                         .on_click(cx.listener(move |composer, _, _, cx| {
                             if ix < composer.attachments.len() {
                                 composer.attachments.remove(ix);
                             }
+                            composer.preview = None;
                             cx.notify();
                         })),
-                )
+                ))
         });
         Some(
             div()
+                // Room above for the half of each remove button past its
+                // corner, and between the pictures and the line under them.
+                .pt(px(REMOVE / 2. + 4.))
+                .pr(px(REMOVE / 2.))
+                .pb(px(8.))
                 .flex()
                 .flex_row()
                 .flex_wrap()
-                .gap(px(6.))
+                .gap(px(12.))
                 .children(thumbs)
                 .into_any_element(),
         )
@@ -468,7 +508,9 @@ impl Composer {
     /// menu, then the command picker, and the turn in flight once there is
     /// nothing left to close.
     fn command_dismiss(&mut self, _: &CommandDismiss, _: &mut Window, cx: &mut Context<Self>) {
-        if self.tools_menu {
+        if self.preview.take().is_some() {
+            // The open picture is the outermost thing there is.
+        } else if self.tools_menu {
             self.tools_menu = false;
         } else if self.cursor.ascend() {
             // A submenu shuts before the menu holding it — one press, one level.
@@ -1006,6 +1048,50 @@ impl Composer {
                     )
                     .child(self.tools(&theme, window, cx)),
             )
+            .children(self.lightbox(window, cx))
+    }
+
+    /// The picture opened from its thumb, as large as the window allows.
+    /// Closed by its button, a press off it, or escape.
+    fn lightbox(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let attachment = self.attachments.get(self.preview?)?;
+        let theme = Theme::of(cx).clone();
+        let viewport = window.viewport_size();
+        let composer = cx.entity().downgrade();
+        let card = div()
+            .relative()
+            .child(
+                picture(attachment)
+                    .max_w(viewport.width * PREVIEW_SHARE)
+                    .max_h(viewport.height * PREVIEW_SHARE)
+                    .object_fit(ObjectFit::Contain)
+                    .rounded(px(16.)),
+            )
+            // Its own layer, for the same reason as a thumb's remove button.
+            .child(surface::layered(
+                disc(&theme, "composer-preview-close", 24.)
+                    .absolute()
+                    .top(px(10.))
+                    .right(px(10.))
+                    .tooltip(|window, cx| Tooltip::text("Close", window, cx))
+                    .on_click(cx.listener(|composer, _, _, cx| {
+                        composer.preview = None;
+                        cx.notify();
+                    })),
+            ));
+        Some(popover::modal(
+            "composer-preview",
+            viewport,
+            card.into_any_element(),
+            move |_, _, cx| {
+                composer
+                    .update(cx, |composer, cx| {
+                        composer.preview = None;
+                        cx.notify();
+                    })
+                    .ok();
+            },
+        ))
     }
 }
 

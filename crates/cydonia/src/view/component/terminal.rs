@@ -306,7 +306,13 @@ impl Render for Terminal {
                     .gap(px(8.))
                     .text_style(TextStyle::Caption)
                     .text_color(theme.text_muted)
-                    .child(icons::icon(icons::development::Terminal).size(px(14.)))
+                    // An svg paints only in a colour set on itself, not one
+                    // inherited from the row.
+                    .child(
+                        icons::icon(icons::development::Terminal)
+                            .size(px(14.))
+                            .text_color(theme.text_muted),
+                    )
                     .child(
                         div()
                             .flex_1()
@@ -331,6 +337,7 @@ impl Render for Terminal {
                     .child(
                         div()
                             .id("terminal-hide")
+                            .group("terminal-hide")
                             .size(px(24.))
                             .flex()
                             .items_center()
@@ -345,7 +352,14 @@ impl Render for Terminal {
                                     cx,
                                 )
                             })
-                            .child(icons::icon(icons::notifications::X).size(px(14.))),
+                            .child(
+                                icons::icon(icons::notifications::X)
+                                    .size(px(14.))
+                                    .text_color(theme.text_muted)
+                                    .group_hover("terminal-hide", |icon| {
+                                        icon.text_color(theme.text)
+                                    }),
+                            ),
                     ),
             )
             .child(

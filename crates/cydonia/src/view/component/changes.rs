@@ -330,15 +330,9 @@ impl Render for Changes {
                         })),
                     )
                     .child(
-                        tool(
-                            &theme,
-                            "git-close",
-                            "Close changes",
-                            icons::notifications::X,
-                        )
-                        .on_click(|_, window, cx| {
-                            window.dispatch_action(Box::new(ToggleChanges), cx)
-                        }),
+                        tool(&theme, "git-close", "Close changes", icons::math::CircleX).on_click(
+                            |_, window, cx| window.dispatch_action(Box::new(ToggleChanges), cx),
+                        ),
                     ),
             )
             .children(root.map(|root| {
