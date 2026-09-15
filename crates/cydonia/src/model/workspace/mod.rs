@@ -327,6 +327,14 @@ impl Workspace {
         cx.notify();
     }
 
+    pub fn set_emacs_shortcuts(&mut self, on: bool, cx: &mut Context<Self>) {
+        if settings::set_emacs_shortcuts(on).is_err() {
+            return;
+        }
+        self.settings.shortcuts.emacs = on;
+        cx.notify();
+    }
+
     // ── the tool server ──────────────────────────────────────────
 
     /// Open or close the door to match the two switches that decide it. One

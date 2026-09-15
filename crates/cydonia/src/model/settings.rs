@@ -194,21 +194,16 @@ impl Appearance {
     }
 }
 
-/// The chords, by the key the command is written under — see
-/// [`crate::view::keymap::Command`].
-///
-/// Sparse: only what differs from the default is kept, so a default that moves
-/// between releases moves for everyone who never said otherwise. An absent
-/// table is every default, which is why the install that predates this needs
-/// no migration.
-///
-/// A map rather than a field per command, because the command list is
-/// [`crate::view::keymap`]'s to know and this file only stores what it is told.
-/// A key naming no command is left where it is rather than dropped: a typo is
-/// worth being able to see and fix.
+/// Text editing preferences and sparse command overrides.
+/// Unknown command names are preserved for hand-edited settings.
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct Shortcuts(BTreeMap<String, String>);
+pub struct Shortcuts {
+    /// Add Option+B/F word movement and Option+D word deletion.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub emacs: bool,
+    #[serde(flatten)]
+    bindings: BTreeMap<String, String>,
+}
 
 impl Shortcuts {
     /// The one key here that is not a command: the chord the *system* holds,
@@ -218,7 +213,7 @@ impl Shortcuts {
     pub const ACTIVATE: &'static str = "activate";
 
     pub fn get(&self, key: &str) -> Option<&str> {
-        self.0.get(key).map(String::as_str)
+        self.bindings.get(key).map(String::as_str)
     }
 
     pub fn activate(&self) -> Option<&str> {
@@ -230,10 +225,10 @@ impl Shortcuts {
     pub fn set(&mut self, key: &str, chord: Option<&str>) {
         match chord {
             Some(chord) => {
-                self.0.insert(key.to_owned(), chord.to_owned());
+                self.bindings.insert(key.to_owned(), chord.to_owned());
             }
             None => {
-                self.0.remove(key);
+                self.bindings.remove(key);
             }
         }
     }
@@ -567,6 +562,19 @@ pub fn set_shortcut(key: &str, chord: Option<&str>) -> Result<()> {
             None => {
                 held.remove(key);
             }
+        }
+        Ok(true)
+    })
+}
+
+/// Enable Emacs word shortcuts without replacing the platform defaults.
+pub fn set_emacs_shortcuts(on: bool) -> Result<()> {
+    edit(|doc| {
+        let held = table(doc, "shortcuts")?;
+        if on {
+            held["emacs"] = toml_edit::value(true);
+        } else {
+            held.remove("emacs");
         }
         Ok(true)
     })

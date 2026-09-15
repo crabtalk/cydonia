@@ -273,6 +273,42 @@ pub fn claimed(wanted: &str, mine: Command, shortcuts: &Shortcuts) -> Vec<Comman
         .collect()
 }
 
+/// Optional word shortcuts, scoped to editable text.
+fn emacs_bindings() -> Vec<KeyBinding> {
+    vec![
+        KeyBinding::new("alt-b", input::WordLeft, Some(input::KEY_CONTEXT)),
+        KeyBinding::new("alt-f", input::WordRight, Some(input::KEY_CONTEXT)),
+        KeyBinding::new(
+            "alt-shift-b",
+            input::SelectWordLeft,
+            Some(input::KEY_CONTEXT),
+        ),
+        KeyBinding::new(
+            "alt-shift-f",
+            input::SelectWordRight,
+            Some(input::KEY_CONTEXT),
+        ),
+        KeyBinding::new("alt-d", input::DeleteWordRight, Some(input::KEY_CONTEXT)),
+        KeyBinding::new("alt-b", editor::keys::WordLeft, Some(editor::CONTEXT)),
+        KeyBinding::new("alt-f", editor::keys::WordRight, Some(editor::CONTEXT)),
+        KeyBinding::new(
+            "alt-shift-b",
+            editor::keys::SelectWordLeft,
+            Some(editor::CONTEXT),
+        ),
+        KeyBinding::new(
+            "alt-shift-f",
+            editor::keys::SelectWordRight,
+            Some(editor::CONTEXT),
+        ),
+        KeyBinding::new(
+            "alt-d",
+            editor::keys::DeleteWordRight,
+            Some(editor::CONTEXT),
+        ),
+    ]
+}
+
 /// Put the whole keymap in, from bezel's defaults up to the commands.
 ///
 /// Cleared first, so calling it twice leaves the same keymap as calling it
@@ -285,6 +321,9 @@ pub fn bind_all(shortcuts: &Shortcuts, cx: &mut App) {
     cx.bind_keys(input::bindings());
     cx.bind_keys(focus::bindings());
     cx.bind_keys(editor::keys::bindings());
+    if shortcuts.emacs {
+        cx.bind_keys(emacs_bindings());
+    }
     // The app's own, every one of them scoped to a surface.
     cx.bind_keys(article::bindings());
     cx.bind_keys(board::bindings());
