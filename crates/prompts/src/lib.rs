@@ -1,59 +1,48 @@
-//! Shared instructions and built-in skills, independent of agent transports.
+//! Shared instructions and built-in resources, independent of agent transports.
 
-pub mod skills;
+pub mod resources;
 
 use std::path::Path;
 
 const WORKSPACE: &str = include_str!("../instructions/workspace.md");
-const SKILL_LOADING: &str = include_str!("../instructions/skill-loading.md");
-const ARTIFACTS: &str = "Project entries have stable project-wide numeric references such as #12. Use project_entries to discover them and project_read_entry to read one. Article and board tools also accept #12. Numbers are scoped to the current project. A board is named by its key (ROAD), its name or its id; a card by its handle (ROAD-12) or its id; a column by its name or its id; an article by its title or its id. Do not read or write anything under .cydonia/ directly — the tools keep the ids and handles straight.";
+const ARTIFACTS: &str = include_str!("../instructions/artifacts.md");
 
 pub fn workspace() -> &'static str {
     WORKSPACE.trim()
 }
 
-pub fn skill_instructions() -> String {
-    format!(
-        "Built-in Cydonia skills:\n{}\n{}",
-        skills::catalog(),
-        SKILL_LOADING.trim()
-    )
+pub fn resource_catalog() -> String {
+    format!("Available Cydonia resources:\n{}", resources::catalog())
 }
 
 /// Instructions for callers with or without a bound project.
-pub fn tool_context(bound: bool, skill_reader: bool) -> String {
+pub fn tool_context(bound: bool) -> String {
     let project = if bound {
         "Project tools operate on the project bound to this connection."
     } else {
-        "Project tools take the project's directory path. Built-in skills are independent of projects."
+        "Project tools take the project's directory path. Resources are independent of projects."
     };
-    let mut context = format!("{}\n\n{project}\n{ARTIFACTS}", workspace());
-    if skill_reader {
-        context.push_str("\n\n");
-        context.push_str(&skill_instructions());
-    }
-    context
+    format!(
+        "{}\n\n{project}\n{}\n\n{}",
+        workspace(),
+        ARTIFACTS.trim(),
+        resource_catalog()
+    )
 }
 
 /// Current session state alongside static instructions, refreshed each turn.
-pub fn session_context(cwd: &Path, skill_reader: bool) -> String {
+pub fn session_context(cwd: &Path, mcp_available: bool) -> String {
     let mut context = format!(
         "Cydonia session context\n{}\n\nCurrent project: {}\n\n",
         workspace(),
         cwd.display(),
     );
-    if skill_reader {
-        context.push_str(ARTIFACTS);
+    if mcp_available {
+        context.push_str(ARTIFACTS.trim());
         context.push_str("\n\n");
-        context.push_str(&skill_instructions());
+        context.push_str(&resource_catalog());
     } else {
-        context.push_str("Cydonia's MCP tools are unavailable for this session. The built-in skills below describe Cydonia's content formats; tool references do not grant access to unavailable tools. Apply the relevant instructions.\n");
-        for skill in skills::list() {
-            context.push_str(&format!(
-                "\n--- Built-in skill: {} ---\n{}\n",
-                skill.name, skill.content
-            ));
-        }
+        context.push_str("Cydonia's MCP connection is unavailable. Required reference documents cannot be loaded. Report this limitation before tasks that depend on Cydonia tools or reference documents; do not guess their behavior.");
     }
     context
 }

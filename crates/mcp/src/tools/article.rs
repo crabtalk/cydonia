@@ -71,14 +71,14 @@ pub static TOOLS: [Tool; 6] = [
     },
     Tool {
         name: "article_read",
-        description: "Read one article's markdown.",
+        description: "Read one article's markdown. The result includes assets_path, the shared media directory on the Cydonia host; filesystem access is needed to place images there.",
         schema: |bound| fields(bound, &[PROJECT, ARTICLE]),
         writes: false,
         call: read,
     },
     Tool {
         name: "article_add",
-        description: "Write a new article, and answer the id it is filed under.",
+        description: "Write a new article, and answer its id and assets_path, the shared media directory on the Cydonia host. This tool writes Markdown, not image bytes.",
         schema: |bound| fields(bound, &[PROJECT, TITLE, MARKDOWN]),
         writes: true,
         call: add,
@@ -138,17 +138,20 @@ fn list(args: Args<'_>) -> Outcome {
 }
 
 fn read(args: Args<'_>) -> Outcome {
-    let found = locate(root(&args)?, args.text(ARTICLE)?)?;
+    let project = root(&args)?;
+    let assets = assets_path(project)?;
+    let found = locate(project, args.text(ARTICLE)?)?;
     let text = std::fs::read_to_string(&found.content)
         .map_err(|e| Trouble::Refused(format!("{} cannot be read — {e}", found.label())))?;
     Ok(Answer::said(text)
-        .with(json!({ "id": found.id, "number": found.number, "title": found.title })))
+        .with(json!({ "id": found.id, "number": found.number, "title": found.title, "assets_path": assets })))
 }
 
 fn add(args: Args<'_>) -> Outcome {
     let project = root(&args)?;
     let title = args.text(TITLE)?;
     let text = args.text(MARKDOWN)?;
+    let assets = assets_path(project)?;
     let dir = article::init(project).map_err(|e| {
         Trouble::Refused(format!("{} cannot be written to — {e}", project.display()))
     })?;
@@ -164,7 +167,13 @@ fn add(args: Args<'_>) -> Outcome {
     let number = artifact::entry::number(project, "article", &id)
         .map_err(|e| Trouble::Refused(e.to_string()))?;
     Ok(Answer::said(format!("#{number} {title} written"))
-        .with(json!({ "id": id, "number": number, "title": title })))
+        .with(json!({ "id": id, "number": number, "title": title, "assets_path": assets })))
+}
+
+fn assets_path(project: &Path) -> Result<PathBuf, Trouble> {
+    let root = std::fs::canonicalize(project)
+        .map_err(|e| Trouble::Refused(format!("the project path cannot be resolved — {e}")))?;
+    Ok(artifact::project::fs::Project::new(root).assets())
 }
 
 fn rewrite(args: Args<'_>) -> Outcome {

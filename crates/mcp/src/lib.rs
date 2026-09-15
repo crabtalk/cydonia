@@ -14,6 +14,7 @@
 pub mod http;
 pub mod proto;
 pub mod rail;
+mod resources;
 pub mod tool;
 pub mod tools;
 
@@ -93,6 +94,15 @@ impl Server {
             "initialize" => Response::ok(id, self.initialize(at)),
             "ping" => Response::ok(id, json!({})),
             "tools/list" => Response::ok(id, self.list(at.is_some())),
+            "resources/list" => match resources::list(request.params.as_ref()) {
+                Ok(result) => Response::ok(id, result),
+                Err(error) => Response::fail(id, error),
+            },
+            "resources/read" => match resources::read(request.params.as_ref()) {
+                Ok(result) => Response::ok(id, result),
+                Err(error) => Response::fail(id, error),
+            },
+            "resources/templates/list" => Response::ok(id, json!({ "resourceTemplates": [] })),
             "tools/call" => match self.invoke(request.params.as_ref(), at) {
                 Ok(result) => Response::ok(id, result),
                 Err(error) => Response::fail(id, error),
@@ -119,16 +129,14 @@ impl Server {
     }
 
     fn initialize(&self, at: Option<&Path>) -> Value {
-        let instructions = prompts::tool_context(
-            at.is_some(),
-            self.offered().any(|tool| tool.name == "skill_read"),
-        );
+        let instructions = prompts::tool_context(at.is_some());
+        let capabilities = json!({ "tools": { "listChanged": false }, "resources": {} });
         json!({
             "protocolVersion": proto::VERSION,
             // `listChanged` is a promise to send a notification, and this
             // server has nowhere to send one from until the door grows a
             // stream. Saying false is what keeps a client from waiting for it.
-            "capabilities": { "tools": { "listChanged": false } },
+            "capabilities": capabilities,
             // The app's own version. `protocolVersion` above is the spec
             // revision the client matches against, and is not ours to name.
             "serverInfo": { "name": NAME, "version": env!("CARGO_PKG_VERSION") },

@@ -6,6 +6,35 @@ mod common;
 use common::{Scratch, invalid, refused, said};
 use serde_json::json;
 
+#[test]
+fn article_results_expose_a_shared_absolute_media_path_without_creating_it() {
+    let scratch = Scratch::new("article-assets");
+    let server = scratch.server();
+    let expected = std::fs::canonicalize(scratch.path())
+        .unwrap()
+        .join(".cydonia/assets");
+    let made = server
+        .call(
+            "article_add",
+            json!({ "project": scratch.path(), "title": "Pictures", "text": "Body" }),
+            None,
+        )
+        .unwrap_or_else(|_| panic!("article creation failed"));
+    let data = made.data.unwrap();
+    assert_eq!(data["assets_path"], json!(expected));
+    assert!(!expected.exists());
+    let read = server
+        .call(
+            "article_read",
+            json!({ "article": data["id"] }),
+            Some(scratch.path()),
+        )
+        .unwrap_or_else(|_| panic!("article read failed"));
+    assert_eq!(read.text, "Body");
+    assert_eq!(read.data.unwrap()["assets_path"], json!(expected));
+    assert!(!expected.exists());
+}
+
 /// What a new article costs: one call, and it is on disk under a title a
 /// person can say back.
 #[test]

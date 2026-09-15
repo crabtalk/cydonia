@@ -8,13 +8,13 @@ struct Metadata {
 }
 
 pub fn generate(root: &Path) -> Result<String, String> {
-    let mut skills = BTreeMap::new();
+    let mut resources = BTreeMap::new();
     for entry in fs::read_dir(root).map_err(|e| e.to_string())? {
         let path = entry.map_err(|e| e.to_string())?.path();
-        if !path.is_dir() {
+        if !path.is_file() || path.extension().and_then(|ext| ext.to_str()) != Some("md") {
             continue;
         }
-        let file = path.join("SKILL.md");
+        let file = path;
         let source = fs::read_to_string(&file).map_err(|e| format!("{}: {e}", file.display()))?;
         let source = source.replace("\r\n", "\n");
         let (frontmatter, body) = source
@@ -32,10 +32,10 @@ pub fn generate(root: &Path) -> Result<String, String> {
             || meta.name.starts_with('-')
             || meta.name.ends_with('-')
             || meta.name.contains("--")
-            || path.file_name().and_then(|name| name.to_str()) != Some(meta.name.as_str())
+            || file.file_stem().and_then(|name| name.to_str()) != Some(meta.name.as_str())
         {
             return Err(format!(
-                "{}: invalid name or folder mismatch",
+                "{}: invalid name or filename mismatch",
                 file.display()
             ));
         }
@@ -51,15 +51,15 @@ pub fn generate(root: &Path) -> Result<String, String> {
             .collect::<Vec<_>>()
             .join(" ");
         let entry = format!(
-            "Skill {{ name: {:?}, description: {:?}, content: {:?} }}",
+            "Resource {{ name: {:?}, description: {:?}, content: {:?} }}",
             meta.name, description, source,
         );
-        if skills.insert(meta.name, entry).is_some() {
-            return Err("duplicate skill name".to_owned());
+        if resources.insert(meta.name, entry).is_some() {
+            return Err("duplicate resource name".to_owned());
         }
     }
     Ok(format!(
-        "static BUILTINS: &[Skill] = &[{}];",
-        skills.into_values().collect::<Vec<_>>().join(",\n")
+        "static BUILTINS: &[Resource] = &[{}];",
+        resources.into_values().collect::<Vec<_>>().join(",\n")
     ))
 }

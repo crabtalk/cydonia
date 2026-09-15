@@ -79,6 +79,28 @@ fn send(url: &str, body: &str, headers: &[(&str, &str)]) -> String {
     request(url, "POST", body, headers)
 }
 
+#[test]
+fn an_external_client_can_discover_and_read_resources() {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let server = Arc::new(Server::new());
+    let door = runtime.block_on(http::open_at(0, server)).unwrap();
+    let list = send(
+        door.url(),
+        r#"{"jsonrpc":"2.0","id":1,"method":"resources/list"}"#,
+        &[],
+    );
+    assert!(list.starts_with("HTTP/1.1 200"));
+    assert!(list.contains("cydonia://resources/markdown"));
+    let read = send(
+        door.url(),
+        r#"{"jsonrpc":"2.0","id":2,"method":"resources/read","params":{"uri":"cydonia://resources/markdown"}}"#,
+        &[],
+    );
+    assert!(read.starts_with("HTTP/1.1 200"));
+    assert!(read.contains("text/markdown"));
+    assert!(read.contains("# Cydonia Markdown"));
+}
+
 /// One request, written by hand. A client here would be a dependency for the
 /// sake of four lines of it.
 fn request(url: &str, method: &str, body: &str, headers: &[(&str, &str)]) -> String {

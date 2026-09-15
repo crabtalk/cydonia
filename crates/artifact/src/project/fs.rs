@@ -59,6 +59,11 @@ impl Project {
         self.root.join(DIR)
     }
 
+    /// Shared media that agents can manage without editing artifact metadata.
+    pub fn assets(&self) -> PathBuf {
+        self.cydonia().join("assets")
+    }
+
     /// The same directory, made if it is not there, and carrying the
     /// `.gitignore` that keeps the whole of it out of the repo it sits in —
     /// none of what cydonia writes here is the project's source.

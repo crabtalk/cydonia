@@ -8,15 +8,13 @@ struct Scratch(PathBuf);
 impl Scratch {
     fn new(name: &str) -> Self {
         let path =
-            std::env::temp_dir().join(format!("cydonia-skills-{name}-{}", std::process::id()));
+            std::env::temp_dir().join(format!("cydonia-resources-{name}-{}", std::process::id()));
         fs::create_dir_all(&path).unwrap();
         Self(path)
     }
 
-    fn skill(&self, folder: &str, content: &str) {
-        let path = self.0.join(folder);
-        fs::create_dir_all(&path).unwrap();
-        fs::write(path.join("SKILL.md"), content).unwrap();
+    fn resource(&self, folder: &str, content: &str) {
+        fs::write(self.0.join(format!("{folder}.md")), content).unwrap();
     }
 }
 
@@ -29,11 +27,11 @@ impl Drop for Scratch {
 #[test]
 fn new_folders_are_discovered_with_yaml_metadata_and_stable_order() {
     let scratch = Scratch::new("discovery");
-    scratch.skill(
+    scratch.resource(
         "z-last",
         "---\nname: z-last\ndescription: >-\n  A folded\n  description.\n---\nUse this.\n",
     );
-    scratch.skill(
+    scratch.resource(
         "a-first",
         "---\nname: a-first\ndescription: 'Quoted: description'\n---\nKeep \\\"literal\\\" text.\n",
     );
@@ -54,7 +52,7 @@ fn invalid_metadata_fails_the_build() {
         "---\nname: example\ndescription: ''\n---\nBody",
         "---\nname: example\ndescription: Example\n---\n",
     ] {
-        scratch.skill("example", content);
+        scratch.resource("example", content);
         assert!(bundle::generate(&scratch.0).is_err(), "{content}");
     }
 }

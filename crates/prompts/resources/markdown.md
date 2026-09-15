@@ -1,12 +1,12 @@
 ---
-name: cydonia-markdown
+name: markdown
 description: Write and edit Cydonia articles using its supported Markdown syntax, image sizing and paths, and rich links. Use for content displayed in Cydonia, not ordinary repository Markdown.
 ---
 
 # Cydonia Markdown
 
 Use this guidance alongside the connected article tools. Their descriptions
-define operations and arguments; this skill defines the content they accept.
+define operations and arguments; this guide defines the content they accept.
 
 ## Article content
 
@@ -24,11 +24,11 @@ list numbering can be normalized.
 Put each displayed picture in its own paragraph, with blank lines around it:
 
 ```markdown
-![Architecture overview](/absolute/project/.cydonia/articles/ARTICLE_ID/overview.png)
+![Architecture overview](/absolute/project/.cydonia/assets/overview.png)
 
-![Architecture overview|480](/absolute/project/.cydonia/articles/ARTICLE_ID/overview.png)
+![Architecture overview|480](/absolute/project/.cydonia/assets/overview.png)
 
-![|320](/absolute/project/.cydonia/articles/ARTICLE_ID/overview.png)
+![|320](/absolute/project/.cydonia/assets/overview.png)
 ```
 
 - Alt text is also the standalone image's visible caption. Leave it empty
@@ -47,9 +47,12 @@ Put each displayed picture in its own paragraph, with blank lines around it:
 
 ### Image files and destinations
 
-Each article lives at `<project>/.cydonia/articles/<id>/content.md`. Its media
-belong beside `content.md`. Obtain the project and article ID from session
-context and article tool results; never derive the directory from the title.
+Store new agent-created media in `<project>/.cydonia/assets/`. This is an
+explicit exception to the restriction on direct access to managed artifacts.
+`article_read` and `article_add` return `assets_path`, the absolute directory
+on the Cydonia host. Create that directory if needed. Use unique filenames;
+preserve existing files unless their replacement or removal was requested.
+Existing article-local images continue to work and need not be moved.
 
 Local image destinations must be absolute filesystem paths. Relative paths
 are resolved against the app process, not the article directory. Do not
@@ -59,15 +62,19 @@ used when the image is available to the app.
 For paths containing spaces, enclose the destination in angle brackets:
 
 ```markdown
-![Overview|480](</absolute/project/.cydonia/articles/ARTICLE_ID/system overview.png>)
+![Overview|480](</absolute/project/.cydonia/assets/system overview.png>)
 ```
 
-When permitted filesystem access is available, copy or generate media into
-the article directory and link the resulting file. Preserve existing media
-and managed metadata. Article tools only write Markdown; they do not upload
-or copy image bytes. If the connected server forbids direct `.cydonia/`
-access, use an existing accessible image or report that media placement is
-unavailable through that connection.
+With filesystem access to the Cydonia host, copy or generate the image in
+`assets_path`, then insert its absolute path using the article tools. This
+media workflow is allowed by the server instructions; it does not need a
+separate exception for each image. Read-only settings and filesystem permission restrictions
+still apply. Shared assets remain after an article is deleted.
+
+Article tools write Markdown, not image bytes. An MCP-only client without
+filesystem access to the host must use an existing accessible image or an
+HTTP(S) image URL. A local path on a remote client's machine is not a path on
+the Cydonia host. Do not claim to upload or copy an image through article tools.
 
 ## Links and previews
 
