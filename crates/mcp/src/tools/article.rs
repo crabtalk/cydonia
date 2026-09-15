@@ -25,7 +25,7 @@ use std::path::{Path, PathBuf};
 
 const ARTICLE: Arg = Arg {
     name: "article",
-    about: "The article: its title, or its id.",
+    about: "The article: its project reference (#12), title, or storage id.",
 };
 
 /// `title` and `text` each carry one line when the article is written and
@@ -127,6 +127,7 @@ fn list(args: Args<'_>) -> Outcome {
         .map(|article| {
             json!({
                 "id": article.id,
+                "number": article.number,
                 "title": article.title,
                 "archived": article.archived,
                 "touched": article.touched.to_string(),
@@ -140,7 +141,8 @@ fn read(args: Args<'_>) -> Outcome {
     let found = locate(root(&args)?, args.text(ARTICLE)?)?;
     let text = std::fs::read_to_string(&found.content)
         .map_err(|e| Trouble::Refused(format!("{} cannot be read — {e}", found.label())))?;
-    Ok(Answer::said(text).with(json!({ "id": found.id, "title": found.title })))
+    Ok(Answer::said(text)
+        .with(json!({ "id": found.id, "number": found.number, "title": found.title })))
 }
 
 fn add(args: Args<'_>) -> Outcome {
@@ -159,7 +161,10 @@ fn add(args: Args<'_>) -> Outcome {
     // directory has to be there first.
     properties::set_title(&content, title);
     let id = article::id_of(&content);
-    Ok(Answer::said(format!("{title} written")).with(json!({ "id": id, "title": title })))
+    let number = artifact::entry::number(project, "article", &id)
+        .map_err(|e| Trouble::Refused(e.to_string()))?;
+    Ok(Answer::said(format!("#{number} {title} written"))
+        .with(json!({ "id": id, "number": number, "title": title })))
 }
 
 fn rewrite(args: Args<'_>) -> Outcome {
@@ -214,6 +219,7 @@ fn rename(args: Args<'_>) -> Outcome {
 /// which carries a cover this has no use for and no path, which is the whole of
 /// what a write needs.
 struct Held {
+    number: Option<u64>,
     id: String,
     title: String,
     archived: bool,
@@ -249,6 +255,7 @@ fn articles(project: &Path) -> Vec<Held> {
         .map(|content| {
             let held = properties::all(&content);
             Held {
+                number: artifact::entry::number(project, "article", &article::id_of(&content)).ok(),
                 id: article::id_of(&content),
                 title: held.title,
                 archived: held.archived,
@@ -266,6 +273,13 @@ fn articles(project: &Path) -> Vec<Held> {
 /// the caller is one `list_articles` away from the ids.
 fn locate(project: &Path, needle: &str) -> Result<Held, Trouble> {
     let mut held = articles(project);
+    if let Some(number) = artifact::entry::reference(needle) {
+        return held
+            .iter()
+            .position(|article| article.number == Some(number))
+            .map(|at| held.swap_remove(at))
+            .ok_or_else(|| Trouble::Refused(format!("no article {needle} in this project")));
+    }
     if let Some(at) = held.iter().position(|article| article.id == needle) {
         return Ok(held.swap_remove(at));
     }
@@ -292,18 +306,17 @@ fn locate(project: &Path, needle: &str) -> Result<Held, Trouble> {
 /// Every article, one to a line: what it is called, and what to ask for it by
 /// when two share a name.
 fn listing(held: &[Held]) -> String {
-    let width = held
-        .iter()
-        .map(|article| article.label().chars().count())
-        .max()
-        .unwrap_or(0);
     held.iter()
         .map(|article| {
             let archived = match article.archived {
                 true => "  — archived",
                 false => "",
             };
-            format!("{:<width$}  {}{archived}", article.label(), article.id)
+            format!(
+                "{}  {}{archived}",
+                artifact::entry::label(article.number, article.label()),
+                article.id
+            )
         })
         .collect::<Vec<_>>()
         .join("\n")

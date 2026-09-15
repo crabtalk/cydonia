@@ -6,7 +6,7 @@ use std::path::Path;
 
 const WORKSPACE: &str = include_str!("../instructions/workspace.md");
 const SKILL_LOADING: &str = include_str!("../instructions/skill-loading.md");
-const ARTIFACTS: &str = "A board is named by its key (ROAD), its name or its id; a card by its handle (ROAD-12) or its id; a column by its name or its id; an article by its title or its id. Do not read or write anything under .cydonia/ directly — the tools keep the ids and handles straight.";
+const ARTIFACTS: &str = "Project entries have stable project-wide numeric references such as #12. Use project_entries to discover them and project_read_entry to read one. Article and board tools also accept #12. Numbers are scoped to the current project. A board is named by its key (ROAD), its name or its id; a card by its handle (ROAD-12) or its id; a column by its name or its id; an article by its title or its id. Do not read or write anything under .cydonia/ directly — the tools keep the ids and handles straight.";
 
 pub fn workspace() -> &'static str {
     WORKSPACE.trim()
@@ -43,6 +43,8 @@ pub fn session_context(cwd: &Path, skill_reader: bool) -> String {
         cwd.display(),
     );
     if skill_reader {
+        context.push_str(ARTIFACTS);
+        context.push_str("\n\n");
         context.push_str(&skill_instructions());
     } else {
         context.push_str("Cydonia's MCP tools are unavailable for this session. The built-in skills below describe Cydonia's content formats; tool references do not grant access to unavailable tools. Apply the relevant instructions.\n");

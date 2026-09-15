@@ -32,6 +32,7 @@ the one impl cydonia ships — so a board is the same board whichever answered.
 | `session` | `session::record` is what one is filed as, `session::chat` its transcript |
 | `table` | `Table`, `ColType`; `table::rows` is `Page`, `Row`, `Edit` |
 | `project` | `Project` — what a backend answers; `project::fs` is `.cydonia/` |
+| `entry` | Project-wide numbers in `.cydonia/entries.db`; catalog and reads |
 | `id` | What names an entry, and keeps naming it |
 | `stamp` | The millisecond it was made, and the one it last changed at |
 

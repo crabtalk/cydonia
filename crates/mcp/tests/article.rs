@@ -22,7 +22,7 @@ fn an_article_is_written_and_found_by_its_title() {
         }),
         None,
     ));
-    assert_eq!(made, "Notes on the watch written");
+    assert_eq!(made, "#1 Notes on the watch written");
 
     let read = said(server.call(
         "article_read",

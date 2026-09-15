@@ -2036,7 +2036,9 @@ dependencies = [
 name = "cydonia-artifact"
 version = "0.1.5"
 dependencies = [
+ "anyhow",
  "cacp",
+ "rusqlite",
  "serde",
  "serde_json",
  "toml 0.8.23",

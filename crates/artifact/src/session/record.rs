@@ -19,6 +19,8 @@ pub struct Record {
     /// before ids existed — see [`crate::id`].
     #[serde(default)]
     pub id: String,
+    #[serde(skip)]
+    pub number: Option<u64>,
     /// The agent it runs on, by the name `settings.toml` gives it.
     ///
     /// Kept for a reader, and as the fallback for a record written before

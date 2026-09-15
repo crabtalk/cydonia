@@ -113,6 +113,7 @@ pub struct PermissionPrompt {
 }
 
 pub struct ChatSession {
+    pub number: Option<u64>,
     pub id: u64,
     pub entry: settings::Agent,
     /// The directory the agent runs in, which is the project's. Kept here so
@@ -192,6 +193,7 @@ impl ChatSession {
             updated: SystemTime::now(),
             agent_session: None,
             record: None,
+            number: None,
             closed: false,
             streaming: false,
             queue: seed.into_iter().collect(),
@@ -223,6 +225,7 @@ impl ChatSession {
             updated,
             agent_session: record.session,
             record: Some(record.id),
+            number: record.number,
             closed: record.closed,
             streaming: false,
             queue: VecDeque::new(),
@@ -242,6 +245,7 @@ impl ChatSession {
 
     fn to_record(&self) -> Record {
         Record {
+            number: self.number,
             // The file is minted before the first write, so by the time there
             // is a record to name there is a name for it.
             id: self.record.clone().unwrap_or_default(),
@@ -270,6 +274,12 @@ impl ChatSession {
         if self.record.is_none() {
             self.record = fs::Project::new(&self.cwd).create_session();
         }
+        if self.number.is_none() {
+            self.number = self
+                .record
+                .as_deref()
+                .and_then(|id| artifact::entry::number(&self.cwd, "session", id).ok());
+        }
         self.record.as_deref()
     }
 
@@ -286,9 +296,7 @@ impl ChatSession {
             return;
         }
         let store = fs::Project::new(&self.cwd);
-        if self.record.is_none() {
-            self.record = store.create_session();
-        }
+        self.mint_record();
         if self.record.is_some() {
             store.save_session(&self.to_record());
         }

@@ -42,6 +42,8 @@ pub struct Board {
     /// before ids existed is read — see [`crate::id`].
     #[serde(default)]
     pub id: String,
+    #[serde(skip)]
+    pub number: Option<u64>,
     /// When it was last written, as the backend that holds it counts — kept
     /// beside the board because the sidebar orders on it, and never written
     /// into the record, which would be a second copy able to disagree.
@@ -72,6 +74,7 @@ impl Board {
     pub fn new(id: String, name: &str) -> Self {
         Self {
             id,
+            number: None,
             touched: stamp::now(),
             archived: false,
             name: name.to_owned(),
@@ -315,6 +318,7 @@ impl Board {
     pub fn adopt(&mut self, fresh: Self) -> bool {
         if toml::to_string_pretty(self).ok() == toml::to_string_pretty(&fresh).ok() {
             self.touched = fresh.touched;
+            self.number = fresh.number;
             return false;
         }
         *self = fresh;

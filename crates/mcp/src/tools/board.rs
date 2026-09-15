@@ -29,7 +29,7 @@ use serde_json::{Value, json};
 
 const BOARD: Arg = Arg {
     name: "board",
-    about: "The board: its key (ROAD), its name, or its id.",
+    about: "The board: its project reference (#12), key (ROAD), name, or storage id.",
 };
 const CARD: Arg = Arg {
     name: "card",
@@ -139,6 +139,7 @@ fn list(args: Args<'_>) -> Outcome {
         .map(|board| {
             json!({
                 "id": board.id,
+                "number": board.number,
                 "key": board.key,
                 "name": board.name,
                 "archived": board.archived,
@@ -269,6 +270,13 @@ fn store(args: &Args<'_>) -> Result<fs::Project, Trouble> {
 /// which is least ambiguous first, since only the id is guaranteed unique.
 fn board(project: &impl Project, needle: &str) -> Result<Board, Trouble> {
     let mut boards = project.boards();
+    if let Some(number) = artifact::entry::reference(needle) {
+        return boards
+            .iter()
+            .position(|board| board.number == Some(number))
+            .map(|at| boards.swap_remove(at))
+            .ok_or_else(|| Trouble::Refused(format!("no board {needle} in this project")));
+    }
     let found = boards
         .iter()
         .position(|board| board.id == needle)
@@ -370,6 +378,7 @@ fn outline(board: &Board) -> String {
         true => board.label().to_owned(),
         false => format!("{} ({})", board.label(), board.key),
     };
+    out = artifact::entry::label(board.number, &out);
     if board.archived {
         out.push_str(" — archived");
     }
@@ -405,16 +414,6 @@ fn outline(board: &Board) -> String {
 
 /// Every board, one to a line.
 fn listing(boards: &[Board]) -> String {
-    let key = boards
-        .iter()
-        .map(|board| board.key.chars().count())
-        .max()
-        .unwrap_or(0);
-    let name = boards
-        .iter()
-        .map(|board| board.label().chars().count())
-        .max()
-        .unwrap_or(0);
     boards
         .iter()
         .map(|board| {
@@ -428,9 +427,8 @@ fn listing(boards: &[Board]) -> String {
                 false => "",
             };
             format!(
-                "{:<key$}  {:<name$}  {held}{archived}",
-                board.key,
-                board.label()
+                "{}  {held}{archived}",
+                artifact::entry::label(board.number, &format!("{} ({})", board.label(), board.key))
             )
         })
         .collect::<Vec<_>>()
@@ -441,6 +439,7 @@ fn listing(boards: &[Board]) -> String {
 fn shape(board: &Board) -> Value {
     json!({
         "id": board.id,
+        "number": board.number,
         "key": board.key,
         "name": board.name,
         "archived": board.archived,

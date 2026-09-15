@@ -16,6 +16,13 @@ use bezel::{
     theme::{TextStyle, Theme, Typeset},
     ui::icons,
 };
+fn title_with_number(number: Option<u64>, title: &str) -> String {
+    match number {
+        Some(number) => format!("{title} #{number}"),
+        None => title.to_owned(),
+    }
+}
+
 /// What a pane puts in the band.
 pub(crate) struct Toolbar {
     /// What the pane is showing, by the name the sidebar would list it under.
@@ -58,7 +65,7 @@ impl Cydonia {
             Pane::Chat => {
                 let chat = workspace.active_session()?;
                 Toolbar {
-                    title: chat.label(),
+                    title: title_with_number(chat.number, &chat.label()),
                     entry: Some(Entry {
                         row: Row::Session {
                             project,
@@ -73,7 +80,7 @@ impl Cydonia {
                 let ix = open.board?;
                 let board = open.boards.get(ix)?;
                 Toolbar {
-                    title: board.label().to_owned(),
+                    title: title_with_number(board.number, board.label()),
                     entry: Some(Entry {
                         row: Row::Board { project, ix },
                         archived: board.archived,
@@ -85,7 +92,7 @@ impl Cydonia {
                 let ix = open.article?;
                 let article = open.articles.get(ix)?;
                 Toolbar {
-                    title: article.label().to_owned(),
+                    title: title_with_number(article.number, article.label()),
                     entry: Some(Entry {
                         row: Row::Article { project, ix },
                         archived: article.archived,
@@ -97,7 +104,7 @@ impl Cydonia {
                 let ix = open.table?;
                 let table = open.tables.get(ix)?;
                 Toolbar {
-                    title: table.name.clone(),
+                    title: title_with_number(table.number, &table.name),
                     entry: Some(Entry {
                         row: Row::Table { project, ix },
                         archived: table.archived,

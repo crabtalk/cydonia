@@ -47,6 +47,16 @@ args = ["--acp"]
 # env = { KEY = "VALUE" }
 ```
 
+## Entry references
+
+Articles, boards, tables, and saved chats share a sequence within each project:
+`#1`, `#2`, and so on. References appear after titles in pane headers, survive
+renames and restarts, and are never reassigned after deletion through the app.
+
+External MCP agents and in-app ACP agents can use `project_entries` to list them
+and `project_read_entry` to read one. Article and board tools also accept `#12`
+in their existing entry arguments. Table reads preview up to 200 rows.
+
 ## Where things live
 
 ```

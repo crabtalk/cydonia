@@ -37,6 +37,7 @@ pub const UNNAMED: &str = "Untitled";
 pub const TITLE_CONTEXT: &str = "CydoniaArticleTitle";
 
 pub struct Article {
+    pub number: Option<u64>,
     pub path: PathBuf,
     /// The picture above the document, if it has been given one. See
     /// [`crate::model::cover`] — this is a cache of a file's existence, and the
@@ -83,6 +84,9 @@ impl Article {
     fn new(path: PathBuf) -> Self {
         let held = properties::all(&path);
         Self {
+            number: path.ancestors().nth(4).and_then(|project| {
+                artifact::entry::number(project, "article", &layout::id_of(&path)).ok()
+            }),
             cover: cover::of(&path),
             title: held.title,
             touched: layout::touched(&path),
@@ -243,6 +247,7 @@ impl Article {
     /// Answers whether the surfaces were replaced, which is what tells the pane
     /// the editor it had the caret in is not there any more.
     pub fn adopt(&mut self, fresh: &Self, cx: &mut Context<Workspace>) -> bool {
+        self.number = fresh.number;
         self.cover = fresh.cover.clone();
         self.archived = fresh.archived;
         self.full_width = fresh.full_width;
@@ -311,7 +316,12 @@ impl Article {
     /// All of it: the directory is the article.
     pub fn remove(&self) {
         if let Some(dir) = self.path.parent() {
-            let _ = std::fs::remove_dir_all(dir);
+            if std::fs::remove_dir_all(dir).is_ok()
+                && let Some(project) = self.path.ancestors().nth(4)
+            {
+                let _ = artifact::entry::Registry::open(project)
+                    .and_then(|registry| registry.remove("article", &layout::id_of(&self.path)));
+            }
         }
     }
 

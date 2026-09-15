@@ -78,6 +78,7 @@ pub struct Column {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Table {
+    pub number: Option<u64>,
     /// What `FROM` takes.
     pub key: String,
     pub name: String,
