@@ -12,15 +12,17 @@ use crate::{
 use artifact::session::chat::PlanStatus;
 use bezel::{
     gpui::{
-        AnyElement, App, Context, FocusHandle, Focusable as _, SharedString, Window, div,
-        prelude::*, px,
+        AnyElement, App, Axis, Context, DragMoveEvent, Empty, FocusHandle, Focusable as _,
+        SharedString, Window, div, prelude::*, px,
     },
     motion::{Fade, Painter},
     theme::{TextStyle, Theme, Typeset},
     ui::{
         icons::{self, Icon},
         surface,
-        widgets::{ButtonStyle, Buttons, Content, Controls, Status},
+        widgets::{
+            ButtonStyle, Buttons, Content, Controls, Layout, SPLIT_HANDLE_HIT, SplitStyle, Status,
+        },
     },
 };
 use cacp::schema::{
@@ -29,6 +31,16 @@ use cacp::schema::{
 };
 use std::path::Path;
 use surface::Surfaced as _;
+
+/// Separate from the sidebar's payload so its resize listener stays idle.
+struct ChangesResize;
+
+/// Keep room for the conversation; a narrow window shares the space evenly
+/// when two 240px columns cannot fit. The preferred width survives hiding.
+fn panel_width(preferred: f32, available: f32) -> f32 {
+    let min = 240.0_f32.min(available / 2.);
+    preferred.clamp(min, (available - 240.).max(min))
+}
 
 /// What the live session can be switched between, flattened to the one shape
 /// the composer draws: its config options, then its modes.
@@ -421,13 +433,56 @@ impl Cydonia {
             .and_then(|id| self.terminals.get(&id))
             .filter(|(visible, _)| *visible)
             .map(|(_, terminal)| terminal.clone());
+        let available = f32::from(window.viewport_size().width)
+            - if self.sidebar_open {
+                self.sidebar_width
+            } else {
+                0.
+            };
+        let width = panel_width(self.changes_width, available.max(0.));
         div()
             .flex_1()
             .min_w_0()
             .min_h_0()
             .flex()
             .flex_col()
-            .child(main)
+            .child(
+                div()
+                    .id("session-detail")
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .flex_row()
+                    .on_drag_move(cx.listener(
+                        |this, event: &DragMoveEvent<ChangesResize>, _, cx| {
+                            this.changes_width = panel_width(
+                                f32::from(event.bounds.right() - event.event.position.x),
+                                f32::from(event.bounds.size.width),
+                            );
+                            cx.notify();
+                        },
+                    ))
+                    .child(main)
+                    .children(self.changes.clone().map(|panel| {
+                        div()
+                            .relative()
+                            .w(px(width))
+                            .min_w_0()
+                            .flex_none()
+                            .border_l_1()
+                            .border_color(theme.border)
+                            .child(panel)
+                            .child(
+                                theme
+                                    .split_handle(Axis::Horizontal, SplitStyle::Ghost)
+                                    .id("changes-split")
+                                    .absolute()
+                                    .top_0()
+                                    .left(px(-SPLIT_HANDLE_HIT / 2.))
+                                    .on_drag(ChangesResize, |_, _, _, cx| cx.new(|_| Empty)),
+                            )
+                    })),
+            )
             .children(terminal.map(|terminal| {
                 div()
                     .h(px(240.))

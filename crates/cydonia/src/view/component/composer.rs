@@ -104,6 +104,7 @@ pub enum ComposerEvent {
     Submit(String),
     Cancel,
     Terminal,
+    Changes,
     /// Talk to this agent instead — an index into the configured agents.
     Agent(usize),
     /// Nothing here to pick: open settings where agents are installed.
@@ -766,6 +767,9 @@ impl Composer {
             Item::action("Terminal")
                 .with_icon(icons::development::Terminal)
                 .with_shortcut(&root::ToggleTerminal, window),
+            Item::action("Git changes")
+                .with_icon(icons::development::GitCompare)
+                .with_shortcut(&root::ToggleChanges, window),
         ];
         let rows = items.clone();
         let popup = self.tools_menu.then(|| {
@@ -780,9 +784,13 @@ impl Composer {
                         Hit::Point(path) => {
                             this.tools_cursor.point_at(&rows, &path);
                         }
-                        Hit::Choose(_) => {
+                        Hit::Choose(path) => {
                             this.tools_menu = false;
-                            cx.emit(ComposerEvent::Terminal);
+                            match path.as_slice() {
+                                [0] => cx.emit(ComposerEvent::Terminal),
+                                [1] => cx.emit(ComposerEvent::Changes),
+                                _ => {}
+                            }
                         }
                         Hit::Dismiss => this.tools_menu = false,
                     }

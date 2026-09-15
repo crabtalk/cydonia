@@ -57,6 +57,7 @@ actions!(
         OpenSettings,
         ToggleSidebar,
         ToggleTerminal,
+        ToggleChanges,
         CommitName,
         DismissName,
         NextEntry,
@@ -276,6 +277,9 @@ pub struct Cydonia {
     /// Visibility and shell per session; hiding a panel keeps its process alive.
     pub(crate) terminals:
         std::collections::HashMap<u64, (bool, Entity<super::component::terminal::Terminal>)>,
+    pub(crate) changes_open: bool,
+    pub(crate) changes_width: f32,
+    pub(crate) changes: Option<Entity<super::component::changes::Changes>>,
     settings_window: Option<WindowHandle<SettingsWindow>>,
     pub(crate) pane: Pane,
     /// Whether a session has been asked for with no agent to open one on.
@@ -356,6 +360,7 @@ impl Cydonia {
                 ComposerEvent::Submit(text) => this.submit(text.clone(), cx),
                 ComposerEvent::Cancel => this.cancel_turn(cx),
                 ComposerEvent::Terminal => this.show_terminal(window, cx),
+                ComposerEvent::Changes => this.show_changes(cx),
                 ComposerEvent::Agent(ix) => this.pick_agent(*ix, cx),
                 ComposerEvent::Install => this.open_settings(Section::Agents, cx),
                 ComposerEvent::Switch(id, value) => this.switch(id, value, cx),
@@ -407,6 +412,9 @@ impl Cydonia {
             sidebar_width: SIDEBAR_WIDTH,
             composer,
             terminals: Default::default(),
+            changes_open: false,
+            changes_width: 440.,
+            changes: None,
             settings_window: None,
             pane: Pane::Chat,
             asked_session: false,
@@ -773,6 +781,7 @@ impl Cydonia {
 
 impl Render for Cydonia {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.sync_changes(cx);
         let theme = Theme::of(cx).clone();
         div()
             .size_full()
@@ -782,6 +791,7 @@ impl Render for Cydonia {
             .font_family(theme.font_sans.clone())
             .text_color(theme.text)
             .text_style(TextStyle::Body)
+            .on_action(cx.listener(Self::toggle_changes))
             .on_action(cx.listener(Self::copy_selection))
             .on_action(cx.listener(Self::commit_cell_action))
             .on_action(cx.listener(Self::dismiss_cell))

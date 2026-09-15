@@ -25,7 +25,7 @@ use crate::{
         root::{
             CloseProject, Cydonia, NewArticle, NewBoard, NewSession, NewSessionNext,
             NewSessionWith, NewTable, NextEntry, OpenProject, OpenSettings, Pane, PrevEntry,
-            ToggleSidebar, ToggleTerminal,
+            ToggleChanges, ToggleSidebar, ToggleTerminal,
         },
     },
 };
@@ -173,6 +173,7 @@ fn menus(cx: &App) -> Vec<Menu> {
         Menu::new("View").items([
             MenuItem::action("Toggle Sidebar", ToggleSidebar),
             MenuItem::action("Toggle Terminal", ToggleTerminal),
+            MenuItem::action("Toggle Git Changes", ToggleChanges),
             MenuItem::separator(),
             // Drawn ⌥⌘→ and ⌥⌘←, which is why those are bound first: the
             // `ctrl-tab` pair these also answer to is a chord gpui cannot

@@ -4,6 +4,7 @@
 
 pub mod article;
 pub mod cover;
+pub mod git;
 pub mod media;
 pub mod migrate;
 pub mod project;

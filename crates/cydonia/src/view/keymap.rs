@@ -25,7 +25,8 @@ use crate::{
         create, info, menubar,
         root::{
             self, CloseProject, NewArticle, NewBoard, NewSession, NewSessionNext, NewTable,
-            NextEntry, OpenProject, OpenSettings, PrevEntry, ToggleSidebar, ToggleTerminal,
+            NextEntry, OpenProject, OpenSettings, PrevEntry, ToggleChanges, ToggleSidebar,
+            ToggleTerminal,
         },
         table,
     },
@@ -58,6 +59,7 @@ pub enum Command {
     CloseProject,
     ToggleSidebar,
     ToggleTerminal,
+    ToggleChanges,
     NextEntry,
     PrevEntry,
     PlainText,
@@ -86,7 +88,7 @@ impl Menu {
 }
 
 impl Command {
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 14] = [
         Self::OpenSettings,
         Self::NewSession,
         Self::NewSessionNext,
@@ -97,6 +99,7 @@ impl Command {
         Self::CloseProject,
         Self::ToggleSidebar,
         Self::ToggleTerminal,
+        Self::ToggleChanges,
         Self::NextEntry,
         Self::PrevEntry,
         Self::PlainText,
@@ -115,6 +118,7 @@ impl Command {
             Self::CloseProject => "close_project",
             Self::ToggleSidebar => "toggle_sidebar",
             Self::ToggleTerminal => "toggle_terminal",
+            Self::ToggleChanges => "toggle_changes",
             Self::NextEntry => "next_entry",
             Self::PrevEntry => "prev_entry",
             Self::PlainText => "plain_text",
@@ -134,6 +138,7 @@ impl Command {
             Self::CloseProject => "Close Project",
             Self::ToggleSidebar => "Toggle Sidebar",
             Self::ToggleTerminal => "Toggle Terminal",
+            Self::ToggleChanges => "Toggle Git Changes",
             Self::NextEntry => "Next Entry",
             Self::PrevEntry => "Previous Entry",
             Self::PlainText => "Plain Text",
@@ -151,6 +156,7 @@ impl Command {
             | Self::OpenProject
             | Self::CloseProject => Menu::File,
             Self::ToggleTerminal
+            | Self::ToggleChanges
             | Self::ToggleSidebar
             | Self::NextEntry
             | Self::PrevEntry
@@ -175,6 +181,7 @@ impl Command {
             // What every app with a sidebar binds it to.
             Self::ToggleSidebar => "cmd-b",
             Self::ToggleTerminal => "cmd-j",
+            Self::ToggleChanges => "cmd-shift-g",
             // The pair the View menu draws. `ctrl-tab` reaches these too and
             // is not movable: gpui has no macOS equivalent for `tab`, so an
             // item naming it would print ⌃T — see [`root::bindings`].
@@ -199,6 +206,7 @@ impl Command {
             Self::CloseProject => KeyBinding::new(chord, CloseProject, None),
             Self::ToggleSidebar => KeyBinding::new(chord, ToggleSidebar, None),
             Self::ToggleTerminal => KeyBinding::new(chord, ToggleTerminal, None),
+            Self::ToggleChanges => KeyBinding::new(chord, ToggleChanges, None),
             Self::NextEntry => KeyBinding::new(chord, NextEntry, None),
             Self::PrevEntry => KeyBinding::new(chord, PrevEntry, None),
             Self::PlainText => KeyBinding::new(chord, TogglePlainText, None),
