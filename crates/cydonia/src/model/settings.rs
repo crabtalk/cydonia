@@ -126,7 +126,7 @@ impl Default for Appearance {
             hue: 0.,
             chroma: 0.,
             wide_pages: false,
-            indent_project_rows: false,
+            indent_project_rows: true,
             // Off, the way every code editor ships it: indentation is
             // structure, and wrapping loses the left column that makes nesting
             // scannable. Against bezel's own default, which wraps because

@@ -132,7 +132,20 @@ impl Cydonia {
             // over the menu, not the row that opened it.
             .when_some(
                 group.filter(|_| self.menu.as_ref() != Some(&menu)),
-                |el, group| el.invisible().group_hover(group, |el| el.visible()),
+                |el, group| {
+                    if matches!(menu, Menu::Add(_) | Menu::Entry(_)) {
+                        // Sidebar labels reclaim the button and gap until hover.
+                        // Out of flow rather than `hidden()`: gpui resolves
+                        // hover separately for prepaint and paint, and a
+                        // `display: none` flip between them paints children
+                        // that were never prepainted.
+                        el.absolute()
+                            .invisible()
+                            .group_hover(group, |el| el.relative().visible())
+                    } else {
+                        el.invisible().group_hover(group, |el| el.visible())
+                    }
+                },
             )
             .p(px(3.))
             .child(mark)
