@@ -26,7 +26,7 @@ use bezel::{
         widgets::Controls as _,
     },
 };
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 actions!(
     cydonia_composer,
@@ -143,6 +143,7 @@ pub struct Switch {
 }
 
 pub enum ComposerEvent {
+    Draft(u64, String),
     /// The message, and the pictures going with it.
     Submit(String, Vec<Attachment>),
     Cancel,
@@ -168,6 +169,9 @@ fn set_to(name: &str, value: Option<SharedString>) -> SharedString {
 
 pub struct Composer {
     field: Entity<TextField>,
+    session: Option<u64>,
+    local_draft: String,
+    saved_attachments: HashMap<Option<u64>, Vec<Attachment>>,
     /// Pictures pasted or dropped, sent with the next message.
     attachments: Vec<Attachment>,
     /// Which of them is open in the lightbox.
@@ -226,12 +230,24 @@ impl Composer {
         cx.subscribe(
             &field,
             |composer: &mut Self, _, event: &FieldEvent, cx| match event {
-                FieldEvent::Changed | FieldEvent::Moved => composer.reread(cx),
+                FieldEvent::Changed => {
+                    composer.reread(cx);
+                    if let Some(id) = composer.session {
+                        cx.emit(ComposerEvent::Draft(
+                            id,
+                            composer.field.read(cx).content().to_string(),
+                        ));
+                    }
+                }
+                FieldEvent::Moved => composer.reread(cx),
             },
         )
         .detach();
         Self {
             field,
+            session: None,
+            local_draft: String::new(),
+            saved_attachments: HashMap::new(),
             attachments: Vec::new(),
             preview: None,
             command: None,
@@ -248,6 +264,33 @@ impl Composer {
             tools_cursor: Cursor::default(),
             cursor: Cursor::default(),
         }
+    }
+
+    pub fn session(&self) -> Option<u64> {
+        self.session
+    }
+
+    pub fn set_session(&mut self, id: Option<u64>, draft: &str, cx: &mut Context<Self>) {
+        if self.session == id {
+            return;
+        }
+        if self.session.is_none() {
+            self.local_draft = self.field.read(cx).content().to_string();
+        }
+        self.saved_attachments
+            .insert(self.session, std::mem::take(&mut self.attachments));
+        self.session = id;
+        self.attachments = self.saved_attachments.remove(&id).unwrap_or_default();
+        self.preview = None;
+        let draft = if id.is_none() {
+            self.local_draft.clone()
+        } else {
+            draft.to_owned()
+        };
+        self.field
+            .update(cx, |field, cx| field.set_content(draft, cx));
+        self.reread(cx);
+        cx.notify();
     }
 
     pub fn set_placeholder(&mut self, placeholder: &str, cx: &mut Context<Self>) {
@@ -1106,3 +1149,7 @@ impl Render for Composer {
         self.body(window, cx)
     }
 }
+
+#[cfg(test)]
+#[path = "../../../tests/unit/composer_drafts.rs"]
+mod draft_tests;

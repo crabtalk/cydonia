@@ -15,6 +15,7 @@ use crate::{
 use anyhow::{Result, anyhow};
 use cacp::{
     AgentConn, Client, Direction, Error, Tap,
+    client::{HistoryEntry, HistoryFork, HistoryRole},
     schema::{
         AuthenticateRequest, CancelNotification, ClientCapabilities, ContentBlock, EnvVariable,
         FileSystemCapabilities, HttpHeader, ImageContent, InitializeRequest, InitializeResponse,
@@ -35,7 +36,7 @@ use tokio::{
     io::{AsyncBufReadExt, BufReader},
     process::{Child, ChildStderr, Command},
     runtime::Runtime,
-    sync::{mpsc, oneshot},
+    sync::{Mutex, mpsc, oneshot},
 };
 
 /// Where the protocol tap writes, and the switch that echoes an agent's stderr
@@ -121,6 +122,7 @@ pub struct Session {
     /// queued [`Event::Update`]s) instead of a fresh one created.
     pub loaded: bool,
     built_in_mcp: bool,
+    history_fork: Option<Arc<Mutex<HistoryFork>>>,
 }
 
 /// How to open a session.
@@ -130,6 +132,8 @@ pub struct Launch {
     pub cwd: PathBuf,
     /// A session to load instead of starting fresh.
     pub previous: Option<String>,
+    pub history: Option<Vec<HistoryEntry>>,
+    pub history_pending: bool,
 }
 
 impl Launch {
@@ -266,6 +270,52 @@ impl Session {
             }
         };
 
+        let history_fork = if !loaded || launch.history_pending {
+            if let Some(mut history) = launch.history {
+                if init.agent_capabilities.prompt_capabilities.image {
+                    history = tokio::task::spawn_blocking(move || {
+                        for entry in &mut history {
+                            if entry.role == HistoryRole::User {
+                                let paths: Vec<_> = entry
+                                    .content
+                                    .iter()
+                                    .flat_map(|block| match block {
+                                        ContentBlock::Text(text) => media::attached(&text.text),
+                                        _ => Vec::new(),
+                                    })
+                                    .collect();
+                                entry.content.extend(
+                                    paths.iter().filter_map(|path| media::encode(path)).map(
+                                        |(data, mime)| {
+                                            ContentBlock::Image(ImageContent {
+                                                data,
+                                                mime_type: mime.to_owned(),
+                                                uri: None,
+                                                annotations: None,
+                                                meta: None,
+                                            })
+                                        },
+                                    ),
+                                );
+                            }
+                        }
+                        history
+                    })
+                    .await
+                    .map_err(|e| anyhow!("fork history preparation failed: {e}"))?;
+                }
+                Some(Arc::new(Mutex::new(HistoryFork::restore(
+                    conn.clone(),
+                    response.clone(),
+                    history,
+                ))))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         Ok(Self {
             conn: Some(conn),
             tx,
@@ -276,6 +326,7 @@ impl Session {
             cwd,
             loaded,
             built_in_mcp,
+            history_fork,
         })
     }
 
@@ -306,6 +357,7 @@ impl Session {
         let session_id = self.session_id.clone();
         let conn = self.conn();
         let tx = self.tx.clone();
+        let history_fork = self.history_fork.clone();
         runtime().spawn(async move {
             if !pictures.is_empty() {
                 let images = tokio::task::spawn_blocking(move || {
@@ -329,10 +381,11 @@ impl Session {
                 blocks.splice(1..1, images);
             }
             let request = PromptRequest::new(session_id, blocks);
-            let done = conn
-                .prompt(request)
-                .await
-                .map(|response| response.stop_reason);
+            let result = match history_fork {
+                Some(fork) => fork.lock().await.prompt(request).await,
+                None => conn.prompt(request).await,
+            };
+            let done = result.map(|response| response.stop_reason);
             let _ = tx.send(Event::TurnDone(done));
         });
     }
@@ -374,6 +427,36 @@ impl Session {
         let conn = self.conn();
         runtime().spawn(async move { conn.set_session_config_option(request).await });
     }
+}
+
+/// Convert the saved prefix to context without replaying tool executions.
+pub fn history(items: &[artifact::session::chat::ChatItem]) -> Vec<HistoryEntry> {
+    use artifact::session::chat::ChatItem;
+    items
+        .iter()
+        .map(|item| {
+            let (role, text) = match item {
+                ChatItem::User(text) => (HistoryRole::User, text.clone()),
+                ChatItem::Agent(text) => (HistoryRole::Agent, text.clone()),
+                ChatItem::Thinking { text, .. } => {
+                    (HistoryRole::Agent, format!("Prior reasoning: {text}"))
+                }
+                ChatItem::Tool { label, output, .. } => {
+                    (HistoryRole::Tool, format!("{label}\n{output}"))
+                }
+                ChatItem::Process { command, output } => {
+                    (HistoryRole::Tool, format!("{command}\n{output}"))
+                }
+                ChatItem::Notice { text, .. } => {
+                    (HistoryRole::Tool, format!("Session notice: {text}"))
+                }
+            };
+            HistoryEntry {
+                role,
+                content: vec![text.into()],
+            }
+        })
+        .collect()
 }
 
 /// Serves what the agent asks of us: file access answered here, anything

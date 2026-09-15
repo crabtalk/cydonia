@@ -14,6 +14,10 @@ Articles are the stable part, and a fresh install is articles and nothing else.
 Sessions, boards and tables ship off; turn them on in **Settings › Features** or
 in `~/.config/cydonia/settings.toml`.
 
+Hover a user message and choose **Fork session from here** to edit it in a new
+session with the earlier conversation as context. The original stays intact.
+Forks share the project files; they do not restore earlier file versions.
+
 Review staged, unstaged and untracked changes via **+ › Git changes** (⇧⌘G)
 in a session. The resizable panel shows syntax-highlighted, wrapped diffs with
 collapsible hunks.

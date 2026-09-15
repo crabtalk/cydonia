@@ -22,7 +22,7 @@ anyhow = "1"
 axum = "0.8"
 base64 = "0.22"
 bezel = { version = "0.1.15", features = ["platform"] }
-cacp = { version = "0.1.0", default-features = false }
+cacp = { version = "0.1.2", default-features = false }
 cacp-agents = "0.1.0"
 chrono = "0.4"
 dirs = "6"

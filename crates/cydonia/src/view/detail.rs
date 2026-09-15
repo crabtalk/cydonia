@@ -366,7 +366,10 @@ impl Cydonia {
         let live = chat.filter(|chat| chat.live());
         let switches = live.map(switches).unwrap_or_default();
         let usage = live.and_then(|chat| chat.usage);
+        let session_id = chat.map(|chat| chat.id);
+        let draft = chat.map(|chat| chat.draft.clone()).unwrap_or_default();
         self.composer.update(cx, |composer, cx| {
+            composer.set_session(session_id, &draft, cx);
             composer.set_placeholder(&placeholder, cx);
             composer.set_commands(&commands, cx);
             composer.set_streaming(streaming, cx);
@@ -753,7 +756,7 @@ impl Cydonia {
         };
         // Nothing has been said yet, so what the session has to show for
         // itself is the directory the agent was started in.
-        if chat.unsaid() {
+        if chat.unsaid() && chat.fork.is_none() {
             let agent = chat.entry.name.clone();
             let cwd = workspace
                 .active_project()

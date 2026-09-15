@@ -31,6 +31,48 @@ impl Workspace {
         Some(id)
     }
 
+    pub fn fork_session(
+        &mut self,
+        source: u64,
+        before: usize,
+        cx: &mut Context<Self>,
+    ) -> Option<u64> {
+        if !self.settings.features.sessions {
+            return None;
+        }
+        let ix = self.project_of(source)?;
+        self.projects[ix].session_mut(source)?.mint_record()?;
+        let id = self.next_id;
+        let mut fork = self.projects[ix].session(source)?.fork_at(id, before)?;
+        self.next_id += 1;
+        fork.flush();
+        self.projects[ix].sessions.push(fork);
+        self.select_session(id, cx);
+        Some(id)
+    }
+
+    pub fn set_draft(&mut self, id: u64, draft: String, cx: &mut Context<Self>) {
+        if self.session(id).is_none_or(|chat| chat.draft == draft) {
+            return;
+        }
+        // Coalesce typing so a large transcript is not rewritten on every keystroke.
+        let save = cx.spawn(async move |workspace, cx| {
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(500))
+                .await;
+            let _ = workspace.update(cx, |workspace, cx| {
+                workspace.with_session(id, cx, |chat| {
+                    chat.flush();
+                    chat.draft_save = None;
+                });
+            });
+        });
+        self.with_session(id, cx, |chat| {
+            chat.draft = draft;
+            chat.draft_save = Some(save);
+        });
+    }
+
     /// Every project's sessions are on show, so picking one brings its project
     /// forward with it.
     pub fn select_session(&mut self, id: u64, cx: &mut Context<Self>) {

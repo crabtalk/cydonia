@@ -52,13 +52,68 @@ pub struct Record {
     /// still going on, and typing into it brings it back.
     #[serde(default)]
     pub closed: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fork: Option<ForkOrigin>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub draft: String,
     pub items: Vec<ChatItem>,
     /// User message item indices mapped to Unix seconds.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub sent_at: BTreeMap<usize, u64>,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ForkOrigin {
+    pub session: String,
+    pub title: String,
+    /// Exclusive item boundary retained from the source.
+    pub before: usize,
+    pub pending: bool,
+}
+
 impl Record {
+    /// Copy history before a user message and leave that message as an editable draft.
+    pub fn fork_at(&self, before: usize) -> Option<Self> {
+        let ChatItem::User(draft) = self.items.get(before)? else {
+            return None;
+        };
+        let title = self.name.as_ref().unwrap_or(&self.title).clone();
+        Some(Self {
+            id: String::new(),
+            number: None,
+            agent: self.agent.clone(),
+            agent_id: self.agent_id.clone(),
+            session: None,
+            title: format!(
+                "Fork of {}",
+                if title.is_empty() {
+                    &self.agent
+                } else {
+                    &title
+                }
+            ),
+            name: None,
+            updated: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            closed: false,
+            fork: Some(ForkOrigin {
+                session: self.id.clone(),
+                title,
+                before,
+                pending: true,
+            }),
+            draft: draft.clone(),
+            items: self.items[..before].to_vec(),
+            sent_at: self
+                .sent_at
+                .range(..before)
+                .map(|(ix, at)| (*ix, *at))
+                .collect(),
+        })
+    }
+
     pub fn at(&self) -> SystemTime {
         UNIX_EPOCH + Duration::from_secs(self.updated)
     }

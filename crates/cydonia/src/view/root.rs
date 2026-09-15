@@ -362,6 +362,11 @@ impl Cydonia {
                 ComposerEvent::Submit(text, attachments) => {
                     this.submit(text.clone(), attachments.clone(), cx)
                 }
+                ComposerEvent::Draft(id, draft) => {
+                    this.workspace.update(cx, |workspace, cx| {
+                        workspace.set_draft(*id, draft.clone(), cx)
+                    });
+                }
                 ComposerEvent::Cancel => this.cancel_turn(cx),
                 ComposerEvent::Terminal => this.show_terminal(window, cx),
                 ComposerEvent::Changes => this.show_changes(cx),
@@ -384,8 +389,15 @@ impl Cydonia {
         // The model is the only thing that says a session appeared or a turn
         // ended; the composer's placeholder, commands and busy state are all
         // read back from it rather than pushed by whoever caused the change.
-        cx.observe(&workspace, |this, _, cx| this.sync_composer(cx))
-            .detach();
+        cx.observe_in(&workspace, window, |this, _, window, cx| {
+            let previous = this.composer.read(cx).session();
+            this.sync_composer(cx);
+            let current = this.composer.read(cx).session();
+            if current.is_some() && current != previous {
+                window.focus(&this.composer_focus_handle(cx), cx);
+            }
+        })
+        .detach();
         // The notice at the foot of the sidebar is the updater's, and the
         // updater moves on its own clock — and from the other window, where the
         // Developer switch that previews it lives.

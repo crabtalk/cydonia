@@ -258,7 +258,7 @@ pub fn render(chat: &ChatSession, window: &mut Window, cx: &mut Context<Workspac
         zones.push(working(chat, turn.range.start, cx));
     }
 
-    div()
+    let transcript = div()
         .flex_1()
         .min_h_0()
         .relative()
@@ -315,6 +315,40 @@ pub fn render(chat: &ChatSession, window: &mut Window, cx: &mut Context<Workspac
             // clear beside it.
             window.viewport_size().width - chat.transcript.scroll.bounds().right(),
         ))
+        .into_any_element();
+    div()
+        .flex_1()
+        .min_h_0()
+        .flex()
+        .flex_col()
+        .children(chat.fork.as_ref().map(|fork| {
+            let source = fork.session.clone();
+            let theme = Theme::of(cx).clone();
+            div()
+                .id("fork-origin")
+                .self_start()
+                .px(px(24.))
+                .pt(px(8.))
+                .text_style(TextStyle::Caption)
+                .text_color(theme.text_muted)
+                .child(format!(
+                    "Forked from {}",
+                    if fork.title.is_empty() {
+                        "session"
+                    } else {
+                        &fork.title
+                    }
+                ))
+                .cursor_pointer()
+                .hover(|link| link.text_color(theme.text))
+                .on_click(cx.listener(move |workspace, _, _, cx| {
+                    if let Some(id) = workspace.session_by_record(&source).map(|chat| chat.id) {
+                        workspace.select_session(id, cx);
+                    }
+                }))
+                .into_any_element()
+        }))
+        .child(transcript)
         .into_any_element()
 }
 
@@ -424,7 +458,10 @@ fn zone(
     let mut zone = div().flex().flex_col().gap(px(10.)).pb(px(28.));
     if let Some(ChatItem::User(text)) = chat.items.get(first) {
         let group = SharedString::from(format!("user-message-{}-{first}", chat.id));
+        let fork_group = SharedString::from(format!("fork-message-{}-{first}", chat.id));
         let copy_group = SharedString::from(format!("copy-message-{}-{first}", chat.id));
+        let caption_size = TextStyle::Caption.painted();
+        let button_size = px(caption_size * 2.);
         let copied = text.clone();
         let id = chat.id;
         let copy_done = chat.transcript.copy_feedback.contains_key(&first);
@@ -458,63 +495,107 @@ fn zone(
                         .flex()
                         .items_center()
                         .justify_end()
-                        .gap(px(8.))
+                        .gap(px(caption_size))
                         .pr(px(6.))
                         .text_style(TextStyle::Caption)
                         .text_color(theme.text_faint)
                         // Reserve the row so hovering does not move the conversation.
                         .invisible()
                         .group_hover(group, |row| row.visible())
-                        .children(timestamp)
-                        .child(
+                        .children(timestamp.map(|text| {
                             div()
-                                .id(("copy-user-message", first))
-                                .group(copy_group.clone())
-                                .size(px(TextStyle::Caption.painted() * 2.))
+                                .h(button_size)
                                 .flex_none()
                                 .flex()
                                 .items_center()
-                                .justify_center()
-                                .cursor_pointer()
-                                .tooltip(move |window, cx| {
-                                    Tooltip::text(
-                                        if copy_done { "Copied" } else { "Copy message" },
-                                        window,
-                                        cx,
-                                    )
-                                })
-                                .on_click(cx.listener(move |workspace, _, _, cx| {
-                                    cx.write_to_clipboard(ClipboardItem::new_string(
-                                        copied.clone(),
-                                    ));
-                                    let reset = cx.spawn(async move |workspace, cx| {
-                                        cx.background_executor()
-                                            .timer(Duration::from_secs(2))
-                                            .await;
-                                        let _ = workspace.update(cx, |workspace, cx| {
-                                            workspace.with_session(id, cx, |chat| {
-                                                chat.transcript.copy_feedback.remove(&first);
-                                            });
-                                        });
-                                    });
-                                    workspace.with_session(id, cx, |chat| {
-                                        chat.transcript.copy_feedback.insert(first, reset);
-                                    });
-                                }))
+                                .child(text)
+                        }))
+                        .child(
+                            div()
+                                .flex()
+                                .flex_none()
+                                .items_center()
+                                .gap(px(caption_size * 0.2))
                                 .child(
-                                    theme
-                                        .icon_at(
-                                            TextStyle::Caption,
-                                            if copy_done {
-                                                icons::notifications::Check
-                                            } else {
-                                                icons::text::Copy
-                                            },
-                                        )
-                                        .text_color(theme.text_muted)
-                                        .group_hover(copy_group, |icon| {
-                                            icon.text_color(theme.text)
-                                        }),
+                                    div()
+                                        .id(("fork-user-message", first))
+                                        .group(fork_group.clone())
+                                        .size(button_size)
+                                        .flex_none()
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .cursor_pointer()
+                                        .tooltip(|window, cx| {
+                                            Tooltip::text("Fork session from here", window, cx)
+                                        })
+                                        .on_click(cx.listener(move |workspace, _, _, cx| {
+                                            workspace.fork_session(id, first, cx);
+                                        }))
+                                        .child(
+                                            theme
+                                                .icon_at(
+                                                    TextStyle::Caption,
+                                                    icons::development::GitFork,
+                                                )
+                                                .text_color(theme.text_muted)
+                                                .group_hover(fork_group, |icon| {
+                                                    icon.text_color(theme.text)
+                                                }),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .id(("copy-user-message", first))
+                                        .group(copy_group.clone())
+                                        .size(button_size)
+                                        .flex_none()
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .cursor_pointer()
+                                        .tooltip(move |window, cx| {
+                                            Tooltip::text(
+                                                if copy_done { "Copied" } else { "Copy message" },
+                                                window,
+                                                cx,
+                                            )
+                                        })
+                                        .on_click(cx.listener(move |workspace, _, _, cx| {
+                                            cx.write_to_clipboard(ClipboardItem::new_string(
+                                                copied.clone(),
+                                            ));
+                                            let reset = cx.spawn(async move |workspace, cx| {
+                                                cx.background_executor()
+                                                    .timer(Duration::from_secs(2))
+                                                    .await;
+                                                let _ = workspace.update(cx, |workspace, cx| {
+                                                    workspace.with_session(id, cx, |chat| {
+                                                        chat.transcript
+                                                            .copy_feedback
+                                                            .remove(&first);
+                                                    });
+                                                });
+                                            });
+                                            workspace.with_session(id, cx, |chat| {
+                                                chat.transcript.copy_feedback.insert(first, reset);
+                                            });
+                                        }))
+                                        .child(
+                                            theme
+                                                .icon_at(
+                                                    TextStyle::Caption,
+                                                    if copy_done {
+                                                        icons::notifications::Check
+                                                    } else {
+                                                        icons::text::Copy
+                                                    },
+                                                )
+                                                .text_color(theme.text_muted)
+                                                .group_hover(copy_group, |icon| {
+                                                    icon.text_color(theme.text)
+                                                }),
+                                        ),
                                 ),
                         ),
                 ),
