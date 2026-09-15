@@ -146,10 +146,10 @@ impl State {
     }
 }
 
-/// The prose of an item, for the two kinds that carry any.
+/// Text available for selection and copying.
 fn item_text(item: &ChatItem) -> Option<&str> {
     match item {
-        ChatItem::User(text) | ChatItem::Agent(text) => Some(text),
+        ChatItem::User(text) | ChatItem::Agent(text) | ChatItem::Notice { text, .. } => Some(text),
         _ => None,
     }
 }
@@ -191,19 +191,7 @@ fn turns(items: &[ChatItem]) -> Vec<Turn> {
     turns
 }
 
-/// What the session has to say for itself, in the strip its severity earns.
-fn notice(theme: &Theme, text: &str, failed: bool) -> AnyElement {
-    let strip = if failed {
-        theme.error_strip(SharedString::from(text.to_owned()))
-    } else {
-        theme.warning_strip(SharedString::from(text.to_owned()))
-    };
-    strip.mt(px(0.)).into_any_element()
-}
-
-/// One message, selectable. The transcript's two prose items — what you asked
-/// and what came back — are the same element, because copying the one is the
-/// same act as copying the other.
+/// User messages, agent responses, and session notices share selectable prose.
 ///
 /// The session id rides in the closure rather than the item: a pointer event
 /// arrives at the workspace, which holds every session, and the transcript on
@@ -465,7 +453,10 @@ fn zone(
     for ix in turn.answer_from..turn.range.end {
         zone = zone.child(match &chat.items[ix] {
             ChatItem::Agent(text) => prose(chat, ix, text, window, cx),
-            ChatItem::Notice { text, failed } => notice(&theme, text, *failed),
+            ChatItem::Notice { text, .. } => div()
+                .opacity(0.65)
+                .child(prose(chat, ix, text, window, cx))
+                .into_any_element(),
             ChatItem::Process { command, output } => {
                 let (command, output) = (command.clone(), output.clone());
                 process(chat, ix, &command, &output, cx)
@@ -559,12 +550,14 @@ fn work(chat: &ChatSession, body: Range<usize>, cx: &mut Context<Workspace>) -> 
                         )
                         .child(text.clone())
                         .into_any_element(),
-                    ChatItem::Agent(text) => div()
+                    ChatItem::Agent(text) | ChatItem::Notice { text, .. } => div()
                         .text_style(TextStyle::Callout)
                         .text_color(theme.text_muted)
+                        .when(matches!(item, ChatItem::Notice { .. }), |el| {
+                            el.opacity(0.65)
+                        })
                         .child(text.clone())
                         .into_any_element(),
-                    ChatItem::Notice { text, failed } => notice(&theme, text, *failed),
                     _ => div().into_any_element(),
                 }
             }));
