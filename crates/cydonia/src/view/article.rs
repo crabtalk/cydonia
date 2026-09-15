@@ -78,8 +78,36 @@ pub fn source_style(theme: &Theme) -> markdown::SourceStyle {
     markdown::SourceStyle {
         line_numbers: true,
         gutter_min_digits: 1,
-        gutter_gap: 1.0,
+        gutter_gap: 1.5,
         gutter_color: Some(theme.text_faint),
+    }
+}
+
+fn source_offset(editor: &editor::Editor, cx: &App) -> f32 {
+    if editor.mode() != Mode::Source {
+        return 0.;
+    }
+    let style = markdown::SourceStyle::of(cx);
+    let base = bezel::theme::base_text_size();
+    let limits = editor::TextSize::of(cx);
+    let size = ((editor.text_size().unwrap_or(base) + editor::text_size_adjustment(cx))
+        .clamp(limits.min, limits.max)
+        * 10.)
+        .round()
+        / 10.;
+    let code_size = markdown::Typography::of(cx).scaled(size / base).code.size();
+    let digits = editor
+        .source()
+        .split('\n')
+        .count()
+        .to_string()
+        .len()
+        .max(style.gutter_min_digits);
+    // Cancel Bezel's code padding and full gutter so source text aligns with the title.
+    12. + if style.line_numbers {
+        (digits as f32 + style.gutter_gap.max(0.)) * code_size
+    } else {
+        0.
     }
 }
 
@@ -314,6 +342,7 @@ impl Cydonia {
         let editor = article.editor.clone()?;
         let cover = article.cover.clone();
         let wide = article.wide(self.workspace.read(cx).wide_pages);
+        let source_offset = source_offset(editor.read(cx), cx);
         let stale = article.stale.then(|| article.path.clone());
         let document = div()
             .id("article")
@@ -359,7 +388,13 @@ impl Cydonia {
                             .py(px(20.))
                             .flex()
                             .cursor(CursorStyle::IBeam)
-                            .child(editor),
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .ml(px(-source_offset))
+                                    .child(editor),
+                            ),
                     ),
             );
         Some(

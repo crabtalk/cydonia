@@ -187,8 +187,22 @@ impl Article {
                 .with_scroll(scroll)
                 .with_mode(self.mode)
         });
-        cx.observe(&editor, |workspace, editor, cx| {
+        let mut source_digits = self.saved.split('\n').count().to_string().len();
+        cx.observe(&editor, move |workspace, editor, cx| {
             workspace.write_article(editor.entity_id(), cx);
+            if editor.read(cx).mode() == Mode::Source {
+                let digits = editor
+                    .read(cx)
+                    .source()
+                    .split('\n')
+                    .count()
+                    .to_string()
+                    .len();
+                if digits != source_digits {
+                    source_digits = digits;
+                    cx.notify();
+                }
+            }
         })
         .detach();
 
