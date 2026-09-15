@@ -92,5 +92,6 @@ fn record(id: &str) -> Record {
         updated: 1_757_000_000,
         closed: false,
         items: Vec::new(),
+        sent_at: Default::default(),
     }
 }

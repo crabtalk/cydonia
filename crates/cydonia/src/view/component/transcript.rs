@@ -17,8 +17,8 @@ use bezel::ui::scroll as scrollbars;
 use bezel::{
     agent::orbs::{OrbSize, OrbState, engine::Frame, orb_element},
     gpui::{
-        AnyElement, Context, Empty, Pixels, ScrollHandle, SharedString, Window, canvas, div,
-        prelude::*, px,
+        AnyElement, ClipboardItem, Context, Empty, Pixels, ScrollHandle, SharedString, Task,
+        Window, canvas, div, prelude::*, px,
     },
     motion::Painter,
     theme::{TextStyle, Theme, Typeset, ink},
@@ -26,7 +26,7 @@ use bezel::{
         icons,
         scroll::{self, FollowState},
         tooltip::Tooltip,
-        widgets::{Layout, Status, Takeover},
+        widgets::{Icons, Layout, Status, Takeover},
     },
 };
 use cacp::schema::ToolKind;
@@ -82,6 +82,8 @@ pub struct State {
     work: HashMap<usize, Takeover>,
     /// Tool items whose output is showing, by item index.
     output: HashSet<usize>,
+    /// Pending copy feedback resets, one per message.
+    copy_feedback: HashMap<usize, Task<()>>,
     /// Which item's text is selected and what of it. One at a time — a press
     /// in another item is what clears the last, the same way a page of prose
     /// has one selection however many paragraphs it holds.
@@ -421,17 +423,101 @@ fn zone(
 
     let mut zone = div().flex().flex_col().gap(px(10.)).pb(px(28.));
     if let Some(ChatItem::User(text)) = chat.items.get(first) {
+        let group = SharedString::from(format!("user-message-{}-{first}", chat.id));
+        let copy_group = SharedString::from(format!("copy-message-{}-{first}", chat.id));
+        let copied = text.clone();
+        let id = chat.id;
+        let copy_done = chat.transcript.copy_feedback.contains_key(&first);
+        let timestamp = chat.sent_at.get(&first).and_then(|seconds| {
+            chrono::DateTime::from_timestamp(i64::try_from(*seconds).ok()?, 0).map(|time| {
+                time.with_timezone(&chrono::Local)
+                    .format("%-I:%M %p")
+                    .to_string()
+            })
+        });
         zone = zone.child(
             div()
+                .group(group.clone())
                 .self_end()
                 .max_w(px(440.))
-                .px(px(14.))
-                .py(px(9.))
-                .rounded(px(Theme::surface_radius()))
-                .bg(theme.surface_raised)
-                .text_style(TextStyle::Body)
-                .text_color(theme.text)
-                .child(prose(chat, first, text, window, cx)),
+                .flex()
+                .flex_col()
+                .gap(px(4.))
+                .child(
+                    div()
+                        .px(px(14.))
+                        .py(px(9.))
+                        .rounded(px(Theme::surface_radius()))
+                        .bg(theme.surface_raised)
+                        .text_style(TextStyle::Body)
+                        .text_color(theme.text)
+                        .child(prose(chat, first, text, window, cx)),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_end()
+                        .gap(px(8.))
+                        .pr(px(6.))
+                        .text_style(TextStyle::Caption)
+                        .text_color(theme.text_faint)
+                        // Reserve the row so hovering does not move the conversation.
+                        .invisible()
+                        .group_hover(group, |row| row.visible())
+                        .children(timestamp)
+                        .child(
+                            div()
+                                .id(("copy-user-message", first))
+                                .group(copy_group.clone())
+                                .size(px(TextStyle::Caption.painted() * 2.))
+                                .flex_none()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .cursor_pointer()
+                                .tooltip(move |window, cx| {
+                                    Tooltip::text(
+                                        if copy_done { "Copied" } else { "Copy message" },
+                                        window,
+                                        cx,
+                                    )
+                                })
+                                .on_click(cx.listener(move |workspace, _, _, cx| {
+                                    cx.write_to_clipboard(ClipboardItem::new_string(
+                                        copied.clone(),
+                                    ));
+                                    let reset = cx.spawn(async move |workspace, cx| {
+                                        cx.background_executor()
+                                            .timer(Duration::from_secs(2))
+                                            .await;
+                                        let _ = workspace.update(cx, |workspace, cx| {
+                                            workspace.with_session(id, cx, |chat| {
+                                                chat.transcript.copy_feedback.remove(&first);
+                                            });
+                                        });
+                                    });
+                                    workspace.with_session(id, cx, |chat| {
+                                        chat.transcript.copy_feedback.insert(first, reset);
+                                    });
+                                }))
+                                .child(
+                                    theme
+                                        .icon_at(
+                                            TextStyle::Caption,
+                                            if copy_done {
+                                                icons::notifications::Check
+                                            } else {
+                                                icons::text::Copy
+                                            },
+                                        )
+                                        .text_color(theme.text_muted)
+                                        .group_hover(copy_group, |icon| {
+                                            icon.text_color(theme.text)
+                                        }),
+                                ),
+                        ),
+                ),
         );
     }
     if !body.is_empty() {

@@ -6,7 +6,10 @@
 
 use crate::session::chat::ChatItem;
 use serde::{Deserialize, Serialize};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::{
+    collections::BTreeMap,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 #[derive(Serialize, Deserialize)]
 pub struct Record {
@@ -50,6 +53,9 @@ pub struct Record {
     #[serde(default)]
     pub closed: bool,
     pub items: Vec<ChatItem>,
+    /// User message item indices mapped to Unix seconds.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub sent_at: BTreeMap<usize, u64>,
 }
 
 impl Record {

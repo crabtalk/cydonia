@@ -31,7 +31,7 @@ use cacp::schema::{
     SessionModeState, SessionUpdate, StopReason, ToolCallContent, ToolCallStatus,
 };
 use std::{
-    collections::VecDeque,
+    collections::{BTreeMap, VecDeque},
     path::PathBuf,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -121,6 +121,7 @@ pub struct ChatSession {
     pub cwd: PathBuf,
     pub connection: Connection,
     pub items: Vec<ChatItem>,
+    pub sent_at: BTreeMap<usize, u64>,
     pub plan: Vec<(String, PlanStatus)>,
     pub permission: Option<PermissionPrompt>,
     pub commands: Vec<Command>,
@@ -181,6 +182,7 @@ impl ChatSession {
             cwd,
             connection: Connection::Connecting,
             items: Vec::new(),
+            sent_at: BTreeMap::new(),
             plan: Vec::new(),
             permission: None,
             commands: Vec::new(),
@@ -213,6 +215,7 @@ impl ChatSession {
             cwd,
             connection: Connection::Idle,
             items: record.items,
+            sent_at: record.sent_at,
             plan: Vec::new(),
             permission: None,
             commands: Vec::new(),
@@ -261,6 +264,7 @@ impl ChatSession {
                 .as_secs(),
             closed: self.closed,
             items: self.items.clone(),
+            sent_at: self.sent_at.clone(),
         }
     }
 
@@ -402,8 +406,15 @@ impl ChatSession {
             at: SystemTime::now(),
             used: self.usage.map_or(0, |usage| usage.used),
         });
-        self.items.push(ChatItem::User(content));
         self.updated = SystemTime::now();
+        self.sent_at.insert(
+            self.items.len(),
+            self.updated
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+        );
+        self.items.push(ChatItem::User(content));
         self.streaming = true;
         // Before the answer, not just after it: what you said is not the
         // agent's to lose if the turn never finishes.

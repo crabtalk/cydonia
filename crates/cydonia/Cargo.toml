@@ -22,6 +22,7 @@ base64.workspace = true
 bezel.workspace = true
 cacp = { workspace = true, features = ["client"] }
 cacp-agents.workspace = true
+chrono.workspace = true
 dirs.workspace = true
 editor.workspace = true
 futures.workspace = true

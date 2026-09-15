@@ -2033,6 +2033,7 @@ dependencies = [
  "bezel-terminal",
  "cacp",
  "cacp-agents",
+ "chrono",
  "cydonia-artifact",
  "cydonia-mcp",
  "cydonia-prompts",
