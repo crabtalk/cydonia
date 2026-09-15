@@ -1,5 +1,4 @@
-//! Real repositories exercise Git's wire format, index/worktree split and
-//! literal paths. Each test owns its repository and leaves the checkout alone.
+//! Git integration tests using isolated temporary repositories.
 use cydonia::model::git::{self, Area, Change};
 use std::{
     path::{Path, PathBuf},

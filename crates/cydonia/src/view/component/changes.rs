@@ -1,5 +1,4 @@
-//! Repository changes beside a session. Polling lives with the visible panel;
-//! queries and patch reads run on the background executor.
+//! Session Git changes panel with background polling while visible.
 
 use crate::{
     model::git::{
@@ -446,8 +445,7 @@ impl Cydonia {
         }
     }
 
-    /// A hidden panel owns no poller. Changing projects replaces its entity,
-    /// so an old repository's in-flight result can never land in the new view.
+    /// Drop hidden panels and replace stale repository entities.
     pub(crate) fn sync_changes(&mut self, cx: &mut Context<Self>) {
         let cwd = (self.changes_open && self.showing(cx) == Some(Pane::Chat))
             .then(|| {
@@ -472,7 +470,6 @@ impl Cydonia {
     }
 }
 
-/// Small toolbar targets, with no form-button padding or text label.
 fn tool(
     theme: &Theme,
     id: &'static str,
@@ -493,8 +490,7 @@ fn tool(
         .child(icons::icon(icon).size(px(13.)).text_color(theme.text_muted))
 }
 
-/// A quiet code background; stronger diff color is confined to the gutter.
-/// Composite over the editor surface once, independent of window vibrancy.
+/// Composite over an opaque surface to keep code readable with vibrancy.
 fn diff_wash(theme: &Theme, tone: Hsla) -> Hsla {
     theme.bg.blend(Hsla {
         s: tone.s * 0.45,
@@ -511,8 +507,7 @@ fn clipped_range(source: &Range<usize>, segment: &Range<usize>) -> Option<Range<
 }
 
 impl Changes {
-    /// Flatten native word-wrapped lines into fixed-height visual rows, retaining
-    /// virtualization even for large diffs. Wrapping uses the same font as paint.
+    /// Wrap with native font metrics into fixed-height rows for virtualization.
     fn measure(&mut self, window: &Window, cx: &Context<Self>) {
         let theme = Theme::of(cx);
         let size = TextStyle::Callout.painted();
@@ -538,8 +533,7 @@ impl Changes {
             .shape_line(digits.clone().into(), px(size), &[run(digits.len())], None)
             .width;
         let viewport = self.diff_scroll.0.borrow().base_handle.bounds().size.width;
-        // Before the first layout, use the default panel width. The bounds
-        // observer below schedules reflow as soon as actual geometry is known.
+        // Use the default width until the bounds observer triggers reflow.
         let viewport = if viewport > px(0.) {
             viewport
         } else {
@@ -701,53 +695,5 @@ impl Changes {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn wrapped_unicode_token_keeps_highlights_on_both_continuations() {
-        let source = "let 名称 = \"你好世界\";";
-        let token = source.find('"').unwrap()..source.rfind('"').unwrap() + 1;
-        let split = source.find('世').unwrap();
-        let segments = [0..split, split..source.len()];
-        let highlighted: String = segments
-            .iter()
-            .map(|segment| {
-                let local = clipped_range(&token, segment).unwrap();
-                source[segment.clone()][local].to_owned()
-            })
-            .collect();
-        assert_eq!(highlighted, "\"你好世界\"");
-        assert_eq!(clipped_range(&(0..3), &segments[1]), None);
-    }
-
-    fn luminance(color: Hsla) -> f32 {
-        let color: gpui::Rgba = color.into();
-        let linear = |value: f32| {
-            if value <= 0.04045 {
-                value / 12.92
-            } else {
-                ((value + 0.055) / 1.055).powf(2.4)
-            }
-        };
-        0.2126 * linear(color.r) + 0.7152 * linear(color.g) + 0.0722 * linear(color.b)
-    }
-
-    #[test]
-    fn diff_backgrounds_keep_code_contrast_in_both_appearances() {
-        for theme in [Theme::dark(), Theme::light()] {
-            for tone in [theme.diff_add, theme.diff_del] {
-                let background = diff_wash(&theme, tone);
-                assert_eq!(
-                    background.a, 1.0,
-                    "Code contrast must not depend on the desktop behind it"
-                );
-                let foreground = luminance(theme.text);
-                let background = luminance(background);
-                let contrast =
-                    (foreground.max(background) + 0.05) / (foreground.min(background) + 0.05);
-                assert!(contrast >= 7.0, "Code contrast is {contrast}:1");
-            }
-        }
-    }
-}
+#[path = "../../../tests/unit/git_changes.rs"]
+mod tests;

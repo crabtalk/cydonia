@@ -1,5 +1,4 @@
-//! Read-only Git queries. Paths stay as OS strings, including porcelain's
-//! NUL-delimited rename pairs; none are interpreted as shell or pathspec syntax.
+//! Read-only Git queries with literal, non-UTF-8 path support.
 
 use anyhow::{Context as _, Result, bail};
 use std::{
@@ -127,8 +126,7 @@ fn parse_status(bytes: &[u8]) -> Result<Vec<Change>> {
             });
             continue;
         }
-        // Conflicts have no useful staged patch; Git's combined diff belongs
-        // in the working-tree section, with a visible unmerged status.
+        // Show conflicts once, in the working-tree section.
         if entry[..2].contains(&b'U') || matches!(&entry[..2], b"AA" | b"DD") {
             files.push(Change {
                 path,
@@ -172,8 +170,7 @@ pub fn diff(root: &Path, change: &Change) -> Result<String> {
         "--submodule=short",
     ]);
     if change.area == Area::Untracked {
-        // Git supplies quoting, file modes, binary detection and symlink
-        // handling, just as it does for tracked files. Exit 1 means a diff.
+        // Let Git handle untracked file metadata; exit 1 means a diff.
         git.args([
             "--no-index",
             "--",
@@ -189,8 +186,7 @@ pub fn diff(root: &Path, change: &Change) -> Result<String> {
             git.arg(original);
         }
     }
-    // Bound the preview before collecting it. Large generated patches must
-    // not exhaust memory or block the UI; all of this runs off-thread.
+    // Bound output before collecting large generated patches.
     let (exit, mut bytes, truncated) = output(git)?;
     let differs = change.area == Area::Untracked && exit.code() == Some(1);
     if !truncated && !exit.success() && !differs {
@@ -207,8 +203,7 @@ pub fn diff(root: &Path, change: &Change) -> Result<String> {
     Ok(patch)
 }
 
-/// A bounded read shared by patch previews and the source versions used for
-/// syntax highlighting. A truncated source is never parsed as a complete file.
+/// Bound patch and source reads, reporting truncation to callers.
 fn output(mut git: Command) -> Result<(std::process::ExitStatus, Vec<u8>, bool)> {
     let mut child = git.stdout(Stdio::piped()).stderr(Stdio::null()).spawn()?;
     let mut bytes = Vec::new();
@@ -228,19 +223,5 @@ fn output(mut git: Command) -> Result<(std::process::ExitStatus, Vec<u8>, bool)>
 }
 
 #[cfg(all(test, unix))]
-mod tests {
-    use super::*;
-    use std::os::unix::ffi::OsStrExt as _;
-
-    #[test]
-    fn porcelain_preserves_non_utf8_paths_and_rename_record_boundaries() {
-        let files = parse_status(b"R  new-\xff\0old-\xff\0?? next\0").unwrap();
-        assert_eq!(files.len(), 2);
-        assert_eq!(files[0].path.as_os_str().as_bytes(), b"new-\xff");
-        assert_eq!(
-            files[0].original.as_ref().unwrap().as_os_str().as_bytes(),
-            b"old-\xff"
-        );
-        assert_eq!(files[1].path, Path::new("next"));
-    }
-}
+#[path = "../../tests/unit/git_status.rs"]
+mod tests;

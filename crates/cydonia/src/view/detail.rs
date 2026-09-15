@@ -35,8 +35,7 @@ use surface::Surfaced as _;
 /// Separate from the sidebar's payload so its resize listener stays idle.
 struct ChangesResize;
 
-/// Keep room for the conversation; a narrow window shares the space evenly
-/// when two 240px columns cannot fit. The preferred width survives hiding.
+/// Reserve 240px for chat, or split narrow windows evenly.
 fn panel_width(preferred: f32, available: f32) -> f32 {
     let min = 240.0_f32.min(available / 2.);
     preferred.clamp(min, (available - 240.).max(min))

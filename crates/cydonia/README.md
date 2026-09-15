@@ -14,13 +14,9 @@ Articles are the stable part, and a fresh install is articles and nothing else.
 Sessions, boards and tables ship off; turn them on in **Settings › Features** or
 in `~/.config/cydonia/settings.toml`.
 
-In a session, choose **Git changes** from the **+** beside the message input
-(⇧⌘G, or **View › Toggle Git Changes**) to review
-staged, unstaged and untracked files in its repository. Select a file for its
-unified diff. The panel refreshes every three seconds while open and supports
-copying the diff. Code wraps to the resizable panel width with vertical-only
-scrolling; individual change hunks can be collapsed. These are repository changes shared by sessions using that
-working directory.
+Review staged, unstaged and untracked changes via **+ › Git changes** (⇧⌘G)
+in a session. The resizable panel shows syntax-highlighted, wrapped diffs with
+collapsible hunks.
 
 ```
 ~/.config/cydonia/   settings.toml, mcp.toml, the agent catalogue cache
