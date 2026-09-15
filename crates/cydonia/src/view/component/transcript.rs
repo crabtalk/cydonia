@@ -17,7 +17,8 @@ use bezel::ui::scroll as scrollbars;
 use bezel::{
     agent::orbs::{OrbSize, OrbState, engine::Frame, orb_element},
     gpui::{
-        AnyElement, Context, Empty, Pixels, ScrollHandle, SharedString, Window, div, prelude::*, px,
+        AnyElement, Context, Empty, Pixels, ScrollHandle, SharedString, Window, canvas, div,
+        prelude::*, px,
     },
     motion::Painter,
     theme::{TextStyle, Theme, Typeset, ink},
@@ -327,21 +328,26 @@ pub fn render(chat: &ChatSession, window: &mut Window, cx: &mut Context<Workspac
         .into_any_element()
 }
 
-/// One mark per turn down the left of the pane, the turn at the top of the
-/// viewport lit, and the question it opened on its tooltip. A press jumps
-/// there.
-///
-/// `bezel::ui::scroll::rail` in every respect but the tooltip, which is the
-/// whole point here: a column of identical dashes says how many turns there
-/// are and nothing about which is which, and the thing a person is looking for
-/// is what they asked.
+/// The top turn is active until the bottom is reached, where the latest wins.
+fn active_turn(handle: &ScrollHandle, count: usize) -> usize {
+    let last = count.saturating_sub(1);
+    if scroll::at_bottom(handle.max_offset().y, handle.offset().y, px(0.5)) {
+        last
+    } else {
+        handle.top_item().min(last)
+    }
+}
+
+/// One clickable mark per turn, with its question as the tooltip.
 fn rail(chat: &ChatSession, turns: &[Turn], room: Pixels) -> AnyElement {
     // bezel's own floor plus the marks' padding, which reaches toward the
     // text: a hitbox over the prose would swallow presses meant for it.
     if turns.is_empty() || room < px(scroll::RAIL_ROOM + 2. * MARK_PAD) {
         return Empty.into_any_element();
     }
-    let at = chat.transcript.scroll.top_item();
+    let handle = chat.transcript.scroll.clone();
+    let count = turns.len();
+    let at = active_turn(&handle, count);
     div()
         .absolute()
         .top_0()
@@ -352,6 +358,18 @@ fn rail(chat: &ChatSession, turns: &[Turn], room: Pixels) -> AnyElement {
         .items_center()
         .justify_center()
         .overflow_hidden()
+        .child(
+            canvas(
+                move |_, window, _| {
+                    // Layout and auto-follow can change the scroll after render.
+                    if active_turn(&handle, count) != at {
+                        window.request_animation_frame();
+                    }
+                },
+                |_, _, _, _| {},
+            )
+            .absolute(),
+        )
         .children(turns.iter().enumerate().map(|(ix, turn)| {
             // A turn opens on a question, except the leading chunk of a
             // session — which is whatever arrived before the first one, and has
@@ -882,3 +900,7 @@ fn working(chat: &ChatSession, at: usize, cx: &mut Context<Workspace>) -> AnyEle
 #[cfg(test)]
 #[path = "../../../tests/unit/transcript_turns.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../../../tests/unit/transcript_rail.rs"]
+mod rail_tests;
