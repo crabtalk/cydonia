@@ -35,6 +35,7 @@ rusqlite.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 syntax.workspace = true
+skills.workspace = true
 terminal.workspace = true
 tokio.workspace = true
 toml.workspace = true

@@ -120,6 +120,7 @@ pub struct Session {
     /// True when an existing session was loaded (history replayed as
     /// queued [`Event::Update`]s) instead of a fresh one created.
     pub loaded: bool,
+    built_in_mcp: bool,
 }
 
 /// How to open a session.
@@ -209,7 +210,7 @@ impl Session {
 
         // Only now are the agent's MCP capabilities known, so remote
         // servers can be dropped for agents that can't reach them.
-        let mcp_servers = acp_mcp_servers(&configured, &init, &cwd);
+        let (mcp_servers, built_in_mcp) = acp_mcp_servers(&configured, &init, &cwd);
 
         let mut loaded = false;
         let mut response = None;
@@ -274,6 +275,7 @@ impl Session {
             response,
             cwd,
             loaded,
+            built_in_mcp,
         })
     }
 
@@ -292,6 +294,7 @@ impl Session {
     /// Send a prompt turn with explicit content blocks (text plus
     /// embedded resources). Same result path as [`Self::prompt`].
     pub fn prompt_blocks(&self, blocks: Vec<ContentBlock>) {
+        let blocks = super::context::prompt(&self.cwd, self.built_in_mcp, blocks);
         let request = PromptRequest::new(self.session_id.clone(), blocks);
         let conn = self.conn();
         let tx = self.tx.clone();
@@ -452,7 +455,7 @@ fn acp_mcp_servers(
     configured: &[mcp::McpServer],
     init: &InitializeResponse,
     cwd: &std::path::Path,
-) -> Vec<McpServer> {
+) -> (Vec<McpServer>, bool) {
     let http = init.agent_capabilities.mcp_capabilities.http;
     let ours = http.then(serve::url).flatten().map(|url| {
         McpServer::Http(McpServerHttp {
@@ -472,7 +475,9 @@ fn acp_mcp_servers(
             meta: None,
         })
     });
-    ours.into_iter()
+    let available = ours.is_some();
+    let servers = ours
+        .into_iter()
         .chain(
             configured
                 .iter()
@@ -502,7 +507,8 @@ fn acp_mcp_servers(
                     _ => None,
                 }),
         )
-        .collect()
+        .collect();
+    (servers, available)
 }
 
 /// Try each advertised auth method in order. Non-interactive methods

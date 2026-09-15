@@ -81,5 +81,6 @@ fn server() -> Server {
         .mount(&tools::article::TOOLS)
         .mount(&tools::board::TOOLS)
         .mount(&tools::project::TOOLS)
+        .mount(&tools::skill::TOOLS)
         .writable(write().clone())
 }

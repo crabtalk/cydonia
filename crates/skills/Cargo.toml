@@ -1,0 +1,17 @@
+[package]
+name = "cydonia-skills"
+description = "Built-in agent skills for Cydonia"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[build-dependencies]
+serde = { workspace = true, features = ["derive"] }
+serde_yaml_ng = "0.10"
+
+[dev-dependencies]
+serde = { workspace = true, features = ["derive"] }
+serde_yaml_ng = "0.10"

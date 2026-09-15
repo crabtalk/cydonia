@@ -144,6 +144,11 @@ impl Server {
     }
 
     fn initialize(&self, at: Option<&Path>) -> Value {
+        let mut instructions = if at.is_some() { BOUND } else { LOOSE }.to_owned();
+        if self.offered().any(|tool| tool.name == "skill_read") {
+            instructions.push_str("\n\n");
+            instructions.push_str(&tools::skill::instructions());
+        }
         json!({
             "protocolVersion": proto::VERSION,
             // `listChanged` is a promise to send a notification, and this
@@ -153,7 +158,7 @@ impl Server {
             // The app's own version. `protocolVersion` above is the spec
             // revision the client matches against, and is not ours to name.
             "serverInfo": { "name": NAME, "version": env!("CARGO_PKG_VERSION") },
-            "instructions": match at.is_some() { true => BOUND, false => LOOSE },
+            "instructions": instructions,
         })
     }
 
