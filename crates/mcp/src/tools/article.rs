@@ -25,7 +25,7 @@ use std::path::{Path, PathBuf};
 
 const ARTICLE: Arg = Arg {
     name: "article",
-    about: "The article: its title, or its id.",
+    about: "The article: its project reference (#12), title, or storage id.",
 };
 
 /// `title` and `text` each carry one line when the article is written and
@@ -48,7 +48,20 @@ const MARKDOWN_NOW: Arg = Arg {
     about: "The markdown it should hold now.",
 };
 
-pub static TOOLS: [Tool; 5] = [
+const OLD_STRING: Arg = Arg {
+    name: "old_string",
+    about: "The exact text to replace, including whitespace. Include surrounding text to identify a unique occurrence. Must not be empty.",
+};
+const NEW_STRING: Arg = Arg {
+    name: "new_string",
+    about: "The replacement text. Use an empty string to delete the matched text.",
+};
+const REPLACE_ALL: Arg = Arg {
+    name: "replace_all",
+    about: "Replace every non-overlapping occurrence. Defaults to false, requiring exactly one match.",
+};
+
+pub static TOOLS: [Tool; 6] = [
     Tool {
         name: "article_list",
         description: "List the project's articles, most recently written first.",
@@ -58,14 +71,14 @@ pub static TOOLS: [Tool; 5] = [
     },
     Tool {
         name: "article_read",
-        description: "Read one article's markdown.",
+        description: "Read one article's markdown. The result includes assets_path, the shared media directory on the Cydonia host; filesystem access is needed to place images there.",
         schema: |bound| fields(bound, &[PROJECT, ARTICLE]),
         writes: false,
         call: read,
     },
     Tool {
         name: "article_add",
-        description: "Write a new article, and answer the id it is filed under.",
+        description: "Write a new article, and answer its id and assets_path, the shared media directory on the Cydonia host. This tool writes Markdown, not image bytes.",
         schema: |bound| fields(bound, &[PROJECT, TITLE, MARKDOWN]),
         writes: true,
         call: add,
@@ -76,6 +89,22 @@ pub static TOOLS: [Tool; 5] = [
         schema: |bound| fields(bound, &[PROJECT, ARTICLE, MARKDOWN_NOW]),
         writes: true,
         call: rewrite,
+    },
+    Tool {
+        name: "article_edit",
+        description: "Edit an article's markdown by exact string replacement. Read it first. Missing or ambiguous matches leave it unchanged; include more context to target one occurrence, or set replace_all to change all. The title is left alone.",
+        schema: |bound| {
+            let mut schema = fields(bound, &[PROJECT, ARTICLE, OLD_STRING, NEW_STRING]);
+            schema["properties"][REPLACE_ALL.name] = json!({
+                "type": "boolean",
+                "description": REPLACE_ALL.about,
+                "default": false,
+            });
+            schema["properties"][OLD_STRING.name]["minLength"] = json!(1);
+            schema
+        },
+        writes: true,
+        call: edit,
     },
     Tool {
         name: "article_rename",
@@ -98,6 +127,7 @@ fn list(args: Args<'_>) -> Outcome {
         .map(|article| {
             json!({
                 "id": article.id,
+                "number": article.number,
                 "title": article.title,
                 "archived": article.archived,
                 "touched": article.touched.to_string(),
@@ -108,16 +138,20 @@ fn list(args: Args<'_>) -> Outcome {
 }
 
 fn read(args: Args<'_>) -> Outcome {
-    let found = locate(root(&args)?, args.text(ARTICLE)?)?;
+    let project = root(&args)?;
+    let assets = assets_path(project)?;
+    let found = locate(project, args.text(ARTICLE)?)?;
     let text = std::fs::read_to_string(&found.content)
         .map_err(|e| Trouble::Refused(format!("{} cannot be read — {e}", found.label())))?;
-    Ok(Answer::said(text).with(json!({ "id": found.id, "title": found.title })))
+    Ok(Answer::said(text)
+        .with(json!({ "id": found.id, "number": found.number, "title": found.title, "assets_path": assets })))
 }
 
 fn add(args: Args<'_>) -> Outcome {
     let project = root(&args)?;
     let title = args.text(TITLE)?;
     let text = args.text(MARKDOWN)?;
+    let assets = assets_path(project)?;
     let dir = article::init(project).map_err(|e| {
         Trouble::Refused(format!("{} cannot be written to — {e}", project.display()))
     })?;
@@ -130,7 +164,16 @@ fn add(args: Args<'_>) -> Outcome {
     // directory has to be there first.
     properties::set_title(&content, title);
     let id = article::id_of(&content);
-    Ok(Answer::said(format!("{title} written")).with(json!({ "id": id, "title": title })))
+    let number = artifact::entry::number(project, "article", &id)
+        .map_err(|e| Trouble::Refused(e.to_string()))?;
+    Ok(Answer::said(format!("#{number} {title} written"))
+        .with(json!({ "id": id, "number": number, "title": title, "assets_path": assets })))
+}
+
+fn assets_path(project: &Path) -> Result<PathBuf, Trouble> {
+    let root = std::fs::canonicalize(project)
+        .map_err(|e| Trouble::Refused(format!("the project path cannot be resolved — {e}")))?;
+    Ok(artifact::project::fs::Project::new(root).assets())
 }
 
 fn rewrite(args: Args<'_>) -> Outcome {
@@ -139,6 +182,37 @@ fn rewrite(args: Args<'_>) -> Outcome {
     std::fs::write(&found.content, text)
         .map_err(|e| Trouble::Refused(format!("{} cannot be written — {e}", found.label())))?;
     Ok(Answer::said(format!("{} rewritten", found.label())))
+}
+
+fn edit(args: Args<'_>) -> Outcome {
+    let old = args.text(OLD_STRING)?;
+    let new = args.text(NEW_STRING)?;
+    let all = args.boolean(REPLACE_ALL, false)?;
+    if old.is_empty() {
+        return Err(Trouble::Invalid("old_string must not be empty".to_owned()));
+    }
+    let found = locate(root(&args)?, args.text(ARTICLE)?)?;
+    let text = std::fs::read_to_string(&found.content)
+        .map_err(|e| Trouble::Refused(format!("{} cannot be read — {e}", found.label())))?;
+    let count = text.matches(old).count();
+    if count == 0 {
+        return Err(Trouble::Refused(
+            "old_string was not found; read the article and provide exact text, including whitespace"
+                .to_owned(),
+        ));
+    }
+    if count > 1 && !all {
+        return Err(Trouble::Refused(format!(
+            "old_string matches {count} occurrences; include more surrounding text for a unique match, or set replace_all to true"
+        )));
+    }
+    let edited = text.replacen(old, new, count);
+    std::fs::write(&found.content, edited)
+        .map_err(|e| Trouble::Refused(format!("{} cannot be written — {e}", found.label())))?;
+    Ok(
+        Answer::said(format!("{} edited: {count} replacement(s)", found.label()))
+            .with(json!({ "id": found.id, "replacements": count })),
+    )
 }
 
 fn rename(args: Args<'_>) -> Outcome {
@@ -154,6 +228,7 @@ fn rename(args: Args<'_>) -> Outcome {
 /// which carries a cover this has no use for and no path, which is the whole of
 /// what a write needs.
 struct Held {
+    number: Option<u64>,
     id: String,
     title: String,
     archived: bool,
@@ -189,6 +264,7 @@ fn articles(project: &Path) -> Vec<Held> {
         .map(|content| {
             let held = properties::all(&content);
             Held {
+                number: artifact::entry::number(project, "article", &article::id_of(&content)).ok(),
                 id: article::id_of(&content),
                 title: held.title,
                 archived: held.archived,
@@ -206,6 +282,13 @@ fn articles(project: &Path) -> Vec<Held> {
 /// the caller is one `list_articles` away from the ids.
 fn locate(project: &Path, needle: &str) -> Result<Held, Trouble> {
     let mut held = articles(project);
+    if let Some(number) = artifact::entry::reference(needle) {
+        return held
+            .iter()
+            .position(|article| article.number == Some(number))
+            .map(|at| held.swap_remove(at))
+            .ok_or_else(|| Trouble::Refused(format!("no article {needle} in this project")));
+    }
     if let Some(at) = held.iter().position(|article| article.id == needle) {
         return Ok(held.swap_remove(at));
     }
@@ -232,18 +315,17 @@ fn locate(project: &Path, needle: &str) -> Result<Held, Trouble> {
 /// Every article, one to a line: what it is called, and what to ask for it by
 /// when two share a name.
 fn listing(held: &[Held]) -> String {
-    let width = held
-        .iter()
-        .map(|article| article.label().chars().count())
-        .max()
-        .unwrap_or(0);
     held.iter()
         .map(|article| {
             let archived = match article.archived {
                 true => "  — archived",
                 false => "",
             };
-            format!("{:<width$}  {}{archived}", article.label(), article.id)
+            format!(
+                "{}  {}{archived}",
+                artifact::entry::label(article.number, article.label()),
+                article.id
+            )
         })
         .collect::<Vec<_>>()
         .join("\n")

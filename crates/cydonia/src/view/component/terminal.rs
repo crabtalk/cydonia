@@ -40,6 +40,25 @@ pub fn bindings() -> Vec<KeyBinding> {
     ]
 }
 
+/// Option sends Meta using the base key, not its macOS alternate character.
+pub fn keystroke_bytes(key: &gpui::Keystroke, app_cursor: bool) -> Option<Vec<u8>> {
+    let meta_char = if key.modifiers.alt && !key.modifiers.control && key.key.chars().count() == 1 {
+        Some(if key.modifiers.shift {
+            key.key.to_uppercase()
+        } else {
+            key.key.clone()
+        })
+    } else {
+        None
+    };
+    view::keystroke_bytes(
+        &key.key,
+        meta_char.as_deref().or(key.key_char.as_deref()),
+        &key.modifiers,
+        app_cursor,
+    )
+}
+
 /// Dropping the panel's owner terminates the shell; a waiter reaps it off-thread.
 struct Shell {
     master: Box<dyn MasterPty + Send>,
@@ -187,12 +206,7 @@ impl Terminal {
 
     fn key(&mut self, event: &gpui::KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
         let key = &event.keystroke;
-        if let Some(bytes) = view::keystroke_bytes(
-            &key.key,
-            key.key_char.as_deref(),
-            &key.modifiers,
-            self.emulator.app_cursor_mode(),
-        ) {
+        if let Some(bytes) = keystroke_bytes(key, self.emulator.app_cursor_mode()) {
             self.emulator.clear_selection();
             self.emulator.scroll_to_bottom();
             self.write(bytes);

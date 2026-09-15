@@ -11,6 +11,8 @@ keywords = ["acp", "agents", "artifacts", "cydonia"]
 categories = ["data-structures"]
 
 [dependencies]
+anyhow.workspace = true
+rusqlite.workspace = true
 cacp.workspace = true
 serde.workspace = true
 serde_json.workspace = true

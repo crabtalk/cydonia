@@ -5,6 +5,7 @@ use crate::{
     model::session::{Command, Usage},
     view::root,
 };
+use bezel::ui::scroll as scrollbars;
 use bezel::{
     gpui::{
         self, AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, KeyBinding,
@@ -402,45 +403,54 @@ impl Composer {
         let filtered = self.filter.filtered().to_vec();
         Some(popover::anchored_menu_above(
             "composer-commands",
-            menu::card(
-                theme,
-                "composer-commands",
-                &items,
-                &cursor,
-                cx,
-                move |composer, hit, _, cx| match hit {
-                    // The pointer moves the same highlight the arrows do, so
-                    // Enter always takes the row that is lit.
-                    Hit::Point(path) => {
-                        if let [row] = path[..] {
-                            composer.filter.set_active(row);
-                            cx.notify();
-                        }
-                    }
-                    Hit::Choose(path) => {
-                        if let [row] = path[..]
-                            && let Some(&item) = filtered.get(row)
-                        {
-                            composer.accept(item, cx);
-                        }
-                    }
-                    // Not dismissed on an out-click: `reread` reopens the
-                    // picker from the text on the very next thing the field
-                    // reports, cursor moves included, so a press into the
-                    // field would shut it and open it again in one frame.
-                    // Escape and editing the `/` away are what close it.
-                    Hit::Dismiss => {}
-                },
-            )
-            .id("composer-commands-list")
-            // The card sizes to its widest row, and a row is a sentence — so
-            // without this it opens as wide as the window lets it. See
-            // [`root::composer_width`].
-            .max_w(px(root::composer_width()))
-            .max_h(px(PICKER_HEIGHT))
-            .overflow_y_scroll()
-            .track_scroll(&self.scroll)
-            .into_any_element(),
+            div()
+                .relative()
+                .child(
+                    menu::card(
+                        theme,
+                        "composer-commands",
+                        &items,
+                        &cursor,
+                        cx,
+                        move |composer, hit, _, cx| match hit {
+                            // The pointer moves the same highlight the arrows do, so
+                            // Enter always takes the row that is lit.
+                            Hit::Point(path) => {
+                                if let [row] = path[..] {
+                                    composer.filter.set_active(row);
+                                    cx.notify();
+                                }
+                            }
+                            Hit::Choose(path) => {
+                                if let [row] = path[..]
+                                    && let Some(&item) = filtered.get(row)
+                                {
+                                    composer.accept(item, cx);
+                                }
+                            }
+                            // Not dismissed on an out-click: `reread` reopens the
+                            // picker from the text on the very next thing the field
+                            // reports, cursor moves included, so a press into the
+                            // field would shut it and open it again in one frame.
+                            // Escape and editing the `/` away are what close it.
+                            Hit::Dismiss => {}
+                        },
+                    )
+                    .id("composer-commands-list")
+                    // The card sizes to its widest row, and a row is a sentence — so
+                    // without this it opens as wide as the window lets it. See
+                    // [`root::composer_width`].
+                    .max_w(px(root::composer_width()))
+                    .max_h(px(PICKER_HEIGHT))
+                    .overflow_y_scroll()
+                    .track_scroll(&self.scroll),
+                )
+                .child(scrollbars::Overlay::new(
+                    "composer-commands-bar",
+                    &self.scroll,
+                    bezel::gpui::Axis::Vertical,
+                ))
+                .into_any_element(),
             None,
         ))
     }

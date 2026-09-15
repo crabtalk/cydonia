@@ -98,6 +98,7 @@ pub struct Workspace {
     /// How wide a page that has not been set either way is drawn — see
     /// [`crate::model::state::State::wide_pages`].
     pub wide_pages: bool,
+    pub indent_project_rows: bool,
     /// Whether a long line in a code block wraps rather than scrolling — see
     /// [`apply_wrap_code`].
     pub wrap_code: bool,
@@ -118,6 +119,7 @@ impl Workspace {
         let active = (!projects.is_empty()).then_some(state.active);
         let restore: Vec<usize> = (0..projects.len()).collect();
         let look = settings.appearance;
+        bezel::ui::scroll::set_visibility(look.scrollbars.into(), cx);
         editor::set_text_size(
             cx,
             editor::TextSize {
@@ -139,6 +141,7 @@ impl Workspace {
             terminal_font_size: look.terminal_font_size,
             tint: Tint::new(look.hue, look.chroma),
             wide_pages: look.wide_pages,
+            indent_project_rows: look.indent_project_rows,
             wrap_code: look.wrap_code,
             meter: false,
             next_id: 0,
@@ -196,6 +199,9 @@ impl Workspace {
             hue: self.tint.hue,
             chroma: self.tint.chroma,
             wide_pages: self.wide_pages,
+            indent_project_rows: self.indent_project_rows,
+            scrollbars: self.settings.appearance.scrollbars,
+            sidebar_scrollbars: self.settings.appearance.sidebar_scrollbars,
             wrap_code: self.wrap_code,
         });
     }
@@ -318,6 +324,14 @@ impl Workspace {
             return;
         }
         self.settings.shortcuts.set(key, chord);
+        cx.notify();
+    }
+
+    pub fn set_emacs_shortcuts(&mut self, on: bool, cx: &mut Context<Self>) {
+        if settings::set_emacs_shortcuts(on).is_err() {
+            return;
+        }
+        self.settings.shortcuts.emacs = on;
         cx.notify();
     }
 
@@ -456,6 +470,30 @@ impl Workspace {
     /// the rest follow this.
     pub fn set_wide_pages(&mut self, wide: bool, cx: &mut Context<Self>) {
         self.wide_pages = wide;
+        self.save_appearance();
+        cx.notify();
+    }
+
+    pub fn set_scrollbars(
+        &mut self,
+        value: settings::Scrollbars,
+        sidebar: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let look = &mut self.settings.appearance;
+        if sidebar {
+            look.sidebar_scrollbars = value;
+        } else {
+            look.scrollbars = value;
+        }
+        bezel::ui::scroll::set_visibility(look.scrollbars.into(), cx);
+        self.save_appearance();
+        cx.refresh_windows();
+        cx.notify();
+    }
+
+    pub fn set_indent_project_rows(&mut self, indent: bool, cx: &mut Context<Self>) {
+        self.indent_project_rows = indent;
         self.save_appearance();
         cx.notify();
     }

@@ -1,6 +1,6 @@
 //! The tool sets, one per surface a project holds, and the two things every
 //! tool in them has in common: the project it is about, and the shape of a
-//! schema over arguments that are all required strings.
+//! schema over required string arguments.
 //!
 //! A tool is named `<surface>_<verb>[_<noun>]` — `board_list`, `article_read`,
 //! `board_move_card`. The prefix is the module, which is what makes the flat
@@ -52,9 +52,7 @@ pub(crate) fn root<'a>(args: &Args<'a>) -> Result<&'a Path, Trouble> {
     }
 }
 
-/// An object schema over the named arguments. Every one this surface takes is
-/// a required string — an address, or a line of text — so there is nothing
-/// else for a schema here to say.
+/// An object schema over required strings. Tools can add optional fields.
 ///
 /// `bound` is whether the caller already has a project, in which case the
 /// argument that names one is left out: an argument a model must supply and

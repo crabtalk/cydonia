@@ -1,5 +1,37 @@
 [
   {
+    "version": "0.1.6",
+    "date": "2026-09-15",
+    "summary": "Built-in agent guides, stable entry references, and improved Markdown editing and sidebar controls.",
+    "media": {
+      "poster": "pics/cydonia/v0.1.6.jpg",
+      "src": "videos/cydonia/v0.1.6.mp4",
+      "alt": "…",
+      "w": 1280,
+      "h": 900
+    },
+    "new": [
+      "Give agents built-in workspace and Markdown guides through ACP and MCP",
+      "Reference project entries by stable IDs and look them up through agent tools",
+      "Let agents make targeted edits to articles",
+      "Show line numbers in raw Markdown",
+      "Configure sidebar indentation and scrollbar visibility",
+      "Enable Emacs word shortcuts in Settings"
+    ],
+    "changed": [
+      "Indent sidebar entries and hide sidebar scrollbars by default",
+      "Display entry IDs as muted header labels",
+      "Upgrade Bezel to 0.1.15"
+    ],
+    "fixed": [
+      "Align raw Markdown text with the article title, with line numbers in the left margin",
+      "Keep sidebar menu buttons steady on hover and reclaim their space when idle",
+      "Highlight the latest turn at the bottom of the transcript",
+      "Render session notices consistently with agent responses",
+      "Send terminal Meta shortcuts correctly"
+    ]
+  },
+  {
     "version": "0.1.5",
     "date": "2026-09-15",
     "summary": "Git diffs and terminals in sessions, draggable board cards, and configurable font sizes.",

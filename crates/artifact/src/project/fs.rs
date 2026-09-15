@@ -59,6 +59,11 @@ impl Project {
         self.root.join(DIR)
     }
 
+    /// Shared media that agents can manage without editing artifact metadata.
+    pub fn assets(&self) -> PathBuf {
+        self.cydonia().join("assets")
+    }
+
     /// The same directory, made if it is not there, and carrying the
     /// `.gitignore` that keeps the whole of it out of the repo it sits in —
     /// none of what cydonia writes here is the project's source.
@@ -152,6 +157,7 @@ impl super::Project for Project {
         // itself and every re-read would report a change nobody made. The
         // write costs one watch event, which finds nothing left to mint.
         for board in &mut boards {
+            board.number = crate::entry::number(&self.root, "board", &board.id).ok();
             let keyed = board.key.is_empty();
             if keyed {
                 board.key = key::derive(&board.name, &keys);
@@ -182,6 +188,7 @@ impl super::Project for Project {
                 key::derive(&board.name, &taken)
             }
         };
+        board.number = crate::entry::number(&self.root, "board", &board.id).ok();
         super::Project::save_board(self, &mut board);
         Some(board)
     }
@@ -196,7 +203,10 @@ impl super::Project for Project {
         }
     }
     fn remove_board(&self, id: &str) {
-        let _ = std::fs::remove_file(self.board_file(id));
+        if std::fs::remove_file(self.board_file(id)).is_ok() {
+            let _ = crate::entry::Registry::open(&self.root)
+                .and_then(|registry| registry.remove("board", id));
+        }
     }
     /// Every session filed in this project, most recently updated first.
     fn sessions(&self) -> Vec<Record> {
@@ -214,6 +224,7 @@ impl super::Project for Project {
                 if record.id.is_empty() {
                     record.id = stem(&path);
                 }
+                record.number = crate::entry::number(&self.root, "session", &record.id).ok();
                 Some(record)
             })
             .collect();
@@ -246,7 +257,10 @@ impl super::Project for Project {
         }
     }
     fn remove_session(&self, id: &str) {
-        let _ = std::fs::remove_file(self.session_file(id));
+        if std::fs::remove_file(self.session_file(id)).is_ok() {
+            let _ = crate::entry::Registry::open(&self.root)
+                .and_then(|registry| registry.remove("session", id));
+        }
     }
 }
 

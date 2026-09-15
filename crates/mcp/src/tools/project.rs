@@ -1,24 +1,9 @@
-//! The tools an agent works the app's rail of projects through.
-//!
-//! Every other tool set here is about what a directory holds and reaches one
-//! whether the app has it open or not. These two are the ones that decide that:
-//! a project is a directory the app is showing, with a place in the sidebar and
-//! somewhere to run agents.
-//!
-//! Named for what the app calls the same two acts — its File menu opens and
-//! closes a project, and a person reading the transcript should recognise what
-//! the agent just did to their window.
-//!
-//! Opening makes the directory if it is not there yet, which is the one thing
-//! these do to a disk. Closing does nothing to one: the project comes off the
-//! rail, its agents stop, and the files and everything cydonia kept beside them
-//! stay exactly where they are — opening it again brings all of it back. There
-//! is no tool here that deletes anything, and that is on purpose.
+//! Open and close projects, and discover or read their numbered entries.
 
 use crate::{
     rail::{self, Change},
     tool::{Answer, Arg, Args, Outcome, Tool, Trouble},
-    tools::fields,
+    tools::{PROJECT, fields, root},
 };
 use serde_json::json;
 use std::path::{Path, PathBuf};
@@ -29,7 +14,26 @@ const PATH: Arg = Arg {
 to the project this session is already in.",
 };
 
-pub static TOOLS: [Tool; 2] = [
+const ENTRY: Arg = Arg {
+    name: "entry",
+    about: "The project entry reference, such as #12.",
+};
+
+pub static TOOLS: [Tool; 4] = [
+    Tool {
+        name: "project_entries",
+        description: "List articles, boards, tables, and saved chats with stable project-wide numeric references, including archived entries.",
+        schema: |bound| fields(bound, &[PROJECT]),
+        writes: false,
+        call: entries,
+    },
+    Tool {
+        name: "project_read_entry",
+        description: "Read a project entry by its numeric reference (#12). Tables return up to 200 rows with the total count.",
+        schema: |bound| fields(bound, &[PROJECT, ENTRY]),
+        writes: false,
+        call: read_entry,
+    },
     Tool {
         name: "project_open",
         description: "Open a directory as a project in cydonia, making the \
@@ -143,4 +147,47 @@ fn held() -> Option<String> {
             .collect::<Vec<_>>()
             .join(", ")
     })
+}
+
+fn entries(args: Args<'_>) -> Outcome {
+    let entries =
+        artifact::entry::list(root(&args)?).map_err(|e| Trouble::Refused(e.to_string()))?;
+    let text = if entries.is_empty() {
+        "this project has no saved entries".to_owned()
+    } else {
+        entries
+            .iter()
+            .map(|entry| {
+                format!(
+                    "#{} [{}] {}{}",
+                    entry.number,
+                    entry.kind,
+                    entry.title,
+                    if entry.archived { " — archived" } else { "" }
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    Ok(Answer::said(text).with(json!({"entries": entries})))
+}
+
+fn read_entry(args: Args<'_>) -> Outcome {
+    let project = root(&args)?;
+    let named = args.text(ENTRY)?;
+    let number = artifact::entry::reference(named)
+        .ok_or_else(|| Trouble::Invalid("entry must be a reference such as #12".to_owned()))?;
+    let entries = artifact::entry::list(project).map_err(|e| Trouble::Refused(e.to_string()))?;
+    let entry = entries
+        .into_iter()
+        .find(|entry| entry.number == number)
+        .ok_or_else(|| Trouble::Refused(format!("no entry {named} in this project")))?;
+    let content =
+        artifact::entry::read(project, &entry).map_err(|e| Trouble::Refused(e.to_string()))?;
+    let text = content
+        .get("markdown")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned)
+        .unwrap_or_else(|| serde_json::to_string_pretty(&content).unwrap_or_default());
+    Ok(Answer::said(text).with(json!({"entry": entry, "content": content})))
 }

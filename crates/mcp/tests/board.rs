@@ -24,7 +24,7 @@ fn a_board_answers_to_key_name_and_id() {
             json!({ "project": scratch.path(), "board": needle }),
             None,
         ));
-        assert!(text.starts_with("Roadmap (ROAD)"), "{needle}: {text}");
+        assert!(text.starts_with("#1 Roadmap (ROAD)"), "{needle}: {text}");
     }
 }
 

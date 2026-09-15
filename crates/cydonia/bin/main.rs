@@ -10,7 +10,7 @@ use bezel::{
 use cydonia::{
     agent, memory,
     model::{media, migrate, settings, state, update, workspace},
-    view::{hotkey, keymap, menubar, root},
+    view::{article, hotkey, keymap, menubar, root},
 };
 
 fn main() -> Result<()> {
@@ -53,6 +53,7 @@ fn main() -> Result<()> {
         input::set_caret_blink(look.cursor_blink, cx);
         theme::set_base_text_size(look.text_size, cx);
         workspace::apply_wrap_code(look.wrap_code, cx);
+        markdown::set_source_style(cx, article::source_style);
         markdown::set_highlighter(
             cx,
             |language, code| syntax::highlight(code, language),

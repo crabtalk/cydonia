@@ -82,6 +82,7 @@ fn a_session_written_before_ids_takes_the_name_of_its_file() {
 /// The least a session can be filed as.
 fn record(id: &str) -> Record {
     Record {
+        number: None,
         id: id.to_owned(),
         agent: "claude".into(),
         agent_id: None,

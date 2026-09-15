@@ -9,6 +9,7 @@ use crate::{
         sidebar::{self, Row},
     },
 };
+use bezel::ui::scroll as scrollbars;
 use bezel::{
     gpui::{
         self, AnyElement, App, Context, CursorStyle, Div, Entity, Focusable as _, KeyBinding,
@@ -71,6 +72,44 @@ const COLUMN_INSET: f32 = 24.;
 /// margin and a page filling the pane has none — at the column's own inset the
 /// text runs into the border, and the drag handle has nowhere left to sit.
 const WIDE_INSET: f32 = COLUMN_INSET * 2.;
+
+/// Plain-text styling, resolved against the active theme on every paint.
+pub fn source_style(theme: &Theme) -> markdown::SourceStyle {
+    markdown::SourceStyle {
+        line_numbers: true,
+        gutter_min_digits: 1,
+        gutter_gap: 1.5,
+        gutter_color: Some(theme.text_faint),
+    }
+}
+
+fn source_offset(editor: &editor::Editor, cx: &App) -> f32 {
+    if editor.mode() != Mode::Source {
+        return 0.;
+    }
+    let style = markdown::SourceStyle::of(cx);
+    let base = bezel::theme::base_text_size();
+    let limits = editor::TextSize::of(cx);
+    let size = ((editor.text_size().unwrap_or(base) + editor::text_size_adjustment(cx))
+        .clamp(limits.min, limits.max)
+        * 10.)
+        .round()
+        / 10.;
+    let code_size = markdown::Typography::of(cx).scaled(size / base).code.size();
+    let digits = editor
+        .source()
+        .split('\n')
+        .count()
+        .to_string()
+        .len()
+        .max(style.gutter_min_digits);
+    // Cancel Bezel's code padding and full gutter so source text aligns with the title.
+    12. + if style.line_numbers {
+        (digits as f32 + style.gutter_gap.max(0.)) * code_size
+    } else {
+        0.
+    }
+}
 
 /// The box the page is set in: the reading column, or the pane itself. The
 /// title and the document both take it, since two boxes made conditional apart
@@ -303,6 +342,7 @@ impl Cydonia {
         let editor = article.editor.clone()?;
         let cover = article.cover.clone();
         let wide = article.wide(self.workspace.read(cx).wide_pages);
+        let source_offset = source_offset(editor.read(cx), cx);
         let stale = article.stale.then(|| article.path.clone());
         let document = div()
             .id("article")
@@ -348,7 +388,13 @@ impl Cydonia {
                             .py(px(20.))
                             .flex()
                             .cursor(CursorStyle::IBeam)
-                            .child(editor),
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .ml(px(-source_offset))
+                                    .child(editor),
+                            ),
                     ),
             );
         Some(
@@ -362,7 +408,20 @@ impl Cydonia {
                 // enough to scroll would carry the notice off the top of the
                 // pane, and it is about the document as a whole.
                 .children(stale.map(|path| self.stale_notice(path, cx)))
-                .child(document)
+                .child(
+                    div()
+                        .relative()
+                        .flex_1()
+                        .min_h_0()
+                        .flex()
+                        .flex_col()
+                        .child(document)
+                        .child(scrollbars::Overlay::new(
+                            "article-bar",
+                            &article.scroll,
+                            bezel::gpui::Axis::Vertical,
+                        )),
+                )
                 // Last, and floated over the document from where the
                 // selection ends — the bar is chrome the page runs under.
                 .children(self.ribbon(window, cx))
@@ -532,38 +591,44 @@ impl Cydonia {
         let tint = sidebar::tint(selected, archived, &theme);
         let id = SharedString::from(format!("article-{project}-{ix}"));
 
-        sidebar::row(id, "article-row", selected, &theme)
-            .child(
-                icons::icon(icons::files::FileText)
+        sidebar::row(
+            id,
+            "article-row",
+            selected,
+            workspace.indent_project_rows,
+            &theme,
+        )
+        .child(
+            icons::icon(icons::files::FileText)
+                .size(px(14.))
+                .flex_none()
+                .text_color(tint),
+        )
+        // Display-only: the title is written at the head of the page, and
+        // this row is never a second field for it.
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .truncate()
+                .text_style(TextStyle::Body)
+                .text_color(tint)
+                .child(title),
+        )
+        .child(
+            self.menu_button(
+                ("article-menu", ix),
+                Some("article-row"),
+                icons::icon(icons::layout::Ellipsis)
                     .size(px(14.))
-                    .flex_none()
-                    .text_color(tint),
+                    .text_color(theme.text_faint),
+                Menu::Entry(entry),
+                cx,
             )
-            // Display-only: the title is written at the head of the page, and
-            // this row is never a second field for it.
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .truncate()
-                    .text_style(TextStyle::Body)
-                    .text_color(tint)
-                    .child(title),
-            )
-            .child(
-                self.menu_button(
-                    ("article-menu", ix),
-                    Some("article-row"),
-                    icons::icon(icons::layout::Ellipsis)
-                        .size(px(14.))
-                        .text_color(theme.text_faint),
-                    Menu::Entry(entry),
-                    cx,
-                )
-                .children(self.entry_menu(Menu::Entry(entry), entry, archived, cx)),
-            )
-            .on_click(cx.listener(move |this, _, window, cx| {
-                this.open_article(project, ix, window, cx);
-            }))
+            .children(self.entry_menu(Menu::Entry(entry), entry, archived, cx)),
+        )
+        .on_click(cx.listener(move |this, _, window, cx| {
+            this.open_article(project, ix, window, cx);
+        }))
     }
 }

@@ -15,6 +15,7 @@ use crate::{
         settings::Section,
     },
 };
+use bezel::ui::scroll as scrollbars;
 use bezel::{
     agent::orbs::{OrbState, engine::Frame},
     gpui::{
@@ -247,15 +248,12 @@ pub(crate) const ROW_HEIGHT: f32 = ROW_PILL + 2.;
 /// the flat blur — is left in view.
 const PINNED_BLEED: f32 = 20.;
 
-/// The box every row under a project heading sits in: indented beneath the
-/// heading, and carrying the wash that says which one is open.
-///
-/// Shared because the indent is a measurement three files have to agree on.
-/// Written out in each of them, it drifts.
+/// Shared row styling keeps selection backgrounds full-width when indented.
 pub(crate) fn row(
     id: impl Into<gpui::ElementId>,
     group: &'static str,
     selected: bool,
+    indent: bool,
     theme: &Theme,
 ) -> Stateful<Div> {
     div()
@@ -265,6 +263,7 @@ pub(crate) fn row(
         .ml(px(root::SIDEBAR_GUTTER))
         .mr(px(root::SIDEBAR_GUTTER))
         .px(px(root::SIDEBAR_GUTTER))
+        .when(indent, |el| el.pl(px(root::SIDEBAR_GUTTER + 14.)))
         .flex()
         .flex_row()
         .items_center()
@@ -319,6 +318,20 @@ impl UniformListDecoration for PinnedHead {
 }
 
 impl Cydonia {
+    fn sidebar_hover(&mut self, menu: Menu, hovered: bool, cx: &mut Context<Self>) {
+        if hovered {
+            if self.sidebar_hovered.as_ref() == Some(&menu) {
+                return;
+            }
+            self.sidebar_hovered = Some(menu);
+        } else if self.sidebar_hovered.as_ref() == Some(&menu) {
+            self.sidebar_hovered = None;
+        } else {
+            return;
+        }
+        cx.notify();
+    }
+
     pub(crate) fn sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
         // Taken here, where the workspace is already open, because the two
@@ -355,17 +368,37 @@ impl Cydonia {
                     .child(self.fold_toggle(theme.text_faint, cx)),
             )
             .child(
-                uniform_list(
-                    "project-list",
-                    count,
-                    cx.processor(move |this, range: Range<usize>, _, cx| {
-                        range.map(|ix| this.sidebar_row(rows[ix], cx)).collect()
-                    }),
-                )
-                .track_scroll(&self.rail)
-                .with_decoration(PinnedHead(cx.entity()))
-                .flex_1()
-                .min_h_0(),
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .child(
+                        uniform_list(
+                            "project-list",
+                            count,
+                            cx.processor(move |this, range: Range<usize>, _, cx| {
+                                range.map(|ix| this.sidebar_row(rows[ix], cx)).collect()
+                            }),
+                        )
+                        .track_scroll(&self.rail)
+                        .with_decoration(PinnedHead(cx.entity()))
+                        .size_full(),
+                    )
+                    .child(
+                        scrollbars::Overlay::new(
+                            "sidebar-bar",
+                            &self.rail.0.borrow().base_handle,
+                            bezel::gpui::Axis::Vertical,
+                        )
+                        .visibility(
+                            self.workspace
+                                .read(cx)
+                                .settings
+                                .appearance
+                                .sidebar_scrollbars
+                                .into(),
+                        ),
+                    ),
             )
             .children(self.restart_notice(cx))
             .child(
@@ -593,6 +626,9 @@ impl Cydonia {
         let head = div()
             .id(("project", ix))
             .group("project-head")
+            .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
+                this.sidebar_hover(Menu::Add(ix), *hovered, cx);
+            }))
             // Pinned it runs edge to edge, and past the band it shows in at
             // the top and the bottom — see [`PINNED_BLEED`]. The label keeps
             // the x the pill's own margin and padding put it at.
@@ -862,6 +898,12 @@ impl Cydonia {
             }
         };
         div()
+            .id(SharedString::from(format!("sidebar-hover-{}", key_of(row))))
+            .when(!matches!(row, Row::Project(_) | Row::Archive(_)), |el| {
+                el.on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
+                    this.sidebar_hover(Menu::Entry(row), *hovered, cx);
+                }))
+            })
             .h(px(ROW_HEIGHT))
             .py(px(1.))
             .child(inner)
@@ -896,18 +938,24 @@ impl Cydonia {
             .projects
             .get(project)
             .is_some_and(|open| open.archive_open);
-        row(("archive", project), "archive-row", false, &theme)
-            .child(theme.disclosure(open).text_color(theme.text_faint))
-            .child(
-                div()
-                    .flex_none()
-                    .text_style(TextStyle::Callout)
-                    .text_color(theme.text_faint)
-                    .child("Archived"),
-            )
-            .child(div().flex_1().h(px(1.)).bg(theme.border))
-            .on_click(cx.listener(move |this, _, _, cx| this.toggle_archive(project, cx)))
-            .into_any_element()
+        row(
+            ("archive", project),
+            "archive-row",
+            false,
+            self.workspace.read(cx).indent_project_rows,
+            &theme,
+        )
+        .child(theme.disclosure(open).text_color(theme.text_faint))
+        .child(
+            div()
+                .flex_none()
+                .text_style(TextStyle::Callout)
+                .text_color(theme.text_faint)
+                .child("Archived"),
+        )
+        .child(div().flex_1().h(px(1.)).bg(theme.border))
+        .on_click(cx.listener(move |this, _, _, cx| this.toggle_archive(project, cx)))
+        .into_any_element()
     }
 
     fn toggle_archive(&mut self, project: usize, cx: &mut Context<Self>) {
@@ -1122,38 +1170,39 @@ impl Cydonia {
             false => row_label(session.label, tint),
         };
 
-        row(("session", id), "session-row", selected, &theme)
-            .child(
-                div()
-                    .flex_none()
+        row(
+            ("session", id),
+            "session-row",
+            selected,
+            self.workspace.read(cx).indent_project_rows,
+            &theme,
+        )
+        .child(
+            div()
+                .flex_none()
+                .size(px(14.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(mark),
+        )
+        .child(label)
+        .child(
+            self.menu_button(
+                ("session-menu", id),
+                Some("session-row"),
+                icons::icon(icons::layout::Ellipsis)
                     .size(px(14.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(mark),
+                    .text_color(theme.text_faint),
+                Menu::Entry(entry),
+                cx,
             )
-            .child(label)
-            .child(
-                self.menu_button(
-                    ("session-menu", id),
-                    Some("session-row"),
-                    icons::icon(icons::layout::Ellipsis)
-                        .size(px(14.))
-                        .text_color(theme.text_faint),
-                    Menu::Entry(entry),
-                    cx,
-                )
-                .children(self.entry_menu(
-                    Menu::Entry(entry),
-                    entry,
-                    session.archived,
-                    cx,
-                )),
-            )
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.select_session(id, cx);
-            }))
-            .into_any_element()
+            .children(self.entry_menu(Menu::Entry(entry), entry, session.archived, cx)),
+        )
+        .on_click(cx.listener(move |this, _, _, cx| {
+            this.select_session(id, cx);
+        }))
+        .into_any_element()
     }
 
     /// One board: its mark and its name.
@@ -1187,6 +1236,7 @@ impl Cydonia {
             SharedString::from(format!("board-{project}-{ix}")),
             "board-row",
             selected,
+            workspace.indent_project_rows,
             &theme,
         )
         .child(

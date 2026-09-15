@@ -14,6 +14,7 @@
 pub mod http;
 pub mod proto;
 pub mod rail;
+mod resources;
 pub mod tool;
 pub mod tools;
 
@@ -28,31 +29,6 @@ use tool::{Answer, Args, Tool, Trouble};
 
 /// What the server calls itself in `initialize`.
 const NAME: &str = "cydonia";
-
-/// What it tells a model it is holding, once, instead of in every description.
-/// What it tells a model it is holding, once, instead of in every description.
-///
-/// The last line is the one that earns its place. A coding agent sitting in
-/// the directory will otherwise open `.cydonia/boards/*.toml` and write TOML
-/// into it, and a card written that way has no id and no handle until
-/// something reads it back — so the tools exist and are quietly routed around.
-/// Nothing here can enforce that; it can only say it.
-const BOUND: &str = "\
-The articles and boards cydonia keeps for the project you are working in. A \
-board is named by its key (ROAD), its name or its id; a card by its handle \
-(ROAD-12) or its id; a column by its name or its id; an article by its title \
-or its id. Do not read or write anything under .cydonia/ directly — these \
-tools are what keep the ids and handles straight.";
-
-/// The same, for a caller that is not in a project: every tool takes the one
-/// it is about as a path.
-const LOOSE: &str = "\
-The articles and boards cydonia keeps for a project, which is any directory. \
-Every tool takes the project it is about as a path. Within one, a board is \
-named by its key (ROAD), its name or its id; a card by its handle (ROAD-12) \
-or its id; a column by its name or its id; an article by its title or its id. \
-Do not read or write anything under .cydonia/ directly — these tools are what \
-keep the ids and handles straight.";
 
 pub struct Server {
     /// Mounted rather than compiled in. A surface the user has switched off is
@@ -118,6 +94,15 @@ impl Server {
             "initialize" => Response::ok(id, self.initialize(at)),
             "ping" => Response::ok(id, json!({})),
             "tools/list" => Response::ok(id, self.list(at.is_some())),
+            "resources/list" => match resources::list(request.params.as_ref()) {
+                Ok(result) => Response::ok(id, result),
+                Err(error) => Response::fail(id, error),
+            },
+            "resources/read" => match resources::read(request.params.as_ref()) {
+                Ok(result) => Response::ok(id, result),
+                Err(error) => Response::fail(id, error),
+            },
+            "resources/templates/list" => Response::ok(id, json!({ "resourceTemplates": [] })),
             "tools/call" => match self.invoke(request.params.as_ref(), at) {
                 Ok(result) => Response::ok(id, result),
                 Err(error) => Response::fail(id, error),
@@ -144,16 +129,18 @@ impl Server {
     }
 
     fn initialize(&self, at: Option<&Path>) -> Value {
+        let instructions = prompts::tool_context(at.is_some());
+        let capabilities = json!({ "tools": { "listChanged": false }, "resources": {} });
         json!({
             "protocolVersion": proto::VERSION,
             // `listChanged` is a promise to send a notification, and this
             // server has nowhere to send one from until the door grows a
             // stream. Saying false is what keeps a client from waiting for it.
-            "capabilities": { "tools": { "listChanged": false } },
+            "capabilities": capabilities,
             // The app's own version. `protocolVersion` above is the spec
             // revision the client matches against, and is not ours to name.
             "serverInfo": { "name": NAME, "version": env!("CARGO_PKG_VERSION") },
-            "instructions": match at.is_some() { true => BOUND, false => LOOSE },
+            "instructions": instructions,
         })
     }
 

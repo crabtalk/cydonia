@@ -1,0 +1,117 @@
+---
+name: markdown
+description: Write and edit Cydonia articles using its supported Markdown syntax, image sizing and paths, and rich links. Use for content displayed in Cydonia, not ordinary repository Markdown.
+---
+
+# Cydonia Markdown
+
+Use this guidance alongside the connected article tools. Their descriptions
+define operations and arguments; this guide defines the content they accept.
+
+## Article content
+
+An article's title is separate from its Markdown body. Use `article_rename`
+to change the title; a heading inside the body does not rename the article.
+Keep YAML frontmatter out of the body: it is not article metadata.
+
+Read the current body before editing. Use `article_edit` for targeted changes
+and `article_rewrite` for an intentional full replacement. After an editor
+save, reread before constructing an exact match: whitespace, escaping and
+list numbering can be normalized.
+
+## Images
+
+Put each displayed picture in its own paragraph, with blank lines around it:
+
+```markdown
+![Architecture overview](/absolute/project/.cydonia/assets/overview.png)
+
+![Architecture overview|480](/absolute/project/.cydonia/assets/overview.png)
+
+![|320](/absolute/project/.cydonia/assets/overview.png)
+```
+
+- Alt text is also the standalone image's visible caption. Leave it empty
+  for no caption; keep it plain text.
+- A final `|480` in the alt text requests a width of 480 pixels, capped by the
+  available page width. Width must be a positive integer. Omit it for natural
+  sizing constrained to the page.
+- The width suffix applies only to a standalone image. An image within prose
+  is preserved as image Markdown but currently renders as linked alt text.
+- Use the width suffix, not `=480x`, `{width=480}`, or HTML attributes.
+  Height, crop, alignment and shape have no authored image syntax.
+- Avoid captions ending in a literal `|` followed by digits: that tail is
+  interpreted as width, even when the pipe was escaped.
+- Image titles such as `![alt](path "title")` do not supply the caption or
+  size; use the alt text and width suffix instead.
+
+### Image files and destinations
+
+Store new agent-created media in `<project>/.cydonia/assets/`. This is an
+explicit exception to the restriction on direct access to managed artifacts.
+`article_read` and `article_add` return `assets_path`, the absolute directory
+on the Cydonia host. Create that directory if needed. Use unique filenames;
+preserve existing files unless their replacement or removal was requested.
+Existing article-local images continue to work and need not be moved.
+
+Local image destinations must be absolute filesystem paths. Relative paths
+are resolved against the app process, not the article directory. Do not
+assume `file://` URLs behave like local paths. HTTP(S) image URLs can also be
+used when the image is available to the app.
+
+For paths containing spaces, enclose the destination in angle brackets:
+
+```markdown
+![Overview|480](</absolute/project/.cydonia/assets/system overview.png>)
+```
+
+With filesystem access to the Cydonia host, copy or generate the image in
+`assets_path`, then insert its absolute path using the article tools. This
+media workflow is allowed by the server instructions; it does not need a
+separate exception for each image. Read-only settings and filesystem permission restrictions
+still apply. Shared assets remain after an article is deleted.
+
+Article tools write Markdown, not image bytes. An MCP-only client without
+filesystem access to the host must use an existing accessible image or an
+HTTP(S) image URL. A local path on a remote client's machine is not a path on
+the Cydonia host. Do not claim to upload or copy an image through article tools.
+
+## Links and previews
+
+The spelling controls whether a link stays text or becomes a rich preview:
+
+```markdown
+[Read the guide](https://example.com/guide)
+
+<https://example.com/guide>
+
+[https://example.com/guide](https://example.com/guide "chip")
+
+[https://example.com/guide](https://example.com/guide "embed")
+```
+
+- Ordinary Markdown links and bare URLs stay text links, even alone.
+- An angle-bracket HTTP(S) URL alone in a paragraph becomes a bookmark card;
+  within prose it becomes a rich inline link.
+- The exact titles `"chip"` and `"embed"` select a compact chip or a larger
+  preview card. A standalone preview requires the label to equal the URL.
+  A custom label such as `[Guide](url "embed")` stays inline.
+- `"embed"` is a link preview, not an iframe or executable embed. Preview
+  details depend on what metadata the destination supplies.
+
+## Supported formatting and limits
+
+Use headings, paragraphs, bold, italic, strikethrough, inline code, fenced
+code, quotes, lists, task lists, thematic breaks and pipe tables. Use four
+spaces for nested list levels, and keep table cells on one line. Escape
+literal pipes in table cells with `\|`.
+
+Raw HTML is literal text, not layout. Underline, text colors, `==highlight==`,
+math typesetting, footnotes and special callout blocks are not enabled.
+Mermaid fences display code; Cydonia does not install a diagram renderer.
+Use an image when a rendered diagram is needed.
+
+Avoid relying on nested quote depth or combinations such as a list inside a
+quote: the editor flattens mixed containers. Soft and hard line breaks share
+one representation. Exact source formatting is not preserved across editor
+saves.

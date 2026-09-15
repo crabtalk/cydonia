@@ -26,6 +26,7 @@ use std::{
 };
 
 pub mod acp;
+pub mod context;
 pub mod mcp;
 pub mod path;
 pub mod serve;

@@ -13,10 +13,12 @@ use crate::{
     view::root,
 };
 use artifact::session::chat::{ChatItem, ToolStatus};
+use bezel::ui::scroll as scrollbars;
 use bezel::{
     agent::orbs::{OrbSize, OrbState, engine::Frame, orb_element},
     gpui::{
-        AnyElement, Context, Empty, Pixels, ScrollHandle, SharedString, Window, div, prelude::*, px,
+        AnyElement, Context, Empty, Pixels, ScrollHandle, SharedString, Window, canvas, div,
+        prelude::*, px,
     },
     motion::Painter,
     theme::{TextStyle, Theme, Typeset, ink},
@@ -33,7 +35,7 @@ use markdown::{
     selectable::{self, Pointer},
 };
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::{HashMap, HashSet, hash_map::DefaultHasher},
     hash::{Hash, Hasher},
     ops::Range,
@@ -74,6 +76,7 @@ const ORB_STILL: f32 = 0.6;
 #[derive(Default)]
 pub struct State {
     scroll: ScrollHandle,
+    pub(crate) footer_height: Rc<Cell<Pixels>>,
     follow: FollowState,
     /// Keyed by the turn's first item index.
     work: HashMap<usize, Takeover>,
@@ -143,10 +146,10 @@ impl State {
     }
 }
 
-/// The prose of an item, for the two kinds that carry any.
+/// Text available for selection and copying.
 fn item_text(item: &ChatItem) -> Option<&str> {
     match item {
-        ChatItem::User(text) | ChatItem::Agent(text) => Some(text),
+        ChatItem::User(text) | ChatItem::Agent(text) | ChatItem::Notice { text, .. } => Some(text),
         _ => None,
     }
 }
@@ -188,19 +191,7 @@ fn turns(items: &[ChatItem]) -> Vec<Turn> {
     turns
 }
 
-/// What the session has to say for itself, in the strip its severity earns.
-fn notice(theme: &Theme, text: &str, failed: bool) -> AnyElement {
-    let strip = if failed {
-        theme.error_strip(SharedString::from(text.to_owned()))
-    } else {
-        theme.warning_strip(SharedString::from(text.to_owned()))
-    };
-    strip.mt(px(0.)).into_any_element()
-}
-
-/// One message, selectable. The transcript's two prose items — what you asked
-/// and what came back — are the same element, because copying the one is the
-/// same act as copying the other.
+/// User messages, agent responses, and session notices share selectable prose.
 ///
 /// The session id rides in the closure rather than the item: a pointer event
 /// arrives at the workspace, which holds every session, and the transcript on
@@ -287,7 +278,10 @@ pub fn render(chat: &ChatSession, window: &mut Window, cx: &mut Context<Workspac
                         .track_scroll(&chat.transcript.scroll)
                         .px(px(24.))
                         .pt(px(PAD))
-                        .pb(px(PAD + root::composer_height() + root::COMPOSER_BOTTOM))
+                        .pb(px(PAD
+                            + f32::from(chat.transcript.footer_height.get())
+                                .max(root::composer_height())
+                            + root::COMPOSER_BOTTOM))
                         .flex()
                         .flex_col()
                         .children(zones),
@@ -296,6 +290,20 @@ pub fn render(chat: &ChatSession, window: &mut Window, cx: &mut Context<Workspac
                     &chat.transcript.scroll,
                     &chat.transcript.follow,
                 )),
+        )
+        .child(
+            scrollbars::Overlay::new(
+                format!("transcript-bar-{id}"),
+                &chat.transcript.scroll,
+                bezel::gpui::Axis::Vertical,
+            )
+            .end_inset(
+                chat.transcript
+                    .footer_height
+                    .get()
+                    .max(px(root::composer_height()))
+                    + px(root::COMPOSER_BOTTOM),
+            ),
         )
         .child(rail(
             chat,
@@ -308,21 +316,26 @@ pub fn render(chat: &ChatSession, window: &mut Window, cx: &mut Context<Workspac
         .into_any_element()
 }
 
-/// One mark per turn down the left of the pane, the turn at the top of the
-/// viewport lit, and the question it opened on its tooltip. A press jumps
-/// there.
-///
-/// `bezel::ui::scroll::rail` in every respect but the tooltip, which is the
-/// whole point here: a column of identical dashes says how many turns there
-/// are and nothing about which is which, and the thing a person is looking for
-/// is what they asked.
+/// The top turn is active until the bottom is reached, where the latest wins.
+fn active_turn(handle: &ScrollHandle, count: usize) -> usize {
+    let last = count.saturating_sub(1);
+    if scroll::at_bottom(handle.max_offset().y, handle.offset().y, px(0.5)) {
+        last
+    } else {
+        handle.top_item().min(last)
+    }
+}
+
+/// One clickable mark per turn, with its question as the tooltip.
 fn rail(chat: &ChatSession, turns: &[Turn], room: Pixels) -> AnyElement {
     // bezel's own floor plus the marks' padding, which reaches toward the
     // text: a hitbox over the prose would swallow presses meant for it.
     if turns.is_empty() || room < px(scroll::RAIL_ROOM + 2. * MARK_PAD) {
         return Empty.into_any_element();
     }
-    let at = chat.transcript.scroll.top_item();
+    let handle = chat.transcript.scroll.clone();
+    let count = turns.len();
+    let at = active_turn(&handle, count);
     div()
         .absolute()
         .top_0()
@@ -333,6 +346,18 @@ fn rail(chat: &ChatSession, turns: &[Turn], room: Pixels) -> AnyElement {
         .items_center()
         .justify_center()
         .overflow_hidden()
+        .child(
+            canvas(
+                move |_, window, _| {
+                    // Layout and auto-follow can change the scroll after render.
+                    if active_turn(&handle, count) != at {
+                        window.request_animation_frame();
+                    }
+                },
+                |_, _, _, _| {},
+            )
+            .absolute(),
+        )
         .children(turns.iter().enumerate().map(|(ix, turn)| {
             // A turn opens on a question, except the leading chunk of a
             // session — which is whatever arrived before the first one, and has
@@ -428,7 +453,10 @@ fn zone(
     for ix in turn.answer_from..turn.range.end {
         zone = zone.child(match &chat.items[ix] {
             ChatItem::Agent(text) => prose(chat, ix, text, window, cx),
-            ChatItem::Notice { text, failed } => notice(&theme, text, *failed),
+            ChatItem::Notice { text, .. } => div()
+                .opacity(0.65)
+                .child(prose(chat, ix, text, window, cx))
+                .into_any_element(),
             ChatItem::Process { command, output } => {
                 let (command, output) = (command.clone(), output.clone());
                 process(chat, ix, &command, &output, cx)
@@ -522,12 +550,14 @@ fn work(chat: &ChatSession, body: Range<usize>, cx: &mut Context<Workspace>) -> 
                         )
                         .child(text.clone())
                         .into_any_element(),
-                    ChatItem::Agent(text) => div()
+                    ChatItem::Agent(text) | ChatItem::Notice { text, .. } => div()
                         .text_style(TextStyle::Callout)
                         .text_color(theme.text_muted)
+                        .when(matches!(item, ChatItem::Notice { .. }), |el| {
+                            el.opacity(0.65)
+                        })
                         .child(text.clone())
                         .into_any_element(),
-                    ChatItem::Notice { text, failed } => notice(&theme, text, *failed),
                     _ => div().into_any_element(),
                 }
             }));
@@ -863,3 +893,7 @@ fn working(chat: &ChatSession, at: usize, cx: &mut Context<Workspace>) -> AnyEle
 #[cfg(test)]
 #[path = "../../../tests/unit/transcript_turns.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../../../tests/unit/transcript_rail.rs"]
+mod rail_tests;

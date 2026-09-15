@@ -7,17 +7,16 @@ use crate::{
     },
     view::root::{Cydonia, Pane, ToggleChanges},
 };
+use bezel::ui::scroll as scrollbars;
 use bezel::{
     gpui::{
         self, AnyElement, ClipboardItem, Context, HighlightStyle, Hsla, Pixels, Render,
         SharedString, StyledText, Task, TextRun, UniformListScrollHandle, Window, canvas, div,
         font, point, prelude::*, px, uniform_list,
     },
-    motion::Painter,
     theme::{TextStyle, Theme, Typeset},
     ui::{
         icons::{self, Icon},
-        scroll::{self, ScrollbarState},
         tooltip::Tooltip,
     },
 };
@@ -35,7 +34,6 @@ pub struct Changes {
     font_key: Option<(SharedString, u32)>,
     wrap_width: Pixels,
     number_width: Pixels,
-    bar: ScrollbarState,
     error: Option<String>,
     loading: bool,
     ready: bool,
@@ -74,7 +72,6 @@ impl Changes {
             font_key: None,
             wrap_width: px(0.),
             number_width: px(0.),
-            bar: ScrollbarState::new(Painter::of(cx)),
             error: None,
             loading: false,
             ready: false,
@@ -371,16 +368,26 @@ impl Render for Changes {
             .when(count > 0, |panel| {
                 panel
                     .child(
-                        uniform_list(
-                            "git-files",
-                            count,
-                            cx.processor(|this, range: std::ops::Range<usize>, _, cx| {
-                                range.map(|ix| this.file_row(ix, cx)).collect()
-                            }),
-                        )
-                        .track_scroll(&self.files_scroll)
-                        .h(px((count as f32 * 28.).min(168.)))
-                        .flex_none(),
+                        div()
+                            .relative()
+                            .h(px((count as f32 * 28.).min(168.)))
+                            .flex_none()
+                            .child(
+                                uniform_list(
+                                    "git-files",
+                                    count,
+                                    cx.processor(|this, range: std::ops::Range<usize>, _, cx| {
+                                        range.map(|ix| this.file_row(ix, cx)).collect()
+                                    }),
+                                )
+                                .track_scroll(&self.files_scroll)
+                                .size_full(),
+                            )
+                            .child(scrollbars::Overlay::new(
+                                "git-files-bar",
+                                &self.files_scroll.0.borrow().base_handle,
+                                bezel::gpui::Axis::Vertical,
+                            )),
                     )
                     .child(
                         div()
@@ -667,7 +674,11 @@ impl Changes {
                 .size_full()
                 .track_scroll(&self.diff_scroll),
             )
-            .child(scroll::scrollbar("git-diff-vertical", &handle, &self.bar))
+            .child(scrollbars::Overlay::new(
+                "git-diff-vertical",
+                &handle,
+                bezel::gpui::Axis::Vertical,
+            ))
             .child(
                 canvas(
                     move |_, window, _| {

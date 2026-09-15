@@ -20,6 +20,7 @@ use bezel::{
 pub(crate) struct Toolbar {
     /// What the pane is showing, by the name the sidebar would list it under.
     pub title: String,
+    pub number: Option<u64>,
     /// The entry that name belongs to. Every pane has one today; the field is
     /// an option because a pane standing in for something not yet made — see
     /// [`Cydonia::launch`] — has a band and nothing to act on.
@@ -59,6 +60,7 @@ impl Cydonia {
                 let chat = workspace.active_session()?;
                 Toolbar {
                     title: chat.label(),
+                    number: chat.number,
                     entry: Some(Entry {
                         row: Row::Session {
                             project,
@@ -74,6 +76,7 @@ impl Cydonia {
                 let board = open.boards.get(ix)?;
                 Toolbar {
                     title: board.label().to_owned(),
+                    number: board.number,
                     entry: Some(Entry {
                         row: Row::Board { project, ix },
                         archived: board.archived,
@@ -86,6 +89,7 @@ impl Cydonia {
                 let article = open.articles.get(ix)?;
                 Toolbar {
                     title: article.label().to_owned(),
+                    number: article.number,
                     entry: Some(Entry {
                         row: Row::Article { project, ix },
                         archived: article.archived,
@@ -98,6 +102,7 @@ impl Cydonia {
                 let table = open.tables.get(ix)?;
                 Toolbar {
                     title: table.name.clone(),
+                    number: table.number,
                     entry: Some(Entry {
                         row: Row::Table { project, ix },
                         archived: table.archived,
@@ -186,7 +191,8 @@ impl Cydonia {
                                     div()
                                         .id("header-title")
                                         .min_w_0()
-                                        .overflow_hidden()
+                                        .truncate()
+                                        .line_clamp(1)
                                         .text_style(TextStyle::Subheadline)
                                         .font_weight(FontWeight::MEDIUM)
                                         .text_color(theme.text)
@@ -213,6 +219,16 @@ impl Cydonia {
                                                 ))
                                         }),
                                 )
+                                .children(toolbar.number.map(|number| {
+                                    div()
+                                        .id("header-entry-number")
+                                        .flex_none()
+                                        .ml(px(6.))
+                                        .text_style(TextStyle::Caption)
+                                        .font_weight(FontWeight::NORMAL)
+                                        .text_color(theme.text_muted)
+                                        .child(format!("#{number}"))
+                                }))
                                 .children(board.as_deref().and_then(|id| self.info_panel(id, cx))),
                         )
                         .children(toolbar.entry.map(|entry| {

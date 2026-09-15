@@ -16,7 +16,7 @@ use crate::{
     view::{
         hotkey,
         keymap::{self, Command, Menu},
-        settings::{self, SettingsWindow},
+        settings::{self, SettingsWindow, Switch},
     },
 };
 use bezel::{
@@ -65,6 +65,7 @@ const UNBOUND: &str = "None";
 impl SettingsWindow {
     pub(super) fn shortcuts_body(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
+        let emacs = self.workspace.read(cx).settings.shortcuts.emacs;
         div()
             .flex()
             .flex_col()
@@ -76,6 +77,28 @@ impl SettingsWindow {
                     .gap(px(settings::LABEL_GAP))
                     .child(theme.field_label("System"))
                     .child(theme.group_box().child(self.activate_row(cx))),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(settings::LABEL_GAP))
+                    .child(theme.field_label("Text editing"))
+                    .child(theme.group_box().child(self.switch_row(
+                        Switch::new(
+                            "emacs-shortcuts",
+                            "Emacs word shortcuts",
+                            "Option+B/F moves by word; add Shift to select. Option+D deletes the next word.",
+                            emacs,
+                        ).first(true),
+                        cx,
+                        move |this, cx| {
+                            this.workspace.update(cx, |workspace, cx| {
+                                workspace.set_emacs_shortcuts(!emacs, cx);
+                            });
+                            this.restore(cx);
+                        },
+                    ))),
             )
             .children(Menu::ALL.into_iter().map(|menu| {
                 div()

@@ -45,6 +45,7 @@ const DDL: &str = "CREATE TABLE IF NOT EXISTS _tables (
 )";
 
 pub struct Data {
+    project: std::path::PathBuf,
     writer: Connection,
     /// Opened `SQLITE_OPEN_READ_ONLY`, and that is the point: a `SELECT` an
     /// agent wrote runs on a connection that cannot write, whatever the
@@ -66,6 +67,16 @@ impl Data {
         writer.busy_timeout(BUSY)?;
         writer.execute_batch("PRAGMA journal_mode = WAL")?;
         writer.execute_batch(DDL)?;
+        // Table key changes and their numeric references commit together.
+        artifact::entry::Registry::open(project)?;
+        writer.execute(
+            "ATTACH DATABASE ?1 AS entry_registry",
+            [fs::Project::new(project)
+                .cydonia()
+                .join("entries.db")
+                .to_string_lossy()
+                .as_ref()],
+        )?;
         // A `_tables` written before a column existed. SQLite has no ADD COLUMN
         // IF NOT EXISTS, and the file is the only record of which shape this
         // one is.
@@ -84,7 +95,11 @@ impl Data {
                 | OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )?;
         reader.busy_timeout(BUSY)?;
-        Ok(Self { writer, reader })
+        Ok(Self {
+            project: project.to_owned(),
+            writer,
+            reader,
+        })
     }
 
     /// The store as it already is, or nothing. Browsing a project must not
@@ -153,6 +168,7 @@ impl Data {
             )
         });
         Ok(Table {
+            number: artifact::entry::number(&self.project, "table", key).ok(),
             columns: columns_of(&self.reader, key)?,
             rows: self.reader.query_row(
                 &format!("SELECT count(*) FROM {}", quote(key)),
@@ -258,6 +274,10 @@ impl Data {
                     "UPDATE _tables SET key = ?2 WHERE key = ?1",
                     [&current, &next],
                 )?;
+                tx.execute(
+                    "UPDATE entry_registry.entries SET id = ?2 WHERE kind = 'table' AND id = ?1",
+                    [&current, &next],
+                )?;
                 tx.commit()?;
                 current = next;
             }
@@ -282,7 +302,12 @@ impl Data {
         let tx = self.writer.transaction()?;
         tx.execute_batch(&format!("DROP TABLE {}", quote(&key)))?;
         tx.execute("DELETE FROM _tables WHERE key = ?1", [&key])?;
-        Ok(tx.commit()?)
+        tx.execute(
+            "UPDATE entry_registry.entries SET id = NULL WHERE kind = 'table' AND id = ?1",
+            [&key],
+        )?;
+        tx.commit()?;
+        Ok(())
     }
 
     /// A table by its key or its display name, answering with the key. Both are
@@ -290,6 +315,15 @@ impl Data {
     /// person says.
     fn resolve(&self, ident: &str) -> Result<String> {
         let ident = ident.trim();
+        let resolved;
+        let ident = if let Some(number) = artifact::entry::reference(ident) {
+            resolved = artifact::entry::Registry::open(&self.project)?
+                .resolve("table", number)?
+                .ok_or_else(|| anyhow!("no table {ident}"))?;
+            resolved.as_str()
+        } else {
+            ident
+        };
         self.reader
             .query_row(
                 "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?1 \

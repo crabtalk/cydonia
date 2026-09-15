@@ -107,9 +107,53 @@ pub struct Appearance {
     /// *has* been decided about carries the decision in its own
     /// `properties.toml` and ignores this.
     pub wide_pages: bool,
+    /// Indent sidebar items beneath project headings by one icon width.
+    pub indent_project_rows: bool,
+    pub scrollbars: Scrollbars,
+    pub sidebar_scrollbars: Scrollbars,
     /// Whether a line too long for a code block wraps rather than scrolling
     /// sideways inside it — `markdown::Layout::wrap_code`.
     pub wrap_code: bool,
+}
+
+/// When overflowing panes show their scrollbars.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Scrollbars {
+    #[default]
+    Scrolling,
+    Always,
+    Never,
+}
+
+impl From<Scrollbars> for bezel::ui::scroll::Visibility {
+    fn from(value: Scrollbars) -> Self {
+        match value {
+            Scrollbars::Scrolling => Self::Scrolling,
+            Scrollbars::Always => Self::Always,
+            Scrollbars::Never => Self::Never,
+        }
+    }
+}
+
+impl Scrollbars {
+    pub const ALL: [Self; 3] = [Self::Scrolling, Self::Always, Self::Never];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Scrolling => "While scrolling",
+            Self::Always => "Always",
+            Self::Never => "Never",
+        }
+    }
+
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Scrolling => "scrolling",
+            Self::Always => "always",
+            Self::Never => "never",
+        }
+    }
 }
 
 impl Default for Appearance {
@@ -124,6 +168,9 @@ impl Default for Appearance {
             hue: 0.,
             chroma: 0.,
             wide_pages: false,
+            indent_project_rows: true,
+            scrollbars: Scrollbars::default(),
+            sidebar_scrollbars: Scrollbars::Never,
             // Off, the way every code editor ships it: indentation is
             // structure, and wrapping loses the left column that makes nesting
             // scannable. Against bezel's own default, which wraps because
@@ -147,21 +194,16 @@ impl Appearance {
     }
 }
 
-/// The chords, by the key the command is written under — see
-/// [`crate::view::keymap::Command`].
-///
-/// Sparse: only what differs from the default is kept, so a default that moves
-/// between releases moves for everyone who never said otherwise. An absent
-/// table is every default, which is why the install that predates this needs
-/// no migration.
-///
-/// A map rather than a field per command, because the command list is
-/// [`crate::view::keymap`]'s to know and this file only stores what it is told.
-/// A key naming no command is left where it is rather than dropped: a typo is
-/// worth being able to see and fix.
+/// Text editing preferences and sparse command overrides.
+/// Unknown command names are preserved for hand-edited settings.
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct Shortcuts(BTreeMap<String, String>);
+pub struct Shortcuts {
+    /// Add Option+B/F word movement and Option+D word deletion.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub emacs: bool,
+    #[serde(flatten)]
+    bindings: BTreeMap<String, String>,
+}
 
 impl Shortcuts {
     /// The one key here that is not a command: the chord the *system* holds,
@@ -171,7 +213,7 @@ impl Shortcuts {
     pub const ACTIVATE: &'static str = "activate";
 
     pub fn get(&self, key: &str) -> Option<&str> {
-        self.0.get(key).map(String::as_str)
+        self.bindings.get(key).map(String::as_str)
     }
 
     pub fn activate(&self) -> Option<&str> {
@@ -183,10 +225,10 @@ impl Shortcuts {
     pub fn set(&mut self, key: &str, chord: Option<&str>) {
         match chord {
             Some(chord) => {
-                self.0.insert(key.to_owned(), chord.to_owned());
+                self.bindings.insert(key.to_owned(), chord.to_owned());
             }
             None => {
-                self.0.remove(key);
+                self.bindings.remove(key);
             }
         }
     }
@@ -492,6 +534,9 @@ fn write_appearance(doc: &mut toml_edit::DocumentMut, appearance: &Appearance) -
     held["hue"] = toml_edit::value(f64::from(appearance.hue));
     held["chroma"] = toml_edit::value(f64::from(appearance.chroma));
     held["wide_pages"] = toml_edit::value(appearance.wide_pages);
+    held["indent_project_rows"] = toml_edit::value(appearance.indent_project_rows);
+    held["scrollbars"] = toml_edit::value(appearance.scrollbars.key());
+    held["sidebar_scrollbars"] = toml_edit::value(appearance.sidebar_scrollbars.key());
     held["wrap_code"] = toml_edit::value(appearance.wrap_code);
     Ok(())
 }
@@ -517,6 +562,19 @@ pub fn set_shortcut(key: &str, chord: Option<&str>) -> Result<()> {
             None => {
                 held.remove(key);
             }
+        }
+        Ok(true)
+    })
+}
+
+/// Enable Emacs word shortcuts without replacing the platform defaults.
+pub fn set_emacs_shortcuts(on: bool) -> Result<()> {
+    edit(|doc| {
+        let held = table(doc, "shortcuts")?;
+        if on {
+            held["emacs"] = toml_edit::value(true);
+        } else {
+            held.remove("emacs");
         }
         Ok(true)
     })
