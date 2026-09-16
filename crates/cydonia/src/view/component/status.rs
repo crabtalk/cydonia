@@ -64,7 +64,7 @@ pub fn files_toggle(open: bool, theme: &Theme) -> gpui::Stateful<Div> {
             } else {
                 icons::files::Folder
             })
-            .size(px(16.))
+            .size(px(13.))
             .text_color(theme.text_muted),
         )
 }

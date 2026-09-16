@@ -182,3 +182,35 @@ fn files_opens_project_tree_instead_of_native_picker(cx: &mut gpui::TestAppConte
         .update(&mut visual, |panel, _, _| assert!(!panel.files_open))
         .unwrap();
 }
+
+#[gpui::test]
+fn command_w_closes_right_terminal_tabs_and_returns_to_launcher(cx: &mut gpui::TestAppContext) {
+    cx.update(|cx| {
+        Theme::install(Appearance::Dark, cx);
+        crate::view::keymap::bind_all(&crate::model::settings::Shortcuts::default(), cx);
+    });
+    let window = cx.add_window(|_, cx| Panel::new(std::env::temp_dir(), cx));
+    window
+        .update(cx, |panel, window, cx| {
+            panel.terminal(window, cx);
+            panel.terminal(window, cx);
+        })
+        .unwrap();
+    let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+    visual.simulate_resize(gpui::size(px(600.), px(400.)));
+    visual.run_until_parked();
+    visual.simulate_keystrokes("cmd-w");
+    window
+        .update(&mut visual, |panel, _, _| {
+            assert_eq!(panel.tabs.len(), 1);
+            assert_eq!(panel.active, Some(0));
+        })
+        .unwrap();
+    visual.simulate_keystrokes("cmd-w");
+    window
+        .update(&mut visual, |panel, window, _| {
+            assert!(panel.tabs.is_empty());
+            assert!(panel.focus.is_focused(window));
+        })
+        .unwrap();
+}

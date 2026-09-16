@@ -219,7 +219,9 @@ impl Panel {
 
     fn items(window: &Window) -> Vec<Item> {
         vec![
-            Item::action("Review").with_icon(icons::development::GitCompare),
+            Item::action("Review")
+                .with_icon(icons::development::GitCompare)
+                .with_shortcut(&crate::view::root::OpenReview, window),
             Item::action("Terminal").with_icon(icons::development::Terminal),
             Item::action("Files")
                 .with_icon(icons::files::Folder)

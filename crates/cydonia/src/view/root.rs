@@ -59,6 +59,7 @@ actions!(
         ToggleTerminal,
         ToggleChanges,
         OpenFiles,
+        OpenReview,
         CommitName,
         DismissName,
         NextEntry,
@@ -814,6 +815,9 @@ impl Render for Cydonia {
             .text_color(theme.text)
             .text_style(TextStyle::Body)
             .on_action(cx.listener(Self::toggle_changes))
+            .on_action(
+                cx.listener(|this, _: &OpenReview, window, cx| this.show_changes(window, cx)),
+            )
             .on_action(cx.listener(|this, _: &OpenFiles, window, cx| this.show_files(window, cx)))
             .on_action(cx.listener(Self::copy_selection))
             .on_action(cx.listener(Self::commit_cell_action))

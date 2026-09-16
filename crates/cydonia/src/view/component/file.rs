@@ -5,11 +5,13 @@ use bezel::{
         self, Context, Entity, Focusable, Render, Subscription, Task, Window, div, prelude::*, px,
     },
     theme::{TextStyle, Theme, Typeset},
-    ui::input::{Shape, TextField},
+    ui::input::{FieldEvent, Shape, TextField},
 };
 use std::{
+    cell::Cell,
     io::{Read, Write},
     path::{Path, PathBuf},
+    rc::Rc,
     time::Duration,
 };
 
@@ -101,6 +103,8 @@ pub struct FileView {
     pub error: Option<String>,
     changed: bool,
     preview: bool,
+    scroll: gpui::ScrollHandle,
+    reveal: Rc<Cell<bool>>,
     _watch: Subscription,
     _poll: Task<()>,
 }
@@ -110,11 +114,19 @@ impl FileView {
         let field = cx.new(|cx| {
             TextField::new(cx)
                 .with_frame(false)
-                .with_shape(Shape::Rows(24))
+                .with_shape(Shape::Grow {
+                    min: 1,
+                    max: usize::MAX,
+                })
                 .with_undo_limit(64)
                 .with_key_context("FileEditor")
         });
-        let watch = cx.observe(&field, |_, _, cx| cx.notify());
+        let watch = cx.subscribe(&field, |this, _, event: &FieldEvent, cx| {
+            if matches!(event, FieldEvent::Changed | FieldEvent::Moved) {
+                this.reveal.set(true);
+            }
+            cx.notify();
+        });
         let poll = cx.spawn(async move |this, cx| {
             loop {
                 let Ok((path, saved)) =
@@ -150,6 +162,8 @@ impl FileView {
             error: None,
             changed: false,
             preview: true,
+            scroll: gpui::ScrollHandle::new(),
+            reveal: Rc::new(Cell::new(false)),
             _watch: watch,
             _poll: poll,
         }
@@ -280,6 +294,126 @@ impl FileView {
     }
 }
 
+fn line_starts(text: &str) -> Vec<usize> {
+    std::iter::once(0)
+        .chain(text.match_indices('\n').map(|(at, _)| at + 1))
+        .collect()
+}
+
+impl FileView {
+    fn source_view(&self, theme: &Theme, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let starts = line_starts(self.field.read(cx).content());
+        let size = TextStyle::Body.painted();
+        let gutter = px(starts.len().to_string().len() as f32 * size * 0.65 + 20.);
+        let field = self.field.clone();
+        let scroll = self.scroll.clone();
+        let reveal = self.reveal.clone();
+        let font = gpui::font(theme.font_mono.clone());
+        let color = theme.text_faint;
+        div()
+            .relative()
+            .flex_1()
+            .min_h_0()
+            .overflow_hidden()
+            .child(
+                div()
+                    .id("file-source")
+                    .size_full()
+                    .overflow_y_scroll()
+                    .track_scroll(&self.scroll)
+                    .pl(gutter + px(8.))
+                    .pr(px(8.))
+                    .py(px(8.))
+                    .font_family(theme.font_mono.clone())
+                    .on_mouse_down(
+                        gpui::MouseButton::Left,
+                        cx.listener(|this, _, window, cx| {
+                            window.focus(&this.field.focus_handle(cx), cx);
+                        }),
+                    )
+                    .child(self.field.clone()),
+            )
+            .child(
+                gpui::canvas(
+                    |bounds, _, _| bounds,
+                    move |_, bounds, window, cx| {
+                        let field = field.read(cx);
+                        if reveal.replace(false) && field.focus_handle(cx).is_focused(window) {
+                            if let Some(caret) = field.offset_bounds(field.cursor()) {
+                                let viewport = scroll.bounds();
+                                let offset = scroll.offset();
+                                let mut y = offset.y;
+                                if caret.top() < viewport.top() {
+                                    y += viewport.top() - caret.top();
+                                } else if caret.bottom() > viewport.bottom() {
+                                    y -= caret.bottom() - viewport.bottom();
+                                }
+                                y = y.clamp(-scroll.max_offset().y, px(0.));
+                                if y != offset.y {
+                                    scroll.set_offset(gpui::point(offset.x, y));
+                                    window.request_animation_frame();
+                                }
+                            }
+                        }
+                        let first = starts.partition_point(|at| {
+                            field
+                                .offset_bounds(*at)
+                                .is_some_and(|row| row.bottom() < bounds.top())
+                        });
+                        let rows: Vec<_> = starts
+                            .iter()
+                            .enumerate()
+                            .skip(first)
+                            .filter_map(|(index, at)| {
+                                field.offset_bounds(*at).map(|row| (index, row))
+                            })
+                            .take_while(|(_, row)| row.top() < bounds.bottom())
+                            .filter(|(_, row)| row.top() >= bounds.top())
+                            .collect();
+                        for (index, row) in rows {
+                            let number = (index + 1).to_string();
+                            let run = gpui::TextRun {
+                                len: number.len(),
+                                font: font.clone(),
+                                color,
+                                background_color: None,
+                                underline: None,
+                                strikethrough: None,
+                            };
+                            let line = window.text_system().shape_line(
+                                number.into(),
+                                px(size),
+                                &[run],
+                                None,
+                            );
+                            let origin =
+                                gpui::point(bounds.right() - line.width - px(6.), row.top());
+                            let _ = line.paint(
+                                origin,
+                                row.size.height,
+                                gpui::TextAlign::Left,
+                                None,
+                                window,
+                                cx,
+                            );
+                        }
+                    },
+                )
+                .absolute()
+                .top_0()
+                .bottom_0()
+                .left_0()
+                .w(gutter),
+            )
+            .child(bezel::ui::scroll::Overlay::new(
+                "file-source-scrollbar",
+                &self.scroll,
+                gpui::Axis::Vertical,
+            ))
+            .into_any_element()
+    }
+}
+
 impl Focusable for FileView {
     fn focus_handle(&self, _: &gpui::App) -> gpui::FocusHandle {
         self.focus.clone()
@@ -354,16 +488,7 @@ impl Render for FileView {
                             )),
                     )
                 } else {
-                    panel.child(
-                        div()
-                            .id("file-source")
-                            .flex_1()
-                            .min_h_0()
-                            .overflow_y_scroll()
-                            .p(px(8.))
-                            .font_family(theme.font_mono.clone())
-                            .child(self.field.clone()),
-                    )
+                    panel.child(self.source_view(&theme, cx))
                 }
             })
     }

@@ -978,7 +978,7 @@ impl Composer {
                 .with_shortcut(&root::ToggleTerminal, window),
             Item::action("Review")
                 .with_icon(icons::development::GitCompare)
-                .with_shortcut(&root::ToggleChanges, window),
+                .with_shortcut(&root::OpenReview, window),
             Item::action("Files")
                 .with_icon(icons::files::Folder)
                 .with_shortcut(&root::OpenFiles, window),

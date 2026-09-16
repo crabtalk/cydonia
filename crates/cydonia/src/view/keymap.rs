@@ -25,7 +25,7 @@ use crate::{
         create, info, menubar,
         root::{
             self, CloseProject, NewArticle, NewBoard, NewSession, NewSessionNext, NewTable,
-            NextEntry, OpenFiles, OpenProject, OpenSettings, PrevEntry, ToggleChanges,
+            NextEntry, OpenFiles, OpenProject, OpenReview, OpenSettings, PrevEntry, ToggleChanges,
             ToggleSidebar, ToggleTerminal,
         },
         table,
@@ -61,6 +61,7 @@ pub enum Command {
     ToggleTerminal,
     ToggleChanges,
     OpenFiles,
+    OpenReview,
     NextEntry,
     PrevEntry,
     PlainText,
@@ -89,7 +90,7 @@ impl Menu {
 }
 
 impl Command {
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 16] = [
         Self::OpenSettings,
         Self::NewSession,
         Self::NewSessionNext,
@@ -102,6 +103,7 @@ impl Command {
         Self::ToggleTerminal,
         Self::ToggleChanges,
         Self::OpenFiles,
+        Self::OpenReview,
         Self::NextEntry,
         Self::PrevEntry,
         Self::PlainText,
@@ -122,6 +124,7 @@ impl Command {
             Self::ToggleTerminal => "toggle_terminal",
             Self::ToggleChanges => "toggle_changes",
             Self::OpenFiles => "open_files",
+            Self::OpenReview => "open_review",
             Self::NextEntry => "next_entry",
             Self::PrevEntry => "prev_entry",
             Self::PlainText => "plain_text",
@@ -143,6 +146,7 @@ impl Command {
             Self::ToggleTerminal => "Toggle Terminal",
             Self::ToggleChanges => "Toggle Right Panel",
             Self::OpenFiles => "Open Files",
+            Self::OpenReview => "Open Review",
             Self::NextEntry => "Next Entry",
             Self::PrevEntry => "Previous Entry",
             Self::PlainText => "Plain Text",
@@ -162,6 +166,7 @@ impl Command {
             Self::ToggleTerminal
             | Self::ToggleChanges
             | Self::OpenFiles
+            | Self::OpenReview
             | Self::ToggleSidebar
             | Self::NextEntry
             | Self::PrevEntry
@@ -188,6 +193,7 @@ impl Command {
             Self::ToggleTerminal => "cmd-j",
             Self::ToggleChanges => "cmd-l",
             Self::OpenFiles => "cmd-shift-f",
+            Self::OpenReview => "cmd-shift-g",
             // The pair the View menu draws. `ctrl-tab` reaches these too and
             // is not movable: gpui has no macOS equivalent for `tab`, so an
             // item naming it would print ⌃T — see [`root::bindings`].
@@ -214,6 +220,7 @@ impl Command {
             Self::ToggleTerminal => KeyBinding::new(chord, ToggleTerminal, None),
             Self::ToggleChanges => KeyBinding::new(chord, ToggleChanges, None),
             Self::OpenFiles => KeyBinding::new(chord, OpenFiles, None),
+            Self::OpenReview => KeyBinding::new(chord, OpenReview, None),
             Self::NextEntry => KeyBinding::new(chord, NextEntry, None),
             Self::PrevEntry => KeyBinding::new(chord, PrevEntry, None),
             Self::PlainText => KeyBinding::new(chord, TogglePlainText, None),
@@ -354,7 +361,7 @@ pub fn bind_all(shortcuts: &Shortcuts, cx: &mut App) {
         KeyBinding::new(
             "cmd-w",
             super::component::panel::CloseTab,
-            Some("SessionPanel"),
+            Some("SessionPanel || BottomTerminalPanel"),
         ),
         KeyBinding::new("cmd-s", super::component::file::Save, Some("FileEditor")),
     ]);

@@ -156,3 +156,37 @@ fn directory_tracking_reads_the_shell_after_cd() {
     assert_eq!(ready, "ready\n");
     assert_eq!(directory.as_deref(), Some(Path::new("/")));
 }
+
+#[gpui::test]
+fn command_w_closes_bottom_tabs_and_emits_empty_for_the_last(cx: &mut gpui::TestAppContext) {
+    cx.update(|cx| {
+        Theme::install(bezel::theme::Appearance::Dark, cx);
+        crate::view::keymap::bind_all(&crate::model::settings::Shortcuts::default(), cx);
+    });
+    let window =
+        cx.add_window(|window, cx| TerminalPanel::new(Path::new("/private/tmp"), window, cx));
+    window
+        .update(cx, |panel, window, cx| panel.add(window, cx))
+        .unwrap();
+    let panel = window.root(cx).unwrap();
+    let empty = std::rc::Rc::new(std::cell::Cell::new(false));
+    let observed = empty.clone();
+    let _watch = cx.update(|cx| cx.subscribe(&panel, move |_, _: &Empty, _| observed.set(true)));
+    let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+    visual.simulate_resize(gpui::size(px(600.), px(240.)));
+    visual.run_until_parked();
+    visual.simulate_keystrokes("cmd-w");
+    window
+        .update(&mut visual, |panel, window, cx| {
+            assert_eq!(panel.tabs.len(), 1);
+            assert_eq!(panel.active, 1);
+            assert!(panel.focus_handle(cx).is_focused(window));
+        })
+        .unwrap();
+    assert!(!empty.get());
+    visual.simulate_keystrokes("cmd-w");
+    assert!(empty.get());
+    window
+        .update(&mut visual, |panel, _, _| assert!(panel.tabs.is_empty()))
+        .unwrap();
+}

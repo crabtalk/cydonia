@@ -74,3 +74,44 @@ fn saving_preserves_crlf_and_clears_dirty_state(cx: &mut gpui::TestAppContext) {
         assert_eq!(read_text(&file.0).unwrap(), "edited\r\n");
     });
 }
+
+#[test]
+fn line_numbers_follow_logical_lines_and_utf8_offsets() {
+    assert_eq!(line_starts(""), vec![0]);
+    assert_eq!(line_starts("a\n\n你好\n"), vec![0, 2, 3, 10]);
+}
+
+#[gpui::test]
+fn source_uses_full_viewport_and_scrolls_long_files(cx: &mut gpui::TestAppContext) {
+    cx.update(|cx| Theme::install(bezel::theme::Appearance::Light, cx));
+    let file = Temp::new();
+    let source = (0..100).map(|n| format!("line {n}\n")).collect::<String>();
+    std::fs::write(&file.0, &source).unwrap();
+    let window = cx.add_window(|_, cx| {
+        let mut view = FileView::new(file.0.clone(), cx);
+        view.receive(Ok(source.clone()), cx);
+        view
+    });
+    let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+    visual.simulate_resize(gpui::size(px(500.), px(1000.)));
+    visual.run_until_parked();
+    window
+        .update(&mut visual, |view, _, cx| {
+            let viewport = view.scroll.bounds();
+            assert!(viewport.size.height > px(900.));
+            let starts = line_starts(view.field.read(cx).content());
+            let line35 = view.field.read(cx).offset_bounds(starts[35]).unwrap();
+            assert!(line35.top() > viewport.top() + viewport.size.height / 2.);
+            assert!(line35.bottom() < viewport.bottom());
+            assert!(view.scroll.max_offset().y > px(0.));
+        })
+        .unwrap();
+    visual.simulate_resize(gpui::size(px(300.), px(400.)));
+    visual.run_until_parked();
+    window
+        .update(&mut visual, |view, _, _| {
+            assert!(view.scroll.bounds().size.height <= px(400.));
+            assert!(view.scroll.max_offset().y > px(1000.));
+        })
+        .unwrap();
+}

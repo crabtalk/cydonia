@@ -512,6 +512,10 @@ impl Render for TerminalPanel {
             .size_full()
             .flex()
             .flex_col()
+            .key_context("BottomTerminalPanel")
+            .on_action(cx.listener(|this, _: &super::panel::CloseTab, window, cx| {
+                this.close(this.active, window, cx);
+            }))
             .bg(crate::view::root::content_bg(&theme))
             .child(
                 div()

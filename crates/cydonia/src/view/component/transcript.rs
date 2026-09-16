@@ -238,7 +238,12 @@ fn tool_icon(kind: ToolKind) -> &'static [u8] {
 
 /// The transcript of one session, rendered from the model that owns it —
 /// expanding a work section or a tool's output writes back through `cx`.
-pub fn render(chat: &ChatSession, window: &mut Window, cx: &mut Context<Workspace>) -> AnyElement {
+pub fn render(
+    chat: &ChatSession,
+    pane_width: f32,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) -> AnyElement {
     let id = chat.id;
     let turns = turns(&chat.items);
     let last = turns.len().saturating_sub(1);
@@ -307,14 +312,7 @@ pub fn render(chat: &ChatSession, window: &mut Window, cx: &mut Context<Workspac
                     + px(root::COMPOSER_BOTTOM),
             ),
         )
-        .child(rail(
-            chat,
-            &turns,
-            // The column is centred in the pane and the pane runs to the
-            // window's right edge, so what is clear after the text is what is
-            // clear beside it.
-            window.viewport_size().width - chat.transcript.scroll.bounds().right(),
-        ))
+        .child(rail(chat, &turns, px(rail_room(pane_width))))
         .into_any_element();
     div()
         .flex_1()
@@ -360,6 +358,10 @@ fn active_turn(handle: &ScrollHandle, count: usize) -> usize {
     } else {
         handle.top_item().min(last)
     }
+}
+
+fn rail_room(pane_width: f32) -> f32 {
+    ((pane_width - CONTENT_MAX_WIDTH) / 2.).max(0.)
 }
 
 /// One clickable mark per turn, with its question as the tooltip.

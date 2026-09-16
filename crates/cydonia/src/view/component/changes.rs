@@ -159,6 +159,8 @@ impl Changes {
         };
         div()
             .id(("git-file", ix))
+            .w_full()
+            .min_w_0()
             .h(px(28.))
             .px(px(12.))
             .flex()
@@ -176,17 +178,23 @@ impl Changes {
                 div()
                     .w(px(14.))
                     .flex_none()
-                    .text_color(match file.status {
-                        'D' => theme.danger,
-                        'A' | '?' => theme.success,
-                        _ => theme.text_muted,
-                    })
+                    .text_color(status_color(theme, file.status))
                     .child(file.status.to_string()),
             )
-            .child(div().flex_1().min_w_0().truncate().child(label))
+            .child(
+                div()
+                    .id(("git-file-path", ix))
+                    .text_color(status_color(theme, file.status))
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .child(label.clone())
+                    .tooltip(move |window, cx| Tooltip::text(label.clone(), window, cx)),
+            )
             .child(
                 div()
                     .flex_none()
+                    .text_right()
                     .text_color(theme.text_faint)
                     .child(file.area.label()),
             )
@@ -294,7 +302,7 @@ impl Changes {
             .child(super::status::path(&path, label))
             .when(self.selected.is_some(), |bar| {
                 bar.child(
-                    tool(&theme, "git-open-file", "Open file", icons::files::Folder).on_click(
+                    tool(&theme, "git-open-file", "Open file", icons::files::File).on_click(
                         cx.listener(|this, _, _, cx| {
                             if let (Some(repo), Some(file)) = (&this.repository, &this.selected) {
                                 cx.emit(OpenFile(repo.root.join(&file.path)));
@@ -400,13 +408,22 @@ fn tool(
         .child(icons::icon(icon).size(px(13.)).text_color(theme.text_muted))
 }
 
+fn status_color(theme: &Theme, status: char) -> Hsla {
+    match status {
+        'A' | '?' => theme.success,
+        'M' | 'T' => theme.warning,
+        'D' | 'U' => theme.danger,
+        'R' | 'C' => match theme.appearance {
+            bezel::theme::Appearance::Dark => gpui::rgb(0x73b8ff).into(),
+            bezel::theme::Appearance::Light => gpui::rgb(0x0969da).into(),
+        },
+        _ => theme.text_muted,
+    }
+}
+
 /// Composite over an opaque surface to keep code readable with vibrancy.
 fn diff_wash(theme: &Theme, tone: Hsla) -> Hsla {
-    theme.bg.blend(Hsla {
-        s: tone.s * 0.45,
-        a: 0.055,
-        ..tone
-    })
+    theme.bg.blend(tone.opacity(0.16))
 }
 
 /// Intersect source highlighting with a visual continuation and rebase its bytes.

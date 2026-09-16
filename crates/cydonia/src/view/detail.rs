@@ -783,9 +783,22 @@ impl Cydonia {
                 .into_any_element();
         }
         let id = chat.id;
+        let available = (f32::from(window.viewport_size().width)
+            - if self.sidebar_open {
+                self.sidebar_width
+            } else {
+                0.
+            })
+        .max(0.);
+        let pane_width = available
+            - if self.changes.is_some() {
+                panel_width(self.changes_width, available)
+            } else {
+                0.
+            };
         self.workspace
             .update(cx, |workspace, cx| match workspace.session(id) {
-                Some(chat) => transcript::render(chat, window, cx),
+                Some(chat) => transcript::render(chat, pane_width, window, cx),
                 None => div().flex_1().into_any_element(),
             })
     }
