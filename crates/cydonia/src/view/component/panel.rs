@@ -106,7 +106,8 @@ impl Panel {
         let open = cx.subscribe(&review, |this, _, event: &super::changes::OpenFile, cx| {
             this.open_file(event.0.clone(), cx);
         });
-        self.push(Content::Review(review), vec![open], cx);
+        let watch = cx.observe(&review, |_, _, cx| cx.notify());
+        self.push(Content::Review(review), vec![open, watch], cx);
     }
 
     fn terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -216,11 +217,13 @@ impl Panel {
         cx.notify();
     }
 
-    fn items() -> Vec<Item> {
+    fn items(window: &Window) -> Vec<Item> {
         vec![
             Item::action("Review").with_icon(icons::development::GitCompare),
             Item::action("Terminal").with_icon(icons::development::Terminal),
-            Item::action("Files").with_icon(icons::files::Folder),
+            Item::action("Files")
+                .with_icon(icons::files::Folder)
+                .with_shortcut(&crate::view::root::OpenFiles, window),
         ]
     }
 }
@@ -232,7 +235,7 @@ impl Render for Panel {
             self.focus(window, cx);
         }
         let theme = Theme::of(cx).clone();
-        let items = Self::items();
+        let items = Self::items(window);
         let rows = items.clone();
         let popup = self.menu.then(|| {
             menu::card(
@@ -274,9 +277,32 @@ impl Render for Panel {
                 files.update(cx, |files, cx| files.reveal(selected, cx));
             }
         }
-        let toolbar = active_file
-            .as_ref()
-            .map(|file| file.update(cx, |file, cx| file.toolbar(self.files_open, window, cx)));
+        let status = self
+            .tabs
+            .iter()
+            .find(|tab| Some(tab.id) == self.active)
+            .map(|tab| match &tab.content {
+                Content::File(file) => {
+                    file.update(cx, |file, cx| file.status_bar(self.files_open, window, cx))
+                }
+                Content::Review(review) => {
+                    review.update(cx, |review, cx| review.status_bar(self.files_open, cx))
+                }
+                Content::Terminal(terminal) => {
+                    super::status::terminal(&terminal.read(cx).directory, &theme)
+                        .child(super::status::files_toggle(self.files_open, &theme))
+                        .into_any_element()
+                }
+            })
+            .unwrap_or_else(|| {
+                super::status::bar(&theme)
+                    .child(super::status::path(
+                        &self.project_root,
+                        self.project_root.display().to_string(),
+                    ))
+                    .child(super::status::files_toggle(self.files_open, &theme))
+                    .into_any_element()
+            });
         let body: AnyElement = self
             .tabs
             .iter()
@@ -329,6 +355,16 @@ impl Render for Panel {
             .bg(crate::view::root::content_bg(&theme))
             .key_context("SessionPanel")
             .track_focus(&self.focus)
+            .on_action(
+                cx.listener(|this, action: &super::files::ToggleFilter, window, cx| {
+                    if !this.files_open {
+                        this.files(window, cx);
+                    }
+                    if let Some(files) = &this.files {
+                        files.update(cx, |files, cx| files.toggle_filter(action, window, cx));
+                    }
+                }),
+            )
             .on_action(cx.listener(|this, _: &ToggleFiles, window, cx| {
                 if this.files_open {
                     this.files_open = false;
@@ -550,47 +586,6 @@ impl Render for Panel {
                         ),
                 )
             })
-            .when(self.files_open && active_file.is_none(), |panel| {
-                panel.child(
-                    div()
-                        .flex_none()
-                        .h(px(34.))
-                        .px(px(12.))
-                        .flex()
-                        .items_center()
-                        .border_b_1()
-                        .border_color(theme.border)
-                        .child(
-                            div().flex_1().min_w_0().truncate().child(
-                                self.project_root
-                                    .file_name()
-                                    .unwrap_or(self.project_root.as_os_str())
-                                    .to_string_lossy()
-                                    .into_owned(),
-                            ),
-                        )
-                        .child(
-                            div()
-                                .id("files-hide")
-                                .size(px(24.))
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .cursor_pointer()
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.files_open = false;
-                                    this.focus(window, cx);
-                                    cx.notify();
-                                }))
-                                .child(
-                                    icons::icon(icons::files::FolderOpen)
-                                        .size(px(16.))
-                                        .text_color(theme.text_muted),
-                                ),
-                        ),
-                )
-            })
-            .children(toolbar)
             .child(
                 div()
                     .flex_1()
@@ -636,6 +631,7 @@ impl Render for Panel {
                         }))
                     }),
             )
+            .child(status)
     }
 }
 

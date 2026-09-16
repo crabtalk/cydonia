@@ -206,7 +206,7 @@ impl FileView {
         }
     }
 
-    pub fn toolbar(
+    pub fn status_bar(
         &mut self,
         files_open: bool,
         _: &mut Window,
@@ -228,16 +228,8 @@ impl FileView {
             .path
             .extension()
             .is_some_and(|ext| ext == "md" || ext == "markdown");
-        div()
-            .flex_none()
-            .flex()
-            .items_center()
-            .gap(px(8.))
-            .p(px(8.))
-            .border_b_1()
-            .border_color(theme.border)
-            .text_style(TextStyle::Caption)
-            .child(div().flex_1().min_w_0().truncate().child(breadcrumb))
+        super::status::bar(&theme)
+            .child(super::status::path(&self.path, breadcrumb))
             .when(markdown && self.ready, |row| {
                 row.child(
                     div()
@@ -257,33 +249,7 @@ impl FileView {
                         }),
                 )
             })
-            .child(
-                div()
-                    .id("file-folders")
-                    .size(px(26.))
-                    .flex_none()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded(px(6.))
-                    .cursor_pointer()
-                    .hover(|button| button.bg(theme.element_hover))
-                    .tooltip(|window, cx| {
-                        bezel::ui::tooltip::Tooltip::text("Toggle files", window, cx)
-                    })
-                    .on_click(|_, window, cx| {
-                        window.dispatch_action(Box::new(super::panel::ToggleFiles), cx)
-                    })
-                    .child(
-                        bezel::ui::icons::icon(if files_open {
-                            bezel::ui::icons::files::FolderOpen
-                        } else {
-                            bezel::ui::icons::files::Folder
-                        })
-                        .size(px(16.))
-                        .text_color(theme.text_muted),
-                    ),
-            )
+            .child(super::status::files_toggle(files_open, &theme))
             .when(self.dirty(cx), |row| {
                 row.child(
                     div()

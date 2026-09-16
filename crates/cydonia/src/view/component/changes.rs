@@ -278,6 +278,45 @@ impl Changes {
     }
 }
 
+impl Changes {
+    pub fn status_bar(&mut self, files_open: bool, cx: &mut Context<Self>) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        let path = match (&self.repository, &self.selected) {
+            (Some(repo), Some(file)) => repo.root.join(&file.path),
+            (Some(repo), None) => repo.root.clone(),
+            _ => self.cwd.clone(),
+        };
+        let label = match &self.selected {
+            Some(file) => format!("{} · {}", file.area.label(), path.display()),
+            None => path.display().to_string(),
+        };
+        super::status::bar(&theme)
+            .child(super::status::path(&path, label))
+            .when(self.selected.is_some(), |bar| {
+                bar.child(
+                    tool(&theme, "git-open-file", "Open file", icons::files::Folder).on_click(
+                        cx.listener(|this, _, _, cx| {
+                            if let (Some(repo), Some(file)) = (&this.repository, &this.selected) {
+                                cx.emit(OpenFile(repo.root.join(&file.path)));
+                            }
+                        }),
+                    ),
+                )
+                .child(
+                    tool(&theme, "git-copy", "Copy diff", icons::text::Copy).on_click(cx.listener(
+                        |this, _, _, cx| {
+                            cx.write_to_clipboard(ClipboardItem::new_string(
+                                this.preview.patch.clone(),
+                            ));
+                        },
+                    )),
+                )
+            })
+            .child(super::status::files_toggle(files_open, &theme))
+            .into_any_element()
+    }
+}
+
 impl Render for Changes {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::of(cx).clone();
@@ -294,31 +333,12 @@ impl Render for Changes {
                 None
             }
         });
-        let root = self
-            .repository
-            .as_ref()
-            .map(|repo| repo.root.display().to_string());
         div()
             .size_full()
             .flex()
             .flex_col()
             .overflow_hidden()
             .bg(crate::view::root::content_bg(&theme))
-            .children(root.map(|root| {
-                div()
-                    .px(px(12.))
-                    .py(px(6.))
-                    .flex_none()
-                    .text_style(TextStyle::Caption2)
-                    .text_color(theme.text_faint)
-                    .child(
-                        div()
-                            .id("git-root")
-                            .truncate()
-                            .child(root.clone())
-                            .tooltip(move |window, cx| Tooltip::text(root.clone(), window, cx)),
-                    )
-            }))
             .when_some(message, |panel, message| {
                 panel.child(
                     div()
@@ -351,51 +371,6 @@ impl Render for Changes {
                                 &self.files_scroll.0.borrow().base_handle,
                                 bezel::gpui::Axis::Vertical,
                             )),
-                    )
-                    .child(
-                        div()
-                            .px(px(12.))
-                            .py(px(7.))
-                            .border_t_1()
-                            .border_b_1()
-                            .border_color(theme.border)
-                            .flex()
-                            .items_center()
-                            .gap(px(8.))
-                            .text_style(TextStyle::Caption)
-                            .child(
-                                div().flex_1().min_w_0().truncate().child(
-                                    self.selected
-                                        .as_ref()
-                                        .map(|file| {
-                                            format!(
-                                                "{} · {}",
-                                                file.area.label(),
-                                                file.path.display()
-                                            )
-                                        })
-                                        .unwrap_or_default(),
-                                ),
-                            )
-                            .child(
-                                tool(&theme, "git-open-file", "Open file", icons::files::Folder)
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        if let (Some(repo), Some(file)) =
-                                            (&this.repository, &this.selected)
-                                        {
-                                            cx.emit(OpenFile(repo.root.join(&file.path)));
-                                        }
-                                    })),
-                            )
-                            .child(
-                                tool(&theme, "git-copy", "Copy diff", icons::text::Copy).on_click(
-                                    cx.listener(|this, _, _, cx| {
-                                        cx.write_to_clipboard(ClipboardItem::new_string(
-                                            this.preview.patch.clone(),
-                                        ))
-                                    }),
-                                ),
-                            ),
                     )
                     .when(self.loading && self.preview.lines.is_empty(), |panel| {
                         panel.child(div().p(px(12.)).child("Loading diff…"))

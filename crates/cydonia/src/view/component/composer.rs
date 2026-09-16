@@ -979,7 +979,9 @@ impl Composer {
             Item::action("Review")
                 .with_icon(icons::development::GitCompare)
                 .with_shortcut(&root::ToggleChanges, window),
-            Item::action("Files").with_icon(icons::files::Folder),
+            Item::action("Files")
+                .with_icon(icons::files::Folder)
+                .with_shortcut(&root::OpenFiles, window),
         ];
         let rows = items.clone();
         let popup = self.tools_menu.then(|| {

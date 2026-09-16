@@ -15,3 +15,5 @@ pub mod panel;
 pub mod files;
 
 pub mod divider;
+
+pub mod status;

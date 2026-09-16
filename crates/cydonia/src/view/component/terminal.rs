@@ -648,5 +648,11 @@ impl Render for TerminalPanel {
                         .map(|tab| tab.terminal.clone()),
                 ),
             )
+            .children(
+                self.tabs
+                    .iter()
+                    .find(|tab| tab.id == self.active)
+                    .map(|tab| super::status::terminal(&tab.terminal.read(cx).directory, &theme)),
+            )
     }
 }

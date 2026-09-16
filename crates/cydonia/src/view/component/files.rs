@@ -17,6 +17,8 @@ use std::{
     time::Duration,
 };
 
+gpui::actions!(file_tree, [ToggleFilter]);
+
 pub struct Open(pub PathBuf);
 #[derive(Clone)]
 struct Entry {
@@ -91,6 +93,8 @@ fn scan(
 
 pub struct Files {
     root: PathBuf,
+    focus: gpui::FocusHandle,
+    filter_open: bool,
     filter: Entity<TextField>,
     expanded: HashSet<PathBuf>,
     entries: Vec<Entry>,
@@ -130,6 +134,8 @@ impl Files {
         });
         let mut this = Self {
             root,
+            focus: cx.focus_handle(),
+            filter_open: false,
             filter,
             expanded: HashSet::new(),
             entries: Vec::new(),
@@ -144,6 +150,18 @@ impl Files {
         };
         this.refresh(cx);
         this
+    }
+
+    pub fn toggle_filter(&mut self, _: &ToggleFilter, window: &mut Window, cx: &mut Context<Self>) {
+        self.filter_open = !self.filter_open;
+        if self.filter_open {
+            window.focus(&self.filter.focus_handle(cx), cx);
+        } else {
+            self.filter
+                .update(cx, |filter, cx| filter.set_content("", cx));
+            window.focus(&self.focus, cx);
+        }
+        cx.notify();
     }
 
     fn refresh(&mut self, cx: &mut Context<Self>) {
@@ -192,7 +210,11 @@ impl Files {
 }
 impl Focusable for Files {
     fn focus_handle(&self, cx: &gpui::App) -> gpui::FocusHandle {
-        self.filter.focus_handle(cx)
+        if self.filter_open {
+            self.filter.focus_handle(cx)
+        } else {
+            self.focus.clone()
+        }
     }
 }
 impl Render for Files {
@@ -205,7 +227,9 @@ impl Render for Files {
             .flex_col()
             .p(px(8.))
             .gap(px(6.))
-            .child(self.filter.clone())
+            .track_focus(&self.focus)
+            .on_action(cx.listener(Self::toggle_filter))
+            .when(self.filter_open, |tree| tree.child(self.filter.clone()))
             .when_some(self.error.clone(), |tree, error| {
                 tree.child(div().text_style(TextStyle::Caption).child(error))
             })

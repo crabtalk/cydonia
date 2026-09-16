@@ -71,3 +71,42 @@ fn file_tree_renders_and_reveals_selected_file(cx: &mut gpui::TestAppContext) {
     visual.simulate_resize(gpui::size(px(220.), px(600.)));
     visual.run_until_parked();
 }
+
+#[gpui::test]
+fn command_f_toggles_filter_and_clears_it_on_close(cx: &mut gpui::TestAppContext) {
+    let tree = Tree::new();
+    cx.update(|cx| {
+        Theme::install(bezel::theme::Appearance::Light, cx);
+        cx.bind_keys([gpui::KeyBinding::new("cmd-f", ToggleFilter, None)]);
+    });
+    let window = cx.add_window(|_, cx| Files::new(tree.0.clone(), cx));
+    window
+        .update(cx, |files, window, cx| {
+            assert!(!files.filter_open);
+            window.focus(&files.focus_handle(cx), cx);
+        })
+        .unwrap();
+    let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+    visual.simulate_resize(gpui::size(px(220.), px(600.)));
+    visual.run_until_parked();
+    visual.simulate_keystrokes("cmd-f");
+    window
+        .update(&mut visual, |files, window, cx| {
+            assert!(files.filter_open);
+            assert!(files.filter.focus_handle(cx).is_focused(window));
+        })
+        .unwrap();
+    visual.simulate_input("view");
+    visual.simulate_keystrokes("cmd-f");
+    window
+        .update(&mut visual, |files, window, _| {
+            assert!(!files.filter_open);
+            assert!(files.focus.is_focused(window));
+        })
+        .unwrap();
+    window
+        .update(&mut visual, |files, _, cx| {
+            assert!(files.filter.read(cx).content().is_empty())
+        })
+        .unwrap();
+}
