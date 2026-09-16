@@ -221,6 +221,7 @@ pub struct Composer {
     usage: Option<Usage>,
     /// Whether the agent mark's menu is up.
     menu: bool,
+    menu_pressed: bool,
     tools_menu: bool,
     tools_cursor: Cursor,
     /// Where that menu is being worked: which of its rows is live, and which
@@ -284,6 +285,7 @@ impl Composer {
             switches: Vec::new(),
             usage: None,
             menu: false,
+            menu_pressed: false,
             tools_menu: false,
             tools_cursor: Cursor::default(),
             cursor: Cursor::default(),
@@ -721,6 +723,7 @@ impl Composer {
         let mark = px(root::composer_height() / 2.);
         let button = div()
             .id("composer-agent")
+            .debug_selector(|| "composer-agent".into())
             .size(px(root::composer_height()))
             .rounded_full()
             .flex()
@@ -739,9 +742,13 @@ impl Composer {
                     .text_color(theme.text_muted)
                     .into_any_element(),
             })
+            // Outside-click dismissal runs before the trigger's click handler.
+            .capture_any_mouse_down(cx.listener(|composer, _, _, _| {
+                composer.menu_pressed = composer.menu;
+            }))
             .on_click(cx.listener(|composer, _, _, cx| {
                 composer.tools_menu = false;
-                composer.menu = !composer.menu;
+                composer.menu = !(std::mem::take(&mut composer.menu_pressed) || composer.menu);
                 composer.cursor.clear();
                 cx.notify();
             }));

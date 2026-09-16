@@ -74,7 +74,7 @@ fn background_events_do_not_move_an_older_session_above_a_new_one() {
 }
 
 #[test]
-fn conversation_events_update_recency() {
+fn agent_events_preserve_user_submission_order() {
     let scratch = Scratch::new();
     let mut chat = scratch.chat();
     for event in [
@@ -95,8 +95,26 @@ fn conversation_events_update_recency() {
     ] {
         chat.updated = UNIX_EPOCH;
         chat.apply(event);
-        assert!(chat.touched() > 0);
+        assert_eq!(chat.touched(), 0);
     }
+}
+
+#[test]
+fn queued_submission_updates_order_immediately_and_survives_restore() {
+    let scratch = Scratch::new();
+    let mut chat = scratch.chat();
+    chat.record = None;
+    chat.items.push(ChatItem::User("previous prompt".into()));
+    chat.streaming = true;
+    chat.send("next prompt".into());
+    assert!(chat.touched() > 1000);
+    assert_eq!(chat.queue.front().map(String::as_str), Some("next prompt"));
+    let submitted = chat.updated;
+    chat.apply(Event::TurnDone(Ok(StopReason::EndTurn)));
+    assert_eq!(chat.updated, submitted);
+    let stored = fs::Project::new(&scratch.0).sessions().pop().unwrap();
+    let restored = ChatSession::restore(2, scratch.0.clone(), agent("/bin/false", &[]), stored);
+    assert_eq!(restored.touched() / 1000, chat.touched() / 1000);
 }
 
 #[test]
@@ -188,6 +206,16 @@ for line in sys.stdin:
         .unwrap();
         let mut chat = scratch.chat();
         chat.connection = Connection::Live(Box::new(session));
+        chat.send("first prompt".into());
+        assert!(chat.touched() > 1000);
+        chat.send("queued prompt".into());
+        let submitted = chat.updated;
+        chat.apply(Event::TurnDone(Ok(StopReason::EndTurn)));
+        assert!(chat.queue.is_empty());
+        assert_eq!(
+            chat.updated, submitted,
+            "dispatch must not reorder sessions"
+        );
         chat.close();
         assert!(chat.closed);
         assert!(!chat.live());

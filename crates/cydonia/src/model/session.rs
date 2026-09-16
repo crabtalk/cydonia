@@ -153,8 +153,7 @@ pub struct ChatSession {
     /// The name you typed, which the agent never overwrites. Two fields rather
     /// than one and a flag: whose name it is *is* the state.
     pub name: Option<String>,
-    /// When the session last had something to say. Wall clock, not `Instant`,
-    /// because the file has to carry it across a launch.
+    /// Last user submission, or creation time before the first message.
     pub updated: SystemTime,
     /// The agent's own id for this session — what `session/load` resumes.
     pub agent_session: Option<String>,
@@ -272,8 +271,7 @@ impl ChatSession {
         }
     }
 
-    /// When this last had something to say, as the millisecond stamp every
-    /// other entry under a project carries — what the sidebar orders on.
+    /// Last user submission in milliseconds, used for sidebar ordering.
     pub fn touched(&self) -> u128 {
         self.updated
             .duration_since(UNIX_EPOCH)
@@ -450,8 +448,10 @@ impl ChatSession {
         if self.closed {
             return;
         }
+        self.updated = SystemTime::now();
         if self.streaming || !self.live() {
             self.queue.push_back(content);
+            self.flush();
         } else {
             self.prompt(content);
         }
@@ -480,10 +480,9 @@ impl ChatSession {
             at: SystemTime::now(),
             used: self.usage.map_or(0, |usage| usage.used),
         });
-        self.updated = SystemTime::now();
         self.sent_at.insert(
             self.items.len(),
-            self.updated
+            SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs(),
@@ -620,19 +619,6 @@ impl ChatSession {
             return;
         }
         self.last_activity = Instant::now();
-        if matches!(
-            &event,
-            Event::Update(
-                SessionUpdate::AgentMessageChunk(_)
-                    | SessionUpdate::AgentThoughtChunk(_)
-                    | SessionUpdate::ToolCall(_)
-                    | SessionUpdate::ToolCallUpdate(_)
-                    | SessionUpdate::Plan(_)
-            ) | Event::Permission(..)
-                | Event::TurnDone(_)
-        ) {
-            self.updated = SystemTime::now();
-        }
         match event {
             Event::Update(update) => self.apply_update(update),
             Event::Permission(request, reply) => self.open_permission(request, reply),

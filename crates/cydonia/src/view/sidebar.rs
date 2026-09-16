@@ -730,8 +730,7 @@ impl Cydonia {
         }
     }
 
-    /// Everything open in one project, last written first — the lines the
-    /// sidebar draws under its head, and the ring a keyboard step walks.
+    /// Entries ordered by last user submission for sessions, last edit otherwise.
     ///
     /// One list rather than four: the kinds are told apart by their marks, and
     /// grouping by kind buries the table you are working in under every article
@@ -781,8 +780,7 @@ impl Cydonia {
         // rescan.
         let filter = self.filter.resolved(features);
         entries.retain(|(_, _, row)| shown(*row, features) && filter.keeps(*row));
-        // One sort for both halves: what was put away sinks, and inside each
-        // half the last thing written is on top.
+        // Archived entries sink; each half follows the entry's recency stamp.
         entries.sort_by_key(|(archived, touched, _)| (*archived, Reverse(*touched)));
         let split = entries.iter().position(|(archived, ..)| *archived);
         let mut rows: Vec<Row> = entries

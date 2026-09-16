@@ -72,3 +72,44 @@ fn macos_word_navigation_and_selection(cx: &mut TestAppContext) {
         assert_eq!(composer.field.read(cx).content().as_ref(), "one two")
     });
 }
+
+struct PopoverComposer(Entity<Composer>);
+
+impl Render for PopoverComposer {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .justify_end()
+            .child(self.0.clone())
+    }
+}
+
+#[gpui::test]
+fn agent_icon_closes_its_open_popover_and_can_open_it_again(cx: &mut TestAppContext) {
+    cx.update(|cx| Theme::install(Appearance::Light, cx));
+    let composer = cx.new(Composer::new);
+    composer.update(cx, |composer, cx| {
+        composer.set_agents(
+            &[Agent {
+                name: "Codex".into(),
+                icon: None,
+            }],
+            Some(0),
+            cx,
+        );
+    });
+    let window = cx.add_window(|_, _| PopoverComposer(composer.clone()));
+    let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+    visual.run_until_parked();
+    for open in [true, false, true, false] {
+        let point = visual.debug_bounds("composer-agent").unwrap().center();
+        visual.simulate_click(point, gpui::Modifiers::default());
+        visual.run_until_parked();
+        assert_eq!(
+            composer.read_with(&visual, |composer, _| composer.menu),
+            open
+        );
+    }
+}
