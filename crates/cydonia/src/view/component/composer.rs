@@ -209,6 +209,7 @@ pub struct Composer {
     streaming: bool,
     activity: Option<Activity>,
     activity_open: bool,
+    activity_frame: std::rc::Rc<std::cell::RefCell<bezel::agent::orbs::engine::Frame>>,
     activity_tick: Option<gpui::Task<()>>,
     /// The configured agents, and which one the session runs on.
     agents: Vec<Agent>,
@@ -276,6 +277,7 @@ impl Composer {
             streaming: false,
             activity: None,
             activity_open: false,
+            activity_frame: Default::default(),
             activity_tick: None,
             agents: Vec::new(),
             agent: None,
@@ -1075,7 +1077,6 @@ impl Composer {
             .on_action(cx.listener(Self::command_dismiss))
             .flex()
             .flex_col()
-            .children(self.activity_row(&theme, cx))
             .child(
                 div()
                     .w_full()
@@ -1109,6 +1110,7 @@ impl Composer {
                                     .flex()
                                     .flex_col()
                                     .gap(px(root::COMPOSER_INSET))
+                                    .children(self.activity_row(&theme, cx))
                                     .children(tray)
                                     .child(
                                         div()

@@ -266,6 +266,12 @@ pub fn render(
     let transcript = div()
         .flex_1()
         .min_h_0()
+        .mb(chat
+            .transcript
+            .footer_height
+            .get()
+            .max(px(root::composer_height()))
+            + px(root::COMPOSER_BOTTOM))
         .relative()
         .flex()
         .justify_center()
@@ -285,10 +291,7 @@ pub fn render(
                         .track_scroll(&chat.transcript.scroll)
                         .px(px(24.))
                         .pt(px(PAD))
-                        .pb(px(PAD
-                            + f32::from(chat.transcript.footer_height.get())
-                                .max(root::composer_height())
-                            + root::COMPOSER_BOTTOM))
+                        .pb(px(PAD))
                         .flex()
                         .flex_col()
                         .children(zones),
@@ -298,20 +301,11 @@ pub fn render(
                     &chat.transcript.follow,
                 )),
         )
-        .child(
-            scrollbars::Overlay::new(
-                format!("transcript-bar-{id}"),
-                &chat.transcript.scroll,
-                bezel::gpui::Axis::Vertical,
-            )
-            .end_inset(
-                chat.transcript
-                    .footer_height
-                    .get()
-                    .max(px(root::composer_height()))
-                    + px(root::COMPOSER_BOTTOM),
-            ),
-        )
+        .child(scrollbars::Overlay::new(
+            format!("transcript-bar-{id}"),
+            &chat.transcript.scroll,
+            bezel::gpui::Axis::Vertical,
+        ))
         .child(rail(chat, &turns, px(rail_room(pane_width))))
         .into_any_element();
     div()
@@ -941,6 +935,17 @@ const WORKING: [&str; 40] = [
 /// for as long as the question is on screen.
 fn verb(question: &str) -> &'static str {
     WORKING[asked_hash(question) % WORKING.len()]
+}
+
+pub fn working_word(chat: &ChatSession) -> &'static str {
+    let question = chat
+        .items
+        .iter()
+        .rev()
+        .find(|item| matches!(item, ChatItem::User(_)))
+        .and_then(item_text)
+        .unwrap_or_default();
+    verb(question)
 }
 
 /// Which orb a session's turn in flight wears, off the same hash for the same

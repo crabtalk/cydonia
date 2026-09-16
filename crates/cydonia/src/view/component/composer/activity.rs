@@ -1,11 +1,16 @@
 use super::*;
 use crate::model::session::{ChatSession, Connection};
+use crate::view::component::transcript;
 use artifact::session::chat::{ChatItem, ToolStatus};
+use bezel::agent::orbs::OrbState;
 use std::time::{Duration, Instant};
 
 #[derive(Clone, PartialEq)]
 pub struct Activity {
-    label: String,
+    orb: OrbState,
+    word: &'static str,
+    connecting: bool,
+    turn_started: Instant,
     since: Instant,
     last_event: Instant,
     tools: Vec<(String, String)>,
@@ -40,26 +45,6 @@ impl Activity {
             })
             .collect();
         let permission = chat.permission.as_ref().map(|prompt| prompt.title.clone());
-        let label = if disconnected {
-            "Connection lost".into()
-        } else if permission.is_some() {
-            "Needs your approval".into()
-        } else if connecting {
-            "Connecting…".into()
-        } else if running.len() == 1 {
-            format!(
-                "Running {}",
-                running[0]
-                    .1
-                    .split_whitespace()
-                    .collect::<Vec<_>>()
-                    .join(" ")
-            )
-        } else if !running.is_empty() {
-            format!("Running {} tools", running.len())
-        } else {
-            "Working…".into()
-        };
         let since = if connecting {
             chat.last_activity
         } else {
@@ -71,7 +56,10 @@ impl Activity {
                 .unwrap_or(chat.last_activity)
         };
         Some(Self {
-            label,
+            orb: transcript::orb_of(chat),
+            word: transcript::working_word(chat),
+            connecting,
+            turn_started: chat.turn_started.unwrap_or(chat.last_activity),
             since,
             last_event: chat.last_activity,
             tools: running
@@ -97,11 +85,7 @@ impl Activity {
 
 fn elapsed(duration: Duration) -> String {
     let seconds = duration.as_secs();
-    if seconds < 60 {
-        format!("{seconds}s")
-    } else {
-        format!("{}m {:02}s", seconds / 60, seconds % 60)
-    }
+    format!("{:02}m {:02}s", seconds / 60, seconds % 60)
 }
 
 impl Composer {
@@ -135,18 +119,7 @@ impl Composer {
     pub(super) fn activity_row(&self, theme: &Theme, cx: &mut Context<Self>) -> Option<AnyElement> {
         let activity = self.activity.as_ref()?;
         let quiet = activity.last_event.elapsed();
-        let label = if quiet >= Duration::from_secs(30) && activity.label == "Working…" {
-            "Waiting for an update…"
-        } else {
-            &activity.label
-        };
-        let mut timing = elapsed(activity.since.elapsed());
-        if quiet >= Duration::from_secs(30)
-            && !activity.disconnected
-            && activity.permission.is_none()
-        {
-            timing.push_str(&format!(" · last activity {} ago", elapsed(quiet)));
-        }
+        let timing = elapsed(activity.since.elapsed());
         let open = self.activity_open;
         let reconnect = activity.reconnectable;
         Some(
@@ -154,7 +127,9 @@ impl Composer {
                 .flex()
                 .flex_col()
                 .min_w_0()
-                .mb(px(6.))
+                .pb(px(6.))
+                .border_b_1()
+                .border_color(theme.border)
                 .child(
                     div()
                         .id("composer-activity")
@@ -162,7 +137,7 @@ impl Composer {
                         .items_center()
                         .gap(px(8.))
                         .min_w_0()
-                        .px(px(12.))
+                        .pr(px(8.))
                         .py(px(4.))
                         .text_style(TextStyle::Caption)
                         .text_color(theme.text_muted)
@@ -175,21 +150,38 @@ impl Composer {
                                 cx.notify();
                             }
                         }))
-                        .child(if activity.disconnected || activity.permission.is_some() {
-                            "!"
-                        } else {
-                            "◌"
-                        })
+                        .child(transcript::orb(
+                            activity.orb,
+                            activity.turn_started.elapsed(),
+                            &self.activity_frame,
+                            cx,
+                        ))
                         .child(
                             div()
                                 .flex_1()
                                 .min_w_0()
                                 .overflow_hidden()
                                 .text_ellipsis()
-                                .child(label.to_owned()),
+                                .when(
+                                    !activity.disconnected && activity.permission.is_none(),
+                                    |label| label.child(format!("{}…", activity.word)),
+                                )
+                                .when(activity.disconnected, |label| {
+                                    label.child("Connection lost")
+                                })
+                                .when(
+                                    !activity.disconnected && activity.permission.is_some(),
+                                    |label| label.child("Needs your approval"),
+                                ),
                         )
                         .when(!activity.disconnected, |row| {
-                            row.child(div().flex_none().whitespace_nowrap().child(timing))
+                            row.child(
+                                div()
+                                    .flex_none()
+                                    .font_family(theme.font_mono.clone())
+                                    .whitespace_nowrap()
+                                    .child(timing),
+                            )
                         })
                         .child(if reconnect {
                             "Reconnect"
@@ -216,7 +208,23 @@ impl Composer {
                             })
                             .when(
                                 activity.tools.is_empty() && activity.permission.is_none(),
-                                |details| details.child("Waiting for the agent’s next update."),
+                                |details| {
+                                    details.child(if activity.connecting {
+                                        "Connecting to the agent…"
+                                    } else {
+                                        "Waiting for the agent’s next update."
+                                    })
+                                },
+                            )
+                            .when(
+                                quiet >= Duration::from_secs(30) && activity.permission.is_none(),
+                                |details| {
+                                    details.child(
+                                        div()
+                                            .mb(px(8.))
+                                            .child(format!("Last activity {} ago", elapsed(quiet))),
+                                    )
+                                },
                             )
                             .children(activity.tools.iter().map(|(label, output)| {
                                 div()

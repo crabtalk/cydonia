@@ -447,8 +447,7 @@ impl Cydonia {
             .child(content)
             // After the content, so it draws over it.
             .child(self.pane_header(window, cx))
-            // Out of flow so the transcript runs under it: the composer's glass
-            // has something to bend only where the messages reach its edge.
+            // The transcript reserves the measured footer height above this overlay.
             //
             // A chat with nowhere to send stands the reason there in its place
             // — the slot is what the eye goes to for what happens next, and a
