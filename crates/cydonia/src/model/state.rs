@@ -40,6 +40,9 @@ pub struct State {
     pub projects: Vec<PathBuf>,
     #[serde(default)]
     pub active: usize,
+    /// Projects whose sidebar children are hidden.
+    #[serde(default)]
+    pub collapsed: Vec<PathBuf>,
     /// What each project was last showing, by project path. Last in the struct
     /// because a map renders as TOML tables, and a bare key after one of those
     /// belongs to it.
@@ -72,6 +75,7 @@ pub fn restore() -> State {
     State {
         projects,
         active,
+        collapsed: stored.collapsed,
         last: stored.last,
     }
 }

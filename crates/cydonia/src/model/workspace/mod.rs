@@ -116,7 +116,16 @@ pub struct Workspace {
 
 impl Workspace {
     pub fn new(settings: Settings, state: State, cx: &mut Context<Self>) -> Self {
-        let projects: Vec<Project> = state.projects.into_iter().map(Project::new).collect();
+        let projects: Vec<Project> = state
+            .projects
+            .into_iter()
+            .map(|path| {
+                let expanded = !state.collapsed.contains(&path);
+                let mut project = Project::new(path);
+                project.expanded = expanded;
+                project
+            })
+            .collect();
         let active = (!projects.is_empty()).then_some(state.active);
         let restore: Vec<usize> = (0..projects.len()).collect();
         let look = settings.appearance;
@@ -183,6 +192,12 @@ impl Workspace {
         state::save(&State {
             projects: self.paths(),
             active: self.active.unwrap_or_default(),
+            collapsed: self
+                .projects
+                .iter()
+                .filter(|project| !project.expanded)
+                .map(|project| project.path.clone())
+                .collect(),
             last: self.last.clone(),
         });
     }

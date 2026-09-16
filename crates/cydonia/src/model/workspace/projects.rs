@@ -71,6 +71,15 @@ impl Workspace {
         cx.notify();
     }
 
+    pub fn toggle_project(&mut self, ix: usize, cx: &mut Context<Self>) {
+        let Some(project) = self.projects.get_mut(ix) else {
+            return;
+        };
+        project.expanded = !project.expanded;
+        self.save();
+        cx.notify();
+    }
+
     /// Carry a project to another place in the list. `active` follows the
     /// project it points at rather than the index it sits on: which one is in
     /// front has nothing to do with what order they are listed in.

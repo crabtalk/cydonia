@@ -973,12 +973,8 @@ impl Cydonia {
 
     fn toggle_project(&mut self, ix: usize, cx: &mut Context<Self>) {
         self.commit(cx);
-        self.workspace.update(cx, |workspace, cx| {
-            if let Some(project) = workspace.projects.get_mut(ix) {
-                project.expanded = !project.expanded;
-            }
-            cx.notify();
-        });
+        self.workspace
+            .update(cx, |workspace, cx| workspace.toggle_project(ix, cx));
     }
 
     /// The kind picker keeps a stable filter icon, accented when narrowed to a type.
