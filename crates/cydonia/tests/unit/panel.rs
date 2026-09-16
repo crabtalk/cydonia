@@ -236,6 +236,70 @@ fn toggling_files_collapses_and_reopens_the_same_browser(cx: &mut gpui::TestAppC
 }
 
 #[gpui::test]
+fn language_status_reopens_install_prompt_in_file_panel(cx: &mut gpui::TestAppContext) {
+    cx.update(|cx| Theme::install(Appearance::Dark, cx));
+    let path =
+        std::env::temp_dir().join(format!("cydonia-grammar-panel-{}.toml", std::process::id()));
+    std::fs::write(&path, "[package]\nname = \"example\"\n".repeat(100)).unwrap();
+    let window = cx.add_window(|_, cx| {
+        let mut panel = Panel::new(std::env::temp_dir(), cx);
+        panel.open_file(path.clone(), cx);
+        panel
+    });
+    let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+    visual.simulate_resize(gpui::size(px(440.), px(600.)));
+    visual.run_until_parked();
+    for width in [180., 280., 440.] {
+        visual.simulate_resize(gpui::size(px(width), px(600.)));
+        visual.run_until_parked();
+        let message = visual.debug_bounds("grammar-message").unwrap();
+        let install = visual.debug_bounds("install-grammar").unwrap();
+        let dismiss = visual.debug_bounds("dismiss-grammar").unwrap();
+        let actions = visual.debug_bounds("grammar-actions").unwrap();
+        assert!(
+            message.right() <= actions.left() || message.bottom() <= actions.top(),
+            "message overlaps actions at {width}px"
+        );
+        assert_eq!(install.top(), dismiss.top(), "buttons stay together");
+        assert!(dismiss.right() <= install.left(), "Install is rightmost");
+        assert_eq!(actions.right(), px(width - 10.), "actions align right");
+        for button in [install, dismiss] {
+            assert!(button.left() >= px(0.) && button.right() <= px(width));
+        }
+        if width == 440. {
+            assert!(message.right() <= actions.left(), "wide panel uses one row");
+        } else {
+            assert!(
+                message.bottom() <= actions.top(),
+                "narrow panel puts actions below"
+            );
+        }
+    }
+    let notice = visual.debug_bounds("grammar-notice").unwrap();
+    assert_eq!(
+        notice.bottom(),
+        px(570.),
+        "notice sits immediately above the status line"
+    );
+    let install = visual
+        .debug_bounds("install-grammar")
+        .expect("install prompt appears automatically");
+    assert!(install.top() >= px(0.) && install.bottom() < px(570.));
+    let dismiss_bounds = visual.debug_bounds("dismiss-grammar").unwrap();
+    assert!(install.left() >= px(0.) && install.right() <= px(440.));
+    assert!(dismiss_bounds.left() >= px(0.) && dismiss_bounds.right() <= px(440.));
+    let dismiss = dismiss_bounds.center();
+    visual.simulate_click(dismiss, gpui::Modifiers::default());
+    visual.run_until_parked();
+    assert!(visual.debug_bounds("install-grammar").is_none());
+    let language = visual.debug_bounds("file-language").unwrap().center();
+    visual.simulate_click(language, gpui::Modifiers::default());
+    visual.run_until_parked();
+    assert!(visual.debug_bounds("install-grammar").is_some());
+    std::fs::remove_file(path).unwrap();
+}
+
+#[gpui::test]
 fn terminal_menu_and_new_tab_use_cmd_t(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         Theme::install(Appearance::Dark, cx);

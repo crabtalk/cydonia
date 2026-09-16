@@ -357,34 +357,26 @@ impl Cydonia {
                             })),
                     )
                     .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap(px(2.))
-                            .child(
-                                theme
-                                    .ghost("open-project")
-                                    .px(px(8.))
-                                    .py(px(6.))
-                                    .tooltip(move |window, cx| match open_chord.clone() {
-                                        Some(chord) => Tooltip::with_keystroke(
-                                            "Open project",
-                                            chord,
-                                            window,
-                                            cx,
-                                        ),
-                                        None => Tooltip::text("Open project", window, cx),
-                                    })
-                                    .child(
-                                        icons::icon(icons::files::FolderPlus)
-                                            .size(px(13.))
-                                            .text_color(theme.text_faint),
-                                    )
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.open_project_action(&OpenProject, window, cx);
-                                    })),
-                            ),
+                        div().flex().flex_row().items_center().gap(px(2.)).child(
+                            theme
+                                .ghost("open-project")
+                                .px(px(8.))
+                                .py(px(6.))
+                                .tooltip(move |window, cx| match open_chord.clone() {
+                                    Some(chord) => {
+                                        Tooltip::with_keystroke("Open project", chord, window, cx)
+                                    }
+                                    None => Tooltip::text("Open project", window, cx),
+                                })
+                                .child(
+                                    icons::icon(icons::files::FolderPlus)
+                                        .size(px(13.))
+                                        .text_color(theme.text_faint),
+                                )
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.open_project_action(&OpenProject, window, cx);
+                                })),
+                        ),
                     ),
             )
     }

@@ -1307,3 +1307,7 @@ mod rail_tests;
 #[cfg(test)]
 #[path = "../../../tests/unit/transcript_virtual.rs"]
 mod virtual_tests;
+
+#[cfg(test)]
+#[path = "../../../tests/unit/transcript_scrollbar.rs"]
+mod scrollbar_tests;

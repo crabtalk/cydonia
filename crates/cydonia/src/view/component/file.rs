@@ -7,7 +7,7 @@ use bezel::{
     },
     theme::{TextStyle, Theme, Typeset},
     ui::input::{FieldEvent, Shape, TextField},
-    ui::tooltip::Tooltip,
+    ui::widgets::Controls as _,
 };
 use std::{
     cell::Cell,
@@ -126,9 +126,11 @@ pub struct FileView {
     scroll: gpui::ScrollHandle,
     reveal: Rc<Cell<bool>>,
     target_line: Rc<Cell<Option<usize>>>,
-    /// What this file's name says it is, resolved once: the path a view is
-    /// opened on does not change under it.
+    /// Updated when a missing grammar finishes installing.
     pub(super) language: Option<crate::model::language::Language>,
+    grammar_status: Option<crate::model::language::Status>,
+    grammar_dismissed: bool,
+    _grammar_poll: Task<()>,
     _watch: Subscription,
     _poll: Task<()>,
     /// The parse in flight. Replaced by the next edit, which drops it — that
@@ -186,6 +188,23 @@ impl FileView {
                 cx.background_executor().timer(Duration::from_secs(3)).await;
             }
         });
+        let grammar_poll = cx.spawn(async move |this, cx| {
+            loop {
+                if !matches!(
+                    this.update(cx, |this, cx| {
+                        this.refresh_grammar(cx);
+                        this.unpainted()
+                            .is_some_and(crate::model::language::available)
+                    }),
+                    Ok(true)
+                ) {
+                    return;
+                }
+                cx.background_executor()
+                    .timer(Duration::from_millis(150))
+                    .await;
+            }
+        });
         Self {
             root: path.parent().unwrap_or(Path::new("/")).to_path_buf(),
             focus: cx.focus_handle(),
@@ -210,6 +229,9 @@ impl FileView {
             scroll: gpui::ScrollHandle::new(),
             reveal: Rc::new(Cell::new(false)),
             target_line: Rc::new(Cell::new(None)),
+            grammar_status: None,
+            grammar_dismissed: false,
+            _grammar_poll: grammar_poll,
             _watch: watch,
             _poll: poll,
             _recolour: Task::ready(()),
@@ -328,6 +350,145 @@ impl FileView {
         }
     }
 
+    fn refresh_grammar(&mut self, cx: &mut Context<Self>) {
+        let Some(name) = self.unpainted() else {
+            return;
+        };
+        let status = crate::model::language::status(name);
+        let language = crate::model::language::of(&self.path);
+        if self.language != language {
+            self.language = language;
+            self.grammar_status = None;
+            self.recolour(cx);
+            markdown::set_highlighter(
+                cx,
+                crate::model::language::highlight,
+                crate::model::language::paintable(),
+            );
+            cx.notify();
+        } else if self.grammar_status.as_ref() != Some(&status) {
+            self.grammar_status = Some(status);
+            cx.notify();
+        }
+    }
+
+    fn grammar_notice(&self, theme: &Theme, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        use crate::model::language::{self, Status};
+        let name = self.unpainted()?;
+        if !self.ready || self.grammar_dismissed || !language::available(name) {
+            return None;
+        }
+        let status = self.grammar_status.clone().unwrap_or(Status::Missing);
+        let message = match &status {
+            Status::Missing => format!("Install {} highlighting?", name.to_uppercase()),
+            Status::Downloading { received, total } => format!(
+                "Installing {name} highlighting… {} / {} KiB",
+                received / 1024,
+                total.div_ceil(1024)
+            ),
+            Status::Checking => format!("Checking {name} highlighting…"),
+            Status::Failed(error) => format!("Could not install {name} highlighting: {error}"),
+            Status::Ready => return None,
+        };
+        let active = status.active();
+        let fraction = match &status {
+            Status::Downloading { received, total } => *received as f32 / (*total).max(1) as f32,
+            Status::Checking => 1.,
+            _ => 0.,
+        };
+        let actions = div()
+            .debug_selector(|| "grammar-actions".into())
+            .ml_auto()
+            .flex_none()
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .child(
+                div()
+                    .id("dismiss-grammar")
+                    .debug_selector(|| "dismiss-grammar".into())
+                    .flex_none()
+                    .whitespace_nowrap()
+                    .px(px(6.))
+                    .py(px(4.))
+                    .cursor_pointer()
+                    .child(if active { "Hide" } else { "Not now" })
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.grammar_dismissed = true;
+                        cx.notify();
+                    })),
+            )
+            .when(!active, |row| {
+                row.child(
+                    div()
+                        .id("install-grammar")
+                        .debug_selector(|| "install-grammar".into())
+                        .flex_none()
+                        .whitespace_nowrap()
+                        .px(px(6.))
+                        .py(px(4.))
+                        .rounded(px(4.))
+                        .bg(theme.element_hover)
+                        .text_color(theme.text)
+                        .cursor_pointer()
+                        .child(if matches!(status, Status::Failed(_)) {
+                            "Retry"
+                        } else {
+                            "Install"
+                        })
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            language::start_install(name);
+                            this.refresh_grammar(cx);
+                        })),
+                )
+            });
+        Some(
+            div()
+                .debug_selector(|| "grammar-notice".into())
+                .w_full()
+                .min_w_0()
+                .flex_none()
+                .bg(theme.surface_raised)
+                .border_t_1()
+                .border_color(theme.border)
+                .p(px(10.))
+                .flex()
+                .flex_col()
+                .gap(px(6.))
+                .text_style(TextStyle::Caption)
+                .text_color(theme.text_muted)
+                .child(
+                    div()
+                        .w_full()
+                        .min_w_0()
+                        .flex_none()
+                        .flex()
+                        .flex_wrap()
+                        .items_center()
+                        .gap(px(8.))
+                        .child(
+                            div()
+                                .debug_selector(|| "grammar-message".into())
+                                .min_w_0()
+                                .max_w_full()
+                                .flex_grow(1.)
+                                .flex_shrink(1.)
+                                .whitespace_normal()
+                                .child(message),
+                        )
+                        .child(actions),
+                )
+                .when(active, |column| {
+                    column.child(
+                        theme
+                            .progress_bar(fraction)
+                            .debug_selector(|| "grammar-progress".into()),
+                    )
+                })
+                .into_any_element(),
+        )
+    }
+
     pub fn status_bar(
         &mut self,
         files_open: bool,
@@ -378,11 +539,14 @@ impl FileView {
                 row.child(
                     div()
                         .id("file-language")
+                        .debug_selector(|| "file-language".into())
                         .flex_none()
-                        .tooltip(|window, cx| {
-                            Tooltip::text("No grammar for this language in this build", window, cx)
-                        })
-                        .child(format!("{name} · not highlighted")),
+                        .cursor_pointer()
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.grammar_dismissed = !this.grammar_dismissed;
+                            cx.notify();
+                        }))
+                        .child(name),
                 )
             })
             .child(super::status::files_toggle(files_open, &theme))
@@ -770,6 +934,7 @@ impl Render for FileView {
                     panel.child(self.source_view(&theme, cx))
                 }
             })
+            .children(self.grammar_notice(&theme, cx))
     }
 }
 

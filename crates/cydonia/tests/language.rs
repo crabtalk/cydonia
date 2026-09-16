@@ -13,11 +13,14 @@ fn a_whole_name_beats_an_extension_and_the_longest_extension_wins() {
         of(Path::new("a/b/Makefile")),
         Some(Language::Missing("make"))
     );
-    assert_eq!(of(Path::new(".zshrc")), Some(Language::Ready("bash")));
-    assert_eq!(of(Path::new("main.rs")), Some(Language::Ready("rust")));
+    assert_eq!(of(Path::new(".zshrc")), Some(Language::Missing("bash")));
+    assert_eq!(of(Path::new("main.rs")), Some(Language::Missing("rust")));
     // `tsx` and `ts` both end the name; the longer match is the right one.
-    assert_eq!(of(Path::new("App.tsx")), Some(Language::Ready("tsx")));
-    assert_eq!(of(Path::new("app.ts")), Some(Language::Ready("typescript")));
+    assert_eq!(of(Path::new("App.tsx")), Some(Language::Missing("tsx")));
+    assert_eq!(
+        of(Path::new("app.ts")),
+        Some(Language::Missing("typescript"))
+    );
 }
 
 #[test]
@@ -39,29 +42,22 @@ fn a_name_the_table_does_not_carry_is_nothing_at_all() {
 }
 
 #[test]
-fn markdown_is_painted_without_a_grammar_and_rust_with_one() {
+fn markdown_is_painted_without_installing_a_grammar() {
     assert_eq!(of(Path::new("README.md")), Some(Language::Markdown));
     assert!(spans(Path::new("README.md"), "# Title\n\n**bold**\n").is_some());
-    assert!(spans(Path::new("main.rs"), "fn main() {}").is_some());
+    assert!(spans(Path::new("main.rs"), "fn main() {}").is_none());
 }
 
-/// Every id in the table either resolves to a grammar or is honestly missing;
-/// a typo would otherwise sit there naming a language nothing can ever load.
 #[test]
-fn every_ready_language_is_one_syntax_actually_carries() {
-    for name in [
-        "main.rs",
-        "a.py",
-        "a.go",
-        "a.json",
-        "a.toml",
-        "a.sh",
-        "a.ts",
-        "a.tsx",
+fn opening_a_supported_file_does_not_start_a_download() {
+    use cydonia::model::language::{Status, available, status};
+    for path in [
+        "main.rs", "a.py", "a.go", "a.json", "a.toml", "a.sh", "a.ts", "a.tsx", "app.js",
     ] {
-        assert!(
-            matches!(of(Path::new(name)), Some(Language::Ready(_))),
-            "{name} should be carried by this build"
-        );
+        let Some(Language::Missing(name)) = of(Path::new(path)) else {
+            panic!("{path} should offer installation");
+        };
+        assert!(available(name));
+        assert_eq!(status(name), Status::Missing);
     }
 }

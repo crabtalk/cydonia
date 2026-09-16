@@ -1,13 +1,12 @@
-//! Which language a file is written in, and whether this build can colour it.
-//!
-//! `syntax::registry` holds the one table of names and extensions; grammars
-//! reach it through a provider, which [`installed`] registers. This maps the
-//! registry's answer onto the three states the app paints from.
+//! Language detection and on-demand WASM syntax highlighting.
 
 use std::{ops::Range, path::Path, sync::OnceLock};
 
 use bezel::theme::HighlightKind;
 use syntax::registry::Known;
+
+mod provider;
+pub use provider::{Status, available, start_install, status};
 
 /// The registry names markdown and carries no grammar for it; `markdown`
 /// paints it from its own parser.
@@ -16,20 +15,18 @@ const MARKDOWN: &str = "markdown";
 /// What a file's name says about it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Language {
-    /// A grammar this build carries, under the name `syntax` knows it by.
+    /// An installed grammar, under the name `syntax` knows it by.
     Ready(&'static str),
     /// Markdown, which bezel highlights without a tree-sitter grammar.
     Markdown,
-    /// A language this build can name and cannot paint.
+    /// A known language whose grammar is not installed.
     Missing(&'static str),
 }
 
-/// Put this build's grammars in the registry. Idempotent, and called from
-/// every entry point here rather than from `main`: a lookup that ran first
-/// would answer `Missing` for a language this build paints.
+/// Register verified cached grammars once, without downloading anything.
 fn installed() {
     static ONCE: OnceLock<()> = OnceLock::new();
-    ONCE.get_or_init(syntax_std::install);
+    ONCE.get_or_init(provider::initialize);
 }
 
 /// The language `path` is written in, or `None` where its name names nothing
@@ -46,7 +43,7 @@ pub fn of(path: &Path) -> Option<Language> {
     })
 }
 
-/// Every language name this build can paint, for the markdown fence highlighter.
+/// Installed languages for the Markdown fence picker.
 pub fn paintable() -> Vec<&'static str> {
     installed();
     syntax::registry::ready()
@@ -59,8 +56,15 @@ pub fn paintable() -> Vec<&'static str> {
 /// diff preview both route through here.
 pub fn spans(path: &Path, text: &str) -> Option<Vec<(Range<usize>, HighlightKind)>> {
     match of(path)? {
-        Language::Ready(language) => syntax::highlight(text, language),
+        Language::Ready(language) => highlight(language, text),
         Language::Markdown => Some(markdown::source::spans(text)),
         Language::Missing(_) => None,
     }
+}
+
+/// Shared by file views, diffs, and Markdown fences.
+pub fn highlight(language: &str, source: &str) -> Option<Vec<(Range<usize>, HighlightKind)>> {
+    installed();
+    provider::ensure_runtime().ok()?;
+    syntax::highlight(source, language)
 }

@@ -126,6 +126,8 @@ fn source_uses_full_viewport_and_scrolls_long_files(cx: &mut gpui::TestAppContex
 /// `Changed` the field emits either way.
 #[gpui::test]
 fn source_files_are_coloured_and_recoloured(cx: &mut gpui::TestAppContext) {
+    crate::model::language::paintable();
+    syntax_std::install();
     let file = Temp::named(".rs");
     std::fs::write(&file.0, "fn main() { let x = 1; }\n").unwrap();
     let view = cx.new(|cx| FileView::new(file.0.clone(), cx));
@@ -172,13 +174,18 @@ fn a_named_but_unpainted_language_reports_itself(cx: &mut gpui::TestAppContext) 
     let file = Temp::named(".svelte");
     let view = cx.new(|cx| FileView::new(file.0.clone(), cx));
     settle(cx);
-    assert_eq!(view.read_with(cx, |view, _| view.unpainted()), Some("svelte"));
+    assert_eq!(
+        view.read_with(cx, |view, _| view.unpainted()),
+        Some("svelte")
+    );
     assert!(view.read_with(cx, |view, cx| view.field.read(cx).spans().is_empty()));
 }
 
 /// Nothing to report for a file that paints, or for a name that names nothing.
 #[gpui::test]
 fn a_painted_or_unknown_file_reports_nothing(cx: &mut gpui::TestAppContext) {
+    crate::model::language::paintable();
+    syntax_std::install();
     let painted = Temp::named(".rs");
     let view = cx.new(|cx| FileView::new(painted.0.clone(), cx));
     settle(cx);
@@ -401,4 +408,87 @@ fn linked_line_is_revealed_after_loading_and_when_reusing_a_file(cx: &mut gpui::
             })
             .unwrap();
     }
+}
+
+#[gpui::test]
+fn a_missing_grammar_asks_before_downloading_and_can_be_dismissed(cx: &mut gpui::TestAppContext) {
+    cx.update(|cx| Theme::install(bezel::theme::Appearance::Light, cx));
+    let file = Temp::named(".json");
+    std::fs::write(&file.0, "{}").unwrap();
+    let window = cx.add_window(|_, cx| FileView::new(file.0.clone(), cx));
+    let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+    visual.run_until_parked();
+    assert!(visual.debug_bounds("install-grammar").is_some());
+    assert_eq!(
+        crate::model::language::status("json"),
+        crate::model::language::Status::Missing
+    );
+    let dismiss = visual.debug_bounds("dismiss-grammar").unwrap().center();
+    visual.simulate_click(dismiss, gpui::Modifiers::default());
+    visual.run_until_parked();
+    assert!(visual.debug_bounds("install-grammar").is_none());
+    assert_eq!(
+        crate::model::language::status("json"),
+        crate::model::language::Status::Missing
+    );
+}
+
+#[gpui::test]
+fn an_open_file_recolours_when_a_wasm_grammar_arrives(cx: &mut gpui::TestAppContext) {
+    let file = Temp::named(".json");
+    std::fs::write(&file.0, r#"{"name": "cydonia"}"#).unwrap();
+    let view = cx.new(|cx| FileView::new(file.0.clone(), cx));
+    settle(cx);
+    assert!(view.read_with(cx, |view, cx| view.field.read(cx).spans().is_empty()));
+    let lang = Box::leak(Box::new(syntax::lang::Lang::new(
+        "json",
+        &["json"],
+        syntax::lang::Grammar::Wasm(std::sync::Arc::from(
+            &include_bytes!("../fixtures/grammar/json.wasm")[..],
+        )),
+        include_str!("../fixtures/grammar/json.scm"),
+    )));
+    syntax::registry::register(syntax::registry::Entry {
+        name: "json",
+        aliases: &["json"],
+        files: &["json"],
+        lang: Some(lang),
+    });
+    view.update(cx, |view, cx| view.refresh_grammar(cx));
+    settle(cx);
+    assert!(view.read_with(cx, |view, _| view.unpainted().is_none()));
+    assert!(!view.read_with(cx, |view, cx| view.field.read(cx).spans().is_empty()));
+}
+
+#[gpui::test]
+fn grammar_download_shows_progress_and_failures_offer_retry(cx: &mut gpui::TestAppContext) {
+    use crate::model::language::Status;
+    cx.update(|cx| Theme::install(bezel::theme::Appearance::Light, cx));
+    let file = Temp::named(".json");
+    std::fs::write(&file.0, "{}").unwrap();
+    let window = cx.add_window(|_, cx| FileView::new(file.0.clone(), cx));
+    let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+    visual.run_until_parked();
+    window
+        .update(&mut visual, |view, _, cx| {
+            view.grammar_dismissed = false;
+            view.grammar_status = Some(Status::Downloading {
+                received: 50,
+                total: 100,
+            });
+            cx.notify();
+        })
+        .unwrap();
+    visual.run_until_parked();
+    assert!(visual.debug_bounds("grammar-progress").is_some());
+    assert!(visual.debug_bounds("install-grammar").is_none());
+    window
+        .update(&mut visual, |view, _, cx| {
+            view.grammar_status = Some(Status::Failed("offline".into()));
+            cx.notify();
+        })
+        .unwrap();
+    visual.run_until_parked();
+    assert!(visual.debug_bounds("grammar-progress").is_none());
+    assert!(visual.debug_bounds("install-grammar").is_some());
 }
