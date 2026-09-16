@@ -273,11 +273,11 @@ impl Render for Panel {
                     None
                 }
             });
-        if self.files_open {
-            if let Some(files) = &self.files {
-                let selected = active_file.as_ref().map(|file| file.read(cx).path.clone());
-                files.update(cx, |files, cx| files.reveal(selected, cx));
-            }
+        if self.files_open
+            && let Some(files) = &self.files
+        {
+            let selected = active_file.as_ref().map(|file| file.read(cx).path.clone());
+            files.update(cx, |files, cx| files.reveal(selected, cx));
         }
         let status = self
             .tabs

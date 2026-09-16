@@ -4,9 +4,15 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 struct Temp(PathBuf);
 impl Temp {
     fn new() -> Self {
+        Self::named("")
+    }
+
+    /// A file whose name ends in `suffix` — `.rs` where the test is about the
+    /// language its name names.
+    fn named(suffix: &str) -> Self {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
         let path = std::env::temp_dir().join(format!(
-            "cydonia-file-{}-{}",
+            "cydonia-file-{}-{}{suffix}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
@@ -114,4 +120,70 @@ fn source_uses_full_viewport_and_scrolls_long_files(cx: &mut gpui::TestAppContex
             assert!(view.scroll.max_offset().y > px(1000.));
         })
         .unwrap();
+}
+
+/// Loading a file colours it, and typing recolours it — both through the one
+/// `Changed` the field emits either way.
+#[gpui::test]
+fn source_files_are_coloured_and_recoloured(cx: &mut gpui::TestAppContext) {
+    let file = Temp::named(".rs");
+    std::fs::write(&file.0, "fn main() { let x = 1; }\n").unwrap();
+    let view = cx.new(|cx| FileView::new(file.0.clone(), cx));
+    settle(cx);
+    let spans = view.read_with(cx, |view, cx| view.field.read(cx).spans().to_vec());
+    assert!(!spans.is_empty(), "a .rs file is coloured");
+    let source = view.read_with(cx, |view, cx| view.field.read(cx).content().clone());
+    assert!(
+        spans.iter().all(|(range, _)| range.end <= source.len()),
+        "no span reaches past the text"
+    );
+
+    view.update(cx, |view, cx| {
+        view.field.update(cx, |field, cx| {
+            field.set_content("// nothing but a comment\n", cx)
+        })
+    });
+    settle(cx);
+    let recoloured = view.read_with(cx, |view, cx| view.field.read(cx).spans().to_vec());
+    assert!(!recoloured.is_empty());
+    assert!(
+        recoloured
+            .iter()
+            .all(|(_, kind)| *kind == bezel::theme::HighlightKind::Comment),
+        "the new text is what was parsed, not the old"
+    );
+}
+
+/// A name that names no language it can highlight leaves the text plain rather
+/// than guessing at one.
+#[gpui::test]
+fn files_of_no_known_language_are_left_plain(cx: &mut gpui::TestAppContext) {
+    let file = Temp::new();
+    std::fs::write(&file.0, "fn main() { let x = 1; }\n").unwrap();
+    let view = cx.new(|cx| FileView::new(file.0.clone(), cx));
+    settle(cx);
+    assert!(view.read_with(cx, |view, cx| view.field.read(cx).spans().is_empty()));
+}
+
+/// The view reads the file for itself, then waits out the debounce and the
+/// parse behind it.
+fn settle(cx: &mut gpui::TestAppContext) {
+    cx.run_until_parked();
+    cx.executor().advance_clock(RECOLOUR * 2);
+    cx.run_until_parked();
+}
+
+/// Markdown has no grammar behind it — bezel paints its own source view — so a
+/// README colours with nothing installed and nothing fetched.
+#[gpui::test]
+fn markdown_is_coloured_without_a_grammar(cx: &mut gpui::TestAppContext) {
+    let file = Temp::named(".md");
+    std::fs::write(&file.0, "# Title\n\nSome `code` and **bold**.\n").unwrap();
+    let view = cx.new(|cx| FileView::new(file.0.clone(), cx));
+    settle(cx);
+    assert!(
+        !view
+            .read_with(cx, |view, cx| view.field.read(cx).spans().to_vec())
+            .is_empty()
+    );
 }

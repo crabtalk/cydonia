@@ -629,9 +629,7 @@ checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
 
 [[package]]
 name = "bezel"
-version = "0.1.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "625629ad8b05d384a56e5a9f250007e115ec35492fe04587fdade99c844d5808"
+version = "0.1.17"
 dependencies = [
  "bezel-agent",
  "bezel-gpui",
@@ -644,9 +642,7 @@ dependencies = [
 
 [[package]]
 name = "bezel-agent"
-version = "0.1.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "81c372794ad1c9cc1aae2d6004487b3db5a21b74b3bfc84b65833442859b297c"
+version = "0.1.17"
 dependencies = [
  "bezel-gpui",
  "bezel-theme",
@@ -655,9 +651,7 @@ dependencies = [
 
 [[package]]
 name = "bezel-editor"
-version = "0.1.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a8a92aa08e3197d904f4e0bbad4d22dcb0caaa53444a87db8b5bbbf0b45bae42"
+version = "0.1.17"
 dependencies = [
  "bezel-gpui",
  "bezel-markdown",
@@ -968,18 +962,14 @@ dependencies = [
 
 [[package]]
 name = "bezel-icons"
-version = "0.1.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "59479044e0bccfad3c89850e5b8ca8bff7e3dad1a8702921bbe8b13ec115514e"
+version = "0.1.17"
 dependencies = [
  "bezel-gpui",
 ]
 
 [[package]]
 name = "bezel-markdown"
-version = "0.1.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "80ea1ac3a9711665f1fcf8613788d6edd7277093abff1ec4d4fe9efeb8911456"
+version = "0.1.17"
 dependencies = [
  "bezel-gpui",
  "bezel-theme",
@@ -989,9 +979,7 @@ dependencies = [
 
 [[package]]
 name = "bezel-motion"
-version = "0.1.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3e171115b9ed5de1584a644ced7f0aa4c49ca665472502918bf21d68d15e8d2c"
+version = "0.1.17"
 dependencies = [
  "bezel-gpui",
  "web-time",
@@ -999,9 +987,7 @@ dependencies = [
 
 [[package]]
 name = "bezel-syntax"
-version = "0.1.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f44020fc9fb4317ee7ad0d81677eb5ac85cb5a50adc17d425faf9663684d3dc2"
+version = "0.1.17"
 dependencies = [
  "bezel-theme",
  "tree-sitter",
@@ -1018,9 +1004,7 @@ dependencies = [
 
 [[package]]
 name = "bezel-terminal"
-version = "0.1.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "35faf442a5e08930ba8657a2e94b54a5b9899f7abf29085b4e961e0a768d7acc"
+version = "0.1.17"
 dependencies = [
  "alacritty_terminal",
  "bezel-gpui",
@@ -1029,9 +1013,7 @@ dependencies = [
 
 [[package]]
 name = "bezel-theme"
-version = "0.1.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2df7f0ac389f3bc7aa07901d0463fe36b6b85faebf5c5e3edbee8d597a08d788"
+version = "0.1.17"
 dependencies = [
  "bezel-gpui",
  "objc",
@@ -1041,9 +1023,7 @@ dependencies = [
 
 [[package]]
 name = "bezel-ui"
-version = "0.1.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4391cfd1c72cc4a224c2e48cf8dc59ebdbeb802d3794ed345cb4c81e92b24b8d"
+version = "0.1.17"
 dependencies = [
  "bezel-gpui",
  "bezel-icons",
@@ -6854,13 +6834,12 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter"
-version = "0.26.12"
+version = "0.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "83c567a8e18ae93f20982c90370b16fd24023aeaf52f6052b96957ab253a0fec"
+checksum = "2038684e0058edba0d17302619f62eabce4a8e11c6ac59506996a8d79848851d"
 dependencies = [
  "cc",
  "regex",
- "regex-syntax",
  "serde_json",
  "streaming-iterator",
  "tree-sitter-language",
@@ -6888,9 +6867,9 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter-highlight"
-version = "0.26.12"
+version = "0.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "12bf7c298789885e63e7c1c9c86976875136064d23f541007bae3a02a23a74f9"
+checksum = "fa86266a9dc1aae627034551d45e84427a45c70914a8629608ed1bd093214c28"
 dependencies = [
  "regex",
  "streaming-iterator",
@@ -6910,9 +6889,9 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter-language"
-version = "0.1.7"
+version = "0.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "009994f150cc0cd50ff54917d5bc8bffe8cad10ca10d81c34da2ec421ae61782"
+checksum = "ca0d1bf6fdd806e43ae5198f82f527056d359def39e54e67a0f478ac09dac081"
 
 [[package]]
 name = "tree-sitter-python"

@@ -5,7 +5,7 @@ resolver = "3"
 [workspace.package]
 version = "0.1.6"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.90"
 license = "MIT"
 repository = "https://github.com/crabtalk/cydonia"
 homepage = "https://cydonia.sh"
@@ -21,28 +21,39 @@ artifact = { version = "0.1.6", path = "crates/artifact", package = "cydonia-art
 anyhow = "1"
 axum = "0.8"
 base64 = "0.22"
-bezel = { version = "0.1.15", features = ["platform"] }
+bezel = { version = "0.1.17", features = ["platform"] }
 cacp = { version = "0.1.2", default-features = false }
 cacp-agents = "0.1.0"
 chrono = "0.4"
 dirs = "6"
-editor = { version = "0.1.15", package = "bezel-editor" }
+editor = { version = "0.1.17", package = "bezel-editor" }
 futures = "0.3"
 global-hotkey = "0.8"
 image = "0.25"
 lru = "0.18"
-markdown = { version = "0.1.15", package = "bezel-markdown" }
+markdown = { version = "0.1.17", package = "bezel-markdown" }
 mcp = { version = "0.1.6", path = "crates/mcp", package = "cydonia-mcp" }
 notify = "8"
 portable-pty = "0.9"
 rusqlite = { version = "0.40", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-syntax = { version = "0.1.15", package = "bezel-syntax" }
+syntax = { version = "0.1.17", package = "bezel-syntax" }
 prompts = { version = "0.1.6", path = "crates/prompts", package = "cydonia-prompts" }
-terminal = { version = "0.1.15", package = "bezel-terminal" }
+terminal = { version = "0.1.17", package = "bezel-terminal" }
 tokio = { version = "1", features = ["net", "process", "rt-multi-thread", "sync", "time"] }
 toml = "0.8"
 toml_edit = "0.22"
 ureq = "3"
 url = { version = "2", features = ["serde"] }
+
+# The five bezel crates cydonia names, taken from the checkout beside it rather
+# than the registry. Their own siblings — ui, theme, icons — are path
+# dependencies inside that workspace, so patching the five carries the rest.
+# Drop this section to build against what is published.
+[patch.crates-io]
+bezel = { path = "../bezel/crates/bezel" }
+bezel-editor = { path = "../bezel/crates/editor" }
+bezel-markdown = { path = "../bezel/crates/markdown" }
+bezel-syntax = { path = "../bezel/crates/syntax" }
+bezel-terminal = { path = "../bezel/crates/terminal" }

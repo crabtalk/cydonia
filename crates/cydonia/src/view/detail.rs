@@ -589,12 +589,11 @@ fn footer(
                 .child(
                     bezel::gpui::canvas(
                         move |bounds, window, _| {
-                            if let Some(height) = &height {
-                                if (height.replace(bounds.size.height) - bounds.size.height).abs()
+                            if let Some(height) = &height
+                                && (height.replace(bounds.size.height) - bounds.size.height).abs()
                                     > px(0.5)
-                                {
-                                    window.refresh();
-                                }
+                            {
+                                window.refresh();
                             }
                         },
                         |_, _, _, _| {},

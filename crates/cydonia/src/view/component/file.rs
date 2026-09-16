@@ -16,6 +16,10 @@ use std::{
 };
 
 const LIMIT: u64 = 256 * 1024;
+/// How long a keystroke waits before the file is parsed again. Every edit
+/// re-parses the whole file — the field holds text, not a syntax tree — so a
+/// run of typing coalesces into one parse instead of one per character.
+const RECOLOUR: Duration = Duration::from_millis(40);
 gpui::actions!(file_editor, [Save]);
 
 pub(crate) fn read_text(path: &Path) -> anyhow::Result<String> {
@@ -105,8 +109,14 @@ pub struct FileView {
     preview: bool,
     scroll: gpui::ScrollHandle,
     reveal: Rc<Cell<bool>>,
+    /// What this file's name says it is, resolved once: the path a view is
+    /// opened on does not change under it.
+    pub(super) language: Option<crate::model::language::Language>,
     _watch: Subscription,
     _poll: Task<()>,
+    /// The parse in flight. Replaced by the next edit, which drops it — that
+    /// is the debounce.
+    _recolour: Task<()>,
 }
 
 impl FileView {
@@ -124,6 +134,12 @@ impl FileView {
         let watch = cx.subscribe(&field, |this, _, event: &FieldEvent, cx| {
             if matches!(event, FieldEvent::Changed | FieldEvent::Moved) {
                 this.reveal.set(true);
+            }
+            // Loading a file emits this too — `set_content` is an edit as far
+            // as the field is concerned — so first paint is coloured by the
+            // same path that keeps typing coloured.
+            if matches!(event, FieldEvent::Changed) {
+                this.recolour(cx);
             }
             cx.notify();
         });
@@ -154,6 +170,7 @@ impl FileView {
         Self {
             root: path.parent().unwrap_or(Path::new("/")).to_path_buf(),
             focus: cx.focus_handle(),
+            language: crate::model::language::of(&path),
             path,
             field,
             saved: String::new(),
@@ -166,7 +183,38 @@ impl FileView {
             reveal: Rc::new(Cell::new(false)),
             _watch: watch,
             _poll: poll,
+            _recolour: Task::ready(()),
         }
+    }
+
+    /// Parse the file again and hand the spans to the field.
+    ///
+    /// Off the main thread: the largest file this view will open is tens of
+    /// milliseconds of tree-sitter, and this runs from a keystroke. The field keeps painting the spans it
+    /// already has until these arrive, so the text never flashes plain
+    /// mid-edit.
+    fn recolour(&mut self, cx: &mut Context<Self>) {
+        use crate::model::language::Language;
+        // A language nothing here can paint is not worth a parse, and a file
+        // whose name names nothing at all is not worth asking about.
+        if !matches!(self.language, Some(Language::Ready(_) | Language::Markdown)) {
+            return;
+        }
+        let path = self.path.clone();
+        let source = self.field.read(cx).content().clone();
+        self._recolour = cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(RECOLOUR).await;
+            let spans =
+                cx.background_executor()
+                    .spawn(async move {
+                        crate::model::language::spans(&path, &source).unwrap_or_default()
+                    })
+                    .await;
+            let _ = this.update(cx, |this, cx| {
+                this.field
+                    .update(cx, |field, cx| field.set_spans(spans, cx));
+            });
+        });
     }
 
     pub(super) fn receive(&mut self, result: anyhow::Result<String>, cx: &mut Context<Self>) {
@@ -338,21 +386,22 @@ impl FileView {
                     |bounds, _, _| bounds,
                     move |_, bounds, window, cx| {
                         let field = field.read(cx);
-                        if reveal.replace(false) && field.focus_handle(cx).is_focused(window) {
-                            if let Some(caret) = field.offset_bounds(field.cursor()) {
-                                let viewport = scroll.bounds();
-                                let offset = scroll.offset();
-                                let mut y = offset.y;
-                                if caret.top() < viewport.top() {
-                                    y += viewport.top() - caret.top();
-                                } else if caret.bottom() > viewport.bottom() {
-                                    y -= caret.bottom() - viewport.bottom();
-                                }
-                                y = y.clamp(-scroll.max_offset().y, px(0.));
-                                if y != offset.y {
-                                    scroll.set_offset(gpui::point(offset.x, y));
-                                    window.request_animation_frame();
-                                }
+                        if reveal.replace(false)
+                            && field.focus_handle(cx).is_focused(window)
+                            && let Some(caret) = field.offset_bounds(field.cursor())
+                        {
+                            let viewport = scroll.bounds();
+                            let offset = scroll.offset();
+                            let mut y = offset.y;
+                            if caret.top() < viewport.top() {
+                                y += viewport.top() - caret.top();
+                            } else if caret.bottom() > viewport.bottom() {
+                                y -= caret.bottom() - viewport.bottom();
+                            }
+                            y = y.clamp(-scroll.max_offset().y, px(0.));
+                            if y != offset.y {
+                                scroll.set_offset(gpui::point(offset.x, y));
+                                window.request_animation_frame();
                             }
                         }
                         let first = starts.partition_point(|at| {

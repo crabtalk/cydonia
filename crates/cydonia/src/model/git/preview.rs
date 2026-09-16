@@ -1,6 +1,7 @@
 //! Map patch lines to syntax tokens from complete source snapshots.
 
 use super::{Area, Change, PATCH_LIMIT, command, output};
+use crate::model::language;
 use bezel::theme::HighlightKind;
 use std::{
     collections::HashSet,
@@ -48,7 +49,7 @@ impl Preview {
 
     /// Reuse highlighting only when the patch and both source snapshots match.
     pub fn load(root: &Path, file: &Change, patch: String, previous: Arc<Self>) -> Arc<Self> {
-        let (old, new) = if language(&file.path).is_some() {
+        let (old, new) = if language::of(&file.path).is_some() {
             versions(root, file)
         } else {
             (None, None)
@@ -124,9 +125,8 @@ impl Preview {
     }
 
     fn build(path: &Path, patch: String, old: Option<String>, new: Option<String>) -> Self {
-        let language = language(path);
-        let before = old.as_deref().map(|text| Source::new(text, language));
-        let after = new.as_deref().map(|text| Source::new(text, language));
+        let before = old.as_deref().map(|text| Source::new(text, path));
+        let after = new.as_deref().map(|text| Source::new(text, path));
         let lines = lines(&patch, before.as_ref(), after.as_ref());
         Self {
             patch,
@@ -166,29 +166,6 @@ impl Line {
             .iter()
             .any(|prefix| self.text.starts_with(prefix))
     }
-}
-
-fn language(path: &Path) -> Option<&'static str> {
-    let tag = path
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .unwrap_or_else(|| {
-            match path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("")
-            {
-                ".bashrc" | ".bash_profile" | ".zshrc" | ".profile" => "sh",
-                _ => "",
-            }
-        })
-        .to_ascii_lowercase();
-    let tag = match tag.as_str() {
-        "mjs" | "cjs" => "js",
-        "mts" | "cts" => "ts",
-        other => other,
-    };
-    syntax::lang::resolve(tag).map(|language| language.name)
 }
 
 fn versions(root: &Path, file: &Change) -> (Option<String>, Option<String>) {
@@ -235,7 +212,7 @@ struct Source<'a> {
 }
 
 impl<'a> Source<'a> {
-    fn new(text: &'a str, language: Option<&str>) -> Self {
+    fn new(text: &'a str, path: &Path) -> Self {
         let mut offset = 0;
         let offsets = text
             .split_inclusive('\n')
@@ -248,9 +225,7 @@ impl<'a> Source<'a> {
                 start..start + line.len()
             })
             .collect();
-        let spans = language
-            .and_then(|language| syntax::highlight(text, language))
-            .unwrap_or_default();
+        let spans = language::spans(path, text).unwrap_or_default();
         Self {
             text,
             offsets,

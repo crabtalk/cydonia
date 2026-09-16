@@ -1391,15 +1391,14 @@ impl Cydonia {
             Row::Table { project, ix } => workspace.delete_table(project, ix, cx),
             Row::Project(_) | Row::Archive(_) => {}
         });
-        if let Some(project) = landing_project {
-            if let Some(landing) = self
+        if let Some(project) = landing_project
+            && let Some(landing) = self
                 .entries(project, cx)
                 .into_iter()
                 .find(|row| !matches!(row, Row::Archive(_)))
-            {
-                self.open_row(landing, window, cx);
-                self.reveal(landing, cx);
-            }
+        {
+            self.open_row(landing, window, cx);
+            self.reveal(landing, cx);
         }
         cx.notify();
     }
