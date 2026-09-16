@@ -24,6 +24,10 @@ fn a_whole_name_beats_an_extension_and_the_longest_extension_wins() {
 fn a_language_with_no_grammar_here_is_named_rather_than_unknown() {
     assert_eq!(of(Path::new("deploy.yml")), Some(Language::Missing("yaml")));
     assert_eq!(of(Path::new("index.html")), Some(Language::Missing("html")));
+    assert_eq!(
+        of(Path::new("routes/+page.svelte")),
+        Some(Language::Missing("svelte"))
+    );
     assert!(spans(Path::new("deploy.yml"), "a: 1").is_none());
 }
 

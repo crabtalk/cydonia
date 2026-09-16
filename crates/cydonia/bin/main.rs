@@ -57,7 +57,7 @@ fn main() -> Result<()> {
         markdown::set_highlighter(
             cx,
             |language, code| syntax::highlight(code, language),
-            syntax::lang::LANGS.iter().map(|lang| lang.name),
+            syntax::registry::ready(),
         );
         memory::init(settings.cover_memory * 1_000_000, cx);
         // Every chord in the app, bezel's included — see

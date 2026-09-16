@@ -165,6 +165,31 @@ fn files_of_no_known_language_are_left_plain(cx: &mut gpui::TestAppContext) {
     assert!(view.read_with(cx, |view, cx| view.field.read(cx).spans().is_empty()));
 }
 
+/// A language this build names and cannot paint reports itself, so an
+/// unhighlighted Svelte file is distinguishable from an unrecognised one.
+#[gpui::test]
+fn a_named_but_unpainted_language_reports_itself(cx: &mut gpui::TestAppContext) {
+    let file = Temp::named(".svelte");
+    let view = cx.new(|cx| FileView::new(file.0.clone(), cx));
+    settle(cx);
+    assert_eq!(view.read_with(cx, |view, _| view.unpainted()), Some("svelte"));
+    assert!(view.read_with(cx, |view, cx| view.field.read(cx).spans().is_empty()));
+}
+
+/// Nothing to report for a file that paints, or for a name that names nothing.
+#[gpui::test]
+fn a_painted_or_unknown_file_reports_nothing(cx: &mut gpui::TestAppContext) {
+    let painted = Temp::named(".rs");
+    let view = cx.new(|cx| FileView::new(painted.0.clone(), cx));
+    settle(cx);
+    assert_eq!(view.read_with(cx, |view, _| view.unpainted()), None);
+
+    let unknown = Temp::new();
+    let view = cx.new(|cx| FileView::new(unknown.0.clone(), cx));
+    settle(cx);
+    assert_eq!(view.read_with(cx, |view, _| view.unpainted()), None);
+}
+
 /// The view reads the file for itself, then waits out the debounce and the
 /// parse behind it.
 fn settle(cx: &mut gpui::TestAppContext) {

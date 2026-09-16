@@ -7,6 +7,7 @@ use bezel::{
     },
     theme::{TextStyle, Theme, Typeset},
     ui::input::{FieldEvent, Shape, TextField},
+    ui::tooltip::Tooltip,
 };
 use std::{
     cell::Cell,
@@ -318,6 +319,15 @@ impl FileView {
         }
     }
 
+    /// The language name where this build names the file and cannot paint it.
+    /// `None` covers both a painted file and one whose name names nothing.
+    fn unpainted(&self) -> Option<&'static str> {
+        match self.language {
+            Some(crate::model::language::Language::Missing(name)) => Some(name),
+            _ => None,
+        }
+    }
+
     pub fn status_bar(
         &mut self,
         files_open: bool,
@@ -362,6 +372,17 @@ impl FileView {
                         } else {
                             "Preview"
                         }),
+                )
+            })
+            .when_some(self.unpainted(), |row, name| {
+                row.child(
+                    div()
+                        .id("file-language")
+                        .flex_none()
+                        .tooltip(|window, cx| {
+                            Tooltip::text("No grammar for this language in this build", window, cx)
+                        })
+                        .child(format!("{name} · not highlighted")),
                 )
             })
             .child(super::status::files_toggle(files_open, &theme))
