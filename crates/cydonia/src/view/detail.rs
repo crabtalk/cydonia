@@ -796,9 +796,9 @@ impl Cydonia {
                 0.
             };
         let root = cx.entity().downgrade();
-        let queued = move |_: &mut Window, cx: &mut bezel::gpui::App| {
+        let queued = move |window: &mut Window, cx: &mut bezel::gpui::App| {
             root.update(cx, |root, cx| {
-                root.queue(cx).map(IntoElement::into_any_element)
+                root.queue(window, cx).map(IntoElement::into_any_element)
             })
             .ok()
             .flatten()
@@ -1083,13 +1083,21 @@ impl Cydonia {
     }
 
     /// Prompts waiting for the current turn, with edit and cancel actions.
-    fn queue(&self, cx: &Context<Self>) -> Option<impl IntoElement + use<>> {
+    fn queue(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<impl IntoElement + use<>> {
         let theme = Theme::of(cx).clone();
         let chat = self.workspace.read(cx).active_session()?;
-        if chat.queue.is_empty() {
+        let id = chat.id;
+        let cwd = chat.cwd.clone();
+        let queue = chat.queue.clone();
+        self.queued_galleries
+            .retain(|(session, ix, text), _| *session == id && queue.get(*ix) == Some(text));
+        if queue.is_empty() {
             return None;
         }
-        let id = chat.id;
         Some(
             div()
                 .flex_none()
@@ -1097,11 +1105,21 @@ impl Cydonia {
                 .flex_col()
                 .items_end()
                 .gap(px(6.))
-                .children(chat.queue.iter().enumerate().map(|(ix, text)| {
+                .children(queue.iter().enumerate().map(|(ix, text)| {
                     let edit_text = text.clone();
                     let cancel_text = text.clone();
+                    let (doc, images) = transcript::gallery::document(text);
+                    let gallery = (!images.is_empty()).then(|| {
+                        self.queued_galleries
+                            .entry((id, ix, text.clone()))
+                            .or_insert_with(|| {
+                                cx.new(|cx| transcript::gallery::Gallery::new(images, &cwd, cx))
+                            })
+                            .clone()
+                    });
                     div()
                         .max_w(px(440.))
+                        .when(gallery.is_some(), |row| row.w(px(440.)).max_w_full())
                         .flex()
                         .flex_col()
                         .items_end()
@@ -1109,13 +1127,25 @@ impl Cydonia {
                         .child(
                             div()
                                 .min_w_0()
+                                .when(gallery.is_some(), |bubble| bubble.w_full())
                                 .px(px(14.))
                                 .py(px(9.))
                                 .rounded(px(Theme::surface_radius()))
                                 .bg(theme.surface_raised.opacity(0.6))
                                 .text_style(TextStyle::Body)
                                 .text_color(theme.text_muted)
-                                .child(text.clone()),
+                                .flex()
+                                .flex_col()
+                                .gap(px(8.))
+                                .when(!doc.blocks.is_empty(), |bubble| {
+                                    bubble.child(markdown::render(
+                                        &doc,
+                                        Default::default(),
+                                        window,
+                                        cx,
+                                    ))
+                                })
+                                .children(gallery),
                         )
                         .child(
                             div()
@@ -1173,3 +1203,7 @@ impl Cydonia {
         )
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/queued_images.rs"]
+mod queued_image_tests;

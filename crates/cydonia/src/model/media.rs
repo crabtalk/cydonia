@@ -112,6 +112,28 @@ pub fn attached(text: &str) -> Vec<PathBuf> {
         .collect()
 }
 
+/// Restore local image blocks as composer attachments.
+pub fn detach(text: &str) -> (String, Vec<PathBuf>) {
+    let mut doc = markdown::parse(text);
+    let mut attachments = Vec::new();
+    doc.blocks.retain(|block| {
+        if let BlockKind::Image { url, .. } = &block.kind
+            && !url.is_empty()
+            && !url.contains("://")
+        {
+            attachments.push(PathBuf::from(url));
+            return false;
+        }
+        true
+    });
+    let text = if attachments.is_empty() {
+        text.to_owned()
+    } else {
+        markdown::serialize(&doc)
+    };
+    (text, attachments)
+}
+
 /// A picture as an agent is handed one: base64 and its MIME type. Sent as it
 /// is when it is already small and in a format models read, and otherwise
 /// scaled to [`LONG_EDGE`] and written as a PNG.

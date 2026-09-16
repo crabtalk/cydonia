@@ -241,7 +241,7 @@ impl Panel {
                 .with_shortcut(&crate::view::root::OpenReview, window),
             Item::action("Terminal")
                 .with_icon(icons::development::Terminal)
-                .with_shortcut(&crate::view::root::ToggleTerminal, window),
+                .with_shortcut_in(&NewTerminal, "SessionPanel", window),
             Item::action("Files")
                 .with_icon(icons::files::Folder)
                 .with_shortcut(&crate::view::root::OpenFiles, window),

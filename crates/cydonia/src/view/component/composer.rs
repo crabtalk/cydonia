@@ -302,8 +302,14 @@ impl Composer {
     }
 
     pub fn restore_queued(&mut self, text: String, window: &mut Window, cx: &mut Context<Self>) {
+        let (text, attachments) = crate::model::media::detach(&text);
+        self.attachments
+            .splice(0..0, attachments.into_iter().map(Attachment::File));
+        self.preview = None;
         let draft = self.field.read(cx).content().to_string();
-        let content = if draft.is_empty() {
+        let content = if text.is_empty() {
+            draft
+        } else if draft.is_empty() {
             text
         } else {
             format!("{text}\n\n{draft}")

@@ -243,3 +243,24 @@ fn copy_terminal_selection_takes_priority_over_transcript(cx: &mut gpui::TestApp
         );
     });
 }
+
+#[gpui::test]
+fn cmd_t_adds_a_focused_tab_in_the_bottom_panel(cx: &mut gpui::TestAppContext) {
+    cx.update(|cx| {
+        Theme::install(bezel::theme::Appearance::Dark, cx);
+        crate::view::keymap::bind_all(&crate::model::settings::Shortcuts::default(), cx);
+    });
+    let window = cx.add_window(|window, cx| TerminalPanel::new(&std::env::temp_dir(), window, cx));
+    let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+    visual.run_until_parked();
+    for count in [2, 3] {
+        visual.simulate_keystrokes("cmd-t");
+        visual.run_until_parked();
+        window
+            .update(&mut visual, |panel, window, cx| {
+                assert_eq!(panel.tabs.len(), count);
+                assert!(panel.focus_handle(cx).is_focused(window));
+            })
+            .unwrap();
+    }
+}

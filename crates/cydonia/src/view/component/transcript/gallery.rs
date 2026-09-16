@@ -8,7 +8,7 @@ use bezel::{
 };
 use std::{cell::Cell, path::Path, rc::Rc, sync::Arc};
 
-pub(super) fn document(text: &str) -> (markdown::Doc, Vec<String>) {
+pub(crate) fn document(text: &str) -> (markdown::Doc, Vec<String>) {
     let mut doc = markdown::parse(text);
     let mut images = Vec::new();
     doc.blocks.retain(|block| {
@@ -22,7 +22,7 @@ pub(super) fn document(text: &str) -> (markdown::Doc, Vec<String>) {
     (doc, images)
 }
 
-pub(super) struct Gallery {
+pub(crate) struct Gallery {
     images: Vec<gpui::ImageSource>,
     focus: gpui::FocusHandle,
     previous_focus: Option<gpui::FocusHandle>,
@@ -36,7 +36,7 @@ pub(super) struct Gallery {
 }
 
 impl Gallery {
-    pub(super) fn new(images: Vec<String>, cwd: &Path, cx: &mut Context<Self>) -> Self {
+    pub(crate) fn new(images: Vec<String>, cwd: &Path, cx: &mut Context<Self>) -> Self {
         Self {
             focus: cx.focus_handle(),
             previous_focus: None,
@@ -62,7 +62,7 @@ impl Gallery {
         }
     }
 
-    pub(super) fn is_preview_open(&self) -> bool {
+    pub(crate) fn is_preview_open(&self) -> bool {
         self.preview
     }
 

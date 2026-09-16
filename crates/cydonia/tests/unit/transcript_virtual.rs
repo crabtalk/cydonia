@@ -8,19 +8,25 @@ use bezel::gpui::{self, Render};
 struct ChatView {
     workspace: gpui::Entity<Workspace>,
     _watch: gpui::Subscription,
+    width: f32,
 }
 impl Render for ChatView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let body = self.workspace.update(cx, |workspace, cx| {
             super::render(
                 workspace.session(1).unwrap(),
-                600.,
+                self.width,
                 |_, _| Some(div().h(px(30.)).child("Queued message").into_any_element()),
                 window,
                 cx,
             )
         });
-        div().w(px(600.)).h(px(500.)).flex().flex_col().child(body)
+        div()
+            .w(px(self.width))
+            .h(px(500.))
+            .flex()
+            .flex_col()
+            .child(body)
     }
 }
 #[gpui::test]
@@ -40,9 +46,33 @@ fn long_session_renders_nearby_turns_and_navigates_without_losing_selection(
     let window = cx.add_window(|_, cx| ChatView {
         _watch: cx.observe(&workspace, |_, _, cx| cx.notify()),
         workspace: workspace.clone(),
+        width: 600.,
     });
     let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
     visual.run_until_parked();
+    for width in [1000., 600.] {
+        window
+            .update(&mut visual, |view, _, cx| {
+                view.width = width;
+                cx.notify();
+            })
+            .unwrap();
+        visual.simulate_resize(gpui::size(px(width), px(500.)));
+        visual.run_until_parked();
+        workspace.read_with(&visual, |workspace, _| {
+            let chat = workspace.session(1).unwrap();
+            let viewport = chat.transcript.list.state.viewport_bounds();
+            assert_eq!(viewport.left(), px(0.));
+            assert_eq!(viewport.right(), px(width));
+            let (position, _) = chat.transcript.layouts.borrow()[&1999]
+                .position(markdown::Cursor::new(0, markdown::Part::Body, 0))
+                .unwrap();
+            assert_eq!(
+                position.x,
+                px(((width - CONTENT_MAX_WIDTH) / 2.).max(0.) + 24.)
+            );
+        });
+    }
     workspace.read_with(&visual, |workspace, _| {
         let chat = workspace.session(1).unwrap();
         assert!(chat.transcript.layouts.borrow().len() < 100);

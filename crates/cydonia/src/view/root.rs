@@ -279,6 +279,10 @@ pub struct Cydonia {
     pub(crate) sidebar_open: bool,
     pub(crate) sidebar_width: f32,
     pub(crate) composer: Entity<Composer>,
+    pub(crate) queued_galleries: std::collections::HashMap<
+        (u64, usize, String),
+        Entity<super::component::transcript::gallery::Gallery>,
+    >,
     /// Visibility and shell per session; hiding a panel keeps its process alive.
     pub(crate) terminals:
         std::collections::HashMap<u64, (bool, Entity<super::component::terminal::TerminalPanel>)>,
@@ -440,6 +444,7 @@ impl Cydonia {
             sidebar_width: SIDEBAR_WIDTH,
             composer,
             terminals: Default::default(),
+            queued_galleries: Default::default(),
             changes_open: false,
             changes_width: 440.,
             terminal_height: 240.,

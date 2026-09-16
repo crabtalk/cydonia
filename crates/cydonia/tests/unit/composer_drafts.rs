@@ -144,3 +144,48 @@ fn composer_preview_uses_the_shared_close_button(cx: &mut TestAppContext) {
         None
     );
 }
+
+#[gpui::test]
+fn editing_queued_images_restores_attachments_and_preserves_draft(cx: &mut TestAppContext) {
+    cx.update(|cx| Theme::install(Appearance::Dark, cx));
+    let composer = cx.new(Composer::new);
+    let window = cx.add_window(|_, _| PopoverComposer(composer.clone()));
+    let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+    visual.update(|window, cx| {
+        composer.update(cx, |composer, cx| {
+            composer.set_session(Some(1), "current draft", cx);
+            composer
+                .attachments
+                .push(Attachment::File("/tmp/draft.png".into()));
+            composer.restore_queued(
+                "queued text\n\n![](</tmp/first image.png>)\n\n![](</tmp/second.png>)".into(),
+                window,
+                cx,
+            );
+            assert_eq!(
+                composer.field.read(cx).content().as_ref(),
+                "queued text\n\ncurrent draft"
+            );
+            let paths: Vec<_> = composer
+                .attachments
+                .iter()
+                .map(|attachment| {
+                    let Attachment::File(path) = attachment else {
+                        panic!("expected file")
+                    };
+                    path.to_str().unwrap()
+                })
+                .collect();
+            assert_eq!(
+                paths,
+                ["/tmp/first image.png", "/tmp/second.png", "/tmp/draft.png"]
+            );
+            composer.set_session(Some(2), "", cx);
+            assert!(composer.attachments.is_empty());
+            composer.restore_queued("![](</tmp/image-only.png>)".into(), window, cx);
+            assert!(composer.field.read(cx).content().is_empty());
+            assert_eq!(composer.attachments.len(), 1);
+            assert!(!composer.is_empty(cx));
+        });
+    });
+}

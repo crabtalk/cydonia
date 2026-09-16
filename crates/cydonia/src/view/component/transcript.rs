@@ -33,7 +33,8 @@ use markdown::{
     BlockLayouts, Selection,
     selectable::{self, Pointer},
 };
-mod gallery;
+mod follow;
+pub(crate) mod gallery;
 pub(crate) mod links;
 use std::{
     cell::{Cell, RefCell},
@@ -80,6 +81,7 @@ pub struct State {
     galleries: RefCell<HashMap<usize, bezel::gpui::Entity<gallery::Gallery>>>,
     list: bezel::ui::list::VariableList<usize>,
     focused_turn: Cell<Option<(usize, usize)>>,
+    rail_selection: Rc<Cell<Option<RailSelection>>>,
     pub(crate) footer_height: Rc<Cell<Pixels>>,
     /// Keyed by the turn's first item index.
     work: HashMap<usize, Takeover>,
@@ -375,11 +377,13 @@ pub fn render(
     let virtual_content = list.render(
         move |index, window, cx| {
             if index == count {
-                return div()
-                    .children(queued(window, cx))
-                    .h_auto()
-                    .pb(px(PAD) + footer_height)
-                    .into_any_element();
+                return content_row(
+                    div()
+                        .children(queued(window, cx))
+                        .h_auto()
+                        .pb(px(PAD) + footer_height),
+                )
+                .into_any_element();
             }
             workspace
                 .update(cx, |workspace, cx| {
@@ -390,14 +394,16 @@ pub fn render(
                         return Empty.into_any_element();
                     };
                     let running = chat.streaming && index + 1 == count;
-                    div()
-                        .px(px(24.))
-                        .when(index == 0, |row| row.pt(px(PAD)))
-                        .child(zone(chat, turn, running, window, cx))
-                        .when(running && turn.range.len() <= 1, |row| {
-                            row.child(working(chat, turn.range.start, cx))
-                        })
-                        .into_any_element()
+                    content_row(
+                        div()
+                            .px(px(24.))
+                            .when(index == 0, |row| row.pt(px(PAD)))
+                            .child(zone(chat, turn, running, window, cx))
+                            .when(running && turn.range.len() <= 1, |row| {
+                                row.child(working(chat, turn.range.start, cx))
+                            }),
+                    )
+                    .into_any_element()
                 })
                 .unwrap_or_else(|_| Empty.into_any_element())
         },
@@ -430,14 +436,8 @@ pub fn render(
         .min_h_0()
         .relative()
         .flex()
-        .justify_center()
-        .child(
-            div()
-                .relative()
-                .w_full()
-                .max_w(px(CONTENT_MAX_WIDTH))
-                .child(virtual_content),
-        )
+        // The list owns the scrollbar, so only its rows constrain content width.
+        .child(follow::viewport(&list.state, virtual_content))
         .child(rail(
             chat,
             &self::turns(&chat.items),
@@ -480,6 +480,14 @@ pub fn render(
         .into_any_element()
 }
 
+fn content_row(content: impl IntoElement) -> bezel::gpui::Div {
+    div()
+        .w_full()
+        .flex()
+        .justify_center()
+        .child(div().w_full().max_w(px(CONTENT_MAX_WIDTH)).child(content))
+}
+
 /// Retain nearby turns so small scrolls can reuse their layout and gallery state.
 fn turns_for_cache(items: &[ChatItem], range: Range<usize>) -> Range<usize> {
     let turns = turns(items);
@@ -495,15 +503,53 @@ fn turns_for_cache(items: &[ChatItem], range: Range<usize>) -> Range<usize> {
             .unwrap_or(items.len())
 }
 
-fn active_list_turn(list: &bezel::ui::list::VariableList<usize>, count: usize) -> usize {
-    if list.state.is_following_tail() {
-        count.saturating_sub(1)
-    } else {
-        list.state
-            .logical_scroll_top()
-            .item_ix
-            .min(count.saturating_sub(1))
+#[derive(Clone, Copy)]
+struct RailSelection {
+    turn: usize,
+    offset: Option<bezel::gpui::ListOffset>,
+}
+
+fn active_list_turn(
+    list: &bezel::ui::list::VariableList<usize>,
+    count: usize,
+    inset: Pixels,
+    selection: &Cell<Option<RailSelection>>,
+) -> usize {
+    if let Some(selected) = selection.get() {
+        let current = list.state.logical_scroll_top();
+        if selected.turn < count
+            && selected.offset.is_none_or(|offset| {
+                offset.item_ix == current.item_ix && offset.offset_in_item == current.offset_in_item
+            })
+        {
+            return selected.turn;
+        }
+        selection.set(None);
     }
+    let last = count.saturating_sub(1);
+    if list.state.is_following_tail() {
+        return last;
+    }
+    let top = list.state.logical_scroll_top().item_ix.min(last);
+    let max = list.state.max_offset_for_scrollbar().y;
+    if max <= px(0.) {
+        return top;
+    }
+    let progress = (-list.state.scroll_px_offset_for_scrollbar().y / max).clamp(0., 1.);
+    let viewport = list.state.viewport_bounds();
+    // Move the reading anchor down the viewport so short trailing turns are reachable.
+    let anchor = viewport.top() + (viewport.size.height - inset).max(px(0.)) * progress;
+    let mut active = top;
+    for ix in top..count {
+        let Some(bounds) = list.state.bounds_for_item(ix) else {
+            break;
+        };
+        if bounds.top() > anchor {
+            break;
+        }
+        active = ix;
+    }
+    active
 }
 
 fn rail_room(pane_width: f32) -> f32 {
@@ -519,7 +565,14 @@ fn rail(chat: &ChatSession, turns: &[Turn], room: Pixels) -> AnyElement {
     }
     let handle = chat.transcript.list.clone();
     let count = turns.len();
-    let at = active_list_turn(&handle, count);
+    let selection = chat.transcript.rail_selection.clone();
+    let inset = chat
+        .transcript
+        .footer_height
+        .get()
+        .max(px(root::composer_height()))
+        + px(root::COMPOSER_BOTTOM + PAD);
+    let at = active_list_turn(&handle, count, inset, &selection);
     div()
         .absolute()
         .top_0()
@@ -533,9 +586,15 @@ fn rail(chat: &ChatSession, turns: &[Turn], room: Pixels) -> AnyElement {
         .child(
             canvas(
                 move |_, window, _| {
-                    // Layout and auto-follow can change the scroll after render.
-                    if active_list_turn(&handle, count) != at {
-                        window.request_animation_frame();
+                    // Capture the actual position after a tick jump is clamped by layout.
+                    if let Some(mut selected) = selection.get()
+                        && selected.offset.is_none()
+                    {
+                        selected.offset = Some(handle.state.logical_scroll_top());
+                        selection.set(Some(selected));
+                    }
+                    if active_list_turn(&handle, count, inset, &selection) != at {
+                        window.refresh();
                     }
                 },
                 |_, _, _, _| {},
@@ -552,18 +611,24 @@ fn rail(chat: &ChatSession, turns: &[Turn], room: Pixels) -> AnyElement {
             }
             .filter(|asked| !asked.is_empty());
             let handle = chat.transcript.list.clone();
+            let selection = chat.transcript.rail_selection.clone();
             div()
                 .id(("rail-mark", ix))
-                // The padding is the hitbox and the gap between two marks at
-                // once; the dash inside it brightens for the whole of it.
+                // Padding provides the hitbox and gap; only the active turn brightens.
                 .p(px(MARK_PAD))
-                .group("rail-mark")
                 .cursor_pointer()
                 .when_some(asked, |mark, asked| {
                     mark.tooltip(move |window, cx| Tooltip::text(asked.clone(), window, cx))
                 })
                 .on_click(move |_, window, _| {
+                    selection.set(Some(RailSelection {
+                        turn: ix,
+                        offset: None,
+                    }));
                     handle.scroll_to(ix);
+                    if ix + 1 == count {
+                        handle.state.set_follow_mode(bezel::gpui::FollowMode::Tail);
+                    }
                     window.refresh();
                 })
                 .child(
@@ -571,8 +636,7 @@ fn rail(chat: &ChatSession, turns: &[Turn], room: Pixels) -> AnyElement {
                         .w(px(MARK))
                         .h(px(MARK_THICK))
                         .rounded_full()
-                        .bg(if ix == at { ink(0.6) } else { ink(0.2) })
-                        .group_hover("rail-mark", |mark| mark.bg(ink(0.32))),
+                        .bg(if ix == at { ink(0.6) } else { ink(0.2) }),
                 )
         }))
         .into_any_element()

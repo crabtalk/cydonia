@@ -234,3 +234,40 @@ fn toggling_files_collapses_and_reopens_the_same_browser(cx: &mut gpui::TestAppC
         })
         .unwrap();
 }
+
+#[gpui::test]
+fn terminal_menu_and_new_tab_use_cmd_t(cx: &mut gpui::TestAppContext) {
+    cx.update(|cx| {
+        Theme::install(Appearance::Dark, cx);
+        crate::view::keymap::bind_all(&crate::model::settings::Shortcuts::default(), cx);
+    });
+    let window = cx.add_window(|_, cx| Panel::new(std::env::temp_dir(), cx));
+    window
+        .update(cx, |panel, window, cx| {
+            let items = Panel::items(window);
+            let Item::Action { keystroke, .. } = &items[1] else {
+                panic!("terminal action")
+            };
+            assert_eq!(keystroke.as_deref(), Some("⌘T"));
+            panel.terminal(window, cx);
+        })
+        .unwrap();
+    let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+    visual.run_until_parked();
+    visual.simulate_keystrokes("cmd-t");
+    visual.run_until_parked();
+    window
+        .update(&mut visual, |panel, window, cx| {
+            assert_eq!(panel.tabs.len(), 2);
+            let tab = panel
+                .tabs
+                .iter()
+                .find(|tab| Some(tab.id) == panel.active)
+                .unwrap();
+            let Content::Terminal(terminal) = &tab.content else {
+                panic!("terminal tab")
+            };
+            assert!(terminal.focus_handle(cx).is_focused(window));
+        })
+        .unwrap();
+}

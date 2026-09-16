@@ -53,3 +53,29 @@ fn a_large_picture_is_scaled_down() {
     assert_eq!(picture.width(), LONG_EDGE);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn detached_images_round_trip_without_duplication() {
+    use cydonia::model::media::detach;
+    let source = "**Look** at this\n\n![](</tmp/first image.png>)\n\n![](</tmp/second.png>)";
+    let (text, images) = detach(source);
+    assert_eq!(text, "**Look** at this");
+    assert_eq!(
+        images,
+        [
+            PathBuf::from("/tmp/first image.png"),
+            PathBuf::from("/tmp/second.png")
+        ]
+    );
+    assert!(attached(&text).is_empty());
+    let resent = std::iter::once(text)
+        .chain(images.iter().map(|path| line(path)))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    assert_eq!(attached(&resent), images);
+
+    let remote = "![](https://example.com/picture.png)";
+    assert_eq!(detach(remote), (remote.to_owned(), vec![]));
+    let plain = "keep  spacing\nunchanged";
+    assert_eq!(detach(plain), (plain.to_owned(), vec![]));
+}
