@@ -18,9 +18,11 @@ path = "bin/main.rs"
 [dependencies]
 artifact.workspace = true
 anyhow.workspace = true
+base64.workspace = true
 bezel.workspace = true
 cacp = { workspace = true, features = ["client"] }
 cacp-agents.workspace = true
+chrono.workspace = true
 dirs.workspace = true
 editor.workspace = true
 futures.workspace = true
@@ -49,3 +51,6 @@ gpui = { version = "0.3.10", package = "bezel-gpui", features = ["test-support"]
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 # Headless UI tests do not require the Metal compiler toolchain.
 gpui_platform = { version = "0.3.10", package = "bezel-gpui-platform", features = ["runtime_shaders"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2"

@@ -20,9 +20,7 @@ use bezel::{
     ui::{
         icons::{self, Icon},
         surface,
-        widgets::{
-            ButtonStyle, Buttons, Content, Controls, Layout, SPLIT_HANDLE_HIT, SplitStyle, Status,
-        },
+        widgets::{ButtonStyle, Buttons, Content, Controls, Status},
     },
 };
 use cacp::schema::{
@@ -261,10 +259,27 @@ impl Cydonia {
         };
         let (id, cwd) = (chat.id, chat.cwd.clone());
         let (_, terminal) = self.terminals.entry(id).or_insert_with(|| {
-            (
-                false,
-                cx.new(|cx| super::component::terminal::Terminal::new(&cwd, cx)),
+            let panel =
+                cx.new(|cx| super::component::terminal::TerminalPanel::new(&cwd, window, cx));
+            cx.subscribe_in(
+                &panel,
+                window,
+                move |this, _, _: &super::component::terminal::Empty, window, cx| {
+                    let visible = this
+                        .terminals
+                        .remove(&id)
+                        .is_some_and(|(visible, _)| visible);
+                    if visible
+                        && this.workspace.read(cx).active_id() == Some(id)
+                        && this.showing(cx) == Some(Pane::Chat)
+                    {
+                        window.focus(&this.composer_focus_handle(cx), cx);
+                    }
+                    cx.notify();
+                },
             )
+            .detach();
+            (false, panel)
         });
         window.focus(&terminal.focus_handle(cx), cx);
         self.terminals.get_mut(&id).unwrap().0 = true;
@@ -303,12 +318,20 @@ impl Cydonia {
             .update(cx, |workspace, cx| workspace.with_session(id, cx, f));
     }
 
-    pub(crate) fn submit(&mut self, text: String, cx: &mut Context<Self>) {
+    pub(crate) fn submit(
+        &mut self,
+        text: String,
+        attachments: Vec<crate::model::media::Attachment>,
+        cx: &mut Context<Self>,
+    ) {
         let Some(id) = self.workspace.read(cx).active_id() else {
             return;
         };
         self.workspace
-            .update(cx, |workspace, cx| workspace.send(id, text, cx));
+            .update(cx, |workspace, cx| match attachments.is_empty() {
+                true => workspace.send(id, text, cx),
+                false => workspace.send_attached(id, text, &attachments, cx),
+            });
     }
 
     pub(crate) fn cancel_turn(&mut self, cx: &mut Context<Self>) {
@@ -358,7 +381,10 @@ impl Cydonia {
         let live = chat.filter(|chat| chat.live());
         let switches = live.map(switches).unwrap_or_default();
         let usage = live.and_then(|chat| chat.usage);
+        let session_id = chat.map(|chat| chat.id);
+        let draft = chat.map(|chat| chat.draft.clone()).unwrap_or_default();
         self.composer.update(cx, |composer, cx| {
+            composer.set_session(session_id, &draft, cx);
             composer.set_placeholder(&placeholder, cx);
             composer.set_commands(&commands, cx);
             composer.set_streaming(streaming, cx);
@@ -426,17 +452,25 @@ impl Cydonia {
             // — the slot is what the eye goes to for what happens next, and a
             // composer simply withheld leaves it answering nothing.
             .when(showing == Some(Pane::Chat), |column| match live {
-                true => column.child(footer(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(8.))
-                        .children(self.plan(cx))
-                        .children(self.permission(cx))
-                        .children(self.queue(cx))
-                        .child(self.composer.clone()),
-                    footer_height.clone(),
-                )),
+                // The whole pane takes a dropped picture for the composer.
+                true => column
+                    .on_drop(
+                        cx.listener(|this, paths: &bezel::gpui::ExternalPaths, _, cx| {
+                            this.composer
+                                .update(cx, |composer, cx| composer.drop_paths(paths, cx));
+                        }),
+                    )
+                    .child(footer(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(8.))
+                            .children(self.plan(cx))
+                            .children(self.permission(cx))
+                            .children(self.queue(cx))
+                            .child(self.composer.clone()),
+                        footer_height.clone(),
+                    )),
                 false => column.children(
                     self.adrift_strip(cx)
                         .map(|strip| footer(strip, footer_height.clone())),
@@ -500,38 +534,31 @@ impl Cydonia {
                             .w(px(width))
                             .min_w_0()
                             .flex_none()
-                            .border_l_1()
-                            .border_color(theme.border)
                             .child(panel)
                     }))
                     .when(self.changes.is_some(), |row| {
                         row.child(
-                            theme
-                                .split_handle(Axis::Horizontal, SplitStyle::Ghost)
+                            crate::view::component::divider::divider(&theme, Axis::Horizontal)
                                 .id("changes-split")
                                 .absolute()
                                 .top_0()
-                                .right(px(width - SPLIT_HANDLE_HIT / 2.))
+                                .right(px(width - crate::view::component::divider::HIT / 2.))
                                 .on_drag(ChangesResize, |_, _, _, cx| cx.new(|_| Empty)),
                         )
                     }),
             )
-            .children(terminal.clone().map(|terminal| {
-                div()
-                    .h(px(height))
-                    .flex_none()
-                    .border_t_1()
-                    .border_color(theme.border)
-                    .child(terminal)
-            }))
+            .children(
+                terminal
+                    .clone()
+                    .map(|terminal| div().h(px(height)).flex_none().child(terminal)),
+            )
             .when(terminal.is_some(), |column| {
                 column.child(
-                    theme
-                        .split_handle(Axis::Vertical, SplitStyle::Ghost)
+                    crate::view::component::divider::divider(&theme, Axis::Vertical)
                         .id("terminal-split")
                         .absolute()
                         .left_0()
-                        .bottom(px(height - SPLIT_HANDLE_HIT / 2.))
+                        .bottom(px(height - crate::view::component::divider::HIT / 2.))
                         .on_drag(TerminalResize, |_, _, _, cx| cx.new(|_| Empty)),
                 )
             })
@@ -737,7 +764,7 @@ impl Cydonia {
         };
         // Nothing has been said yet, so what the session has to show for
         // itself is the directory the agent was started in.
-        if chat.unsaid() {
+        if chat.unsaid() && chat.fork.is_none() {
             let agent = chat.entry.name.clone();
             let cwd = workspace
                 .active_project()
@@ -756,9 +783,22 @@ impl Cydonia {
                 .into_any_element();
         }
         let id = chat.id;
+        let available = (f32::from(window.viewport_size().width)
+            - if self.sidebar_open {
+                self.sidebar_width
+            } else {
+                0.
+            })
+        .max(0.);
+        let pane_width = available
+            - if self.changes.is_some() {
+                panel_width(self.changes_width, available)
+            } else {
+                0.
+            };
         self.workspace
             .update(cx, |workspace, cx| match workspace.session(id) {
-                Some(chat) => transcript::render(chat, window, cx),
+                Some(chat) => transcript::render(chat, pane_width, window, cx),
                 None => div().flex_1().into_any_element(),
             })
     }

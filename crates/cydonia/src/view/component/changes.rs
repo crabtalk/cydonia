@@ -1,11 +1,8 @@
 //! Session Git changes panel with background polling while visible.
 
-use crate::{
-    model::git::{
-        self, Change, Repository,
-        preview::{Kind, Preview},
-    },
-    view::root::{Cydonia, Pane, ToggleChanges},
+use crate::model::git::{
+    self, Change, Repository,
+    preview::{Kind, Preview},
 };
 use bezel::ui::scroll as scrollbars;
 use bezel::{
@@ -21,6 +18,9 @@ use bezel::{
     },
 };
 use std::{collections::HashSet, ops::Range, path::PathBuf, sync::Arc, time::Duration};
+
+pub struct OpenFile(pub PathBuf);
+impl gpui::EventEmitter<OpenFile> for Changes {}
 
 pub struct Changes {
     pub cwd: PathBuf,
@@ -159,6 +159,8 @@ impl Changes {
         };
         div()
             .id(("git-file", ix))
+            .w_full()
+            .min_w_0()
             .h(px(28.))
             .px(px(12.))
             .flex()
@@ -176,17 +178,23 @@ impl Changes {
                 div()
                     .w(px(14.))
                     .flex_none()
-                    .text_color(match file.status {
-                        'D' => theme.danger,
-                        'A' | '?' => theme.success,
-                        _ => theme.text_muted,
-                    })
+                    .text_color(status_color(theme, file.status))
                     .child(file.status.to_string()),
             )
-            .child(div().flex_1().min_w_0().truncate().child(label))
+            .child(
+                div()
+                    .id(("git-file-path", ix))
+                    .text_color(status_color(theme, file.status))
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .child(label.clone())
+                    .tooltip(move |window, cx| Tooltip::text(label.clone(), window, cx)),
+            )
             .child(
                 div()
                     .flex_none()
+                    .text_right()
                     .text_color(theme.text_faint)
                     .child(file.area.label()),
             )
@@ -278,6 +286,45 @@ impl Changes {
     }
 }
 
+impl Changes {
+    pub fn status_bar(&mut self, files_open: bool, cx: &mut Context<Self>) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        let path = match (&self.repository, &self.selected) {
+            (Some(repo), Some(file)) => repo.root.join(&file.path),
+            (Some(repo), None) => repo.root.clone(),
+            _ => self.cwd.clone(),
+        };
+        let label = match &self.selected {
+            Some(file) => format!("{} · {}", file.area.label(), path.display()),
+            None => path.display().to_string(),
+        };
+        super::status::bar(&theme)
+            .child(super::status::path(&path, label))
+            .when(self.selected.is_some(), |bar| {
+                bar.child(
+                    tool(&theme, "git-open-file", "Open file", icons::files::File).on_click(
+                        cx.listener(|this, _, _, cx| {
+                            if let (Some(repo), Some(file)) = (&this.repository, &this.selected) {
+                                cx.emit(OpenFile(repo.root.join(&file.path)));
+                            }
+                        }),
+                    ),
+                )
+                .child(
+                    tool(&theme, "git-copy", "Copy diff", icons::text::Copy).on_click(cx.listener(
+                        |this, _, _, cx| {
+                            cx.write_to_clipboard(ClipboardItem::new_string(
+                                this.preview.patch.clone(),
+                            ));
+                        },
+                    )),
+                )
+            })
+            .child(super::status::files_toggle(files_open, &theme))
+            .into_any_element()
+    }
+}
+
 impl Render for Changes {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::of(cx).clone();
@@ -285,7 +332,7 @@ impl Render for Changes {
         let count = self.repository.as_ref().map_or(0, |repo| repo.files.len());
         let message = self.error.clone().or_else(|| {
             if !self.ready {
-                Some("Loading Git changes…".into())
+                Some("Loading review…".into())
             } else if self.repository.is_none() {
                 Some("This directory is not in a Git repository.".into())
             } else if count == 0 {
@@ -294,68 +341,12 @@ impl Render for Changes {
                 None
             }
         });
-        let root = self
-            .repository
-            .as_ref()
-            .map(|repo| repo.root.display().to_string());
         div()
             .size_full()
             .flex()
             .flex_col()
             .overflow_hidden()
             .bg(crate::view::root::content_bg(&theme))
-            .child(
-                div()
-                    .h(px(36.))
-                    .flex_none()
-                    .px(px(12.))
-                    .flex()
-                    .items_center()
-                    .gap(px(8.))
-                    .border_b_1()
-                    .border_color(theme.border)
-                    .text_style(TextStyle::Subheadline)
-                    .child(div().flex_1().child("Git changes"))
-                    .child(
-                        tool(
-                            &theme,
-                            "git-refresh",
-                            "Refresh changes",
-                            icons::arrows::RefreshCw,
-                        )
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            if !this.loading {
-                                this.refresh(cx);
-                            }
-                        })),
-                    )
-                    .child(
-                        tool(
-                            &theme,
-                            "git-close",
-                            "Close changes",
-                            icons::notifications::X,
-                        )
-                        .on_click(|_, window, cx| {
-                            window.dispatch_action(Box::new(ToggleChanges), cx)
-                        }),
-                    ),
-            )
-            .children(root.map(|root| {
-                div()
-                    .px(px(12.))
-                    .py(px(6.))
-                    .flex_none()
-                    .text_style(TextStyle::Caption2)
-                    .text_color(theme.text_faint)
-                    .child(
-                        div()
-                            .id("git-root")
-                            .truncate()
-                            .child(root.clone())
-                            .tooltip(move |window, cx| Tooltip::text(root.clone(), window, cx)),
-                    )
-            }))
             .when_some(message, |panel, message| {
                 panel.child(
                     div()
@@ -389,91 +380,11 @@ impl Render for Changes {
                                 bezel::gpui::Axis::Vertical,
                             )),
                     )
-                    .child(
-                        div()
-                            .px(px(12.))
-                            .py(px(7.))
-                            .border_t_1()
-                            .border_b_1()
-                            .border_color(theme.border)
-                            .flex()
-                            .items_center()
-                            .gap(px(8.))
-                            .text_style(TextStyle::Caption)
-                            .child(
-                                div().flex_1().min_w_0().truncate().child(
-                                    self.selected
-                                        .as_ref()
-                                        .map(|file| {
-                                            format!(
-                                                "{} · {}",
-                                                file.area.label(),
-                                                file.path.display()
-                                            )
-                                        })
-                                        .unwrap_or_default(),
-                                ),
-                            )
-                            .child(
-                                tool(&theme, "git-copy", "Copy diff", icons::text::Copy).on_click(
-                                    cx.listener(|this, _, _, cx| {
-                                        cx.write_to_clipboard(ClipboardItem::new_string(
-                                            this.preview.patch.clone(),
-                                        ))
-                                    }),
-                                ),
-                            ),
-                    )
                     .when(self.loading && self.preview.lines.is_empty(), |panel| {
                         panel.child(div().p(px(12.)).child("Loading diff…"))
                     })
                     .child(self.diff_body(cx))
             })
-    }
-}
-
-impl Cydonia {
-    pub(crate) fn show_changes(&mut self, cx: &mut Context<Self>) {
-        if self.showing(cx) == Some(Pane::Chat) {
-            self.changes_open = true;
-            cx.notify();
-        }
-    }
-
-    pub(crate) fn toggle_changes(
-        &mut self,
-        _: &ToggleChanges,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.showing(cx) == Some(Pane::Chat) {
-            self.changes_open = !self.changes_open;
-            cx.notify();
-        }
-    }
-
-    /// Drop hidden panels and replace stale repository entities.
-    pub(crate) fn sync_changes(&mut self, cx: &mut Context<Self>) {
-        let cwd = (self.changes_open && self.showing(cx) == Some(Pane::Chat))
-            .then(|| {
-                self.workspace
-                    .read(cx)
-                    .active_session()
-                    .map(|chat| chat.cwd.clone())
-            })
-            .flatten();
-        match cwd {
-            Some(cwd)
-                if self
-                    .changes
-                    .as_ref()
-                    .is_none_or(|panel| panel.read(cx).cwd != cwd) =>
-            {
-                self.changes = Some(cx.new(|cx| Changes::new(cwd, cx)));
-            }
-            None => self.changes = None,
-            _ => {}
-        }
     }
 }
 
@@ -497,13 +408,22 @@ fn tool(
         .child(icons::icon(icon).size(px(13.)).text_color(theme.text_muted))
 }
 
+fn status_color(theme: &Theme, status: char) -> Hsla {
+    match status {
+        'A' | '?' => theme.success,
+        'M' | 'T' => theme.warning,
+        'D' | 'U' => theme.danger,
+        'R' | 'C' => match theme.appearance {
+            bezel::theme::Appearance::Dark => gpui::rgb(0x73b8ff).into(),
+            bezel::theme::Appearance::Light => gpui::rgb(0x0969da).into(),
+        },
+        _ => theme.text_muted,
+    }
+}
+
 /// Composite over an opaque surface to keep code readable with vibrancy.
 fn diff_wash(theme: &Theme, tone: Hsla) -> Hsla {
-    theme.bg.blend(Hsla {
-        s: tone.s * 0.45,
-        a: 0.055,
-        ..tone
-    })
+    theme.bg.blend(tone.opacity(0.16))
 }
 
 /// Intersect source highlighting with a visual continuation and rebase its bytes.

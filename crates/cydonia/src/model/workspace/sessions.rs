@@ -31,6 +31,48 @@ impl Workspace {
         Some(id)
     }
 
+    pub fn fork_session(
+        &mut self,
+        source: u64,
+        before: usize,
+        cx: &mut Context<Self>,
+    ) -> Option<u64> {
+        if !self.settings.features.sessions {
+            return None;
+        }
+        let ix = self.project_of(source)?;
+        self.projects[ix].session_mut(source)?.mint_record()?;
+        let id = self.next_id;
+        let mut fork = self.projects[ix].session(source)?.fork_at(id, before)?;
+        self.next_id += 1;
+        fork.flush();
+        self.projects[ix].sessions.push(fork);
+        self.select_session(id, cx);
+        Some(id)
+    }
+
+    pub fn set_draft(&mut self, id: u64, draft: String, cx: &mut Context<Self>) {
+        if self.session(id).is_none_or(|chat| chat.draft == draft) {
+            return;
+        }
+        // Coalesce typing so a large transcript is not rewritten on every keystroke.
+        let save = cx.spawn(async move |workspace, cx| {
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(500))
+                .await;
+            let _ = workspace.update(cx, |workspace, cx| {
+                workspace.with_session(id, cx, |chat| {
+                    chat.flush();
+                    chat.draft_save = None;
+                });
+            });
+        });
+        self.with_session(id, cx, |chat| {
+            chat.draft = draft;
+            chat.draft_save = Some(save);
+        });
+    }
+
     /// Every project's sessions are on show, so picking one brings its project
     /// forward with it.
     pub fn select_session(&mut self, id: u64, cx: &mut Context<Self>) {
@@ -145,6 +187,37 @@ impl Workspace {
             self.remember(ix, state::Kind::Session, record);
         }
         cx.notify();
+    }
+
+    /// Send a message with pictures. Each is kept in the project's assets and
+    /// written into the message as a line of its own, which is what the
+    /// transcript paints and what the prompt reads back out for the agent.
+    pub fn send_attached(
+        &mut self,
+        id: u64,
+        text: String,
+        attachments: &[crate::model::media::Attachment],
+        cx: &mut Context<Self>,
+    ) {
+        use crate::model::media;
+        let Some(ix) = self.project_of(id) else {
+            return;
+        };
+        let project = artifact::project::fs::Project::new(&self.projects[ix].path);
+        let mut parts = vec![text.trim_end().to_owned()];
+        if project.init().is_ok() {
+            let dir = project.assets();
+            parts.extend(
+                attachments
+                    .iter()
+                    .filter_map(|attachment| media::keep_attachment(&dir, attachment))
+                    .map(|path| media::line(&path)),
+            );
+        }
+        parts.retain(|part| !part.is_empty());
+        if !parts.is_empty() {
+            self.send(id, parts.join("\n\n"), cx);
+        }
     }
 
     /// Close the connection and keep the transcript. The row stays where it

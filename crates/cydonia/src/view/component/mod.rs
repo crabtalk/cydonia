@@ -8,3 +8,12 @@ pub mod meter;
 pub mod ribbon;
 pub mod terminal;
 pub mod transcript;
+
+pub mod file;
+pub mod panel;
+
+pub mod files;
+
+pub mod divider;
+
+pub mod status;

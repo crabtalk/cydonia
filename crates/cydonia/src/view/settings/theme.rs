@@ -44,7 +44,7 @@ impl SettingsWindow {
             .child(self.colors_group(cx))
             .child(self.typography_group(cx))
             .child(self.sidebar_group(cx))
-            .child(theme.group_box().child(self.scrollbars_row(false, cx)))
+            .child(self.scrollbars_group(cx))
             .child(self.editor_group(cx))
             .into_any_element()
     }
@@ -126,6 +126,22 @@ impl SettingsWindow {
             .into_any_element()
     }
 
+    fn scrollbars_group(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(settings::LABEL_GAP))
+            .child(theme.field_label("Scrollbars"))
+            .child(
+                theme
+                    .group_box()
+                    .child(self.scrollbars_row(true, cx))
+                    .child(self.scrollbars_row(false, cx)),
+            )
+            .into_any_element()
+    }
+
     fn scrollbars_row(&self, sidebar: bool, cx: &mut Context<Self>) -> AnyElement {
         use crate::model::settings::Scrollbars;
         let theme = Theme::of(cx).clone();
@@ -136,7 +152,7 @@ impl SettingsWindow {
             look.scrollbars
         };
         theme
-            .card_row(!sidebar)
+            .card_row(sidebar)
             .child(div().flex_1().min_w_0().child(theme.row_title(if sidebar {
                 "Sidebar scrollbars"
             } else {
@@ -187,26 +203,23 @@ impl SettingsWindow {
             .gap(px(settings::LABEL_GAP))
             .child(theme.field_label("Sidebar"))
             .child(
-                theme
-                    .group_box()
-                    .child(
-                        self.switch_row(
-                            Switch::new(
-                                "indent-project-rows",
-                                "Indent project rows",
-                                "Inset items below each project heading by one icon width.",
-                                on,
-                            )
-                            .first(true),
-                            cx,
-                            move |this, cx| {
-                                this.workspace.update(cx, |workspace, cx| {
-                                    workspace.set_indent_project_rows(!on, cx);
-                                });
-                            },
-                        ),
-                    )
-                    .child(self.scrollbars_row(true, cx)),
+                theme.group_box().child(
+                    self.switch_row(
+                        Switch::new(
+                            "indent-project-rows",
+                            "Indent project rows",
+                            "Inset items below each project heading by one icon width.",
+                            on,
+                        )
+                        .first(true),
+                        cx,
+                        move |this, cx| {
+                            this.workspace.update(cx, |workspace, cx| {
+                                workspace.set_indent_project_rows(!on, cx);
+                            });
+                        },
+                    ),
+                ),
             )
             .into_any_element()
     }

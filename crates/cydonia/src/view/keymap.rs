@@ -25,8 +25,8 @@ use crate::{
         create, info, menubar,
         root::{
             self, CloseProject, NewArticle, NewBoard, NewSession, NewSessionNext, NewTable,
-            NextEntry, OpenProject, OpenSettings, PrevEntry, ToggleChanges, ToggleSidebar,
-            ToggleTerminal,
+            NextEntry, OpenFiles, OpenProject, OpenReview, OpenSettings, PrevEntry, ToggleChanges,
+            ToggleSidebar, ToggleTerminal,
         },
         table,
     },
@@ -60,6 +60,8 @@ pub enum Command {
     ToggleSidebar,
     ToggleTerminal,
     ToggleChanges,
+    OpenFiles,
+    OpenReview,
     NextEntry,
     PrevEntry,
     PlainText,
@@ -88,7 +90,7 @@ impl Menu {
 }
 
 impl Command {
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 16] = [
         Self::OpenSettings,
         Self::NewSession,
         Self::NewSessionNext,
@@ -100,6 +102,8 @@ impl Command {
         Self::ToggleSidebar,
         Self::ToggleTerminal,
         Self::ToggleChanges,
+        Self::OpenFiles,
+        Self::OpenReview,
         Self::NextEntry,
         Self::PrevEntry,
         Self::PlainText,
@@ -119,6 +123,8 @@ impl Command {
             Self::ToggleSidebar => "toggle_sidebar",
             Self::ToggleTerminal => "toggle_terminal",
             Self::ToggleChanges => "toggle_changes",
+            Self::OpenFiles => "open_files",
+            Self::OpenReview => "open_review",
             Self::NextEntry => "next_entry",
             Self::PrevEntry => "prev_entry",
             Self::PlainText => "plain_text",
@@ -138,7 +144,9 @@ impl Command {
             Self::CloseProject => "Close Project",
             Self::ToggleSidebar => "Toggle Sidebar",
             Self::ToggleTerminal => "Toggle Terminal",
-            Self::ToggleChanges => "Toggle Git Changes",
+            Self::ToggleChanges => "Toggle Right Panel",
+            Self::OpenFiles => "Open Files",
+            Self::OpenReview => "Open Review",
             Self::NextEntry => "Next Entry",
             Self::PrevEntry => "Previous Entry",
             Self::PlainText => "Plain Text",
@@ -157,6 +165,8 @@ impl Command {
             | Self::CloseProject => Menu::File,
             Self::ToggleTerminal
             | Self::ToggleChanges
+            | Self::OpenFiles
+            | Self::OpenReview
             | Self::ToggleSidebar
             | Self::NextEntry
             | Self::PrevEntry
@@ -181,7 +191,9 @@ impl Command {
             // What every app with a sidebar binds it to.
             Self::ToggleSidebar => "cmd-b",
             Self::ToggleTerminal => "cmd-j",
-            Self::ToggleChanges => "cmd-shift-g",
+            Self::ToggleChanges => "cmd-l",
+            Self::OpenFiles => "cmd-shift-f",
+            Self::OpenReview => "cmd-shift-g",
             // The pair the View menu draws. `ctrl-tab` reaches these too and
             // is not movable: gpui has no macOS equivalent for `tab`, so an
             // item naming it would print ⌃T — see [`root::bindings`].
@@ -207,6 +219,8 @@ impl Command {
             Self::ToggleSidebar => KeyBinding::new(chord, ToggleSidebar, None),
             Self::ToggleTerminal => KeyBinding::new(chord, ToggleTerminal, None),
             Self::ToggleChanges => KeyBinding::new(chord, ToggleChanges, None),
+            Self::OpenFiles => KeyBinding::new(chord, OpenFiles, None),
+            Self::OpenReview => KeyBinding::new(chord, OpenReview, None),
             Self::NextEntry => KeyBinding::new(chord, NextEntry, None),
             Self::PrevEntry => KeyBinding::new(chord, PrevEntry, None),
             Self::PlainText => KeyBinding::new(chord, TogglePlainText, None),
@@ -333,6 +347,24 @@ pub fn bind_all(shortcuts: &Shortcuts, cx: &mut App) {
     cx.bind_keys(ribbon::bindings());
     cx.bind_keys(table::bindings());
     cx.bind_keys(terminal::bindings());
+    cx.bind_keys([
+        KeyBinding::new(
+            "cmd-f",
+            super::component::files::ToggleFilter,
+            Some("SessionPanel"),
+        ),
+        KeyBinding::new(
+            "cmd-p",
+            super::component::panel::OpenFile,
+            Some("SessionPanel"),
+        ),
+        KeyBinding::new(
+            "cmd-w",
+            super::component::panel::CloseTab,
+            Some("SessionPanel || BottomTerminalPanel"),
+        ),
+        KeyBinding::new("cmd-s", super::component::file::Save, Some("FileEditor")),
+    ]);
     cx.bind_keys(root::bindings());
     cx.bind_keys(menubar::bindings());
     // Last, and the only ones the reader can move.

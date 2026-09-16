@@ -3,8 +3,8 @@
 use crate::model::typography;
 use bezel::{
     gpui::{
-        self, App, ClipboardItem, Context, FocusHandle, Focusable, KeyBinding, Render, Task,
-        Window, div, prelude::*, px,
+        self, App, ClipboardItem, Context, Entity, EventEmitter, FocusHandle, Focusable,
+        KeyBinding, Render, Subscription, Task, Window, div, prelude::*, px,
     },
     theme::{TextStyle, Theme, Typeset},
     ui::{icons, input, tooltip::Tooltip},
@@ -61,6 +61,7 @@ pub fn keystroke_bytes(key: &gpui::Keystroke, app_cursor: bool) -> Option<Vec<u8
 
 /// Dropping the panel's owner terminates the shell; a waiter reaps it off-thread.
 struct Shell {
+    pid: Option<u32>,
     master: Box<dyn MasterPty + Send>,
     input: channel::Sender<Vec<u8>>,
     killer: Box<dyn ChildKiller + Send + Sync>,
@@ -98,6 +99,7 @@ impl Shell {
         command.env("TERM", "xterm-256color");
         command.env("COLORTERM", "truecolor");
         let mut child = pair.slave.spawn_command(command)?;
+        let pid = child.process_id();
         let killer = child.clone_killer();
         drop(pair.slave);
         std::thread::spawn(move || {
@@ -134,6 +136,7 @@ impl Shell {
         });
         Ok((
             Self {
+                pid,
                 master: pair.master,
                 input,
                 killer,
@@ -143,14 +146,65 @@ impl Shell {
     }
 }
 
+#[cfg(target_os = "macos")]
+fn process_directory(pid: u32) -> Option<std::path::PathBuf> {
+    use std::os::unix::ffi::OsStringExt;
+    let mut info = std::mem::MaybeUninit::<libc::proc_vnodepathinfo>::uninit();
+    let size = std::mem::size_of_val(&info) as i32;
+    // The kernel initializes the full structure on a successful, full-size read.
+    let read = unsafe {
+        libc::proc_pidinfo(
+            pid as i32,
+            libc::PROC_PIDVNODEPATHINFO,
+            0,
+            info.as_mut_ptr().cast(),
+            size,
+        )
+    };
+    if read != size {
+        return None;
+    }
+    let info = unsafe { info.assume_init() };
+    let bytes: Vec<u8> = info
+        .pvi_cdir
+        .vip_path
+        .iter()
+        .flatten()
+        .map(|byte| *byte as u8)
+        .take_while(|byte| *byte != 0)
+        .collect();
+    if bytes.is_empty() {
+        return None;
+    }
+    Some(std::ffi::OsString::from_vec(bytes).into())
+}
+
+#[cfg(target_os = "linux")]
+fn process_directory(pid: u32) -> Option<std::path::PathBuf> {
+    std::fs::read_link(format!("/proc/{pid}/cwd")).ok()
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn process_directory(_: u32) -> Option<std::path::PathBuf> {
+    None
+}
+
+fn directory_label(directory: &Path) -> String {
+    directory
+        .file_name()
+        .unwrap_or(directory.as_os_str())
+        .to_string_lossy()
+        .into_owned()
+}
+
 pub struct Terminal {
+    pub(crate) directory: std::path::PathBuf,
     emulator: Emulator,
     shell: Option<Shell>,
     focus: FocusHandle,
     geometry: Option<GridGeometry>,
     selecting: bool,
     scroll_remainder: f32,
-    cwd: std::path::PathBuf,
     status: Option<String>,
     _pump: Option<Task<()>>,
 }
@@ -158,13 +212,13 @@ pub struct Terminal {
 impl Terminal {
     pub fn new(cwd: &Path, cx: &mut Context<Self>) -> Self {
         let mut this = Self {
+            directory: cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf()),
             emulator: Emulator::new(80, 24),
             shell: None,
             focus: cx.focus_handle(),
             geometry: None,
             selecting: false,
             scroll_remainder: 0.,
-            cwd: cwd.to_path_buf(),
             status: None,
             _pump: None,
         };
@@ -177,6 +231,16 @@ impl Terminal {
                             .update(cx, |this, cx| {
                                 let reply = this.emulator.feed(&bytes);
                                 this.write(reply);
+                                if let Some(directory) = this
+                                    .shell
+                                    .as_ref()
+                                    .and_then(|shell| shell.pid)
+                                    .and_then(process_directory)
+                                    && directory != this.directory
+                                {
+                                    this.directory = directory;
+                                    cx.emit(DirectoryChanged);
+                                }
                                 cx.notify();
                             })
                             .is_err()
@@ -186,8 +250,7 @@ impl Terminal {
                     }
                     let _ = this.update(cx, |this, cx| {
                         this.shell = None;
-                        this.status = Some("Shell exited".into());
-                        cx.notify();
+                        cx.emit(Exited);
                     });
                 }));
             }
@@ -295,59 +358,9 @@ impl Render for Terminal {
             .size_full()
             .flex()
             .flex_col()
-            .bg(view::terminal_panel_bg(&theme))
-            .child(
-                div()
-                    .h(px(30.))
-                    .flex_none()
-                    .px(px(12.))
-                    .flex()
-                    .items_center()
-                    .gap(px(8.))
-                    .text_style(TextStyle::Caption)
-                    .text_color(theme.text_muted)
-                    .child(icons::icon(icons::development::Terminal).size(px(14.)))
-                    .child(
-                        div()
-                            .flex_1()
-                            .child(self.status.clone().unwrap_or_else(|| "Terminal".into())),
-                    )
-                    .when(self.status.is_some(), |header| {
-                        header.child(
-                            div()
-                                .id("terminal-restart")
-                                .px(px(6.))
-                                .cursor_pointer()
-                                .hover(|s| s.text_color(theme.text))
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    let cwd = this.cwd.clone();
-                                    *this = Self::new(&cwd, cx);
-                                    window.focus(&this.focus, cx);
-                                    cx.notify();
-                                }))
-                                .child("Restart"),
-                        )
-                    })
-                    .child(
-                        div()
-                            .id("terminal-hide")
-                            .size(px(24.))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .rounded(px(4.))
-                            .cursor_pointer()
-                            .hover(|s| s.bg(theme.element_hover))
-                            .tooltip(|window, cx| Tooltip::text("Hide terminal", window, cx))
-                            .on_click(|_, window, cx| {
-                                window.dispatch_action(
-                                    Box::new(crate::view::root::ToggleTerminal),
-                                    cx,
-                                )
-                            })
-                            .child(icons::icon(icons::notifications::X).size(px(14.))),
-                    ),
-            )
+            .when_some(self.status.clone(), |panel, status| {
+                panel.child(div().px(px(12.)).text_color(theme.text_muted).child(status))
+            })
             .child(
                 div()
                     .id("session-terminal")
@@ -401,65 +414,249 @@ impl Render for Terminal {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::time::Duration;
+#[path = "../../../tests/unit/terminal.rs"]
+mod tests;
 
-    fn shell() -> (Shell, mpsc::Receiver<Vec<u8>>) {
-        let mut command = CommandBuilder::new("/bin/sh");
-        command.arg("-i");
-        command.env("ENV", "/dev/null");
-        Shell::open_command(Path::new("/private/tmp"), command).expect("open PTY")
+pub(crate) struct DirectoryChanged;
+impl EventEmitter<DirectoryChanged> for Terminal {}
+
+pub(crate) struct Exited;
+impl EventEmitter<Exited> for Terminal {}
+
+pub struct Empty;
+
+struct Tab {
+    id: usize,
+    terminal: Entity<Terminal>,
+    _exit: Subscription,
+    _directory: Subscription,
+}
+
+pub struct TerminalPanel {
+    cwd: std::path::PathBuf,
+    tabs: Vec<Tab>,
+    active: usize,
+    next_id: usize,
+}
+
+impl EventEmitter<Empty> for TerminalPanel {}
+
+impl TerminalPanel {
+    pub fn new(cwd: &Path, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let mut panel = Self {
+            cwd: cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf()),
+            tabs: Vec::new(),
+            active: 0,
+            next_id: 1,
+        };
+        panel.add(window, cx);
+        panel
     }
 
-    fn collect(mut output: mpsc::Receiver<Vec<u8>>) -> channel::Receiver<Vec<u8>> {
-        let (tx, rx) = channel::channel();
-        std::thread::spawn(move || {
-            let bytes = futures::executor::block_on(async {
-                let mut bytes = Vec::new();
-                while let Some(chunk) = output.next().await {
-                    bytes.extend(chunk);
-                }
-                bytes
-            });
-            let _ = tx.send(bytes);
+    fn add(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let id = self.next_id;
+        self.next_id += 1;
+        let terminal = cx.new(|cx| Terminal::new(&self.cwd, cx));
+        let exit = cx.subscribe_in(&terminal, window, move |this, _, _: &Exited, window, cx| {
+            this.close(id, window, cx);
         });
-        rx
+        window.focus(&terminal.focus_handle(cx), cx);
+        let directory = cx.subscribe(&terminal, |_, _, _: &DirectoryChanged, cx| cx.notify());
+        self.tabs.push(Tab {
+            id,
+            terminal,
+            _exit: exit,
+            _directory: directory,
+        });
+        self.active = id;
+        cx.notify();
     }
 
-    #[test]
-    fn shell_has_session_directory_terminal_environment_and_resizes() {
-        let (shell, output) = shell();
-        let output = collect(output);
-        shell
-            .master
-            .resize(PtySize {
-                rows: 37,
-                cols: 101,
-                pixel_width: 0,
-                pixel_height: 0,
-            })
-            .unwrap();
-        shell
-            .input
-            .send(b"printf '\\nCWD:%s\\nTERM:%s\\n' \"$PWD\" \"$TERM\"; stty size; exit\n".to_vec())
-            .unwrap();
-        let bytes = output
-            .recv_timeout(Duration::from_secs(10))
-            .expect("shell exits and closes output");
-        let text = String::from_utf8_lossy(&bytes);
-        assert!(text.contains("CWD:/private/tmp\r\n"), "{text}");
-        assert!(text.contains("TERM:xterm-256color\r\n"), "{text}");
-        assert!(text.contains("37 101\r\n"), "{text}");
+    fn close(&mut self, id: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(index) = self.tabs.iter().position(|tab| tab.id == id) else {
+            return;
+        };
+        let focused = self.tabs[index]
+            .terminal
+            .focus_handle(cx)
+            .is_focused(window);
+        self.tabs.remove(index);
+        if self.tabs.is_empty() {
+            cx.emit(Empty);
+        } else if self.active == id {
+            let next = &self.tabs[index.min(self.tabs.len() - 1)];
+            self.active = next.id;
+            if focused {
+                window.focus(&next.terminal.focus_handle(cx), cx);
+            }
+        }
+        cx.notify();
     }
+}
 
-    #[test]
-    fn dropping_shell_closes_its_output() {
-        let (shell, output) = shell();
-        let output = collect(output);
-        drop(shell);
-        output
-            .recv_timeout(Duration::from_secs(10))
-            .expect("dropping a session ends its shell");
+impl Focusable for TerminalPanel {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.tabs
+            .iter()
+            .find(|tab| tab.id == self.active)
+            .expect("terminal panel has an active tab")
+            .terminal
+            .focus_handle(cx)
+    }
+}
+
+impl Render for TerminalPanel {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = Theme::of(cx).clone();
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .key_context("BottomTerminalPanel")
+            .on_action(cx.listener(|this, _: &super::panel::CloseTab, window, cx| {
+                this.close(this.active, window, cx);
+            }))
+            .bg(crate::view::root::content_bg(&theme))
+            .child(
+                div()
+                    .h(px(40.))
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .px(px(8.))
+                    .text_style(TextStyle::Body)
+                    .text_color(theme.text_muted)
+                    .child(
+                        div()
+                            .id("terminal-tabs")
+                            .min_w_0()
+                            .flex()
+                            .gap(px(4.))
+                            .overflow_x_scroll()
+                            .children(self.tabs.iter().map(|tab| {
+                                let id = tab.id;
+                                let directory = directory_label(&tab.terminal.read(cx).directory);
+                                div()
+                                    .id(("terminal-tab", id))
+                                    .flex_none()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(10.))
+                                    .px(px(10.))
+                                    .w(px(156.))
+                                    .h(px(28.))
+                                    .rounded(px(10.))
+                                    .cursor_pointer()
+                                    .hover(|tab| tab.text_color(theme.text))
+                                    .when(self.active == id, |tab| {
+                                        tab.bg(theme.element_hover).text_color(theme.text)
+                                    })
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.active = id;
+                                        window.focus(&this.focus_handle(cx), cx);
+                                        cx.notify();
+                                    }))
+                                    .child(
+                                        icons::icon(icons::development::Terminal)
+                                            .size(px(14.))
+                                            .flex_none()
+                                            .text_color(if self.active == id {
+                                                theme.text
+                                            } else {
+                                                theme.text_muted
+                                            }),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .truncate()
+                                            .child(directory.clone()),
+                                    )
+                                    .child(
+                                        div()
+                                            .id(("terminal-close", id))
+                                            .size(px(18.))
+                                            .flex_none()
+                                            .rounded(px(4.))
+                                            .hover(|button| button.bg(theme.element_hover))
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .tooltip(|window, cx| {
+                                                Tooltip::text("Close terminal", window, cx)
+                                            })
+                                            .on_click(cx.listener(move |this, _, window, cx| {
+                                                cx.stop_propagation();
+                                                this.close(id, window, cx);
+                                            }))
+                                            .child(
+                                                icons::icon(icons::notifications::X)
+                                                    .size(px(12.))
+                                                    .text_color(theme.text_muted),
+                                            ),
+                                    )
+                            })),
+                    )
+                    .child(
+                        div()
+                            .id("terminal-add")
+                            .size(px(24.))
+                            .flex_none()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .cursor_pointer()
+                            .rounded(px(4.))
+                            .hover(|s| s.bg(theme.element_hover))
+                            .tooltip(|window, cx| Tooltip::text("New terminal", window, cx))
+                            .on_click(cx.listener(|this, _, window, cx| this.add(window, cx)))
+                            .child(
+                                icons::icon(icons::math::Plus)
+                                    .size(px(14.))
+                                    .text_color(theme.text_muted),
+                            ),
+                    )
+                    .child(div().flex_1())
+                    .child(
+                        div()
+                            .id("terminal-hide")
+                            .flex_none()
+                            .size(px(24.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .cursor_pointer()
+                            .rounded(px(4.))
+                            .hover(|s| s.bg(theme.element_hover))
+                            .tooltip(|window, cx| Tooltip::text("Hide terminal panel", window, cx))
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(
+                                    Box::new(crate::view::root::ToggleTerminal),
+                                    cx,
+                                )
+                            })
+                            .child(
+                                icons::icon(icons::arrows::ChevronDown)
+                                    .size(px(14.))
+                                    .text_color(theme.text_muted),
+                            ),
+                    ),
+            )
+            .child(
+                div().flex_1().min_h_0().children(
+                    self.tabs
+                        .iter()
+                        .find(|tab| tab.id == self.active)
+                        .map(|tab| tab.terminal.clone()),
+                ),
+            )
+            .children(
+                self.tabs
+                    .iter()
+                    .find(|tab| tab.id == self.active)
+                    .map(|tab| super::status::terminal(&tab.terminal.read(cx).directory, &theme)),
+            )
     }
 }

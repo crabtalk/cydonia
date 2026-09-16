@@ -2,14 +2,18 @@
 //! commands behind `/`.
 
 use crate::{
-    model::session::{Command, Usage},
+    model::{
+        media::Attachment,
+        session::{Command, Usage},
+    },
     view::root,
 };
 use bezel::ui::scroll as scrollbars;
 use bezel::{
     gpui::{
-        self, AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, KeyBinding,
-        Render, ScrollHandle, SharedString, Window, actions, div, prelude::*, px,
+        self, AnyElement, App, ClipboardEntry, Context, Entity, EventEmitter, ExternalPaths,
+        FocusHandle, Focusable, KeyBinding, ObjectFit, Render, ScrollHandle, SharedString, Window,
+        actions, div, img, prelude::*, px,
     },
     theme::{Glass, SurfaceStyle, TextStyle, Theme, Typeset},
     ui::{
@@ -17,11 +21,12 @@ use bezel::{
         input::{self, FieldEvent, Shape, TextField},
         menu::{self, Cursor, Hit, Item},
         popover,
-        surface::Surfaced as _,
+        surface::{self, Surfaced as _},
         tooltip::Tooltip,
         widgets::Controls as _,
     },
 };
+use std::{collections::HashMap, sync::Arc};
 
 actions!(
     cydonia_composer,
@@ -46,6 +51,42 @@ const WARN_AT: f32 = 0.8;
 /// catalog would otherwise open a card taller than the window and off the top
 /// of it.
 const PICKER_HEIGHT: f32 = 320.;
+
+/// The side of a picture waiting in the composer.
+const THUMB: f32 = 64.;
+
+/// The side of a thumb's remove button, which sits centred on its corner.
+const REMOVE: f32 = 18.;
+
+/// How much of the window an opened picture may take, either way.
+const PREVIEW_SHARE: f32 = 0.8;
+
+/// A solid round button with a ✕ on it. Solid because it sits over a picture,
+/// where a bare glyph can land on anything.
+fn disc(theme: &Theme, id: impl Into<gpui::ElementId>, side: f32) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(id)
+        .size(px(side))
+        .rounded_full()
+        .flex()
+        .items_center()
+        .justify_center()
+        .bg(theme.solid)
+        .cursor_pointer()
+        .hover(|button| button.opacity(0.85))
+        .child(
+            icons::icon(icons::notifications::X)
+                .size(px(side * 0.6))
+                .text_color(theme.on_solid),
+        )
+}
+
+fn picture(attachment: &Attachment) -> gpui::Img {
+    match attachment {
+        Attachment::Bytes(image) => img(image.clone()),
+        Attachment::File(path) => img(path.clone()),
+    }
+}
 
 pub fn bindings() -> Vec<KeyBinding> {
     let ctx = Some(KEY_CONTEXT);
@@ -102,10 +143,13 @@ pub struct Switch {
 }
 
 pub enum ComposerEvent {
-    Submit(String),
+    Draft(u64, String),
+    /// The message, and the pictures going with it.
+    Submit(String, Vec<Attachment>),
     Cancel,
     Terminal,
     Changes,
+    Files,
     /// Talk to this agent instead — an index into the configured agents.
     Agent(usize),
     /// Nothing here to pick: open settings where agents are installed.
@@ -126,6 +170,13 @@ fn set_to(name: &str, value: Option<SharedString>) -> SharedString {
 
 pub struct Composer {
     field: Entity<TextField>,
+    session: Option<u64>,
+    local_draft: String,
+    saved_attachments: HashMap<Option<u64>, Vec<Attachment>>,
+    /// Pictures pasted or dropped, sent with the next message.
+    attachments: Vec<Attachment>,
+    /// Which of them is open in the lightbox.
+    preview: Option<usize>,
     /// Byte offset of the `/` being typed, or `None` when no picker is open.
     /// Derived from the text on every change rather than stored as a flag: a
     /// backspace over the `/` has to close the picker, and a flag would have to
@@ -180,12 +231,26 @@ impl Composer {
         cx.subscribe(
             &field,
             |composer: &mut Self, _, event: &FieldEvent, cx| match event {
-                FieldEvent::Changed | FieldEvent::Moved => composer.reread(cx),
+                FieldEvent::Changed => {
+                    composer.reread(cx);
+                    if let Some(id) = composer.session {
+                        cx.emit(ComposerEvent::Draft(
+                            id,
+                            composer.field.read(cx).content().to_string(),
+                        ));
+                    }
+                }
+                FieldEvent::Moved => composer.reread(cx),
             },
         )
         .detach();
         Self {
             field,
+            session: None,
+            local_draft: String::new(),
+            saved_attachments: HashMap::new(),
+            attachments: Vec::new(),
+            preview: None,
             command: None,
             filter: popover::Filter::new(Vec::new()),
             commands: Vec::new(),
@@ -200,6 +265,33 @@ impl Composer {
             tools_cursor: Cursor::default(),
             cursor: Cursor::default(),
         }
+    }
+
+    pub fn session(&self) -> Option<u64> {
+        self.session
+    }
+
+    pub fn set_session(&mut self, id: Option<u64>, draft: &str, cx: &mut Context<Self>) {
+        if self.session == id {
+            return;
+        }
+        if self.session.is_none() {
+            self.local_draft = self.field.read(cx).content().to_string();
+        }
+        self.saved_attachments
+            .insert(self.session, std::mem::take(&mut self.attachments));
+        self.session = id;
+        self.attachments = self.saved_attachments.remove(&id).unwrap_or_default();
+        self.preview = None;
+        let draft = if id.is_none() {
+            self.local_draft.clone()
+        } else {
+            draft.to_owned()
+        };
+        self.field
+            .update(cx, |field, cx| field.set_content(draft, cx));
+        self.reread(cx);
+        cx.notify();
     }
 
     pub fn set_placeholder(&mut self, placeholder: &str, cx: &mut Context<Self>) {
@@ -271,7 +363,109 @@ impl Composer {
     }
 
     pub fn is_empty(&self, cx: &App) -> bool {
-        self.field.read(cx).content().trim().is_empty()
+        self.attachments.is_empty() && self.field.read(cx).content().trim().is_empty()
+    }
+
+    /// Take pictures off the clipboard ahead of the field, which would paste
+    /// only the text beside them — a file copied in Finder is its name.
+    /// A clipboard with no picture on it is left to the field.
+    fn paste(&mut self, _: &input::Paste, _: &mut Window, cx: &mut Context<Self>) {
+        let Some(item) = cx.read_from_clipboard() else {
+            return;
+        };
+        let before = self.attachments.len();
+        for entry in item.entries() {
+            match entry {
+                ClipboardEntry::Image(image) => self
+                    .attachments
+                    .push(Attachment::Bytes(Arc::new(image.clone()))),
+                ClipboardEntry::ExternalPaths(paths) => self.attach(paths),
+                _ => {}
+            }
+        }
+        if self.attachments.len() > before {
+            cx.stop_propagation();
+            cx.notify();
+        }
+    }
+
+    /// Take the pictures among dropped files. Called by the session pane, whose
+    /// whole area is the drop target — the composer alone is a narrow strip to
+    /// aim a drag at.
+    pub fn drop_paths(&mut self, paths: &ExternalPaths, cx: &mut Context<Self>) {
+        self.attach(paths);
+        cx.notify();
+    }
+
+    fn attach(&mut self, paths: &ExternalPaths) {
+        self.attachments.extend(
+            paths
+                .paths()
+                .iter()
+                .filter(|path| markdown::is_image(&path.to_string_lossy()))
+                .cloned()
+                .map(Attachment::File),
+        );
+    }
+
+    /// The pictures waiting to go with the message, each with a way to take it
+    /// back off.
+    fn tray(&self, theme: &Theme, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if self.attachments.is_empty() {
+            return None;
+        }
+        let thumbs = self.attachments.iter().enumerate().map(|(ix, attachment)| {
+            // Unclipped, so the remove button can sit on the corner: half on
+            // the picture, half off it.
+            div()
+                .relative()
+                .size(px(THUMB))
+                .child(
+                    div()
+                        .id(("composer-attachment", ix))
+                        .size_full()
+                        .rounded(px(12.))
+                        .overflow_hidden()
+                        .border_1()
+                        .border_color(theme.border)
+                        .cursor_pointer()
+                        .on_click(cx.listener(move |composer, _, _, cx| {
+                            composer.preview = Some(ix);
+                            cx.notify();
+                        }))
+                        .child(picture(attachment).size_full().object_fit(ObjectFit::Cover)),
+                )
+                // Its own layer: inside the glass card every primitive shares
+                // one draw order, and a picture paints over quads and icons.
+                .child(surface::layered(
+                    disc(theme, ("composer-attachment-remove", ix), REMOVE)
+                        .absolute()
+                        .top(px(-REMOVE / 2.))
+                        .right(px(-REMOVE / 2.))
+                        .tooltip(|window, cx| Tooltip::text("Remove image", window, cx))
+                        .on_click(cx.listener(move |composer, _, _, cx| {
+                            if ix < composer.attachments.len() {
+                                composer.attachments.remove(ix);
+                            }
+                            composer.preview = None;
+                            cx.notify();
+                        })),
+                ))
+        });
+        Some(
+            div()
+                // Room above for the half of each remove button past its
+                // corner, and between the pictures and the line under them.
+                .pt(px(REMOVE / 2. + 4.))
+                .pr(px(REMOVE / 2.))
+                .pb(px(8.))
+                .flex()
+                .flex_row()
+                .flex_wrap()
+                .gap(px(12.))
+                .children(thumbs)
+                .into_any_element(),
+        )
     }
 
     /// The picker trigger, and it is a *read* of the text rather than a key
@@ -317,12 +511,15 @@ impl Composer {
             return;
         }
         let content = self.field.read(cx).content().clone();
-        if content.trim().is_empty() {
+        if content.trim().is_empty() && self.attachments.is_empty() {
             return;
         }
         self.field.update(cx, |field, cx| field.clear(cx));
         self.command = None;
-        cx.emit(ComposerEvent::Submit(content.to_string()));
+        cx.emit(ComposerEvent::Submit(
+            content.to_string(),
+            std::mem::take(&mut self.attachments),
+        ));
         cx.notify();
     }
 
@@ -355,7 +552,9 @@ impl Composer {
     /// menu, then the command picker, and the turn in flight once there is
     /// nothing left to close.
     fn command_dismiss(&mut self, _: &CommandDismiss, _: &mut Window, cx: &mut Context<Self>) {
-        if self.tools_menu {
+        if self.preview.take().is_some() {
+            // The open picture is the outermost thing there is.
+        } else if self.tools_menu {
             self.tools_menu = false;
         } else if self.cursor.ascend() {
             // A submenu shuts before the menu holding it — one press, one level.
@@ -777,9 +976,12 @@ impl Composer {
             Item::action("Terminal")
                 .with_icon(icons::development::Terminal)
                 .with_shortcut(&root::ToggleTerminal, window),
-            Item::action("Git changes")
+            Item::action("Review")
                 .with_icon(icons::development::GitCompare)
-                .with_shortcut(&root::ToggleChanges, window),
+                .with_shortcut(&root::OpenReview, window),
+            Item::action("Files")
+                .with_icon(icons::files::Folder)
+                .with_shortcut(&root::OpenFiles, window),
         ];
         let rows = items.clone();
         let popup = self.tools_menu.then(|| {
@@ -799,6 +1001,7 @@ impl Composer {
                             match path.as_slice() {
                                 [0] => cx.emit(ComposerEvent::Terminal),
                                 [1] => cx.emit(ComposerEvent::Changes),
+                                [2] => cx.emit(ComposerEvent::Files),
                                 _ => {}
                             }
                         }
@@ -824,9 +1027,12 @@ impl Composer {
     fn body(&mut self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::of(cx).clone();
         let picker = self.picker(&theme, cx);
+        let tray = self.tray(&theme, cx);
         let radius = px(root::composer_height() / 2.);
 
         div()
+            // Ahead of the field's own paste, which only knows text.
+            .capture_action(cx.listener(Self::paste))
             .on_action(cx.listener(Self::send))
             .on_action(cx.listener(Self::command_next))
             .on_action(cx.listener(Self::command_previous))
@@ -864,25 +1070,76 @@ impl Composer {
                                         12.
                                     }))
                                     .flex()
-                                    .flex_row()
-                                    .items_end()
+                                    .flex_col()
                                     .gap(px(root::COMPOSER_INSET))
+                                    .children(tray)
                                     .child(
                                         div()
-                                            .flex_1()
-                                            .min_w_0()
-                                            .min_h(px(root::composer_disc()))
                                             .flex()
-                                            .items_center()
-                                            .child(self.field.clone()),
+                                            .flex_row()
+                                            .items_end()
+                                            .gap(px(root::COMPOSER_INSET))
+                                            .child(
+                                                div()
+                                                    .flex_1()
+                                                    .min_w_0()
+                                                    .min_h(px(root::composer_disc()))
+                                                    .flex()
+                                                    .items_center()
+                                                    .child(self.field.clone()),
+                                            )
+                                            .children(self.button(&theme, cx)),
                                     )
-                                    .children(self.button(&theme, cx))
                                     .surface(&theme, SURFACE),
                             )
                             .children(picker),
                     )
                     .child(self.tools(&theme, window, cx)),
             )
+            .children(self.lightbox(window, cx))
+    }
+
+    /// The picture opened from its thumb, as large as the window allows.
+    /// Closed by its button, a press off it, or escape.
+    fn lightbox(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let attachment = self.attachments.get(self.preview?)?;
+        let theme = Theme::of(cx).clone();
+        let viewport = window.viewport_size();
+        let composer = cx.entity().downgrade();
+        let card = div()
+            .relative()
+            .child(
+                picture(attachment)
+                    .max_w(viewport.width * PREVIEW_SHARE)
+                    .max_h(viewport.height * PREVIEW_SHARE)
+                    .object_fit(ObjectFit::Contain)
+                    .rounded(px(16.)),
+            )
+            // Its own layer, for the same reason as a thumb's remove button.
+            .child(surface::layered(
+                disc(&theme, "composer-preview-close", 24.)
+                    .absolute()
+                    .top(px(10.))
+                    .right(px(10.))
+                    .tooltip(|window, cx| Tooltip::text("Close", window, cx))
+                    .on_click(cx.listener(|composer, _, _, cx| {
+                        composer.preview = None;
+                        cx.notify();
+                    })),
+            ));
+        Some(popover::modal(
+            "composer-preview",
+            viewport,
+            card.into_any_element(),
+            move |_, _, cx| {
+                composer
+                    .update(cx, |composer, cx| {
+                        composer.preview = None;
+                        cx.notify();
+                    })
+                    .ok();
+            },
+        ))
     }
 }
 
@@ -897,3 +1154,7 @@ impl Render for Composer {
         self.body(window, cx)
     }
 }
+
+#[cfg(test)]
+#[path = "../../../tests/unit/composer_drafts.rs"]
+mod draft_tests;

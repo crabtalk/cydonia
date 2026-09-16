@@ -40,7 +40,7 @@ use bezel::{
         menu::Cursor,
         scroll::DriftState,
         stats::Stats,
-        widgets::{ButtonStyle, Buttons, Content, Layout, SPLIT_HANDLE_HIT, SplitDrag, SplitStyle},
+        widgets::{ButtonStyle, Buttons, Content, SplitDrag},
     },
 };
 
@@ -58,6 +58,8 @@ actions!(
         ToggleSidebar,
         ToggleTerminal,
         ToggleChanges,
+        OpenFiles,
+        OpenReview,
         CommitName,
         DismissName,
         NextEntry,
@@ -276,11 +278,12 @@ pub struct Cydonia {
     pub(crate) composer: Entity<Composer>,
     /// Visibility and shell per session; hiding a panel keeps its process alive.
     pub(crate) terminals:
-        std::collections::HashMap<u64, (bool, Entity<super::component::terminal::Terminal>)>,
+        std::collections::HashMap<u64, (bool, Entity<super::component::terminal::TerminalPanel>)>,
     pub(crate) changes_open: bool,
     pub(crate) changes_width: f32,
     pub(crate) terminal_height: f32,
-    pub(crate) changes: Option<Entity<super::component::changes::Changes>>,
+    pub(crate) changes: Option<Entity<super::component::panel::Panel>>,
+    pub(crate) right_panels: std::collections::HashMap<u64, Entity<super::component::panel::Panel>>,
     settings_window: Option<WindowHandle<SettingsWindow>>,
     pub(crate) pane: Pane,
     /// Whether a session has been asked for with no agent to open one on.
@@ -359,10 +362,18 @@ impl Cydonia {
             &composer,
             window,
             |this, _, event: &ComposerEvent, window, cx| match event {
-                ComposerEvent::Submit(text) => this.submit(text.clone(), cx),
+                ComposerEvent::Submit(text, attachments) => {
+                    this.submit(text.clone(), attachments.clone(), cx)
+                }
+                ComposerEvent::Draft(id, draft) => {
+                    this.workspace.update(cx, |workspace, cx| {
+                        workspace.set_draft(*id, draft.clone(), cx)
+                    });
+                }
                 ComposerEvent::Cancel => this.cancel_turn(cx),
                 ComposerEvent::Terminal => this.show_terminal(window, cx),
-                ComposerEvent::Changes => this.show_changes(cx),
+                ComposerEvent::Changes => this.show_changes(window, cx),
+                ComposerEvent::Files => this.show_files(window, cx),
                 ComposerEvent::Agent(ix) => this.pick_agent(*ix, cx),
                 ComposerEvent::Install => this.open_settings(Section::Agents, cx),
                 ComposerEvent::Switch(id, value) => this.switch(id, value, cx),
@@ -382,8 +393,15 @@ impl Cydonia {
         // The model is the only thing that says a session appeared or a turn
         // ended; the composer's placeholder, commands and busy state are all
         // read back from it rather than pushed by whoever caused the change.
-        cx.observe(&workspace, |this, _, cx| this.sync_composer(cx))
-            .detach();
+        cx.observe_in(&workspace, window, |this, _, window, cx| {
+            let previous = this.composer.read(cx).session();
+            this.sync_composer(cx);
+            let current = this.composer.read(cx).session();
+            if current.is_some() && current != previous {
+                window.focus(&this.composer_focus_handle(cx), cx);
+            }
+        })
+        .detach();
         // The notice at the foot of the sidebar is the updater's, and the
         // updater moves on its own clock — and from the other window, where the
         // Developer switch that previews it lives.
@@ -418,6 +436,7 @@ impl Cydonia {
             changes_width: 440.,
             terminal_height: 240.,
             changes: None,
+            right_panels: Default::default(),
             settings_window: None,
             pane: Pane::Chat,
             asked_session: false,
@@ -796,6 +815,10 @@ impl Render for Cydonia {
             .text_color(theme.text)
             .text_style(TextStyle::Body)
             .on_action(cx.listener(Self::toggle_changes))
+            .on_action(
+                cx.listener(|this, _: &OpenReview, window, cx| this.show_changes(window, cx)),
+            )
+            .on_action(cx.listener(|this, _: &OpenFiles, window, cx| this.show_files(window, cx)))
             .on_action(cx.listener(Self::copy_selection))
             .on_action(cx.listener(Self::commit_cell_action))
             .on_action(cx.listener(Self::dismiss_cell))
@@ -825,12 +848,13 @@ impl Render for Cydonia {
             // rather than sitting in flow, so neither gives up a column.
             .when(self.sidebar_open, |root| {
                 root.child(
-                    theme
-                        .split_handle(Axis::Horizontal, SplitStyle::Ghost)
+                    crate::view::component::divider::divider(&theme, Axis::Horizontal)
                         .id("sidebar-split")
                         .absolute()
                         .top_0()
-                        .left(px(self.sidebar_width - SPLIT_HANDLE_HIT / 2.))
+                        .left(px(
+                            self.sidebar_width - crate::view::component::divider::HIT / 2.
+                        ))
                         .on_drag(SplitDrag, |_, _, _, cx| cx.new(|_| Empty)),
                 )
             })

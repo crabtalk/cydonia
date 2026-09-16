@@ -1438,9 +1438,9 @@ dependencies = [
 
 [[package]]
 name = "cacp"
-version = "0.1.0"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bfc72ea792bbec775bcc0c222ed657731de404600a2c7a83e5e09e94d6a11f31"
+checksum = "c40f37554984979b5e3234e02f5f83c3976a0e2735ea3c1921fe1774fcdb9200"
 dependencies = [
  "cacp-proto",
  "serde",
@@ -1463,9 +1463,9 @@ dependencies = [
 
 [[package]]
 name = "cacp-proto"
-version = "0.1.0"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5cfbf28a68d49b1922e40ca0cb66cc34751a059c09e6a5e20aa6b32a527311ac"
+checksum = "750e5af7d668852a8189bdcc172be49b25a4f984a5438a89ff0892a804ed9273"
 dependencies = [
  "serde",
  "serde_json",
@@ -2023,6 +2023,7 @@ name = "cydonia"
 version = "0.1.6"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "bezel",
  "bezel-editor",
  "bezel-gpui",
@@ -2032,6 +2033,7 @@ dependencies = [
  "bezel-terminal",
  "cacp",
  "cacp-agents",
+ "chrono",
  "cydonia-artifact",
  "cydonia-mcp",
  "cydonia-prompts",
@@ -2039,6 +2041,7 @@ dependencies = [
  "futures",
  "global-hotkey",
  "image",
+ "libc",
  "lru",
  "notify",
  "portable-pty",

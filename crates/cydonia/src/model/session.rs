@@ -21,7 +21,7 @@ use artifact::{
     project::{Project as _, fs},
     session::{
         chat::{ChatItem, PlanStatus, ToolStatus},
-        record::Record,
+        record::{ForkOrigin, Record},
     },
 };
 use bezel::gpui::{Context, Task};
@@ -31,7 +31,7 @@ use cacp::schema::{
     SessionModeState, SessionUpdate, StopReason, ToolCallContent, ToolCallStatus,
 };
 use std::{
-    collections::VecDeque,
+    collections::{BTreeMap, VecDeque},
     path::PathBuf,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -121,6 +121,10 @@ pub struct ChatSession {
     pub cwd: PathBuf,
     pub connection: Connection,
     pub items: Vec<ChatItem>,
+    pub fork: Option<ForkOrigin>,
+    pub draft: String,
+    pub(crate) draft_save: Option<Task<()>>,
+    pub sent_at: BTreeMap<usize, u64>,
     pub plan: Vec<(String, PlanStatus)>,
     pub permission: Option<PermissionPrompt>,
     pub commands: Vec<Command>,
@@ -174,13 +178,17 @@ impl ChatSession {
         seed: Option<String>,
         cx: &mut Context<Workspace>,
     ) -> Self {
-        let pump = pump(id, &entry, cwd.clone(), None, cx);
+        let pump = pump(id, &entry, cwd.clone(), None, None, false, cx);
         Self {
             id,
             entry,
             cwd,
             connection: Connection::Connecting,
             items: Vec::new(),
+            fork: None,
+            draft: String::new(),
+            draft_save: None,
+            sent_at: BTreeMap::new(),
             plan: Vec::new(),
             permission: None,
             commands: Vec::new(),
@@ -213,6 +221,10 @@ impl ChatSession {
             cwd,
             connection: Connection::Idle,
             items: record.items,
+            fork: record.fork,
+            draft: record.draft,
+            draft_save: None,
+            sent_at: record.sent_at,
             plan: Vec::new(),
             permission: None,
             commands: Vec::new(),
@@ -261,7 +273,17 @@ impl ChatSession {
                 .as_secs(),
             closed: self.closed,
             items: self.items.clone(),
+            fork: self.fork.clone(),
+            draft: self.draft.clone(),
+            sent_at: self.sent_at.clone(),
         }
+    }
+
+    pub fn fork_at(&self, id: u64, before: usize) -> Option<Self> {
+        let record = self.to_record().fork_at(before)?;
+        let mut chat = Self::restore(id, self.cwd.clone(), self.entry.clone(), record);
+        chat.record = None;
+        Some(chat)
     }
 
     /// The id this session is filed under, minted now if it has none.
@@ -292,7 +314,7 @@ impl ChatSession {
     /// before — opening a project must not put a `.cydonia/` in it, and an
     /// agent that merely cleared its throat has not started one.
     pub fn flush(&mut self) {
-        if self.unsaid() {
+        if self.unsaid() && self.fork.is_none() {
             return;
         }
         let store = fs::Project::new(&self.cwd);
@@ -310,6 +332,15 @@ impl ChatSession {
             &self.entry,
             self.cwd.clone(),
             self.agent_session.clone(),
+            self.fork.as_ref().map(|fork| {
+                let end = if fork.pending {
+                    fork.before.min(self.items.len())
+                } else {
+                    self.items.len()
+                };
+                acp::history(&self.items[..end])
+            }),
+            self.fork.as_ref().is_some_and(|fork| fork.pending),
             cx,
         );
         self.connection = Connection::Connecting;
@@ -402,8 +433,15 @@ impl ChatSession {
             at: SystemTime::now(),
             used: self.usage.map_or(0, |usage| usage.used),
         });
-        self.items.push(ChatItem::User(content));
         self.updated = SystemTime::now();
+        self.sent_at.insert(
+            self.items.len(),
+            self.updated
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+        );
+        self.items.push(ChatItem::User(content));
         self.streaming = true;
         // Before the answer, not just after it: what you said is not the
         // agent's to lose if the turn never finishes.
@@ -495,6 +533,11 @@ impl ChatSession {
             Event::Permission(request, reply) => self.open_permission(request, reply),
             Event::Stderr(line) => self.stderr(line),
             Event::TurnDone(result) => {
+                if result.is_ok()
+                    && let Some(fork) = &mut self.fork
+                {
+                    fork.pending = false;
+                }
                 self.finish_thinking();
                 self.streaming = false;
                 match result {
@@ -823,6 +866,8 @@ fn pump(
     entry: &settings::Agent,
     cwd: PathBuf,
     previous: Option<String>,
+    history: Option<Vec<cacp::client::HistoryEntry>>,
+    history_pending: bool,
     cx: &mut Context<Workspace>,
 ) -> Task<()> {
     let entry = entry.clone();
@@ -835,6 +880,8 @@ fn pump(
             &entry,
             Launch {
                 previous,
+                history,
+                history_pending,
                 ..Launch::new(cwd)
             },
             tx,
