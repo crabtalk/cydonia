@@ -34,6 +34,7 @@ use markdown::{
     BlockLayouts, Selection,
     selectable::{self, Pointer},
 };
+pub(crate) mod links;
 use std::{
     cell::{Cell, RefCell},
     collections::{HashMap, HashSet, hash_map::DefaultHasher},
@@ -206,10 +207,12 @@ fn prose(
     cx: &mut Context<Workspace>,
 ) -> AnyElement {
     let id = chat.id;
-    selectable::render(
+    let doc = markdown::parse(text);
+    let layouts = chat.transcript.layouts(ix);
+    let body = selectable::render(
         ("transcript-prose", ix),
-        &markdown::parse(text),
-        &chat.transcript.layouts(ix),
+        &doc,
+        &layouts,
         chat.transcript.selection(ix),
         chat.transcript.dragging,
         window,
@@ -217,7 +220,72 @@ fn prose(
         move |workspace, pointer, cx| {
             workspace.with_session(id, cx, |chat| chat.transcript.point(ix, pointer));
         },
-    )
+    );
+    let cwd = chat.cwd.clone();
+    div()
+        .capture_any_mouse_up(cx.listener(
+            move |workspace, event: &bezel::gpui::MouseUpEvent, window, cx| {
+                if event.button != bezel::gpui::MouseButton::Left {
+                    return;
+                }
+                let Some(cursor) = layouts.hit(event.position) else {
+                    return;
+                };
+                let Some(text) = doc
+                    .blocks
+                    .get(cursor.block)
+                    .and_then(|block| block.text_at(cursor.part))
+                else {
+                    return;
+                };
+                for span in &text.marks {
+                    let markdown::Mark::Link(href) = &span.mark else {
+                        continue;
+                    };
+                    let selection = Selection::new(
+                        markdown::Cursor {
+                            offset: span.range.start,
+                            ..cursor
+                        },
+                        markdown::Cursor {
+                            offset: span.range.end,
+                            ..cursor
+                        },
+                    );
+                    if !layouts
+                        .rects(selection)
+                        .iter()
+                        .any(|bounds| bounds.contains(&event.position))
+                    {
+                        continue;
+                    }
+                    let Some((path, line)) = links::resolve(&cwd, href) else {
+                        continue;
+                    };
+                    let clicked = workspace
+                        .session(id)
+                        .and_then(|chat| chat.transcript.selection(ix))
+                        .is_some_and(|selection| {
+                            selection.is_collapsed() && selection.head == cursor
+                        });
+                    workspace.with_session(id, cx, |chat| chat.transcript.point(ix, Pointer::Up));
+                    cx.stop_propagation();
+                    if clicked {
+                        window.dispatch_action(
+                            Box::new(links::OpenSessionFile {
+                                session: id,
+                                path,
+                                line,
+                            }),
+                            cx,
+                        );
+                    }
+                    return;
+                }
+            },
+        ))
+        .child(body)
+        .into_any_element()
 }
 
 /// The glyph for a tool's category — what the ACP `kind` is for.

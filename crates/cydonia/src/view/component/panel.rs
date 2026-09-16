@@ -667,6 +667,35 @@ impl Render for Panel {
 }
 
 impl Cydonia {
+    pub(crate) fn open_session_file(
+        &mut self,
+        link: &super::transcript::links::OpenSessionFile,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.showing(cx) != Some(Pane::Chat)
+            || self.workspace.read(cx).active_id() != Some(link.session)
+        {
+            return;
+        }
+        self.changes_open = true;
+        self.sync_changes(cx);
+        if let Some(panel) = self.changes.clone() {
+            panel.update(cx, |panel, cx| {
+                panel.restore_tabs(window, cx);
+                panel.open_file(link.path.clone(), cx);
+                if let Some(line) = link.line
+                    && let Some(tab) = panel.tabs.iter().find(|tab| Some(tab.id) == panel.active)
+                    && let Content::File(file) = &tab.content
+                {
+                    file.update(cx, |file, cx| file.go_to_line(line, cx));
+                }
+                panel.focus(window, cx);
+            });
+        }
+        cx.notify();
+    }
+
     pub(crate) fn show_files(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.showing(cx) == Some(Pane::Chat) {
             self.changes_open = true;

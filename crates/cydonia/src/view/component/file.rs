@@ -116,6 +116,7 @@ pub struct FileView {
     preview_dragging: bool,
     scroll: gpui::ScrollHandle,
     reveal: Rc<Cell<bool>>,
+    target_line: Rc<Cell<Option<usize>>>,
     /// What this file's name says it is, resolved once: the path a view is
     /// opened on does not change under it.
     pub(super) language: Option<crate::model::language::Language>,
@@ -193,6 +194,7 @@ impl FileView {
             preview_dragging: false,
             scroll: gpui::ScrollHandle::new(),
             reveal: Rc::new(Cell::new(false)),
+            target_line: Rc::new(Cell::new(None)),
             _watch: watch,
             _poll: poll,
             _recolour: Task::ready(()),
@@ -386,6 +388,12 @@ fn line_starts(text: &str) -> Vec<usize> {
 }
 
 impl FileView {
+    pub(super) fn go_to_line(&mut self, line: usize, cx: &mut Context<Self>) {
+        self.preview = false;
+        self.target_line.set(Some(line.max(1)));
+        cx.notify();
+    }
+
     fn source_view(&self, theme: &Theme, cx: &mut Context<Self>) -> gpui::AnyElement {
         let starts = line_starts(self.field.read(cx).content());
         let size = typography::file_size(cx);
@@ -393,6 +401,8 @@ impl FileView {
         let field = self.field.clone();
         let scroll = self.scroll.clone();
         let reveal = self.reveal.clone();
+        let target_line = self.target_line.clone();
+        let ready = self.ready;
         let font = gpui::font(theme.font_mono.clone());
         let color = theme.text_faint;
         div()
@@ -423,6 +433,20 @@ impl FileView {
                     |bounds, _, _| bounds,
                     move |_, bounds, window, cx| {
                         let field = field.read(cx);
+                        if ready
+                            && let Some(line) = target_line.get()
+                            && let Some(at) = starts
+                                .get(line.saturating_sub(1).min(starts.len().saturating_sub(1)))
+                            && let Some(row) = field.offset_bounds(*at)
+                        {
+                            let offset = scroll.offset();
+                            let y = (offset.y + scroll.bounds().top() - row.top())
+                                .clamp(-scroll.max_offset().y, px(0.));
+                            scroll.set_offset(gpui::point(offset.x, y));
+                            target_line.set(None);
+                            reveal.set(false);
+                            window.refresh();
+                        }
                         if reveal.replace(false)
                             && field.focus_handle(cx).is_focused(window)
                             && let Some(caret) = field.offset_bounds(field.cursor())

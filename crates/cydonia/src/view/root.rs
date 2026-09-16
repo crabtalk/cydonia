@@ -826,6 +826,7 @@ impl Render for Cydonia {
             .text_color(theme.text)
             .text_style(TextStyle::Body)
             .on_action(cx.listener(Self::toggle_changes))
+            .on_action(cx.listener(Self::open_session_file))
             .on_action(
                 cx.listener(|this, _: &OpenReview, window, cx| this.show_changes(window, cx)),
             )

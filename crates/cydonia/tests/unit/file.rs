@@ -336,3 +336,44 @@ fn markdown_preview_supports_drag_select_all_and_copy(cx: &mut gpui::TestAppCont
     visual.run_until_parked();
     view.read_with(&visual, |view, _| assert!(view.preview_selection.is_none()));
 }
+
+#[gpui::test]
+fn linked_line_is_revealed_after_loading_and_when_reusing_a_file(cx: &mut gpui::TestAppContext) {
+    cx.update(|cx| Theme::install(bezel::theme::Appearance::Light, cx));
+    let file = Temp::named(".md");
+    let source = (1..=100).map(|n| format!("line {n}\n")).collect::<String>();
+    std::fs::write(&file.0, &source).unwrap();
+    let window = cx.add_window(|_, cx| {
+        let mut view = FileView::new(file.0.clone(), cx);
+        view.go_to_line(60, cx);
+        view.receive(Ok(source), cx);
+        view
+    });
+    let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+    visual.simulate_resize(gpui::size(px(400.), px(300.)));
+    visual.run_until_parked();
+    for line in [60, 10] {
+        window
+            .update(&mut visual, |view, _, cx| view.go_to_line(line, cx))
+            .unwrap();
+        visual.run_until_parked();
+        visual.update(|window, _| window.refresh());
+        visual.run_until_parked();
+        window
+            .update(&mut visual, |view, _, cx| {
+                assert!(!view.preview);
+                assert_eq!(view.target_line.get(), None);
+                let starts = line_starts(view.field.read(cx).content());
+                let row = view.field.read(cx).offset_bounds(starts[line - 1]).unwrap();
+                assert!(row.top() >= view.scroll.bounds().top());
+                assert!(
+                    row.bottom() <= view.scroll.bounds().bottom(),
+                    "line {line}, row {row:?}, viewport {:?}, offset {:?}, max {:?}",
+                    view.scroll.bounds(),
+                    view.scroll.offset(),
+                    view.scroll.max_offset()
+                );
+            })
+            .unwrap();
+    }
+}
