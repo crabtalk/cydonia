@@ -950,11 +950,17 @@ impl Composer {
             return None;
         }
         let glyph = if streaming {
-            icons::multimedia::Square
+            div()
+                .size(px(root::composer_disc() / 3.))
+                .rounded(px(2.))
+                .bg(theme.on_solid)
+                .into_any_element()
         } else {
-            icons::arrows::ArrowUp
+            icons::icon(icons::arrows::ArrowUp)
+                .size(px(root::composer_disc() / 2.))
+                .text_color(theme.on_solid)
+                .into_any_element()
         };
-        let glyph_size = px(root::composer_disc() / 2.);
         let disc = div()
             .flex_none()
             .size(px(root::composer_disc()))
@@ -962,18 +968,10 @@ impl Composer {
             .flex()
             .items_center()
             .justify_center()
-            .bg(if streaming { theme.danger } else { theme.solid })
+            .bg(theme.solid)
             .cursor_pointer()
             .hover(|s| s.opacity(0.9))
-            .child(
-                icons::icon(glyph)
-                    .size(glyph_size)
-                    .text_color(if streaming {
-                        theme.on_accent
-                    } else {
-                        theme.on_solid
-                    }),
-            );
+            .child(glyph);
         Some(
             div()
                 .id("composer-send")
@@ -1081,6 +1079,11 @@ impl Composer {
         let picker = self.picker(&theme, cx);
         let tray = self.tray(&theme, cx);
         let radius = px(root::composer_height() / 2.);
+        let right_inset = if self.streaming || !self.is_empty(cx) {
+            root::COMPOSER_INSET
+        } else {
+            12.
+        };
 
         div()
             // Ahead of the field's own paste, which only knows text.
@@ -1116,15 +1119,11 @@ impl Composer {
                                     .rounded(radius)
                                     .py(px(root::COMPOSER_INSET))
                                     .pl(px(12.))
-                                    .pr(px(if self.streaming || !self.is_empty(cx) {
-                                        root::COMPOSER_INSET
-                                    } else {
-                                        12.
-                                    }))
+                                    .pr(px(right_inset))
                                     .flex()
                                     .flex_col()
                                     .gap(px(root::COMPOSER_INSET))
-                                    .children(self.activity_row(&theme, cx))
+                                    .children(self.activity_row(&theme, right_inset, cx))
                                     .children(tray)
                                     .child(
                                         div()

@@ -361,6 +361,9 @@ impl ChatSession {
     /// Point the session at an agent again, replaying the conversation the
     /// agent still holds when it supports `session/load`.
     pub fn resume(&mut self, cx: &mut Context<Workspace>) {
+        if self.closed {
+            return;
+        }
         self._pump = pump(
             self.id,
             &self.entry,
@@ -444,6 +447,9 @@ impl ChatSession {
     /// Send now, or queue it for whenever there is an agent to send it to —
     /// a turn in flight, or a connection still being made.
     pub fn send(&mut self, content: String) {
+        if self.closed {
+            return;
+        }
         if self.streaming || !self.live() {
             self.queue.push_back(content);
         } else {
@@ -453,7 +459,7 @@ impl ChatSession {
 
     /// Send the next queued prompt, if there is one and nothing is in flight.
     pub fn drain(&mut self) {
-        if self.streaming {
+        if self.closed || self.streaming {
             return;
         }
         if let Some(next) = self.queue.pop_front() {
@@ -610,8 +616,23 @@ impl ChatSession {
     }
 
     fn apply(&mut self, event: Event) {
+        if self.closed {
+            return;
+        }
         self.last_activity = Instant::now();
-        self.updated = SystemTime::now();
+        if matches!(
+            &event,
+            Event::Update(
+                SessionUpdate::AgentMessageChunk(_)
+                    | SessionUpdate::AgentThoughtChunk(_)
+                    | SessionUpdate::ToolCall(_)
+                    | SessionUpdate::ToolCallUpdate(_)
+                    | SessionUpdate::Plan(_)
+            ) | Event::Permission(..)
+                | Event::TurnDone(_)
+        ) {
+            self.updated = SystemTime::now();
+        }
         match event {
             Event::Update(update) => self.apply_update(update),
             Event::Permission(request, reply) => self.open_permission(request, reply),
@@ -958,10 +979,12 @@ fn pump(id: u64, entry: &settings::Agent, launch: Launch, cx: &mut Context<Works
     // and a receiver the launch owned would be dropped with the error.
     let (tx, mut events) = acp::channel();
     let echo = tx.clone();
-    let conn = acp::runtime().spawn(async move { Session::spawn(&entry, launch, tx).await });
+    let mut conn = PendingConnection(
+        acp::runtime().spawn(async move { Session::spawn(&entry, launch, tx).await }),
+    );
 
     cx.spawn(async move |this, cx| {
-        let opened = conn
+        let opened = (&mut conn.0)
             .await
             .unwrap_or_else(|e| Err(anyhow!("the connection task panicked: {e}")));
         let session = match opened {
@@ -1000,6 +1023,9 @@ fn pump(id: u64, entry: &settings::Agent, launch: Launch, cx: &mut Context<Works
         if this
             .update(cx, |workspace, cx| {
                 workspace.with_session(id, cx, |chat| {
+                    if chat.closed {
+                        return;
+                    }
                     chat.agent_session = Some(session.session_id.to_string());
                     // What this agent lets you switch, read off `session/new`
                     // before the session is boxed away. Every change after
@@ -1037,3 +1063,16 @@ fn pump(id: u64, entry: &settings::Agent, launch: Launch, cx: &mut Context<Works
         }
     })
 }
+
+/// Dropping a Tokio join handle alone detaches the startup task.
+struct PendingConnection(tokio::task::JoinHandle<anyhow::Result<Session>>);
+
+impl Drop for PendingConnection {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+#[cfg(test)]
+#[path = "../../tests/unit/session.rs"]
+mod tests;

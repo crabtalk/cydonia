@@ -241,6 +241,7 @@ fn tool_icon(kind: ToolKind) -> &'static [u8] {
 pub fn render(
     chat: &ChatSession,
     pane_width: f32,
+    queued: Option<AnyElement>,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) -> AnyElement {
@@ -263,15 +264,15 @@ pub fn render(
         zones.push(working(chat, turn.range.start, cx));
     }
 
+    let footer_height = chat
+        .transcript
+        .footer_height
+        .get()
+        .max(px(root::composer_height()))
+        + px(root::COMPOSER_BOTTOM);
     let transcript = div()
         .flex_1()
         .min_h_0()
-        .mb(chat
-            .transcript
-            .footer_height
-            .get()
-            .max(px(root::composer_height()))
-            + px(root::COMPOSER_BOTTOM))
         .relative()
         .flex()
         .justify_center()
@@ -291,21 +292,25 @@ pub fn render(
                         .track_scroll(&chat.transcript.scroll)
                         .px(px(24.))
                         .pt(px(PAD))
-                        .pb(px(PAD))
+                        .pb(px(PAD) + footer_height)
                         .flex()
                         .flex_col()
-                        .children(zones),
+                        .children(zones)
+                        .children(queued),
                 )
                 .child(scroll::follow(
                     &chat.transcript.scroll,
                     &chat.transcript.follow,
                 )),
         )
-        .child(scrollbars::Overlay::new(
-            format!("transcript-bar-{id}"),
-            &chat.transcript.scroll,
-            bezel::gpui::Axis::Vertical,
-        ))
+        .child(
+            scrollbars::Overlay::new(
+                format!("transcript-bar-{id}"),
+                &chat.transcript.scroll,
+                bezel::gpui::Axis::Vertical,
+            )
+            .end_inset(footer_height),
+        )
         .child(rail(chat, &turns, px(rail_room(pane_width))))
         .into_any_element();
     div()

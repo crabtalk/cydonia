@@ -1,5 +1,4 @@
-//! The detail column: whichever pane is showing, and everything the turn in
-//! flight stacks under it — plan, permission, queue, composer.
+//! The detail column and its floating plan, permission, and composer controls.
 
 use crate::{
     model::session::{ChatSession, Choice},
@@ -448,7 +447,7 @@ impl Cydonia {
             .child(content)
             // After the content, so it draws over it.
             .child(self.pane_header(window, cx))
-            // The transcript reserves the measured footer height above this overlay.
+            // Scroll content beneath the glass; bottom padding clears the last message.
             //
             // A chat with nowhere to send stands the reason there in its place
             // — the slot is what the eye goes to for what happens next, and a
@@ -469,7 +468,6 @@ impl Cydonia {
                             .gap(px(8.))
                             .children(self.plan(cx))
                             .children(self.permission(cx))
-                            .children(self.queue(cx))
                             .child(self.composer.clone()),
                         footer_height.clone(),
                     )),
@@ -765,7 +763,7 @@ impl Cydonia {
         };
         // Nothing has been said yet, so what the session has to show for
         // itself is the directory the agent was started in.
-        if chat.unsaid() && chat.fork.is_none() {
+        if chat.unsaid() && chat.fork.is_none() && chat.queue.is_empty() {
             let agent = chat.entry.name.clone();
             let cwd = workspace
                 .active_project()
@@ -797,9 +795,10 @@ impl Cydonia {
             } else {
                 0.
             };
+        let queued = self.queue(cx).map(IntoElement::into_any_element);
         self.workspace
             .update(cx, |workspace, cx| match workspace.session(id) {
-                Some(chat) => transcript::render(chat, pane_width, window, cx),
+                Some(chat) => transcript::render(chat, pane_width, queued, window, cx),
                 None => div().flex_1().into_any_element(),
             })
     }
@@ -1084,79 +1083,86 @@ impl Cydonia {
             return None;
         }
         let id = chat.id;
-        Some(div().flex().flex_col().items_end().gap(px(6.)).children(
-            chat.queue.iter().enumerate().map(|(ix, text)| {
-                let edit_text = text.clone();
-                let cancel_text = text.clone();
-                div()
-                    .max_w(px(440.))
-                    .flex()
-                    .flex_col()
-                    .items_end()
-                    .gap(px(4.))
-                    .child(
-                        div()
-                            .min_w_0()
-                            .px(px(14.))
-                            .py(px(9.))
-                            .rounded(px(Theme::surface_radius()))
-                            .bg(theme.surface_raised.opacity(0.6))
-                            .text_style(TextStyle::Body)
-                            .text_color(theme.text_muted)
-                            .child(text.clone()),
-                    )
-                    .child(
-                        div()
-                            .flex_none()
-                            .flex()
-                            .gap(px(2.))
-                            .text_style(TextStyle::Caption)
-                            .text_color(theme.text_muted)
-                            .child(
-                                theme
-                                    .ghost(("edit-queued", ix))
-                                    .size(px(24.))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .child(
-                                        icons::icon(icons::text::Pencil)
-                                            .size(px(12.))
-                                            .text_color(theme.text_muted),
-                                    )
-                                    .tooltip(|window, cx| {
-                                        Tooltip::text("Edit queued message", window, cx)
-                                    })
-                                    .on_click(cx.listener(move |this, _, window, cx| {
-                                        if let Some(text) = this.take_queued(id, ix, &edit_text, cx)
-                                        {
-                                            this.composer.update(cx, |composer, cx| {
-                                                composer.restore_queued(text, window, cx);
-                                            });
-                                        }
-                                    })),
-                            )
-                            .child(
-                                theme
-                                    .ghost(("cancel-queued", ix))
-                                    .size(px(24.))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .child(
-                                        icons::icon(icons::notifications::X)
-                                            .size(px(12.))
-                                            .text_color(theme.text_muted),
-                                    )
-                                    .tooltip(|window, cx| {
-                                        Tooltip::text("Cancel queued message", window, cx)
-                                    })
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.take_queued(id, ix, &cancel_text, cx);
-                                    })),
-                            ),
-                    )
-            }),
-        ))
+        Some(
+            div()
+                .flex_none()
+                .flex()
+                .flex_col()
+                .items_end()
+                .gap(px(6.))
+                .children(chat.queue.iter().enumerate().map(|(ix, text)| {
+                    let edit_text = text.clone();
+                    let cancel_text = text.clone();
+                    div()
+                        .max_w(px(440.))
+                        .flex()
+                        .flex_col()
+                        .items_end()
+                        .gap(px(4.))
+                        .child(
+                            div()
+                                .min_w_0()
+                                .px(px(14.))
+                                .py(px(9.))
+                                .rounded(px(Theme::surface_radius()))
+                                .bg(theme.surface_raised.opacity(0.6))
+                                .text_style(TextStyle::Body)
+                                .text_color(theme.text_muted)
+                                .child(text.clone()),
+                        )
+                        .child(
+                            div()
+                                .flex_none()
+                                .flex()
+                                .gap(px(2.))
+                                .text_style(TextStyle::Caption)
+                                .text_color(theme.text_muted)
+                                .child(
+                                    theme
+                                        .ghost(("edit-queued", ix))
+                                        .size(px(24.))
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .child(
+                                            icons::icon(icons::text::Pencil)
+                                                .size(px(12.))
+                                                .text_color(theme.text_muted),
+                                        )
+                                        .tooltip(|window, cx| {
+                                            Tooltip::text("Edit queued message", window, cx)
+                                        })
+                                        .on_click(cx.listener(move |this, _, window, cx| {
+                                            if let Some(text) =
+                                                this.take_queued(id, ix, &edit_text, cx)
+                                            {
+                                                this.composer.update(cx, |composer, cx| {
+                                                    composer.restore_queued(text, window, cx);
+                                                });
+                                            }
+                                        })),
+                                )
+                                .child(
+                                    theme
+                                        .ghost(("cancel-queued", ix))
+                                        .size(px(24.))
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .child(
+                                            icons::icon(icons::notifications::X)
+                                                .size(px(12.))
+                                                .text_color(theme.text_muted),
+                                        )
+                                        .tooltip(|window, cx| {
+                                            Tooltip::text("Cancel queued message", window, cx)
+                                        })
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.take_queued(id, ix, &cancel_text, cx);
+                                        })),
+                                ),
+                        )
+                })),
+        )
     }
 }

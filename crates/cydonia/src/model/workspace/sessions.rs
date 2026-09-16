@@ -194,6 +194,8 @@ impl Workspace {
             cx.notify();
             return;
         }
+        // Sending explicitly brings an archived conversation back into use.
+        chat.closed = false;
         if chat.idle() && chat.resumable() {
             chat.resume(cx);
         }
@@ -243,7 +245,10 @@ impl Workspace {
     pub fn archive_session(&mut self, id: u64, archived: bool, cx: &mut Context<Self>) {
         self.with_session(id, cx, |chat| match archived {
             true => chat.close(),
-            false => chat.closed = false,
+            false => {
+                chat.closed = false;
+                chat.flush();
+            }
         });
     }
 

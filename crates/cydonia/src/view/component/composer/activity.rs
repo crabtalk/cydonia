@@ -116,7 +116,12 @@ impl Composer {
         cx.notify();
     }
 
-    pub(super) fn activity_row(&self, theme: &Theme, cx: &mut Context<Self>) -> Option<AnyElement> {
+    pub(super) fn activity_row(
+        &self,
+        theme: &Theme,
+        right_inset: f32,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         let activity = self.activity.as_ref()?;
         let quiet = activity.last_event.elapsed();
         let timing = elapsed(activity.since.elapsed());
@@ -127,9 +132,14 @@ impl Composer {
                 .flex()
                 .flex_col()
                 .min_w_0()
+                // Extend the divider through the capsule's padding, keeping content inset.
+                .ml(px(-12.))
+                .mr(px(-right_inset))
+                .pl(px(12.))
+                .pr(px(right_inset))
                 .pb(px(6.))
                 .border_b_1()
-                .border_color(theme.border)
+                .border_color(theme.border.opacity(0.7))
                 .child(
                     div()
                         .id("composer-activity")
