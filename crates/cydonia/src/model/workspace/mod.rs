@@ -303,9 +303,8 @@ impl Workspace {
         cx.notify();
     }
 
-    /// The same window's other choice.
-    /// The switch, which from the first press is the answer in both
-    /// appearances rather than the one bezel would have resolved.
+    /// The same window's other choice. Pressed, the window is opaque in both
+    /// appearances; released, it is frosted in dark alone — see [`vibrancy`].
     pub fn set_opaque(&mut self, opaque: bool, cx: &mut Context<Self>) {
         self.opaque = Some(opaque);
         apply_transparency(self.opaque, cx);
@@ -611,14 +610,15 @@ pub fn apply_tint(tint: Tint, cx: &mut App) {
 
 /// What the switch asks of the brand.
 ///
-/// Nothing said is not the same as "no" — it is the answer bezel resolves per
-/// appearance, opaque in light and frosted in dark. Once a person presses the
-/// switch it is theirs in both, which is what the `Some` is for.
+/// Never [`Vibrancy::On`]. Light's glass tokens sit near opaque so that text
+/// does not ghost over whatever is behind the window, so a frosted light window
+/// is one bezel has no palette for — see [`Vibrancy::Auto`], which is frost in
+/// dark and opaque in light. Wanting transparency asks for that; only reducing
+/// it is absolute, held in both appearances.
 pub fn vibrancy(opaque: Option<bool>) -> Vibrancy {
     match opaque {
-        None => Vibrancy::Auto,
         Some(true) => Vibrancy::Off,
-        Some(false) => Vibrancy::On,
+        None | Some(false) => Vibrancy::Auto,
     }
 }
 

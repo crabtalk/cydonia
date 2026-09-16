@@ -292,21 +292,21 @@ impl SettingsWindow {
     /// The app's own reduce-transparency switch, so the vibrancy can go without
     /// turning the system setting on for every other app.
     ///
-    /// Shown where the window actually is, which for the person who has never
-    /// pressed it is the appearance's own answer: on in light, off in dark.
-    /// The first press makes it theirs in both — see
-    /// [`crate::model::workspace::vibrancy`].
+    /// A question dark alone can answer: light has no frosted palette to offer,
+    /// so the switch is held on and locked there rather than promising a window
+    /// it would paint unreadable — see [`crate::model::workspace::vibrancy`].
     pub(super) fn transparency_row(&self, cx: &mut Context<Self>) -> AnyElement {
         let light = matches!(Theme::of(cx).appearance, Appearance::Light);
-        let on = self.workspace.read(cx).opaque.unwrap_or(light);
+        let on = light || self.workspace.read(cx).opaque.unwrap_or(false);
+        let blurb = if light {
+            "Light is always opaque. Switch to dark for translucent surfaces."
+        } else {
+            "Replace translucent surfaces with opaque backgrounds."
+        };
         self.switch_row(
-            Switch::new(
-                "reduce-transparency",
-                "Reduce transparency",
-                "Replace translucent surfaces with opaque backgrounds.",
-                on,
-            )
-            .first(true),
+            Switch::new("reduce-transparency", "Reduce transparency", blurb, on)
+                .first(true)
+                .locked(light),
             cx,
             move |this, cx| {
                 this.workspace

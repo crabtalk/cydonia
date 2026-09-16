@@ -11,10 +11,16 @@ fn an_unpressed_switch_leaves_the_answer_to_the_appearance() {
     assert_eq!(vibrancy(None), Vibrancy::Auto);
 }
 
-/// From the first press it is theirs, in both appearances — including the
-/// light one it would otherwise have held opaque.
+/// Pressed, the window is opaque in both appearances.
 #[test]
-fn a_pressed_switch_is_the_answer_in_both_appearances() {
+fn a_pressed_switch_holds_the_window_opaque_in_both_appearances() {
     assert_eq!(vibrancy(Some(true)), Vibrancy::Off);
-    assert_eq!(vibrancy(Some(false)), Vibrancy::On);
+}
+
+/// Released, it asks for frost where there is a palette for one, which is dark
+/// alone. Never [`Vibrancy::On`]: light frosted is the combination that paints
+/// text over the desktop.
+#[test]
+fn a_released_switch_never_frosts_light() {
+    assert_eq!(vibrancy(Some(false)), Vibrancy::Auto);
 }
