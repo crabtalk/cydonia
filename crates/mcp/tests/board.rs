@@ -331,3 +331,64 @@ fn a_read_only_server_offers_no_way_to_write() {
         None,
     ));
 }
+
+#[test]
+fn agents_create_boards_with_normalized_unique_keys() {
+    let scratch = Scratch::new("create-board");
+    let server = scratch.server();
+    let added = said(server.call(
+        "board_add",
+        json!({
+            "project": scratch.path(), "name": " Roadmap ", "key": "road"
+        }),
+        None,
+    ));
+    assert!(added.starts_with("#1 Roadmap (ROAD)"));
+    let boards = scratch.store().boards();
+    assert_eq!(boards.len(), 1);
+    assert_eq!(boards[0].name, "Roadmap");
+    assert_eq!(boards[0].key, "ROAD");
+    assert!(
+        refused(server.call(
+            "board_add",
+            json!({
+                "project": scratch.path(), "name": "Other", "key": "Road"
+            }),
+            None
+        ))
+        .contains("another board")
+    );
+    for (name, key) in [(" ", "NEW"), ("Other", "---")] {
+        refused(server.call(
+            "board_add",
+            json!({
+                "project": scratch.path(), "name": name, "key": key
+            }),
+            None,
+        ));
+    }
+    assert_eq!(scratch.store().boards().len(), 1);
+}
+
+#[test]
+fn board_creation_respects_bound_projects_and_read_only_mode() {
+    use std::sync::{Arc, atomic::AtomicBool};
+    let scratch = Scratch::new("create-bound-board");
+    let server = scratch.server();
+    said(server.call(
+        "board_add",
+        json!({"name": "Tasks", "key": "TASK"}),
+        Some(scratch.path()),
+    ));
+    assert_eq!(scratch.store().boards()[0].key, "TASK");
+    let server = scratch.server().writable(Arc::new(AtomicBool::new(false)));
+    assert!(
+        refused(server.call(
+            "board_add",
+            json!({"name": "Other", "key": "NEW"}),
+            Some(scratch.path())
+        ))
+        .contains("read only")
+    );
+    assert_eq!(scratch.store().boards().len(), 1);
+}

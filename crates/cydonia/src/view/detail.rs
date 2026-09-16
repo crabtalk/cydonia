@@ -1,5 +1,4 @@
-//! The detail column: whichever pane is showing, and everything the turn in
-//! flight stacks under it — plan, permission, queue, composer.
+//! The detail column and its floating plan, permission, and composer controls.
 
 use crate::{
     model::session::{ChatSession, Choice},
@@ -20,6 +19,7 @@ use bezel::{
     ui::{
         icons::{self, Icon},
         surface,
+        tooltip::Tooltip,
         widgets::{ButtonStyle, Buttons, Content, Controls, Status},
     },
 };
@@ -373,6 +373,7 @@ impl Cydonia {
         );
         let commands = chat.map(|chat| chat.commands.clone()).unwrap_or_default();
         let streaming = chat.is_some_and(|chat| chat.streaming);
+        let activity = chat.and_then(composer::Activity::of);
         let current = chat
             .map(|chat| chat.entry.name.clone())
             .and_then(|name| agents.iter().position(|agent| agent.name == name));
@@ -388,6 +389,7 @@ impl Cydonia {
             composer.set_placeholder(&placeholder, cx);
             composer.set_commands(&commands, cx);
             composer.set_streaming(streaming, cx);
+            composer.set_activity(activity, cx);
             composer.set_agents(&agents, current, cx);
             composer.set_switches(&switches, cx);
             composer.set_usage(usage, cx);
@@ -445,8 +447,7 @@ impl Cydonia {
             .child(content)
             // After the content, so it draws over it.
             .child(self.pane_header(window, cx))
-            // Out of flow so the transcript runs under it: the composer's glass
-            // has something to bend only where the messages reach its edge.
+            // Scroll content beneath the glass; bottom padding clears the last message.
             //
             // A chat with nowhere to send stands the reason there in its place
             // — the slot is what the eye goes to for what happens next, and a
@@ -467,7 +468,6 @@ impl Cydonia {
                             .gap(px(8.))
                             .children(self.plan(cx))
                             .children(self.permission(cx))
-                            .children(self.queue(cx))
                             .child(self.composer.clone()),
                         footer_height.clone(),
                     )),
@@ -589,12 +589,11 @@ fn footer(
                 .child(
                     bezel::gpui::canvas(
                         move |bounds, window, _| {
-                            if let Some(height) = &height {
-                                if (height.replace(bounds.size.height) - bounds.size.height).abs()
+                            if let Some(height) = &height
+                                && (height.replace(bounds.size.height) - bounds.size.height).abs()
                                     > px(0.5)
-                                {
-                                    window.refresh();
-                                }
+                            {
+                                window.refresh();
                             }
                         },
                         |_, _, _, _| {},
@@ -764,7 +763,7 @@ impl Cydonia {
         };
         // Nothing has been said yet, so what the session has to show for
         // itself is the directory the agent was started in.
-        if chat.unsaid() && chat.fork.is_none() {
+        if chat.unsaid() && chat.fork.is_none() && chat.queue.is_empty() {
             let agent = chat.entry.name.clone();
             let cwd = workspace
                 .active_project()
@@ -796,9 +795,17 @@ impl Cydonia {
             } else {
                 0.
             };
+        let root = cx.entity().downgrade();
+        let queued = move |window: &mut Window, cx: &mut bezel::gpui::App| {
+            root.update(cx, |root, cx| {
+                root.queue(window, cx).map(IntoElement::into_any_element)
+            })
+            .ok()
+            .flatten()
+        };
         self.workspace
             .update(cx, |workspace, cx| match workspace.session(id) {
-                Some(chat) => transcript::render(chat, pane_width, window, cx),
+                Some(chat) => transcript::render(chat, pane_width, queued, window, cx),
                 None => div().flex_1().into_any_element(),
             })
     }
@@ -1054,62 +1061,149 @@ impl Cydonia {
         cx.notify();
     }
 
-    /// Prompts waiting for the in-flight turn — a steer, drawn as what it is:
-    /// the message you have already written, not yet sent. The same bubble the
-    /// transcript gives a sent one, held back to the muted tone, and an ✕ to
-    /// take it back while it is still yours to take back.
-    fn queue(&self, cx: &Context<Self>) -> Option<impl IntoElement + use<>> {
+    fn take_queued(
+        &mut self,
+        id: u64,
+        ix: usize,
+        expected: &str,
+        cx: &mut Context<Self>,
+    ) -> Option<String> {
+        let mut text = None;
+        self.workspace.update(cx, |workspace, cx| {
+            if workspace.active_id() != Some(id) {
+                return;
+            }
+            workspace.with_session(id, cx, |chat| {
+                if chat.queue.get(ix).is_some_and(|queued| queued == expected) {
+                    text = chat.queue.remove(ix);
+                }
+            });
+        });
+        text
+    }
+
+    /// Prompts waiting for the current turn, with edit and cancel actions.
+    fn queue(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<impl IntoElement + use<>> {
         let theme = Theme::of(cx).clone();
         let chat = self.workspace.read(cx).active_session()?;
-        if chat.queue.is_empty() {
+        let id = chat.id;
+        let cwd = chat.cwd.clone();
+        let queue = chat.queue.clone();
+        self.queued_galleries
+            .retain(|(session, ix, text), _| *session == id && queue.get(*ix) == Some(text));
+        if queue.is_empty() {
             return None;
         }
-        let id = chat.id;
-        Some(div().flex().flex_col().items_end().gap(px(6.)).children(
-            chat.queue.iter().enumerate().map(|(ix, text)| {
-                // An svg paints in its own `text_color` and inherits none,
-                // so the ✕ takes the bubble's group to light with it.
-                let group = SharedString::from(format!("steer-{ix}"));
-                div()
-                    .group(group.clone())
-                    .max_w(px(440.))
-                    .px(px(14.))
-                    .py(px(9.))
-                    .rounded(px(Theme::surface_radius()))
-                    .bg(theme.surface_raised.opacity(0.6))
-                    .flex()
-                    .flex_row()
-                    .items_start()
-                    .gap(px(10.))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .text_style(TextStyle::Body)
-                            .text_color(theme.text_muted)
-                            .child(text.clone()),
-                    )
-                    .child(
-                        div()
-                            .id(("unqueue", ix))
-                            .flex_none()
-                            // Onto the first line's baseline, so a steer
-                            // that wraps keeps its ✕ at the top.
-                            .mt(px(4.))
-                            .cursor_pointer()
-                            .child(
-                                icons::icon(icons::notifications::X)
-                                    .size(px(12.))
-                                    .text_color(theme.text_faint)
-                                    .group_hover(group, |el| el.text_color(theme.text)),
-                            )
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.workspace.update(cx, |workspace, cx| {
-                                    workspace.with_session(id, cx, |chat| chat.unqueue(ix));
-                                });
-                            })),
-                    )
-            }),
-        ))
+        Some(
+            div()
+                .flex_none()
+                .flex()
+                .flex_col()
+                .items_end()
+                .gap(px(6.))
+                .children(queue.iter().enumerate().map(|(ix, text)| {
+                    let edit_text = text.clone();
+                    let cancel_text = text.clone();
+                    let (doc, images) = transcript::gallery::document(text);
+                    let gallery = (!images.is_empty()).then(|| {
+                        self.queued_galleries
+                            .entry((id, ix, text.clone()))
+                            .or_insert_with(|| {
+                                cx.new(|cx| transcript::gallery::Gallery::new(images, &cwd, cx))
+                            })
+                            .clone()
+                    });
+                    div()
+                        .max_w(px(440.))
+                        .when(gallery.is_some(), |row| row.w(px(440.)).max_w_full())
+                        .flex()
+                        .flex_col()
+                        .items_end()
+                        .gap(px(4.))
+                        .child(
+                            div()
+                                .min_w_0()
+                                .when(gallery.is_some(), |bubble| bubble.w_full())
+                                .px(px(14.))
+                                .py(px(9.))
+                                .rounded(px(Theme::surface_radius()))
+                                .bg(theme.surface_raised.opacity(0.6))
+                                .text_style(TextStyle::Body)
+                                .text_color(theme.text_muted)
+                                .flex()
+                                .flex_col()
+                                .gap(px(8.))
+                                .when(!doc.blocks.is_empty(), |bubble| {
+                                    bubble.child(markdown::render(
+                                        &doc,
+                                        Default::default(),
+                                        window,
+                                        cx,
+                                    ))
+                                })
+                                .children(gallery),
+                        )
+                        .child(
+                            div()
+                                .flex_none()
+                                .flex()
+                                .gap(px(2.))
+                                .text_style(TextStyle::Caption)
+                                .text_color(theme.text_muted)
+                                .child(
+                                    theme
+                                        .ghost(("edit-queued", ix))
+                                        .size(px(24.))
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .child(
+                                            icons::icon(icons::text::Pencil)
+                                                .size(px(12.))
+                                                .text_color(theme.text_muted),
+                                        )
+                                        .tooltip(|window, cx| {
+                                            Tooltip::text("Edit queued message", window, cx)
+                                        })
+                                        .on_click(cx.listener(move |this, _, window, cx| {
+                                            if let Some(text) =
+                                                this.take_queued(id, ix, &edit_text, cx)
+                                            {
+                                                this.composer.update(cx, |composer, cx| {
+                                                    composer.restore_queued(text, window, cx);
+                                                });
+                                            }
+                                        })),
+                                )
+                                .child(
+                                    theme
+                                        .ghost(("cancel-queued", ix))
+                                        .size(px(24.))
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .child(
+                                            icons::icon(icons::notifications::X)
+                                                .size(px(12.))
+                                                .text_color(theme.text_muted),
+                                        )
+                                        .tooltip(|window, cx| {
+                                            Tooltip::text("Cancel queued message", window, cx)
+                                        })
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.take_queued(id, ix, &cancel_text, cx);
+                                        })),
+                                ),
+                        )
+                })),
+        )
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/queued_images.rs"]
+mod queued_image_tests;

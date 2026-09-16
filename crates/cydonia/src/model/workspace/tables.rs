@@ -61,7 +61,7 @@ impl Workspace {
         open.reload_page();
         let id = open.tables[ix].key.clone();
         self.active = Some(project);
-        self.remember(project, state::Kind::Table, id);
+        self.remember(project, state::Kind::Table, id, cx);
         cx.notify();
     }
 
@@ -210,6 +210,7 @@ impl Workspace {
         self.with_store(key, cx, |data, key| {
             let _ = data.archive(key, archived);
         });
+        self.prune_archived(cx);
     }
 
     /// Run `f` against whichever store holds `key`, then re-read what it did.

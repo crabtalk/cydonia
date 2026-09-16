@@ -60,7 +60,23 @@ const NAME_NOW: Arg = Arg {
     about: "What the column should be called now.",
 };
 
-pub static TOOLS: [Tool; 9] = [
+const BOARD_NAME: Arg = Arg {
+    name: "name",
+    about: "What the new board is called.",
+};
+const KEY: Arg = Arg {
+    name: "key",
+    about: "A unique board key for card handles, such as ROAD. Normalized to uppercase letters and digits.",
+};
+
+pub static TOOLS: [Tool; 10] = [
+    Tool {
+        name: "board_add",
+        description: "Create a board with a name and unique key. Returns its id, project number, key, and columns. Use board_add_column to add columns.",
+        schema: |bound| fields(bound, &[PROJECT, BOARD_NAME, KEY]),
+        writes: true,
+        call: add,
+    },
     Tool {
         name: "board_list",
         description: "List the project's boards, with how much is on each.",
@@ -127,6 +143,25 @@ pub static TOOLS: [Tool; 9] = [
 ];
 
 // ── the tools ────────────────────────────────────────────────────
+
+fn add(args: Args<'_>) -> Outcome {
+    let project = store(&args)?;
+    let name = args.text(BOARD_NAME)?.trim();
+    if name.is_empty() {
+        return Err(Trouble::Refused("A board needs a name.".into()));
+    }
+    let key = artifact::board::key::normalize(args.text(KEY)?)
+        .ok_or_else(|| Trouble::Refused("A key needs at least one letter or digit.".into()))?;
+    if project.boards().iter().any(|board| board.key == key) {
+        return Err(Trouble::Refused(format!(
+            "{key} is another board's key here."
+        )));
+    }
+    let board = project
+        .create_board(name, &key)
+        .ok_or_else(|| Trouble::Refused("The board could not be written.".into()))?;
+    Ok(Answer::said(outline(&board)).with(shape(&board)))
+}
 
 fn list(args: Args<'_>) -> Outcome {
     let project = &store(&args)?;

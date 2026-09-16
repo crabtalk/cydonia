@@ -67,9 +67,8 @@ bundle:
 	@# Gatekeeper refuses a bundle nothing has signed. The hardened runtime and
 	@# the timestamp are what notarization will not proceed without; ad-hoc keeps
 	@# the first and drops the second rather than failing, so both stay here
-	@# unconditionally. No entitlements: agents are spawned, not loaded, and
-	@# nothing here is sandboxed.
-	codesign --force --options runtime --timestamp --sign "$(SIGN)" $(APP)
+	@# unconditionally. Wasmtime needs executable memory for grammar modules.
+	codesign --force --options runtime --entitlements bundle/cydonia.entitlements --timestamp --sign "$(SIGN)" $(APP)
 	@echo "built $(APP) $(VERSION)"
 
 dmg: bundle

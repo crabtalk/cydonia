@@ -513,6 +513,16 @@ impl Render for TerminalPanel {
             .flex()
             .flex_col()
             .key_context("BottomTerminalPanel")
+            .on_action(
+                cx.listener(|this, _: &super::panel::NewTerminal, window, cx| {
+                    this.add(window, cx);
+                }),
+            )
+            .on_action(
+                cx.listener(|this, _: &crate::view::menubar::CloseWindow, window, cx| {
+                    this.close(this.active, window, cx);
+                }),
+            )
             .on_action(cx.listener(|this, _: &super::panel::CloseTab, window, cx| {
                 this.close(this.active, window, cx);
             }))

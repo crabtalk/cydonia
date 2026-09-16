@@ -4,9 +4,15 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 struct Temp(PathBuf);
 impl Temp {
     fn new() -> Self {
+        Self::named("")
+    }
+
+    /// A file whose name ends in `suffix` — `.rs` where the test is about the
+    /// language its name names.
+    fn named(suffix: &str) -> Self {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
         let path = std::env::temp_dir().join(format!(
-            "cydonia-file-{}-{}",
+            "cydonia-file-{}-{}{suffix}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
@@ -114,4 +120,375 @@ fn source_uses_full_viewport_and_scrolls_long_files(cx: &mut gpui::TestAppContex
             assert!(view.scroll.max_offset().y > px(1000.));
         })
         .unwrap();
+}
+
+/// Loading a file colours it, and typing recolours it — both through the one
+/// `Changed` the field emits either way.
+#[gpui::test]
+fn source_files_are_coloured_and_recoloured(cx: &mut gpui::TestAppContext) {
+    crate::model::language::paintable();
+    syntax_std::install();
+    let file = Temp::named(".rs");
+    std::fs::write(&file.0, "fn main() { let x = 1; }\n").unwrap();
+    let view = cx.new(|cx| FileView::new(file.0.clone(), cx));
+    settle(cx);
+    let spans = view.read_with(cx, |view, cx| view.field.read(cx).spans().to_vec());
+    assert!(!spans.is_empty(), "a .rs file is coloured");
+    let source = view.read_with(cx, |view, cx| view.field.read(cx).content().clone());
+    assert!(
+        spans.iter().all(|(range, _)| range.end <= source.len()),
+        "no span reaches past the text"
+    );
+
+    view.update(cx, |view, cx| {
+        view.field.update(cx, |field, cx| {
+            field.set_content("// nothing but a comment\n", cx)
+        })
+    });
+    settle(cx);
+    let recoloured = view.read_with(cx, |view, cx| view.field.read(cx).spans().to_vec());
+    assert!(!recoloured.is_empty());
+    assert!(
+        recoloured
+            .iter()
+            .all(|(_, kind)| *kind == bezel::theme::HighlightKind::Comment),
+        "the new text is what was parsed, not the old"
+    );
+}
+
+/// A name that names no language it can highlight leaves the text plain rather
+/// than guessing at one.
+#[gpui::test]
+fn files_of_no_known_language_are_left_plain(cx: &mut gpui::TestAppContext) {
+    let file = Temp::new();
+    std::fs::write(&file.0, "fn main() { let x = 1; }\n").unwrap();
+    let view = cx.new(|cx| FileView::new(file.0.clone(), cx));
+    settle(cx);
+    assert!(view.read_with(cx, |view, cx| view.field.read(cx).spans().is_empty()));
+}
+
+/// A language this build names and cannot paint reports itself, so an
+/// unhighlighted Svelte file is distinguishable from an unrecognised one.
+#[gpui::test]
+fn a_named_but_unpainted_language_reports_itself(cx: &mut gpui::TestAppContext) {
+    let file = Temp::named(".svelte");
+    let view = cx.new(|cx| FileView::new(file.0.clone(), cx));
+    settle(cx);
+    assert_eq!(
+        view.read_with(cx, |view, _| view.unpainted()),
+        Some("svelte")
+    );
+    assert!(view.read_with(cx, |view, cx| view.field.read(cx).spans().is_empty()));
+}
+
+/// Nothing to report for a file that paints, or for a name that names nothing.
+#[gpui::test]
+fn a_painted_or_unknown_file_reports_nothing(cx: &mut gpui::TestAppContext) {
+    crate::model::language::paintable();
+    syntax_std::install();
+    let painted = Temp::named(".rs");
+    let view = cx.new(|cx| FileView::new(painted.0.clone(), cx));
+    settle(cx);
+    assert_eq!(view.read_with(cx, |view, _| view.unpainted()), None);
+
+    let unknown = Temp::new();
+    let view = cx.new(|cx| FileView::new(unknown.0.clone(), cx));
+    settle(cx);
+    assert_eq!(view.read_with(cx, |view, _| view.unpainted()), None);
+}
+
+/// The view reads the file for itself, then waits out the debounce and the
+/// parse behind it.
+fn settle(cx: &mut gpui::TestAppContext) {
+    cx.run_until_parked();
+    cx.executor().advance_clock(RECOLOUR * 2);
+    cx.run_until_parked();
+}
+
+/// Markdown has no grammar behind it — bezel paints its own source view — so a
+/// README colours with nothing installed and nothing fetched.
+#[gpui::test]
+fn markdown_is_coloured_without_a_grammar(cx: &mut gpui::TestAppContext) {
+    let file = Temp::named(".md");
+    std::fs::write(&file.0, "# Title\n\nSome `code` and **bold**.\n").unwrap();
+    let view = cx.new(|cx| FileView::new(file.0.clone(), cx));
+    settle(cx);
+    assert!(
+        !view
+            .read_with(cx, |view, cx| view.field.read(cx).spans().to_vec())
+            .is_empty()
+    );
+}
+
+#[gpui::test]
+fn zoom_shortcuts_resize_source_and_work_in_preview(cx: &mut gpui::TestAppContext) {
+    cx.update(|cx| {
+        Theme::install(bezel::theme::Appearance::Light, cx);
+        crate::view::keymap::bind_all(&crate::model::settings::Shortcuts::default(), cx);
+        typography::set_file_size(14., cx);
+    });
+    let file = Temp::named(".md");
+    let window = cx.add_window(|window, cx| {
+        let mut view = FileView::new(file.0.clone(), cx);
+        view.receive(Ok("original\r\n".into()), cx);
+        view.preview = false;
+        window.focus(&view.field.focus_handle(cx), cx);
+        view
+    });
+    let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+    visual.run_until_parked();
+    let before = window
+        .update(&mut visual, |view, _, cx| {
+            view.field.read(cx).offset_bounds(0).unwrap().size.height
+        })
+        .unwrap();
+    visual.simulate_keystrokes("cmd-=");
+    visual.run_until_parked();
+    window
+        .update(&mut visual, |view, _, cx| {
+            assert_eq!(typography::file_size(cx), 15.);
+            assert!(view.field.read(cx).offset_bounds(0).unwrap().size.height > before);
+            assert!(!view.dirty(cx));
+        })
+        .unwrap();
+    visual.simulate_keystrokes("cmd--");
+    visual.run_until_parked();
+    window
+        .update(&mut visual, |view, window, cx| {
+            assert_eq!(typography::file_size(cx), 14.);
+            view.preview = true;
+            window.focus(&view.focus, cx);
+            cx.notify();
+        })
+        .unwrap();
+    visual.run_until_parked();
+    visual.simulate_keystrokes("cmd-shift-=");
+    visual.run_until_parked();
+    window
+        .update(&mut visual, |_, _, cx| {
+            assert_eq!(typography::file_size(cx), 15.)
+        })
+        .unwrap();
+    visual.simulate_keystrokes("cmd-0");
+    visual.run_until_parked();
+    window
+        .update(&mut visual, |_, _, cx| {
+            assert_eq!(typography::file_size(cx), 14.)
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn copy_source_selection_takes_priority_over_transcript(cx: &mut gpui::TestAppContext) {
+    cx.update(|cx| {
+        Theme::install(bezel::theme::Appearance::Light, cx);
+        crate::view::keymap::bind_all(&crate::model::settings::Shortcuts::default(), cx);
+    });
+    let file = Temp::new();
+    std::fs::write(&file.0, "copy this file").unwrap();
+    let view = cx.new(|cx| {
+        let mut view = FileView::new(file.0.clone(), cx);
+        view.receive(Ok("copy this file".into()), cx);
+        view
+    });
+    let window = cx.add_window(|window, cx| {
+        window.focus(&view.read(cx).field.focus_handle(cx), cx);
+        crate::view::clipboard_tests::CopyRoot(view.clone().into())
+    });
+    let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+    visual.run_until_parked();
+    visual.simulate_keystrokes("cmd-a cmd-c");
+    visual.run_until_parked();
+    visual.update(|_, cx| {
+        assert_eq!(
+            cx.read_from_clipboard()
+                .and_then(|item| item.text())
+                .as_deref(),
+            Some("copy this file")
+        );
+    });
+}
+
+#[gpui::test]
+fn markdown_preview_supports_drag_select_all_and_copy(cx: &mut gpui::TestAppContext) {
+    cx.update(|cx| {
+        Theme::install(bezel::theme::Appearance::Light, cx);
+        crate::view::keymap::bind_all(&crate::model::settings::Shortcuts::default(), cx);
+    });
+    let file = Temp::named(".md");
+    let source = "# Title\n\nCopy **this** preview.\n";
+    std::fs::write(&file.0, source).unwrap();
+    let view = cx.new(|cx| {
+        let mut view = FileView::new(file.0.clone(), cx);
+        view.receive(Ok(source.into()), cx);
+        view
+    });
+    let window = cx.add_window(|window, cx| {
+        window.focus(&view.focus_handle(cx), cx);
+        crate::view::clipboard_tests::CopyRoot(view.clone().into())
+    });
+    let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+    visual.run_until_parked();
+    let (start, end) = view.read_with(&visual, |view, cx| {
+        let doc = markdown::parse(view.field.read(cx).content());
+        let bounds = view.preview_layouts.rects(markdown::Selection::all(&doc));
+        let first = bounds.first().unwrap();
+        let last = bounds.last().unwrap();
+        (
+            gpui::point(first.left(), first.center().y),
+            gpui::point(last.right(), last.center().y),
+        )
+    });
+    visual.simulate_mouse_down(start, gpui::MouseButton::Left, gpui::Modifiers::default());
+    visual.run_until_parked();
+    visual.simulate_mouse_move(end, gpui::MouseButton::Left, gpui::Modifiers::default());
+    visual.simulate_mouse_up(end, gpui::MouseButton::Left, gpui::Modifiers::default());
+    visual.run_until_parked();
+    visual.simulate_keystrokes("cmd-c");
+    visual.update(|_, cx| {
+        assert_eq!(
+            cx.read_from_clipboard()
+                .and_then(|item| item.text())
+                .as_deref(),
+            Some("Title\nCopy this preview.")
+        );
+    });
+    visual.simulate_keystrokes("cmd-a cmd-c");
+    visual.update(|_, cx| {
+        assert_eq!(
+            cx.read_from_clipboard()
+                .and_then(|item| item.text())
+                .as_deref(),
+            Some("Title\nCopy this preview.")
+        );
+    });
+    view.update(&mut visual, |view, cx| {
+        view.receive(Ok("replacement".into()), cx);
+    });
+    visual.run_until_parked();
+    view.read_with(&visual, |view, _| assert!(view.preview_selection.is_none()));
+}
+
+#[gpui::test]
+fn linked_line_is_revealed_after_loading_and_when_reusing_a_file(cx: &mut gpui::TestAppContext) {
+    cx.update(|cx| Theme::install(bezel::theme::Appearance::Light, cx));
+    let file = Temp::named(".md");
+    let source = (1..=100).map(|n| format!("line {n}\n")).collect::<String>();
+    std::fs::write(&file.0, &source).unwrap();
+    let window = cx.add_window(|_, cx| {
+        let mut view = FileView::new(file.0.clone(), cx);
+        view.go_to_line(60, cx);
+        view.receive(Ok(source), cx);
+        view
+    });
+    let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+    visual.simulate_resize(gpui::size(px(400.), px(300.)));
+    visual.run_until_parked();
+    for line in [60, 10] {
+        window
+            .update(&mut visual, |view, _, cx| view.go_to_line(line, cx))
+            .unwrap();
+        visual.run_until_parked();
+        visual.update(|window, _| window.refresh());
+        visual.run_until_parked();
+        window
+            .update(&mut visual, |view, _, cx| {
+                assert!(!view.preview);
+                assert_eq!(view.target_line.get(), None);
+                let starts = line_starts(view.field.read(cx).content());
+                let row = view.field.read(cx).offset_bounds(starts[line - 1]).unwrap();
+                assert!(row.top() >= view.scroll.bounds().top());
+                assert!(
+                    row.bottom() <= view.scroll.bounds().bottom(),
+                    "line {line}, row {row:?}, viewport {:?}, offset {:?}, max {:?}",
+                    view.scroll.bounds(),
+                    view.scroll.offset(),
+                    view.scroll.max_offset()
+                );
+            })
+            .unwrap();
+    }
+}
+
+#[gpui::test]
+fn a_missing_grammar_asks_before_downloading_and_can_be_dismissed(cx: &mut gpui::TestAppContext) {
+    cx.update(|cx| Theme::install(bezel::theme::Appearance::Light, cx));
+    let file = Temp::named(".json");
+    std::fs::write(&file.0, "{}").unwrap();
+    let window = cx.add_window(|_, cx| FileView::new(file.0.clone(), cx));
+    let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+    visual.run_until_parked();
+    assert!(visual.debug_bounds("install-grammar").is_some());
+    assert_eq!(
+        crate::model::language::status("json"),
+        crate::model::language::Status::Missing
+    );
+    let dismiss = visual.debug_bounds("dismiss-grammar").unwrap().center();
+    visual.simulate_click(dismiss, gpui::Modifiers::default());
+    visual.run_until_parked();
+    assert!(visual.debug_bounds("install-grammar").is_none());
+    assert_eq!(
+        crate::model::language::status("json"),
+        crate::model::language::Status::Missing
+    );
+}
+
+#[gpui::test]
+fn an_open_file_recolours_when_a_wasm_grammar_arrives(cx: &mut gpui::TestAppContext) {
+    let file = Temp::named(".json");
+    std::fs::write(&file.0, r#"{"name": "cydonia"}"#).unwrap();
+    let view = cx.new(|cx| FileView::new(file.0.clone(), cx));
+    settle(cx);
+    assert!(view.read_with(cx, |view, cx| view.field.read(cx).spans().is_empty()));
+    let lang = Box::leak(Box::new(syntax::lang::Lang::new(
+        "json",
+        &["json"],
+        syntax::lang::Grammar::Wasm(std::sync::Arc::from(
+            &include_bytes!("../fixtures/grammar/json.wasm")[..],
+        )),
+        include_str!("../fixtures/grammar/json.scm"),
+    )));
+    syntax::registry::register(syntax::registry::Entry {
+        name: "json",
+        aliases: &["json"],
+        files: &["json"],
+        lang: Some(lang),
+    });
+    view.update(cx, |view, cx| view.refresh_grammar(cx));
+    settle(cx);
+    assert!(view.read_with(cx, |view, _| view.unpainted().is_none()));
+    assert!(!view.read_with(cx, |view, cx| view.field.read(cx).spans().is_empty()));
+}
+
+#[gpui::test]
+fn grammar_download_shows_progress_and_failures_offer_retry(cx: &mut gpui::TestAppContext) {
+    use crate::model::language::Status;
+    cx.update(|cx| Theme::install(bezel::theme::Appearance::Light, cx));
+    let file = Temp::named(".json");
+    std::fs::write(&file.0, "{}").unwrap();
+    let window = cx.add_window(|_, cx| FileView::new(file.0.clone(), cx));
+    let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+    visual.run_until_parked();
+    window
+        .update(&mut visual, |view, _, cx| {
+            view.grammar_dismissed = false;
+            view.grammar_status = Some(Status::Downloading {
+                received: 50,
+                total: 100,
+            });
+            cx.notify();
+        })
+        .unwrap();
+    visual.run_until_parked();
+    assert!(visual.debug_bounds("grammar-progress").is_some());
+    assert!(visual.debug_bounds("install-grammar").is_none());
+    window
+        .update(&mut visual, |view, _, cx| {
+            view.grammar_status = Some(Status::Failed("offline".into()));
+            cx.notify();
+        })
+        .unwrap();
+    visual.run_until_parked();
+    assert!(visual.debug_bounds("grammar-progress").is_none());
+    assert!(visual.debug_bounds("install-grammar").is_some());
 }

@@ -102,6 +102,16 @@ impl Article {
         }
     }
 
+    pub fn unload(&mut self, cx: &App) {
+        if !self.archived || self.edited(cx) {
+            return;
+        }
+        self.field = None;
+        self.editor = None;
+        self.saved = String::new();
+        self.scroll = ScrollHandle::new();
+    }
+
     pub fn archive(&mut self, archived: bool) {
         self.archived = archived;
         properties::set_archived(&self.path, archived);
@@ -329,13 +339,12 @@ impl Article {
 
     /// All of it: the directory is the article.
     pub fn remove(&self) {
-        if let Some(dir) = self.path.parent() {
-            if std::fs::remove_dir_all(dir).is_ok()
-                && let Some(project) = self.path.ancestors().nth(4)
-            {
-                let _ = artifact::entry::Registry::open(project)
-                    .and_then(|registry| registry.remove("article", &layout::id_of(&self.path)));
-            }
+        if let Some(dir) = self.path.parent()
+            && std::fs::remove_dir_all(dir).is_ok()
+            && let Some(project) = self.path.ancestors().nth(4)
+        {
+            let _ = artifact::entry::Registry::open(project)
+                .and_then(|registry| registry.remove("article", &layout::id_of(&self.path)));
         }
     }
 

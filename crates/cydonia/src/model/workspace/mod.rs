@@ -93,6 +93,7 @@ pub struct Workspace {
     pub text_size: f32,
     pub article_font_size: Option<f32>,
     pub terminal_font_size: f32,
+    pub file_font_size: f32,
     /// The hue the greys carry, and how much of it.
     pub tint: Tint,
     /// How wide a page that has not been set either way is drawn — see
@@ -115,7 +116,16 @@ pub struct Workspace {
 
 impl Workspace {
     pub fn new(settings: Settings, state: State, cx: &mut Context<Self>) -> Self {
-        let projects: Vec<Project> = state.projects.into_iter().map(Project::new).collect();
+        let projects: Vec<Project> = state
+            .projects
+            .into_iter()
+            .map(|path| {
+                let expanded = !state.collapsed.contains(&path);
+                let mut project = Project::new(path);
+                project.expanded = expanded;
+                project
+            })
+            .collect();
         let active = (!projects.is_empty()).then_some(state.active);
         let restore: Vec<usize> = (0..projects.len()).collect();
         let look = settings.appearance;
@@ -129,6 +139,7 @@ impl Workspace {
             },
         );
         crate::model::typography::set_terminal_size(look.terminal_font_size, cx);
+        crate::model::typography::set_file_size(look.file_font_size, cx);
         let mut this = Self {
             settings,
             projects,
@@ -139,6 +150,7 @@ impl Workspace {
             text_size: look.text_size,
             article_font_size: look.article_font_size,
             terminal_font_size: look.terminal_font_size,
+            file_font_size: look.file_font_size,
             tint: Tint::new(look.hue, look.chroma),
             wide_pages: look.wide_pages,
             indent_project_rows: look.indent_project_rows,
@@ -180,6 +192,12 @@ impl Workspace {
         state::save(&State {
             projects: self.paths(),
             active: self.active.unwrap_or_default(),
+            collapsed: self
+                .projects
+                .iter()
+                .filter(|project| !project.expanded)
+                .map(|project| project.path.clone())
+                .collect(),
             last: self.last.clone(),
         });
     }
@@ -196,6 +214,7 @@ impl Workspace {
             text_size: self.text_size,
             article_font_size: self.article_font_size,
             terminal_font_size: self.terminal_font_size,
+            file_font_size: self.file_font_size,
             hue: self.tint.hue,
             chroma: self.tint.chroma,
             wide_pages: self.wide_pages,
@@ -284,9 +303,8 @@ impl Workspace {
         cx.notify();
     }
 
-    /// The same window's other choice.
-    /// The switch, which from the first press is the answer in both
-    /// appearances rather than the one bezel would have resolved.
+    /// The same window's other choice — see [`vibrancy`] for what each state
+    /// asks of the theme.
     pub fn set_opaque(&mut self, opaque: bool, cx: &mut Context<Self>) {
         self.opaque = Some(opaque);
         apply_transparency(self.opaque, cx);
@@ -458,6 +476,13 @@ impl Workspace {
         cx.notify();
     }
 
+    pub fn set_file_font_size(&mut self, points: f32, cx: &mut Context<Self>) {
+        self.file_font_size = settings::clamp_content_text_size(points);
+        crate::model::typography::set_file_size(self.file_font_size, cx);
+        self.save_appearance();
+        cx.notify();
+    }
+
     pub fn set_terminal_font_size(&mut self, points: f32, cx: &mut Context<Self>) {
         self.terminal_font_size = settings::clamp_content_text_size(points);
         crate::model::typography::set_terminal_size(self.terminal_font_size, cx);
@@ -585,14 +610,13 @@ pub fn apply_tint(tint: Tint, cx: &mut App) {
 
 /// What the switch asks of the brand.
 ///
-/// Nothing said is not the same as "no" — it is the answer bezel resolves per
-/// appearance, opaque in light and frosted in dark. Once a person presses the
-/// switch it is theirs in both, which is what the `Some` is for.
+/// Never [`Vibrancy::On`]: bezel's light palette carries no frosted tokens.
+/// [`Vibrancy::Auto`] is frost in dark and opaque in light; [`Vibrancy::Off`]
+/// is opaque in both.
 pub fn vibrancy(opaque: Option<bool>) -> Vibrancy {
     match opaque {
-        None => Vibrancy::Auto,
         Some(true) => Vibrancy::Off,
-        Some(false) => Vibrancy::On,
+        None | Some(false) => Vibrancy::Auto,
     }
 }
 

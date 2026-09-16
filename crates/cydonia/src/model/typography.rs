@@ -1,5 +1,4 @@
-//! Terminal zoom is shared by sessions, independent of article zoom, and never
-//! written into settings. Reset returns to the configured base size.
+//! File and terminal zoom are independent and temporary. Reset uses the saved base size.
 
 use super::settings::clamp_content_text_size;
 use bezel::gpui::{App, Global};
@@ -69,38 +68,47 @@ pub fn reset_terminal_zoom(cx: &mut App) {
     font.install(cx);
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::model::settings::CONTENT_TEXT_SIZE;
+#[derive(Clone, Copy)]
+struct FileFont(TerminalFont);
 
-    #[test]
-    fn zoom_preserves_base_and_follows_a_changed_default() {
-        let mut font = TerminalFont::default();
-        font.step(1.);
-        font.step(1.);
-        assert_eq!(font.base, 13.);
-        assert_eq!(font.size(), 15.);
-        font.rebase(16.);
-        assert_eq!(font.size(), 18.);
-        font.adjustment = 0.;
-        assert_eq!(font.size(), 16.);
-    }
-
-    #[test]
-    fn zoom_responds_immediately_after_hitting_either_limit() {
-        let mut font = TerminalFont::default();
-        for _ in 0..100 {
-            font.step(1.);
-        }
-        assert_eq!(font.size(), CONTENT_TEXT_SIZE.1);
-        font.step(-1.);
-        assert_eq!(font.size(), CONTENT_TEXT_SIZE.1 - 1.);
-        for _ in 0..100 {
-            font.step(-1.);
-        }
-        assert_eq!(font.size(), CONTENT_TEXT_SIZE.0);
-        font.step(1.);
-        assert_eq!(font.size(), CONTENT_TEXT_SIZE.0 + 1.);
+impl Default for FileFont {
+    fn default() -> Self {
+        Self(TerminalFont {
+            base: bezel::theme::TextStyle::Body.size(),
+            adjustment: 0.,
+        })
     }
 }
+
+impl Global for FileFont {}
+
+fn file_font(cx: &App) -> TerminalFont {
+    cx.try_global::<FileFont>().copied().unwrap_or_default().0
+}
+
+pub fn file_size(cx: &App) -> f32 {
+    file_font(cx).size()
+}
+
+fn update_file(cx: &mut App, update: impl FnOnce(&mut TerminalFont)) {
+    let mut font = file_font(cx);
+    update(&mut font);
+    cx.set_global(FileFont(font));
+    cx.refresh_windows();
+}
+
+pub fn set_file_size(points: f32, cx: &mut App) {
+    update_file(cx, |font| font.rebase(points));
+}
+
+pub fn zoom_file(by: f32, cx: &mut App) {
+    update_file(cx, |font| font.step(by));
+}
+
+pub fn reset_file_zoom(cx: &mut App) {
+    update_file(cx, |font| font.adjustment = 0.);
+}
+
+#[cfg(test)]
+#[path = "../../tests/unit/typography.rs"]
+mod tests;

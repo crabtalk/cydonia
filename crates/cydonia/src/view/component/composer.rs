@@ -1,6 +1,10 @@
 //! The composer: a growing field on a glass card, and the agent's slash
 //! commands behind `/`.
 
+mod activity;
+pub use activity::Activity;
+
+use super::image_preview::{self, disc};
 use crate::{
     model::{
         media::Attachment,
@@ -54,32 +58,13 @@ const PICKER_HEIGHT: f32 = 320.;
 
 /// The side of a picture waiting in the composer.
 const THUMB: f32 = 64.;
+const THUMB_RADIUS: f32 = 8.;
 
 /// The side of a thumb's remove button, which sits centred on its corner.
-const REMOVE: f32 = 18.;
+const REMOVE: f32 = 14.;
 
 /// How much of the window an opened picture may take, either way.
 const PREVIEW_SHARE: f32 = 0.8;
-
-/// A solid round button with a ✕ on it. Solid because it sits over a picture,
-/// where a bare glyph can land on anything.
-fn disc(theme: &Theme, id: impl Into<gpui::ElementId>, side: f32) -> gpui::Stateful<gpui::Div> {
-    div()
-        .id(id)
-        .size(px(side))
-        .rounded_full()
-        .flex()
-        .items_center()
-        .justify_center()
-        .bg(theme.solid)
-        .cursor_pointer()
-        .hover(|button| button.opacity(0.85))
-        .child(
-            icons::icon(icons::notifications::X)
-                .size(px(side * 0.6))
-                .text_color(theme.on_solid),
-        )
-}
 
 fn picture(attachment: &Attachment) -> gpui::Img {
     match attachment {
@@ -90,7 +75,7 @@ fn picture(attachment: &Attachment) -> gpui::Img {
 
 pub fn bindings() -> Vec<KeyBinding> {
     let ctx = Some(KEY_CONTEXT);
-    vec![
+    let mut bindings = vec![
         KeyBinding::new("enter", Send, ctx),
         // Bound explicitly: the field's own `enter` is what usually inserts a
         // newline, and the composer has just taken it.
@@ -98,7 +83,18 @@ pub fn bindings() -> Vec<KeyBinding> {
         KeyBinding::new("down", CommandNext, ctx),
         KeyBinding::new("up", CommandPrevious, ctx),
         KeyBinding::new("escape", CommandDismiss, ctx),
-    ]
+    ];
+    if cfg!(target_os = "macos") {
+        bindings.extend([
+            KeyBinding::new("alt-left", input::WordLeft, ctx),
+            KeyBinding::new("alt-right", input::WordRight, ctx),
+            KeyBinding::new("alt-shift-left", input::SelectWordLeft, ctx),
+            KeyBinding::new("alt-shift-right", input::SelectWordRight, ctx),
+            KeyBinding::new("alt-backspace", input::DeleteWordLeft, ctx),
+            KeyBinding::new("alt-delete", input::DeleteWordRight, ctx),
+        ]);
+    }
+    bindings
 }
 
 /// One agent on offer: what to call it, and the registry's mark for it when
@@ -147,6 +143,7 @@ pub enum ComposerEvent {
     /// The message, and the pictures going with it.
     Submit(String, Vec<Attachment>),
     Cancel,
+    Reconnect,
     Terminal,
     Changes,
     Files,
@@ -192,6 +189,10 @@ pub struct Composer {
     scroll: ScrollHandle,
     /// Whether a turn is in flight — what the button does when pressed.
     streaming: bool,
+    activity: Option<Activity>,
+    activity_open: bool,
+    activity_frame: std::rc::Rc<std::cell::RefCell<bezel::agent::orbs::engine::Frame>>,
+    activity_tick: Option<gpui::Task<()>>,
     /// The configured agents, and which one the session runs on.
     agents: Vec<Agent>,
     agent: Option<usize>,
@@ -202,6 +203,7 @@ pub struct Composer {
     usage: Option<Usage>,
     /// Whether the agent mark's menu is up.
     menu: bool,
+    menu_pressed: bool,
     tools_menu: bool,
     tools_cursor: Cursor,
     /// Where that menu is being worked: which of its rows is live, and which
@@ -256,11 +258,16 @@ impl Composer {
             commands: Vec::new(),
             scroll: ScrollHandle::new(),
             streaming: false,
+            activity: None,
+            activity_open: false,
+            activity_frame: Default::default(),
+            activity_tick: None,
             agents: Vec::new(),
             agent: None,
             switches: Vec::new(),
             usage: None,
             menu: false,
+            menu_pressed: false,
             tools_menu: false,
             tools_cursor: Cursor::default(),
             cursor: Cursor::default(),
@@ -281,6 +288,7 @@ impl Composer {
         self.saved_attachments
             .insert(self.session, std::mem::take(&mut self.attachments));
         self.session = id;
+        self.activity_open = false;
         self.attachments = self.saved_attachments.remove(&id).unwrap_or_default();
         self.preview = None;
         let draft = if id.is_none() {
@@ -291,6 +299,26 @@ impl Composer {
         self.field
             .update(cx, |field, cx| field.set_content(draft, cx));
         self.reread(cx);
+        cx.notify();
+    }
+
+    pub fn restore_queued(&mut self, text: String, window: &mut Window, cx: &mut Context<Self>) {
+        let (text, attachments) = crate::model::media::detach(&text);
+        self.attachments
+            .splice(0..0, attachments.into_iter().map(Attachment::File));
+        self.preview = None;
+        let draft = self.field.read(cx).content().to_string();
+        let content = if text.is_empty() {
+            draft
+        } else if draft.is_empty() {
+            text
+        } else {
+            format!("{text}\n\n{draft}")
+        };
+        self.field
+            .update(cx, |field, cx| field.set_content(content, cx));
+        self.reread(cx);
+        window.focus(&self.focus_handle(cx), cx);
         cx.notify();
     }
 
@@ -424,17 +452,31 @@ impl Composer {
                     div()
                         .id(("composer-attachment", ix))
                         .size_full()
-                        .rounded(px(12.))
+                        .rounded(px(THUMB_RADIUS))
                         .overflow_hidden()
-                        .border_1()
-                        .border_color(theme.border)
                         .cursor_pointer()
                         .on_click(cx.listener(move |composer, _, _, cx| {
                             composer.preview = Some(ix);
                             cx.notify();
                         }))
-                        .child(picture(attachment).size_full().object_fit(ObjectFit::Cover)),
+                        .child(
+                            picture(attachment)
+                                .size_full()
+                                .rounded(px(THUMB_RADIUS))
+                                .object_fit(ObjectFit::Cover),
+                        ),
                 )
+                // Paint the border above the image on the glass surface.
+                .child(surface::layered(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .size_full()
+                        .rounded(px(THUMB_RADIUS))
+                        .border_1()
+                        .border_color(theme.border),
+                ))
                 // Its own layer: inside the glass card every primitive shares
                 // one draw order, and a picture paints over quads and icons.
                 .child(surface::layered(
@@ -669,6 +711,7 @@ impl Composer {
         let mark = px(root::composer_height() / 2.);
         let button = div()
             .id("composer-agent")
+            .debug_selector(|| "composer-agent".into())
             .size(px(root::composer_height()))
             .rounded_full()
             .flex()
@@ -687,9 +730,13 @@ impl Composer {
                     .text_color(theme.text_muted)
                     .into_any_element(),
             })
+            // Outside-click dismissal runs before the trigger's click handler.
+            .capture_any_mouse_down(cx.listener(|composer, _, _, _| {
+                composer.menu_pressed = composer.menu;
+            }))
             .on_click(cx.listener(|composer, _, _, cx| {
                 composer.tools_menu = false;
-                composer.menu = !composer.menu;
+                composer.menu = !(std::mem::take(&mut composer.menu_pressed) || composer.menu);
                 composer.cursor.clear();
                 cx.notify();
             }));
@@ -898,11 +945,17 @@ impl Composer {
             return None;
         }
         let glyph = if streaming {
-            icons::multimedia::Square
+            div()
+                .size(px(root::composer_disc() / 3.))
+                .rounded(px(2.))
+                .bg(theme.on_solid)
+                .into_any_element()
         } else {
-            icons::arrows::ArrowUp
+            icons::icon(icons::arrows::ArrowUp)
+                .size(px(root::composer_disc() / 2.))
+                .text_color(theme.on_solid)
+                .into_any_element()
         };
-        let glyph_size = px(root::composer_disc() / 2.);
         let disc = div()
             .flex_none()
             .size(px(root::composer_disc()))
@@ -910,18 +963,10 @@ impl Composer {
             .flex()
             .items_center()
             .justify_center()
-            .bg(if streaming { theme.danger } else { theme.solid })
+            .bg(theme.solid)
             .cursor_pointer()
             .hover(|s| s.opacity(0.9))
-            .child(
-                icons::icon(glyph)
-                    .size(glyph_size)
-                    .text_color(if streaming {
-                        theme.on_accent
-                    } else {
-                        theme.on_solid
-                    }),
-            );
+            .child(glyph);
         Some(
             div()
                 .id("composer-send")
@@ -1029,6 +1074,11 @@ impl Composer {
         let picker = self.picker(&theme, cx);
         let tray = self.tray(&theme, cx);
         let radius = px(root::composer_height() / 2.);
+        let right_inset = if self.streaming || !self.is_empty(cx) {
+            root::COMPOSER_INSET
+        } else {
+            12.
+        };
 
         div()
             // Ahead of the field's own paste, which only knows text.
@@ -1064,14 +1114,11 @@ impl Composer {
                                     .rounded(radius)
                                     .py(px(root::COMPOSER_INSET))
                                     .pl(px(12.))
-                                    .pr(px(if self.streaming || !self.is_empty(cx) {
-                                        root::COMPOSER_INSET
-                                    } else {
-                                        12.
-                                    }))
+                                    .pr(px(right_inset))
                                     .flex()
                                     .flex_col()
                                     .gap(px(root::COMPOSER_INSET))
+                                    .children(self.activity_row(&theme, right_inset, cx))
                                     .children(tray)
                                     .child(
                                         div()
@@ -1106,27 +1153,19 @@ impl Composer {
         let theme = Theme::of(cx).clone();
         let viewport = window.viewport_size();
         let composer = cx.entity().downgrade();
-        let card = div()
-            .relative()
-            .child(
-                picture(attachment)
-                    .max_w(viewport.width * PREVIEW_SHARE)
-                    .max_h(viewport.height * PREVIEW_SHARE)
-                    .object_fit(ObjectFit::Contain)
-                    .rounded(px(16.)),
-            )
-            // Its own layer, for the same reason as a thumb's remove button.
-            .child(surface::layered(
-                disc(&theme, "composer-preview-close", 24.)
-                    .absolute()
-                    .top(px(10.))
-                    .right(px(10.))
-                    .tooltip(|window, cx| Tooltip::text("Close", window, cx))
-                    .on_click(cx.listener(|composer, _, _, cx| {
-                        composer.preview = None;
-                        cx.notify();
-                    })),
-            ));
+        let card = image_preview::frame(
+            &theme,
+            "composer-preview-close",
+            picture(attachment)
+                .max_w(viewport.width * PREVIEW_SHARE)
+                .max_h(viewport.height * PREVIEW_SHARE)
+                .object_fit(ObjectFit::Contain)
+                .rounded(px(16.)),
+            cx.listener(|composer, _, _, cx| {
+                composer.preview = None;
+                cx.notify();
+            }),
+        );
         Some(popover::modal(
             "composer-preview",
             viewport,

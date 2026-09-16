@@ -17,3 +17,5 @@ pub mod files;
 pub mod divider;
 
 pub mod status;
+
+mod image_preview;

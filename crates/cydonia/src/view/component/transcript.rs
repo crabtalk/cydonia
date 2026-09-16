@@ -13,18 +13,17 @@ use crate::{
     view::root,
 };
 use artifact::session::chat::{ChatItem, ToolStatus};
-use bezel::ui::scroll as scrollbars;
+
 use bezel::{
     agent::orbs::{OrbSize, OrbState, engine::Frame, orb_element},
     gpui::{
-        AnyElement, ClipboardItem, Context, Empty, Pixels, ScrollHandle, SharedString, Task,
-        Window, canvas, div, prelude::*, px,
+        AnyElement, ClipboardItem, Context, Empty, Pixels, SharedString, Task, Window, canvas, div,
+        prelude::*, px,
     },
     motion::Painter,
     theme::{TextStyle, Theme, Typeset, ink},
     ui::{
-        icons,
-        scroll::{self, FollowState},
+        icons, scroll,
         tooltip::Tooltip,
         widgets::{Icons, Layout, Status, Takeover},
     },
@@ -34,6 +33,9 @@ use markdown::{
     BlockLayouts, Selection,
     selectable::{self, Pointer},
 };
+mod follow;
+pub(crate) mod gallery;
+pub(crate) mod links;
 use std::{
     cell::{Cell, RefCell},
     collections::{HashMap, HashSet, hash_map::DefaultHasher},
@@ -75,9 +77,12 @@ const ORB_STILL: f32 = 0.6;
 /// state, per session, so switching back finds the transcript as it was left.
 #[derive(Default)]
 pub struct State {
-    scroll: ScrollHandle,
+    focus: RefCell<HashMap<usize, bezel::gpui::FocusHandle>>,
+    galleries: RefCell<HashMap<usize, bezel::gpui::Entity<gallery::Gallery>>>,
+    list: bezel::ui::list::VariableList<usize>,
+    focused_turn: Cell<Option<(usize, usize)>>,
+    rail_selection: Rc<Cell<Option<RailSelection>>>,
     pub(crate) footer_height: Rc<Cell<Pixels>>,
-    follow: FollowState,
     /// Keyed by the turn's first item index.
     work: HashMap<usize, Takeover>,
     /// Tool items whose output is showing, by item index.
@@ -142,7 +147,12 @@ impl State {
     /// collapsed without a drag behind it.
     pub fn copied(&self, chat: &ChatSession) -> Option<String> {
         let (ix, selection) = self.selection?;
-        let doc = markdown::parse(item_text(chat.items.get(ix)?)?);
+        let item = chat.items.get(ix)?;
+        let doc = if matches!(item, ChatItem::User(_)) {
+            gallery::document(item_text(item)?).0
+        } else {
+            markdown::parse(item_text(item)?)
+        };
         let text = selectable::copied(&doc, selection);
         (!text.is_empty()).then_some(text)
     }
@@ -206,10 +216,16 @@ fn prose(
     cx: &mut Context<Workspace>,
 ) -> AnyElement {
     let id = chat.id;
-    selectable::render(
+    let doc = if matches!(chat.items.get(ix), Some(ChatItem::User(_))) {
+        gallery::document(text).0
+    } else {
+        markdown::parse(text)
+    };
+    let layouts = chat.transcript.layouts(ix);
+    let body = selectable::render(
         ("transcript-prose", ix),
-        &markdown::parse(text),
-        &chat.transcript.layouts(ix),
+        &doc,
+        &layouts,
         chat.transcript.selection(ix),
         chat.transcript.dragging,
         window,
@@ -217,7 +233,79 @@ fn prose(
         move |workspace, pointer, cx| {
             workspace.with_session(id, cx, |chat| chat.transcript.point(ix, pointer));
         },
-    )
+    );
+    let cwd = chat.cwd.clone();
+    let focus = chat
+        .transcript
+        .focus
+        .borrow_mut()
+        .entry(ix)
+        .or_insert_with(|| cx.focus_handle())
+        .clone();
+    selectable::surface(&focus, &doc, chat.transcript.selection(ix), cx)
+        .capture_any_mouse_up(cx.listener(
+            move |workspace, event: &bezel::gpui::MouseUpEvent, window, cx| {
+                if event.button != bezel::gpui::MouseButton::Left {
+                    return;
+                }
+                let Some(cursor) = layouts.hit(event.position) else {
+                    return;
+                };
+                let Some(text) = doc
+                    .blocks
+                    .get(cursor.block)
+                    .and_then(|block| block.text_at(cursor.part))
+                else {
+                    return;
+                };
+                for span in &text.marks {
+                    let markdown::Mark::Link(href) = &span.mark else {
+                        continue;
+                    };
+                    let selection = Selection::new(
+                        markdown::Cursor {
+                            offset: span.range.start,
+                            ..cursor
+                        },
+                        markdown::Cursor {
+                            offset: span.range.end,
+                            ..cursor
+                        },
+                    );
+                    if !layouts
+                        .rects(selection)
+                        .iter()
+                        .any(|bounds| bounds.contains(&event.position))
+                    {
+                        continue;
+                    }
+                    let Some((path, line)) = links::resolve(&cwd, href) else {
+                        continue;
+                    };
+                    let clicked = workspace
+                        .session(id)
+                        .and_then(|chat| chat.transcript.selection(ix))
+                        .is_some_and(|selection| {
+                            selection.is_collapsed() && selection.head == cursor
+                        });
+                    workspace.with_session(id, cx, |chat| chat.transcript.point(ix, Pointer::Up));
+                    cx.stop_propagation();
+                    if clicked {
+                        window.dispatch_action(
+                            Box::new(links::OpenSessionFile {
+                                session: id,
+                                path,
+                                line,
+                            }),
+                            cx,
+                        );
+                    }
+                    return;
+                }
+            },
+        ))
+        .child(body)
+        .into_any_element()
 }
 
 /// The glyph for a tool's category — what the ACP `kind` is for.
@@ -241,78 +329,120 @@ fn tool_icon(kind: ToolKind) -> &'static [u8] {
 pub fn render(
     chat: &ChatSession,
     pane_width: f32,
-    window: &mut Window,
+    queued: impl Fn(&mut Window, &mut bezel::gpui::App) -> Option<AnyElement> + 'static,
+    _window: &mut Window,
     cx: &mut Context<Workspace>,
 ) -> AnyElement {
     let id = chat.id;
     let turns = turns(&chat.items);
-    let last = turns.len().saturating_sub(1);
-    let mut zones: Vec<AnyElement> = Vec::new();
-    for (position, turn) in turns.iter().enumerate() {
-        let running = chat.streaming && position == last;
-        zones.push(zone(chat, turn, running, window, cx));
-    }
-    // Only while the turn has nothing to show. Once it has, the text arriving
-    // under it *is* the sign that it is running — and a row pinned below prose
-    // that reflows on every streamed frame is a row that jumps, taking the eye
-    // with it. See [`working`].
-    if let Some(turn) = turns
-        .last()
-        .filter(|turn| chat.streaming && turn.range.len() <= 1)
+    let list = chat.transcript.list.clone();
+    let mut keys: Vec<_> = turns.iter().map(|turn| turn.range.start).collect();
+    keys.push(usize::MAX);
+    list.sync(keys.clone());
+    for ix in list
+        .visible_range()
+        .chain(turns.len().saturating_sub(1)..keys.len())
     {
-        zones.push(working(chat, turn.range.start, cx));
+        if let Some(key) = keys.get(ix) {
+            list.invalidate(key);
+        }
     }
-
+    let selected_turn = chat.transcript.selection.and_then(|(item, _)| {
+        turns
+            .iter()
+            .position(|turn| turn.range.contains(&item))
+            .map(|turn| (turn, item))
+    });
+    let previous_focus = chat.transcript.focused_turn.replace(selected_turn);
+    if previous_focus != selected_turn {
+        if let Some((index, _)) = previous_focus.filter(|(ix, _)| *ix < keys.len()) {
+            list.focus_item(index, None);
+        }
+        if let Some((item, _)) = chat.transcript.selection
+            && let Some((index, _)) = selected_turn
+        {
+            list.focus_item(index, chat.transcript.focus.borrow().get(&item).cloned());
+        }
+    }
+    let footer_height = chat
+        .transcript
+        .footer_height
+        .get()
+        .max(px(root::composer_height()))
+        + px(root::COMPOSER_BOTTOM);
+    list.set_end_inset(footer_height);
+    let workspace = cx.entity().downgrade();
+    let visible_workspace = workspace.clone();
+    let count = turns.len();
+    let virtual_content = list.render(
+        move |index, window, cx| {
+            if index == count {
+                return content_row(
+                    div()
+                        .children(queued(window, cx))
+                        .h_auto()
+                        .pb(px(PAD) + footer_height),
+                )
+                .into_any_element();
+            }
+            workspace
+                .update(cx, |workspace, cx| {
+                    let Some(chat) = workspace.session(id) else {
+                        return Empty.into_any_element();
+                    };
+                    let Some(turn) = turns.get(index) else {
+                        return Empty.into_any_element();
+                    };
+                    let running = chat.streaming && index + 1 == count;
+                    content_row(
+                        div()
+                            .px(px(24.))
+                            .when(index == 0, |row| row.pt(px(PAD)))
+                            .child(zone(chat, turn, running, window, cx))
+                            .when(running && turn.range.len() <= 1, |row| {
+                                row.child(working(chat, turn.range.start, cx))
+                            }),
+                    )
+                    .into_any_element()
+                })
+                .unwrap_or_else(|_| Empty.into_any_element())
+        },
+        move |range, window, cx| {
+            let _ = visible_workspace.update(cx, |workspace, cx| {
+                if let Some(chat) = workspace.session(id) {
+                    let turns = turns_for_cache(&chat.items, range);
+                    let selected = chat.transcript.selection.map(|(ix, _)| ix);
+                    chat.transcript
+                        .focus
+                        .borrow_mut()
+                        .retain(|ix, _| turns.contains(ix) || selected == Some(*ix));
+                    chat.transcript
+                        .layouts
+                        .borrow_mut()
+                        .retain(|ix, _| turns.contains(ix) || selected == Some(*ix));
+                    chat.transcript
+                        .galleries
+                        .borrow_mut()
+                        .retain(|ix, gallery| {
+                            turns.contains(ix) || gallery.read(cx).is_preview_open()
+                        });
+                }
+            });
+            window.request_animation_frame();
+        },
+    );
     let transcript = div()
         .flex_1()
         .min_h_0()
         .relative()
         .flex()
-        .justify_center()
-        .child(
-            div()
-                .relative()
-                .w_full()
-                .max_w(px(CONTENT_MAX_WIDTH))
-                .child(
-                    // The turns are the scroll container's own children, not a
-                    // column inside it: `scroll::rail` addresses what gpui
-                    // indexes, and a wrapper would leave it one item to point at.
-                    div()
-                        .id(("transcript", id))
-                        .size_full()
-                        .overflow_y_scroll()
-                        .track_scroll(&chat.transcript.scroll)
-                        .px(px(24.))
-                        .pt(px(PAD))
-                        .pb(px(PAD
-                            + f32::from(chat.transcript.footer_height.get())
-                                .max(root::composer_height())
-                            + root::COMPOSER_BOTTOM))
-                        .flex()
-                        .flex_col()
-                        .children(zones),
-                )
-                .child(scroll::follow(
-                    &chat.transcript.scroll,
-                    &chat.transcript.follow,
-                )),
-        )
-        .child(
-            scrollbars::Overlay::new(
-                format!("transcript-bar-{id}"),
-                &chat.transcript.scroll,
-                bezel::gpui::Axis::Vertical,
-            )
-            .end_inset(
-                chat.transcript
-                    .footer_height
-                    .get()
-                    .max(px(root::composer_height()))
-                    + px(root::COMPOSER_BOTTOM),
-            ),
-        )
-        .child(rail(chat, &turns, px(rail_room(pane_width))))
+        // The list owns the scrollbar, so only its rows constrain content width.
+        .child(follow::viewport(&list.state, virtual_content))
+        .child(rail(
+            chat,
+            &self::turns(&chat.items),
+            px(rail_room(pane_width)),
+        ))
         .into_any_element();
     div()
         .flex_1()
@@ -350,14 +480,76 @@ pub fn render(
         .into_any_element()
 }
 
-/// The top turn is active until the bottom is reached, where the latest wins.
-fn active_turn(handle: &ScrollHandle, count: usize) -> usize {
-    let last = count.saturating_sub(1);
-    if scroll::at_bottom(handle.max_offset().y, handle.offset().y, px(0.5)) {
-        last
-    } else {
-        handle.top_item().min(last)
+fn content_row(content: impl IntoElement) -> bezel::gpui::Div {
+    div()
+        .w_full()
+        .flex()
+        .justify_center()
+        .child(div().w_full().max_w(px(CONTENT_MAX_WIDTH)).child(content))
+}
+
+/// Retain nearby turns so small scrolls can reuse their layout and gallery state.
+fn turns_for_cache(items: &[ChatItem], range: Range<usize>) -> Range<usize> {
+    let turns = turns(items);
+    let start = range.start.saturating_sub(2);
+    let end = (range.end + 2).min(turns.len());
+    turns
+        .get(start)
+        .map(|turn| turn.range.start)
+        .unwrap_or(items.len())
+        ..turns
+            .get(end.saturating_sub(1))
+            .map(|turn| turn.range.end)
+            .unwrap_or(items.len())
+}
+
+#[derive(Clone, Copy)]
+struct RailSelection {
+    turn: usize,
+    offset: Option<bezel::gpui::ListOffset>,
+}
+
+fn active_list_turn(
+    list: &bezel::ui::list::VariableList<usize>,
+    count: usize,
+    inset: Pixels,
+    selection: &Cell<Option<RailSelection>>,
+) -> usize {
+    if let Some(selected) = selection.get() {
+        let current = list.state.logical_scroll_top();
+        if selected.turn < count
+            && selected.offset.is_none_or(|offset| {
+                offset.item_ix == current.item_ix && offset.offset_in_item == current.offset_in_item
+            })
+        {
+            return selected.turn;
+        }
+        selection.set(None);
     }
+    let last = count.saturating_sub(1);
+    if list.state.is_following_tail() {
+        return last;
+    }
+    let top = list.state.logical_scroll_top().item_ix.min(last);
+    let max = list.state.max_offset_for_scrollbar().y;
+    if max <= px(0.) {
+        return top;
+    }
+    let progress = (-list.state.scroll_px_offset_for_scrollbar().y / max).clamp(0., 1.);
+    let viewport = list.state.viewport_bounds();
+    // Move the reading anchor down the viewport so short trailing turns are reachable.
+    let anchor = viewport.top() + (viewport.size.height - inset).max(px(0.)) * progress;
+    let mut active = top;
+    for ix in top..count {
+        let Some(bounds) = list.state.bounds_for_item(ix) else {
+            break;
+        };
+        if bounds.top() > anchor {
+            break;
+        }
+        active = ix;
+    }
+    active
 }
 
 fn rail_room(pane_width: f32) -> f32 {
@@ -371,9 +563,16 @@ fn rail(chat: &ChatSession, turns: &[Turn], room: Pixels) -> AnyElement {
     if turns.is_empty() || room < px(scroll::RAIL_ROOM + 2. * MARK_PAD) {
         return Empty.into_any_element();
     }
-    let handle = chat.transcript.scroll.clone();
+    let handle = chat.transcript.list.clone();
     let count = turns.len();
-    let at = active_turn(&handle, count);
+    let selection = chat.transcript.rail_selection.clone();
+    let inset = chat
+        .transcript
+        .footer_height
+        .get()
+        .max(px(root::composer_height()))
+        + px(root::COMPOSER_BOTTOM + PAD);
+    let at = active_list_turn(&handle, count, inset, &selection);
     div()
         .absolute()
         .top_0()
@@ -387,9 +586,15 @@ fn rail(chat: &ChatSession, turns: &[Turn], room: Pixels) -> AnyElement {
         .child(
             canvas(
                 move |_, window, _| {
-                    // Layout and auto-follow can change the scroll after render.
-                    if active_turn(&handle, count) != at {
-                        window.request_animation_frame();
+                    // Capture the actual position after a tick jump is clamped by layout.
+                    if let Some(mut selected) = selection.get()
+                        && selected.offset.is_none()
+                    {
+                        selected.offset = Some(handle.state.logical_scroll_top());
+                        selection.set(Some(selected));
+                    }
+                    if active_list_turn(&handle, count, inset, &selection) != at {
+                        window.refresh();
                     }
                 },
                 |_, _, _, _| {},
@@ -405,19 +610,25 @@ fn rail(chat: &ChatSession, turns: &[Turn], room: Pixels) -> AnyElement {
                 _ => None,
             }
             .filter(|asked| !asked.is_empty());
-            let handle = chat.transcript.scroll.clone();
+            let handle = chat.transcript.list.clone();
+            let selection = chat.transcript.rail_selection.clone();
             div()
                 .id(("rail-mark", ix))
-                // The padding is the hitbox and the gap between two marks at
-                // once; the dash inside it brightens for the whole of it.
+                // Padding provides the hitbox and gap; only the active turn brightens.
                 .p(px(MARK_PAD))
-                .group("rail-mark")
                 .cursor_pointer()
                 .when_some(asked, |mark, asked| {
                     mark.tooltip(move |window, cx| Tooltip::text(asked.clone(), window, cx))
                 })
                 .on_click(move |_, window, _| {
-                    handle.scroll_to_item(ix);
+                    selection.set(Some(RailSelection {
+                        turn: ix,
+                        offset: None,
+                    }));
+                    handle.scroll_to(ix);
+                    if ix + 1 == count {
+                        handle.state.set_follow_mode(bezel::gpui::FollowMode::Tail);
+                    }
                     window.refresh();
                 })
                 .child(
@@ -425,8 +636,7 @@ fn rail(chat: &ChatSession, turns: &[Turn], room: Pixels) -> AnyElement {
                         .w(px(MARK))
                         .h(px(MARK_THICK))
                         .rounded_full()
-                        .bg(if ix == at { ink(0.6) } else { ink(0.2) })
-                        .group_hover("rail-mark", |mark| mark.bg(ink(0.32))),
+                        .bg(if ix == at { ink(0.6) } else { ink(0.2) }),
                 )
         }))
         .into_any_element()
@@ -459,6 +669,15 @@ fn zone(
 
     let mut zone = div().flex().flex_col().gap(px(10.)).pb(px(28.));
     if let Some(ChatItem::User(text)) = chat.items.get(first) {
+        let (doc, images) = gallery::document(text);
+        let gallery = (!images.is_empty()).then(|| {
+            chat.transcript
+                .galleries
+                .borrow_mut()
+                .entry(first)
+                .or_insert_with(|| cx.new(|cx| gallery::Gallery::new(images, &chat.cwd, cx)))
+                .clone()
+        });
         let group = SharedString::from(format!("user-message-{}-{first}", chat.id));
         let fork_group = SharedString::from(format!("fork-message-{}-{first}", chat.id));
         let copy_group = SharedString::from(format!("copy-message-{}-{first}", chat.id));
@@ -479,6 +698,7 @@ fn zone(
                 .group(group.clone())
                 .self_end()
                 .max_w(px(440.))
+                .when(gallery.is_some(), |row| row.w(px(440.)).max_w_full())
                 .flex()
                 .flex_col()
                 .gap(px(4.))
@@ -490,7 +710,13 @@ fn zone(
                         .bg(theme.surface_raised)
                         .text_style(TextStyle::Body)
                         .text_color(theme.text)
-                        .child(prose(chat, first, text, window, cx)),
+                        .flex()
+                        .flex_col()
+                        .gap(px(8.))
+                        .when(!doc.blocks.is_empty(), |bubble| {
+                            bubble.child(prose(chat, first, text, window, cx))
+                        })
+                        .children(gallery),
                 )
                 .child(
                     div()
@@ -943,6 +1169,17 @@ fn verb(question: &str) -> &'static str {
     WORKING[asked_hash(question) % WORKING.len()]
 }
 
+pub fn working_word(chat: &ChatSession) -> &'static str {
+    let question = chat
+        .items
+        .iter()
+        .rev()
+        .find(|item| matches!(item, ChatItem::User(_)))
+        .and_then(item_text)
+        .unwrap_or_default();
+    verb(question)
+}
+
 /// Which orb a session's turn in flight wears, off the same hash for the same
 /// reason: a shape rerolled per frame would be twelve loaders playing at once,
 /// and one picked per place would have the sidebar and the transcript showing
@@ -1066,3 +1303,11 @@ mod tests;
 #[cfg(test)]
 #[path = "../../../tests/unit/transcript_rail.rs"]
 mod rail_tests;
+
+#[cfg(test)]
+#[path = "../../../tests/unit/transcript_virtual.rs"]
+mod virtual_tests;
+
+#[cfg(test)]
+#[path = "../../../tests/unit/transcript_scrollbar.rs"]
+mod scrollbar_tests;

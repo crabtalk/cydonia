@@ -1,11 +1,13 @@
 //! Small text-file buffers with explicit saves and external-change detection.
 
+use crate::model::typography;
 use bezel::{
     gpui::{
         self, Context, Entity, Focusable, Render, Subscription, Task, Window, div, prelude::*, px,
     },
-    theme::{TextStyle, Theme, Typeset},
+    theme::{ControlSize, Sizing as _, TextStyle, Theme, Typeset},
     ui::input::{FieldEvent, Shape, TextField},
+    ui::widgets::{ButtonStyle, Buttons as _, Controls as _},
 };
 use std::{
     cell::Cell,
@@ -16,7 +18,16 @@ use std::{
 };
 
 const LIMIT: u64 = 256 * 1024;
-gpui::actions!(file_editor, [Save]);
+#[cfg(target_os = "macos")]
+mod external;
+/// How long a keystroke waits before the file is parsed again. Every edit
+/// re-parses the whole file — the field holds text, not a syntax tree — so a
+/// run of typing coalesces into one parse instead of one per character.
+const RECOLOUR: Duration = Duration::from_millis(40);
+gpui::actions!(
+    file_editor,
+    [Save, IncreaseTextSize, DecreaseTextSize, ResetTextSize]
+);
 
 pub(crate) fn read_text(path: &Path) -> anyhow::Result<String> {
     anyhow::ensure!(std::fs::metadata(path)?.is_file(), "Choose a regular file");
@@ -101,12 +112,30 @@ pub struct FileView {
     ready: bool,
     loading: bool,
     pub error: Option<String>,
+    #[cfg(target_os = "macos")]
+    opening_external: bool,
+    #[cfg(target_os = "macos")]
+    external_menu: external::Menu,
+    #[cfg(target_os = "macos")]
+    external_error: Option<String>,
     changed: bool,
     preview: bool,
+    preview_selection: Option<markdown::Selection>,
+    preview_layouts: markdown::BlockLayouts,
+    preview_dragging: bool,
     scroll: gpui::ScrollHandle,
     reveal: Rc<Cell<bool>>,
+    target_line: Rc<Cell<Option<usize>>>,
+    /// Updated when a missing grammar finishes installing.
+    pub(super) language: Option<crate::model::language::Language>,
+    grammar_status: Option<crate::model::language::Status>,
+    grammar_dismissed: bool,
+    _grammar_poll: Task<()>,
     _watch: Subscription,
     _poll: Task<()>,
+    /// The parse in flight. Replaced by the next edit, which drops it — that
+    /// is the debounce.
+    _recolour: Task<()>,
 }
 
 impl FileView {
@@ -124,6 +153,14 @@ impl FileView {
         let watch = cx.subscribe(&field, |this, _, event: &FieldEvent, cx| {
             if matches!(event, FieldEvent::Changed | FieldEvent::Moved) {
                 this.reveal.set(true);
+            }
+            // Loading a file emits this too — `set_content` is an edit as far
+            // as the field is concerned — so first paint is coloured by the
+            // same path that keeps typing coloured.
+            if matches!(event, FieldEvent::Changed) {
+                this.preview_selection = None;
+                this.preview_dragging = false;
+                this.recolour(cx);
             }
             cx.notify();
         });
@@ -151,22 +188,84 @@ impl FileView {
                 cx.background_executor().timer(Duration::from_secs(3)).await;
             }
         });
+        let grammar_poll = cx.spawn(async move |this, cx| {
+            loop {
+                if !matches!(
+                    this.update(cx, |this, cx| {
+                        this.refresh_grammar(cx);
+                        this.unpainted()
+                            .is_some_and(crate::model::language::available)
+                    }),
+                    Ok(true)
+                ) {
+                    return;
+                }
+                cx.background_executor()
+                    .timer(Duration::from_millis(150))
+                    .await;
+            }
+        });
         Self {
             root: path.parent().unwrap_or(Path::new("/")).to_path_buf(),
             focus: cx.focus_handle(),
+            language: crate::model::language::of(&path),
             path,
             field,
             saved: String::new(),
             ready: false,
             loading: true,
             error: None,
+            #[cfg(target_os = "macos")]
+            opening_external: false,
+            #[cfg(target_os = "macos")]
+            external_menu: external::Menu::default(),
+            #[cfg(target_os = "macos")]
+            external_error: None,
             changed: false,
             preview: true,
+            preview_selection: None,
+            preview_layouts: markdown::BlockLayouts::default(),
+            preview_dragging: false,
             scroll: gpui::ScrollHandle::new(),
             reveal: Rc::new(Cell::new(false)),
+            target_line: Rc::new(Cell::new(None)),
+            grammar_status: None,
+            grammar_dismissed: false,
+            _grammar_poll: grammar_poll,
             _watch: watch,
             _poll: poll,
+            _recolour: Task::ready(()),
         }
+    }
+
+    /// Parse the file again and hand the spans to the field.
+    ///
+    /// Off the main thread: the largest file this view will open is tens of
+    /// milliseconds of tree-sitter, and this runs from a keystroke. The field keeps painting the spans it
+    /// already has until these arrive, so the text never flashes plain
+    /// mid-edit.
+    fn recolour(&mut self, cx: &mut Context<Self>) {
+        use crate::model::language::Language;
+        // A language nothing here can paint is not worth a parse, and a file
+        // whose name names nothing at all is not worth asking about.
+        if !matches!(self.language, Some(Language::Ready(_) | Language::Markdown)) {
+            return;
+        }
+        let path = self.path.clone();
+        let source = self.field.read(cx).content().clone();
+        self._recolour = cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(RECOLOUR).await;
+            let spans =
+                cx.background_executor()
+                    .spawn(async move {
+                        crate::model::language::spans(&path, &source).unwrap_or_default()
+                    })
+                    .await;
+            let _ = this.update(cx, |this, cx| {
+                this.field
+                    .update(cx, |field, cx| field.set_spans(spans, cx));
+            });
+        });
     }
 
     pub(super) fn receive(&mut self, result: anyhow::Result<String>, cx: &mut Context<Self>) {
@@ -188,6 +287,28 @@ impl FileView {
             }
             Err(error) => self.error = Some(error.to_string()),
         }
+        cx.notify();
+    }
+
+    pub(super) fn draft_snapshot(&self, cx: &gpui::App) -> Option<(String, String)> {
+        self.dirty(cx).then(|| {
+            (
+                self.saved.clone(),
+                self.field.read(cx).content().to_string(),
+            )
+        })
+    }
+
+    pub(super) fn restore_draft(
+        &mut self,
+        (saved, draft): (String, String),
+        cx: &mut Context<Self>,
+    ) {
+        self.saved = saved;
+        self.ready = true;
+        self.loading = false;
+        self.field
+            .update(cx, |field, cx| field.set_content(draft, cx));
         cx.notify();
     }
 
@@ -220,6 +341,153 @@ impl FileView {
         }
     }
 
+    /// The language name where this build names the file and cannot paint it.
+    /// `None` covers both a painted file and one whose name names nothing.
+    fn unpainted(&self) -> Option<&'static str> {
+        match self.language {
+            Some(crate::model::language::Language::Missing(name)) => Some(name),
+            _ => None,
+        }
+    }
+
+    fn refresh_grammar(&mut self, cx: &mut Context<Self>) {
+        let Some(name) = self.unpainted() else {
+            return;
+        };
+        let status = crate::model::language::status(name);
+        let language = crate::model::language::of(&self.path);
+        if self.language != language {
+            self.language = language;
+            self.grammar_status = None;
+            self.recolour(cx);
+            markdown::set_highlighter(
+                cx,
+                crate::model::language::highlight,
+                crate::model::language::paintable(),
+            );
+            cx.notify();
+        } else if self.grammar_status.as_ref() != Some(&status) {
+            self.grammar_status = Some(status);
+            cx.notify();
+        }
+    }
+
+    fn grammar_notice(&self, theme: &Theme, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        use crate::model::language::{self, Status};
+        let name = self.unpainted()?;
+        if !self.ready || self.grammar_dismissed || !language::available(name) {
+            return None;
+        }
+        let status = self.grammar_status.clone().unwrap_or(Status::Missing);
+        let message = match &status {
+            Status::Missing => format!("Install {} highlighting?", name.to_uppercase()),
+            Status::Downloading { received, total } => format!(
+                "Installing {name} highlighting… {} / {} KiB",
+                received / 1024,
+                total.div_ceil(1024)
+            ),
+            Status::Checking => format!("Checking {name} highlighting…"),
+            Status::Failed(error) => format!("Could not install {name} highlighting: {error}"),
+            Status::Ready => return None,
+        };
+        let active = status.active();
+        let fraction = match &status {
+            Status::Downloading { received, total } => *received as f32 / (*total).max(1) as f32,
+            Status::Checking => 1.,
+            _ => 0.,
+        };
+        let actions = div()
+            .debug_selector(|| "grammar-actions".into())
+            .ml_auto()
+            .flex_none()
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .child(
+                theme
+                    .button(
+                        if active { "Hide" } else { "Not now" },
+                        ButtonStyle::Ghost,
+                        None,
+                    )
+                    .control_size(ControlSize::Small)
+                    .id("dismiss-grammar")
+                    .debug_selector(|| "dismiss-grammar".into())
+                    .flex_none()
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.grammar_dismissed = true;
+                        cx.notify();
+                    })),
+            )
+            .when(!active, |row| {
+                row.child(
+                    theme
+                        .button(
+                            if matches!(status, Status::Failed(_)) {
+                                "Retry"
+                            } else {
+                                "Install"
+                            },
+                            ButtonStyle::Prominent,
+                            None,
+                        )
+                        .control_size(ControlSize::Small)
+                        .id("install-grammar")
+                        .debug_selector(|| "install-grammar".into())
+                        .flex_none()
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            language::start_install(name);
+                            this.refresh_grammar(cx);
+                        })),
+                )
+            });
+        Some(
+            div()
+                .debug_selector(|| "grammar-notice".into())
+                .w_full()
+                .min_w_0()
+                .flex_none()
+                .border_t_1()
+                .border_color(theme.border)
+                .px(px(8.))
+                .py(px(6.))
+                .flex()
+                .flex_col()
+                .gap(px(6.))
+                .text_style(TextStyle::Caption)
+                .text_color(theme.text_muted)
+                .child(
+                    div()
+                        .w_full()
+                        .min_w_0()
+                        .flex_none()
+                        .flex()
+                        .flex_wrap()
+                        .items_center()
+                        .gap(px(8.))
+                        .child(
+                            div()
+                                .debug_selector(|| "grammar-message".into())
+                                .min_w_0()
+                                .max_w_full()
+                                .flex_grow(1.)
+                                .flex_shrink(1.)
+                                .whitespace_normal()
+                                .child(message),
+                        )
+                        .child(actions),
+                )
+                .when(active, |column| {
+                    column.child(
+                        theme
+                            .progress_bar(fraction)
+                            .debug_selector(|| "grammar-progress".into()),
+                    )
+                })
+                .into_any_element(),
+        )
+    }
+
     pub fn status_bar(
         &mut self,
         files_open: bool,
@@ -242,7 +510,7 @@ impl FileView {
             .path
             .extension()
             .is_some_and(|ext| ext == "md" || ext == "markdown");
-        super::status::bar(&theme)
+        let bar = super::status::bar(&theme)
             .child(super::status::path(&self.path, breadcrumb))
             .when(markdown && self.ready, |row| {
                 row.child(
@@ -251,7 +519,10 @@ impl FileView {
                         .cursor_pointer()
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.preview = !this.preview;
-                            if !this.preview {
+                            this.preview_dragging = false;
+                            if this.preview {
+                                window.focus(&this.focus, cx);
+                            } else {
                                 window.focus(&this.field.focus_handle(cx), cx);
                             }
                             cx.notify();
@@ -261,6 +532,20 @@ impl FileView {
                         } else {
                             "Preview"
                         }),
+                )
+            })
+            .when_some(self.unpainted(), |row, name| {
+                row.child(
+                    div()
+                        .id("file-language")
+                        .debug_selector(|| "file-language".into())
+                        .flex_none()
+                        .cursor_pointer()
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.grammar_dismissed = !this.grammar_dismissed;
+                            cx.notify();
+                        }))
+                        .child(name),
                 )
             })
             .child(super::status::files_toggle(files_open, &theme))
@@ -274,8 +559,39 @@ impl FileView {
                             this.save(false, cx);
                         })),
                 )
-            })
-            .into_any_element()
+            });
+        #[cfg(target_os = "macos")]
+        let bar = bar.child(self.external_button(cx));
+        bar.into_any_element()
+    }
+
+    #[cfg(target_os = "macos")]
+    fn open_external(&mut self, target: external::Target, cx: &mut Context<Self>) {
+        let opens_file = matches!(
+            target,
+            external::Target::Application(_) | external::Target::Default
+        );
+        if self.opening_external || (opens_file && self.dirty(cx) && !self.save(false, cx)) {
+            return;
+        }
+        self.opening_external = true;
+        self.external_error = None;
+        let path = self.path.clone();
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move { external::open(&path, &target) })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.opening_external = false;
+                this.external_error = result
+                    .err()
+                    .map(|error| format!("Open with failed: {error:#}"));
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
     }
 
     fn reload(&mut self, cx: &mut Context<Self>) {
@@ -301,13 +617,21 @@ fn line_starts(text: &str) -> Vec<usize> {
 }
 
 impl FileView {
+    pub(super) fn go_to_line(&mut self, line: usize, cx: &mut Context<Self>) {
+        self.preview = false;
+        self.target_line.set(Some(line.max(1)));
+        cx.notify();
+    }
+
     fn source_view(&self, theme: &Theme, cx: &mut Context<Self>) -> gpui::AnyElement {
         let starts = line_starts(self.field.read(cx).content());
-        let size = TextStyle::Body.painted();
+        let size = typography::file_size(cx);
         let gutter = px(starts.len().to_string().len() as f32 * size * 0.65 + 20.);
         let field = self.field.clone();
         let scroll = self.scroll.clone();
         let reveal = self.reveal.clone();
+        let target_line = self.target_line.clone();
+        let ready = self.ready;
         let font = gpui::font(theme.font_mono.clone());
         let color = theme.text_faint;
         div()
@@ -338,21 +662,36 @@ impl FileView {
                     |bounds, _, _| bounds,
                     move |_, bounds, window, cx| {
                         let field = field.read(cx);
-                        if reveal.replace(false) && field.focus_handle(cx).is_focused(window) {
-                            if let Some(caret) = field.offset_bounds(field.cursor()) {
-                                let viewport = scroll.bounds();
-                                let offset = scroll.offset();
-                                let mut y = offset.y;
-                                if caret.top() < viewport.top() {
-                                    y += viewport.top() - caret.top();
-                                } else if caret.bottom() > viewport.bottom() {
-                                    y -= caret.bottom() - viewport.bottom();
-                                }
-                                y = y.clamp(-scroll.max_offset().y, px(0.));
-                                if y != offset.y {
-                                    scroll.set_offset(gpui::point(offset.x, y));
-                                    window.request_animation_frame();
-                                }
+                        if ready
+                            && let Some(line) = target_line.get()
+                            && let Some(at) = starts
+                                .get(line.saturating_sub(1).min(starts.len().saturating_sub(1)))
+                            && let Some(row) = field.offset_bounds(*at)
+                        {
+                            let offset = scroll.offset();
+                            let y = (offset.y + scroll.bounds().top() - row.top())
+                                .clamp(-scroll.max_offset().y, px(0.));
+                            scroll.set_offset(gpui::point(offset.x, y));
+                            target_line.set(None);
+                            reveal.set(false);
+                            window.refresh();
+                        }
+                        if reveal.replace(false)
+                            && field.focus_handle(cx).is_focused(window)
+                            && let Some(caret) = field.offset_bounds(field.cursor())
+                        {
+                            let viewport = scroll.bounds();
+                            let offset = scroll.offset();
+                            let mut y = offset.y;
+                            if caret.top() < viewport.top() {
+                                y += viewport.top() - caret.top();
+                            } else if caret.bottom() > viewport.bottom() {
+                                y -= caret.bottom() - viewport.bottom();
+                            }
+                            y = y.clamp(-scroll.max_offset().y, px(0.));
+                            if y != offset.y {
+                                scroll.set_offset(gpui::point(offset.x, y));
+                                window.request_animation_frame();
                             }
                         }
                         let first = starts.partition_point(|at| {
@@ -423,20 +762,77 @@ impl Focusable for FileView {
 impl Render for FileView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::of(cx).clone();
+        let size = typography::file_size(cx);
+        self.field.update(cx, |field, cx| {
+            field.set_metrics(
+                bezel::theme::Metrics::from(TextStyle::Body)
+                    .scaled(size / TextStyle::Body.painted()),
+                cx,
+            );
+        });
         let markdown = self
             .path
             .extension()
             .is_some_and(|ext| ext == "md" || ext == "markdown");
         let notice = self.error.clone().or_else(|| self.changed.then(|| "File changed on disk. Reload discards your edits; overwrite saves your version.".into()));
+        #[cfg(target_os = "macos")]
+        let external_notice = self.external_error.clone().map(|error| {
+            div()
+                .p(px(8.))
+                .text_style(TextStyle::Caption)
+                .text_color(theme.text_muted)
+                .child(error)
+                .child(
+                    div()
+                        .id("dismiss-open-with-error")
+                        .cursor_pointer()
+                        .child("Dismiss")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.external_error = None;
+                            cx.notify();
+                        })),
+                )
+                .into_any_element()
+        });
+        #[cfg(not(target_os = "macos"))]
+        let external_notice: Option<gpui::AnyElement> = None;
         div()
             .size_full()
             .flex()
             .flex_col()
             .key_context("FileEditor")
             .track_focus(&self.focus)
+            .on_action(|_: &IncreaseTextSize, _, cx| typography::zoom_file(1., cx))
+            .on_action(|_: &DecreaseTextSize, _, cx| typography::zoom_file(-1., cx))
+            .on_action(|_: &ResetTextSize, _, cx| typography::reset_file_zoom(cx))
+            .when(markdown && self.preview, |panel| {
+                panel
+                    .on_action(cx.listener(|this, _: &bezel::ui::input::Copy, _, cx| {
+                        let Some(selection) = this.preview_selection else {
+                            return;
+                        };
+                        let doc = markdown::parse_with(
+                            this.field.read(cx).content(),
+                            &markdown::Marks::of(cx),
+                        );
+                        let text = markdown::selectable::copied(&doc, selection);
+                        if !text.is_empty() {
+                            cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+                        }
+                    }))
+                    .on_action(cx.listener(|this, _: &bezel::ui::input::SelectAll, _, cx| {
+                        let doc = markdown::parse_with(
+                            this.field.read(cx).content(),
+                            &markdown::Marks::of(cx),
+                        );
+                        this.preview_selection = Some(markdown::Selection::all(&doc));
+                        cx.notify();
+                    }))
+            })
             .on_action(cx.listener(|this, _: &Save, _, cx| {
                 this.save(false, cx);
             }))
+            .children(external_notice)
             .when_some(notice, |panel, notice| {
                 panel.child(
                     div()
@@ -477,12 +873,58 @@ impl Render for FileView {
                     panel.child(
                         div()
                             .id("file-preview")
+                            .cursor(gpui::CursorStyle::IBeam)
+                            .on_mouse_down(
+                                gpui::MouseButton::Left,
+                                cx.listener(|this, event: &gpui::MouseDownEvent, window, cx| {
+                                    window.focus(&this.focus, cx);
+                                    this.preview_selection = this
+                                        .preview_layouts
+                                        .hit(event.position)
+                                        .map(markdown::Selection::at);
+                                    this.preview_dragging = this.preview_selection.is_some();
+                                    cx.notify();
+                                }),
+                            )
+                            .on_mouse_move(cx.listener(
+                                |this, event: &gpui::MouseMoveEvent, _, cx| {
+                                    if this.preview_dragging
+                                        && let Some(cursor) =
+                                            this.preview_layouts.hit(event.position)
+                                        && let Some(selection) = this.preview_selection
+                                    {
+                                        this.preview_selection = Some(selection.extend_to(cursor));
+                                        cx.notify();
+                                    }
+                                },
+                            ))
+                            .on_mouse_up(
+                                gpui::MouseButton::Left,
+                                cx.listener(|this, _, _, _| this.preview_dragging = false),
+                            )
+                            .on_mouse_up_out(
+                                gpui::MouseButton::Left,
+                                cx.listener(|this, _, _, _| this.preview_dragging = false),
+                            )
                             .flex_1()
                             .min_h_0()
                             .overflow_y_scroll()
                             .p(px(16.))
-                            .child(markdown::render::markdown(
-                                &self.field.read(cx).content().clone(),
+                            .child(markdown::render::render_with(
+                                &markdown::parse_with(
+                                    self.field.read(cx).content(),
+                                    &markdown::Marks::of(cx),
+                                ),
+                                markdown::render::Editing {
+                                    selection: self.preview_selection,
+                                    layouts: Some(&self.preview_layouts),
+                                    caret_on: false,
+                                    typography: Some(
+                                        markdown::Typography::of(cx)
+                                            .scaled(size / bezel::theme::base_text_size()),
+                                    ),
+                                    ..Default::default()
+                                },
                                 window,
                                 cx,
                             )),
@@ -491,6 +933,7 @@ impl Render for FileView {
                     panel.child(self.source_view(&theme, cx))
                 }
             })
+            .children(self.grammar_notice(&theme, cx))
     }
 }
 

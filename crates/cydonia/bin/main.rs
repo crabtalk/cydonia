@@ -9,7 +9,7 @@ use bezel::{
 };
 use cydonia::{
     agent, memory,
-    model::{media, migrate, settings, state, update, workspace},
+    model::{language, media, migrate, settings, state, update, workspace},
     view::{article, hotkey, keymap, menubar, root},
 };
 
@@ -54,11 +54,7 @@ fn main() -> Result<()> {
         theme::set_base_text_size(look.text_size, cx);
         workspace::apply_wrap_code(look.wrap_code, cx);
         markdown::set_source_style(cx, article::source_style);
-        markdown::set_highlighter(
-            cx,
-            |language, code| syntax::highlight(code, language),
-            syntax::lang::LANGS.iter().map(|lang| lang.name),
-        );
+        markdown::set_highlighter(cx, language::highlight, language::paintable());
         memory::init(settings.cover_memory * 1_000_000, cx);
         // Every chord in the app, bezel's included — see
         // [`cydonia::view::keymap`]. One call rather than an `init` per

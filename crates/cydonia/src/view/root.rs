@@ -19,7 +19,7 @@ use crate::{
         },
         confirm, create, info,
         settings::{self, Section, SettingsWindow},
-        sidebar::{Filter, Renaming, Row},
+        sidebar::{Renaming, Row},
         table,
     },
 };
@@ -200,11 +200,8 @@ pub fn bindings() -> Vec<KeyBinding> {
         // taking the hand out of the editor — where `tab` itself is indent.
         KeyBinding::new("ctrl-tab", NextEntry, None),
         KeyBinding::new("ctrl-shift-tab", PrevEntry, None),
-        // Claimed app-wide and answered last: an editor and a field bind copy
-        // on their own contexts, which gpui dispatches from the focus outward,
-        // so this only runs where nothing else wanted it — which is exactly
-        // where a transcript selection is the thing being copied.
-        KeyBinding::new("cmd-c", CopySelection, None),
+        // Scope the fallback to the root so focused text surfaces take priority.
+        KeyBinding::new("cmd-c", CopySelection, Some("Cydonia")),
         KeyBinding::new("enter", CommitName, Some(RENAME_CONTEXT)),
         KeyBinding::new("escape", DismissName, Some(RENAME_CONTEXT)),
     ]
@@ -232,7 +229,13 @@ pub fn open(settings: Settings, state: State, cx: &mut App) -> Result<WindowHand
         },
         |window, cx| {
             appearance::observe_window(window, cx).detach();
-            cx.new(|cx| Cydonia::new(settings, state, window, cx))
+            cx.new(|cx| {
+                let mut root = Cydonia::new(settings, state, window, cx);
+                root.restore_panel_layout();
+                cx.on_release(|root: &mut Cydonia, cx| root.save_panel_layout(cx))
+                    .detach();
+                root
+            })
         },
     )
 }
@@ -276,6 +279,10 @@ pub struct Cydonia {
     pub(crate) sidebar_open: bool,
     pub(crate) sidebar_width: f32,
     pub(crate) composer: Entity<Composer>,
+    pub(crate) queued_galleries: std::collections::HashMap<
+        (u64, usize, String),
+        Entity<super::component::transcript::gallery::Gallery>,
+    >,
     /// Visibility and shell per session; hiding a panel keeps its process alive.
     pub(crate) terminals:
         std::collections::HashMap<u64, (bool, Entity<super::component::terminal::TerminalPanel>)>,
@@ -335,8 +342,6 @@ pub struct Cydonia {
     /// The formatting bar over the open document's selection, and the URL
     /// field it puts up — see [`crate::view::component::ribbon`].
     pub(crate) ribbon: Ribbon,
-    /// Which kinds the sidebar is listing.
-    pub(crate) filter: Filter,
     /// What the name field is attached to, and the field itself.
     pub(crate) renaming: Option<Renaming>,
     pub(crate) name_field: Entity<TextField>,
@@ -371,6 +376,13 @@ impl Cydonia {
                     });
                 }
                 ComposerEvent::Cancel => this.cancel_turn(cx),
+                ComposerEvent::Reconnect => {
+                    this.workspace.update(cx, |workspace, cx| {
+                        if let Some(id) = workspace.active_id() {
+                            workspace.select_session(id, cx);
+                        }
+                    });
+                }
                 ComposerEvent::Terminal => this.show_terminal(window, cx),
                 ComposerEvent::Changes => this.show_changes(window, cx),
                 ComposerEvent::Files => this.show_files(window, cx),
@@ -432,6 +444,7 @@ impl Cydonia {
             sidebar_width: SIDEBAR_WIDTH,
             composer,
             terminals: Default::default(),
+            queued_galleries: Default::default(),
             changes_open: false,
             changes_width: 440.,
             terminal_height: 240.,
@@ -457,7 +470,6 @@ impl Cydonia {
             menu_cursor: Cursor::default(),
             menu_pressed: false,
             ribbon: Ribbon::new(cx),
-            filter: Filter::default(),
             renaming: None,
             name_field,
             rail: UniformListScrollHandle::new(),
@@ -807,6 +819,7 @@ impl Render for Cydonia {
         self.sync_changes(cx);
         let theme = Theme::of(cx).clone();
         div()
+            .key_context("Cydonia")
             .size_full()
             .relative()
             .flex()
@@ -815,10 +828,11 @@ impl Render for Cydonia {
             .text_color(theme.text)
             .text_style(TextStyle::Body)
             .on_action(cx.listener(Self::toggle_changes))
+            .on_action(cx.listener(Self::open_session_file))
             .on_action(
                 cx.listener(|this, _: &OpenReview, window, cx| this.show_changes(window, cx)),
             )
-            .on_action(cx.listener(|this, _: &OpenFiles, window, cx| this.show_files(window, cx)))
+            .on_action(cx.listener(|this, _: &OpenFiles, window, cx| this.toggle_files(window, cx)))
             .on_action(cx.listener(Self::copy_selection))
             .on_action(cx.listener(Self::commit_cell_action))
             .on_action(cx.listener(Self::dismiss_cell))

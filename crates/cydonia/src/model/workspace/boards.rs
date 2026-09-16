@@ -52,10 +52,14 @@ impl Workspace {
         if ix >= open.boards.len() {
             return;
         }
+        let id = open.boards[ix].id.clone();
+        if !open.load_board(&id) {
+            return;
+        }
         open.board = Some(ix);
         let id = open.boards[ix].id.clone();
         self.active = Some(project);
-        self.remember(project, state::Kind::Board, id);
+        self.remember(project, state::Kind::Board, id, cx);
         cx.notify();
     }
 
@@ -109,12 +113,16 @@ impl Workspace {
         {
             return Err(format!("{key} is another board's key here."));
         }
+        if !open.load_board(id) {
+            return Err("The board could not be read.".into());
+        }
         let store = open.store();
         if let Some(board) = open.boards.iter_mut().find(|board| board.id == id) {
             board.name = name.trim().to_owned();
             board.key = key;
             store.save_board(board);
         }
+        self.prune_archived(cx);
         cx.notify();
         Ok(())
     }
@@ -124,6 +132,7 @@ impl Workspace {
             board.archived = archived;
             store.save_board(board);
         });
+        self.prune_archived(cx);
         cx.notify();
     }
 
@@ -196,6 +205,9 @@ impl Workspace {
 
     fn with_board(&mut self, id: &str, edit: impl FnOnce(&fs::Project, &mut Board)) {
         for open in &mut self.projects {
+            if !open.load_board(id) {
+                return;
+            }
             let store = open.store();
             if let Some(board) = open.boards.iter_mut().find(|board| board.id == id) {
                 edit(&store, board);
@@ -209,6 +221,14 @@ impl Workspace {
         let Some(open) = self.active.and_then(|ix| self.projects.get_mut(ix)) else {
             return;
         };
+        if let Some(id) = open
+            .board
+            .and_then(|ix| open.boards.get(ix))
+            .map(|board| board.id.clone())
+            && !open.load_board(&id)
+        {
+            return;
+        }
         let store = open.store();
         if let Some(board) = open.board.and_then(|ix| open.boards.get_mut(ix)) {
             store.save_board(board);

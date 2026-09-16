@@ -123,6 +123,22 @@ impl Project {
         let _ = std::fs::remove_file(old);
     }
 
+    /// Read one persisted session without loading the rest of the project.
+    pub fn session(&self, id: &str) -> Option<Record> {
+        let body = std::fs::read_to_string(self.session_file(id)).ok()?;
+        let mut record: Record = serde_json::from_str(&body).ok()?;
+        record.id = id.to_owned();
+        record.number = crate::entry::number(&self.root, "session", id).ok();
+        Some(record)
+    }
+
+    /// Read one board for a lazily opened archive entry.
+    pub fn board(&self, id: &str) -> Option<Board> {
+        let mut board = self.read_board(&self.board_file(id))?;
+        board.number = crate::entry::number(&self.root, "board", id).ok();
+        Some(board)
+    }
+
     fn sessions_dir(&self) -> PathBuf {
         self.cydonia().join(SESSIONS)
     }

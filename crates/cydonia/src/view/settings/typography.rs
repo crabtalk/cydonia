@@ -1,4 +1,4 @@
-//! Saved base sizes. Article and terminal keyboard zoom stays separate, so
+//! Saved base sizes. Keyboard zoom stays separate, so
 //! resetting zoom always has a configured size to return to.
 
 use crate::{
@@ -16,6 +16,7 @@ enum Font {
     Ui,
     Article,
     Terminal,
+    File,
 }
 
 impl Font {
@@ -24,6 +25,7 @@ impl Font {
             Self::Ui => "ui-font",
             Self::Article => "article-font",
             Self::Terminal => "terminal-font",
+            Self::File => "file-font",
         }
     }
 
@@ -32,6 +34,7 @@ impl Font {
             Self::Ui => "UI font size",
             Self::Article => "Article font size",
             Self::Terminal => "Terminal font size",
+            Self::File => "File font size",
         }
     }
 
@@ -40,6 +43,7 @@ impl Font {
             Self::Ui => "Sizes for menus, controls, and the rest of the interface.",
             Self::Article => "Default for articles. ⌘+/− zooms; ⌘0 resets.",
             Self::Terminal => "Default for terminals. ⌘+/− zooms; ⌘0 resets.",
+            Self::File => "Default for file source and previews. ⌘+/− zooms; ⌘0 resets.",
         }
     }
 
@@ -59,6 +63,7 @@ impl SettingsWindow {
             workspace.text_size,
             workspace.article_font_size(),
             workspace.terminal_font_size,
+            workspace.file_font_size,
         ];
         div()
             .flex()
@@ -67,7 +72,7 @@ impl SettingsWindow {
             .child(theme.field_label("Typography"))
             .child(
                 theme.group_box().children(
-                    [Font::Ui, Font::Article, Font::Terminal]
+                    [Font::Ui, Font::Article, Font::Terminal, Font::File]
                         .into_iter()
                         .zip(sizes)
                         .enumerate()
@@ -140,6 +145,7 @@ impl SettingsWindow {
                     Font::Ui => workspace.set_text_size(next, cx),
                     Font::Article => workspace.set_article_font_size(next, cx),
                     Font::Terminal => workspace.set_terminal_font_size(next, cx),
+                    Font::File => workspace.set_file_font_size(next, cx),
                 });
                 cx.notify();
             }))

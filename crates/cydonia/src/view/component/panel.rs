@@ -1,5 +1,7 @@
 //! A session's persistent Review, terminal, and file tabs.
 
+mod persistence;
+
 use super::{
     changes::Changes,
     file::FileView,
@@ -22,7 +24,10 @@ use bezel::{
 };
 use std::path::PathBuf;
 
-gpui::actions!(session_panel, [OpenFile, CloseTab, ToggleFiles]);
+gpui::actions!(
+    session_panel,
+    [OpenFile, NewTerminal, CloseTab, ToggleFiles]
+);
 
 struct FilesResize;
 
@@ -52,6 +57,7 @@ pub struct Panel {
     cursor: Cursor,
     closing: Option<usize>,
     focus_pending: bool,
+    restore_pending: Option<persistence::SavedPanel>,
 }
 
 impl Panel {
@@ -71,6 +77,7 @@ impl Panel {
             cursor: Cursor::default(),
             closing: None,
             focus_pending: false,
+            restore_pending: None,
         }
     }
 
@@ -155,6 +162,16 @@ impl Panel {
         cx.notify();
     }
 
+    fn toggle_files(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.files_open {
+            self.files_open = false;
+            self.focus(window, cx);
+            cx.notify();
+        } else {
+            self.files(window, cx);
+        }
+    }
+
     fn open_file(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         self.focus_pending = true;
         let path = path.canonicalize().unwrap_or(path);
@@ -222,7 +239,9 @@ impl Panel {
             Item::action("Review")
                 .with_icon(icons::development::GitCompare)
                 .with_shortcut(&crate::view::root::OpenReview, window),
-            Item::action("Terminal").with_icon(icons::development::Terminal),
+            Item::action("Terminal")
+                .with_icon(icons::development::Terminal)
+                .with_shortcut_in(&NewTerminal, "SessionPanel", window),
             Item::action("Files")
                 .with_icon(icons::files::Folder)
                 .with_shortcut(&crate::view::root::OpenFiles, window),
@@ -232,6 +251,7 @@ impl Panel {
 
 impl Render for Panel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.restore_tabs(window, cx);
         if self.focus_pending {
             self.focus_pending = false;
             self.focus(window, cx);
@@ -273,11 +293,11 @@ impl Render for Panel {
                     None
                 }
             });
-        if self.files_open {
-            if let Some(files) = &self.files {
-                let selected = active_file.as_ref().map(|file| file.read(cx).path.clone());
-                files.update(cx, |files, cx| files.reveal(selected, cx));
-            }
+        if self.files_open
+            && let Some(files) = &self.files
+        {
+            let selected = active_file.as_ref().map(|file| file.read(cx).path.clone());
+            files.update(cx, |files, cx| files.reveal(selected, cx));
         }
         let status = self
             .tabs
@@ -291,7 +311,12 @@ impl Render for Panel {
                     review.update(cx, |review, cx| review.status_bar(self.files_open, cx))
                 }
                 Content::Terminal(terminal) => {
-                    super::status::terminal(&terminal.read(cx).directory, &theme)
+                    let directory = &terminal.read(cx).directory;
+                    super::status::bar(&theme)
+                        .child(super::status::path(
+                            directory,
+                            directory.display().to_string(),
+                        ))
                         .child(super::status::files_toggle(self.files_open, &theme))
                         .into_any_element()
                 }
@@ -357,6 +382,14 @@ impl Render for Panel {
             .bg(crate::view::root::content_bg(&theme))
             .key_context("SessionPanel")
             .track_focus(&self.focus)
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(|this, _, window, cx| {
+                    if !this.focus.contains_focused(window, cx) {
+                        this.focus(window, cx);
+                    }
+                }),
+            )
             .on_action(
                 cx.listener(|this, action: &super::files::ToggleFilter, window, cx| {
                     if !this.files_open {
@@ -368,15 +401,17 @@ impl Render for Panel {
                 }),
             )
             .on_action(cx.listener(|this, _: &ToggleFiles, window, cx| {
-                if this.files_open {
-                    this.files_open = false;
-                    this.focus(window, cx);
-                    cx.notify();
-                } else {
-                    this.files(window, cx);
-                }
+                this.toggle_files(window, cx);
             }))
             .on_action(cx.listener(|this, _: &OpenFile, window, cx| this.files(window, cx)))
+            .on_action(cx.listener(|this, _: &NewTerminal, window, cx| this.terminal(window, cx)))
+            .on_action(
+                cx.listener(|this, _: &crate::view::menubar::CloseWindow, window, cx| {
+                    if let Some(id) = this.active {
+                        this.close(id, window, cx);
+                    }
+                }),
+            )
             .on_action(cx.listener(|this, _: &CloseTab, window, cx| {
                 if let Some(id) = this.active {
                     this.close(id, window, cx);
@@ -638,6 +673,48 @@ impl Render for Panel {
 }
 
 impl Cydonia {
+    pub(crate) fn open_session_file(
+        &mut self,
+        link: &super::transcript::links::OpenSessionFile,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.showing(cx) != Some(Pane::Chat)
+            || self.workspace.read(cx).active_id() != Some(link.session)
+        {
+            return;
+        }
+        self.changes_open = true;
+        self.sync_changes(cx);
+        if let Some(panel) = self.changes.clone() {
+            panel.update(cx, |panel, cx| {
+                panel.restore_tabs(window, cx);
+                panel.open_file(link.path.clone(), cx);
+                if let Some(line) = link.line
+                    && let Some(tab) = panel.tabs.iter().find(|tab| Some(tab.id) == panel.active)
+                    && let Content::File(file) = &tab.content
+                {
+                    file.update(cx, |file, cx| file.go_to_line(line, cx));
+                }
+                panel.focus(window, cx);
+            });
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn toggle_files(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.showing(cx) != Some(Pane::Chat) {
+            return;
+        }
+        if self.changes_open
+            && let Some(panel) = self.changes.clone()
+        {
+            panel.update(cx, |panel, cx| panel.toggle_files(window, cx));
+        } else {
+            self.show_files(window, cx);
+        }
+    }
+
     pub(crate) fn show_files(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.showing(cx) == Some(Pane::Chat) {
             self.changes_open = true;
@@ -655,6 +732,7 @@ impl Cydonia {
             self.sync_changes(cx);
             if let Some(panel) = self.changes.clone() {
                 panel.update(cx, |panel, cx| {
+                    panel.restore_tabs(window, cx);
                     panel.review(cx);
                     panel.focus(window, cx);
                 });
@@ -685,24 +763,42 @@ impl Cydonia {
 
     pub(crate) fn sync_changes(&mut self, cx: &mut Context<Self>) {
         let workspace = self.workspace.read(cx);
-        self.right_panels
-            .retain(|id, _| workspace.session(*id).is_some());
+        let visible = (self.showing(cx) == Some(Pane::Chat))
+            .then(|| workspace.active_id())
+            .flatten();
+        self.right_panels.retain(|id, panel| {
+            workspace
+                .session(*id)
+                .is_some_and(|chat| !chat.closed || visible == Some(*id))
+                || panel.read(cx).tabs.iter().any(
+                    |tab| matches!(&tab.content, Content::File(file) if file.read(cx).dirty(cx)),
+                )
+        });
+        self.terminals.retain(|id, _| {
+            workspace
+                .session(*id)
+                .is_some_and(|chat| !chat.closed || visible == Some(*id))
+        });
         let session = (self.changes_open && self.showing(cx) == Some(Pane::Chat))
             .then(|| {
                 workspace
                     .active_session()
-                    .map(|chat| (chat.id, chat.cwd.clone()))
+                    .map(|chat| (chat.id, chat.cwd.clone(), chat.record.clone()))
             })
             .flatten();
         let project_root = workspace
             .active_project()
             .map(|project| project.path.clone());
-        self.changes = session.map(|(id, cwd)| {
+        self.changes = session.map(|(id, cwd, record)| {
             self.right_panels
                 .entry(id)
                 .or_insert_with(|| {
                     cx.new(|cx| {
+                        let saved = record
+                            .as_deref()
+                            .and_then(|record| persistence::saved_panel(&cwd, record));
                         let mut panel = Panel::new(cwd, cx);
+                        panel.restore_pending = saved;
                         if let Some(root) = project_root {
                             panel.project_root = root.canonicalize().unwrap_or(root);
                         }

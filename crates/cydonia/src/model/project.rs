@@ -32,6 +32,7 @@ pub struct Project {
     pub sessions: Vec<ChatSession>,
     pub active: Option<u64>,
     pub boards: Vec<Board>,
+    unloaded_boards: std::collections::HashSet<String>,
     /// Which board the board pane shows.
     pub board: Option<usize>,
     pub articles: Vec<Article>,
@@ -60,6 +61,7 @@ impl Project {
     pub fn new(path: PathBuf) -> Self {
         let mut this = Self {
             boards: fs::Project::new(&path).boards(),
+            unloaded_boards: Default::default(),
             articles: article::list(&path),
             data: Data::attach(&path),
             path,
@@ -75,7 +77,40 @@ impl Project {
             watch: None,
         };
         this.reload_tables();
+        this.unload_boards(None);
         this
+    }
+
+    pub fn load_board(&mut self, id: &str) -> bool {
+        if !self.unloaded_boards.contains(id) {
+            return true;
+        }
+        let Some(fresh) = self.store().board(id) else {
+            return false;
+        };
+        let Some(board) = self.boards.iter_mut().find(|board| board.id == id) else {
+            return false;
+        };
+        *board = fresh;
+        self.unloaded_boards.remove(id);
+        true
+    }
+
+    pub fn unload_boards(&mut self, visible: Option<usize>) {
+        let store = self.store();
+        for (ix, board) in self.boards.iter_mut().enumerate() {
+            if !board.archived || visible == Some(ix) || self.unloaded_boards.contains(&board.id) {
+                continue;
+            }
+            let Some(saved) = store.board(&board.id) else {
+                continue;
+            };
+            if serde_json::to_value(&saved).ok() != serde_json::to_value(&*board).ok() {
+                continue;
+            }
+            board.columns = Vec::new();
+            self.unloaded_boards.insert(board.id.clone());
+        }
     }
 
     /// Re-read everything on disk and reconcile it with what is held. The
@@ -164,6 +199,7 @@ impl Project {
             .drain(..)
             .map(|board| (board.id.clone(), board))
             .collect();
+        self.unloaded_boards.clear();
         let mut moved = false;
         self.boards = self
             .store()
@@ -178,6 +214,7 @@ impl Project {
             })
             .collect();
         self.board = open.and_then(|id| self.boards.iter().position(|at| at.id == id));
+        self.unload_boards(self.board);
         moved
     }
 
@@ -247,3 +284,7 @@ impl Project {
         self.active.and_then(|id| self.session(id))
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/archive_boards.rs"]
+mod archive_tests;
