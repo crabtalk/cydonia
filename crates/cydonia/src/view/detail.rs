@@ -20,6 +20,7 @@ use bezel::{
     ui::{
         icons::{self, Icon},
         surface,
+        tooltip::Tooltip,
         widgets::{ButtonStyle, Buttons, Content, Controls, Status},
     },
 };
@@ -1054,10 +1055,28 @@ impl Cydonia {
         cx.notify();
     }
 
-    /// Prompts waiting for the in-flight turn — a steer, drawn as what it is:
-    /// the message you have already written, not yet sent. The same bubble the
-    /// transcript gives a sent one, held back to the muted tone, and an ✕ to
-    /// take it back while it is still yours to take back.
+    fn take_queued(
+        &mut self,
+        id: u64,
+        ix: usize,
+        expected: &str,
+        cx: &mut Context<Self>,
+    ) -> Option<String> {
+        let mut text = None;
+        self.workspace.update(cx, |workspace, cx| {
+            if workspace.active_id() != Some(id) {
+                return;
+            }
+            workspace.with_session(id, cx, |chat| {
+                if chat.queue.get(ix).is_some_and(|queued| queued == expected) {
+                    text = chat.queue.remove(ix);
+                }
+            });
+        });
+        text
+    }
+
+    /// Prompts waiting for the current turn, with edit and cancel actions.
     fn queue(&self, cx: &Context<Self>) -> Option<impl IntoElement + use<>> {
         let theme = Theme::of(cx).clone();
         let chat = self.workspace.read(cx).active_session()?;
@@ -1067,47 +1086,75 @@ impl Cydonia {
         let id = chat.id;
         Some(div().flex().flex_col().items_end().gap(px(6.)).children(
             chat.queue.iter().enumerate().map(|(ix, text)| {
-                // An svg paints in its own `text_color` and inherits none,
-                // so the ✕ takes the bubble's group to light with it.
-                let group = SharedString::from(format!("steer-{ix}"));
+                let edit_text = text.clone();
+                let cancel_text = text.clone();
                 div()
-                    .group(group.clone())
                     .max_w(px(440.))
-                    .px(px(14.))
-                    .py(px(9.))
-                    .rounded(px(Theme::surface_radius()))
-                    .bg(theme.surface_raised.opacity(0.6))
                     .flex()
-                    .flex_row()
-                    .items_start()
-                    .gap(px(10.))
+                    .flex_col()
+                    .items_end()
+                    .gap(px(4.))
                     .child(
                         div()
-                            .flex_1()
                             .min_w_0()
+                            .px(px(14.))
+                            .py(px(9.))
+                            .rounded(px(Theme::surface_radius()))
+                            .bg(theme.surface_raised.opacity(0.6))
                             .text_style(TextStyle::Body)
                             .text_color(theme.text_muted)
                             .child(text.clone()),
                     )
                     .child(
                         div()
-                            .id(("unqueue", ix))
                             .flex_none()
-                            // Onto the first line's baseline, so a steer
-                            // that wraps keeps its ✕ at the top.
-                            .mt(px(4.))
-                            .cursor_pointer()
+                            .flex()
+                            .gap(px(2.))
+                            .text_style(TextStyle::Caption)
+                            .text_color(theme.text_muted)
                             .child(
-                                icons::icon(icons::notifications::X)
-                                    .size(px(12.))
-                                    .text_color(theme.text_faint)
-                                    .group_hover(group, |el| el.text_color(theme.text)),
+                                theme
+                                    .ghost(("edit-queued", ix))
+                                    .size(px(24.))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .child(
+                                        icons::icon(icons::text::Pencil)
+                                            .size(px(12.))
+                                            .text_color(theme.text_muted),
+                                    )
+                                    .tooltip(|window, cx| {
+                                        Tooltip::text("Edit queued message", window, cx)
+                                    })
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        if let Some(text) = this.take_queued(id, ix, &edit_text, cx)
+                                        {
+                                            this.composer.update(cx, |composer, cx| {
+                                                composer.restore_queued(text, window, cx);
+                                            });
+                                        }
+                                    })),
                             )
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.workspace.update(cx, |workspace, cx| {
-                                    workspace.with_session(id, cx, |chat| chat.unqueue(ix));
-                                });
-                            })),
+                            .child(
+                                theme
+                                    .ghost(("cancel-queued", ix))
+                                    .size(px(24.))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .child(
+                                        icons::icon(icons::notifications::X)
+                                            .size(px(12.))
+                                            .text_color(theme.text_muted),
+                                    )
+                                    .tooltip(|window, cx| {
+                                        Tooltip::text("Cancel queued message", window, cx)
+                                    })
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.take_queued(id, ix, &cancel_text, cx);
+                                    })),
+                            ),
                     )
             }),
         ))

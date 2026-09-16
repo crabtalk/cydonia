@@ -318,6 +318,20 @@ impl Composer {
         cx.notify();
     }
 
+    pub fn restore_queued(&mut self, text: String, window: &mut Window, cx: &mut Context<Self>) {
+        let draft = self.field.read(cx).content().to_string();
+        let content = if draft.is_empty() {
+            text
+        } else {
+            format!("{text}\n\n{draft}")
+        };
+        self.field
+            .update(cx, |field, cx| field.set_content(content, cx));
+        self.reread(cx);
+        window.focus(&self.focus_handle(cx), cx);
+        cx.notify();
+    }
+
     pub fn set_placeholder(&mut self, placeholder: &str, cx: &mut Context<Self>) {
         self.field
             .update(cx, |field, cx| field.set_placeholder(placeholder, cx));
