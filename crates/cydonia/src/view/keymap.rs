@@ -138,7 +138,7 @@ impl Command {
             Self::CloseProject => "Close Project",
             Self::ToggleSidebar => "Toggle Sidebar",
             Self::ToggleTerminal => "Toggle Terminal",
-            Self::ToggleChanges => "Toggle Review",
+            Self::ToggleChanges => "Toggle Right Panel",
             Self::NextEntry => "Next Entry",
             Self::PrevEntry => "Previous Entry",
             Self::PlainText => "Plain Text",
@@ -333,6 +333,19 @@ pub fn bind_all(shortcuts: &Shortcuts, cx: &mut App) {
     cx.bind_keys(ribbon::bindings());
     cx.bind_keys(table::bindings());
     cx.bind_keys(terminal::bindings());
+    cx.bind_keys([
+        KeyBinding::new(
+            "cmd-p",
+            super::component::panel::OpenFile,
+            Some("SessionPanel"),
+        ),
+        KeyBinding::new(
+            "cmd-w",
+            super::component::panel::CloseTab,
+            Some("SessionPanel"),
+        ),
+        KeyBinding::new("cmd-s", super::component::file::Save, Some("FileEditor")),
+    ]);
     cx.bind_keys(root::bindings());
     cx.bind_keys(menubar::bindings());
     // Last, and the only ones the reader can move.

@@ -1,11 +1,8 @@
 //! Session Git changes panel with background polling while visible.
 
-use crate::{
-    model::git::{
-        self, Change, Repository,
-        preview::{Kind, Preview},
-    },
-    view::root::{Cydonia, Pane, ToggleChanges},
+use crate::model::git::{
+    self, Change, Repository,
+    preview::{Kind, Preview},
 };
 use bezel::ui::scroll as scrollbars;
 use bezel::{
@@ -21,6 +18,9 @@ use bezel::{
     },
 };
 use std::{collections::HashSet, ops::Range, path::PathBuf, sync::Arc, time::Duration};
+
+pub struct OpenFile(pub PathBuf);
+impl gpui::EventEmitter<OpenFile> for Changes {}
 
 pub struct Changes {
     pub cwd: PathBuf,
@@ -304,30 +304,6 @@ impl Render for Changes {
             .flex_col()
             .overflow_hidden()
             .bg(crate::view::root::content_bg(&theme))
-            .child(
-                div()
-                    .h(px(36.))
-                    .flex_none()
-                    .px(px(12.))
-                    .flex()
-                    .items_center()
-                    .gap(px(8.))
-                    .border_b_1()
-                    .border_color(theme.border)
-                    .text_style(TextStyle::Subheadline)
-                    .child(div().flex_1().child("Review"))
-                    .child(
-                        tool(
-                            &theme,
-                            "git-close",
-                            "Collapse review",
-                            icons::layout::PanelLeftClose,
-                        )
-                        .on_click(|_, window, cx| {
-                            window.dispatch_action(Box::new(ToggleChanges), cx)
-                        }),
-                    ),
-            )
             .children(root.map(|root| {
                 div()
                     .px(px(12.))
@@ -402,6 +378,16 @@ impl Render for Changes {
                                 ),
                             )
                             .child(
+                                tool(&theme, "git-open-file", "Open file", icons::files::Folder)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        if let (Some(repo), Some(file)) =
+                                            (&this.repository, &this.selected)
+                                        {
+                                            cx.emit(OpenFile(repo.root.join(&file.path)));
+                                        }
+                                    })),
+                            )
+                            .child(
                                 tool(&theme, "git-copy", "Copy diff", icons::text::Copy).on_click(
                                     cx.listener(|this, _, _, cx| {
                                         cx.write_to_clipboard(ClipboardItem::new_string(
@@ -416,51 +402,6 @@ impl Render for Changes {
                     })
                     .child(self.diff_body(cx))
             })
-    }
-}
-
-impl Cydonia {
-    pub(crate) fn show_changes(&mut self, cx: &mut Context<Self>) {
-        if self.showing(cx) == Some(Pane::Chat) {
-            self.changes_open = true;
-            cx.notify();
-        }
-    }
-
-    pub(crate) fn toggle_changes(
-        &mut self,
-        _: &ToggleChanges,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.showing(cx) == Some(Pane::Chat) {
-            self.changes_open = !self.changes_open;
-            cx.notify();
-        }
-    }
-
-    /// Drop hidden panels and replace stale repository entities.
-    pub(crate) fn sync_changes(&mut self, cx: &mut Context<Self>) {
-        let cwd = (self.changes_open && self.showing(cx) == Some(Pane::Chat))
-            .then(|| {
-                self.workspace
-                    .read(cx)
-                    .active_session()
-                    .map(|chat| chat.cwd.clone())
-            })
-            .flatten();
-        match cwd {
-            Some(cwd)
-                if self
-                    .changes
-                    .as_ref()
-                    .is_none_or(|panel| panel.read(cx).cwd != cwd) =>
-            {
-                self.changes = Some(cx.new(|cx| Changes::new(cwd, cx)));
-            }
-            None => self.changes = None,
-            _ => {}
-        }
     }
 }
 

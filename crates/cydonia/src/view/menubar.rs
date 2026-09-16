@@ -173,7 +173,7 @@ fn menus(cx: &App) -> Vec<Menu> {
         Menu::new("View").items([
             MenuItem::action("Toggle Sidebar", ToggleSidebar),
             MenuItem::action("Toggle Terminal", ToggleTerminal),
-            MenuItem::action("Toggle Review", ToggleChanges),
+            MenuItem::action("Toggle Right Panel", ToggleChanges),
             MenuItem::separator(),
             // Drawn ⌥⌘→ and ⌥⌘←, which is why those are bound first: the
             // `ctrl-tab` pair these also answer to is a chord gpui cannot

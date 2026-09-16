@@ -198,7 +198,7 @@ fn directory_label(directory: &Path) -> String {
 }
 
 pub struct Terminal {
-    directory: std::path::PathBuf,
+    pub(crate) directory: std::path::PathBuf,
     emulator: Emulator,
     shell: Option<Shell>,
     focus: FocusHandle,
@@ -417,10 +417,10 @@ impl Render for Terminal {
 #[path = "../../../tests/unit/terminal.rs"]
 mod tests;
 
-struct DirectoryChanged;
+pub(crate) struct DirectoryChanged;
 impl EventEmitter<DirectoryChanged> for Terminal {}
 
-struct Exited;
+pub(crate) struct Exited;
 impl EventEmitter<Exited> for Terminal {}
 
 pub struct Empty;
@@ -512,7 +512,7 @@ impl Render for TerminalPanel {
             .size_full()
             .flex()
             .flex_col()
-            .bg(view::terminal_panel_bg(&theme))
+            .bg(crate::view::root::content_bg(&theme))
             .child(
                 div()
                     .h(px(40.))

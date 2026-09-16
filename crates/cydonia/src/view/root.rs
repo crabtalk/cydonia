@@ -40,7 +40,7 @@ use bezel::{
         menu::Cursor,
         scroll::DriftState,
         stats::Stats,
-        widgets::{ButtonStyle, Buttons, Content, Layout, SPLIT_HANDLE_HIT, SplitDrag, SplitStyle},
+        widgets::{ButtonStyle, Buttons, Content, SplitDrag},
     },
 };
 
@@ -280,7 +280,8 @@ pub struct Cydonia {
     pub(crate) changes_open: bool,
     pub(crate) changes_width: f32,
     pub(crate) terminal_height: f32,
-    pub(crate) changes: Option<Entity<super::component::changes::Changes>>,
+    pub(crate) changes: Option<Entity<super::component::panel::Panel>>,
+    pub(crate) right_panels: std::collections::HashMap<u64, Entity<super::component::panel::Panel>>,
     settings_window: Option<WindowHandle<SettingsWindow>>,
     pub(crate) pane: Pane,
     /// Whether a session has been asked for with no agent to open one on.
@@ -369,7 +370,8 @@ impl Cydonia {
                 }
                 ComposerEvent::Cancel => this.cancel_turn(cx),
                 ComposerEvent::Terminal => this.show_terminal(window, cx),
-                ComposerEvent::Changes => this.show_changes(cx),
+                ComposerEvent::Changes => this.show_changes(window, cx),
+                ComposerEvent::Files => this.show_files(window, cx),
                 ComposerEvent::Agent(ix) => this.pick_agent(*ix, cx),
                 ComposerEvent::Install => this.open_settings(Section::Agents, cx),
                 ComposerEvent::Switch(id, value) => this.switch(id, value, cx),
@@ -432,6 +434,7 @@ impl Cydonia {
             changes_width: 440.,
             terminal_height: 240.,
             changes: None,
+            right_panels: Default::default(),
             settings_window: None,
             pane: Pane::Chat,
             asked_session: false,
@@ -839,12 +842,13 @@ impl Render for Cydonia {
             // rather than sitting in flow, so neither gives up a column.
             .when(self.sidebar_open, |root| {
                 root.child(
-                    theme
-                        .split_handle(Axis::Horizontal, SplitStyle::Ghost)
+                    crate::view::component::divider::divider(&theme, Axis::Horizontal)
                         .id("sidebar-split")
                         .absolute()
                         .top_0()
-                        .left(px(self.sidebar_width - SPLIT_HANDLE_HIT / 2.))
+                        .left(px(
+                            self.sidebar_width - crate::view::component::divider::HIT / 2.
+                        ))
                         .on_drag(SplitDrag, |_, _, _, cx| cx.new(|_| Empty)),
                 )
             })

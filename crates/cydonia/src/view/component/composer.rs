@@ -149,6 +149,7 @@ pub enum ComposerEvent {
     Cancel,
     Terminal,
     Changes,
+    Files,
     /// Talk to this agent instead — an index into the configured agents.
     Agent(usize),
     /// Nothing here to pick: open settings where agents are installed.
@@ -978,6 +979,7 @@ impl Composer {
             Item::action("Review")
                 .with_icon(icons::development::GitCompare)
                 .with_shortcut(&root::ToggleChanges, window),
+            Item::action("Files").with_icon(icons::files::Folder),
         ];
         let rows = items.clone();
         let popup = self.tools_menu.then(|| {
@@ -997,6 +999,7 @@ impl Composer {
                             match path.as_slice() {
                                 [0] => cx.emit(ComposerEvent::Terminal),
                                 [1] => cx.emit(ComposerEvent::Changes),
+                                [2] => cx.emit(ComposerEvent::Files),
                                 _ => {}
                             }
                         }

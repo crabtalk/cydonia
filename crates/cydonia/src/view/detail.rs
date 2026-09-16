@@ -20,9 +20,7 @@ use bezel::{
     ui::{
         icons::{self, Icon},
         surface,
-        widgets::{
-            ButtonStyle, Buttons, Content, Controls, Layout, SPLIT_HANDLE_HIT, SplitStyle, Status,
-        },
+        widgets::{ButtonStyle, Buttons, Content, Controls, Status},
     },
 };
 use cacp::schema::{
@@ -536,38 +534,31 @@ impl Cydonia {
                             .w(px(width))
                             .min_w_0()
                             .flex_none()
-                            .border_l_1()
-                            .border_color(theme.border)
                             .child(panel)
                     }))
                     .when(self.changes.is_some(), |row| {
                         row.child(
-                            theme
-                                .split_handle(Axis::Horizontal, SplitStyle::Ghost)
+                            crate::view::component::divider::divider(&theme, Axis::Horizontal)
                                 .id("changes-split")
                                 .absolute()
                                 .top_0()
-                                .right(px(width - SPLIT_HANDLE_HIT / 2.))
+                                .right(px(width - crate::view::component::divider::HIT / 2.))
                                 .on_drag(ChangesResize, |_, _, _, cx| cx.new(|_| Empty)),
                         )
                     }),
             )
-            .children(terminal.clone().map(|terminal| {
-                div()
-                    .h(px(height))
-                    .flex_none()
-                    .border_t_1()
-                    .border_color(theme.border)
-                    .child(terminal)
-            }))
+            .children(
+                terminal
+                    .clone()
+                    .map(|terminal| div().h(px(height)).flex_none().child(terminal)),
+            )
             .when(terminal.is_some(), |column| {
                 column.child(
-                    theme
-                        .split_handle(Axis::Vertical, SplitStyle::Ghost)
+                    crate::view::component::divider::divider(&theme, Axis::Vertical)
                         .id("terminal-split")
                         .absolute()
                         .left_0()
-                        .bottom(px(height - SPLIT_HANDLE_HIT / 2.))
+                        .bottom(px(height - crate::view::component::divider::HIT / 2.))
                         .on_drag(TerminalResize, |_, _, _, cx| cx.new(|_| Empty)),
                 )
             })

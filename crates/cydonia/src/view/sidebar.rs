@@ -346,11 +346,6 @@ impl Cydonia {
             .w(px(self.sidebar_width))
             .h_full()
             .bg(root::sidebar_bg(&theme))
-            // Drawn ON the column, not left as a gap between two: a bare strip
-            // between them would be raw desktop at full strength, a bright line
-            // the height of the window.
-            .border_r_1()
-            .border_color(theme.border)
             .flex()
             .flex_col()
             // The fold out at the trailing edge: the lights float in the
