@@ -44,3 +44,65 @@ fn startup_tool_failures_are_included_in_the_work() {
     assert_eq!(turns[0].range, 0..1);
     assert_eq!(turns[0].answer_from, 1);
 }
+
+#[gpui::test]
+fn selecting_message_text_takes_focus_from_the_composer(cx: &mut gpui::TestAppContext) {
+    use crate::view::component::composer::Composer;
+    use bezel::gpui::{self, Focusable as _, Render};
+    struct Messages {
+        composer: gpui::Entity<Composer>,
+        user: gpui::FocusHandle,
+        agent: gpui::FocusHandle,
+    }
+    impl Render for Messages {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .size_full()
+                .flex()
+                .flex_col()
+                .child(
+                    selectable::surface(&self.user, &markdown::parse("User message"), None, cx)
+                        .id("user-text")
+                        .debug_selector(|| "user-text".into())
+                        .h(px(40.))
+                        .child("User message"),
+                )
+                .child(
+                    selectable::surface(&self.agent, &markdown::parse("Agent response"), None, cx)
+                        .id("agent-text")
+                        .debug_selector(|| "agent-text".into())
+                        .h(px(40.))
+                        .child("Agent response"),
+                )
+                .child(self.composer.clone())
+        }
+    }
+    cx.update(|cx| Theme::install(bezel::theme::Appearance::Light, cx));
+    let composer = cx.new(Composer::new);
+    let window = cx.add_window(|window, cx| {
+        window.focus(&composer.focus_handle(cx), cx);
+        Messages {
+            composer: composer.clone(),
+            user: cx.focus_handle(),
+            agent: cx.focus_handle(),
+        }
+    });
+    let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+    visual.run_until_parked();
+    for selector in ["user-text", "agent-text"] {
+        let point = visual.debug_bounds(selector).unwrap().center();
+        visual.simulate_click(point, gpui::Modifiers::default());
+        visual.run_until_parked();
+        window
+            .update(&mut visual, |messages, window, cx| {
+                let focus = if selector == "user-text" {
+                    &messages.user
+                } else {
+                    &messages.agent
+                };
+                assert!(focus.is_focused(window));
+                assert!(!messages.composer.focus_handle(cx).is_focused(window));
+            })
+            .unwrap();
+    }
+}

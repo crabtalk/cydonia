@@ -795,7 +795,14 @@ impl Cydonia {
             } else {
                 0.
             };
-        let queued = self.queue(cx).map(IntoElement::into_any_element);
+        let root = cx.entity().downgrade();
+        let queued = move |_: &mut Window, cx: &mut bezel::gpui::App| {
+            root.update(cx, |root, cx| {
+                root.queue(cx).map(IntoElement::into_any_element)
+            })
+            .ok()
+            .flatten()
+        };
         self.workspace
             .update(cx, |workspace, cx| match workspace.session(id) {
                 Some(chat) => transcript::render(chat, pane_width, queued, window, cx),

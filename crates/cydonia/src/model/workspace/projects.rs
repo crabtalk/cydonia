@@ -67,6 +67,7 @@ impl Workspace {
         }
         self.active = Some(ix);
         self.open_last_entry(cx);
+        self.prune_archived(cx);
         self.save();
         cx.notify();
     }
@@ -145,6 +146,7 @@ impl Workspace {
             (!self.projects.is_empty()).then(|| next.min(self.projects.len() - 1))
         });
         self.open_last_entry(cx);
+        self.prune_archived(cx);
         self.save();
         cx.notify();
     }
@@ -222,13 +224,56 @@ impl Workspace {
 
     /// Remember the entry a project is now showing, so the next launch lands on
     /// it. Every way of opening one arrives here.
-    pub(super) fn remember(&mut self, project: usize, kind: state::Kind, id: String) {
+    pub(super) fn remember(
+        &mut self,
+        project: usize,
+        kind: state::Kind,
+        id: String,
+        cx: &mut Context<Self>,
+    ) {
         let Some(open) = self.projects.get(project) else {
             return;
         };
         self.last
             .insert(open.path.clone(), state::Entry { kind, id });
+        self.prune_archived(cx);
         self.save();
+    }
+
+    pub(super) fn prune_archived(&mut self, cx: &mut Context<Self>) {
+        self.prune_archived_for(self.landing(), cx);
+    }
+
+    pub(super) fn prune_archived_for(&mut self, kind: Option<state::Kind>, cx: &mut Context<Self>) {
+        for (ix, project) in self.projects.iter_mut().enumerate() {
+            let active = self.active == Some(ix);
+            for chat in &mut project.sessions {
+                if !(active
+                    && kind == Some(state::Kind::Session)
+                    && project.active == Some(chat.id))
+                {
+                    chat.unload_history();
+                }
+            }
+            for (at, article) in project.articles.iter_mut().enumerate() {
+                if !(active && kind == Some(state::Kind::Article) && project.article == Some(at)) {
+                    article.unload(cx);
+                }
+            }
+            project.unload_boards(if active && kind == Some(state::Kind::Board) {
+                project.board
+            } else {
+                None
+            });
+            if !(active && kind == Some(state::Kind::Table))
+                && project
+                    .table
+                    .and_then(|at| project.tables.get(at))
+                    .is_some_and(|table| table.archived)
+            {
+                project.page = None;
+            }
+        }
     }
 
     pub fn active_project(&self) -> Option<&Project> {
@@ -261,6 +306,7 @@ impl Workspace {
         if self.projects[ix].reload(cx) {
             cx.emit(Reloaded);
         }
+        self.prune_archived(cx);
         cx.notify();
     }
 

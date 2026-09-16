@@ -23,6 +23,7 @@ impl Workspace {
             return;
         };
         article.archive(archived);
+        self.prune_archived(cx);
         cx.notify();
     }
 
@@ -53,7 +54,7 @@ impl Workspace {
             .to_string_lossy()
             .into_owned();
         self.active = Some(project);
-        self.remember(project, state::Kind::Article, id);
+        self.remember(project, state::Kind::Article, id, cx);
         cx.notify();
     }
 

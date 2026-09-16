@@ -125,6 +125,7 @@ pub struct ChatSession {
     pub cwd: PathBuf,
     pub connection: Connection,
     pub items: Vec<ChatItem>,
+    history_unloaded: bool,
     pub fork: Option<ForkOrigin>,
     pub draft: String,
     pub(crate) draft_save: Option<Task<()>>,
@@ -201,6 +202,7 @@ impl ChatSession {
             cwd,
             connection: Connection::Connecting,
             items: Vec::new(),
+            history_unloaded: false,
             fork: None,
             draft: String::new(),
             draft_save: None,
@@ -242,6 +244,7 @@ impl ChatSession {
             cwd,
             connection: Connection::Idle,
             items: record.items,
+            history_unloaded: false,
             fork: record.fork,
             draft: record.draft,
             draft_save: None,
@@ -269,6 +272,55 @@ impl ChatSession {
             transcript: transcript::State::default(),
             _pump: Task::ready(()),
         }
+    }
+
+    pub fn load_history(&mut self) -> bool {
+        if !self.history_unloaded {
+            return true;
+        }
+        let Some(record) = self
+            .record
+            .as_deref()
+            .and_then(|id| fs::Project::new(&self.cwd).session(id))
+        else {
+            return false;
+        };
+        self.items = record.items;
+        self.sent_at = record.sent_at;
+        self.fork = record.fork;
+        self.draft = record.draft;
+        self.history_unloaded = false;
+        true
+    }
+
+    /// Drop only a persisted archive; failed saves retain the in-memory copy.
+    pub fn unload_history(&mut self) {
+        if !self.closed || self.history_unloaded || self.draft_save.is_some() {
+            return;
+        }
+        let Some(record) = self
+            .record
+            .as_deref()
+            .and_then(|id| fs::Project::new(&self.cwd).session(id))
+        else {
+            return;
+        };
+        if serde_json::to_value(&record).ok() != serde_json::to_value(self.to_record()).ok() {
+            return;
+        }
+        self.items = Vec::new();
+        self.sent_at = BTreeMap::new();
+        self.fork = None;
+        self.draft = String::new();
+        self.transcript = transcript::State::default();
+        self.plan = Vec::new();
+        self.commands = Vec::new();
+        self.config = Vec::new();
+        self.modes = None;
+        self.permission = None;
+        self.usage = None;
+        self.tool_started = BTreeMap::new();
+        self.history_unloaded = true;
     }
 
     /// Last user submission in milliseconds, used for sidebar ordering.
@@ -304,7 +356,12 @@ impl ChatSession {
     }
 
     pub fn fork_at(&self, id: u64, before: usize) -> Option<Self> {
-        let record = self.to_record().fork_at(before)?;
+        let source = if self.history_unloaded {
+            fs::Project::new(&self.cwd).session(self.record.as_deref()?)?
+        } else {
+            self.to_record()
+        };
+        let record = source.fork_at(before)?;
         let mut chat = Self::restore(id, self.cwd.clone(), self.entry.clone(), record);
         chat.record = None;
         chat.preferences = self.preferences.clone();
@@ -332,11 +389,14 @@ impl ChatSession {
 
     /// Whether nothing has been said in it yet — see [`nothing_said`].
     pub fn unsaid(&self) -> bool {
-        nothing_said(&self.items)
+        !self.history_unloaded && nothing_said(&self.items)
     }
 
     /// Give a session with panel tabs a stable identity, even before its first prompt.
     pub(crate) fn retain_panel(&mut self) -> Option<String> {
+        if !self.load_history() {
+            return None;
+        }
         self.mint_record()?;
         fs::Project::new(&self.cwd).save_session(&self.to_record());
         self.save_preferences();
@@ -345,6 +405,9 @@ impl ChatSession {
 
     /// Save a conversation after its first prompt or fork.
     pub fn flush(&mut self) {
+        if !self.load_history() {
+            return;
+        }
         if self.unsaid() && self.fork.is_none() {
             return;
         }
@@ -359,7 +422,7 @@ impl ChatSession {
     /// Point the session at an agent again, replaying the conversation the
     /// agent still holds when it supports `session/load`.
     pub fn resume(&mut self, cx: &mut Context<Workspace>) {
-        if self.closed {
+        if self.closed || !self.load_history() {
             return;
         }
         self._pump = pump(

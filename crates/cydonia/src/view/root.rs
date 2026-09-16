@@ -19,7 +19,7 @@ use crate::{
         },
         confirm, create, info,
         settings::{self, Section, SettingsWindow},
-        sidebar::{Filter, Renaming, Row},
+        sidebar::{Renaming, Row},
         table,
     },
 };
@@ -338,8 +338,6 @@ pub struct Cydonia {
     /// The formatting bar over the open document's selection, and the URL
     /// field it puts up — see [`crate::view::component::ribbon`].
     pub(crate) ribbon: Ribbon,
-    /// Which kinds the sidebar is listing.
-    pub(crate) filter: Filter,
     /// What the name field is attached to, and the field itself.
     pub(crate) renaming: Option<Renaming>,
     pub(crate) name_field: Entity<TextField>,
@@ -467,7 +465,6 @@ impl Cydonia {
             menu_cursor: Cursor::default(),
             menu_pressed: false,
             ribbon: Ribbon::new(cx),
-            filter: Filter::default(),
             renaming: None,
             name_field,
             rail: UniformListScrollHandle::new(),
@@ -830,7 +827,7 @@ impl Render for Cydonia {
             .on_action(
                 cx.listener(|this, _: &OpenReview, window, cx| this.show_changes(window, cx)),
             )
-            .on_action(cx.listener(|this, _: &OpenFiles, window, cx| this.show_files(window, cx)))
+            .on_action(cx.listener(|this, _: &OpenFiles, window, cx| this.toggle_files(window, cx)))
             .on_action(cx.listener(Self::copy_selection))
             .on_action(cx.listener(Self::commit_cell_action))
             .on_action(cx.listener(Self::dismiss_cell))

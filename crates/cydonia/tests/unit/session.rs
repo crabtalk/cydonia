@@ -222,3 +222,57 @@ for line in sys.stdin:
         wait_for_close(&mut events).await;
     });
 }
+
+#[test]
+fn archived_history_unloads_and_metadata_edits_preserve_the_disk_transcript() {
+    let scratch = Scratch::new();
+    let mut chat = scratch.chat();
+    chat.record = None;
+    chat.items.push(ChatItem::User("Keep this message".into()));
+    chat.items.push(ChatItem::Agent("And this response".into()));
+    chat.draft = "unfinished draft".into();
+    chat.closed = true;
+    chat.mint_record();
+    fs::Project::new(&scratch.0).save_session(&chat.to_record());
+    let stored = fs::Project::new(&scratch.0)
+        .session(chat.record.as_deref().unwrap())
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(stored).unwrap(),
+        serde_json::to_value(chat.to_record()).unwrap()
+    );
+    chat.unload_history();
+    assert!(chat.history_unloaded);
+    assert!(chat.items.is_empty());
+    assert!(chat.draft.is_empty());
+    assert!(!chat.unsaid());
+    chat.name = Some("Renamed archive".into());
+    chat.flush();
+    chat.unload_history();
+    let saved = fs::Project::new(&scratch.0)
+        .session(chat.record.as_deref().unwrap())
+        .unwrap();
+    assert_eq!(saved.items.len(), 2);
+    assert_eq!(saved.draft, "unfinished draft");
+    assert_eq!(saved.name.as_deref(), Some("Renamed archive"));
+    assert!(chat.load_history());
+    assert!(chat.items.len() >= 2);
+    assert_eq!(chat.draft, "unfinished draft");
+}
+
+#[test]
+fn missing_archive_cannot_be_overwritten_with_an_empty_transcript() {
+    let scratch = Scratch::new();
+    let mut chat = scratch.chat();
+    chat.record = None;
+    chat.items.push(ChatItem::User("Persisted message".into()));
+    chat.closed = true;
+    chat.mint_record();
+    fs::Project::new(&scratch.0).save_session(&chat.to_record());
+    chat.unload_history();
+    let store = fs::Project::new(&scratch.0);
+    store.remove_session(chat.record.as_deref().unwrap());
+    assert!(!chat.load_history());
+    chat.flush();
+    assert!(store.sessions().is_empty());
+}

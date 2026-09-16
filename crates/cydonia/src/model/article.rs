@@ -102,6 +102,16 @@ impl Article {
         }
     }
 
+    pub fn unload(&mut self, cx: &App) {
+        if !self.archived || self.edited(cx) {
+            return;
+        }
+        self.field = None;
+        self.editor = None;
+        self.saved = String::new();
+        self.scroll = ScrollHandle::new();
+    }
+
     pub fn archive(&mut self, archived: bool) {
         self.archived = archived;
         properties::set_archived(&self.path, archived);

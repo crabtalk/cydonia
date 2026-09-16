@@ -62,6 +62,10 @@ impl Gallery {
         }
     }
 
+    pub(super) fn is_preview_open(&self) -> bool {
+        self.preview
+    }
+
     fn finish(&mut self, width: f32, open: bool, window: &mut Window, cx: &mut Context<Self>) {
         if self.press.take().is_none() {
             return;

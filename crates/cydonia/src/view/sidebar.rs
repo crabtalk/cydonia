@@ -83,82 +83,6 @@ pub(crate) enum Row {
     },
 }
 
-/// Which kinds the sidebar lists. One choice for the whole column, above the
-/// projects, because it answers "what am I looking for", not "what is in this
-/// project".
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) enum Filter {
-    #[default]
-    All,
-    Sessions,
-    Boards,
-    Articles,
-    Tables,
-}
-
-impl Filter {
-    /// Only the kinds that are switched on are on offer: a kind you cannot
-    /// make is not a kind worth filtering to.
-    fn every(features: &Features) -> Vec<Self> {
-        let mut every = vec![Self::All];
-        if features.sessions {
-            every.push(Self::Sessions);
-        }
-        if features.boards {
-            every.push(Self::Boards);
-        }
-        every.push(Self::Articles);
-        if features.tables {
-            every.push(Self::Tables);
-        }
-        every
-    }
-
-    /// The filter as it applies under `features`. A kind switched off while it
-    /// was the one selected would otherwise filter every project down to its
-    /// heading, and an empty column says nothing about why.
-    fn resolved(self, features: &Features) -> Self {
-        match self {
-            Self::Sessions if !features.sessions => Self::All,
-            Self::Boards if !features.boards => Self::All,
-            Self::Tables if !features.tables => Self::All,
-            filter => filter,
-        }
-    }
-
-    fn label(self) -> &'static str {
-        match self {
-            Self::All => "All",
-            Self::Sessions => "Sessions",
-            Self::Boards => "Boards",
-            Self::Articles => "Articles",
-            Self::Tables => "Tables",
-        }
-    }
-
-    fn icon(self) -> &'static [u8] {
-        match self {
-            Self::All => icons::text::ListFilter,
-            Self::Sessions => icons::social::MessageCircle,
-            Self::Boards => icons::development::SquareKanban,
-            Self::Articles => icons::files::FileText,
-            Self::Tables => icons::files::Table2,
-        }
-    }
-
-    /// Whether an entry is one of the kind being looked for.
-    fn keeps(self, row: Row) -> bool {
-        matches!(
-            (self, row),
-            (Self::All, _)
-                | (Self::Sessions, Row::Session { .. })
-                | (Self::Boards, Row::Board { .. })
-                | (Self::Articles, Row::Article { .. })
-                | (Self::Tables, Row::Table { .. })
-        )
-    }
-}
-
 /// Whether the kind a row names is switched on. Articles have no switch, and
 /// neither do the two rows that are not entries — a project heading and the
 /// line its archive folds under stand whatever is listed beneath them.
@@ -438,7 +362,6 @@ impl Cydonia {
                             .flex_row()
                             .items_center()
                             .gap(px(2.))
-                            .child(self.filter_button(cx))
                             .child(
                                 theme
                                     .ghost("open-project")
@@ -778,8 +701,7 @@ impl Cydonia {
         // switch hides it hides here — the entries stay in the project and in
         // memory, and turning it back on lists them again with nothing to
         // rescan.
-        let filter = self.filter.resolved(features);
-        entries.retain(|(_, _, row)| shown(*row, features) && filter.keeps(*row));
+        entries.retain(|(_, _, row)| shown(*row, features));
         // Archived entries sink; each half follows the entry's recency stamp.
         entries.sort_by_key(|(archived, touched, _)| (*archived, Reverse(*touched)));
         let split = entries.iter().position(|(archived, ..)| *archived);
@@ -973,61 +895,6 @@ impl Cydonia {
         self.commit(cx);
         self.workspace
             .update(cx, |workspace, cx| workspace.toggle_project(ix, cx));
-    }
-
-    /// The kind picker keeps a stable filter icon, accented when narrowed to a type.
-    fn filter_button(&self, cx: &mut Context<Self>) -> AnyElement {
-        let theme = Theme::of(cx).clone();
-        let label = self.filter.label();
-        let trigger = theme
-            .ghost("filter")
-            .relative()
-            .px(px(8.))
-            .py(px(6.))
-            .tooltip(move |window, cx| Tooltip::text(format!("Showing {label}"), window, cx))
-            .child(
-                icons::icon(icons::text::ListFilter)
-                    .size(px(13.))
-                    .text_color(if self.filter == Filter::All {
-                        theme.text_faint
-                    } else {
-                        theme.accent
-                    }),
-            )
-            .on_click(cx.listener(|this, _, _, cx| {
-                cx.stop_propagation();
-                this.toggle_menu(Menu::Filter, cx);
-            }))
-            .children(self.filter_menu(cx));
-        self.menu_press(trigger, Menu::Filter, cx)
-            .into_any_element()
-    }
-
-    fn filter_menu(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if self.menu != Some(Menu::Filter) {
-            return None;
-        }
-        let features = &self.workspace.read(cx).settings.features;
-        let rows = Filter::every(features)
-            .into_iter()
-            .map(|filter| {
-                menu::row(
-                    Item::action(filter.label())
-                        .with_icon(filter.icon())
-                        .checked(self.filter == filter),
-                    move |this, _, cx| {
-                        this.filter = filter;
-                        this.menu = None;
-                        cx.notify();
-                    },
-                )
-            })
-            .collect();
-        Some(popover::anchored_menu_above(
-            "filter-menu",
-            self.menu_card("filter-menu", rows, cx),
-            None,
-        ))
     }
 
     /// What the `+` starts here. Session first: it is what the sidebar is for.

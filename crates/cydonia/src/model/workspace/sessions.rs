@@ -27,6 +27,7 @@ impl Workspace {
         let project = &mut self.projects[ix];
         project.sessions.push(chat);
         project.active = Some(id);
+        self.prune_archived_for(Some(state::Kind::Session), cx);
         cx.notify();
         Some(id)
     }
@@ -41,7 +42,7 @@ impl Workspace {
         let record = self.projects[ix].session_mut(id)?.retain_panel()?;
         let cwd = self.projects[ix].path.clone();
         if remember {
-            self.remember(ix, state::Kind::Session, record.clone());
+            self.remember(ix, state::Kind::Session, record.clone(), cx);
         }
         cx.notify();
         Some((cwd, record))
@@ -68,6 +69,14 @@ impl Workspace {
     }
 
     pub fn set_draft(&mut self, id: u64, draft: String, cx: &mut Context<Self>) {
+        if !self
+            .projects
+            .iter_mut()
+            .find_map(|project| project.session_mut(id))
+            .is_some_and(|chat| chat.load_history())
+        {
+            return;
+        }
         if self.session(id).is_none_or(|chat| chat.draft == draft) {
             return;
         }
@@ -81,6 +90,7 @@ impl Workspace {
                     chat.flush();
                     chat.draft_save = None;
                 });
+                workspace.prune_archived(cx);
             });
         });
         self.with_session(id, cx, |chat| {
@@ -95,6 +105,12 @@ impl Workspace {
         let Some(ix) = self.project_of(id) else {
             return;
         };
+        if !self.projects[ix]
+            .session_mut(id)
+            .is_some_and(|chat| chat.load_history())
+        {
+            return;
+        }
         self.projects[ix].active = Some(id);
         self.active = Some(ix);
         // A session has no file until its first turn is written, so one that
@@ -103,9 +119,10 @@ impl Workspace {
             .session(id)
             .and_then(|chat| chat.record.clone())
         {
-            self.remember(ix, state::Kind::Session, record);
+            self.remember(ix, state::Kind::Session, record, cx);
         }
         self.wake_session(id, cx);
+        self.prune_archived_for(Some(state::Kind::Session), cx);
         cx.notify();
     }
 
@@ -166,7 +183,8 @@ impl Workspace {
                 args: Vec::new(),
                 env: Default::default(),
             });
-            let chat = ChatSession::restore(id, path.clone(), entry, stored);
+            let mut chat = ChatSession::restore(id, path.clone(), entry, stored);
+            chat.unload_history();
             self.projects[ix].sessions.push(chat);
         }
     }
@@ -174,6 +192,14 @@ impl Workspace {
     /// Send to a session, starting an agent for it when it has none — typing
     /// into a session read back from disk is what picks it up again.
     pub fn send(&mut self, id: u64, content: String, cx: &mut Context<Self>) {
+        if !self
+            .projects
+            .iter_mut()
+            .find_map(|project| project.session_mut(id))
+            .is_some_and(|chat| chat.load_history())
+        {
+            return;
+        }
         // Read before `chat` borrows the projects. This is the second place an
         // agent process starts, so it is the second half of the gate.
         let enabled = self.settings.features.sessions;
@@ -202,7 +228,7 @@ impl Workspace {
         chat.send(content);
         let record = chat.record.clone();
         if let (Some(record), Some(ix)) = (record, self.project_of(id)) {
-            self.remember(ix, state::Kind::Session, record);
+            self.remember(ix, state::Kind::Session, record, cx);
         }
         cx.notify();
     }
@@ -246,10 +272,14 @@ impl Workspace {
         self.with_session(id, cx, |chat| match archived {
             true => chat.close(),
             false => {
+                if !chat.load_history() {
+                    return;
+                }
                 chat.closed = false;
                 chat.flush();
             }
         });
+        self.prune_archived(cx);
     }
 
     pub fn rename_session(&mut self, id: u64, name: String, cx: &mut Context<Self>) {
@@ -258,6 +288,7 @@ impl Workspace {
             chat.name = (!name.is_empty()).then(|| name.to_owned());
             chat.flush();
         });
+        self.prune_archived(cx);
     }
 
     pub fn close_session(&mut self, id: u64, cx: &mut Context<Self>) {

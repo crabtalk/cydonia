@@ -162,6 +162,16 @@ impl Panel {
         cx.notify();
     }
 
+    fn toggle_files(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.files_open {
+            self.files_open = false;
+            self.focus(window, cx);
+            cx.notify();
+        } else {
+            self.files(window, cx);
+        }
+    }
+
     fn open_file(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         self.focus_pending = true;
         let path = path.canonicalize().unwrap_or(path);
@@ -229,7 +239,9 @@ impl Panel {
             Item::action("Review")
                 .with_icon(icons::development::GitCompare)
                 .with_shortcut(&crate::view::root::OpenReview, window),
-            Item::action("Terminal").with_icon(icons::development::Terminal),
+            Item::action("Terminal")
+                .with_icon(icons::development::Terminal)
+                .with_shortcut(&crate::view::root::ToggleTerminal, window),
             Item::action("Files")
                 .with_icon(icons::files::Folder)
                 .with_shortcut(&crate::view::root::OpenFiles, window),
@@ -389,13 +401,7 @@ impl Render for Panel {
                 }),
             )
             .on_action(cx.listener(|this, _: &ToggleFiles, window, cx| {
-                if this.files_open {
-                    this.files_open = false;
-                    this.focus(window, cx);
-                    cx.notify();
-                } else {
-                    this.files(window, cx);
-                }
+                this.toggle_files(window, cx);
             }))
             .on_action(cx.listener(|this, _: &OpenFile, window, cx| this.files(window, cx)))
             .on_action(cx.listener(|this, _: &NewTerminal, window, cx| this.terminal(window, cx)))
@@ -696,6 +702,19 @@ impl Cydonia {
         cx.notify();
     }
 
+    pub(crate) fn toggle_files(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.showing(cx) != Some(Pane::Chat) {
+            return;
+        }
+        if self.changes_open
+            && let Some(panel) = self.changes.clone()
+        {
+            panel.update(cx, |panel, cx| panel.toggle_files(window, cx));
+        } else {
+            self.show_files(window, cx);
+        }
+    }
+
     pub(crate) fn show_files(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.showing(cx) == Some(Pane::Chat) {
             self.changes_open = true;
@@ -744,8 +763,22 @@ impl Cydonia {
 
     pub(crate) fn sync_changes(&mut self, cx: &mut Context<Self>) {
         let workspace = self.workspace.read(cx);
-        self.right_panels
-            .retain(|id, _| workspace.session(*id).is_some());
+        let visible = (self.showing(cx) == Some(Pane::Chat))
+            .then(|| workspace.active_id())
+            .flatten();
+        self.right_panels.retain(|id, panel| {
+            workspace
+                .session(*id)
+                .is_some_and(|chat| !chat.closed || visible == Some(*id))
+                || panel.read(cx).tabs.iter().any(
+                    |tab| matches!(&tab.content, Content::File(file) if file.read(cx).dirty(cx)),
+                )
+        });
+        self.terminals.retain(|id, _| {
+            workspace
+                .session(*id)
+                .is_some_and(|chat| !chat.closed || visible == Some(*id))
+        });
         let session = (self.changes_open && self.showing(cx) == Some(Pane::Chat))
             .then(|| {
                 workspace

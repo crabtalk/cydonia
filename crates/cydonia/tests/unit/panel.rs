@@ -214,3 +214,23 @@ fn command_w_closes_right_terminal_tabs_and_returns_to_launcher(cx: &mut gpui::T
         })
         .unwrap();
 }
+
+#[gpui::test]
+fn toggling_files_collapses_and_reopens_the_same_browser(cx: &mut gpui::TestAppContext) {
+    cx.update(|cx| Theme::install(Appearance::Dark, cx));
+    let window = cx.add_window(|_, cx| Panel::new(std::env::temp_dir(), cx));
+    window
+        .update(cx, |panel, window, cx| {
+            panel.toggle_files(window, cx);
+            assert!(panel.files_open);
+            let files = panel.files.clone().unwrap();
+            panel.toggle_files(window, cx);
+            assert!(!panel.files_open);
+            assert!(panel.focus.is_focused(window));
+            panel.toggle_files(window, cx);
+            assert!(panel.files_open);
+            assert_eq!(panel.files.as_ref(), Some(&files));
+            assert!(files.focus_handle(cx).is_focused(window));
+        })
+        .unwrap();
+}
