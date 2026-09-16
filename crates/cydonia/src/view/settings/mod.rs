@@ -314,9 +314,8 @@ impl Switch {
         self
     }
 
-    /// Show the state without offering to change it, for a switch the current
-    /// appearance answers rather than the person. Dimmed and unpressable: a
-    /// live-looking toggle that will not move reads as a bug.
+    /// Show the state without offering to change it —
+    /// [`SettingsWindow::switch_row`] then attaches no click handler.
     pub(super) fn locked(mut self, locked: bool) -> Self {
         self.locked = locked;
         self

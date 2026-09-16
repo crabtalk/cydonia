@@ -1,17 +1,8 @@
 //! Which language a file is written in, and whether this build can colour it.
 //!
-//! One table, [`KNOWN`], maps file names onto language ids; what a lookup
-//! answers with depends on what the build carries. A name `syntax` has a
-//! grammar for is [`Language::Ready`]; one it does not is
-//! [`Language::Missing`], which is a language we can *name* without being able
-//! to paint — the difference between "that is YAML and there is no grammar
-//! here" and "that is a file extension nobody has ever written a grammar for",
-//! and the only reason an app can offer to fetch one rather than nag about
-//! files it could never help with.
-//!
-//! The table is compiled in and maintained by hand, because the thing that
-//! knows `.gleam` is Gleam ships *with* Gleam — a build that has never seen a
-//! grammar cannot learn what its files are called from it.
+//! TODO: [`KNOWN`] duplicates the identity half of `syntax::lang::LANGS` and is
+//! maintained by hand against it, across a crate boundary. It exists because
+//! that table holds no entry for a language it has no grammar for.
 
 use std::{ops::Range, path::Path};
 
@@ -76,8 +67,7 @@ const KNOWN: &[(&str, &[&str])] = &[
 pub enum Language {
     /// A grammar this build carries, under the name `syntax` knows it by.
     Ready(&'static str),
-    /// Markdown, which bezel highlights itself — there is no grammar behind it
-    /// and nothing to fetch.
+    /// Markdown, which bezel highlights without a tree-sitter grammar.
     Markdown,
     /// A language this build can name and cannot paint.
     Missing(&'static str),
@@ -119,8 +109,8 @@ pub fn of(path: &Path) -> Option<Language> {
 /// The spans `text` is painted with as the contents of `path`, or `None` where
 /// nothing here can paint it.
 ///
-/// The one place that answers "how is this file coloured", so that a view, a
-/// diff and anything after them cannot answer it differently.
+/// The single place that answers how a file is coloured; the file view and the
+/// diff preview both route through here.
 pub fn spans(path: &Path, text: &str) -> Option<Vec<(Range<usize>, HighlightKind)>> {
     match of(path)? {
         Language::Ready(language) => syntax::highlight(text, language),

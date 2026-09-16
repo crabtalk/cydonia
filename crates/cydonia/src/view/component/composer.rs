@@ -4,6 +4,7 @@
 mod activity;
 pub use activity::Activity;
 
+use super::image_preview::{self, disc};
 use crate::{
     model::{
         media::Attachment,
@@ -64,26 +65,6 @@ const REMOVE: f32 = 14.;
 
 /// How much of the window an opened picture may take, either way.
 const PREVIEW_SHARE: f32 = 0.8;
-
-/// A solid round button with a ✕ on it. Solid because it sits over a picture,
-/// where a bare glyph can land on anything.
-fn disc(theme: &Theme, id: impl Into<gpui::ElementId>, side: f32) -> gpui::Stateful<gpui::Div> {
-    div()
-        .id(id)
-        .size(px(side))
-        .rounded_full()
-        .flex()
-        .items_center()
-        .justify_center()
-        .bg(theme.solid)
-        .cursor_pointer()
-        .hover(|button| button.opacity(0.85))
-        .child(
-            icons::icon(icons::notifications::X)
-                .size(px(side * 0.6))
-                .text_color(theme.on_solid),
-        )
-}
 
 fn picture(attachment: &Attachment) -> gpui::Img {
     match attachment {
@@ -1165,27 +1146,19 @@ impl Composer {
         let theme = Theme::of(cx).clone();
         let viewport = window.viewport_size();
         let composer = cx.entity().downgrade();
-        let card = div()
-            .relative()
-            .child(
-                picture(attachment)
-                    .max_w(viewport.width * PREVIEW_SHARE)
-                    .max_h(viewport.height * PREVIEW_SHARE)
-                    .object_fit(ObjectFit::Contain)
-                    .rounded(px(16.)),
-            )
-            // Its own layer, for the same reason as a thumb's remove button.
-            .child(surface::layered(
-                disc(&theme, "composer-preview-close", 24.)
-                    .absolute()
-                    .top(px(10.))
-                    .right(px(10.))
-                    .tooltip(|window, cx| Tooltip::text("Close", window, cx))
-                    .on_click(cx.listener(|composer, _, _, cx| {
-                        composer.preview = None;
-                        cx.notify();
-                    })),
-            ));
+        let card = image_preview::frame(
+            &theme,
+            "composer-preview-close",
+            picture(attachment)
+                .max_w(viewport.width * PREVIEW_SHARE)
+                .max_h(viewport.height * PREVIEW_SHARE)
+                .object_fit(ObjectFit::Contain)
+                .rounded(px(16.)),
+            cx.listener(|composer, _, _, cx| {
+                composer.preview = None;
+                cx.notify();
+            }),
+        );
         Some(popover::modal(
             "composer-preview",
             viewport,

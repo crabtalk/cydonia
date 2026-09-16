@@ -17,6 +17,8 @@ use std::{
 };
 
 const LIMIT: u64 = 256 * 1024;
+#[cfg(target_os = "macos")]
+mod external;
 /// How long a keystroke waits before the file is parsed again. Every edit
 /// re-parses the whole file — the field holds text, not a syntax tree — so a
 /// run of typing coalesces into one parse instead of one per character.
@@ -109,6 +111,12 @@ pub struct FileView {
     ready: bool,
     loading: bool,
     pub error: Option<String>,
+    #[cfg(target_os = "macos")]
+    opening_external: bool,
+    #[cfg(target_os = "macos")]
+    external_menu: external::Menu,
+    #[cfg(target_os = "macos")]
+    external_error: Option<String>,
     changed: bool,
     preview: bool,
     preview_selection: Option<markdown::Selection>,
@@ -187,6 +195,12 @@ impl FileView {
             ready: false,
             loading: true,
             error: None,
+            #[cfg(target_os = "macos")]
+            opening_external: false,
+            #[cfg(target_os = "macos")]
+            external_menu: external::Menu::default(),
+            #[cfg(target_os = "macos")]
+            external_error: None,
             changed: false,
             preview: true,
             preview_selection: None,
@@ -326,7 +340,7 @@ impl FileView {
             .path
             .extension()
             .is_some_and(|ext| ext == "md" || ext == "markdown");
-        super::status::bar(&theme)
+        let bar = super::status::bar(&theme)
             .child(super::status::path(&self.path, breadcrumb))
             .when(markdown && self.ready, |row| {
                 row.child(
@@ -361,8 +375,39 @@ impl FileView {
                             this.save(false, cx);
                         })),
                 )
-            })
-            .into_any_element()
+            });
+        #[cfg(target_os = "macos")]
+        let bar = bar.child(self.external_button(cx));
+        bar.into_any_element()
+    }
+
+    #[cfg(target_os = "macos")]
+    fn open_external(&mut self, target: external::Target, cx: &mut Context<Self>) {
+        let opens_file = matches!(
+            target,
+            external::Target::Application(_) | external::Target::Default
+        );
+        if self.opening_external || (opens_file && self.dirty(cx) && !self.save(false, cx)) {
+            return;
+        }
+        self.opening_external = true;
+        self.external_error = None;
+        let path = self.path.clone();
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move { external::open(&path, &target) })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.opening_external = false;
+                this.external_error = result
+                    .err()
+                    .map(|error| format!("Open with failed: {error:#}"));
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
     }
 
     fn reload(&mut self, cx: &mut Context<Self>) {
@@ -546,6 +591,27 @@ impl Render for FileView {
             .extension()
             .is_some_and(|ext| ext == "md" || ext == "markdown");
         let notice = self.error.clone().or_else(|| self.changed.then(|| "File changed on disk. Reload discards your edits; overwrite saves your version.".into()));
+        #[cfg(target_os = "macos")]
+        let external_notice = self.external_error.clone().map(|error| {
+            div()
+                .p(px(8.))
+                .text_style(TextStyle::Caption)
+                .text_color(theme.text_muted)
+                .child(error)
+                .child(
+                    div()
+                        .id("dismiss-open-with-error")
+                        .cursor_pointer()
+                        .child("Dismiss")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.external_error = None;
+                            cx.notify();
+                        })),
+                )
+                .into_any_element()
+        });
+        #[cfg(not(target_os = "macos"))]
+        let external_notice: Option<gpui::AnyElement> = None;
         div()
             .size_full()
             .flex()
@@ -582,6 +648,7 @@ impl Render for FileView {
             .on_action(cx.listener(|this, _: &Save, _, cx| {
                 this.save(false, cx);
             }))
+            .children(external_notice)
             .when_some(notice, |panel, notice| {
                 panel.child(
                     div()

@@ -303,8 +303,8 @@ impl Workspace {
         cx.notify();
     }
 
-    /// The same window's other choice. Pressed, the window is opaque in both
-    /// appearances; released, it is frosted in dark alone — see [`vibrancy`].
+    /// The same window's other choice — see [`vibrancy`] for what each state
+    /// asks of the theme.
     pub fn set_opaque(&mut self, opaque: bool, cx: &mut Context<Self>) {
         self.opaque = Some(opaque);
         apply_transparency(self.opaque, cx);
@@ -610,11 +610,9 @@ pub fn apply_tint(tint: Tint, cx: &mut App) {
 
 /// What the switch asks of the brand.
 ///
-/// Never [`Vibrancy::On`]. Light's glass tokens sit near opaque so that text
-/// does not ghost over whatever is behind the window, so a frosted light window
-/// is one bezel has no palette for — see [`Vibrancy::Auto`], which is frost in
-/// dark and opaque in light. Wanting transparency asks for that; only reducing
-/// it is absolute, held in both appearances.
+/// Never [`Vibrancy::On`]: bezel's light palette carries no frosted tokens.
+/// [`Vibrancy::Auto`] is frost in dark and opaque in light; [`Vibrancy::Off`]
+/// is opaque in both.
 pub fn vibrancy(opaque: Option<bool>) -> Vibrancy {
     match opaque {
         Some(true) => Vibrancy::Off,

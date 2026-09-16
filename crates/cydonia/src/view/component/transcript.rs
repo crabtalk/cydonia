@@ -34,6 +34,7 @@ use markdown::{
     BlockLayouts, Selection,
     selectable::{self, Pointer},
 };
+mod gallery;
 pub(crate) mod links;
 use std::{
     cell::{Cell, RefCell},
@@ -76,6 +77,7 @@ const ORB_STILL: f32 = 0.6;
 /// state, per session, so switching back finds the transcript as it was left.
 #[derive(Default)]
 pub struct State {
+    galleries: RefCell<HashMap<usize, bezel::gpui::Entity<gallery::Gallery>>>,
     scroll: ScrollHandle,
     pub(crate) footer_height: Rc<Cell<Pixels>>,
     follow: FollowState,
@@ -143,7 +145,12 @@ impl State {
     /// collapsed without a drag behind it.
     pub fn copied(&self, chat: &ChatSession) -> Option<String> {
         let (ix, selection) = self.selection?;
-        let doc = markdown::parse(item_text(chat.items.get(ix)?)?);
+        let item = chat.items.get(ix)?;
+        let doc = if matches!(item, ChatItem::User(_)) {
+            gallery::document(item_text(item)?).0
+        } else {
+            markdown::parse(item_text(item)?)
+        };
         let text = selectable::copied(&doc, selection);
         (!text.is_empty()).then_some(text)
     }
@@ -207,7 +214,11 @@ fn prose(
     cx: &mut Context<Workspace>,
 ) -> AnyElement {
     let id = chat.id;
-    let doc = markdown::parse(text);
+    let doc = if matches!(chat.items.get(ix), Some(ChatItem::User(_))) {
+        gallery::document(text).0
+    } else {
+        markdown::parse(text)
+    };
     let layouts = chat.transcript.layouts(ix);
     let body = selectable::render(
         ("transcript-prose", ix),
@@ -526,6 +537,15 @@ fn zone(
 
     let mut zone = div().flex().flex_col().gap(px(10.)).pb(px(28.));
     if let Some(ChatItem::User(text)) = chat.items.get(first) {
+        let (doc, images) = gallery::document(text);
+        let gallery = (!images.is_empty()).then(|| {
+            chat.transcript
+                .galleries
+                .borrow_mut()
+                .entry(first)
+                .or_insert_with(|| cx.new(|cx| gallery::Gallery::new(images, &chat.cwd, cx)))
+                .clone()
+        });
         let group = SharedString::from(format!("user-message-{}-{first}", chat.id));
         let fork_group = SharedString::from(format!("fork-message-{}-{first}", chat.id));
         let copy_group = SharedString::from(format!("copy-message-{}-{first}", chat.id));
@@ -546,6 +566,7 @@ fn zone(
                 .group(group.clone())
                 .self_end()
                 .max_w(px(440.))
+                .when(gallery.is_some(), |row| row.w(px(440.)).max_w_full())
                 .flex()
                 .flex_col()
                 .gap(px(4.))
@@ -557,7 +578,13 @@ fn zone(
                         .bg(theme.surface_raised)
                         .text_style(TextStyle::Body)
                         .text_color(theme.text)
-                        .child(prose(chat, first, text, window, cx)),
+                        .flex()
+                        .flex_col()
+                        .gap(px(8.))
+                        .when(!doc.blocks.is_empty(), |bubble| {
+                            bubble.child(prose(chat, first, text, window, cx))
+                        })
+                        .children(gallery),
                 )
                 .child(
                     div()

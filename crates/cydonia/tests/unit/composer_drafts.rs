@@ -113,3 +113,34 @@ fn agent_icon_closes_its_open_popover_and_can_open_it_again(cx: &mut TestAppCont
         );
     }
 }
+
+#[gpui::test]
+fn composer_preview_uses_the_shared_close_button(cx: &mut TestAppContext) {
+    cx.update(|cx| Theme::install(Appearance::Light, cx));
+    let mut png = std::io::Cursor::new(Vec::new());
+    image::RgbaImage::from_pixel(80, 80, image::Rgba([255, 255, 255, 255]))
+        .write_to(&mut png, image::ImageFormat::Png)
+        .unwrap();
+    let picture = Arc::new(gpui::Image::from_bytes(
+        gpui::ImageFormat::Png,
+        png.into_inner(),
+    ));
+    let composer = cx.new(|cx| {
+        let mut composer = Composer::new(cx);
+        composer.attachments.push(Attachment::Bytes(picture));
+        composer.preview = Some(0);
+        composer
+    });
+    let window = cx.add_window(|_, _| PopoverComposer(composer.clone()));
+    let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+    visual.run_until_parked();
+    let button = visual
+        .debug_bounds("composer-preview-close")
+        .expect("close button is painted");
+    visual.simulate_click(button.center(), gpui::Modifiers::default());
+    visual.run_until_parked();
+    assert_eq!(
+        composer.read_with(&visual, |composer, _| composer.preview),
+        None
+    );
+}
