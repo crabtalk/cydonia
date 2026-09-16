@@ -1,5 +1,7 @@
 //! A session's persistent Review, terminal, and file tabs.
 
+mod persistence;
+
 use super::{
     changes::Changes,
     file::FileView,
@@ -22,7 +24,10 @@ use bezel::{
 };
 use std::path::PathBuf;
 
-gpui::actions!(session_panel, [OpenFile, CloseTab, ToggleFiles]);
+gpui::actions!(
+    session_panel,
+    [OpenFile, NewTerminal, CloseTab, ToggleFiles]
+);
 
 struct FilesResize;
 
@@ -52,6 +57,7 @@ pub struct Panel {
     cursor: Cursor,
     closing: Option<usize>,
     focus_pending: bool,
+    restore_pending: Option<persistence::SavedPanel>,
 }
 
 impl Panel {
@@ -71,6 +77,7 @@ impl Panel {
             cursor: Cursor::default(),
             closing: None,
             focus_pending: false,
+            restore_pending: None,
         }
     }
 
@@ -232,6 +239,7 @@ impl Panel {
 
 impl Render for Panel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.restore_tabs(window, cx);
         if self.focus_pending {
             self.focus_pending = false;
             self.focus(window, cx);
@@ -291,7 +299,12 @@ impl Render for Panel {
                     review.update(cx, |review, cx| review.status_bar(self.files_open, cx))
                 }
                 Content::Terminal(terminal) => {
-                    super::status::terminal(&terminal.read(cx).directory, &theme)
+                    let directory = &terminal.read(cx).directory;
+                    super::status::bar(&theme)
+                        .child(super::status::path(
+                            directory,
+                            directory.display().to_string(),
+                        ))
                         .child(super::status::files_toggle(self.files_open, &theme))
                         .into_any_element()
                 }
@@ -357,6 +370,14 @@ impl Render for Panel {
             .bg(crate::view::root::content_bg(&theme))
             .key_context("SessionPanel")
             .track_focus(&self.focus)
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(|this, _, window, cx| {
+                    if !this.focus.contains_focused(window, cx) {
+                        this.focus(window, cx);
+                    }
+                }),
+            )
             .on_action(
                 cx.listener(|this, action: &super::files::ToggleFilter, window, cx| {
                     if !this.files_open {
@@ -377,6 +398,14 @@ impl Render for Panel {
                 }
             }))
             .on_action(cx.listener(|this, _: &OpenFile, window, cx| this.files(window, cx)))
+            .on_action(cx.listener(|this, _: &NewTerminal, window, cx| this.terminal(window, cx)))
+            .on_action(
+                cx.listener(|this, _: &crate::view::menubar::CloseWindow, window, cx| {
+                    if let Some(id) = this.active {
+                        this.close(id, window, cx);
+                    }
+                }),
+            )
             .on_action(cx.listener(|this, _: &CloseTab, window, cx| {
                 if let Some(id) = this.active {
                     this.close(id, window, cx);
@@ -655,6 +684,7 @@ impl Cydonia {
             self.sync_changes(cx);
             if let Some(panel) = self.changes.clone() {
                 panel.update(cx, |panel, cx| {
+                    panel.restore_tabs(window, cx);
                     panel.review(cx);
                     panel.focus(window, cx);
                 });
@@ -691,18 +721,22 @@ impl Cydonia {
             .then(|| {
                 workspace
                     .active_session()
-                    .map(|chat| (chat.id, chat.cwd.clone()))
+                    .map(|chat| (chat.id, chat.cwd.clone(), chat.record.clone()))
             })
             .flatten();
         let project_root = workspace
             .active_project()
             .map(|project| project.path.clone());
-        self.changes = session.map(|(id, cwd)| {
+        self.changes = session.map(|(id, cwd, record)| {
             self.right_panels
                 .entry(id)
                 .or_insert_with(|| {
                     cx.new(|cx| {
+                        let saved = record
+                            .as_deref()
+                            .and_then(|record| persistence::saved_panel(&cwd, record));
                         let mut panel = Panel::new(cwd, cx);
+                        panel.restore_pending = saved;
                         if let Some(root) = project_root {
                             panel.project_root = root.canonicalize().unwrap_or(root);
                         }

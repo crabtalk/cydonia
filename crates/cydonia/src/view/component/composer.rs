@@ -57,9 +57,10 @@ const PICKER_HEIGHT: f32 = 320.;
 
 /// The side of a picture waiting in the composer.
 const THUMB: f32 = 64.;
+const THUMB_RADIUS: f32 = 8.;
 
 /// The side of a thumb's remove button, which sits centred on its corner.
-const REMOVE: f32 = 18.;
+const REMOVE: f32 = 14.;
 
 /// How much of the window an opened picture may take, either way.
 const PREVIEW_SHARE: f32 = 0.8;
@@ -445,17 +446,31 @@ impl Composer {
                     div()
                         .id(("composer-attachment", ix))
                         .size_full()
-                        .rounded(px(12.))
+                        .rounded(px(THUMB_RADIUS))
                         .overflow_hidden()
-                        .border_1()
-                        .border_color(theme.border)
                         .cursor_pointer()
                         .on_click(cx.listener(move |composer, _, _, cx| {
                             composer.preview = Some(ix);
                             cx.notify();
                         }))
-                        .child(picture(attachment).size_full().object_fit(ObjectFit::Cover)),
+                        .child(
+                            picture(attachment)
+                                .size_full()
+                                .rounded(px(THUMB_RADIUS))
+                                .object_fit(ObjectFit::Cover),
+                        ),
                 )
+                // Paint the border above the image on the glass surface.
+                .child(surface::layered(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .size_full()
+                        .rounded(px(THUMB_RADIUS))
+                        .border_1()
+                        .border_color(theme.border),
+                ))
                 // Its own layer: inside the glass card every primitive shares
                 // one draw order, and a picture paints over quads and icons.
                 .child(surface::layered(

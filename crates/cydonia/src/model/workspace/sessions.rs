@@ -31,6 +31,22 @@ impl Workspace {
         Some(id)
     }
 
+    pub fn retain_panel_session(
+        &mut self,
+        id: u64,
+        remember: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<(PathBuf, String)> {
+        let ix = self.project_of(id)?;
+        let record = self.projects[ix].session_mut(id)?.retain_panel()?;
+        let cwd = self.projects[ix].path.clone();
+        if remember {
+            self.remember(ix, state::Kind::Session, record.clone());
+        }
+        cx.notify();
+        Some((cwd, record))
+    }
+
     pub fn fork_session(
         &mut self,
         source: u64,

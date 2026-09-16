@@ -337,9 +337,15 @@ impl ChatSession {
         nothing_said(&self.items)
     }
 
-    /// Write the session out. The file is minted on the first write and not
-    /// before — opening a project must not put a `.cydonia/` in it, and an
-    /// agent that merely cleared its throat has not started one.
+    /// Give a session with panel tabs a stable identity, even before its first prompt.
+    pub(crate) fn retain_panel(&mut self) -> Option<String> {
+        self.mint_record()?;
+        fs::Project::new(&self.cwd).save_session(&self.to_record());
+        self.save_preferences();
+        self.record.clone()
+    }
+
+    /// Save a conversation after its first prompt or fork.
     pub fn flush(&mut self) {
         if self.unsaid() && self.fork.is_none() {
             return;

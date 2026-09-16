@@ -251,6 +251,28 @@ impl FileView {
         cx.notify();
     }
 
+    pub(super) fn draft_snapshot(&self, cx: &gpui::App) -> Option<(String, String)> {
+        self.dirty(cx).then(|| {
+            (
+                self.saved.clone(),
+                self.field.read(cx).content().to_string(),
+            )
+        })
+    }
+
+    pub(super) fn restore_draft(
+        &mut self,
+        (saved, draft): (String, String),
+        cx: &mut Context<Self>,
+    ) {
+        self.saved = saved;
+        self.ready = true;
+        self.loading = false;
+        self.field
+            .update(cx, |field, cx| field.set_content(draft, cx));
+        cx.notify();
+    }
+
     pub fn dirty(&self, cx: &gpui::App) -> bool {
         self.ready && self.field.read(cx).content().as_ref() != normalized(&self.saved)
     }

@@ -229,7 +229,13 @@ pub fn open(settings: Settings, state: State, cx: &mut App) -> Result<WindowHand
         },
         |window, cx| {
             appearance::observe_window(window, cx).detach();
-            cx.new(|cx| Cydonia::new(settings, state, window, cx))
+            cx.new(|cx| {
+                let mut root = Cydonia::new(settings, state, window, cx);
+                root.restore_panel_layout();
+                cx.on_release(|root: &mut Cydonia, cx| root.save_panel_layout(cx))
+                    .detach();
+                root
+            })
         },
     )
 }
