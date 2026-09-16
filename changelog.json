@@ -1,5 +1,37 @@
 [
   {
+    "version": "0.1.7",
+    "date": "2026-09-17",
+    "summary": "A tabbed workspace, syntax-highlighted files with on-demand grammars, image galleries, and steadier sessions.",
+    "media": {
+      "poster": "pics/cydonia/v0.1.7.jpg",
+      "src": "videos/cydonia/v0.1.7.mp4",
+      "alt": "…",
+      "w": 1280,
+      "h": 900
+    },
+    "new": [
+      "Work in a tabbed workspace, attach images to messages, and fork a session from any turn",
+      "Read files with syntax highlighting, installing tree-sitter grammars on demand",
+      "Browse image galleries in the transcript and open files in an external app",
+      "Open session file links in the right panel",
+      "Edit or cancel a queued message before it is sent",
+      "Zoom the file view and set font sizes globally"
+    ],
+    "changed": [
+      "Resolve files through the syntax registry",
+      "Keep session controls and transcript history within a smaller memory footprint",
+      "Upgrade Bezel to 0.1.18"
+    ],
+    "fixed": [
+      "Fade the session scrollbar once scrolling stops, and raise it again on hover",
+      "Correct session scrolling, queued images, and the terminal shortcut hint",
+      "Stabilize session ordering, activity, and the ACP lifecycle",
+      "Persist sidebar project expansion and panel tabs across restarts",
+      "Hold the light appearance opaque instead of frosting it"
+    ]
+  },
+  {
     "version": "0.1.6",
     "date": "2026-09-15",
     "summary": "Built-in agent guides, stable entry references, and improved Markdown editing and sidebar controls.",
