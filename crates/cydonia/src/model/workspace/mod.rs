@@ -93,6 +93,7 @@ pub struct Workspace {
     pub text_size: f32,
     pub article_font_size: Option<f32>,
     pub terminal_font_size: f32,
+    pub file_font_size: f32,
     /// The hue the greys carry, and how much of it.
     pub tint: Tint,
     /// How wide a page that has not been set either way is drawn — see
@@ -129,6 +130,7 @@ impl Workspace {
             },
         );
         crate::model::typography::set_terminal_size(look.terminal_font_size, cx);
+        crate::model::typography::set_file_size(look.file_font_size, cx);
         let mut this = Self {
             settings,
             projects,
@@ -139,6 +141,7 @@ impl Workspace {
             text_size: look.text_size,
             article_font_size: look.article_font_size,
             terminal_font_size: look.terminal_font_size,
+            file_font_size: look.file_font_size,
             tint: Tint::new(look.hue, look.chroma),
             wide_pages: look.wide_pages,
             indent_project_rows: look.indent_project_rows,
@@ -196,6 +199,7 @@ impl Workspace {
             text_size: self.text_size,
             article_font_size: self.article_font_size,
             terminal_font_size: self.terminal_font_size,
+            file_font_size: self.file_font_size,
             hue: self.tint.hue,
             chroma: self.tint.chroma,
             wide_pages: self.wide_pages,
@@ -454,6 +458,13 @@ impl Workspace {
     pub fn set_article_font_size(&mut self, points: f32, cx: &mut Context<Self>) {
         self.article_font_size = Some(settings::clamp_content_text_size(points));
         self.apply_article_font_size(cx);
+        self.save_appearance();
+        cx.notify();
+    }
+
+    pub fn set_file_font_size(&mut self, points: f32, cx: &mut Context<Self>) {
+        self.file_font_size = settings::clamp_content_text_size(points);
+        crate::model::typography::set_file_size(self.file_font_size, cx);
         self.save_appearance();
         cx.notify();
     }

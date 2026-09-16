@@ -1,5 +1,6 @@
 //! Small text-file buffers with explicit saves and external-change detection.
 
+use crate::model::typography;
 use bezel::{
     gpui::{
         self, Context, Entity, Focusable, Render, Subscription, Task, Window, div, prelude::*, px,
@@ -20,7 +21,10 @@ const LIMIT: u64 = 256 * 1024;
 /// re-parses the whole file — the field holds text, not a syntax tree — so a
 /// run of typing coalesces into one parse instead of one per character.
 const RECOLOUR: Duration = Duration::from_millis(40);
-gpui::actions!(file_editor, [Save]);
+gpui::actions!(
+    file_editor,
+    [Save, IncreaseTextSize, DecreaseTextSize, ResetTextSize]
+);
 
 pub(crate) fn read_text(path: &Path) -> anyhow::Result<String> {
     anyhow::ensure!(std::fs::metadata(path)?.is_file(), "Choose a regular file");
@@ -351,7 +355,7 @@ fn line_starts(text: &str) -> Vec<usize> {
 impl FileView {
     fn source_view(&self, theme: &Theme, cx: &mut Context<Self>) -> gpui::AnyElement {
         let starts = line_starts(self.field.read(cx).content());
-        let size = TextStyle::Body.painted();
+        let size = typography::file_size(cx);
         let gutter = px(starts.len().to_string().len() as f32 * size * 0.65 + 20.);
         let field = self.field.clone();
         let scroll = self.scroll.clone();
@@ -472,6 +476,14 @@ impl Focusable for FileView {
 impl Render for FileView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::of(cx).clone();
+        let size = typography::file_size(cx);
+        self.field.update(cx, |field, cx| {
+            field.set_metrics(
+                bezel::theme::Metrics::from(TextStyle::Body)
+                    .scaled(size / TextStyle::Body.painted()),
+                cx,
+            );
+        });
         let markdown = self
             .path
             .extension()
@@ -483,6 +495,9 @@ impl Render for FileView {
             .flex_col()
             .key_context("FileEditor")
             .track_focus(&self.focus)
+            .on_action(|_: &IncreaseTextSize, _, cx| typography::zoom_file(1., cx))
+            .on_action(|_: &DecreaseTextSize, _, cx| typography::zoom_file(-1., cx))
+            .on_action(|_: &ResetTextSize, _, cx| typography::reset_file_zoom(cx))
             .on_action(cx.listener(|this, _: &Save, _, cx| {
                 this.save(false, cx);
             }))
@@ -530,8 +545,18 @@ impl Render for FileView {
                             .min_h_0()
                             .overflow_y_scroll()
                             .p(px(16.))
-                            .child(markdown::render::markdown(
-                                &self.field.read(cx).content().clone(),
+                            .child(markdown::render::render_with(
+                                &markdown::parse_with(
+                                    self.field.read(cx).content(),
+                                    &markdown::Marks::of(cx),
+                                ),
+                                markdown::render::Editing {
+                                    typography: Some(
+                                        markdown::Typography::of(cx)
+                                            .scaled(size / bezel::theme::base_text_size()),
+                                    ),
+                                    ..Default::default()
+                                },
                                 window,
                                 cx,
                             )),

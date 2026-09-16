@@ -364,6 +364,31 @@ pub fn bind_all(shortcuts: &Shortcuts, cx: &mut App) {
             Some("SessionPanel || BottomTerminalPanel"),
         ),
         KeyBinding::new("cmd-s", super::component::file::Save, Some("FileEditor")),
+        KeyBinding::new(
+            "cmd-=",
+            super::component::file::IncreaseTextSize,
+            Some("FileEditor"),
+        ),
+        KeyBinding::new(
+            "cmd-+",
+            super::component::file::IncreaseTextSize,
+            Some("FileEditor"),
+        ),
+        KeyBinding::new(
+            "cmd-shift-=",
+            super::component::file::IncreaseTextSize,
+            Some("FileEditor"),
+        ),
+        KeyBinding::new(
+            "cmd--",
+            super::component::file::DecreaseTextSize,
+            Some("FileEditor"),
+        ),
+        KeyBinding::new(
+            "cmd-0",
+            super::component::file::ResetTextSize,
+            Some("FileEditor"),
+        ),
     ]);
     cx.bind_keys(root::bindings());
     cx.bind_keys(menubar::bindings());

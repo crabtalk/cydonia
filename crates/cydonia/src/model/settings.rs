@@ -60,7 +60,7 @@ pub struct Settings {
 /// an interface nobody can read the settings window to fix.
 pub const TEXT_SIZE: (f32, f32) = (11., 17.);
 
-/// Article and terminal sizes have a wider range than interface chrome.
+/// Content sizes have a wider range than interface chrome.
 pub const CONTENT_TEXT_SIZE: (f32, f32) = (8., 40.);
 
 pub fn clamp_content_text_size(points: f32) -> f32 {
@@ -99,6 +99,7 @@ pub struct Appearance {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub article_font_size: Option<f32>,
     pub terminal_font_size: f32,
+    pub file_font_size: f32,
     /// The greys' oklch hue in degrees, and how much of it they carry. Zero
     /// chroma is the shipped neutral, whatever the hue says.
     pub hue: f32,
@@ -165,6 +166,7 @@ impl Default for Appearance {
             text_size: TextStyle::Body.size(),
             article_font_size: None,
             terminal_font_size: terminal::view::TERM_FONT_SIZE,
+            file_font_size: TextStyle::Body.size(),
             hue: 0.,
             chroma: 0.,
             wide_pages: false,
@@ -191,6 +193,7 @@ impl Appearance {
         };
         self.article_font_size = self.article_font_size.map(clamp_content_text_size);
         self.terminal_font_size = clamp_content_text_size(self.terminal_font_size);
+        self.file_font_size = clamp_content_text_size(self.file_font_size);
     }
 }
 
@@ -531,6 +534,7 @@ fn write_appearance(doc: &mut toml_edit::DocumentMut, appearance: &Appearance) -
         }
     }
     held["terminal_font_size"] = toml_edit::value(f64::from(appearance.terminal_font_size));
+    held["file_font_size"] = toml_edit::value(f64::from(appearance.file_font_size));
     held["hue"] = toml_edit::value(f64::from(appearance.hue));
     held["chroma"] = toml_edit::value(f64::from(appearance.chroma));
     held["wide_pages"] = toml_edit::value(appearance.wide_pages);
@@ -729,45 +733,5 @@ fn claims(table: &toml_edit::Table, agent: &Agent, supersedes: Option<&str>) -> 
 }
 
 #[cfg(test)]
-mod typography_tests {
-    use super::*;
-
-    #[test]
-    fn old_settings_keep_article_inheritance_and_terminal_default() {
-        let look: Appearance = toml::from_str("text_size = 16.0").unwrap();
-        assert_eq!(look.article_font_size, None);
-        assert_eq!(look.terminal_font_size, 13.);
-        assert_eq!(look.text_size, 16.);
-    }
-
-    #[test]
-    fn sizes_round_trip_without_losing_comments_or_unrelated_settings() {
-        let mut doc: toml_edit::DocumentMut = "# My settings\n[appearance]\n# Preferred terminal size\nterminal_font_size = 13.0\ncustom_setting = true\n".parse().unwrap();
-        let look = Appearance {
-            article_font_size: Some(18.),
-            terminal_font_size: 15.,
-            ..Appearance::default()
-        };
-        write_appearance(&mut doc, &look).unwrap();
-        let body = doc.to_string();
-        assert!(body.contains("# My settings"));
-        assert!(body.contains("# Preferred terminal size"));
-        assert!(body.contains("custom_setting = true"));
-        let read: Settings = toml::from_str(&body).unwrap();
-        assert_eq!(read.appearance, look);
-    }
-
-    #[test]
-    fn invalid_font_sizes_are_normalized_before_layout() {
-        let mut look: Appearance =
-            toml::from_str("text_size = nan\narticle_font_size = -2.0\nterminal_font_size = inf")
-                .unwrap();
-        look.normalize();
-        assert!(look.text_size.is_finite());
-        assert_eq!(look.article_font_size, Some(CONTENT_TEXT_SIZE.0));
-        assert_eq!(look.terminal_font_size, 13.);
-        look.terminal_font_size = 1000.;
-        look.normalize();
-        assert_eq!(look.terminal_font_size, CONTENT_TEXT_SIZE.1);
-    }
-}
+#[path = "../../tests/unit/settings_typography.rs"]
+mod typography_tests;

@@ -187,3 +187,61 @@ fn markdown_is_coloured_without_a_grammar(cx: &mut gpui::TestAppContext) {
             .is_empty()
     );
 }
+
+#[gpui::test]
+fn zoom_shortcuts_resize_source_and_work_in_preview(cx: &mut gpui::TestAppContext) {
+    cx.update(|cx| {
+        Theme::install(bezel::theme::Appearance::Light, cx);
+        crate::view::keymap::bind_all(&crate::model::settings::Shortcuts::default(), cx);
+        typography::set_file_size(14., cx);
+    });
+    let file = Temp::named(".md");
+    let window = cx.add_window(|window, cx| {
+        let mut view = FileView::new(file.0.clone(), cx);
+        view.receive(Ok("original\r\n".into()), cx);
+        view.preview = false;
+        window.focus(&view.field.focus_handle(cx), cx);
+        view
+    });
+    let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+    visual.run_until_parked();
+    let before = window
+        .update(&mut visual, |view, _, cx| {
+            view.field.read(cx).offset_bounds(0).unwrap().size.height
+        })
+        .unwrap();
+    visual.simulate_keystrokes("cmd-=");
+    visual.run_until_parked();
+    window
+        .update(&mut visual, |view, _, cx| {
+            assert_eq!(typography::file_size(cx), 15.);
+            assert!(view.field.read(cx).offset_bounds(0).unwrap().size.height > before);
+            assert!(!view.dirty(cx));
+        })
+        .unwrap();
+    visual.simulate_keystrokes("cmd--");
+    visual.run_until_parked();
+    window
+        .update(&mut visual, |view, window, cx| {
+            assert_eq!(typography::file_size(cx), 14.);
+            view.preview = true;
+            window.focus(&view.focus, cx);
+            cx.notify();
+        })
+        .unwrap();
+    visual.run_until_parked();
+    visual.simulate_keystrokes("cmd-shift-=");
+    visual.run_until_parked();
+    window
+        .update(&mut visual, |_, _, cx| {
+            assert_eq!(typography::file_size(cx), 15.)
+        })
+        .unwrap();
+    visual.simulate_keystrokes("cmd-0");
+    visual.run_until_parked();
+    window
+        .update(&mut visual, |_, _, cx| {
+            assert_eq!(typography::file_size(cx), 14.)
+        })
+        .unwrap();
+}
