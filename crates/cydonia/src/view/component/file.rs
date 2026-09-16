@@ -5,9 +5,9 @@ use bezel::{
     gpui::{
         self, Context, Entity, Focusable, Render, Subscription, Task, Window, div, prelude::*, px,
     },
-    theme::{TextStyle, Theme, Typeset},
+    theme::{ControlSize, Sizing as _, TextStyle, Theme, Typeset},
     ui::input::{FieldEvent, Shape, TextField},
-    ui::widgets::Controls as _,
+    ui::widgets::{ButtonStyle, Buttons as _, Controls as _},
 };
 use std::{
     cell::Cell,
@@ -404,15 +404,16 @@ impl FileView {
             .items_center()
             .gap(px(6.))
             .child(
-                div()
+                theme
+                    .button(
+                        if active { "Hide" } else { "Not now" },
+                        ButtonStyle::Ghost,
+                        None,
+                    )
+                    .control_size(ControlSize::Small)
                     .id("dismiss-grammar")
                     .debug_selector(|| "dismiss-grammar".into())
                     .flex_none()
-                    .whitespace_nowrap()
-                    .px(px(6.))
-                    .py(px(4.))
-                    .cursor_pointer()
-                    .child(if active { "Hide" } else { "Not now" })
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.grammar_dismissed = true;
                         cx.notify();
@@ -420,22 +421,20 @@ impl FileView {
             )
             .when(!active, |row| {
                 row.child(
-                    div()
+                    theme
+                        .button(
+                            if matches!(status, Status::Failed(_)) {
+                                "Retry"
+                            } else {
+                                "Install"
+                            },
+                            ButtonStyle::Prominent,
+                            None,
+                        )
+                        .control_size(ControlSize::Small)
                         .id("install-grammar")
                         .debug_selector(|| "install-grammar".into())
                         .flex_none()
-                        .whitespace_nowrap()
-                        .px(px(6.))
-                        .py(px(4.))
-                        .rounded(px(4.))
-                        .bg(theme.element_hover)
-                        .text_color(theme.text)
-                        .cursor_pointer()
-                        .child(if matches!(status, Status::Failed(_)) {
-                            "Retry"
-                        } else {
-                            "Install"
-                        })
                         .on_click(cx.listener(move |this, _, _, cx| {
                             language::start_install(name);
                             this.refresh_grammar(cx);
@@ -448,10 +447,10 @@ impl FileView {
                 .w_full()
                 .min_w_0()
                 .flex_none()
-                .bg(theme.surface_raised)
                 .border_t_1()
                 .border_color(theme.border)
-                .p(px(10.))
+                .px(px(8.))
+                .py(px(6.))
                 .flex()
                 .flex_col()
                 .gap(px(6.))

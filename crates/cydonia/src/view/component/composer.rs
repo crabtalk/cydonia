@@ -84,15 +84,16 @@ pub fn bindings() -> Vec<KeyBinding> {
         KeyBinding::new("up", CommandPrevious, ctx),
         KeyBinding::new("escape", CommandDismiss, ctx),
     ];
-    #[cfg(target_os = "macos")]
-    bindings.extend([
-        KeyBinding::new("alt-left", input::WordLeft, ctx),
-        KeyBinding::new("alt-right", input::WordRight, ctx),
-        KeyBinding::new("alt-shift-left", input::SelectWordLeft, ctx),
-        KeyBinding::new("alt-shift-right", input::SelectWordRight, ctx),
-        KeyBinding::new("alt-backspace", input::DeleteWordLeft, ctx),
-        KeyBinding::new("alt-delete", input::DeleteWordRight, ctx),
-    ]);
+    if cfg!(target_os = "macos") {
+        bindings.extend([
+            KeyBinding::new("alt-left", input::WordLeft, ctx),
+            KeyBinding::new("alt-right", input::WordRight, ctx),
+            KeyBinding::new("alt-shift-left", input::SelectWordLeft, ctx),
+            KeyBinding::new("alt-shift-right", input::SelectWordRight, ctx),
+            KeyBinding::new("alt-backspace", input::DeleteWordLeft, ctx),
+            KeyBinding::new("alt-delete", input::DeleteWordRight, ctx),
+        ]);
+    }
     bindings
 }
 

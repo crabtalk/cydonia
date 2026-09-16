@@ -6,7 +6,7 @@ fn archived_boards_keep_metadata_and_load_cards_only_on_demand() {
     std::fs::create_dir_all(&path).unwrap();
     let store = fs::Project::new(&path);
     let mut board = store.create_board("Archive", "ARC").unwrap();
-    let column = board.add_column("Todo".into()).id.clone();
+    let column = board.add_column("Todo").id.clone();
     board.add_card(&column, "Preserve this card".into());
     board.archived = true;
     store.save_board(&mut board);
