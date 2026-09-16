@@ -23,11 +23,11 @@ fn a_whole_name_beats_an_extension_and_the_longest_extension_wins() {
 #[test]
 fn a_language_with_no_grammar_here_is_named_rather_than_unknown() {
     assert_eq!(of(Path::new("deploy.yml")), Some(Language::Missing("yaml")));
-    assert_eq!(of(Path::new("index.html")), Some(Language::Missing("html")));
     assert_eq!(
         of(Path::new("routes/+page.svelte")),
         Some(Language::Missing("svelte"))
     );
+    assert_eq!(of(Path::new("index.html")), Some(Language::Missing("html")));
     assert!(spans(Path::new("deploy.yml"), "a: 1").is_none());
 }
 
@@ -50,7 +50,14 @@ fn markdown_is_painted_without_a_grammar_and_rust_with_one() {
 #[test]
 fn every_ready_language_is_one_syntax_actually_carries() {
     for name in [
-        "main.rs", "a.py", "a.go", "a.json", "a.toml", "a.sh", "a.ts", "a.tsx",
+        "main.rs",
+        "a.py",
+        "a.go",
+        "a.json",
+        "a.toml",
+        "a.sh",
+        "a.ts",
+        "a.tsx",
     ] {
         assert!(
             matches!(of(Path::new(name)), Some(Language::Ready(_))),

@@ -1,9 +1,10 @@
 //! Which language a file is written in, and whether this build can colour it.
 //!
-//! `syntax::registry` holds the one table of names, extensions and grammars.
-//! This maps its answer onto the three states the app paints from.
+//! `syntax::registry` holds the one table of names and extensions; grammars
+//! reach it through a provider, which [`installed`] registers. This maps the
+//! registry's answer onto the three states the app paints from.
 
-use std::{ops::Range, path::Path};
+use std::{ops::Range, path::Path, sync::OnceLock};
 
 use bezel::theme::HighlightKind;
 use syntax::registry::Known;
@@ -23,9 +24,18 @@ pub enum Language {
     Missing(&'static str),
 }
 
+/// Put this build's grammars in the registry. Idempotent, and called from
+/// every entry point here rather than from `main`: a lookup that ran first
+/// would answer `Missing` for a language this build paints.
+fn installed() {
+    static ONCE: OnceLock<()> = OnceLock::new();
+    ONCE.get_or_init(syntax_std::install);
+}
+
 /// The language `path` is written in, or `None` where its name names nothing
 /// the registry holds.
 pub fn of(path: &Path) -> Option<Language> {
+    installed();
     let known = syntax::registry::of_path(path)?;
     if known.name() == MARKDOWN {
         return Some(Language::Markdown);
@@ -34,6 +44,12 @@ pub fn of(path: &Path) -> Option<Language> {
         Known::Ready(lang) => Language::Ready(lang.name),
         Known::Named(name) => Language::Missing(name),
     })
+}
+
+/// Every language name this build can paint, for the markdown fence highlighter.
+pub fn paintable() -> Vec<&'static str> {
+    installed();
+    syntax::registry::ready()
 }
 
 /// The spans `text` is painted with as the contents of `path`, or `None` where

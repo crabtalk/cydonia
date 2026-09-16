@@ -991,11 +991,18 @@ version = "0.1.17"
 dependencies = [
  "bezel-theme",
  "tree-sitter",
+ "tree-sitter-highlight",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "bezel-syntax-std"
+version = "0.1.17"
+dependencies = [
+ "bezel-syntax",
  "tree-sitter-bash",
  "tree-sitter-go",
- "tree-sitter-highlight",
  "tree-sitter-json",
- "tree-sitter-language",
  "tree-sitter-python",
  "tree-sitter-rust",
  "tree-sitter-toml-ng",
@@ -2010,6 +2017,7 @@ dependencies = [
  "bezel-gpui-platform",
  "bezel-markdown",
  "bezel-syntax",
+ "bezel-syntax-std",
  "bezel-terminal",
  "cacp",
  "cacp-agents",

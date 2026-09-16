@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Cranelift compiles wasm to native code at runtime, and the hardened
+	     runtime refuses writable-executable memory without this. Reached
+	     through tree-sitter's `wasm` feature, which pins cranelift and offers
+	     no interpreter to fall back to.
+
+	     MAP_JIT rather than the broader `allow-unsigned-executable-memory` or
+	     `disable-executable-page-protection`. Not a restricted entitlement: no
+	     provisioning profile, and notarization accepts it. -->
+	<key>com.apple.security.cs.allow-jit</key>
+	<true/>
+</dict>
+</plist>
