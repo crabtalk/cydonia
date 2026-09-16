@@ -1,6 +1,9 @@
 //! The composer: a growing field on a glass card, and the agent's slash
 //! commands behind `/`.
 
+mod activity;
+pub use activity::Activity;
+
 use crate::{
     model::{
         media::Attachment,
@@ -90,7 +93,7 @@ fn picture(attachment: &Attachment) -> gpui::Img {
 
 pub fn bindings() -> Vec<KeyBinding> {
     let ctx = Some(KEY_CONTEXT);
-    vec![
+    let mut bindings = vec![
         KeyBinding::new("enter", Send, ctx),
         // Bound explicitly: the field's own `enter` is what usually inserts a
         // newline, and the composer has just taken it.
@@ -98,7 +101,17 @@ pub fn bindings() -> Vec<KeyBinding> {
         KeyBinding::new("down", CommandNext, ctx),
         KeyBinding::new("up", CommandPrevious, ctx),
         KeyBinding::new("escape", CommandDismiss, ctx),
-    ]
+    ];
+    #[cfg(target_os = "macos")]
+    bindings.extend([
+        KeyBinding::new("alt-left", input::WordLeft, ctx),
+        KeyBinding::new("alt-right", input::WordRight, ctx),
+        KeyBinding::new("alt-shift-left", input::SelectWordLeft, ctx),
+        KeyBinding::new("alt-shift-right", input::SelectWordRight, ctx),
+        KeyBinding::new("alt-backspace", input::DeleteWordLeft, ctx),
+        KeyBinding::new("alt-delete", input::DeleteWordRight, ctx),
+    ]);
+    bindings
 }
 
 /// One agent on offer: what to call it, and the registry's mark for it when
@@ -147,6 +160,7 @@ pub enum ComposerEvent {
     /// The message, and the pictures going with it.
     Submit(String, Vec<Attachment>),
     Cancel,
+    Reconnect,
     Terminal,
     Changes,
     Files,
@@ -192,6 +206,9 @@ pub struct Composer {
     scroll: ScrollHandle,
     /// Whether a turn is in flight — what the button does when pressed.
     streaming: bool,
+    activity: Option<Activity>,
+    activity_open: bool,
+    activity_tick: Option<gpui::Task<()>>,
     /// The configured agents, and which one the session runs on.
     agents: Vec<Agent>,
     agent: Option<usize>,
@@ -256,6 +273,9 @@ impl Composer {
             commands: Vec::new(),
             scroll: ScrollHandle::new(),
             streaming: false,
+            activity: None,
+            activity_open: false,
+            activity_tick: None,
             agents: Vec::new(),
             agent: None,
             switches: Vec::new(),
@@ -281,6 +301,7 @@ impl Composer {
         self.saved_attachments
             .insert(self.session, std::mem::take(&mut self.attachments));
         self.session = id;
+        self.activity_open = false;
         self.attachments = self.saved_attachments.remove(&id).unwrap_or_default();
         self.preview = None;
         let draft = if id.is_none() {
@@ -1039,6 +1060,7 @@ impl Composer {
             .on_action(cx.listener(Self::command_dismiss))
             .flex()
             .flex_col()
+            .children(self.activity_row(&theme, cx))
             .child(
                 div()
                     .w_full()

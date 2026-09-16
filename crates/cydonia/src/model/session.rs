@@ -13,7 +13,11 @@
 
 use crate::{
     agent::acp::{self, Event, Launch, Reply, Session},
-    model::{settings, workspace::Workspace},
+    model::{
+        session_preferences::{self, Choices},
+        settings,
+        workspace::Workspace,
+    },
     view::component::transcript,
 };
 use anyhow::anyhow;
@@ -33,7 +37,7 @@ use cacp::schema::{
 use std::{
     collections::{BTreeMap, VecDeque},
     path::PathBuf,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 const STREAM_FRAME: Duration = Duration::from_millis(120);
@@ -138,6 +142,7 @@ pub struct ChatSession {
     /// The same for config options, which is where the model lives — see
     /// `SessionConfigOptionCategory::Model`.
     pub config: Vec<SessionConfigOption>,
+    preferences: Choices,
     /// Context spent, when the agent says.
     pub usage: Option<Usage>,
     /// What the turn in flight is counted from — see [`Self::elapsed`] and
@@ -161,6 +166,9 @@ pub struct ChatSession {
     /// Whether the user archived it. Typing into it clears this.
     pub closed: bool,
     pub streaming: bool,
+    pub(crate) last_activity: Instant,
+    pub(crate) turn_started: Option<Instant>,
+    pub(crate) tool_started: BTreeMap<String, Instant>,
     /// Prompts waiting for an agent to send them to: what was typed while a
     /// turn was in flight, and what a dispatched card opened the session with.
     pub queue: VecDeque<String>,
@@ -178,7 +186,16 @@ impl ChatSession {
         seed: Option<String>,
         cx: &mut Context<Workspace>,
     ) -> Self {
-        let pump = pump(id, &entry, cwd.clone(), None, None, false, cx);
+        let preferences = session_preferences::load(&cwd, &entry, None);
+        let pump = pump(
+            id,
+            &entry,
+            Launch {
+                choices: preferences.clone(),
+                ..Launch::new(cwd.clone())
+            },
+            cx,
+        );
         Self {
             id,
             entry,
@@ -194,6 +211,7 @@ impl ChatSession {
             commands: Vec::new(),
             modes: None,
             config: Vec::new(),
+            preferences,
             usage: None,
             flight: None,
             title: String::new(),
@@ -204,6 +222,9 @@ impl ChatSession {
             number: None,
             closed: false,
             streaming: false,
+            last_activity: Instant::now(),
+            turn_started: None,
+            tool_started: BTreeMap::new(),
             queue: seed.into_iter().collect(),
             transcript: transcript::State::default(),
             _pump: pump,
@@ -215,6 +236,7 @@ impl ChatSession {
     /// or when something is sent to it.
     pub fn restore(id: u64, cwd: PathBuf, entry: settings::Agent, record: Record) -> Self {
         let updated = record.at();
+        let preferences = session_preferences::load(&cwd, &entry, Some(&record.id));
         Self {
             id,
             entry,
@@ -230,6 +252,7 @@ impl ChatSession {
             commands: Vec::new(),
             modes: None,
             config: Vec::new(),
+            preferences,
             usage: None,
             flight: None,
             title: record.title,
@@ -240,6 +263,9 @@ impl ChatSession {
             number: record.number,
             closed: record.closed,
             streaming: false,
+            last_activity: Instant::now(),
+            turn_started: None,
+            tool_started: BTreeMap::new(),
             queue: VecDeque::new(),
             transcript: transcript::State::default(),
             _pump: Task::ready(()),
@@ -283,6 +309,7 @@ impl ChatSession {
         let record = self.to_record().fork_at(before)?;
         let mut chat = Self::restore(id, self.cwd.clone(), self.entry.clone(), record);
         chat.record = None;
+        chat.preferences = self.preferences.clone();
         Some(chat)
     }
 
@@ -321,6 +348,7 @@ impl ChatSession {
         self.mint_record();
         if self.record.is_some() {
             store.save_session(&self.to_record());
+            self.save_preferences();
         }
     }
 
@@ -330,20 +358,24 @@ impl ChatSession {
         self._pump = pump(
             self.id,
             &self.entry,
-            self.cwd.clone(),
-            self.agent_session.clone(),
-            self.fork.as_ref().map(|fork| {
-                let end = if fork.pending {
-                    fork.before.min(self.items.len())
-                } else {
-                    self.items.len()
-                };
-                acp::history(&self.items[..end])
-            }),
-            self.fork.as_ref().is_some_and(|fork| fork.pending),
+            Launch {
+                previous: self.agent_session.clone(),
+                history: self.fork.as_ref().map(|fork| {
+                    let end = if fork.pending {
+                        fork.before.min(self.items.len())
+                    } else {
+                        self.items.len()
+                    };
+                    acp::history(&self.items[..end])
+                }),
+                history_pending: self.fork.as_ref().is_some_and(|fork| fork.pending),
+                choices: self.preferences.clone(),
+                ..Launch::new(self.cwd.clone())
+            },
             cx,
         );
         self.connection = Connection::Connecting;
+        self.last_activity = Instant::now();
         self.closed = false;
     }
 
@@ -429,6 +461,9 @@ impl ChatSession {
             return;
         };
         session.prompt(&content);
+        self.last_activity = Instant::now();
+        self.turn_started = Some(self.last_activity);
+        self.tool_started.clear();
         self.flight = Some(Flight {
             at: SystemTime::now(),
             used: self.usage.map_or(0, |usage| usage.used),
@@ -471,10 +506,23 @@ impl ChatSession {
         let Connection::Live(session) = &self.connection else {
             return;
         };
+        if !self.modes.as_ref().is_some_and(|modes| {
+            modes
+                .available_modes
+                .iter()
+                .any(|mode| &*mode.id == mode_id)
+        }) {
+            return;
+        }
         session.set_mode(mode_id);
         if let Some(modes) = &mut self.modes {
             modes.current_mode_id = mode_id.into();
         }
+        self.preferences.mode = Some(mode_id.into());
+        if let Err(error) = session_preferences::remember_mode(&self.cwd, &self.entry, mode_id) {
+            self.notice(true, &format!("Could not save session default: {error}"));
+        }
+        self.save_preferences();
     }
 
     /// The same for a config option, which is where the model lives
@@ -483,7 +531,19 @@ impl ChatSession {
         let Connection::Live(session) = &self.connection else {
             return;
         };
+        if !self
+            .config
+            .iter()
+            .any(|option| &*option.id == config_id && session_preferences::supports(option, &value))
+        {
+            return;
+        }
         session.set_config_option(config_id, value.clone());
+        self.preferences
+            .config
+            .insert(config_id.into(), value.clone());
+        let saved =
+            session_preferences::remember_config(&self.cwd, &self.entry, config_id, value.clone());
         let found = self
             .config
             .iter_mut()
@@ -501,6 +561,23 @@ impl ChatSession {
             // The agent offers one shape and was asked for the other. Its own
             // update is the answer; nothing is guessed at here.
             _ => {}
+        }
+        if let Err(error) = saved {
+            self.notice(true, &format!("Could not save session default: {error}"));
+        }
+        self.save_preferences();
+    }
+
+    fn save_preferences(&mut self) {
+        if let Some(record) = &self.record
+            && let Err(error) = session_preferences::remember_session(
+                &self.cwd,
+                &self.entry,
+                record,
+                &self.preferences,
+            )
+        {
+            self.notice(true, &format!("Could not save session choices: {error}"));
         }
     }
 
@@ -527,6 +604,7 @@ impl ChatSession {
     }
 
     fn apply(&mut self, event: Event) {
+        self.last_activity = Instant::now();
         self.updated = SystemTime::now();
         match event {
             Event::Update(update) => self.apply_update(update),
@@ -594,6 +672,9 @@ impl ChatSession {
                 }
             }
             SessionUpdate::ToolCall(call) => {
+                self.tool_started
+                    .entry(call.tool_call_id.to_string())
+                    .or_insert_with(Instant::now);
                 self.finish_thinking();
                 self.items.push(ChatItem::Tool {
                     id: call.tool_call_id.to_string(),
@@ -681,9 +762,15 @@ impl ChatSession {
                 if let Some(modes) = &mut self.modes {
                     modes.current_mode_id = update.current_mode_id;
                 }
+                self.preferences = Choices::capture(self.modes.as_ref(), &self.config);
+                self.save_preferences();
             }
             // Reported whole, like the plan: replace, don't merge.
-            SessionUpdate::ConfigOptionUpdate(update) => self.config = update.config_options,
+            SessionUpdate::ConfigOptionUpdate(update) => {
+                self.config = update.config_options;
+                self.preferences = Choices::capture(self.modes.as_ref(), &self.config);
+                self.save_preferences();
+            }
             SessionUpdate::UsageUpdate(update) => {
                 self.usage = Some(Usage {
                     used: update.used,
@@ -858,36 +945,14 @@ fn content_text(block: &ContentBlock) -> String {
 
 /// Drain the ACP event channel into the session, for as long as there is one.
 ///
-/// `previous` is the agent's own session id: with it set and the agent
-/// capable, the conversation is loaded rather than started over, so the turn
-/// that follows carries everything said before it.
-fn pump(
-    id: u64,
-    entry: &settings::Agent,
-    cwd: PathBuf,
-    previous: Option<String>,
-    history: Option<Vec<cacp::client::HistoryEntry>>,
-    history_pending: bool,
-    cx: &mut Context<Workspace>,
-) -> Task<()> {
+/// The launch carries the previous session and its saved choices.
+fn pump(id: u64, entry: &settings::Agent, launch: Launch, cx: &mut Context<Workspace>) -> Task<()> {
     let entry = entry.clone();
     // Ours, not the launch's — a launch that fails still wrote to its stderr,
     // and a receiver the launch owned would be dropped with the error.
     let (tx, mut events) = acp::channel();
     let echo = tx.clone();
-    let conn = acp::runtime().spawn(async move {
-        Session::spawn(
-            &entry,
-            Launch {
-                previous,
-                history,
-                history_pending,
-                ..Launch::new(cwd)
-            },
-            tx,
-        )
-        .await
-    });
+    let conn = acp::runtime().spawn(async move { Session::spawn(&entry, launch, tx).await });
 
     cx.spawn(async move |this, cx| {
         let opened = conn
@@ -935,6 +1000,7 @@ fn pump(
                     // this arrives as an update.
                     chat.modes = session.response.modes.clone();
                     chat.config = session.response.config_options.clone().unwrap_or_default();
+                    chat.preferences = Choices::capture(chat.modes.as_ref(), &chat.config);
                     chat.connection = Connection::Live(Box::new(session));
                 });
                 workspace.session_connected(id, cx);

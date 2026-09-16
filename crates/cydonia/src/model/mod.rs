@@ -10,6 +10,7 @@ pub mod media;
 pub mod migrate;
 pub mod project;
 pub mod session;
+pub mod session_preferences;
 pub mod settings;
 pub mod state;
 pub mod update;

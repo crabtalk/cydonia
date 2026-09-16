@@ -373,6 +373,7 @@ impl Cydonia {
         );
         let commands = chat.map(|chat| chat.commands.clone()).unwrap_or_default();
         let streaming = chat.is_some_and(|chat| chat.streaming);
+        let activity = chat.and_then(composer::Activity::of);
         let current = chat
             .map(|chat| chat.entry.name.clone())
             .and_then(|name| agents.iter().position(|agent| agent.name == name));
@@ -388,6 +389,7 @@ impl Cydonia {
             composer.set_placeholder(&placeholder, cx);
             composer.set_commands(&commands, cx);
             composer.set_streaming(streaming, cx);
+            composer.set_activity(activity, cx);
             composer.set_agents(&agents, current, cx);
             composer.set_switches(&switches, cx);
             composer.set_usage(usage, cx);

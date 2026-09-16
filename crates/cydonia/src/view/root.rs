@@ -200,11 +200,8 @@ pub fn bindings() -> Vec<KeyBinding> {
         // taking the hand out of the editor — where `tab` itself is indent.
         KeyBinding::new("ctrl-tab", NextEntry, None),
         KeyBinding::new("ctrl-shift-tab", PrevEntry, None),
-        // Claimed app-wide and answered last: an editor and a field bind copy
-        // on their own contexts, which gpui dispatches from the focus outward,
-        // so this only runs where nothing else wanted it — which is exactly
-        // where a transcript selection is the thing being copied.
-        KeyBinding::new("cmd-c", CopySelection, None),
+        // Scope the fallback to the root so focused text surfaces take priority.
+        KeyBinding::new("cmd-c", CopySelection, Some("Cydonia")),
         KeyBinding::new("enter", CommitName, Some(RENAME_CONTEXT)),
         KeyBinding::new("escape", DismissName, Some(RENAME_CONTEXT)),
     ]
@@ -371,6 +368,13 @@ impl Cydonia {
                     });
                 }
                 ComposerEvent::Cancel => this.cancel_turn(cx),
+                ComposerEvent::Reconnect => {
+                    this.workspace.update(cx, |workspace, cx| {
+                        if let Some(id) = workspace.active_id() {
+                            workspace.select_session(id, cx);
+                        }
+                    });
+                }
                 ComposerEvent::Terminal => this.show_terminal(window, cx),
                 ComposerEvent::Changes => this.show_changes(window, cx),
                 ComposerEvent::Files => this.show_files(window, cx),
@@ -807,6 +811,7 @@ impl Render for Cydonia {
         self.sync_changes(cx);
         let theme = Theme::of(cx).clone();
         div()
+            .key_context("Cydonia")
             .size_full()
             .relative()
             .flex()

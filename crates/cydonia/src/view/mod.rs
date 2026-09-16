@@ -17,3 +17,7 @@ pub mod root;
 pub mod settings;
 pub mod sidebar;
 pub mod table;
+
+#[cfg(test)]
+#[path = "../../tests/unit/clipboard.rs"]
+pub(crate) mod clipboard_tests;

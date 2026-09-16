@@ -10,7 +10,11 @@
 
 use crate::{
     agent::{mcp, serve},
-    model::{media, settings},
+    model::{
+        media,
+        session_preferences::{self, Choices},
+        settings,
+    },
 };
 use anyhow::{Result, anyhow};
 use cacp::{
@@ -134,6 +138,7 @@ pub struct Launch {
     pub previous: Option<String>,
     pub history: Option<Vec<HistoryEntry>>,
     pub history_pending: bool,
+    pub choices: Choices,
 }
 
 impl Launch {
@@ -316,7 +321,7 @@ impl Session {
             None
         };
 
-        Ok(Self {
+        let mut session = Self {
             conn: Some(conn),
             tx,
             child: Some(child),
@@ -327,7 +332,86 @@ impl Session {
             loaded,
             built_in_mcp,
             history_fork,
-        })
+        };
+        session.restore_choices(&launch.choices).await?;
+        Ok(session)
+    }
+
+    /// Restore supported choices before the first queued prompt can run.
+    async fn restore_choices(&mut self, choices: &Choices) -> Result<()> {
+        if let Some(mode) = &choices.mode
+            && let Some(modes) = &self.response.modes
+            && modes
+                .available_modes
+                .iter()
+                .any(|offered| offered.id.to_string() == *mode)
+            && modes.current_mode_id.to_string() != *mode
+        {
+            self.conn()
+                .set_session_mode(SetSessionModeRequest {
+                    session_id: self.session_id.clone(),
+                    mode_id: mode.clone().into(),
+                    meta: None,
+                })
+                .await
+                .map_err(|error| {
+                    anyhow!("restoring session mode failed: {}", error_text(&error))
+                })?;
+            if let Some(modes) = &mut self.response.modes {
+                modes.current_mode_id = mode.clone().into();
+            }
+        }
+        let mut keys: Vec<_> = self
+            .response
+            .config_options
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .map(|option| {
+                (
+                    option.category != Some(cacp::schema::SessionConfigOptionCategory::Model),
+                    option.id.to_string(),
+                )
+            })
+            .collect();
+        keys.sort();
+        for (_, id) in keys {
+            let Some(value) = choices.config.get(&id) else {
+                continue;
+            };
+            let Some(option) = self
+                .response
+                .config_options
+                .as_deref()
+                .unwrap_or_default()
+                .iter()
+                .find(|option| option.id.to_string() == id)
+            else {
+                continue;
+            };
+            if !session_preferences::supports(option, value)
+                || session_preferences::current(option) == *value
+            {
+                continue;
+            }
+            let response = self
+                .conn()
+                .set_session_config_option(SetSessionConfigOptionRequest {
+                    session_id: self.session_id.clone(),
+                    config_id: id.clone().into(),
+                    value: value.clone(),
+                    meta: None,
+                })
+                .await
+                .map_err(|error| {
+                    anyhow!(
+                        "restoring session option {id} failed: {}",
+                        error_text(&error)
+                    )
+                })?;
+            self.response.config_options = Some(response.config_options);
+        }
+        Ok(())
     }
 
     /// A handle on the agent. Cheap to clone, and present for as long as

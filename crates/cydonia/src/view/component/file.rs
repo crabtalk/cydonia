@@ -111,6 +111,9 @@ pub struct FileView {
     pub error: Option<String>,
     changed: bool,
     preview: bool,
+    preview_selection: Option<markdown::Selection>,
+    preview_layouts: markdown::BlockLayouts,
+    preview_dragging: bool,
     scroll: gpui::ScrollHandle,
     reveal: Rc<Cell<bool>>,
     /// What this file's name says it is, resolved once: the path a view is
@@ -143,6 +146,8 @@ impl FileView {
             // as the field is concerned — so first paint is coloured by the
             // same path that keeps typing coloured.
             if matches!(event, FieldEvent::Changed) {
+                this.preview_selection = None;
+                this.preview_dragging = false;
                 this.recolour(cx);
             }
             cx.notify();
@@ -183,6 +188,9 @@ impl FileView {
             error: None,
             changed: false,
             preview: true,
+            preview_selection: None,
+            preview_layouts: markdown::BlockLayouts::default(),
+            preview_dragging: false,
             scroll: gpui::ScrollHandle::new(),
             reveal: Rc::new(Cell::new(false)),
             _watch: watch,
@@ -303,7 +311,10 @@ impl FileView {
                         .cursor_pointer()
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.preview = !this.preview;
-                            if !this.preview {
+                            this.preview_dragging = false;
+                            if this.preview {
+                                window.focus(&this.focus, cx);
+                            } else {
                                 window.focus(&this.field.focus_handle(cx), cx);
                             }
                             cx.notify();
@@ -498,6 +509,30 @@ impl Render for FileView {
             .on_action(|_: &IncreaseTextSize, _, cx| typography::zoom_file(1., cx))
             .on_action(|_: &DecreaseTextSize, _, cx| typography::zoom_file(-1., cx))
             .on_action(|_: &ResetTextSize, _, cx| typography::reset_file_zoom(cx))
+            .when(markdown && self.preview, |panel| {
+                panel
+                    .on_action(cx.listener(|this, _: &bezel::ui::input::Copy, _, cx| {
+                        let Some(selection) = this.preview_selection else {
+                            return;
+                        };
+                        let doc = markdown::parse_with(
+                            this.field.read(cx).content(),
+                            &markdown::Marks::of(cx),
+                        );
+                        let text = markdown::selectable::copied(&doc, selection);
+                        if !text.is_empty() {
+                            cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+                        }
+                    }))
+                    .on_action(cx.listener(|this, _: &bezel::ui::input::SelectAll, _, cx| {
+                        let doc = markdown::parse_with(
+                            this.field.read(cx).content(),
+                            &markdown::Marks::of(cx),
+                        );
+                        this.preview_selection = Some(markdown::Selection::all(&doc));
+                        cx.notify();
+                    }))
+            })
             .on_action(cx.listener(|this, _: &Save, _, cx| {
                 this.save(false, cx);
             }))
@@ -541,6 +576,39 @@ impl Render for FileView {
                     panel.child(
                         div()
                             .id("file-preview")
+                            .cursor(gpui::CursorStyle::IBeam)
+                            .on_mouse_down(
+                                gpui::MouseButton::Left,
+                                cx.listener(|this, event: &gpui::MouseDownEvent, window, cx| {
+                                    window.focus(&this.focus, cx);
+                                    this.preview_selection = this
+                                        .preview_layouts
+                                        .hit(event.position)
+                                        .map(markdown::Selection::at);
+                                    this.preview_dragging = this.preview_selection.is_some();
+                                    cx.notify();
+                                }),
+                            )
+                            .on_mouse_move(cx.listener(
+                                |this, event: &gpui::MouseMoveEvent, _, cx| {
+                                    if this.preview_dragging
+                                        && let Some(cursor) =
+                                            this.preview_layouts.hit(event.position)
+                                        && let Some(selection) = this.preview_selection
+                                    {
+                                        this.preview_selection = Some(selection.extend_to(cursor));
+                                        cx.notify();
+                                    }
+                                },
+                            ))
+                            .on_mouse_up(
+                                gpui::MouseButton::Left,
+                                cx.listener(|this, _, _, _| this.preview_dragging = false),
+                            )
+                            .on_mouse_up_out(
+                                gpui::MouseButton::Left,
+                                cx.listener(|this, _, _, _| this.preview_dragging = false),
+                            )
                             .flex_1()
                             .min_h_0()
                             .overflow_y_scroll()
@@ -551,6 +619,9 @@ impl Render for FileView {
                                     &markdown::Marks::of(cx),
                                 ),
                                 markdown::render::Editing {
+                                    selection: self.preview_selection,
+                                    layouts: Some(&self.preview_layouts),
+                                    caret_on: false,
                                     typography: Some(
                                         markdown::Typography::of(cx)
                                             .scaled(size / bezel::theme::base_text_size()),

@@ -190,3 +190,56 @@ fn command_w_closes_bottom_tabs_and_emits_empty_for_the_last(cx: &mut gpui::Test
         .update(&mut visual, |panel, _, _| assert!(panel.tabs.is_empty()))
         .unwrap();
 }
+
+#[gpui::test]
+fn copy_terminal_selection_takes_priority_over_transcript(cx: &mut gpui::TestAppContext) {
+    cx.update(|cx| {
+        Theme::install(bezel::theme::Appearance::Light, cx);
+        crate::view::keymap::bind_all(&crate::model::settings::Shortcuts::default(), cx);
+    });
+    let view = cx.new(|cx| Terminal {
+        directory: Path::new("/private/tmp").into(),
+        emulator: Emulator::new(80, 24),
+        shell: None,
+        focus: cx.focus_handle(),
+        geometry: None,
+        selecting: false,
+        scroll_remainder: 0.,
+        status: None,
+        _pump: None,
+    });
+    let window = cx.add_window(|window, cx| {
+        window.focus(&view.focus_handle(cx), cx);
+        crate::view::clipboard_tests::CopyRoot(view.clone().into())
+    });
+    let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+    visual.run_until_parked();
+    view.update(&mut visual, |view, cx| {
+        view.emulator.feed(b"terminal text");
+        let grid = view.geometry.unwrap();
+        view.select(
+            grid.origin + gpui::point(px(0.), px(grid.line_h / 2.)),
+            true,
+        );
+        view.select(
+            grid.origin + gpui::point(px(grid.cell_w * 13.), px(grid.line_h / 2.)),
+            false,
+        );
+        assert_eq!(
+            view.emulator.selection_text().as_deref(),
+            Some("terminal text")
+        );
+        cx.notify();
+    });
+    visual.run_until_parked();
+    visual.simulate_keystrokes("cmd-c");
+    visual.run_until_parked();
+    visual.update(|_, cx| {
+        assert_eq!(
+            cx.read_from_clipboard()
+                .and_then(|item| item.text())
+                .as_deref(),
+            Some("terminal text")
+        );
+    });
+}

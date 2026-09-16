@@ -245,3 +245,94 @@ fn zoom_shortcuts_resize_source_and_work_in_preview(cx: &mut gpui::TestAppContex
         })
         .unwrap();
 }
+
+#[gpui::test]
+fn copy_source_selection_takes_priority_over_transcript(cx: &mut gpui::TestAppContext) {
+    cx.update(|cx| {
+        Theme::install(bezel::theme::Appearance::Light, cx);
+        crate::view::keymap::bind_all(&crate::model::settings::Shortcuts::default(), cx);
+    });
+    let file = Temp::new();
+    std::fs::write(&file.0, "copy this file").unwrap();
+    let view = cx.new(|cx| {
+        let mut view = FileView::new(file.0.clone(), cx);
+        view.receive(Ok("copy this file".into()), cx);
+        view
+    });
+    let window = cx.add_window(|window, cx| {
+        window.focus(&view.read(cx).field.focus_handle(cx), cx);
+        crate::view::clipboard_tests::CopyRoot(view.clone().into())
+    });
+    let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+    visual.run_until_parked();
+    visual.simulate_keystrokes("cmd-a cmd-c");
+    visual.run_until_parked();
+    visual.update(|_, cx| {
+        assert_eq!(
+            cx.read_from_clipboard()
+                .and_then(|item| item.text())
+                .as_deref(),
+            Some("copy this file")
+        );
+    });
+}
+
+#[gpui::test]
+fn markdown_preview_supports_drag_select_all_and_copy(cx: &mut gpui::TestAppContext) {
+    cx.update(|cx| {
+        Theme::install(bezel::theme::Appearance::Light, cx);
+        crate::view::keymap::bind_all(&crate::model::settings::Shortcuts::default(), cx);
+    });
+    let file = Temp::named(".md");
+    let source = "# Title\n\nCopy **this** preview.\n";
+    std::fs::write(&file.0, source).unwrap();
+    let view = cx.new(|cx| {
+        let mut view = FileView::new(file.0.clone(), cx);
+        view.receive(Ok(source.into()), cx);
+        view
+    });
+    let window = cx.add_window(|window, cx| {
+        window.focus(&view.focus_handle(cx), cx);
+        crate::view::clipboard_tests::CopyRoot(view.clone().into())
+    });
+    let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+    visual.run_until_parked();
+    let (start, end) = view.read_with(&visual, |view, cx| {
+        let doc = markdown::parse(view.field.read(cx).content());
+        let bounds = view.preview_layouts.rects(markdown::Selection::all(&doc));
+        let first = bounds.first().unwrap();
+        let last = bounds.last().unwrap();
+        (
+            gpui::point(first.left(), first.center().y),
+            gpui::point(last.right(), last.center().y),
+        )
+    });
+    visual.simulate_mouse_down(start, gpui::MouseButton::Left, gpui::Modifiers::default());
+    visual.run_until_parked();
+    visual.simulate_mouse_move(end, gpui::MouseButton::Left, gpui::Modifiers::default());
+    visual.simulate_mouse_up(end, gpui::MouseButton::Left, gpui::Modifiers::default());
+    visual.run_until_parked();
+    visual.simulate_keystrokes("cmd-c");
+    visual.update(|_, cx| {
+        assert_eq!(
+            cx.read_from_clipboard()
+                .and_then(|item| item.text())
+                .as_deref(),
+            Some("Title\nCopy this preview.")
+        );
+    });
+    visual.simulate_keystrokes("cmd-a cmd-c");
+    visual.update(|_, cx| {
+        assert_eq!(
+            cx.read_from_clipboard()
+                .and_then(|item| item.text())
+                .as_deref(),
+            Some("Title\nCopy this preview.")
+        );
+    });
+    view.update(&mut visual, |view, cx| {
+        view.receive(Ok("replacement".into()), cx);
+    });
+    visual.run_until_parked();
+    view.read_with(&visual, |view, _| assert!(view.preview_selection.is_none()));
+}
