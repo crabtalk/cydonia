@@ -17,8 +17,8 @@ use artifact::session::chat::{ChatItem, ToolStatus};
 use bezel::{
     agent::orbs::{OrbSize, OrbState, engine::Frame, orb_element},
     gpui::{
-        AnyElement, ClipboardItem, Context, Empty, Pixels, SharedString, Task, Window, canvas, div,
-        prelude::*, px,
+        AnyElement, Bounds, ClipboardItem, Context, Empty, Pixels, SharedString, Task, Window,
+        canvas, div, prelude::*, px,
     },
     motion::Painter,
     theme::{TextStyle, Theme, Typeset, ink},
@@ -119,6 +119,19 @@ impl State {
         self.layouts.borrow_mut().entry(ix).or_default().clone()
     }
 
+    /// Put the stream back on its newest line, and keep it there as the answer
+    /// arrives.
+    ///
+    /// Sending is the one gesture that says where you want to be looking: a
+    /// wheel upward releases the tail ([`super::transcript::follow`]) and
+    /// nothing puts it back, so a message sent after reading further up lands
+    /// below the fold along with the reply to it.
+    pub fn follow_tail(&self) {
+        self.list
+            .state
+            .set_follow_mode(bezel::gpui::FollowMode::Tail);
+    }
+
     /// What `ix` has selected, if it is the item holding the selection.
     fn selection(&self, ix: usize) -> Option<Selection> {
         self.selection
@@ -141,6 +154,30 @@ impl State {
             }
             Pointer::Up => self.dragging = false,
         }
+    }
+
+    /// Where the bar over a selection stands: the last row the run painted, in
+    /// window coordinates, and the box the stream is read through.
+    ///
+    /// `None` while the pointer is still choosing the run, and for a press that
+    /// collapsed without a drag — a caret in read-only prose is not a selection
+    /// and has nothing for a bar to be about.
+    pub fn selection_perch(&self) -> Option<(Bounds<Pixels>, Bounds<Pixels>)> {
+        if self.dragging {
+            return None;
+        }
+        let (ix, selection) = self.selection?;
+        if selection.is_collapsed() {
+            return None;
+        }
+        let head = *self.layouts(ix).rects(selection).last()?;
+        Some((self.list.state.viewport_bounds(), head))
+    }
+
+    /// Drop the run, and the bar over it with it.
+    pub fn clear_selection(&mut self) {
+        self.selection = None;
+        self.dragging = false;
     }
 
     /// What is selected, as it would be pasted, or nothing when a press

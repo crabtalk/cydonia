@@ -369,6 +369,14 @@ impl Workspace {
         true
     }
 
+    /// Drop the run the transcript is holding, and the bar over it.
+    pub fn clear_selection(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.active_id() else {
+            return;
+        };
+        self.with_session(id, cx, |chat| chat.transcript.clear_selection());
+    }
+
     /// Switch a session's mode — what the composer's mode picker reports.
     /// See [`ChatSession::set_mode`].
     pub fn set_session_mode(&mut self, id: u64, mode_id: String, cx: &mut Context<Self>) {
