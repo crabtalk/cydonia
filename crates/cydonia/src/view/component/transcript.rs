@@ -59,6 +59,17 @@ const MARK_THICK: f32 = 2.;
 const MARK_PAD: f32 = 5.;
 const RAIL_INSET: f32 = 12.;
 
+/// What a mark is painted at: the turn being read, one that is on screen with
+/// it, and one that is neither.
+///
+/// Three rather than two, because the rail answers two questions at once — how
+/// much of the session the pane is showing, and which turn of it you are on.
+/// Off one value the second question has no answer; off two the first one is a
+/// single dash whatever is on screen.
+const MARK_READING: f32 = 0.6;
+const MARK_VISIBLE: f32 = 0.38;
+const MARK_AWAY: f32 = 0.16;
+
 /// How much of a question its mark's tooltip carries.
 const ASKED_MAX: usize = 80;
 
@@ -589,15 +600,46 @@ fn active_list_turn(
     active
 }
 
+/// Which turns the pane is showing, as a range over the rail's marks.
+///
+/// `inset` is the composer band, taken off the foot: a turn behind it is
+/// painted and covered, and a mark lit for it says the pane is showing
+/// something it is not.
+///
+/// The list reports no bounds for a turn above the scroll top, which is what
+/// ends the run at the near edge; the far edge is the first turn whose top is
+/// past the floor.
+fn visible_list_turns(
+    list: &bezel::ui::list::VariableList<usize>,
+    count: usize,
+    inset: Pixels,
+) -> Range<usize> {
+    let viewport = list.state.viewport_bounds();
+    let floor = viewport.bottom() - inset;
+    let first = list.state.logical_scroll_top().item_ix.min(count);
+    let mut last = first;
+    for ix in first..count {
+        let Some(bounds) = list.state.bounds_for_item(ix) else {
+            break;
+        };
+        if bounds.top() >= floor {
+            break;
+        }
+        last = ix + 1;
+    }
+    first..last.max(first)
+}
+
 fn rail_room(pane_width: f32) -> f32 {
     ((pane_width - CONTENT_MAX_WIDTH) / 2.).max(0.)
 }
 
 /// One clickable mark per turn, with its question as the tooltip.
 fn rail(chat: &ChatSession, turns: &[Turn], room: Pixels) -> AnyElement {
-    // bezel's own floor plus the marks' padding, which reaches toward the
-    // text: a hitbox over the prose would swallow presses meant for it.
-    if turns.is_empty() || room < px(scroll::RAIL_ROOM + 2. * MARK_PAD) {
+    // The marks' padding reaches toward the text, so it comes off the room
+    // before bezel is asked: a hitbox over the prose would swallow presses
+    // meant for it.
+    if turns.is_empty() || !scroll::rail_fits(room - px(2. * MARK_PAD)) {
         return Empty.into_any_element();
     }
     let handle = chat.transcript.list.clone();
@@ -610,6 +652,10 @@ fn rail(chat: &ChatSession, turns: &[Turn], room: Pixels) -> AnyElement {
         .max(px(root::composer_height()))
         + px(root::COMPOSER_BOTTOM + PAD);
     let at = active_list_turn(&handle, count, inset, &selection);
+    let showing = visible_list_turns(&handle, count, inset);
+    // The canvas below watches for the run moving under it, and holds its own
+    // copy: the marks are built from theirs after it is mounted.
+    let watched = showing.clone();
     div()
         .absolute()
         .top_0()
@@ -630,7 +676,9 @@ fn rail(chat: &ChatSession, turns: &[Turn], room: Pixels) -> AnyElement {
                         selected.offset = Some(handle.state.logical_scroll_top());
                         selection.set(Some(selected));
                     }
-                    if active_list_turn(&handle, count, inset, &selection) != at {
+                    if active_list_turn(&handle, count, inset, &selection) != at
+                        || visible_list_turns(&handle, count, inset) != watched
+                    {
                         window.refresh();
                     }
                 },
@@ -651,7 +699,8 @@ fn rail(chat: &ChatSession, turns: &[Turn], room: Pixels) -> AnyElement {
             let selection = chat.transcript.rail_selection.clone();
             div()
                 .id(("rail-mark", ix))
-                // Padding provides the hitbox and gap; only the active turn brightens.
+                // Padding provides the hitbox and gap; the tone is what the
+                // mark says — see [`MARK_READING`].
                 .p(px(MARK_PAD))
                 .cursor_pointer()
                 .when_some(asked, |mark, asked| {
@@ -673,7 +722,13 @@ fn rail(chat: &ChatSession, turns: &[Turn], room: Pixels) -> AnyElement {
                         .w(px(MARK))
                         .h(px(MARK_THICK))
                         .rounded_full()
-                        .bg(if ix == at { ink(0.6) } else { ink(0.2) }),
+                        .bg(ink(if ix == at {
+                            MARK_READING
+                        } else if showing.contains(&ix) {
+                            MARK_VISIBLE
+                        } else {
+                            MARK_AWAY
+                        })),
                 )
         }))
         .into_any_element()

@@ -368,6 +368,21 @@ pub fn bind_all(shortcuts: &Shortcuts, cx: &mut App) {
             super::component::panel::NewTerminal,
             Some("SessionPanel || BottomTerminalPanel"),
         ),
+        // The chord that steps between entries everywhere else steps between
+        // tabs here — see [`root::bindings`], whose binding this shadows while
+        // a panel holds the focus. `cmd-tab` is the system's and never reaches
+        // an app; the terminal makes no bytes of `ctrl-tab`, so a shell under
+        // the pointer does not eat it either.
+        KeyBinding::new(
+            "ctrl-tab",
+            super::component::panel::NextTab,
+            Some("SessionPanel || BottomTerminalPanel"),
+        ),
+        KeyBinding::new(
+            "ctrl-shift-tab",
+            super::component::panel::PrevTab,
+            Some("SessionPanel || BottomTerminalPanel"),
+        ),
         KeyBinding::new("cmd-s", super::component::file::Save, Some("FileEditor")),
         KeyBinding::new("cmd-c", input::Copy, Some("FileEditor")),
         KeyBinding::new("cmd-a", input::SelectAll, Some("FileEditor")),

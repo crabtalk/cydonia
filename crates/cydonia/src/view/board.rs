@@ -44,10 +44,10 @@ const COLUMN_WIDTH: f32 = 272.;
 /// way, through [`scroll::Overlay::end_inset`].
 const BOARD_INSET: f32 = 16.;
 
-/// What separates two lanes, and the room the lane's scrollbar sits in.
-///
-/// Twice [`scroll::THUMB_CENTRE`], so the thumb runs down the middle of it.
-const LANE_CHANNEL: Pixels = px(2. * scroll::THUMB_CENTRE);
+/// What separates two lanes, and the room the lane's scrollbar sits in. Handed
+/// to the bar through [`scroll::Overlay::channel`], which centres the thumb in
+/// it.
+const LANE_CHANNEL: Pixels = px(18.);
 
 /// How much of a card is shown before it is cut off. A card is a card: what
 /// does not fit in this much of a lane is read by opening it.
@@ -645,8 +645,7 @@ impl Cydonia {
                             // rather than as a gap on the row: a bar is clipped
                             // to the pane it reports on, so only a lane that
                             // owns the whole channel can put its thumb down the
-                            // middle of it. Twice the thumb's centre line is
-                            // what centres it — see [`scroll::THUMB_CENTRE`].
+                            // middle of it.
                             .pr(LANE_CHANNEL)
                             // The foot of the scroll, where `Add a card` sits:
                             // the lane's own gap ends at the last card, and
@@ -692,7 +691,8 @@ impl Cydonia {
                     .children(composing.then(|| scroll::follow(&scroll, &follow)))
                     .child(
                         scrollbars::Overlay::new(bar_id, &scroll, bezel::gpui::Axis::Vertical)
-                            .end_inset(px(BOARD_INSET)),
+                            .end_inset(px(BOARD_INSET))
+                            .channel(LANE_CHANNEL),
                     ),
             )
             .into_any_element()
