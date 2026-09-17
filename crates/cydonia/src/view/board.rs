@@ -13,8 +13,8 @@ use bezel::ui::scroll as scrollbars;
 use bezel::{
     gpui::{
         self, AnyElement, App, ClipboardItem, Context, Div, DragMoveEvent, Entity, Focusable as _,
-        FontWeight, KeyBinding, Render, ScrollHandle, SharedString, Stateful, Window, actions, div,
-        prelude::*, px,
+        FontWeight, KeyBinding, Pixels, Render, ScrollHandle, SharedString, Stateful, Window,
+        actions, div, prelude::*, px,
     },
     motion::Painter,
     theme::{TextStyle, Theme, Typeset},
@@ -24,7 +24,7 @@ use bezel::{
         loaders,
         menu::Item,
         popover,
-        scroll::{self, Axes, DriftState},
+        scroll::{self, Axes, DriftState, FollowState},
         widgets::Buttons,
     },
 };
@@ -38,6 +38,16 @@ actions!(cydonia_board, [CommitCard, DismissCard]);
 const KEY_CONTEXT: &str = "CydoniaCard";
 
 const COLUMN_WIDTH: f32 = 272.;
+
+/// What the board holds itself off the window's edges by, and how far short of
+/// the foot a lane's bar stops — the session's bar clears its composer the same
+/// way, through [`scroll::Overlay::end_inset`].
+const BOARD_INSET: f32 = 16.;
+
+/// What separates two lanes, and the room the lane's scrollbar sits in.
+///
+/// Twice [`scroll::THUMB_CENTRE`], so the thumb runs down the middle of it.
+const LANE_CHANNEL: Pixels = px(2. * scroll::THUMB_CENTRE);
 
 /// How much of a card is shown before it is cut off. A card is a card: what
 /// does not fit in this much of a lane is read by opening it.
@@ -150,7 +160,8 @@ pub struct Landing {
     pub before: Option<String>,
 }
 
-/// One scroll and one drift per lane, minted the first time the lane is drawn.
+/// One scroll, one drift and one follow per lane, minted the first time the
+/// lane is drawn.
 ///
 /// gpui keys a pane's own scroll state by element id and needs nothing from
 /// us, but a drift moves that scroll from outside, and moving it takes a
@@ -158,15 +169,21 @@ pub struct Landing {
 /// deleted and remade is a new id, and a handful of dropped handles is cheaper
 /// than a sweep that has to know which lanes are still on the board.
 #[derive(Default)]
-pub struct Lanes(RefCell<HashMap<String, (ScrollHandle, DriftState)>>);
+pub struct Lanes(RefCell<HashMap<String, (ScrollHandle, DriftState, FollowState)>>);
 
 impl Lanes {
-    fn of(&self, id: &str) -> (ScrollHandle, DriftState) {
+    fn of(&self, id: &str) -> (ScrollHandle, DriftState, FollowState) {
         self.0
             .borrow_mut()
             .entry(id.to_owned())
             .or_default()
             .clone()
+    }
+
+    /// Pin the lane to its end again. A lane remembers being scrolled away
+    /// from, and opening an editor at its foot is asking to be taken there.
+    fn follow(&self, id: &str) {
+        self.of(id).2.follow();
     }
 }
 
@@ -243,6 +260,11 @@ impl Cydonia {
         };
         self.card_field
             .update(cx, |field, cx| field.set_content(text, cx));
+        // A lane scrolled away from earlier stays where it was left; opening a
+        // card at its foot is asking to be taken back there.
+        if let Editing::New(column) = &at {
+            self.lanes.follow(column);
+        }
         self.editing = Some(at);
         window.focus(&self.card_field.read(cx).focus_handle(cx), cx);
         cx.notify();
@@ -519,9 +541,8 @@ impl Cydonia {
                     .size_full()
                     .flex()
                     .flex_row()
-                    .gap(px(10.))
-                    .px(px(16.))
-                    .pt(px(16.))
+                    .px(px(BOARD_INSET))
+                    .pt(px(BOARD_INSET))
                     .track_scroll(&self.board_scroll)
                     .children(columns)
                     .child(self.new_column_lane(cx)),
@@ -575,7 +596,8 @@ impl Cydonia {
 
         let lane = id.clone();
         let taken = id.clone();
-        let (scroll, drift) = self.lanes.of(&id);
+        let composing = matches!(&self.editing, Some(Editing::New(at)) if *at == id);
+        let (scroll, drift, follow) = self.lanes.of(&id);
         let bar_id = format!("lane-bar-{id}");
         div()
             .flex_none()
@@ -619,6 +641,19 @@ impl Cydonia {
                     .child(
                         scroll::pane(SharedString::from(format!("column-{id}")), Axes::Vertical)
                             .size_full()
+                            // The space between two lanes, carried by the lane
+                            // rather than as a gap on the row: a bar is clipped
+                            // to the pane it reports on, so only a lane that
+                            // owns the whole channel can put its thumb down the
+                            // middle of it. Twice the thumb's centre line is
+                            // what centres it — see [`scroll::THUMB_CENTRE`].
+                            .pr(LANE_CHANNEL)
+                            // The foot of the scroll, where `Add a card` sits:
+                            // the lane's own gap ends at the last card, and
+                            // without this the row lands on the lane's edge.
+                            // `../desktop` pads the same place, by enough to
+                            // clear the controls bar it floats there.
+                            .pb(px(8.))
                             .track_scroll(&scroll)
                             .flex()
                             .flex_col()
@@ -650,11 +685,15 @@ impl Cydonia {
                     // The lane's own half of the gesture: a card held at the
                     // foot of a full lane brings the rest of it up.
                     .child(scroll::drift(&scroll, &drift, Axes::Vertical))
-                    .child(scrollbars::Overlay::new(
-                        bar_id,
-                        &scroll,
-                        bezel::gpui::Axis::Vertical,
-                    )),
+                    // A new card is written at the lane's end, and grows as it
+                    // is typed into: the lane stays at that end for as long as
+                    // it is left there, and lets go the moment it is scrolled
+                    // up — the transcript's rule, and the same element.
+                    .children(composing.then(|| scroll::follow(&scroll, &follow)))
+                    .child(
+                        scrollbars::Overlay::new(bar_id, &scroll, bezel::gpui::Axis::Vertical)
+                            .end_inset(px(BOARD_INSET)),
+                    ),
             )
             .into_any_element()
     }
@@ -801,7 +840,7 @@ impl Cydonia {
         // bounds, so a card scrolled out of its lane still answers for the
         // strip of window its bounds landed on — the lane's own header, most
         // of the time.
-        let (viewport, _) = self.lanes.of(column);
+        let (viewport, ..) = self.lanes.of(column);
         div()
             .id(SharedString::from(format!("card-{id}")))
             .group("card")
