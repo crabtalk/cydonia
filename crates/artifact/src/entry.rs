@@ -148,6 +148,15 @@ pub fn list(project: &Path) -> Result<Vec<Entry>> {
             archived: session.closed,
         });
     }
+    for layout in store.layouts() {
+        entries.push(Entry {
+            number: number(project, "layout", &layout.id)?,
+            title: layout.label().to_owned(),
+            kind: "layout",
+            id: layout.id,
+            archived: layout.archived,
+        });
+    }
     if store.cydonia().join("data.db").is_file() {
         let connection = data(project)?;
         let mut query = connection.prepare(
@@ -204,6 +213,11 @@ pub fn read(project: &Path, entry: &Entry) -> Result<serde_json::Value> {
                 .into_iter()
                 .find(|session| session.id == entry.id)
                 .ok_or_else(|| anyhow::anyhow!("session no longer exists"))?,
+        )?,
+        "layout" => serde_json::to_value(
+            store
+                .layout(&entry.id)
+                .ok_or_else(|| anyhow::anyhow!("layout no longer exists"))?,
         )?,
         "table" => {
             use rusqlite::types::ValueRef;

@@ -13,7 +13,7 @@
 
 pub mod fs;
 
-use crate::{board::Board, session::record::Record};
+use crate::{board::Board, layout::Layout, session::record::Record};
 
 pub trait Project {
     /// This project's boards, most recently written first.
@@ -30,6 +30,17 @@ pub trait Project {
     fn save_board(&self, board: &mut Board);
 
     fn remove_board(&self, id: &str);
+
+    /// This project's layouts, most recently written first.
+    fn layouts(&self) -> Vec<Layout>;
+
+    /// Mint a layout over the entry it is being made from. An empty name is
+    /// given the next one free — see [`crate::layout::next_name`].
+    fn create_layout(&self, name: &str, entry: u64) -> Option<Layout>;
+
+    fn save_layout(&self, layout: &mut Layout);
+
+    fn remove_layout(&self, id: &str);
 
     /// Every session filed here, most recently updated first.
     fn sessions(&self) -> Vec<Record>;

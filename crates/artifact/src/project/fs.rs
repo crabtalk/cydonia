@@ -16,6 +16,7 @@
 use crate::{
     board::{self, Board, key},
     id,
+    layout::{self, Layout},
     session::record::Record,
     stamp,
 };
@@ -37,6 +38,9 @@ const BOARD_FILE: &str = "board.toml";
 /// Where a project's sessions live. One file each, so writing one does not
 /// rewrite the rest.
 const SESSIONS: &str = "sessions";
+
+/// Where a project's layouts live.
+const LAYOUTS: &str = "layouts";
 
 /// A project on this disk.
 pub struct Project {
@@ -139,6 +143,31 @@ impl Project {
         Some(board)
     }
 
+    fn layouts_dir(&self) -> PathBuf {
+        self.cydonia().join(LAYOUTS)
+    }
+
+    fn layout_file(&self, id: &str) -> PathBuf {
+        self.layouts_dir().join(format!("{id}.toml"))
+    }
+
+    fn read_layout(&self, path: &Path) -> Option<Layout> {
+        let body = std::fs::read_to_string(path).ok()?;
+        let mut layout: Layout = toml::from_str(&body).ok()?;
+        layout.touched = stamp::of(path);
+        if layout.id.is_empty() {
+            layout.id = stem(path);
+        }
+        Some(layout)
+    }
+
+    /// Read one layout without loading the rest of the project.
+    pub fn layout(&self, id: &str) -> Option<Layout> {
+        let mut layout = self.read_layout(&self.layout_file(id))?;
+        layout.number = crate::entry::number(&self.root, "layout", id).ok();
+        Some(layout)
+    }
+
     fn sessions_dir(&self) -> PathBuf {
         self.cydonia().join(SESSIONS)
     }
@@ -224,6 +253,60 @@ impl super::Project for Project {
                 .and_then(|registry| registry.remove("board", id));
         }
     }
+    fn layouts(&self) -> Vec<Layout> {
+        let Ok(entries) = std::fs::read_dir(self.layouts_dir()) else {
+            return Vec::new();
+        };
+        let mut layouts: Vec<Layout> = entries
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().is_some_and(|ext| ext == "toml"))
+            .filter_map(|path| self.read_layout(&path))
+            .collect();
+        for layout in &mut layouts {
+            layout.number = crate::entry::number(&self.root, "layout", &layout.id).ok();
+        }
+        layouts.sort_by_key(|layout| Reverse(layout.touched));
+        layouts
+    }
+
+    fn create_layout(&self, name: &str, entry: u64) -> Option<Layout> {
+        let dir = self.init().ok()?.join(LAYOUTS);
+        std::fs::create_dir_all(&dir).ok()?;
+        let name = match name.is_empty() {
+            false => name.to_owned(),
+            // Named against what the project's other layouts have taken, so
+            // the number climbs past every one of them.
+            true => {
+                let taken: HashSet<String> = super::Project::layouts(self)
+                    .into_iter()
+                    .map(|layout| layout.name)
+                    .collect();
+                layout::next_name(&taken)
+            }
+        };
+        let mut layout = Layout::new(stem(&free(&dir, stamp::now())), &name, entry);
+        layout.number = crate::entry::number(&self.root, "layout", &layout.id).ok();
+        super::Project::save_layout(self, &mut layout);
+        Some(layout)
+    }
+
+    fn save_layout(&self, layout: &mut Layout) {
+        let Ok(body) = toml::to_string_pretty(&*layout) else {
+            return;
+        };
+        if std::fs::write(self.layout_file(&layout.id), body).is_ok() {
+            layout.touched = stamp::now();
+        }
+    }
+
+    fn remove_layout(&self, id: &str) {
+        if std::fs::remove_file(self.layout_file(id)).is_ok() {
+            let _ = crate::entry::Registry::open(&self.root)
+                .and_then(|registry| registry.remove("layout", id));
+        }
+    }
+
     /// Every session filed in this project, most recently updated first.
     fn sessions(&self) -> Vec<Record> {
         let Ok(entries) = std::fs::read_dir(self.sessions_dir()) else {
