@@ -17,6 +17,7 @@ use bezel::{
     motion::{Fade, Painter},
     theme::{TextStyle, Theme, Typeset},
     ui::{
+        floating,
         icons::{self, Icon},
         surface,
         tooltip::Tooltip,
@@ -580,7 +581,9 @@ fn footer(
         .flex()
         .justify_center()
         .child(
-            div()
+            // A layer, not a box: the band floats over the stream, and what it
+            // covers is its own — see [`floating::layer`].
+            floating::layer("composer-band")
                 .w_full()
                 .max_w(px(root::COMPOSER_COLUMN))
                 .px(px(root::COMPOSER_MARGIN))

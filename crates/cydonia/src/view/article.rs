@@ -614,9 +614,7 @@ impl Cydonia {
                 .text_color(tint)
                 .child(title),
         )
-        .child(
-            self.archive_button(("article-archive", ix), entry, archived, cx),
-        )
+        .child(self.archive_button(("article-archive", ix), entry, archived, cx))
         .on_click(cx.listener(move |this, _, window, cx| {
             this.open_article(project, ix, window, cx);
         }))

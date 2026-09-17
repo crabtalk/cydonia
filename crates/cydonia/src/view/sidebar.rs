@@ -1035,9 +1035,7 @@ impl Cydonia {
                 .child(mark),
         )
         .child(label)
-        .child(
-            self.archive_button(("session-archive", id), entry, session.archived, cx),
-        )
+        .child(self.archive_button(("session-archive", id), entry, session.archived, cx))
         .on_click(cx.listener(move |this, _, _, cx| {
             this.select_session(id, cx);
         }))
@@ -1085,14 +1083,12 @@ impl Cydonia {
                 .text_color(tint),
         )
         .child(label)
-        .child(
-            self.archive_button(
-                SharedString::from(format!("board-archive-{project}-{ix}")),
-                entry,
-                archived,
-                cx,
-            ),
-        )
+        .child(self.archive_button(
+            SharedString::from(format!("board-archive-{project}-{ix}")),
+            entry,
+            archived,
+            cx,
+        ))
         .on_click(cx.listener(move |this, _, _, cx| this.open_board(project, ix, cx)))
         .into_any_element()
     }
@@ -1124,11 +1120,7 @@ impl Cydonia {
                 |el| el.hidden(),
             )
             .p(px(3.))
-            .child(
-                icons::icon(mark)
-                    .size(px(14.))
-                    .text_color(theme.text_faint),
-            )
+            .child(icons::icon(mark).size(px(14.)).text_color(theme.text_faint))
             .tooltip(move |window, cx| {
                 Tooltip::text(
                     match archived {

@@ -47,3 +47,21 @@ toml = "0.8"
 toml_edit = "0.22"
 ureq = "3"
 url = { version = "2", features = ["serde"] }
+
+# The design system, from the checkout beside this one: cydonia and bezel are
+# worked on together, and a fix in a component lands here before it is
+# published. Delete this section to build against the published release.
+#
+# One entry per bezel crate named above, and no more: a patch replaces a
+# package in the graph rather than a re-export, and bezel's own dependencies
+# carry paths, so `ui`, `theme`, `motion`, `icons` and `agent` arrive through
+# the facade already. A crate named here but left unpatched would come from the
+# registry against a patched `bezel-ui` — two copies of one crate, which is two
+# type universes.
+[patch.crates-io]
+bezel = { path = "../bezel/crates/bezel" }
+bezel-editor = { path = "../bezel/crates/editor" }
+bezel-markdown = { path = "../bezel/crates/markdown" }
+bezel-syntax = { path = "../bezel/crates/syntax" }
+bezel-syntax-std = { path = "../bezel/crates/syntax-std" }
+bezel-terminal = { path = "../bezel/crates/terminal" }

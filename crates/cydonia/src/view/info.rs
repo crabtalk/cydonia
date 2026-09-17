@@ -172,10 +172,13 @@ impl Cydonia {
                             })),
                     ),
             )
-            // Pressing away discards: nothing is filed until Save.
-            .on_mouse_down_out(
-                cx.listener(|this, _, window, cx| this.dismiss_info(&DismissInfo, window, cx)),
-            )
+            // Pressing away discards: nothing is filed until Save. The press is
+            // spent on the dismissal and reaches nothing behind the panel — the
+            // rule [`popover::dismiss_on_out`] states.
+            .on_mouse_down_out(cx.listener(|this, _, window, cx| {
+                this.dismiss_info(&DismissInfo, window, cx);
+                cx.stop_propagation();
+            }))
             .into_any_element();
         Some(popover::anchored_menu_below(
             SharedString::from("board-info"),
