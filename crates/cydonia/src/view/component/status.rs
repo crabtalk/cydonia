@@ -37,9 +37,7 @@ pub fn path(path: &Path, label: String) -> gpui::Stateful<Div> {
 }
 
 pub fn terminal(path: &Path, theme: &Theme) -> Div {
-    bar(theme)
-        .child(self::path(path, path.display().to_string()))
-        .child("Terminal")
+    bar(theme).child(self::path(path, path.display().to_string()))
 }
 
 pub fn files_toggle(open: bool, theme: &Theme) -> gpui::Stateful<Div> {

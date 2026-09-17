@@ -418,11 +418,7 @@ pub fn data_dir() -> Result<PathBuf> {
     {
         return Ok(PathBuf::from(xdg).join("cydonia"));
     }
-    Ok(dirs::home_dir()
-        .context("no home directory on this system")?
-        .join(".local")
-        .join("share")
-        .join("cydonia"))
+    Ok(home()?.join(".local").join("share").join("cydonia"))
 }
 
 /// Cydonia's config directory: `$XDG_CONFIG_HOME/cydonia`, defaulting to
@@ -434,10 +430,25 @@ pub fn dir() -> Result<PathBuf> {
     {
         return Ok(PathBuf::from(xdg).join("cydonia"));
     }
-    Ok(dirs::home_dir()
-        .context("no home directory on this system")?
-        .join(".config")
-        .join("cydonia"))
+    Ok(home()?.join(".config").join("cydonia"))
+}
+
+/// The home every directory above hangs off — except under a test, where it is
+/// a directory of this process's own.
+///
+/// A [`crate::model::workspace::Workspace`] writes `state.toml` whenever the
+/// open projects change, and a test that builds one writes it too: run against
+/// the real home, a suite replaces the project list of whoever ran it with a
+/// list of temp directories (user report).
+///
+/// `NEXTEST` is set by the runner in every test process, which is what reaches
+/// the integration binaries — they link this crate compiled without `cfg(test)`
+/// and see none of it otherwise.
+fn home() -> Result<PathBuf> {
+    if cfg!(test) || std::env::var_os("NEXTEST").is_some() {
+        return Ok(std::env::temp_dir().join(format!("cydonia-test-home-{}", std::process::id())));
+    }
+    dirs::home_dir().context("no home directory on this system")
 }
 
 /// `~/.config/cydonia/settings.toml`.

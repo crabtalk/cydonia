@@ -168,7 +168,7 @@ impl Board {
     pub fn rename_column(&mut self, id: &str, name: &str) -> bool {
         match self.column_mut(id) {
             Some(column) => {
-                column.name = name.to_owned();
+                column.name = column::heading(name);
                 true
             }
             None => false,

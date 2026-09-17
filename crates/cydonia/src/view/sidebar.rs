@@ -26,6 +26,7 @@ use bezel::{
     theme::{TextStyle, Theme, Typeset},
     ui::{
         icons::{self, Icon},
+        input::Case,
         menu::Item,
         popover,
         surface::Surfaced as _,
@@ -1393,8 +1394,17 @@ impl Cydonia {
                 .map(|column| column.name.clone())
                 .unwrap_or_default(),
         };
-        self.name_field
-            .update(cx, |field, cx| field.set_content(label, cx));
+        // A lane is named in one case — see [`artifact::board::column::heading`]
+        // — and the field is put in it before the name lands, so what is typed
+        // and what is stored are the same string.
+        let case = match &what {
+            Renaming::Column(_) => Case::Upper,
+            _ => Case::Mixed,
+        };
+        self.name_field.update(cx, |field, cx| {
+            field.set_case(case);
+            field.set_content(label, cx);
+        });
         // See [`Cydonia::open_info`] — the other way round.
         self.info = None;
         self.renaming = Some(what);
