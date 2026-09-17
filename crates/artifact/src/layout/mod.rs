@@ -259,10 +259,7 @@ impl Node {
             };
             return true;
         }
-        let Self::Split {
-            axis, children, ..
-        } = self
-        else {
+        let Self::Split { axis, children, .. } = self else {
             return false;
         };
         let axis = *axis;
@@ -289,6 +286,34 @@ impl Node {
             .any(|child| child.insert(target, arriving, side))
     }
 
+    /// How much of the arrangement's width, or height, the pane on this entry
+    /// takes: the shares of every split above it that divides along `axis`,
+    /// multiplied together.
+    ///
+    /// A split the other way does not narrow it — two panes stacked are each
+    /// as wide as the column holding them. Nothing for an entry no pane here
+    /// is on.
+    ///
+    /// What a pane needs to know to draw itself as a pane rather than as the
+    /// window: a rail, a margin or a column that has room in the window may
+    /// have none in the fraction of it this pane is.
+    pub fn share_of(&self, entry: u64, axis: Axis) -> Option<f64> {
+        match self {
+            Self::Leaf { entry: held, .. } => (*held == entry).then_some(1.),
+            Self::Split {
+                axis: split,
+                children,
+                ..
+            } => children.iter().find_map(|child| {
+                let share = child.share_of(entry, axis)?;
+                Some(match *split == axis {
+                    true => share * child.ratio(),
+                    false => share,
+                })
+            }),
+        }
+    }
+
     /// Take the pane showing this entry out, collapsing whatever it leaves
     /// behind. Answers whether it was there.
     pub fn remove(&mut self, entry: u64) -> bool {
@@ -296,6 +321,51 @@ impl Node {
             return false;
         }
         self.prune(&HashSet::from([entry]))
+    }
+
+    /// The node at this path: each step is a child's index in the split
+    /// above it, so an empty path is this node.
+    pub fn at_path_mut(&mut self, path: &[usize]) -> Option<&mut Node> {
+        let Some((step, rest)) = path.split_first() else {
+            return Some(self);
+        };
+        let Self::Split { children, .. } = self else {
+            return None;
+        };
+        children.get_mut(*step)?.at_path_mut(rest)
+    }
+
+    /// Move the seam after child `at` so that everything before it takes
+    /// `fraction` of this split. Answers whether it moved.
+    ///
+    /// Only the two children either side of the seam change: a drag moves one
+    /// division, and the panes further along keep the widths they were put at.
+    /// Neither may go below `min`, so a seam pushed past a neighbour stops
+    /// rather than closing it — a pane with no width is one nothing can grab
+    /// to bring back.
+    pub fn resize(&mut self, at: usize, fraction: f64, min: f64) -> bool {
+        let Self::Split { children, .. } = self else {
+            return false;
+        };
+        if at + 1 >= children.len() {
+            return false;
+        }
+        let before: f64 = children.iter().take(at).map(Node::ratio).sum();
+        let pair = children[at].ratio() + children[at + 1].ratio();
+        // Where the seam may sit: `min` inside each of the two it divides.
+        let low = before + min;
+        let high = before + pair - min;
+        if high < low {
+            return false;
+        }
+        let at_fraction = fraction.clamp(low, high);
+        let first = at_fraction - before;
+        if (first - children[at].ratio()).abs() < f64::EPSILON {
+            return false;
+        }
+        children[at].set_ratio(first);
+        children[at + 1].set_ratio(pair - first);
+        true
     }
 
     /// Move a pane already here to another pane's edge.
@@ -440,7 +510,12 @@ impl Layout {
 pub fn next_name(taken: &HashSet<String>) -> String {
     let highest = taken
         .iter()
-        .filter_map(|name| name.strip_prefix(STEM)?.strip_prefix('-')?.parse::<u64>().ok())
+        .filter_map(|name| {
+            name.strip_prefix(STEM)?
+                .strip_prefix('-')?
+                .parse::<u64>()
+                .ok()
+        })
         .max()
         .unwrap_or(0);
     format!("{STEM}-{}", highest + 1)

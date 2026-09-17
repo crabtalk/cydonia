@@ -105,7 +105,7 @@ impl Cydonia {
         self.commit(cx);
         self.workspace
             .update(cx, |workspace, cx| workspace.open_table(project, ix, cx));
-        self.leaf.pane = Pane::Table;
+        self.leaf_mut().pane = Pane::Table;
         cx.notify();
     }
 
@@ -131,10 +131,11 @@ impl Cydonia {
                 .map(|table| table.name.clone())
                 .unwrap_or_default(),
         };
-        self.leaf.cell_field
+        self.leaf()
+            .cell_field
             .update(cx, |field, cx| field.set_content(text, cx));
-        self.leaf.cell = Some(at);
-        window.focus(&self.leaf.cell_field.read(cx).focus_handle(cx), cx);
+        self.leaf_mut().cell = Some(at);
+        window.focus(&self.leaf().cell_field.read(cx).focus_handle(cx), cx);
         cx.notify();
     }
 
@@ -146,11 +147,13 @@ impl Cydonia {
     /// an empty one is a cancel. A *cell* may be emptied: that is how a value
     /// is cleared.
     pub(crate) fn commit_cell(&mut self, cx: &mut Context<Self>) {
-        let Some(at) = self.leaf.cell.take() else {
+        let Some(at) = self.leaf_mut().cell.take() else {
             return;
         };
-        let text = self.leaf.cell_field.read(cx).content().trim().to_owned();
-        self.leaf.cell_field.update(cx, |field, cx| field.clear(cx));
+        let text = self.leaf().cell_field.read(cx).content().trim().to_owned();
+        self.leaf()
+            .cell_field
+            .update(cx, |field, cx| field.clear(cx));
         self.workspace.update(cx, |workspace, cx| match at {
             Cell::Value { rowid, column } => workspace.write_cell(rowid, column, text, cx),
             Cell::Head(ix) if !text.is_empty() => {
@@ -177,8 +180,10 @@ impl Cydonia {
 
     /// Drop the edit and leave what was there.
     pub(crate) fn dismiss_cell(&mut self, _: &DismissCell, _: &mut Window, cx: &mut Context<Self>) {
-        self.leaf.cell = None;
-        self.leaf.cell_field.update(cx, |field, cx| field.clear(cx));
+        self.leaf_mut().cell = None;
+        self.leaf()
+            .cell_field
+            .update(cx, |field, cx| field.clear(cx));
         cx.notify();
     }
 
@@ -221,10 +226,10 @@ impl Cydonia {
 
     /// The table. Same frame as [`Cydonia::article`]: the body of the content
     /// card, with the composer stack still pinned under it.
-    pub(crate) fn table(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    pub(crate) fn table(&self, at: usize, cx: &mut Context<Self>) -> Option<AnyElement> {
         let theme = Theme::of(cx).clone();
         let (name, columns, rows, total) = {
-            let page = self.workspace.read(cx).active_page()?;
+            let page = self.workspace.read(cx).page_at_ix(at)?;
             (
                 page.name.clone(),
                 page.columns.clone(),
@@ -257,7 +262,7 @@ impl Cydonia {
             .flex_row()
             .items_baseline()
             .gap(px(8.))
-            .child(match self.leaf.cell == Some(Cell::Name) {
+            .child(match self.leaf().cell == Some(Cell::Name) {
                 true => div()
                     .w(px(240.))
                     .child(self.cell_editor(cx))
@@ -376,7 +381,7 @@ impl Cydonia {
     fn cell_editor(&self, cx: &mut Context<Self>) -> Div {
         div()
             .w_full()
-            .child(self.leaf.cell_field.clone())
+            .child(self.leaf().cell_field.clone())
             .on_mouse_down_out(cx.listener(|this, _, _, cx| this.commit_cell(cx)))
     }
 
@@ -389,7 +394,7 @@ impl Cydonia {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = Theme::of(cx).clone();
-        if self.leaf.cell == Some(Cell::Head(ix)) {
+        if self.leaf().cell == Some(Cell::Head(ix)) {
             // `header_cell` paints the label itself, so the shape handed to it
             // while editing carries none — otherwise the old name sits beside
             // the field that is rewriting it.
@@ -459,7 +464,7 @@ impl Cydonia {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = Theme::of(cx).clone();
-        if self.leaf.cell == Some(Cell::Value { rowid, column }) {
+        if self.leaf().cell == Some(Cell::Value { rowid, column }) {
             return self.cell_editor(cx).into_any_element();
         }
         div()
@@ -506,7 +511,8 @@ impl Cydonia {
     ) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
         let workspace = self.workspace.read(cx);
-        let selected = self.showing(cx) == Some(Pane::Table)
+        let selected = !self.arranged(cx)
+            && self.showing(cx) == Some(Pane::Table)
             && workspace.active == Some(project)
             && workspace
                 .projects

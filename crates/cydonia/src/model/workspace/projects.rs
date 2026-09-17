@@ -199,6 +199,9 @@ impl Workspace {
                 project.table = project.tables.iter().position(|table| table.key == id);
                 project.reload_page();
             }
+            state::Kind::Layout => {
+                project.layout = project.layouts.iter().position(|layout| layout.id == id);
+            }
         }
         // Landing back in a session is being in front of it — see
         // [`Self::wake_session`]. Landing in an article or a board is not, and
@@ -231,6 +234,15 @@ impl Workspace {
         id: String,
         cx: &mut Context<Self>,
     ) {
+        // Opening anything that is not a layout leaves the one that was
+        // arranging the window. Here rather than in each `open_*`: this is the
+        // one place they all come through, so there is no way to open an entry
+        // and forget to.
+        if kind != state::Kind::Layout
+            && let Some(open) = self.projects.get_mut(project)
+        {
+            open.layout = None;
+        }
         let Some(open) = self.projects.get(project) else {
             return;
         };
@@ -271,7 +283,7 @@ impl Workspace {
                     .and_then(|at| project.tables.get(at))
                     .is_some_and(|table| table.archived)
             {
-                project.page = None;
+                project.pages.clear();
             }
         }
     }
@@ -307,6 +319,9 @@ impl Workspace {
             cx.emit(Reloaded);
         }
         self.prune_archived(cx);
+        // An entry deleted from under a layout leaves a member naming a
+        // number nothing answers to.
+        self.prune_layouts(cx);
         cx.notify();
     }
 

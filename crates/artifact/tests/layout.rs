@@ -102,10 +102,16 @@ fn a_deleted_layout_does_not_hand_its_number_on() {
 /// left: `layout-2` must not come back meaning something new.
 #[test]
 fn names_climb_past_a_deleted_one() {
-    let taken: HashSet<String> = ["layout-1", "layout-2"].iter().map(|s| s.to_string()).collect();
+    let taken: HashSet<String> = ["layout-1", "layout-2"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
     assert_eq!(layout::next_name(&taken), "layout-3");
 
-    let gapped: HashSet<String> = ["layout-1", "layout-3"].iter().map(|s| s.to_string()).collect();
+    let gapped: HashSet<String> = ["layout-1", "layout-3"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
     assert_eq!(layout::next_name(&gapped), "layout-4");
 
     assert_eq!(layout::next_name(&HashSet::new()), "layout-1");
@@ -114,7 +120,10 @@ fn names_climb_past_a_deleted_one() {
 /// A name that is not one of ours is not counted for the next one.
 #[test]
 fn a_renamed_layout_does_not_hold_a_number() {
-    let taken: HashSet<String> = ["Auth work", "layout-1"].iter().map(|s| s.to_string()).collect();
+    let taken: HashSet<String> = ["Auth work", "layout-1"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
     assert_eq!(layout::next_name(&taken), "layout-2");
 }
 
@@ -183,7 +192,10 @@ fn evening_shares_the_room() {
             child.ratio()
         );
     }
-    let Node::Split { children: inner, .. } = &children[2] else {
+    let Node::Split {
+        children: inner, ..
+    } = &children[2]
+    else {
         panic!("a split");
     };
     assert!((inner[0].ratio() - 0.5).abs() < f64::EPSILON);
@@ -597,7 +609,10 @@ fn check(node: &Node, step: u64) {
         children.len()
     );
     let total: f64 = children.iter().map(Node::ratio).sum();
-    assert!((total - 1.).abs() < 1e-6, "step {step}: shares sum to {total}");
+    assert!(
+        (total - 1.).abs() < 1e-6,
+        "step {step}: shares sum to {total}"
+    );
     for child in children {
         check(child, step);
     }
@@ -698,4 +713,193 @@ fn nothing_zoomed_writes_no_key() {
     )
     .expect("written");
     assert!(!body.contains("zoomed"), "{body}");
+}
+
+// ── seams ────────────────────────────────────────────────────────
+
+/// Dragging a seam moves the two panes either side of it and leaves the rest
+/// at the widths they were put at.
+#[test]
+fn a_seam_moves_only_the_two_it_divides() {
+    let mut tree = Node::split(
+        Axis::Horizontal,
+        vec![Node::leaf(1), Node::leaf(2), Node::leaf(3)],
+    );
+    tree.even();
+
+    // The first seam sits at a third; drag it to a fifth.
+    assert!(tree.resize(0, 0.2, 0.05));
+    let Node::Split { children, .. } = &tree else {
+        panic!("a split");
+    };
+    assert!((children[0].ratio() - 0.2).abs() < 1e-9);
+    assert!(
+        (children[1].ratio() - (2. / 3. - 0.2)).abs() < 1e-9,
+        "its neighbour took the difference"
+    );
+    assert!(
+        (children[2].ratio() - 1. / 3.).abs() < 1e-9,
+        "the third is untouched"
+    );
+    let total: f64 = children.iter().map(Node::ratio).sum();
+    assert!((total - 1.).abs() < 1e-9);
+}
+
+/// A seam dragged past its neighbour stops: a pane with no width is one
+/// nothing can grab to bring back.
+#[test]
+fn a_seam_stops_rather_than_closing_a_pane() {
+    let mut tree = Node::split(Axis::Horizontal, vec![Node::leaf(1), Node::leaf(2)]);
+    tree.even();
+
+    tree.resize(0, 5.0, 0.1);
+    let Node::Split { children, .. } = &tree else {
+        panic!("a split");
+    };
+    assert!((children[0].ratio() - 0.9).abs() < 1e-9, "clamped");
+    assert!((children[1].ratio() - 0.1).abs() < 1e-9);
+
+    tree.resize(0, -5.0, 0.1);
+    let Node::Split { children, .. } = &tree else {
+        panic!("a split");
+    };
+    assert!(
+        (children[0].ratio() - 0.1).abs() < 1e-9,
+        "clamped the other way"
+    );
+}
+
+/// There is no seam after the last pane.
+#[test]
+fn there_is_no_seam_past_the_end() {
+    let mut tree = Node::split(Axis::Horizontal, vec![Node::leaf(1), Node::leaf(2)]);
+    assert!(!tree.resize(1, 0.5, 0.05));
+    assert!(!tree.resize(9, 0.5, 0.05));
+    assert!(!Node::leaf(1).resize(0, 0.5, 0.05), "a pane has no seams");
+}
+
+/// A path names a split inside the tree, so a seam deep in the arrangement is
+/// the one that moves.
+#[test]
+fn a_path_reaches_the_split_it_names() {
+    let mut tree = Node::split(
+        Axis::Horizontal,
+        vec![
+            Node::leaf(1),
+            Node::split(Axis::Vertical, vec![Node::leaf(2), Node::leaf(3)]),
+        ],
+    );
+    tree.even();
+
+    let inner = tree.at_path_mut(&[1]).expect("the column");
+    assert!(inner.resize(0, 0.25, 0.05));
+
+    let Node::Split { children, .. } = &tree else {
+        panic!("a split");
+    };
+    let Node::Split {
+        children: inner, ..
+    } = &children[1]
+    else {
+        panic!("a column");
+    };
+    assert!((inner[0].ratio() - 0.25).abs() < 1e-9);
+    assert!((inner[1].ratio() - 0.75).abs() < 1e-9);
+    assert!(
+        (children[0].ratio() - 0.5).abs() < 1e-9,
+        "the outer split is untouched"
+    );
+}
+
+/// An empty path is the tree itself, and a path that names nothing answers
+/// nothing rather than the nearest thing to it.
+#[test]
+fn a_path_that_names_nothing_finds_nothing() {
+    let mut tree = Node::split(Axis::Horizontal, vec![Node::leaf(1), Node::leaf(2)]);
+    assert!(tree.at_path_mut(&[]).is_some());
+    assert!(tree.at_path_mut(&[0]).is_some(), "a leaf is a node");
+    assert!(
+        tree.at_path_mut(&[0, 0]).is_none(),
+        "a leaf has no children"
+    );
+    assert!(tree.at_path_mut(&[9]).is_none());
+}
+
+// ── how much of the window a pane is ─────────────────────────────
+
+/// A pane beside another is half the width; stacked, it is the full width and
+/// half the height. A split the other way does not narrow a pane.
+#[test]
+fn a_pane_knows_how_much_of_the_window_it_is() {
+    let mut tree = Node::split(Axis::Horizontal, vec![Node::leaf(1), Node::leaf(2)]);
+    tree.even();
+    assert_eq!(tree.share_of(1, Axis::Horizontal), Some(0.5));
+    assert_eq!(
+        tree.share_of(1, Axis::Vertical),
+        Some(1.),
+        "side by side takes nothing off the height"
+    );
+
+    let mut tree = Node::split(Axis::Vertical, vec![Node::leaf(1), Node::leaf(2)]);
+    tree.even();
+    assert_eq!(tree.share_of(1, Axis::Horizontal), Some(1.));
+    assert_eq!(tree.share_of(1, Axis::Vertical), Some(0.5));
+}
+
+/// The shares of every split above a pane multiply, and only those dividing
+/// the way asked about count.
+#[test]
+fn shares_multiply_down_the_tree() {
+    let tree = Node::Split {
+        ratio: 1.,
+        axis: Axis::Horizontal,
+        children: vec![
+            Node::Leaf {
+                ratio: 0.5,
+                entry: 1,
+            },
+            Node::Split {
+                ratio: 0.5,
+                axis: Axis::Vertical,
+                children: vec![
+                    Node::Leaf {
+                        ratio: 0.5,
+                        entry: 2,
+                    },
+                    Node::Split {
+                        ratio: 0.5,
+                        axis: Axis::Horizontal,
+                        children: vec![
+                            Node::Leaf {
+                                ratio: 0.5,
+                                entry: 3,
+                            },
+                            Node::Leaf {
+                                ratio: 0.5,
+                                entry: 4,
+                            },
+                        ],
+                    },
+                ],
+            },
+        ],
+    };
+
+    // 2 is in the right half, stacked — so half the width, and the vertical
+    // split takes a quarter of the height off it.
+    assert_eq!(tree.share_of(2, Axis::Horizontal), Some(0.5));
+    assert_eq!(tree.share_of(2, Axis::Vertical), Some(0.5));
+    // 3 sits in the bottom half of that column, divided across — so its
+    // width halves again while its height is the half it already had.
+    assert_eq!(tree.share_of(3, Axis::Horizontal), Some(0.25));
+    assert_eq!(tree.share_of(3, Axis::Vertical), Some(0.5));
+}
+
+/// A pane on its own is the whole of it, and an entry no pane is on has no
+/// share at all.
+#[test]
+fn a_lone_pane_is_the_whole_window() {
+    let tree = Node::leaf(1);
+    assert_eq!(tree.share_of(1, Axis::Horizontal), Some(1.));
+    assert_eq!(tree.share_of(9, Axis::Horizontal), None);
 }

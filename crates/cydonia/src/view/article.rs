@@ -174,7 +174,7 @@ impl Cydonia {
         self.commit(cx);
         self.workspace
             .update(cx, |workspace, cx| workspace.open_article(project, ix, cx));
-        self.leaf.pane = Pane::Article;
+        self.leaf_mut().pane = Pane::Article;
 
         let (field, editor, unnamed) = {
             let article = self.workspace.read(cx).active_article();
@@ -334,10 +334,11 @@ impl Cydonia {
     /// card, with the composer stack still pinned under it.
     pub(crate) fn article(
         &self,
+        at: usize,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        let article = self.workspace.read(cx).active_article()?;
+        let article = self.workspace.read(cx).article_at_ix(at)?;
         let field = article.field.clone()?;
         let editor = article.editor.clone()?;
         let cover = article.cover.clone();
@@ -576,7 +577,8 @@ impl Cydonia {
     ) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
         let workspace = self.workspace.read(cx);
-        let selected = self.showing(cx) == Some(Pane::Article)
+        let selected = !self.arranged(cx)
+            && self.showing(cx) == Some(Pane::Article)
             && workspace.active == Some(project)
             && workspace
                 .projects

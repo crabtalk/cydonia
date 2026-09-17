@@ -7,7 +7,7 @@ use crate::{
         settings::Settings,
         state::State,
         update,
-        workspace::{Reloaded, Workspace},
+        workspace::{Reloaded, Showing, Workspace},
     },
     view::{
         board,
@@ -28,9 +28,9 @@ use anyhow::Result;
 use bezel::{
     gpui::{
         self, AnyElement, App, Axis, Bounds, Context, DragMoveEvent, Empty, Entity, FocusHandle,
-        Hsla, KeyBinding, PathPromptOptions, Render, TitlebarOptions,
-        UniformListScrollHandle, Window, WindowBounds, WindowHandle, WindowOptions, actions, div,
-        point, prelude::*, px, size,
+        Hsla, KeyBinding, PathPromptOptions, Render, TitlebarOptions, UniformListScrollHandle,
+        Window, WindowBounds, WindowHandle, WindowOptions, actions, div, point, prelude::*, px,
+        size,
     },
     motion::{Fade, Painter},
     theme::{Material, TextStyle, Theme, Typeset, appearance},
@@ -64,6 +64,10 @@ actions!(
         DismissName,
         NextEntry,
         PrevEntry,
+        NextPane,
+        PrevPane,
+        ClosePane,
+        ZoomPane,
         CopySelection
     ]
 );
@@ -204,6 +208,12 @@ pub fn bindings() -> Vec<KeyBinding> {
         // trick for the same reason.
         KeyBinding::new("ctrl-tab", NextEntry, Some("Cydonia")),
         KeyBinding::new("ctrl-shift-tab", PrevEntry, Some("Cydonia")),
+        // The panes of a layout, on the chords beside the ones that step
+        // through entries.
+        KeyBinding::new("ctrl-alt-tab", NextPane, Some("Cydonia")),
+        KeyBinding::new("ctrl-alt-shift-tab", PrevPane, Some("Cydonia")),
+        KeyBinding::new("ctrl-alt-w", ClosePane, Some("Cydonia")),
+        KeyBinding::new("ctrl-alt-z", ZoomPane, Some("Cydonia")),
         // Scope the fallback to the root so focused text surfaces take priority.
         KeyBinding::new("cmd-c", CopySelection, Some("Cydonia")),
         KeyBinding::new("enter", CommitName, Some(RENAME_CONTEXT)),
@@ -261,8 +271,13 @@ fn stepped(at: Option<usize>, len: usize, step: isize) -> Option<usize> {
 /// [`Leaf`]'s. One to a window today.
 pub struct Cydonia {
     pub(crate) workspace: Entity<Workspace>,
-    /// The pane being shown, and what showing it needs — see [`Leaf`].
-    pub(crate) leaf: Leaf,
+    /// The panes on screen, and which of them has the focus.
+    ///
+    /// One unless a layout is open — see [`Leaf`]. The order is the order the
+    /// arrangement lays them out, so stepping through them is stepping across
+    /// the window.
+    pub(crate) leaves: Vec<Leaf>,
+    pub(crate) focused: usize,
     pub(crate) sidebar_open: bool,
     pub(crate) sidebar_width: f32,
     /// Visibility and shell per session; hiding a panel keeps its process alive.
@@ -278,6 +293,11 @@ pub struct Cydonia {
     /// with its label rather than looked up when the dialog draws: what is
     /// being asked about must not change wording under the question.
     pub(crate) confirming: Option<confirm::Confirming>,
+    /// Where a pane dropped on a pane's edge would land: the pane under the
+    /// pointer, and which of its edges. Written by whichever pane the pointer
+    /// is inside and read by the one that draws the mark, the way a card's
+    /// landing is — see [`board::Landing`].
+    pub(crate) pane_landing: Option<(u64, artifact::layout::Side)>,
     /// The board identity panel, while it is open — see [`header::BoardInfo`].
     pub(crate) info: Option<info::BoardInfo>,
     /// The board that has been asked for and not yet made — see
@@ -310,43 +330,153 @@ pub struct Cydonia {
 }
 
 impl Cydonia {
+    /// The pane with the focus — what a command without a pane of its own acts
+    /// on, and what the sidebar lights.
+    ///
+    /// Never empty: a window always draws at least one pane, and closing the
+    /// last one is closing the layout, not the pane.
+    pub(crate) fn leaf(&self) -> &Leaf {
+        let at = self.focused.min(self.leaves.len().saturating_sub(1));
+        &self.leaves[at]
+    }
+
+    /// The entities one pane needs, with the composer wired to this window.
+    ///
+    /// `on` is the pane's entry, where it has one: an event from a composer in
+    /// a pane that is not the focused one moves the focus there first, so what
+    /// was typed is sent to the session it was typed under.
+    fn pane_parts(
+        on: Option<u64>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> (Entity<Composer>, Entity<TextField>, Entity<TextField>) {
+        let composer = cx.new(Composer::new);
+        cx.subscribe_in(
+            &composer,
+            window,
+            move |this, _, event: &ComposerEvent, window, cx| {
+                if let Some(on) = on {
+                    this.focus_pane(on, window, cx);
+                }
+                match event {
+                    ComposerEvent::Submit(text, attachments) => {
+                        this.submit(text.clone(), attachments.clone(), cx)
+                    }
+                    ComposerEvent::Draft(id, draft) => {
+                        this.workspace.update(cx, |workspace, cx| {
+                            workspace.set_draft(*id, draft.clone(), cx)
+                        });
+                    }
+                    ComposerEvent::Cancel => this.cancel_turn(cx),
+                    ComposerEvent::Reconnect => {
+                        this.workspace.update(cx, |workspace, cx| {
+                            if let Some(id) = workspace.active_id() {
+                                workspace.select_session(id, cx);
+                            }
+                        });
+                    }
+                    ComposerEvent::Terminal => this.show_terminal(window, cx),
+                    ComposerEvent::Changes => this.show_changes(window, cx),
+                    ComposerEvent::Files => this.show_files(window, cx),
+                    ComposerEvent::Agent(ix) => this.pick_agent(*ix, cx),
+                    ComposerEvent::Install => this.open_settings(Section::Agents, cx),
+                    ComposerEvent::Switch(id, value) => this.switch(id, value, cx),
+                }
+            },
+        )
+        .detach();
+        (composer, board::field(cx), table::field(cx))
+    }
+
+    /// Reconcile the panes on screen with the open layout.
+    ///
+    /// A pane already on an entry is kept, so switching layouts does not throw
+    /// away a composer with a draft in it. Panes are ordered as the
+    /// arrangement lays them out — stepping through them steps across the
+    /// window.
+    pub(crate) fn sync_leaves(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let members = self.arrangement(cx).map(|layout| layout.entries());
+        let Some(members) = members else {
+            // No layout: one pane, on whatever the project was left on.
+            self.leaves.truncate(1);
+            self.leaf_mut().entry = None;
+            self.focused = 0;
+            return;
+        };
+        let focused = self.leaf().entry;
+        let mut kept: Vec<Leaf> = Vec::with_capacity(members.len());
+        for entry in &members {
+            match self
+                .leaves
+                .iter()
+                .position(|leaf| leaf.entry == Some(*entry))
+            {
+                Some(at) => kept.push(self.leaves.remove(at)),
+                None => {
+                    let (composer, card_field, cell_field) =
+                        Self::pane_parts(Some(*entry), window, cx);
+                    let mut leaf = Leaf::new(composer, card_field, cell_field, Ribbon::new(cx));
+                    leaf.entry = Some(*entry);
+                    kept.push(leaf);
+                }
+            }
+        }
+        self.leaves = kept;
+        self.focused = focused
+            .and_then(|on| self.leaves.iter().position(|leaf| leaf.entry == Some(on)))
+            .unwrap_or(0);
+    }
+
+    /// Move the focus to the pane on this entry, and put the project's
+    /// selection on what that pane shows.
+    ///
+    /// The selection is what every command without a pane of its own reads —
+    /// see [`Workspace::active_board`] and the rest. Syncing it here is what
+    /// makes "the pane you are in" the thing they act on.
+    pub(crate) fn focus_pane(&mut self, entry: u64, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(at) = self
+            .leaves
+            .iter()
+            .position(|leaf| leaf.entry == Some(entry))
+        else {
+            return;
+        };
+        if self.focused == at {
+            return;
+        }
+        self.focused = at;
+        let Some(project) = self.workspace.read(cx).active else {
+            return;
+        };
+        let Some(showing) = self.workspace.read(cx).showing_of(project, entry) else {
+            return;
+        };
+        self.leaf_mut().pane = match showing {
+            Showing::Session(_) => Pane::Chat,
+            Showing::Board(_) => Pane::Board,
+            Showing::Article(_) => Pane::Article,
+            Showing::Table(_) => Pane::Table,
+        };
+        self.workspace.update(cx, |workspace, cx| {
+            workspace.select_showing(project, showing, cx);
+        });
+        self.sync_composer(cx);
+        let _ = window;
+        cx.notify();
+    }
+
+    pub(crate) fn leaf_mut(&mut self) -> &mut Leaf {
+        let at = self.focused.min(self.leaves.len().saturating_sub(1));
+        &mut self.leaves[at]
+    }
+
     pub fn new(
         settings: Settings,
         state: State,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let composer = cx.new(Composer::new);
-        cx.subscribe_in(
-            &composer,
-            window,
-            |this, _, event: &ComposerEvent, window, cx| match event {
-                ComposerEvent::Submit(text, attachments) => {
-                    this.submit(text.clone(), attachments.clone(), cx)
-                }
-                ComposerEvent::Draft(id, draft) => {
-                    this.workspace.update(cx, |workspace, cx| {
-                        workspace.set_draft(*id, draft.clone(), cx)
-                    });
-                }
-                ComposerEvent::Cancel => this.cancel_turn(cx),
-                ComposerEvent::Reconnect => {
-                    this.workspace.update(cx, |workspace, cx| {
-                        if let Some(id) = workspace.active_id() {
-                            workspace.select_session(id, cx);
-                        }
-                    });
-                }
-                ComposerEvent::Terminal => this.show_terminal(window, cx),
-                ComposerEvent::Changes => this.show_changes(window, cx),
-                ComposerEvent::Files => this.show_files(window, cx),
-                ComposerEvent::Switch(id, value) => this.switch(id, value, cx),
-            },
-        )
-        .detach();
-
-        let card_field = board::field(cx);
-        let cell_field = table::field(cx);
+        let (composer, card_field, cell_field) = Self::pane_parts(None, window, cx);
         let name_field = cx.new(|cx| {
             TextField::new(cx)
                 .with_frame(false)
@@ -358,9 +488,9 @@ impl Cydonia {
         // ended; the composer's placeholder, commands and busy state are all
         // read back from it rather than pushed by whoever caused the change.
         cx.observe_in(&workspace, window, |this, _, window, cx| {
-            let previous = this.leaf.composer.read(cx).session();
+            let previous = this.leaf().composer.read(cx).session();
             this.sync_composer(cx);
-            let current = this.leaf.composer.read(cx).session();
+            let current = this.leaf().composer.read(cx).session();
             if current.is_some() && current != previous {
                 window.focus(&this.composer_focus_handle(cx), cx);
             }
@@ -381,8 +511,10 @@ impl Cydonia {
         cx.subscribe_in(&workspace, window, |this, _, _: &Reloaded, window, cx| {
             this.drop_stale_edit(cx);
             this.rest_ribbon(cx);
-            this.leaf.cell = None;
-            this.leaf.cell_field.update(cx, |field, cx| field.clear(cx));
+            this.leaf_mut().cell = None;
+            this.leaf()
+                .cell_field
+                .update(cx, |field, cx| field.clear(cx));
             this.follow_article(window, cx);
             cx.notify();
         })
@@ -392,7 +524,8 @@ impl Cydonia {
             meter: cx.new(Stats::new),
             meter_at: Floating::new(Painter::of(cx)),
             workspace,
-            leaf: Leaf::new(composer, card_field, cell_field, Ribbon::new(cx)),
+            leaves: vec![Leaf::new(composer, card_field, cell_field, Ribbon::new(cx))],
+            focused: 0,
             sidebar_open: true,
             sidebar_width: SIDEBAR_WIDTH,
             terminals: Default::default(),
@@ -402,6 +535,7 @@ impl Cydonia {
             changes: None,
             right_panels: Default::default(),
             settings_window: None,
+            pane_landing: None,
             confirming: None,
             info: None,
             making: None,
@@ -467,7 +601,7 @@ impl Cydonia {
         // which is the same notice a session whose agent has gone stands
         // under. The window jumping to Settings on its own answered a question
         // it had not been asked yet.
-        self.leaf.asked_session = asked.is_none();
+        self.leaf_mut().asked_session = asked.is_none();
         self.show_pane(Pane::Chat, cx);
         if let Some(entry) = asked {
             self.workspace
@@ -601,8 +735,8 @@ impl Cydonia {
     /// project with a board open from earlier in the session lands on the
     /// board however recently the article beside it was read.
     fn land(&mut self, cx: &mut Context<Self>) {
-        if let Some(kind) = self.workspace.read(cx).landing() {
-            self.leaf.pane = Pane::of(kind);
+        if let Some(pane) = self.workspace.read(cx).landing().and_then(Pane::of) {
+            self.leaf_mut().pane = pane;
         }
     }
 
@@ -699,8 +833,8 @@ impl Cydonia {
     /// it, so with nothing open there is no pane to name — least of all the
     /// chat, which under the shipped defaults is itself switched off.
     pub(crate) fn showing(&self, cx: &App) -> Option<Pane> {
-        if self.has_pane(self.leaf.pane, cx) {
-            return Some(self.leaf.pane);
+        if self.has_pane(self.leaf().pane, cx) {
+            return Some(self.leaf().pane);
         }
         [Pane::Chat, Pane::Board, Pane::Article, Pane::Table]
             .into_iter()
@@ -718,7 +852,7 @@ impl Cydonia {
             // takes to put the pane back to what it is for.
             Pane::Chat => {
                 workspace.active_session().is_some()
-                    || (self.leaf.asked_session && workspace.preferred_agent().is_none())
+                    || (self.leaf().asked_session && workspace.preferred_agent().is_none())
             }
             Pane::Board => workspace.active_board().is_some(),
             Pane::Article => workspace.active_article().is_some(),
@@ -756,6 +890,7 @@ impl Cydonia {
 
 impl Render for Cydonia {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.sync_leaves(window, cx);
         self.sync_changes(cx);
         let theme = Theme::of(cx).clone();
         div()
@@ -767,6 +902,12 @@ impl Render for Cydonia {
             .font_family(theme.font_sans.clone())
             .text_color(theme.text)
             .text_style(TextStyle::Body)
+            .on_action(cx.listener(|this, _: &NextPane, window, cx| this.step_pane(1, window, cx)))
+            .on_action(cx.listener(|this, _: &PrevPane, window, cx| this.step_pane(-1, window, cx)))
+            .on_action(
+                cx.listener(|this, _: &ClosePane, window, cx| this.close_focused_pane(window, cx)),
+            )
+            .on_action(cx.listener(|this, _: &ZoomPane, _, cx| this.zoom_focused_pane(cx)))
             .on_action(cx.listener(Self::toggle_changes))
             .on_action(cx.listener(Self::open_session_file))
             .on_action(

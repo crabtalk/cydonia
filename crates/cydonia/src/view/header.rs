@@ -6,6 +6,7 @@
 //! `../desktop` must. Two panes showing at once is this called twice — see
 //! `todos/panels.md`.
 
+use crate::model::workspace::Showing;
 use crate::view::{
     component::menu::Menu,
     leaf::Pane,
@@ -56,24 +57,35 @@ impl Cydonia {
         let workspace = self.workspace.read(cx);
         let project = workspace.active?;
         let open = workspace.projects.get(project)?;
-        Some(match pane {
-            Pane::Chat => {
-                let chat = workspace.active_session()?;
+        let showing = match pane {
+            Pane::Chat => Showing::Session(open.active?),
+            Pane::Board => Showing::Board(open.board?),
+            Pane::Article => Showing::Article(open.article?),
+            Pane::Table => Showing::Table(open.table?),
+        };
+        self.toolbar_of(project, showing, cx)
+    }
+
+    /// The same, for an entry named outright rather than read off the
+    /// project's selection — what a pane of a layout puts in its own bar,
+    /// which is some entry other than the one in front.
+    pub(crate) fn toolbar_of(&self, project: usize, showing: Showing, cx: &App) -> Option<Toolbar> {
+        let workspace = self.workspace.read(cx);
+        let open = workspace.projects.get(project)?;
+        Some(match showing {
+            Showing::Session(id) => {
+                let chat = open.session(id)?;
                 Toolbar {
                     title: chat.label(),
                     number: chat.number,
                     entry: Some(Entry {
-                        row: Row::Session {
-                            project,
-                            id: chat.id,
-                        },
+                        row: Row::Session { project, id },
                         archived: chat.closed,
-                        naming: Naming::Inline(Renaming::Session(chat.id)),
+                        naming: Naming::Inline(Renaming::Session(id)),
                     }),
                 }
             }
-            Pane::Board => {
-                let ix = open.board?;
+            Showing::Board(ix) => {
                 let board = open.boards.get(ix)?;
                 Toolbar {
                     title: board.label().to_owned(),
@@ -85,8 +97,7 @@ impl Cydonia {
                     }),
                 }
             }
-            Pane::Article => {
-                let ix = open.article?;
+            Showing::Article(ix) => {
                 let article = open.articles.get(ix)?;
                 Toolbar {
                     title: article.label().to_owned(),
@@ -98,8 +109,7 @@ impl Cydonia {
                     }),
                 }
             }
-            Pane::Table => {
-                let ix = open.table?;
+            Showing::Table(ix) => {
                 let table = open.tables.get(ix)?;
                 Toolbar {
                     title: table.name.clone(),
@@ -118,6 +128,12 @@ impl Cydonia {
     /// place: the sidebar row asks this before drawing it, and the band wins
     /// because it is what is left when the sidebar is folded away.
     pub(crate) fn header_renaming(&self, cx: &App) -> Option<&Renaming> {
+        // A layout draws no band, so there is no field here to be the one
+        // place — the sidebar row draws it instead. Without this the field
+        // would be nowhere: the row stands down for a band that is not there.
+        if self.arranged(cx) {
+            return None;
+        }
         let at = self.renaming.as_ref()?;
         let showing = self.toolbar(self.showing(cx)?, cx)?;
         let Naming::Inline(shown) = showing.entry?.naming else {

@@ -1,7 +1,10 @@
 //! The detail column and its floating plan, permission, and composer controls.
 
 use crate::{
-    model::session::{ChatSession, Choice},
+    model::{
+        session::{ChatSession, Choice},
+        workspace::Showing,
+    },
     view::{
         component::{composer, ribbon, transcript},
         leaf::Pane,
@@ -307,7 +310,7 @@ impl Cydonia {
     }
 
     pub fn composer_focus_handle(&self, cx: &App) -> FocusHandle {
-        self.leaf.composer.focus_handle(cx)
+        self.leaf().composer.focus_handle(cx)
     }
 
     /// Run `f` on the active session. Every composer action is this shape:
@@ -466,34 +469,64 @@ impl Cydonia {
                 icon: workspace.agent_icon(&entry.name),
             })
             .collect();
-        let chat = workspace.active_session();
-        let placeholder = chat.map_or_else(
-            || "message the agent…".to_owned(),
-            |chat| format!("message {}…", chat.entry.name),
-        );
-        let commands = chat.map(|chat| chat.commands.clone()).unwrap_or_default();
-        let streaming = chat.is_some_and(|chat| chat.streaming);
-        let activity = chat.and_then(composer::Activity::of);
-        let current = chat
-            .map(|chat| chat.entry.name.clone())
-            .and_then(|name| agents.iter().position(|agent| agent.name == name));
-        // Both belong to the agent process rather than to the transcript, so a
-        // session read back off disk offers neither until it reconnects.
-        let live = chat.filter(|chat| chat.live());
-        let switches = live.map(switches).unwrap_or_default();
-        let usage = live.and_then(|chat| chat.usage);
-        let session_id = chat.map(|chat| chat.id);
-        let draft = chat.map(|chat| chat.draft.clone()).unwrap_or_default();
-        self.leaf.composer.update(cx, |composer, cx| {
-            composer.set_session(session_id, &draft, cx);
-            composer.set_placeholder(&placeholder, cx);
-            composer.set_commands(&commands, cx);
-            composer.set_streaming(streaming, cx);
-            composer.set_activity(activity, cx);
-            composer.set_agents(&agents, current, cx);
-            composer.set_switches(&switches, cx);
-            composer.set_usage(usage, cx);
-        });
+        // The session each pane is on: its own where a layout put it there,
+        // and whatever the project is on for the single pane.
+        let project = workspace.active;
+        let on: Vec<Option<u64>> = self
+            .leaves
+            .iter()
+            .map(|leaf| match leaf.entry {
+                Some(entry) => project
+                    .and_then(|project| workspace.showing_of(project, entry))
+                    .and_then(|showing| match showing {
+                        Showing::Session(id) => Some(id),
+                        _ => None,
+                    }),
+                None => workspace.active_id(),
+            })
+            .collect();
+        // Read out before writing: the composers are updated through `cx`,
+        // which the workspace is borrowed from.
+        let mut pointed = Vec::with_capacity(on.len());
+        for id in on {
+            let chat = id.and_then(|id| workspace.session(id));
+            let placeholder = chat.map_or_else(
+                || "message the agent…".to_owned(),
+                |chat| format!("message {}…", chat.entry.name),
+            );
+            let current = chat
+                .map(|chat| chat.entry.name.clone())
+                .and_then(|name| agents.iter().position(|agent| agent.name == name));
+            // Both belong to the agent process rather than to the transcript,
+            // so a session read back off disk offers neither until it
+            // reconnects.
+            let live = chat.filter(|chat| chat.live());
+            pointed.push((
+                chat.map(|chat| chat.id),
+                chat.map(|chat| chat.draft.clone()).unwrap_or_default(),
+                placeholder,
+                chat.map(|chat| chat.commands.clone()).unwrap_or_default(),
+                chat.is_some_and(|chat| chat.streaming),
+                chat.and_then(composer::Activity::of),
+                current,
+                live.map(switches).unwrap_or_default(),
+                live.and_then(|chat| chat.usage),
+            ));
+        }
+        for (leaf, point) in self.leaves.iter().zip(pointed) {
+            let (session, draft, placeholder, commands, streaming, activity, current, sw, usage) =
+                point;
+            leaf.composer.update(cx, |composer, cx| {
+                composer.set_session(session, &draft, cx);
+                composer.set_placeholder(&placeholder, cx);
+                composer.set_commands(&commands, cx);
+                composer.set_streaming(streaming, cx);
+                composer.set_activity(activity, cx);
+                composer.set_agents(&agents, current, cx);
+                composer.set_switches(&sw, cx);
+                composer.set_usage(usage, cx);
+            });
+        }
     }
 
     pub(crate) fn detail(
@@ -506,17 +539,51 @@ impl Cydonia {
         // from settings.toml, leaving nothing to reconnect it to.
         let live = self.workspace.read(cx).reachable();
         let showing = self.showing(cx);
-        let body = match showing {
-            None => self.launch(cx),
-            Some(Pane::Chat) => self.conversation(window, cx),
-            Some(Pane::Board) => self.board(window, cx),
-            // An entry can be named and not yet loaded — an article holds no
-            // editor until it is opened. The front door stands in for the
-            // moment in between.
-            Some(Pane::Article) => self.article(window, cx).unwrap_or_else(|| self.launch(cx)),
-            Some(Pane::Table) => self.table(cx).unwrap_or_else(|| self.launch(cx)),
+        let arranged = self.workspace.read(cx).active_layout().is_some();
+        // A layout arranges several entries, so it draws its own panes. One
+        // entry open on its own is the single pane below.
+        let body = match self.panes(window, cx) {
+            Some(panes) => panes,
+            None => match showing {
+                None => self.launch(cx),
+                Some(Pane::Chat) => {
+                    self.conversation(self.workspace.read(cx).active_id(), None, window, cx)
+                }
+                Some(Pane::Board) => match self
+                    .workspace
+                    .read(cx)
+                    .active_project()
+                    .and_then(|open| open.board)
+                {
+                    Some(at) => self.board(at, window, cx),
+                    None => self.launch(cx),
+                },
+                // An entry can be named and not yet loaded — an article holds
+                // no editor until it is opened. The front door stands in for
+                // the moment in between.
+                Some(Pane::Article) => self
+                    .workspace
+                    .read(cx)
+                    .active_project()
+                    .and_then(|open| open.article)
+                    .and_then(|at| self.article(at, window, cx))
+                    .unwrap_or_else(|| self.launch(cx)),
+                Some(Pane::Table) => self
+                    .workspace
+                    .read(cx)
+                    .active_project()
+                    .and_then(|open| open.table)
+                    .and_then(|at| self.table(at, cx))
+                    .unwrap_or_else(|| self.launch(cx)),
+            },
         };
 
+        let body = match arranged {
+            true => body,
+            // One pane takes a drop on its edge too: that is where the first
+            // layout comes from.
+            false => self.lone_pane(body, cx),
+        };
         let content = div()
             .flex_1()
             .min_h_0()
@@ -528,7 +595,10 @@ impl Cydonia {
             // which is where it wants to end up — `../desktop` reserves it
             // inside the scroll so content slides under the glass, and doing
             // that means every pane's own scroll box, not this one div.
-            .pt(px(root::HEADER_HEIGHT))
+            //
+            // A layout takes none of it: its panes carry a bar each, and the
+            // one at the top left keeps clear of the lights itself.
+            .when(!arranged, |el| el.pt(px(root::HEADER_HEIGHT)))
             .child(body);
 
         let footer_height = self
@@ -545,8 +615,10 @@ impl Cydonia {
             .flex()
             .flex_col()
             .child(content)
-            // After the content, so it draws over it.
-            .child(self.pane_header(window, cx))
+            // After the content, so it draws over it. A layout has no band of
+            // its own: one title over several panes would name whichever is in
+            // front and say nothing about the rest.
+            .children((!arranged).then(|| self.pane_header(window, cx)))
             .children(match showing == Some(Pane::Chat) {
                 true => self.selection_bar(cx),
                 false => None,
@@ -556,30 +628,34 @@ impl Cydonia {
             // A chat with nowhere to send stands the reason there in its place
             // — the slot is what the eye goes to for what happens next, and a
             // composer simply withheld leaves it answering nothing.
-            .when(showing == Some(Pane::Chat), |column| match live {
-                // The whole pane takes a dropped picture for the composer.
-                true => column
-                    .on_drop(
-                        cx.listener(|this, paths: &bezel::gpui::ExternalPaths, _, cx| {
-                            this.leaf.composer
-                                .update(cx, |composer, cx| composer.drop_paths(paths, cx));
-                        }),
-                    )
-                    .child(footer(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap(px(8.))
-                            .children(self.plan(cx))
-                            .children(self.permission(cx))
-                            .child(self.leaf.composer.clone()),
-                        footer_height.clone(),
-                    )),
-                false => column.children(
-                    self.adrift_strip(cx)
-                        .map(|strip| footer(strip, footer_height.clone())),
-                ),
-            });
+            .when(
+                showing == Some(Pane::Chat) && !arranged,
+                |column| match live {
+                    // The whole pane takes a dropped picture for the composer.
+                    true => column
+                        .on_drop(
+                            cx.listener(|this, paths: &bezel::gpui::ExternalPaths, _, cx| {
+                                this.leaf()
+                                    .composer
+                                    .update(cx, |composer, cx| composer.drop_paths(paths, cx));
+                            }),
+                        )
+                        .child(footer(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap(px(8.))
+                                .children(self.plan(cx))
+                                .children(self.permission(cx))
+                                .child(self.leaf().composer.clone()),
+                            footer_height.clone(),
+                        )),
+                    false => column.children(
+                        self.adrift_strip(cx)
+                            .map(|strip| footer(strip, footer_height.clone())),
+                    ),
+                },
+            );
         let terminal = (showing == Some(Pane::Chat))
             .then(|| self.workspace.read(cx).active_id())
             .flatten()
@@ -672,7 +748,7 @@ impl Cydonia {
 /// Where the composer floats, and where anything standing in for it goes: out
 /// of flow at the column's foot, held to the composer's own width so the two
 /// land on the same edges.
-fn footer(
+pub(crate) fn footer(
     inner: impl IntoElement,
     height: Option<std::rc::Rc<std::cell::Cell<bezel::gpui::Pixels>>>,
 ) -> impl IntoElement {
@@ -727,7 +803,7 @@ impl Cydonia {
     /// The front door, and what stands where a pane would be if one were
     /// showing: a project to open, or the first entry to make in the one that
     /// already is.
-    fn launch(&self, cx: &mut Context<Self>) -> AnyElement {
+    pub(crate) fn launch(&self, cx: &mut Context<Self>) -> AnyElement {
         match self.workspace.read(cx).active_project().is_some() {
             true => self.nothing_open(cx),
             false => self.no_project(cx),
@@ -853,16 +929,21 @@ impl Cydonia {
             .into_any_element()
     }
 
-    /// The session in front. It has one: the chat pane is named by `showing`
-    /// only where a session is open in it, so the empty case is unreachable
-    /// rather than a state this has to draw.
-    fn conversation(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    /// The session a chat pane is on. Nothing where one was asked for with no
+    /// agent to open it on — see [`Cydonia::asked_session`].
+    pub(crate) fn conversation(
+        &self,
+        on: Option<u64>,
+        entry: Option<u64>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let workspace = self.workspace.read(cx);
-        let Some(chat) = workspace.active_session() else {
+        let Some(chat) = on.and_then(|on| workspace.session_by_id(on)) else {
             // No session, and the pane showing regardless: one was asked for
             // with no agent to open it on — see [`Cydonia::asked_session`].
-            return match self.leaf.asked_session {
+            return match self.leaf().asked_session {
                 true => self.no_agent(None, false, cx),
                 false => div().flex_1().into_any_element(),
             };
@@ -895,12 +976,18 @@ impl Cydonia {
                 0.
             })
         .max(0.);
-        let pane_width = available
+        let column = available
             - if self.changes.is_some() {
                 panel_width(self.changes_width, available)
             } else {
                 0.
             };
+        // The column, less what a layout gives the panes beside this one. The
+        // transcript sizes its margins off this and drops the rail when they
+        // are too narrow to hold it — measured against the window, a pane in a
+        // split would keep a rail there is no room for and draw it over the
+        // prose.
+        let pane_width = column * self.width_share(entry, cx);
         let root = cx.entity().downgrade();
         let queued = move |window: &mut Window, cx: &mut bezel::gpui::App| {
             root.update(cx, |root, cx| {
@@ -1199,7 +1286,8 @@ impl Cydonia {
         let id = chat.id;
         let cwd = chat.cwd.clone();
         let queue = chat.queue.clone();
-        self.leaf.queued_galleries
+        self.leaf_mut()
+            .queued_galleries
             .retain(|(session, ix, text), _| *session == id && queue.get(*ix) == Some(text));
         if queue.is_empty() {
             return None;
@@ -1216,7 +1304,8 @@ impl Cydonia {
                     let cancel_text = text.clone();
                     let (doc, images) = transcript::gallery::document(text);
                     let gallery = (!images.is_empty()).then(|| {
-                        self.leaf.queued_galleries
+                        self.leaf_mut()
+                            .queued_galleries
                             .entry((id, ix, text.clone()))
                             .or_insert_with(|| {
                                 cx.new(|cx| transcript::gallery::Gallery::new(images, &cwd, cx))
@@ -1279,7 +1368,7 @@ impl Cydonia {
                                             if let Some(text) =
                                                 this.take_queued(id, ix, &edit_text, cx)
                                             {
-                                                this.leaf.composer.update(cx, |composer, cx| {
+                                                this.leaf().composer.update(cx, |composer, cx| {
                                                     composer.restore_queued(text, window, cx);
                                                 });
                                             }

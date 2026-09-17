@@ -79,6 +79,19 @@ impl Cydonia {
         let workspace = self.workspace.read(cx);
         let at = |path: Option<String>| (path, UNDONE.to_owned());
         match entry {
+            // A layout holds none of what it arranges, so nothing but the
+            // arrangement itself goes.
+            Row::Layout { project, ix } => workspace
+                .projects
+                .get(project)
+                .and_then(|open| open.layouts.get(ix))
+                .map(|layout| {
+                    (
+                        Some(format!(".cydonia/layouts/{}.toml", layout.id)),
+                        format!("The entries it arranges stay where they are. {UNDONE}"),
+                    )
+                })
+                .unwrap_or_else(|| at(None)),
             Row::Session { project, id } => workspace
                 .projects
                 .get(project)

@@ -15,6 +15,7 @@ use crate::{
 };
 use artifact::{
     board::Board,
+    layout::Layout,
     project::{Project as _, fs},
 };
 use bezel::gpui::Context;
@@ -44,9 +45,16 @@ pub struct Project {
     pub tables: Vec<Table>,
     /// Which table the table pane shows.
     pub table: Option<usize>,
-    /// The open table's window of rows, read when it is opened rather than
-    /// while it is drawn — a query per frame is a query too many.
-    pub page: Option<Page>,
+    /// The window of rows each table on screen was last read with, by the
+    /// table's key. Read when a table is opened rather than while it is drawn
+    /// — a query per frame is a query too many.
+    ///
+    /// By key rather than one slot: a layout can stand two tables side by
+    /// side, and one page between them would draw the same rows in both.
+    pub pages: HashMap<String, Page>,
+    pub layouts: Vec<Layout>,
+    /// Which layout the window is arranged by.
+    pub layout: Option<usize>,
     /// Whether the sidebar shows what is under this project's heading.
     pub expanded: bool,
     /// Whether it shows what is under the archived divider. Folded away by
@@ -61,6 +69,8 @@ impl Project {
     pub fn new(path: PathBuf) -> Self {
         let mut this = Self {
             boards: fs::Project::new(&path).boards(),
+            layouts: fs::Project::new(&path).layouts(),
+            layout: None,
             unloaded_boards: Default::default(),
             articles: article::list(&path),
             data: Data::attach(&path),
@@ -71,7 +81,7 @@ impl Project {
             article: None,
             tables: Vec::new(),
             table: None,
-            page: None,
+            pages: HashMap::new(),
             expanded: true,
             archive_open: false,
             watch: None,
@@ -131,6 +141,7 @@ impl Project {
         }
         let articles = self.reload_articles(cx);
         let boards = self.reload_boards();
+        self.reload_layouts();
         let before = self.shape();
         self.reload_tables();
         articles || boards || before != self.shape()
@@ -141,8 +152,7 @@ impl Project {
     fn shape(&self) -> (Vec<String>, Vec<String>) {
         let keys = self.tables.iter().map(|table| table.key.clone()).collect();
         let columns = self
-            .page
-            .as_ref()
+            .open_page()
             .map(|page| page.columns.iter().map(|col| col.name.clone()).collect())
             .unwrap_or_default();
         (keys, columns)
@@ -218,6 +228,17 @@ impl Project {
         moved
     }
 
+    /// The same, for layouts. Held by id across the re-read: a layout made or
+    /// dropped beside the open one shifts every index past it.
+    fn reload_layouts(&mut self) {
+        let open = self
+            .layout
+            .and_then(|ix| self.layouts.get(ix))
+            .map(|layout| layout.id.clone());
+        self.layouts = self.store().layouts();
+        self.layout = open.and_then(|id| self.layouts.iter().position(|at| at.id == id));
+    }
+
     /// Re-read what tables exist. The store is the list — nothing here keeps a
     /// second copy of it that a failed write could leave standing.
     pub fn reload_tables(&mut self) {
@@ -245,15 +266,43 @@ impl Project {
     }
 
     /// Read the open table's rows.
+    /// The page the open table is on.
+    pub fn open_page(&self) -> Option<&Page> {
+        let key = &self.tables.get(self.table?)?.key;
+        self.pages.get(key)
+    }
+
+    /// Read the rows for the open table, and for every table a layout has on
+    /// screen beside it. Anything else is dropped: a page is a window on a
+    /// table nobody is looking at.
     pub fn reload_page(&mut self) {
-        let key = self
+        let mut wanted: Vec<String> = self
             .table
             .and_then(|ix| self.tables.get(ix))
-            .map(|table| table.key.clone());
-        self.page = match (key, self.data.as_ref()) {
-            (Some(key), Some(data)) => data.read(&key, None, false, PAGE, 0).ok(),
-            _ => None,
+            .map(|table| table.key.clone())
+            .into_iter()
+            .collect();
+        if let Some(layout) = self.layout.and_then(|ix| self.layouts.get(ix)) {
+            for number in layout.entries() {
+                if let Some(table) = self
+                    .tables
+                    .iter()
+                    .find(|table| table.number == Some(number))
+                {
+                    wanted.push(table.key.clone());
+                }
+            }
+        }
+        self.pages.retain(|key, _| wanted.contains(key));
+        let Some(data) = self.data.as_ref() else {
+            self.pages.clear();
+            return;
         };
+        for key in wanted {
+            if let Ok(page) = data.read(&key, None, false, PAGE, 0) {
+                self.pages.insert(key, page);
+            }
+        }
     }
 
     /// Where this project's work is kept. The filesystem, for this app —

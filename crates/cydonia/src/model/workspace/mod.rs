@@ -45,6 +45,8 @@ use std::{
 // scope — see the note at the head of each.
 mod articles;
 mod boards;
+mod layouts;
+pub use layouts::Showing;
 mod projects;
 mod sessions;
 mod tables;
