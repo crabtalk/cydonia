@@ -8,7 +8,8 @@
 
 use crate::view::{
     component::menu::Menu,
-    root::{self, Cydonia, Pane},
+    leaf::Pane,
+    root::{self, Cydonia},
     sidebar::{Renaming, Row},
 };
 use bezel::{

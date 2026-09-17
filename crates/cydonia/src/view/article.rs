@@ -4,7 +4,8 @@ use crate::{
     memory,
     model::article,
     view::{
-        root::{Cydonia, NewArticle, Pane},
+        leaf::Pane,
+        root::{Cydonia, NewArticle},
         sidebar::{self, Row},
     },
 };
@@ -173,7 +174,7 @@ impl Cydonia {
         self.commit(cx);
         self.workspace
             .update(cx, |workspace, cx| workspace.open_article(project, ix, cx));
-        self.pane = Pane::Article;
+        self.leaf.pane = Pane::Article;
 
         let (field, editor, unnamed) = {
             let article = self.workspace.read(cx).active_article();

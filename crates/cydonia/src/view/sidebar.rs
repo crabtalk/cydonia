@@ -11,7 +11,8 @@ use crate::{
             transcript,
         },
         keymap::{self, Command},
-        root::{self, CommitName, Cydonia, DismissName, NewSession, OpenProject, Pane},
+        leaf::Pane,
+        root::{self, CommitName, Cydonia, DismissName, NewSession, OpenProject},
         settings::Section,
     },
 };

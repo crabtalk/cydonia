@@ -7,7 +7,8 @@ use crate::{
     data::ColType,
     view::{
         component::menu::{self, Menu},
-        root::{Cydonia, NewTable, Pane},
+        leaf::Pane,
+        root::{Cydonia, NewTable},
         sidebar::{self, Renaming, Row},
     },
 };
@@ -104,7 +105,7 @@ impl Cydonia {
         self.commit(cx);
         self.workspace
             .update(cx, |workspace, cx| workspace.open_table(project, ix, cx));
-        self.pane = Pane::Table;
+        self.leaf.pane = Pane::Table;
         cx.notify();
     }
 
@@ -130,10 +131,10 @@ impl Cydonia {
                 .map(|table| table.name.clone())
                 .unwrap_or_default(),
         };
-        self.cell_field
+        self.leaf.cell_field
             .update(cx, |field, cx| field.set_content(text, cx));
-        self.cell = Some(at);
-        window.focus(&self.cell_field.read(cx).focus_handle(cx), cx);
+        self.leaf.cell = Some(at);
+        window.focus(&self.leaf.cell_field.read(cx).focus_handle(cx), cx);
         cx.notify();
     }
 
@@ -145,11 +146,11 @@ impl Cydonia {
     /// an empty one is a cancel. A *cell* may be emptied: that is how a value
     /// is cleared.
     pub(crate) fn commit_cell(&mut self, cx: &mut Context<Self>) {
-        let Some(at) = self.cell.take() else {
+        let Some(at) = self.leaf.cell.take() else {
             return;
         };
-        let text = self.cell_field.read(cx).content().trim().to_owned();
-        self.cell_field.update(cx, |field, cx| field.clear(cx));
+        let text = self.leaf.cell_field.read(cx).content().trim().to_owned();
+        self.leaf.cell_field.update(cx, |field, cx| field.clear(cx));
         self.workspace.update(cx, |workspace, cx| match at {
             Cell::Value { rowid, column } => workspace.write_cell(rowid, column, text, cx),
             Cell::Head(ix) if !text.is_empty() => {
@@ -176,8 +177,8 @@ impl Cydonia {
 
     /// Drop the edit and leave what was there.
     pub(crate) fn dismiss_cell(&mut self, _: &DismissCell, _: &mut Window, cx: &mut Context<Self>) {
-        self.cell = None;
-        self.cell_field.update(cx, |field, cx| field.clear(cx));
+        self.leaf.cell = None;
+        self.leaf.cell_field.update(cx, |field, cx| field.clear(cx));
         cx.notify();
     }
 
@@ -256,7 +257,7 @@ impl Cydonia {
             .flex_row()
             .items_baseline()
             .gap(px(8.))
-            .child(match self.cell == Some(Cell::Name) {
+            .child(match self.leaf.cell == Some(Cell::Name) {
                 true => div()
                     .w(px(240.))
                     .child(self.cell_editor(cx))
@@ -375,7 +376,7 @@ impl Cydonia {
     fn cell_editor(&self, cx: &mut Context<Self>) -> Div {
         div()
             .w_full()
-            .child(self.cell_field.clone())
+            .child(self.leaf.cell_field.clone())
             .on_mouse_down_out(cx.listener(|this, _, _, cx| this.commit_cell(cx)))
     }
 
@@ -388,7 +389,7 @@ impl Cydonia {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = Theme::of(cx).clone();
-        if self.cell == Some(Cell::Head(ix)) {
+        if self.leaf.cell == Some(Cell::Head(ix)) {
             // `header_cell` paints the label itself, so the shape handed to it
             // while editing carries none — otherwise the old name sits beside
             // the field that is rewriting it.
@@ -458,7 +459,7 @@ impl Cydonia {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = Theme::of(cx).clone();
-        if self.cell == Some(Cell::Value { rowid, column }) {
+        if self.leaf.cell == Some(Cell::Value { rowid, column }) {
             return self.cell_editor(cx).into_any_element();
         }
         div()

@@ -5,12 +5,12 @@ use crate::{
     model::{
         session::ChatSession,
         settings::Settings,
-        state::{self, State},
+        state::State,
         update,
         workspace::{Reloaded, Workspace},
     },
     view::{
-        board::{self, Editing},
+        board,
         component::{
             composer::{Composer, ComposerEvent},
             menu::Menu,
@@ -18,6 +18,7 @@ use crate::{
             ribbon::Ribbon,
         },
         confirm, create, info,
+        leaf::{Leaf, Pane},
         settings::{self, Section, SettingsWindow},
         sidebar::{Renaming, Row},
         table,
@@ -27,7 +28,7 @@ use anyhow::Result;
 use bezel::{
     gpui::{
         self, AnyElement, App, Axis, Bounds, Context, DragMoveEvent, Empty, Entity, FocusHandle,
-        Hsla, KeyBinding, PathPromptOptions, Render, ScrollHandle, TitlebarOptions,
+        Hsla, KeyBinding, PathPromptOptions, Render, TitlebarOptions,
         UniformListScrollHandle, Window, WindowBounds, WindowHandle, WindowOptions, actions, div,
         point, prelude::*, px, size,
     },
@@ -38,7 +39,6 @@ use bezel::{
         icons,
         input::TextField,
         menu::Cursor,
-        scroll::DriftState,
         stats::Stats,
         widgets::{ButtonStyle, Buttons, Content, SplitDrag},
     },
@@ -244,28 +244,6 @@ pub fn open(settings: Settings, state: State, cx: &mut App) -> Result<WindowHand
     )
 }
 
-/// Which pane the detail column shows. A property of the window, not of a
-/// project — switching projects must not teleport you to another pane.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Pane {
-    Chat,
-    Board,
-    Article,
-    Table,
-}
-
-impl Pane {
-    /// The pane a remembered entry is read in — see [`Workspace::landing`].
-    fn of(kind: state::Kind) -> Self {
-        match kind {
-            state::Kind::Session => Self::Chat,
-            state::Kind::Board => Self::Board,
-            state::Kind::Article => Self::Article,
-            state::Kind::Table => Self::Table,
-        }
-    }
-}
-
 /// One step from `at` through `len` entries, wrapping — a list of none has
 /// nowhere to land.
 fn stepped(at: Option<usize>, len: usize, step: isize) -> Option<usize> {
@@ -276,17 +254,17 @@ fn stepped(at: Option<usize>, len: usize, step: isize) -> Option<usize> {
     Some((at + step).rem_euclid(len as isize) as usize)
 }
 
-/// The root view. It owns no app state — only the chrome's own: how wide the
-/// sidebar is, which pane is showing, and whichever card is being written.
+/// The root view. It owns no app state — only the window's own chrome: how
+/// wide the sidebar is, which menu is open, and what a dialog is asking about.
+///
+/// What is being shown, and everything the showing of it needs, is the
+/// [`Leaf`]'s. One to a window today.
 pub struct Cydonia {
     pub(crate) workspace: Entity<Workspace>,
+    /// The pane being shown, and what showing it needs — see [`Leaf`].
+    pub(crate) leaf: Leaf,
     pub(crate) sidebar_open: bool,
     pub(crate) sidebar_width: f32,
-    pub(crate) composer: Entity<Composer>,
-    pub(crate) queued_galleries: std::collections::HashMap<
-        (u64, usize, String),
-        Entity<super::component::transcript::gallery::Gallery>,
-    >,
     /// Visibility and shell per session; hiding a panel keeps its process alive.
     pub(crate) terminals:
         std::collections::HashMap<u64, (bool, Entity<super::component::terminal::TerminalPanel>)>,
@@ -296,31 +274,6 @@ pub struct Cydonia {
     pub(crate) changes: Option<Entity<super::component::panel::Panel>>,
     pub(crate) right_panels: std::collections::HashMap<u64, Entity<super::component::panel::Panel>>,
     settings_window: Option<WindowHandle<SettingsWindow>>,
-    pub(crate) pane: Pane,
-    /// Whether a session has been asked for with no agent to open one on.
-    ///
-    /// The chat pane then stands over the notice — see [`Cydonia::no_agent`] —
-    /// rather than a ⌘N throwing the settings window up in front of a window
-    /// that has said nothing about why. Runtime only, and read through
-    /// [`Cydonia::has_pane`], which drops it the moment an agent is there: a
-    /// flag left set behind an install would keep an empty pane on offer.
-    pub(crate) asked_session: bool,
-    pub(crate) editing: Option<Editing>,
-    pub(crate) card_field: Entity<TextField>,
-    /// The board's own scroll, and the drift that carries a held card past the
-    /// edge of the window — a lane out of sight is one a drag cannot reach,
-    /// because reaching for it means letting go.
-    pub(crate) board_scroll: ScrollHandle,
-    pub(crate) board_drift: DriftState,
-    /// The same, per lane — see [`board::Lanes`].
-    pub(crate) lanes: board::Lanes,
-    /// Where the card now in the air would land. Written by the lanes and
-    /// cards the pointer crosses and read by the one that draws the mark —
-    /// see [`board::Landing`].
-    pub(crate) landing: Option<board::Landing>,
-    /// What the table pane's field is attached to, and the field itself.
-    pub(crate) cell: Option<table::Cell>,
-    pub(crate) cell_field: Entity<TextField>,
     /// The delete waiting to be agreed to, and the name to ask about. Held
     /// with its label rather than looked up when the dialog draws: what is
     /// being asked about must not change wording under the question.
@@ -343,9 +296,6 @@ pub struct Cydonia {
     /// Whether the press now being handled landed on the open menu's own
     /// trigger — read by [`Cydonia::toggle_menu`] and nothing else.
     pub(crate) menu_pressed: bool,
-    /// The formatting bar over the open document's selection, and the URL
-    /// field it puts up — see [`crate::view::component::ribbon`].
-    pub(crate) ribbon: Ribbon,
     /// What the name field is attached to, and the field itself.
     pub(crate) renaming: Option<Renaming>,
     pub(crate) name_field: Entity<TextField>,
@@ -408,9 +358,9 @@ impl Cydonia {
         // ended; the composer's placeholder, commands and busy state are all
         // read back from it rather than pushed by whoever caused the change.
         cx.observe_in(&workspace, window, |this, _, window, cx| {
-            let previous = this.composer.read(cx).session();
+            let previous = this.leaf.composer.read(cx).session();
             this.sync_composer(cx);
-            let current = this.composer.read(cx).session();
+            let current = this.leaf.composer.read(cx).session();
             if current.is_some() && current != previous {
                 window.focus(&this.composer_focus_handle(cx), cx);
             }
@@ -431,8 +381,8 @@ impl Cydonia {
         cx.subscribe_in(&workspace, window, |this, _, _: &Reloaded, window, cx| {
             this.drop_stale_edit(cx);
             this.rest_ribbon(cx);
-            this.cell = None;
-            this.cell_field.update(cx, |field, cx| field.clear(cx));
+            this.leaf.cell = None;
+            this.leaf.cell_field.update(cx, |field, cx| field.clear(cx));
             this.follow_article(window, cx);
             cx.notify();
         })
@@ -442,27 +392,16 @@ impl Cydonia {
             meter: cx.new(Stats::new),
             meter_at: Floating::new(Painter::of(cx)),
             workspace,
+            leaf: Leaf::new(composer, card_field, cell_field, Ribbon::new(cx)),
             sidebar_open: true,
             sidebar_width: SIDEBAR_WIDTH,
-            composer,
             terminals: Default::default(),
-            queued_galleries: Default::default(),
             changes_open: false,
             changes_width: 440.,
             terminal_height: 240.,
             changes: None,
             right_panels: Default::default(),
             settings_window: None,
-            pane: Pane::Chat,
-            asked_session: false,
-            editing: None,
-            card_field,
-            board_scroll: ScrollHandle::new(),
-            board_drift: DriftState::new(),
-            lanes: board::Lanes::default(),
-            landing: None,
-            cell: None,
-            cell_field,
             confirming: None,
             info: None,
             making: None,
@@ -471,7 +410,6 @@ impl Cydonia {
             sidebar_hovered: None,
             menu_cursor: Cursor::default(),
             menu_pressed: false,
-            ribbon: Ribbon::new(cx),
             renaming: None,
             name_field,
             rail: UniformListScrollHandle::new(),
@@ -529,7 +467,7 @@ impl Cydonia {
         // which is the same notice a session whose agent has gone stands
         // under. The window jumping to Settings on its own answered a question
         // it had not been asked yet.
-        self.asked_session = asked.is_none();
+        self.leaf.asked_session = asked.is_none();
         self.show_pane(Pane::Chat, cx);
         if let Some(entry) = asked {
             self.workspace
@@ -664,7 +602,7 @@ impl Cydonia {
     /// board however recently the article beside it was read.
     fn land(&mut self, cx: &mut Context<Self>) {
         if let Some(kind) = self.workspace.read(cx).landing() {
-            self.pane = Pane::of(kind);
+            self.leaf.pane = Pane::of(kind);
         }
     }
 
@@ -761,8 +699,8 @@ impl Cydonia {
     /// it, so with nothing open there is no pane to name — least of all the
     /// chat, which under the shipped defaults is itself switched off.
     pub(crate) fn showing(&self, cx: &App) -> Option<Pane> {
-        if self.has_pane(self.pane, cx) {
-            return Some(self.pane);
+        if self.has_pane(self.leaf.pane, cx) {
+            return Some(self.leaf.pane);
         }
         [Pane::Chat, Pane::Board, Pane::Article, Pane::Table]
             .into_iter()
@@ -780,7 +718,7 @@ impl Cydonia {
             // takes to put the pane back to what it is for.
             Pane::Chat => {
                 workspace.active_session().is_some()
-                    || (self.asked_session && workspace.preferred_agent().is_none())
+                    || (self.leaf.asked_session && workspace.preferred_agent().is_none())
             }
             Pane::Board => workspace.active_board().is_some(),
             Pane::Article => workspace.active_article().is_some(),

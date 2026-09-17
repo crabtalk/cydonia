@@ -8,7 +8,8 @@ use super::{
     files::Files,
     terminal::{DirectoryChanged, Exited, Terminal},
 };
-use crate::view::root::{Cydonia, Pane, ToggleChanges};
+use crate::view::leaf::Pane;
+use crate::view::root::{Cydonia, ToggleChanges};
 use bezel::{
     gpui::{
         self, AnyElement, Axis, Context, DragMoveEvent, Empty, Entity, Focusable, Render,

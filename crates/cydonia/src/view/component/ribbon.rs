@@ -196,8 +196,8 @@ impl Cydonia {
     /// document's own press is what the editor hears; this is only the bar
     /// getting out of the way of it.
     pub(crate) fn set_selecting(&mut self, selecting: bool, cx: &mut Context<Self>) {
-        if self.ribbon.selecting != selecting {
-            self.ribbon.selecting = selecting;
+        if self.leaf.ribbon.selecting != selecting {
+            self.leaf.ribbon.selecting = selecting;
             cx.notify();
         }
     }
@@ -209,8 +209,8 @@ impl Cydonia {
     /// whichever document is open by the time this runs, and by the time this
     /// runs that is no longer the one the run was in.
     pub(crate) fn rest_ribbon(&mut self, cx: &mut Context<Self>) {
-        if self.ribbon.linking.take().is_some() {
-            self.ribbon.field.update(cx, |field, cx| field.clear(cx));
+        if self.leaf.ribbon.linking.take().is_some() {
+            self.leaf.ribbon.field.update(cx, |field, cx| field.clear(cx));
             cx.notify();
         }
         self.set_selecting(false, cx);
@@ -243,11 +243,11 @@ impl Cydonia {
         cx: &mut Context<Self>,
     ) {
         let held = replacing.clone().unwrap_or_default();
-        self.ribbon
+        self.leaf.ribbon
             .field
             .update(cx, |field, cx| field.set_content(held, cx));
-        self.ribbon.linking = Some(Linking { replacing });
-        window.focus(&self.ribbon.field.read(cx).focus_handle(cx), cx);
+        self.leaf.ribbon.linking = Some(Linking { replacing });
+        window.focus(&self.leaf.ribbon.field.read(cx).focus_handle(cx), cx);
         cx.notify();
     }
 
@@ -256,10 +256,10 @@ impl Cydonia {
     /// An empty field takes the link off. It is the only thing emptying one
     /// could mean, and it saves a second button for the removal.
     fn confirm_link(&mut self, _: &ConfirmLink, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(linking) = self.ribbon.linking.take() else {
+        let Some(linking) = self.leaf.ribbon.linking.take() else {
             return;
         };
-        let url = self.ribbon.field.read(cx).content().trim().to_string();
+        let url = self.leaf.ribbon.field.read(cx).content().trim().to_string();
         if let Some(editor) = self.open_editor(cx) {
             editor.update(cx, |editor, cx| {
                 if let Some(old) = linking.replacing {
@@ -276,7 +276,7 @@ impl Cydonia {
 
     /// Drop the field and leave the run as it was.
     fn dismiss_link(&mut self, _: &DismissLink, window: &mut Window, cx: &mut Context<Self>) {
-        if self.ribbon.linking.take().is_none() {
+        if self.leaf.ribbon.linking.take().is_none() {
             return;
         }
         if let Some(editor) = self.open_editor(cx) {
@@ -299,7 +299,7 @@ impl Cydonia {
     /// The bar, when there is a run of text for it to be about.
     pub(crate) fn ribbon(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         // Held down: the run is still being chosen.
-        if self.ribbon.selecting {
+        if self.leaf.ribbon.selecting {
             return None;
         }
         let article = self.workspace.read(cx).active_article()?;
@@ -316,7 +316,7 @@ impl Cydonia {
         }
         // Writing a link takes the focus off the document, and the bar is what
         // is holding the field it went to.
-        let linking = self.ribbon.linking.is_some();
+        let linking = self.leaf.ribbon.linking.is_some();
         if !linking && !editor.focus_handle(cx).contains_focused(window, cx) {
             return None;
         }
@@ -430,7 +430,7 @@ impl Cydonia {
             .on_mouse_down_out(cx.listener(|this, _, window, cx| {
                 this.confirm_link(&ConfirmLink, window, cx);
             }))
-            .child(self.ribbon.field.clone())
+            .child(self.leaf.ribbon.field.clone())
     }
 
     /// What the caret's block is called, and the menu of what it could be.

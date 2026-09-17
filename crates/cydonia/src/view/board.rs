@@ -4,7 +4,8 @@ use crate::{
     model::session::ChatSession,
     view::{
         component::menu::{self, Menu},
-        root::{Cydonia, NewBoard, Pane},
+        leaf::Pane,
+        root::{Cydonia, NewBoard},
         sidebar::Renaming,
     },
 };
@@ -217,7 +218,7 @@ impl Cydonia {
 
     pub fn show_pane(&mut self, pane: Pane, cx: &mut Context<Self>) {
         self.commit(cx);
-        self.pane = pane;
+        self.leaf.pane = pane;
         cx.notify();
     }
 
@@ -240,7 +241,7 @@ impl Cydonia {
         self.commit(cx);
         self.workspace
             .update(cx, |workspace, cx| workspace.open_board(project, ix, cx));
-        self.pane = Pane::Board;
+        self.leaf.pane = Pane::Board;
         cx.notify();
     }
 
@@ -258,15 +259,15 @@ impl Cydonia {
                 .map(|card| card.text.clone())
                 .unwrap_or_default(),
         };
-        self.card_field
+        self.leaf.card_field
             .update(cx, |field, cx| field.set_content(text, cx));
         // A lane scrolled away from earlier stays where it was left; opening a
         // card at its foot is asking to be taken back there.
         if let Editing::New(column) = &at {
-            self.lanes.follow(column);
+            self.leaf.lanes.follow(column);
         }
-        self.editing = Some(at);
-        window.focus(&self.card_field.read(cx).focus_handle(cx), cx);
+        self.leaf.editing = Some(at);
+        window.focus(&self.leaf.card_field.read(cx).focus_handle(cx), cx);
         cx.notify();
     }
 
@@ -278,11 +279,11 @@ impl Cydonia {
     pub(crate) fn commit(&mut self, cx: &mut Context<Self>) {
         self.commit_cell(cx);
         self.rest_ribbon(cx);
-        let Some(at) = self.editing.take() else {
+        let Some(at) = self.leaf.editing.take() else {
             return;
         };
-        let text = self.card_field.read(cx).content().trim().to_owned();
-        self.card_field.update(cx, |field, cx| field.clear(cx));
+        let text = self.leaf.card_field.read(cx).content().trim().to_owned();
+        self.leaf.card_field.update(cx, |field, cx| field.clear(cx));
         self.workspace.update(cx, |workspace, cx| {
             let Some(board) = workspace.active_board_mut() else {
                 return;
@@ -310,7 +311,7 @@ impl Cydonia {
     /// Held by id, so a card that merely moved keeps its open field; only one
     /// that has gone leaves the field pointing at nothing.
     pub(crate) fn drop_stale_edit(&mut self, cx: &mut Context<Self>) {
-        let Some(at) = self.editing.clone() else {
+        let Some(at) = self.leaf.editing.clone() else {
             return;
         };
         let board = self.workspace.read(cx).active_board();
@@ -319,8 +320,8 @@ impl Cydonia {
             Editing::Card(card) => board.is_some_and(|board| board.card(card).is_some()),
         };
         if !alive {
-            self.editing = None;
-            self.card_field.update(cx, |field, cx| field.clear(cx));
+            self.leaf.editing = None;
+            self.leaf.card_field.update(cx, |field, cx| field.clear(cx));
         }
     }
 
@@ -331,8 +332,8 @@ impl Cydonia {
 
     /// Escape abandons the edit — the one way to leave a card as it was.
     fn dismiss_card(&mut self, _: &DismissCard, _: &mut Window, cx: &mut Context<Self>) {
-        self.editing = None;
-        self.card_field.update(cx, |field, cx| field.clear(cx));
+        self.leaf.editing = None;
+        self.leaf.card_field.update(cx, |field, cx| field.clear(cx));
         cx.notify();
     }
 
@@ -344,8 +345,8 @@ impl Cydonia {
     /// card it is over refines that to a place in the lane. Each one only ever
     /// overwrites something vaguer than itself.
     fn aim_card(&mut self, landing: Option<Landing>, cx: &mut Context<Self>) {
-        if self.landing != landing {
-            self.landing = landing;
+        if self.leaf.landing != landing {
+            self.leaf.landing = landing;
             cx.notify();
         }
     }
@@ -361,7 +362,7 @@ impl Cydonia {
     /// nothing was aimed at takes a card anyway.
     fn drop_card(&mut self, card: &str, column: &str, cx: &mut Context<Self>) {
         let before = self
-            .landing
+            .leaf.landing
             .take()
             .filter(|landing| landing.column == column)
             .and_then(|landing| landing.before);
@@ -536,7 +537,7 @@ impl Cydonia {
             // over no lane at all leaves nothing aimed, which is what makes
             // dragging a card off the board mean nothing.
             .on_drag_move(cx.listener(|this, event: &DragMoveEvent<CardDrag>, _, cx| {
-                this.board_drift.aim(event.event.position);
+                this.leaf.board_drift.aim(event.event.position);
                 this.aim_card(None, cx);
             }))
             // A release no lane took.
@@ -548,20 +549,20 @@ impl Cydonia {
                     .flex_row()
                     .px(px(BOARD_INSET))
                     .pt(px(BOARD_INSET))
-                    .track_scroll(&self.board_scroll)
+                    .track_scroll(&self.leaf.board_scroll)
                     .children(columns)
                     .child(self.new_column_lane(cx)),
             )
             .child(scrollbars::Overlay::new(
                 "board-bar",
-                &self.board_scroll,
+                &self.leaf.board_scroll,
                 bezel::gpui::Axis::Horizontal,
             ))
             // A lane off the side of the window is one a drag cannot reach:
             // reaching for it would mean letting go.
             .child(scroll::drift(
-                &self.board_scroll,
-                &self.board_drift,
+                &self.leaf.board_scroll,
+                &self.leaf.board_drift,
                 Axes::Horizontal,
             ))
             .into_any_element()
@@ -602,14 +603,14 @@ impl Cydonia {
         if cards.is_empty() && self.aimed_at(&id, cx) {
             rows.push(self.landing_mark(Mark::Flow, cx));
         }
-        if matches!(&self.editing, Some(Editing::New(at)) if *at == id) {
+        if matches!(&self.leaf.editing, Some(Editing::New(at)) if *at == id) {
             rows.push(self.card_editor(cx));
         }
 
         let lane = id.clone();
         let taken = id.clone();
-        let composing = matches!(&self.editing, Some(Editing::New(at)) if *at == id);
-        let (scroll, drift, follow) = self.lanes.of(&id);
+        let composing = matches!(&self.leaf.editing, Some(Editing::New(at)) if *at == id);
+        let (scroll, drift, follow) = self.leaf.lanes.of(&id);
         let bar_id = format!("lane-bar-{id}");
         div()
             .flex_none()
@@ -871,7 +872,7 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        if matches!(&self.editing, Some(Editing::Card(at)) if at == id) {
+        if matches!(&self.leaf.editing, Some(Editing::Card(at)) if at == id) {
             return self.card_editor(cx);
         }
         let theme = Theme::of(cx).clone();
@@ -908,7 +909,7 @@ impl Cydonia {
         // last drop left is still sitting in `landing`.
         let ahead = cx.has_active_drag()
             && self
-                .landing
+                .leaf.landing
                 .as_ref()
                 .is_some_and(|at| at.before.as_deref() == Some(id));
         let behind = next.is_none() && self.aimed_at(column, cx);
@@ -917,7 +918,7 @@ impl Cydonia {
         // bounds, so a card scrolled out of its lane still answers for the
         // strip of window its bounds landed on — the lane's own header, most
         // of the time.
-        let (viewport, ..) = self.lanes.of(column);
+        let (viewport, ..) = self.leaf.lanes.of(column);
         div()
             .id(SharedString::from(format!("card-{id}")))
             .group("card")
@@ -1061,7 +1062,7 @@ impl Cydonia {
     fn aimed_at(&self, column: &str, cx: &App) -> bool {
         cx.has_active_drag()
             && self
-                .landing
+                .leaf.landing
                 .as_ref()
                 .is_some_and(|at| at.column == column && at.before.is_none())
     }
@@ -1116,7 +1117,7 @@ impl Cydonia {
             .flex()
             .flex_col()
             .gap(px(4.))
-            .child(self.card_field.clone())
+            .child(self.leaf.card_field.clone())
             .child(
                 div()
                     .text_style(TextStyle::Subheadline)

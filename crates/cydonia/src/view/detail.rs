@@ -4,7 +4,8 @@ use crate::{
     model::session::{ChatSession, Choice},
     view::{
         component::{composer, ribbon, transcript},
-        root::{self, Cydonia, NewSession, Pane},
+        leaf::Pane,
+        root::{self, Cydonia, NewSession},
         settings::Section,
     },
 };
@@ -306,7 +307,7 @@ impl Cydonia {
     }
 
     pub fn composer_focus_handle(&self, cx: &App) -> FocusHandle {
-        self.composer.focus_handle(cx)
+        self.leaf.composer.focus_handle(cx)
     }
 
     /// Run `f` on the active session. Every composer action is this shape:
@@ -483,7 +484,7 @@ impl Cydonia {
         let usage = live.and_then(|chat| chat.usage);
         let session_id = chat.map(|chat| chat.id);
         let draft = chat.map(|chat| chat.draft.clone()).unwrap_or_default();
-        self.composer.update(cx, |composer, cx| {
+        self.leaf.composer.update(cx, |composer, cx| {
             composer.set_session(session_id, &draft, cx);
             composer.set_placeholder(&placeholder, cx);
             composer.set_commands(&commands, cx);
@@ -560,7 +561,7 @@ impl Cydonia {
                 true => column
                     .on_drop(
                         cx.listener(|this, paths: &bezel::gpui::ExternalPaths, _, cx| {
-                            this.composer
+                            this.leaf.composer
                                 .update(cx, |composer, cx| composer.drop_paths(paths, cx));
                         }),
                     )
@@ -571,7 +572,7 @@ impl Cydonia {
                             .gap(px(8.))
                             .children(self.plan(cx))
                             .children(self.permission(cx))
-                            .child(self.composer.clone()),
+                            .child(self.leaf.composer.clone()),
                         footer_height.clone(),
                     )),
                 false => column.children(
@@ -861,7 +862,7 @@ impl Cydonia {
         let Some(chat) = workspace.active_session() else {
             // No session, and the pane showing regardless: one was asked for
             // with no agent to open it on — see [`Cydonia::asked_session`].
-            return match self.asked_session {
+            return match self.leaf.asked_session {
                 true => self.no_agent(None, false, cx),
                 false => div().flex_1().into_any_element(),
             };
@@ -1198,7 +1199,7 @@ impl Cydonia {
         let id = chat.id;
         let cwd = chat.cwd.clone();
         let queue = chat.queue.clone();
-        self.queued_galleries
+        self.leaf.queued_galleries
             .retain(|(session, ix, text), _| *session == id && queue.get(*ix) == Some(text));
         if queue.is_empty() {
             return None;
@@ -1215,7 +1216,7 @@ impl Cydonia {
                     let cancel_text = text.clone();
                     let (doc, images) = transcript::gallery::document(text);
                     let gallery = (!images.is_empty()).then(|| {
-                        self.queued_galleries
+                        self.leaf.queued_galleries
                             .entry((id, ix, text.clone()))
                             .or_insert_with(|| {
                                 cx.new(|cx| transcript::gallery::Gallery::new(images, &cwd, cx))
@@ -1278,7 +1279,7 @@ impl Cydonia {
                                             if let Some(text) =
                                                 this.take_queued(id, ix, &edit_text, cx)
                                             {
-                                                this.composer.update(cx, |composer, cx| {
+                                                this.leaf.composer.update(cx, |composer, cx| {
                                                     composer.restore_queued(text, window, cx);
                                                 });
                                             }

@@ -22,9 +22,10 @@ use crate::{
     model::{settings, update},
     view::{
         article::TogglePlainText,
+        leaf::Pane,
         root::{
             CloseProject, Cydonia, NewArticle, NewBoard, NewSession, NewSessionNext,
-            NewSessionWith, NewTable, NextEntry, OpenProject, OpenSettings, Pane, PrevEntry,
+            NewSessionWith, NewTable, NextEntry, OpenProject, OpenSettings, PrevEntry,
             ToggleChanges, ToggleSidebar, ToggleTerminal,
         },
     },
