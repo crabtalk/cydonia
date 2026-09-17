@@ -4,7 +4,7 @@
 use crate::{
     assets,
     model::update::{self, Status, Updater},
-    view::settings::SettingsWindow,
+    view::settings::{SettingsWindow, Switch},
 };
 use bezel::{
     gpui::{AnyElement, Context, Entity, SharedString, div, img, prelude::*, px},
@@ -29,6 +29,11 @@ const COMMUNITY: &str = "https://discord.gg/yGZDYnwbx6";
 /// one on their own. The site, not the tag: it hands out the image for the
 /// machine asking, which is the part this build got wrong by not being it.
 const HOMEPAGE: &str = env!("CARGO_PKG_HOMEPAGE");
+
+/// What the notification switch says it does. The background is the whole of
+/// it: nothing is posted while the window is in front.
+const NOTIFY_BLURB: &str =
+    "Tell the system when an agent finishes, while cydonia is in the background.";
 
 /// The mark over the rows. An About panel's measure — big enough to be the
 /// picture of the app, small enough that the two lines under it are still what
@@ -74,6 +79,7 @@ impl SettingsWindow {
                     ),
             )
             .children(self.updates(cx))
+            .children(self.notifications(cx))
             .child(
                 div().flex().justify_center().child(
                     div()
@@ -87,6 +93,42 @@ impl SettingsWindow {
                 ),
             )
             .into_any_element()
+    }
+
+    /// What the app says while it is not the one in front — the same kind of
+    /// question the updates above answer, which is why the two are in one room.
+    ///
+    /// Only with sessions on: a turn is a session's, and an install that has
+    /// none has nothing here to be told about.
+    fn notifications(&self, cx: &Context<Self>) -> Option<AnyElement> {
+        let workspace = self.workspace.read(cx);
+        if !workspace.settings.features.sessions {
+            return None;
+        }
+        let on = workspace.settings.notify_turns;
+        let theme = Theme::of(cx).clone();
+        Some(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(super::LABEL_GAP))
+                .child(theme.field_label("Notifications"))
+                .child(
+                    theme.group_box().child(
+                        self.switch_row(
+                            Switch::new("notify-turns", "When a turn finishes", NOTIFY_BLURB, on)
+                                .first(true),
+                            cx,
+                            move |this, cx| {
+                                this.workspace.update(cx, |workspace, cx| {
+                                    workspace.set_notify_turns(!on, cx)
+                                });
+                            },
+                        ),
+                    ),
+                )
+                .into_any_element(),
+        )
     }
 
     /// Releases: whether the app looks for one itself, and where the looking has

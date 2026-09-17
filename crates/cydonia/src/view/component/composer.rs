@@ -147,10 +147,6 @@ pub enum ComposerEvent {
     Terminal,
     Changes,
     Files,
-    /// Talk to this agent instead — an index into the configured agents.
-    Agent(usize),
-    /// Nothing here to pick: open settings where agents are installed.
-    Install,
     /// Set a switch to one of its values, by id.
     Switch(SwitchId, SharedString),
 }
@@ -781,52 +777,34 @@ impl Composer {
         ))
     }
 
-    /// The menu's rows: the agents first, then whatever the live session
-    /// offers. Each switch carries the value it is on in its own name — the
-    /// reason to open one of these is as often to read what it is set to as to
-    /// change it, and a submenu row has one line to say both on.
+    /// The menu's rows: whatever the live session offers, one submenu each.
+    /// Each switch carries the value it is on in its own name — the reason to
+    /// open one of these is as often to read what it is set to as to change it,
+    /// and a submenu row has one line to say both on.
     ///
-    /// The agents are the exception. Picking one opens a session beside this
-    /// one rather than swapping it, so the row says that, and the check inside
-    /// is what says which agent this session is on.
+    /// No agents here. A session is bound to the process serving it, so picking
+    /// one would open a session beside this one rather than change this one —
+    /// which is the sidebar's `+`, and belongs where sessions are made.
     ///
-    /// No leading glyphs here: these rows are words, and one icon among them
-    /// would open an empty gutter down the menu's left. The agents inside the
-    /// first panel keep their marks, where every row has one.
+    /// No leading glyphs either: these rows are words, and one icon among them
+    /// would open an empty gutter down the menu's left.
     fn menu_items(&self) -> Vec<Item> {
-        let mut agents: Vec<Item> = self
-            .agents
+        self.switches
             .iter()
-            .enumerate()
-            .map(|(ix, agent)| {
-                let row = Item::action(agent.name.clone()).checked(Some(ix) == self.agent);
-                match agent.icon.clone() {
-                    Some(mark) => row.with_icon(mark),
-                    None => row,
-                }
+            .map(|switch| {
+                Item::submenu(
+                    set_to(&switch.name, self.value_of(switch)),
+                    switch
+                        .options
+                        .iter()
+                        .map(|option| {
+                            Item::action(option.name.clone())
+                                .checked(switch.current.as_ref() == Some(&option.id))
+                        })
+                        .collect(),
+                )
             })
-            .collect();
-        // Nothing installed is a panel of one row, and a rule above it would
-        // be a rule under nothing.
-        if !agents.is_empty() {
-            agents.push(Item::Separator);
-        }
-        agents.push(Item::action("Install an agent…").with_icon(icons::files::Download));
-        let mut items = vec![Item::submenu("New session with", agents)];
-        items.extend(self.switches.iter().map(|switch| {
-            Item::submenu(
-                set_to(&switch.name, self.value_of(switch)),
-                switch
-                    .options
-                    .iter()
-                    .map(|option| {
-                        Item::action(option.name.clone())
-                            .checked(switch.current.as_ref() == Some(&option.id))
-                    })
-                    .collect(),
-            )
-        }));
-        items
+            .collect()
     }
 
     /// What the pointer did to that menu. A path is one row per level — the
@@ -844,14 +822,7 @@ impl Composer {
                 // Picking anything shuts the menu: every choice here is the
                 // session's, and none of them is made twice in a row.
                 self.close_menu();
-                if row == 0 {
-                    // Past the last agent is the install row — which is also
-                    // the whole panel when nothing is installed.
-                    match at < self.agents.len() {
-                        true => cx.emit(ComposerEvent::Agent(at)),
-                        false => cx.emit(ComposerEvent::Install),
-                    }
-                } else if let Some(switch) = self.switches.get(row - 1)
+                if let Some(switch) = self.switches.get(row)
                     && let Some(option) = switch.options.get(at)
                 {
                     cx.emit(ComposerEvent::Switch(switch.id.clone(), option.id.clone()));

@@ -395,6 +395,16 @@ impl Workspace {
     /// A release already staged is left alone: this switch is about the looking,
     /// and throwing away a bundle that is downloaded and verified would be a
     /// second thing under one name.
+    /// Whether a finished turn is worth telling the system about. Written
+    /// through to `settings.toml` first, as every switch here is.
+    pub fn set_notify_turns(&mut self, on: bool, cx: &mut Context<Self>) {
+        if settings::set_notify_turns(on).is_err() {
+            return;
+        }
+        self.settings.notify_turns = on;
+        cx.notify();
+    }
+
     pub fn set_auto_update(&mut self, on: bool, cx: &mut Context<Self>) {
         if settings::set_auto_update(on).is_err() {
             return;

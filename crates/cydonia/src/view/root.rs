@@ -386,8 +386,6 @@ impl Cydonia {
                 ComposerEvent::Terminal => this.show_terminal(window, cx),
                 ComposerEvent::Changes => this.show_changes(window, cx),
                 ComposerEvent::Files => this.show_files(window, cx),
-                ComposerEvent::Agent(ix) => this.pick_agent(*ix, cx),
-                ComposerEvent::Install => this.open_settings(Section::Agents, cx),
                 ComposerEvent::Switch(id, value) => this.switch(id, value, cx),
             },
         )

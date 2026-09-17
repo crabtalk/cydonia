@@ -34,6 +34,16 @@ pub struct Settings {
     /// picked — see [`crate::model::update`].
     #[serde(default = "auto_update")]
     pub auto_update: bool,
+    /// Whether a turn finishing while the app is in the background is worth
+    /// telling the system about. Bare, beside `auto_update`, for the reason
+    /// above — and because the two are the same kind of thing: what the app
+    /// does while nobody is looking at it.
+    ///
+    /// Only ever posted with the app in the background; a turn you watched
+    /// finish is one you already know about — see
+    /// [`crate::model::notify`].
+    #[serde(default = "notify_turns")]
+    pub notify_turns: bool,
     /// How the interface is painted. The first table, so the bare keys above
     /// keep belonging to the document rather than to it.
     #[serde(default)]
@@ -361,6 +371,12 @@ fn auto_update() -> bool {
     true
 }
 
+/// Whether a fresh install says a turn has finished. On: it speaks only while
+/// the app is in the background, which is the case it exists for.
+fn notify_turns() -> bool {
+    true
+}
+
 /// The launchers that resolve a package name on every run. An installed
 /// agent's command is a path to an unpacked executable, which resolves nothing.
 const RUNNERS: [&str; 3] = ["npx", "bunx", "pnpx"];
@@ -390,6 +406,7 @@ impl Default for Settings {
             cover_memory: cover_memory(),
             watch_bounce: watch_bounce(),
             auto_update: auto_update(),
+            notify_turns: notify_turns(),
             appearance: Appearance::default(),
             shortcuts: Shortcuts::default(),
             features: Features::default(),
@@ -623,6 +640,14 @@ pub fn set_watch_bounce(ms: u64) -> Result<()> {
 pub fn set_auto_update(on: bool) -> Result<()> {
     edit(|doc| {
         doc["auto_update"] = toml_edit::value(on);
+        Ok(true)
+    })
+}
+
+/// Switch the finished-turn notification on or off in the file.
+pub fn set_notify_turns(on: bool) -> Result<()> {
+    edit(|doc| {
+        doc["notify_turns"] = toml_edit::value(on);
         Ok(true)
     })
 }
