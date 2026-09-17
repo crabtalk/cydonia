@@ -550,16 +550,7 @@ impl Cydonia {
                 .into_any_element(),
         })
         .child(
-            self.menu_button(
-                ("table-menu", ix),
-                Some("table-row"),
-                icons::icon(icons::layout::Ellipsis)
-                    .size(px(14.))
-                    .text_color(theme.text_faint),
-                Menu::Entry(entry),
-                cx,
-            )
-            .children(self.entry_menu(Menu::Entry(entry), entry, archived, cx)),
+            self.archive_button(("table-archive", ix), entry, archived, cx),
         )
         .on_click(cx.listener(move |this, _, _, cx| {
             this.open_table(project, ix, cx);

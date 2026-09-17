@@ -1036,16 +1036,7 @@ impl Cydonia {
         )
         .child(label)
         .child(
-            self.menu_button(
-                ("session-menu", id),
-                Some("session-row"),
-                icons::icon(icons::layout::Ellipsis)
-                    .size(px(14.))
-                    .text_color(theme.text_faint),
-                Menu::Entry(entry),
-                cx,
-            )
-            .children(self.entry_menu(Menu::Entry(entry), entry, session.archived, cx)),
+            self.archive_button(("session-archive", id), entry, session.archived, cx),
         )
         .on_click(cx.listener(move |this, _, _, cx| {
             this.select_session(id, cx);
@@ -1095,33 +1086,72 @@ impl Cydonia {
         )
         .child(label)
         .child(
-            self.menu_button(
-                SharedString::from(format!("board-menu-{project}-{ix}")),
-                Some("board-row"),
-                icons::icon(icons::layout::Ellipsis)
-                    .size(px(14.))
-                    .text_color(theme.text_faint),
-                Menu::Entry(entry),
+            self.archive_button(
+                SharedString::from(format!("board-archive-{project}-{ix}")),
+                entry,
+                archived,
                 cx,
-            )
-            .children(self.entry_menu(Menu::Entry(entry), entry, archived, cx)),
+            ),
         )
         .on_click(cx.listener(move |this, _, _, cx| this.open_board(project, ix, cx)))
         .into_any_element()
     }
 
-    /// The `···` on any entry: the same things whichever kind it is.
+    /// The button every sidebar row carries in place of a menu: one press puts
+    /// the entry away, or takes it back out. Rename and delete are the header's
+    /// — see [`Self::entry_menu`].
     ///
-    /// Delete is offered from the header and not from a row. In the sidebar you
+    /// Shown only while the pointer is on the row, resolved from
+    /// `sidebar_hovered` during render: GPUI can resolve a hover style
+    /// differently in prepaint and paint.
+    pub(crate) fn archive_button(
+        &self,
+        id: impl Into<gpui::ElementId>,
+        entry: Row,
+        archived: bool,
+        cx: &Context<Self>,
+    ) -> Stateful<Div> {
+        let theme = Theme::of(cx).clone();
+        let mark = match archived {
+            true => icons::files::ArchiveRestore,
+            false => icons::files::Archive,
+        };
+        theme
+            .ghost(id)
+            .flex_none()
+            .when(
+                self.sidebar_hovered.as_ref() != Some(&Menu::Entry(entry)),
+                |el| el.hidden(),
+            )
+            .p(px(3.))
+            .child(
+                icons::icon(mark)
+                    .size(px(14.))
+                    .text_color(theme.text_faint),
+            )
+            .tooltip(move |window, cx| {
+                Tooltip::text(
+                    match archived {
+                        true => "Unarchive",
+                        false => "Archive",
+                    },
+                    window,
+                    cx,
+                )
+            })
+            .on_click(cx.listener(move |this, _, _, cx| {
+                cx.stop_propagation();
+                this.archive_entry(entry, !archived, cx);
+            }))
+    }
+
+    /// The `···` in the band: everything for the entry filling the window.
+    ///
+    /// Delete is offered here and not from a sidebar row. In the sidebar you
     /// are running a pointer down a list and the row under it is whichever one
     /// you stopped on; in the header there is one thing it could mean, and it
-    /// is the thing filling the window. `../desktop` draws the line in the same
-    /// place — its row menus archive, its `PostActions` in the title bar
-    /// deletes.
-    /// `at` is the trigger that would have opened it — the row's own
-    /// [`Menu::Entry`], or the header's [`Menu::Header`]. The same entry is
-    /// drawn in both places, so the trigger and not the entry is what says
-    /// which menu is open.
+    /// is the thing filling the window. A row carries archive alone — see
+    /// [`Self::archive_button`].
     pub(crate) fn entry_menu(
         &self,
         at: Menu,
@@ -1141,12 +1171,7 @@ impl Cydonia {
         // page and a board's name in the band opens its identity panel, so
         // neither is offered a second route here. Everywhere else the name is
         // display-only and this is the way.
-        let header = at == Menu::Header;
-        let named = match entry {
-            Row::Article { .. } => false,
-            Row::Board { .. } => !header,
-            _ => true,
-        };
+        let named = !matches!(entry, Row::Article { .. } | Row::Board { .. });
         let mut rows = vec![menu::row(put, move |this, _, cx| {
             this.archive_entry(entry, !archived, cx)
         })];
@@ -1159,11 +1184,9 @@ impl Cydonia {
                 ),
             );
         }
-        // A page's measure, from the header alone — it is about the document
-        // filling the window, and in the sidebar the row under the pointer is
-        // whichever one you stopped on rather than the one you are reading. An
-        // article is never `named`, so nothing it could sit above is here.
-        if header && matches!(entry, Row::Article { .. }) {
+        // A page's measure. An article is never `named`, so nothing it could
+        // sit above is here.
+        if matches!(entry, Row::Article { .. }) {
             let workspace = self.workspace.read(cx);
             let plain_chord = keymap::label(Command::PlainText, &workspace.settings.shortcuts)
                 .unwrap_or_default();
@@ -1206,16 +1229,11 @@ impl Cydonia {
                 ),
             );
         }
-        if header {
-            rows.push(menu::row(
-                Item::action("Delete").with_icon(icons::files::Trash),
-                move |this, _, cx| this.ask_delete(entry, cx),
-            ));
-        }
-        let id = match header {
-            true => SharedString::from("header-menu-card"),
-            false => SharedString::from(format!("entry-menu-{}", key_of(entry))),
-        };
+        rows.push(menu::row(
+            Item::action("Delete").with_icon(icons::files::Trash),
+            move |this, _, cx| this.ask_delete(entry, cx),
+        ));
+        let id = SharedString::from("header-menu-card");
         Some(popover::anchored_menu_below(
             id.clone(),
             self.menu_card(id, rows, cx),

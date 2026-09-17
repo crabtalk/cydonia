@@ -4,7 +4,6 @@ use crate::{
     memory,
     model::article,
     view::{
-        component::menu::Menu,
         root::{Cydonia, NewArticle, Pane},
         sidebar::{self, Row},
     },
@@ -616,16 +615,7 @@ impl Cydonia {
                 .child(title),
         )
         .child(
-            self.menu_button(
-                ("article-menu", ix),
-                Some("article-row"),
-                icons::icon(icons::layout::Ellipsis)
-                    .size(px(14.))
-                    .text_color(theme.text_faint),
-                Menu::Entry(entry),
-                cx,
-            )
-            .children(self.entry_menu(Menu::Entry(entry), entry, archived, cx)),
+            self.archive_button(("article-archive", ix), entry, archived, cx),
         )
         .on_click(cx.listener(move |this, _, window, cx| {
             this.open_article(project, ix, window, cx);
