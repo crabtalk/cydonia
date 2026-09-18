@@ -32,7 +32,7 @@ use cacp::schema::{
     PermissionOptionKind, SessionConfigKind, SessionConfigOptionCategory, SessionConfigOptionValue,
     SessionConfigSelectOption, SessionConfigSelectOptions, SessionModeState,
 };
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use surface::Surfaced as _;
 
 /// Separate from the sidebar's payload so its resize listener stays idle.
@@ -289,39 +289,47 @@ pub fn adrift_line(agent: &str, others: bool) -> String {
 }
 
 impl Cydonia {
-    pub(crate) fn show_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.showing(cx) != Some(Pane::Chat) {
-            return;
+    /// Where the window's shell opens: the session's working directory when a
+    /// chat is in front — its worktree, where it has one — and the project's
+    /// otherwise. Read once, when the panel is made.
+    fn shell_cwd(&self, cx: &App) -> Option<PathBuf> {
+        let workspace = self.workspace.read(cx);
+        if self.showing(cx) == Some(Pane::Chat)
+            && let Some(chat) = workspace.active_session()
+        {
+            return Some(chat.cwd.clone());
         }
-        let Some(chat) = self.workspace.read(cx).active_session() else {
-            return;
-        };
-        let (id, cwd) = (chat.id, chat.cwd.clone());
-        let (_, terminal) = self.terminals.entry(id).or_insert_with(|| {
+        Some(workspace.active_project()?.path.clone())
+    }
+
+    pub(crate) fn show_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.terminal.is_none() {
+            let Some(cwd) = self.shell_cwd(cx) else {
+                return;
+            };
             let panel =
                 cx.new(|cx| super::component::terminal::TerminalPanel::new(&cwd, window, cx));
+            // The last tab closing takes the panel with it: an empty bottom
+            // panel is a band of nothing with a `+` in it.
             cx.subscribe_in(
                 &panel,
                 window,
-                move |this, _, _: &super::component::terminal::Empty, window, cx| {
-                    let visible = this
-                        .terminals
-                        .remove(&id)
-                        .is_some_and(|(visible, _)| visible);
-                    if visible
-                        && this.workspace.read(cx).active_id() == Some(id)
-                        && this.showing(cx) == Some(Pane::Chat)
-                    {
-                        window.focus(&this.composer_focus_handle(cx), cx);
+                |this, _, _: &super::component::terminal::Empty, window, cx| {
+                    if this.terminal.take().is_some_and(|(visible, _)| visible) {
+                        this.focus_after_terminal(window, cx);
                     }
                     cx.notify();
                 },
             )
             .detach();
-            (false, panel)
-        });
-        window.focus(&terminal.focus_handle(cx), cx);
-        self.terminals.get_mut(&id).unwrap().0 = true;
+            self.terminal = Some((false, panel));
+        }
+        let Some((visible, panel)) = self.terminal.as_mut() else {
+            return;
+        };
+        *visible = true;
+        let panel = panel.clone();
+        window.focus(&panel.focus_handle(cx), cx);
         cx.notify();
     }
 
@@ -331,15 +339,24 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let id = self.workspace.read(cx).active_id();
-        if let Some((visible, _)) = id.and_then(|id| self.terminals.get_mut(&id))
+        if let Some((visible, _)) = self.terminal.as_mut()
             && *visible
         {
             *visible = false;
-            window.focus(&self.composer_focus_handle(cx), cx);
+            self.focus_after_terminal(window, cx);
             cx.notify();
         } else {
             self.show_terminal(window, cx);
+        }
+    }
+
+    /// Where the focus lands when the panel goes down. The composer is the
+    /// chat's, and a pane without one takes the window's own handle — leaving
+    /// it on the shut panel is leaving it nowhere.
+    fn focus_after_terminal(&self, window: &mut Window, cx: &mut Context<Self>) {
+        match self.showing(cx) == Some(Pane::Chat) {
+            true => window.focus(&self.composer_focus_handle(cx), cx),
+            false => window.focus(&self.focus, cx),
         }
     }
 
@@ -494,8 +511,6 @@ impl Cydonia {
     pub(crate) fn sync_composer(&mut self, cx: &mut Context<Self>) {
         let workspace = self.workspace.read(cx);
         let arranged = workspace.active_layout().is_some();
-        self.terminals
-            .retain(|id, _| workspace.session(*id).is_some());
         let agents: Vec<composer::Agent> = workspace
             .settings
             .agents
@@ -702,10 +717,11 @@ impl Cydonia {
                     ),
                 },
             );
-        let terminal = (showing == Some(Pane::Chat) && !arranged)
-            .then(|| self.workspace.read(cx).active_id())
-            .flatten()
-            .and_then(|id| self.terminals.get(&id))
+        // The one panel the window has, under whatever is showing: a layout's
+        // panes included, which is what the right panel cannot do.
+        let terminal = self
+            .terminal
+            .as_ref()
             .filter(|(visible, _)| *visible)
             .map(|(_, terminal)| terminal.clone());
         // The window's own panels stand beside one entry, not beside an

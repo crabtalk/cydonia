@@ -289,9 +289,13 @@ pub struct Cydonia {
     pub(crate) focused: usize,
     pub(crate) sidebar_open: bool,
     pub(crate) sidebar_width: f32,
-    /// Visibility and shell per session; hiding a panel keeps its process alive.
-    pub(crate) terminals:
-        std::collections::HashMap<u64, (bool, Entity<super::component::terminal::TerminalPanel>)>,
+    /// The window's bottom panel: its shell, and whether it is up.
+    ///
+    /// One to a window, like the sidebar and the right panel — every pane and
+    /// every layout shows this same one, and hiding it keeps its processes
+    /// alive. It opens in the directory of whatever was in front at the time
+    /// and stays there; `cmd-t` is how a tab somewhere else is had.
+    pub(crate) terminal: Option<(bool, Entity<super::component::terminal::TerminalPanel>)>,
     pub(crate) changes_open: bool,
     /// How wide the right-hand panel was dragged, and `None` for one nobody
     /// has dragged — which is given a share of the window instead. See
@@ -351,7 +355,7 @@ pub struct Cydonia {
     pub(crate) rail: UniformListScrollHandle,
     /// Where the focus rests when no field holds it — a board, a table and a
     /// transcript have none — so the bindings below always have a path here.
-    focus: FocusHandle,
+    pub(crate) focus: FocusHandle,
 }
 
 impl Cydonia {
@@ -573,7 +577,7 @@ impl Cydonia {
             focused: 0,
             sidebar_open: true,
             sidebar_width: SIDEBAR_WIDTH,
-            terminals: Default::default(),
+            terminal: None,
             changes_open: false,
             changes_width: None,
             panel_save: None,
