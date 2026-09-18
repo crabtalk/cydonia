@@ -119,6 +119,9 @@ pub struct Workspace {
     /// Empty for a project nobody has dragged a row in, which lists by stamp
     /// until they do — see [`order`].
     pub(super) order: BTreeMap<PathBuf, Vec<state::Entry>>,
+    /// The entries pinned to the top of each project's list, by project path
+    /// — see [`order`].
+    pub(super) pinned: BTreeMap<PathBuf, Vec<state::Entry>>,
     /// The arrangements this machine holds, and which one the window is
     /// showing. The window's rather than a project's: a layout can hold panes
     /// from several — see [`layouts`].
@@ -172,6 +175,7 @@ impl Workspace {
             agent_icons: HashMap::new(),
             last: state.last,
             order: state.order,
+            pinned: state.pinned,
             layouts: crate::model::layouts::all(),
             layout: None,
         };
@@ -215,6 +219,7 @@ impl Workspace {
                 .collect(),
             last: self.last.clone(),
             order: self.order.clone(),
+            pinned: self.pinned.clone(),
         });
     }
 

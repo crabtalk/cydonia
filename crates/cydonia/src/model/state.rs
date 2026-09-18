@@ -61,6 +61,11 @@ pub struct State {
     /// already has to miss.
     #[serde(default)]
     pub order: BTreeMap<PathBuf, Vec<Entry>>,
+    /// The entries held at the top of each project's list, by project path.
+    /// A list rather than a flag on [`Entry`]: pins are ordered among
+    /// themselves, and `last` has no use for one.
+    #[serde(default)]
+    pub pinned: BTreeMap<PathBuf, Vec<Entry>>,
 }
 
 /// `~/.config/cydonia/state.toml`, beside the settings it is not.
@@ -91,6 +96,7 @@ pub fn restore() -> State {
         collapsed: stored.collapsed,
         last: stored.last,
         order: stored.order,
+        pinned: stored.pinned,
     }
 }
 

@@ -167,6 +167,30 @@ impl Workspace {
         self.edit_layout(cx, |layout| layout.remove(entry));
     }
 
+    /// Take an entry out of whatever layout holds it, open or not.
+    ///
+    /// [`Self::close_pane`] is the gesture's version of this and works on the
+    /// layout in front; this one is for an entry that is going away from the
+    /// list altogether, which can be holding a pane in an arrangement nobody
+    /// is looking at. Taking the last pane out takes the layout with it, the
+    /// same rule and for the same reason.
+    pub fn drop_from_layouts(&mut self, member: &Member, cx: &mut Context<Self>) {
+        let Some(ix) = self.layout_holding(member) else {
+            return;
+        };
+        let Some(layout) = self.layouts.get_mut(ix) else {
+            return;
+        };
+        if layout.leaves() <= 1 {
+            self.delete_layout(ix, cx);
+            return;
+        }
+        if layout.remove(member) {
+            store::save(layout);
+            cx.notify();
+        }
+    }
+
     /// Stand one pane over the others, or put it back.
     pub fn zoom_pane(&mut self, entry: &Member, cx: &mut Context<Self>) {
         self.edit_layout(cx, |layout| {

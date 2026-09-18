@@ -328,3 +328,42 @@ fn a_member_that_has_gone_is_pruned(cx: &mut gpui::TestAppContext) {
         assert_eq!(layout.entries(), vec![a], "only the one still there");
     });
 }
+
+/// An entry going away from the list takes its pane with it, whether or not
+/// the layout holding it is the one in front.
+#[gpui::test]
+fn an_entry_can_be_dropped_from_the_layout_holding_it(cx: &mut gpui::TestAppContext) {
+    let scratch = Scratch::new("dropped");
+    let (workspace, a, b) = two_boards(&scratch, cx);
+
+    workspace.update(cx, |workspace, cx| {
+        workspace.new_board(0, "Third".into(), "THR", cx).ok();
+        let c = workspace.member_of(0, Showing::Board(0)).expect("a member");
+        workspace.arrange(&a, &b, Side::Right, cx);
+        workspace.arrange(&b, &c, Side::Below, cx);
+        assert_eq!(workspace.active_layout().expect("open").leaves(), 3);
+
+        workspace.drop_from_layouts(&b, cx);
+
+        let layout = workspace.active_layout().expect("still open");
+        assert_eq!(layout.leaves(), 2);
+        assert!(!layout.contains(&b), "the pane went with the entry");
+        assert_eq!(workspace.layout_holding(&b), None);
+    });
+}
+
+/// Taking the last pane out takes the layout with it — the same rule closing
+/// one by hand follows.
+#[gpui::test]
+fn dropping_the_last_pane_drops_the_layout(cx: &mut gpui::TestAppContext) {
+    let scratch = Scratch::new("last");
+    let (workspace, a, b) = two_boards(&scratch, cx);
+
+    workspace.update(cx, |workspace, cx| {
+        workspace.arrange(&a, &b, Side::Right, cx);
+        workspace.drop_from_layouts(&a, cx);
+        workspace.drop_from_layouts(&b, cx);
+
+        assert!(workspace.layouts.is_empty(), "nothing left to arrange");
+    });
+}

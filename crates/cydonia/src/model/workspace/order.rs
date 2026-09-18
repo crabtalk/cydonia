@@ -49,6 +49,59 @@ impl Workspace {
             .position(|held| held.kind == entry.kind && held.id == entry.id)
     }
 
+    /// Where an entry sits among the pins, and `None` for one that is not
+    /// pinned. What puts the pinned rows above the rest, in an order of their
+    /// own.
+    pub fn pin_rank(&self, project: usize, showing: Showing) -> Option<usize> {
+        let path = &self.projects.get(project)?.path;
+        let entry = self.entry_of(project, showing)?;
+        self.pinned
+            .get(path)?
+            .iter()
+            .position(|held| held.kind == entry.kind && held.id == entry.id)
+    }
+
+    pub fn is_pinned(&self, project: usize, showing: Showing) -> bool {
+        self.pin_rank(project, showing).is_some()
+    }
+
+    /// Pin an entry to the top of its project's list, or let it back down.
+    ///
+    /// A new pin goes to the foot of the pins rather than the head: the row
+    /// that was already at the top is the one somebody is used to reaching
+    /// for, and a pin that displaced it would move the list it was meant to
+    /// hold still.
+    pub fn pin(&mut self, project: usize, showing: Showing, on: bool, cx: &mut Context<Self>) {
+        let Some(entry) = self.entry_of(project, showing) else {
+            return;
+        };
+        let Some(open) = self.projects.get(project) else {
+            return;
+        };
+        let held = self.pinned.entry(open.path.clone()).or_default();
+        held.retain(|pin| !(pin.kind == entry.kind && pin.id == entry.id));
+        if on {
+            held.push(entry);
+        }
+        self.save();
+        cx.notify();
+    }
+
+    /// Drop an entry's pin without touching anything else — what archiving one
+    /// does on the way past. Quiet about an entry that was never pinned.
+    pub fn unpin_entry(&mut self, project: usize, showing: Showing) {
+        let Some(entry) = self.entry_of(project, showing) else {
+            return;
+        };
+        let Some(open) = self.projects.get(project) else {
+            return;
+        };
+        if let Some(held) = self.pinned.get_mut(&open.path) {
+            held.retain(|pin| !(pin.kind == entry.kind && pin.id == entry.id));
+        }
+        self.save();
+    }
+
     /// Write down the order a project's rows are now in. The sidebar hands the
     /// whole list rather than the one row that moved: what the rest of them
     /// are is a question only the list on screen can answer, and it is holding
@@ -58,6 +111,16 @@ impl Workspace {
             return;
         };
         self.order.insert(open.path.clone(), order);
+        self.save();
+        cx.notify();
+    }
+
+    /// Write down which of a project's entries are pinned, and in what order.
+    pub fn set_pinned(&mut self, project: usize, pinned: Vec<state::Entry>, cx: &mut Context<Self>) {
+        let Some(open) = self.projects.get(project) else {
+            return;
+        };
+        self.pinned.insert(open.path.clone(), pinned);
         self.save();
         cx.notify();
     }

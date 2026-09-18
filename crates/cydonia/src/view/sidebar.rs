@@ -788,14 +788,20 @@ impl Cydonia {
             .chain(articles)
             .chain(tables)
             .collect();
-        // Archived entries sink. Each half then follows the arrangement, or
-        // the entry's stamp where there is none to follow — an entry made
-        // since the order was written has no rank yet, and is listed above the
-        // rows that do rather than under them.
+        // Archived entries sink, and pinned ones rise within what is left.
+        // Below the pins the list follows the arrangement, or the entry's
+        // stamp where there is none to follow — an entry made since the order
+        // was written has no rank yet, and is listed above the rows that do
+        // rather than under them. So a new session arrives at the top of the
+        // unpinned rows without displacing a pin.
         entries.sort_by_key(|(archived, touched, row)| {
-            let rank = showing_of(*row).and_then(|showing| workspace.rank_of(project, showing));
+            let showing = showing_of(*row);
+            let pin = showing.and_then(|showing| workspace.pin_rank(project, showing));
+            let rank = showing.and_then(|showing| workspace.rank_of(project, showing));
             (
                 *archived,
+                pin.is_none(),
+                pin.unwrap_or_default(),
                 rank.is_some(),
                 rank.unwrap_or_default(),
                 Reverse(*touched),
@@ -1080,6 +1086,11 @@ impl Cydonia {
     /// The whole list is rewritten rather than the one row that moved: an
     /// order held as gaps between the rows that did move is one every later
     /// read has to reconstruct, and the list on screen is already the answer.
+    ///
+    /// A drag never pins or unpins. The pins are a region of the list with
+    /// their own order, and a row dragged between the two regions would be
+    /// changing what it *is* rather than where it sits — that is what the
+    /// button at the end of the row and the band's `···` are for.
     fn reorder_entry(&mut self, carried: &Member, onto: Row, cx: &mut Context<Self>) {
         let Some(project) = project_of(onto) else {
             return;
@@ -1096,19 +1107,33 @@ impl Cydonia {
         let (Some(from), Some(to)) = (from, to) else {
             return;
         };
-        if from == to {
+        if from == to || self.pinned(rows[from], cx) != self.pinned(onto, cx) {
             return;
         }
+        let among_pins = self.pinned(onto, cx);
         let mut moved = rows;
         let row = moved.remove(from);
         moved.insert(to, row);
         let workspace = self.workspace.read(cx);
-        let order: Vec<state::Entry> = moved
-            .iter()
-            .filter_map(|row| workspace.entry_of(project, showing_of(*row)?))
-            .collect();
-        self.workspace
-            .update(cx, |workspace, cx| workspace.set_order(project, order, cx));
+        let entry_of = |row: &Row| workspace.entry_of(project, showing_of(*row)?);
+        // Every entry, so that unpinning one later puts it back where it sat
+        // rather than at the top.
+        let order: Vec<state::Entry> = moved.iter().filter_map(entry_of).collect();
+        // And the pins again, when it was one of them that moved: their own
+        // order is what the region above is listed by.
+        let pins: Option<Vec<state::Entry>> = among_pins.then(|| {
+            moved
+                .iter()
+                .filter(|row| self.pinned(**row, cx))
+                .filter_map(entry_of)
+                .collect()
+        });
+        self.workspace.update(cx, |workspace, cx| {
+            workspace.set_order(project, order, cx);
+            if let Some(pins) = pins {
+                workspace.set_pinned(project, pins, cx);
+            }
+        });
     }
 
     /// What a layout would name this row, so it can be dragged into one.
@@ -1492,6 +1517,13 @@ impl Cydonia {
     /// Shown only while the pointer is on the row, resolved from
     /// `sidebar_hovered` during render: GPUI can resolve a hover style
     /// differently in prepaint and paint.
+    /// The button at the end of a row: archive, or unpin for a row that is
+    /// pinned.
+    ///
+    /// A pinned entry is one somebody asked to keep in reach, and the same
+    /// press meaning "put it away" would undo that in one step from a list the
+    /// pointer is only passing down. Unpinning first is the way to archive
+    /// one, and the band's `···` is the way to do it in a single press.
     pub(crate) fn archive_button(
         &self,
         id: impl Into<gpui::ElementId>,
@@ -1500,9 +1532,11 @@ impl Cydonia {
         cx: &Context<Self>,
     ) -> Stateful<Div> {
         let theme = Theme::of(cx).clone();
-        let mark = match archived {
-            true => icons::files::ArchiveRestore,
-            false => icons::files::Archive,
+        let pinned = self.pinned(entry, cx);
+        let mark = match (pinned, archived) {
+            (true, _) => icons::navigation::PinOff,
+            (false, true) => icons::files::ArchiveRestore,
+            (false, false) => icons::files::Archive,
         };
         theme
             .ghost(id)
@@ -1515,9 +1549,10 @@ impl Cydonia {
             .child(icons::icon(mark).size(px(14.)).text_color(theme.text_faint))
             .tooltip(move |window, cx| {
                 Tooltip::text(
-                    match archived {
-                        true => "Unarchive",
-                        false => "Archive",
+                    match (pinned, archived) {
+                        (true, _) => "Unpin",
+                        (false, true) => "Unarchive",
+                        (false, false) => "Archive",
                     },
                     window,
                     cx,
@@ -1525,8 +1560,28 @@ impl Cydonia {
             })
             .on_click(cx.listener(move |this, _, _, cx| {
                 cx.stop_propagation();
-                this.archive_entry(entry, !archived, cx);
+                match pinned {
+                    true => this.pin_entry(entry, false, cx),
+                    false => this.archive_entry(entry, !archived, cx),
+                }
             }))
+    }
+
+    /// Whether an entry is held at the top of its project's list.
+    pub(crate) fn pinned(&self, entry: Row, cx: &App) -> bool {
+        let (Some(project), Some(showing)) = (project_of(entry), showing_of(entry)) else {
+            return false;
+        };
+        self.workspace.read(cx).is_pinned(project, showing)
+    }
+
+    /// Pin an entry to the top of its project's list, or let it back down.
+    pub(crate) fn pin_entry(&mut self, entry: Row, on: bool, cx: &mut Context<Self>) {
+        let (Some(project), Some(showing)) = (project_of(entry), showing_of(entry)) else {
+            return;
+        };
+        self.workspace
+            .update(cx, |workspace, cx| workspace.pin(project, showing, on, cx));
     }
 
     /// The `···` in the band: everything for the entry filling the window.
@@ -1559,6 +1614,21 @@ impl Cydonia {
         let mut rows = vec![menu::row(put, move |this, _, cx| {
             this.archive_entry(entry, !archived, cx)
         })];
+        // Above archive, and only for an entry still in hand: what is put away
+        // is not held at the top of anything.
+        if !archived && showing_of(entry).is_some() {
+            let pinned = self.pinned(entry, cx);
+            let pin = match pinned {
+                true => Item::action("Unpin").with_icon(icons::navigation::PinOff),
+                false => Item::action("Pin to top").with_icon(icons::navigation::Pin),
+            };
+            rows.insert(
+                0,
+                menu::row(pin, move |this, _, cx| {
+                    this.pin_entry(entry, !pinned, cx)
+                }),
+            );
+        }
         if named {
             rows.insert(
                 0,
@@ -1728,6 +1798,20 @@ impl Cydonia {
                 workspace.archive_layout(ix, archived, cx)
             });
             return;
+        }
+        // Putting an entry away takes it out of the two places that hold it
+        // up: the pins at the top of the list, and whatever layout arranges
+        // it. Both are about an entry in hand, and this one no longer is.
+        if archived && let Some(showing) = showing_of(entry) {
+            let member = self.member_of_row(entry, cx);
+            self.workspace.update(cx, |workspace, cx| {
+                if let Some(project) = project_of(entry) {
+                    workspace.unpin_entry(project, showing);
+                }
+                if let Some(member) = member {
+                    workspace.drop_from_layouts(&member, cx);
+                }
+            });
         }
         self.workspace.update(cx, |workspace, cx| match entry {
             Row::Layout(_) => {}
