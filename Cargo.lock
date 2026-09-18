@@ -639,6 +639,8 @@ checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
 [[package]]
 name = "bezel"
 version = "0.1.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3e0a312e99802ef74ffc762fe4a1e5470c540e9f3de485dd6fb8d951e0483f3"
 dependencies = [
  "bezel-agent",
  "bezel-gpui",
@@ -652,6 +654,8 @@ dependencies = [
 [[package]]
 name = "bezel-agent"
 version = "0.1.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "890f89fdcd74109cca44a8b55a22fbae9850eb1a62abac899d05f8e814c1dd18"
 dependencies = [
  "bezel-gpui",
  "bezel-theme",
@@ -661,6 +665,8 @@ dependencies = [
 [[package]]
 name = "bezel-editor"
 version = "0.1.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "154f3d8fed6ea96dadbd3c6166ee698f845a7c58ca639f18b92fd7076644a9e1"
 dependencies = [
  "bezel-gpui",
  "bezel-markdown",
@@ -972,6 +978,8 @@ dependencies = [
 [[package]]
 name = "bezel-icons"
 version = "0.1.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e15e000803daf4275dd5a20f17751f6a94df9f9ea34a82e4bfce42694b43296f"
 dependencies = [
  "bezel-gpui",
 ]
@@ -979,6 +987,8 @@ dependencies = [
 [[package]]
 name = "bezel-markdown"
 version = "0.1.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "65e5eb54bdc964e89cb3c7603c10c6e7d216503018ee3f6d76381873de8f2b77"
 dependencies = [
  "bezel-gpui",
  "bezel-theme",
@@ -989,6 +999,8 @@ dependencies = [
 [[package]]
 name = "bezel-motion"
 version = "0.1.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "97ba93f07aae75481ad22f159932c2e2f21560539c1d889c26ff697b51d493fa"
 dependencies = [
  "bezel-gpui",
  "web-time",
@@ -997,6 +1009,8 @@ dependencies = [
 [[package]]
 name = "bezel-syntax"
 version = "0.1.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8cd9bc377178a1f20e2fd17ae024077384f0f8964d10d7b2e07aed6d73df1460"
 dependencies = [
  "bezel-theme",
  "tree-sitter",
@@ -1007,6 +1021,8 @@ dependencies = [
 [[package]]
 name = "bezel-syntax-std"
 version = "0.1.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bfc48a68d1348cb8fa7bce52bdd6db0d8105637239d9303a0a73d2e502c62395"
 dependencies = [
  "bezel-syntax",
  "tree-sitter-bash",
@@ -1021,6 +1037,8 @@ dependencies = [
 [[package]]
 name = "bezel-terminal"
 version = "0.1.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4bb2487eb545a35ec9f83ce7007cba5a47ecd420d5012a821273ceec0ec262b9"
 dependencies = [
  "alacritty_terminal",
  "bezel-gpui",
@@ -1030,6 +1048,8 @@ dependencies = [
 [[package]]
 name = "bezel-theme"
 version = "0.1.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b9a2a018072edd1077622433f36ae2500a69d794d52d736a2edcb0506af33325"
 dependencies = [
  "bezel-gpui",
  "objc",
@@ -1040,6 +1060,8 @@ dependencies = [
 [[package]]
 name = "bezel-ui"
 version = "0.1.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "04c2c703c380ca573fd249000300ce761ef4a4dff5889e96216d606cc104673f"
 dependencies = [
  "bezel-gpui",
  "bezel-icons",
@@ -2183,7 +2205,7 @@ checksum = "f27ae1dd37df86211c42e150270f82743308803d90a6f6e6651cd730d5e1732f"
 
 [[package]]
 name = "cydonia"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2222,7 +2244,7 @@ dependencies = [
 
 [[package]]
 name = "cydonia-artifact"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "anyhow",
  "cacp",
@@ -2236,7 +2258,7 @@ dependencies = [
 
 [[package]]
 name = "cydonia-mcp"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "axum",
  "cydonia-artifact",
@@ -2248,7 +2270,7 @@ dependencies = [
 
 [[package]]
 name = "cydonia-prompts"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "serde",
  "serde_yaml_ng",
@@ -2339,7 +2361,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users 0.5.2",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2542,7 +2564,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4179,7 +4201,7 @@ version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "536bfad37a309d62069485248eeaba1e8d9853aaf951caaeaed0585a95346f08"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4335,7 +4357,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5329,7 +5351,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5802,7 +5824,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5881,7 +5903,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6410,7 +6432,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6749,7 +6771,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7272,7 +7294,7 @@ checksum = "f2f6fb2847f6742cd76af783a2a2c49e9375d0a111c7bef6f71cd9e738c72d6e"
 dependencies = [
  "memoffset",
  "tempfile",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -8165,7 +8187,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
