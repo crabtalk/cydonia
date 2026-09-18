@@ -61,6 +61,10 @@ const CONTENT_MAX_WIDTH: f32 = 720.;
 /// picture without moving a line of the document under it.
 const COVER_HEIGHT: f32 = CONTENT_MAX_WIDTH / 5.;
 
+/// How much empty page hangs below the last line, so the end of a document
+/// scrolls clear of the bottom edge of the pane.
+const TAIL: f32 = 120.;
+
 /// The column's own inset. What the title adds to it is the editor's
 /// [`editor::Layout::text_inset`], read at paint like the theme — the editor
 /// holds its text that far inside its box so a block's drag handle has
@@ -389,7 +393,8 @@ impl Cydonia {
                         // says so before the click.
                         column(wide)
                             .px(px(inset(wide)))
-                            .py(px(20.))
+                            .pt(px(20.))
+                            .pb(px(TAIL))
                             .flex()
                             .cursor(CursorStyle::IBeam)
                             .child(

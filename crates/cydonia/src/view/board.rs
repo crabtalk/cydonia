@@ -37,11 +37,15 @@ use bezel::{
 use markdown::Typography;
 use std::{cell::RefCell, collections::HashMap};
 
-actions!(cydonia_board, [CommitCard, DismissCard]);
+actions!(cydonia_board, [CommitCard, DismissCard, FindCard, DismissFind]);
 
 /// Claimed on top of `TextField`, so `enter` files the card here and stays a
 /// newline in every other multi-line field.
 const KEY_CONTEXT: &str = "CydoniaCard";
+
+/// The find field's own, so `escape` puts the bar away and stays whatever it is
+/// everywhere else.
+const FIND_CONTEXT: &str = "CydoniaBoardFind";
 
 const COLUMN_WIDTH: f32 = 272.;
 
@@ -93,7 +97,29 @@ pub fn bindings() -> Vec<KeyBinding> {
         KeyBinding::new("enter", CommitCard, ctx),
         KeyBinding::new("shift-enter", input::InsertNewline, ctx),
         KeyBinding::new("escape", DismissCard, ctx),
+        KeyBinding::new("escape", DismissFind, Some(FIND_CONTEXT)),
     ]
+}
+
+/// The board's find field — one per pane, so two boards side by side are
+/// narrowed separately.
+pub fn find_field(cx: &mut App) -> Entity<TextField> {
+    cx.new(|cx| {
+        TextField::new(cx)
+            .with_key_context(FIND_CONTEXT)
+            .with_placeholder("find a card…")
+    })
+}
+
+/// Does this card answer the query? Matched against what a card is named by:
+/// its handle, which is how `DEV-38` gets referred to in prose, and its text.
+fn card_matches(card: &Card, handle: Option<&str>, query: &str) -> bool {
+    let query = query.trim().to_lowercase();
+    if query.is_empty() {
+        return true;
+    }
+    card.text.to_lowercase().contains(&query)
+        || handle.is_some_and(|handle| handle.to_lowercase().contains(&query))
 }
 
 /// The board's one text field — whichever card is being written or rewritten.
@@ -109,6 +135,14 @@ pub fn field(cx: &mut App) -> Entity<TextField> {
             .with_key_context(KEY_CONTEXT)
             .with_placeholder("what needs doing…")
     })
+}
+
+/// What a lane holds, and what the find query leaves of it. The two are the
+/// same number on a board nobody is searching.
+#[derive(Clone, Copy)]
+struct Tally {
+    held: usize,
+    shown: usize,
 }
 
 /// A card's text, read as the document it is. Somebody writing `- [ ] ship it`
@@ -597,6 +631,117 @@ impl Cydonia {
         self.workspace.read(cx).session_by_record(record)
     }
 
+    // ── finding ──────────────────────────────────────────────────
+
+    /// What the board is narrowed by right now, and the empty string when it is
+    /// not narrowed at all. Empty while the bar is down whatever the field
+    /// still holds, so a query never outlives the thing on screen saying so.
+    fn board_query(&self, on: Option<&Member>, cx: &App) -> String {
+        let leaf = self.leaf_of(on);
+        match leaf.finding {
+            true => leaf.find_field.read(cx).content().to_string(),
+            false => String::new(),
+        }
+    }
+
+    /// A lane's name, how many cards it holds, and the ids of the ones the query
+    /// leaves standing — in the lane's own order.
+    fn lane_cards(
+        &self,
+        project: usize,
+        board_at: usize,
+        id: &str,
+        query: &str,
+        cx: &App,
+    ) -> Option<(String, usize, Vec<String>)> {
+        let board = self.workspace.read(cx).board_in(project, board_at)?;
+        let column = board.column(id)?;
+        let cards: Vec<String> = column
+            .cards
+            .iter()
+            .filter(|card| card_matches(card, board.handle_of(card).as_deref(), query))
+            .map(|card| card.id.clone())
+            .collect();
+        Some((column.name.clone(), column.cards.len(), cards))
+    }
+
+    /// Put the find bar up, or take the caret back to a field already up.
+    pub(crate) fn find_card(&mut self, _: &FindCard, window: &mut Window, cx: &mut Context<Self>) {
+        let field = self.leaf().find_field.clone();
+        self.leaf_mut().finding = true;
+        window.focus(&field.read(cx).focus_handle(cx), cx);
+        cx.notify();
+    }
+
+    /// Done finding: the field goes and takes its query with it.
+    pub(crate) fn dismiss_find(
+        &mut self,
+        _: &DismissFind,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let field = self.leaf().find_field.clone();
+        self.leaf_mut().finding = false;
+        field.update(cx, |field, cx| field.clear(cx));
+        cx.notify();
+    }
+
+    /// The bar at the board's top right. Up exactly while the query is —
+    /// [`Leaf::finding`] carries no second state for a bar the reader may put
+    /// away: a filter with nothing on screen to explain it is a board that has
+    /// quietly lost cards.
+    fn find_bar(&self, on: Option<&Member>, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if !self.leaf_of(on).finding || cx.has_active_drag() {
+            return None;
+        }
+        let theme = Theme::of(cx).clone();
+        Some(
+            div()
+                .absolute()
+                .top(px(BOARD_INSET))
+                .right(px(BOARD_INSET))
+                .w(px(COLUMN_WIDTH))
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(6.))
+                .px(px(8.))
+                .py(px(2.))
+                .rounded_full()
+                .border_1()
+                .border_color(theme.border)
+                .bg(theme.surface_raised)
+                .child(
+                    icons::icon(icons::text::Search)
+                        .size(px(14.))
+                        .text_color(theme.text_faint),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .child(self.leaf_of(on).find_field.clone()),
+                )
+                .child(
+                    theme
+                        .ghost("board-find-close")
+                        .p(px(4.))
+                        .rounded_full()
+                        .child(
+                            icons::icon(icons::notifications::X)
+                                .size(px(12.))
+                                .text_color(theme.text_faint),
+                        )
+                        .tooltip(|window, cx| Tooltip::text("Stop finding", window, cx))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            cx.stop_propagation();
+                            this.dismiss_find(&DismissFind, window, cx);
+                        })),
+                )
+                .into_any_element(),
+        )
+    }
+
     // ── chrome ───────────────────────────────────────────────────
 
     /// The board, laid out the way the board says — see
@@ -628,6 +773,7 @@ impl Cydonia {
             .relative()
             .on_action(cx.listener(Self::commit_card))
             .on_action(cx.listener(Self::dismiss_card))
+            .on_action(cx.listener(Self::dismiss_find))
             // Outermost, so it runs first: every move starts from nowhere, and
             // the lane and card the pointer is inside put it back. A pointer
             // over no lane at all leaves nothing aimed, which is what makes
@@ -649,6 +795,7 @@ impl Cydonia {
             .on_drop(cx.listener(|this, _: &CardDrag, _, cx| this.aim_card(None, cx)))
             .child(body)
             .children(self.view_pill(&id, view, cx))
+            .children(self.find_bar(on, cx))
             .into_any_element()
     }
 
@@ -874,16 +1021,8 @@ impl Cydonia {
         } = lane;
         let theme = Theme::of(cx).clone();
         let id = id.to_owned();
-        let Some((name, cards)) = self
-            .workspace
-            .read(cx)
-            .board_in(project, board_at)
-            .and_then(|board| board.column(&id))
-            .map(|column| {
-                let cards: Vec<String> = column.cards.iter().map(|card| card.id.clone()).collect();
-                (column.name.clone(), cards)
-            })
-        else {
+        let query = self.board_query(on, cx);
+        let Some((name, held, cards)) = self.lane_cards(project, board_at, &id, &query, cx) else {
             return div().into_any_element();
         };
         let mut rows: Vec<AnyElement> = cards
@@ -950,9 +1089,11 @@ impl Cydonia {
             .on_drop(cx.listener(move |this, drag: &CardDrag, _, cx| {
                 this.drop_card(drag, (project, board_at), &taken, cx);
             }))
-            .child(self.list_group_header(&id, name, cards.len(), at, lanes, cx))
+            .child(self.list_group_header(&id, name, Tally { held, shown: cards.len() }, at, lanes, cx))
             .children(rows)
-            .child(
+            // Nothing to write into a narrowed lane: a card that does not
+            // answer the query would be filed and vanish in one gesture.
+            .children((query.trim().is_empty()).then(|| {
                 theme
                     .ghost(SharedString::from(format!("list-add-card-{id}")))
                     .flex_none()
@@ -972,22 +1113,27 @@ impl Cydonia {
                     )
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.edit(Editing::New(written.clone()), window, cx);
-                    })),
-            )
+                    }))
+            }))
             .into_any_element()
     }
 
     /// A group's heading: the lane's name and count, and the `···` that moves
     /// or drops it — the lane's own header, on a row the width of the pane.
+    ///
+    /// `held` is the whole lane and `shown` what the query left of it. The
+    /// `···` is built from `held`: Delete is refused on a lane holding cards,
+    /// not on one showing them.
     fn list_group_header(
         &self,
         id: &str,
         name: String,
-        count: usize,
+        tally: Tally,
         at: usize,
         lanes: usize,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let Tally { held, shown } = tally;
         let theme = Theme::of(cx).clone();
         let row = div()
             .flex_none()
@@ -1017,7 +1163,14 @@ impl Cydonia {
                         this.start_rename(Renaming::Column(named.clone()), window, cx);
                     })),
             )
-            .child(div().text_color(theme.text_faint).child(count.to_string()))
+            .child(
+                div()
+                    .text_color(theme.text_faint)
+                    .child(match shown == held {
+                        true => held.to_string(),
+                        false => format!("{shown}/{held}"),
+                    }),
+            )
             .child(div().flex_1())
             .child(
                 self.menu_button(
@@ -1029,7 +1182,7 @@ impl Cydonia {
                     Menu::Lane(id.to_owned()),
                     cx,
                 )
-                .children(self.lane_menu(id, count, at, lanes, View::List, cx)),
+                .children(self.lane_menu(id, held, at, lanes, View::List, cx)),
             )
             .into_any_element()
     }
@@ -1259,16 +1412,8 @@ impl Cydonia {
         } = lane;
         let theme = Theme::of(cx).clone();
         let id = id.to_owned();
-        let Some((name, cards)) = self
-            .workspace
-            .read(cx)
-            .board_in(project, board_at)
-            .and_then(|board| board.column(&id))
-            .map(|column| {
-                let cards: Vec<String> = column.cards.iter().map(|card| card.id.clone()).collect();
-                (column.name.clone(), cards)
-            })
-        else {
+        let query = self.board_query(on, cx);
+        let Some((name, held, cards)) = self.lane_cards(project, board_at, &id, &query, cx) else {
             return div().into_any_element();
         };
         let mut rows: Vec<AnyElement> = cards
@@ -1338,7 +1483,7 @@ impl Cydonia {
             .on_drop(cx.listener(move |this, drag: &CardDrag, _, cx| {
                 this.drop_card(drag, (project, board_at), &taken, cx);
             }))
-            .child(self.column_header(&id, name, cards.len(), at, lanes, cx))
+            .child(self.column_header(&id, name, Tally { held, shown: cards.len() }, at, lanes, cx))
             .child(
                 div()
                     .relative()
@@ -1364,7 +1509,10 @@ impl Cydonia {
                             .flex_col()
                             .gap(px(8.))
                             .children(rows)
-                            .child(
+                            // Nothing to write into a narrowed lane: a card
+                            // that does not answer the query would be filed
+                            // and vanish in one gesture.
+                            .children(query.trim().is_empty().then(|| {
                                 theme
                                     .ghost(SharedString::from(format!("add-card-{id}")))
                                     .flex_none()
@@ -1384,8 +1532,8 @@ impl Cydonia {
                                     )
                                     .on_click(cx.listener(move |this, _, window, cx| {
                                         this.edit(Editing::New(id.clone()), window, cx);
-                                    })),
-                            ),
+                                    }))
+                            })),
                     )
                     // The lane's own half of the gesture: a card held at the
                     // foot of a full lane brings the rest of it up.
@@ -1409,15 +1557,20 @@ impl Cydonia {
     /// `at` is where the lane sits among `lanes`, which is what decides whether
     /// it can step either way — read here rather than in the menu, which is
     /// built from what the header was drawn with.
+    ///
+    /// `held` is the whole lane and `shown` what the query left of it. The
+    /// `···` is built from `held`: Delete is refused on a lane holding cards,
+    /// not on one showing them.
     fn column_header(
         &self,
         id: &str,
         name: String,
-        count: usize,
+        tally: Tally,
         at: usize,
         lanes: usize,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let Tally { held, shown } = tally;
         let theme = Theme::of(cx).clone();
         let row = div()
             .flex_none()
@@ -1448,7 +1601,14 @@ impl Cydonia {
                         this.start_rename(Renaming::Column(named.clone()), window, cx);
                     })),
             )
-            .child(div().text_color(theme.text_faint).child(count.to_string()))
+            .child(
+                div()
+                    .text_color(theme.text_faint)
+                    .child(match shown == held {
+                        true => held.to_string(),
+                        false => format!("{shown}/{held}"),
+                    }),
+            )
             .child(div().flex_1())
             .child(
                 self.menu_button(
@@ -1460,7 +1620,7 @@ impl Cydonia {
                     Menu::Lane(id.to_owned()),
                     cx,
                 )
-                .children(self.lane_menu(id, count, at, lanes, View::Lanes, cx)),
+                .children(self.lane_menu(id, held, at, lanes, View::Lanes, cx)),
             )
             .into_any_element()
     }
@@ -1853,3 +2013,7 @@ impl Cydonia {
             .into_any_element()
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/board_find.rs"]
+mod find_tests;

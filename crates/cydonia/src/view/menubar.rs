@@ -191,6 +191,7 @@ fn menus(cx: &App) -> Vec<Menu> {
             // a chord before the focused surface is offered it — see
             // [`crate::view::keymap::Command::PlainText`].
             MenuItem::action("Plain Text", TogglePlainText),
+            MenuItem::action("Find Card", crate::view::board::FindCard),
             MenuItem::separator(),
             MenuItem::action("Enter Full Screen", ToggleFullScreen),
         ]),
@@ -316,6 +317,9 @@ impl Cydonia {
             // Pane-specific commands grey themselves everywhere else.
             .when(showing == Some(Pane::Article), |root| {
                 root.on_action(cx.listener(Self::toggle_plain_text))
+            })
+            .when(showing == Some(Pane::Board), |root| {
+                root.on_action(cx.listener(Self::find_card))
             })
             .when(entries, |root| {
                 root.on_action(cx.listener(Self::next_entry))

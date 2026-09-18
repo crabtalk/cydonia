@@ -270,24 +270,23 @@ impl Cydonia {
                         })),
                 }
             }))
-            .children((self.showing(cx) == Some(Pane::Chat)).then(|| self.changes_toggle(cx)))
+            .children(
+                (!self.changes_open && self.showing(cx) == Some(Pane::Chat))
+                    .then(|| self.changes_toggle(cx)),
+            )
             .into_any_element()
     }
 
-    /// The right panel's own fold, on the band rather than on the panel: the
-    /// panel's hide button goes down with the panel, so without this there is
-    /// nothing to press to bring it back. Mirrors [`Cydonia::fold_toggle`].
+    /// The control that brings the right panel back, on the band rather than
+    /// on the panel: the panel's own hide button goes down with the panel. Only
+    /// drawn while the panel is closed. Mirrors [`Cydonia::fold_toggle`].
     fn changes_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
-        let label = match self.changes_open {
-            true => "Hide right panel",
-            false => "Show right panel",
-        };
         theme
             .ghost("toggle-changes")
             .flex_none()
             .p(px(4.))
-            .tooltip(move |window, cx| Tooltip::text(label, window, cx))
+            .tooltip(|window, cx| Tooltip::text("Show right panel", window, cx))
             .child(
                 icons::icon(icons::layout::PanelRight)
                     .size(px(14.))

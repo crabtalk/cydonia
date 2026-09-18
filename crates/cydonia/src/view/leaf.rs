@@ -86,6 +86,14 @@ pub struct Leaf {
     pub(crate) board_list: ScrollHandle,
     /// The same, per lane — see [`board::Lanes`].
     pub(crate) lanes: board::Lanes,
+    /// The board's find field, and whether its bar is up.
+    ///
+    /// The bar stands whenever the query does: a board narrowed with nothing on
+    /// screen saying so is a board quietly missing cards, and a drag that lands
+    /// in a lane it cannot see is worse. Closing it is what clears the query —
+    /// see [`crate::view::root::Cydonia::dismiss_find`].
+    pub(crate) find_field: Entity<TextField>,
+    pub(crate) finding: bool,
     /// Where the card now in the air would land. Written by the lanes and
     /// cards the pointer crosses and read by the one that draws the mark —
     /// see [`board::Landing`].
@@ -103,6 +111,7 @@ impl Leaf {
         composer: Entity<Composer>,
         card_field: Entity<TextField>,
         cell_field: Entity<TextField>,
+        find_field: Entity<TextField>,
         ribbon: Ribbon,
     ) -> Self {
         Self {
@@ -117,6 +126,8 @@ impl Leaf {
             board_drift: DriftState::new(),
             board_list: ScrollHandle::new(),
             lanes: board::Lanes::default(),
+            find_field,
+            finding: false,
             landing: None,
             cell: None,
             cell_field,

@@ -1166,6 +1166,13 @@ impl Composer {
             .on_action(cx.listener(Self::command_next))
             .on_action(cx.listener(Self::command_previous))
             .on_action(cx.listener(Self::command_dismiss))
+            // The band occludes the pane behind it, so the pane's own drop
+            // target never sees a picture let go over the composer — and a
+            // composer holding a few lines of text is most of what is there to
+            // aim at. See [`crate::view::detail::footer`].
+            .on_drop(cx.listener(|this, paths: &ExternalPaths, _, cx| {
+                this.drop_paths(paths, cx)
+            }))
             .flex()
             .flex_col()
             .child(

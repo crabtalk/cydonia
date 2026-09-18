@@ -65,6 +65,7 @@ pub enum Command {
     NextEntry,
     PrevEntry,
     PlainText,
+    FindCard,
 }
 
 /// Which menu a command is reached by, so the section is read in the order the
@@ -90,7 +91,7 @@ impl Menu {
 }
 
 impl Command {
-    pub const ALL: [Self; 16] = [
+    pub const ALL: [Self; 17] = [
         Self::OpenSettings,
         Self::NewSession,
         Self::NewSessionNext,
@@ -107,6 +108,7 @@ impl Command {
         Self::NextEntry,
         Self::PrevEntry,
         Self::PlainText,
+        Self::FindCard,
     ];
 
     /// The key it is written under, inside `[shortcuts]`.
@@ -128,6 +130,7 @@ impl Command {
             Self::NextEntry => "next_entry",
             Self::PrevEntry => "prev_entry",
             Self::PlainText => "plain_text",
+            Self::FindCard => "find_card",
         }
     }
 
@@ -150,6 +153,7 @@ impl Command {
             Self::NextEntry => "Next Entry",
             Self::PrevEntry => "Previous Entry",
             Self::PlainText => "Plain Text",
+            Self::FindCard => "Find Card",
         }
     }
 
@@ -170,7 +174,8 @@ impl Command {
             | Self::ToggleSidebar
             | Self::NextEntry
             | Self::PrevEntry
-            | Self::PlainText => Menu::View,
+            | Self::PlainText
+            | Self::FindCard => Menu::View,
         }
     }
 
@@ -201,6 +206,7 @@ impl Command {
             Self::OpenFiles => "cmd-shift-f",
             Self::OpenReview => "cmd-shift-g",
             Self::PlainText => "cmd-e",
+            Self::FindCard => "cmd-f",
         })
     }
 
@@ -225,6 +231,11 @@ impl Command {
             Self::NextEntry => KeyBinding::new(chord, NextEntry, None),
             Self::PrevEntry => KeyBinding::new(chord, PrevEntry, None),
             Self::PlainText => KeyBinding::new(chord, TogglePlainText, None),
+            // Everywhere but the files panel, which holds ⌘F for its own
+            // filter — see [`bind_all`]. Scoped rather than left app-wide
+            // because commands are bound last and would take the chord from
+            // it.
+            Self::FindCard => KeyBinding::new(chord, board::FindCard, Some("!SessionPanel")),
         })
     }
 }

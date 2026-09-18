@@ -38,7 +38,7 @@ use bezel::{
     ui::{
         floating::Floating,
         icons,
-        input::TextField,
+        input::{FieldEvent, TextField},
         menu::Cursor,
         stats::Stats,
         widgets::{ButtonStyle, Buttons, Content, SplitDrag},
@@ -378,7 +378,12 @@ impl Cydonia {
         on: Option<Member>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> (Entity<Composer>, Entity<TextField>, Entity<TextField>) {
+    ) -> (
+        Entity<Composer>,
+        Entity<TextField>,
+        Entity<TextField>,
+        Entity<TextField>,
+    ) {
         let composer = cx.new(Composer::new);
         cx.subscribe_in(
             &composer,
@@ -412,7 +417,14 @@ impl Cydonia {
             },
         )
         .detach();
-        (composer, board::field(cx), table::field(cx))
+        // The board is drawn from the root's render, so what the reader types
+        // into the find field has to reach the root — the field's own `notify`
+        // repaints the field alone, and the lanes would keep every card until
+        // something else asked for a frame.
+        let find = board::find_field(cx);
+        cx.subscribe(&find, |_, _, _: &FieldEvent, cx| cx.notify())
+            .detach();
+        (composer, board::field(cx), table::field(cx), find)
     }
 
     /// Reconcile the panes on screen with the open layout.
@@ -440,9 +452,15 @@ impl Cydonia {
             {
                 Some(at) => kept.push(self.leaves.remove(at)),
                 None => {
-                    let (composer, card_field, cell_field) =
+                    let (composer, card_field, cell_field, find_field) =
                         Self::pane_parts(Some(entry.clone()), window, cx);
-                    let mut leaf = Leaf::new(composer, card_field, cell_field, Ribbon::new(cx));
+                    let mut leaf = Leaf::new(
+                        composer,
+                        card_field,
+                        cell_field,
+                        find_field,
+                        Ribbon::new(cx),
+                    );
                     leaf.entry = Some(entry.clone());
                     kept.push(leaf);
                 }
@@ -525,7 +543,7 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let (composer, card_field, cell_field) = Self::pane_parts(None, window, cx);
+        let (composer, card_field, cell_field, find_field) = Self::pane_parts(None, window, cx);
         let name_field = cx.new(|cx| {
             TextField::new(cx)
                 .with_frame(false)
@@ -573,7 +591,13 @@ impl Cydonia {
             meter: cx.new(Stats::new),
             meter_at: Floating::new(Painter::of(cx)),
             workspace,
-            leaves: vec![Leaf::new(composer, card_field, cell_field, Ribbon::new(cx))],
+            leaves: vec![Leaf::new(
+                composer,
+                card_field,
+                cell_field,
+                find_field,
+                Ribbon::new(cx),
+            )],
             focused: 0,
             sidebar_open: true,
             sidebar_width: SIDEBAR_WIDTH,
