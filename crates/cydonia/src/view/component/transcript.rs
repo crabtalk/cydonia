@@ -59,6 +59,11 @@ const MARK_THICK: f32 = 2.;
 const MARK_PAD: f32 = 5.;
 const RAIL_INSET: f32 = 12.;
 
+/// What the rail keeps clear of the pane's top and bottom edges. A session
+/// with more marks than fit in what is left is slid under the opening by
+/// [`rail_shift`] rather than squeezed into it.
+const RAIL_PAD: f32 = 64.;
+
 /// What a mark is painted at: the turn being read, one that is on screen with
 /// it, and one that is neither.
 ///
@@ -93,6 +98,16 @@ pub struct State {
     list: bezel::ui::list::VariableList<usize>,
     focused_turn: Cell<Option<(usize, usize)>>,
     rail_selection: Rc<Cell<Option<RailSelection>>>,
+    /// Where each turn's row was painted last frame, keyed by turn, and the
+    /// run of turns the rail lights from it.
+    ///
+    /// The rows report their own bounds because the list reports none of its
+    /// own while it follows the tail: its scroll top is then the item past the
+    /// end, and `bounds_for_item` answers `None` for everything before that.
+    /// The rail's canvas drains the first into the second and the marks are
+    /// coloured from it on the frame after.
+    painted: Rc<RefCell<HashMap<usize, Bounds<Pixels>>>>,
+    showing: Rc<RefCell<Range<usize>>>,
     pub(crate) footer_height: Rc<Cell<Pixels>>,
     /// Keyed by the turn's first item index.
     work: HashMap<usize, Takeover>,
@@ -421,6 +436,7 @@ pub fn render(
     list.set_end_inset(footer_height);
     let workspace = cx.entity().downgrade();
     let visible_workspace = workspace.clone();
+    let painted = chat.transcript.painted.clone();
     let count = turns.len();
     let virtual_content = list.render(
         move |index, window, cx| {
@@ -442,14 +458,28 @@ pub fn render(
                         return Empty.into_any_element();
                     };
                     let running = chat.streaming && index + 1 == count;
+                    let painted = painted.clone();
                     content_row(
                         div()
+                            .relative()
                             .px(px(24.))
                             .when(index == 0, |row| row.pt(px(PAD)))
                             .child(zone(chat, turn, running, window, cx))
                             .when(running && turn.range.len() <= 1, |row| {
                                 row.child(working(chat, turn.range.start, cx))
-                            }),
+                            })
+                            // What the rail reads to know which turns are on
+                            // screen — see [`State::painted`].
+                            .child(
+                                canvas(
+                                    move |bounds, _, _| {
+                                        painted.borrow_mut().insert(index, bounds);
+                                    },
+                                    |_, _, _, _| {},
+                                )
+                                .absolute()
+                                .size_full(),
+                            ),
                     )
                     .into_any_element()
                 })
@@ -600,34 +630,46 @@ fn active_list_turn(
     active
 }
 
-/// Which turns the pane is showing, as a range over the rail's marks.
+/// The run of turns on screen, from where their rows were last painted.
 ///
 /// `inset` is the composer band, taken off the foot: a turn behind it is
 /// painted and covered, and a mark lit for it says the pane is showing
 /// something it is not.
-///
-/// The list reports no bounds for a turn above the scroll top, which is what
-/// ends the run at the near edge; the far edge is the first turn whose top is
-/// past the floor.
-fn visible_list_turns(
-    list: &bezel::ui::list::VariableList<usize>,
-    count: usize,
+fn painted_turns(
+    painted: &HashMap<usize, Bounds<Pixels>>,
+    viewport: Bounds<Pixels>,
     inset: Pixels,
 ) -> Range<usize> {
-    let viewport = list.state.viewport_bounds();
     let floor = viewport.bottom() - inset;
-    let first = list.state.logical_scroll_top().item_ix.min(count);
-    let mut last = first;
-    for ix in first..count {
-        let Some(bounds) = list.state.bounds_for_item(ix) else {
-            break;
-        };
-        if bounds.top() >= floor {
-            break;
+    let mut run: Option<Range<usize>> = None;
+    for (ix, bounds) in painted {
+        if bounds.bottom() <= viewport.top() || bounds.top() >= floor {
+            continue;
         }
-        last = ix + 1;
+        run = Some(match run {
+            Some(run) => run.start.min(*ix)..run.end.max(ix + 1),
+            None => *ix..ix + 1,
+        });
     }
-    first..last.max(first)
+    run.unwrap_or(0..0)
+}
+
+/// How far the column of marks is moved off centre, so that the turn being
+/// read stays inside the rail's opening.
+///
+/// The column is centred in `room` whatever its length, so the shift is
+/// measured from there: zero while every mark fits, and clamped at either end
+/// of a longer column, where the first and last marks sit against the top and
+/// bottom of the opening rather than in its middle. A `room` of zero — the
+/// pane before its first layout — leaves the column centred.
+fn rail_shift(count: usize, at: usize, room: Pixels) -> Pixels {
+    let step = px(MARK_THICK + 2. * MARK_PAD);
+    let total = step * count as f32;
+    if total <= room || room <= px(0.) {
+        return px(0.);
+    }
+    let above = (step * (at as f32 + 0.5) - room / 2.).clamp(px(0.), total - room);
+    (total - room) / 2. - above
 }
 
 fn rail_room(pane_width: f32) -> f32 {
@@ -652,20 +694,31 @@ fn rail(chat: &ChatSession, turns: &[Turn], room: Pixels) -> AnyElement {
         .max(px(root::composer_height()))
         + px(root::COMPOSER_BOTTOM + PAD);
     let at = active_list_turn(&handle, count, inset, &selection);
-    let showing = visible_list_turns(&handle, count, inset);
-    // The canvas below watches for the run moving under it, and holds its own
-    // copy: the marks are built from theirs after it is mounted.
-    let watched = showing.clone();
+    // The rows paint before the canvas below, which is what turns their bounds
+    // into the run — a frame behind the marks reading it.
+    let painted = chat.transcript.painted.clone();
+    let shown = chat.transcript.showing.clone();
+    let showing = shown.borrow().clone();
+    // The pane's height, which the marks are placed against: it is unknown
+    // until the list has laid out once, so the canvas below watches it too.
+    let height = handle.state.viewport_bounds().size.height;
+    let room = height - px(2. * RAIL_PAD);
+    let column = div()
+        .relative()
+        .top(rail_shift(count, at, room))
+        .flex()
+        .flex_col()
+        .items_center()
+        .flex_none();
     div()
         .absolute()
         .top_0()
         .bottom_0()
         .left(px(RAIL_INSET))
+        .py(px(RAIL_PAD))
         .flex()
         .flex_col()
         .items_center()
-        .justify_center()
-        .overflow_hidden()
         .child(
             canvas(
                 move |_, window, _| {
@@ -676,8 +729,19 @@ fn rail(chat: &ChatSession, turns: &[Turn], room: Pixels) -> AnyElement {
                         selected.offset = Some(handle.state.logical_scroll_top());
                         selection.set(Some(selected));
                     }
-                    if active_list_turn(&handle, count, inset, &selection) != at
-                        || visible_list_turns(&handle, count, inset) != watched
+                    let run = painted_turns(
+                        &painted.borrow(),
+                        handle.state.viewport_bounds(),
+                        inset,
+                    );
+                    painted.borrow_mut().clear();
+                    let moved = *shown.borrow() != run;
+                    if moved {
+                        *shown.borrow_mut() = run;
+                    }
+                    if moved
+                        || handle.state.viewport_bounds().size.height != height
+                        || active_list_turn(&handle, count, inset, &selection) != at
                     {
                         window.refresh();
                     }
@@ -686,7 +750,18 @@ fn rail(chat: &ChatSession, turns: &[Turn], room: Pixels) -> AnyElement {
             )
             .absolute(),
         )
-        .children(turns.iter().enumerate().map(|(ix, turn)| {
+        // The opening is its own element so that a column longer than it is
+        // cut off at the padding rather than painted through it.
+        .child(
+            div()
+                .flex_1()
+                .min_h_0()
+                .flex()
+                .flex_col()
+                .items_center()
+                .justify_center()
+                .overflow_hidden()
+                .child(column.children(turns.iter().enumerate().map(|(ix, turn)| {
             // A turn opens on a question, except the leading chunk of a
             // session — which is whatever arrived before the first one, and has
             // nothing to name itself with.
@@ -730,7 +805,8 @@ fn rail(chat: &ChatSession, turns: &[Turn], room: Pixels) -> AnyElement {
                             MARK_AWAY
                         })),
                 )
-        }))
+                }))),
+        )
         .into_any_element()
 }
 

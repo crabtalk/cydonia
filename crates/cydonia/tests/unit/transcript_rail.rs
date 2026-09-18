@@ -202,3 +202,35 @@ fn only_the_reading_tick_is_brightest_during_hover_and_navigation(cx: &mut gpui:
         assert_eq!(brightest(&painted).len(), 1);
     }
 }
+
+#[test]
+fn the_run_spans_every_row_painted_over_the_viewport() {
+    let row = |top: f32, height: f32| {
+        gpui::Bounds::new(gpui::point(px(0.), px(top)), gpui::size(px(100.), px(height)))
+    };
+    let viewport = row(0., 300.);
+    let inset = px(60.);
+    // Three rows on screen, one scrolled off the top, one under the composer.
+    let painted = HashMap::from([
+        (0, row(-90., 80.)),
+        (1, row(-10., 80.)),
+        (2, row(70., 80.)),
+        (3, row(150., 80.)),
+        (4, row(240., 80.)),
+    ]);
+    assert_eq!(painted_turns(&painted, viewport, inset), 1..4);
+    assert_eq!(painted_turns(&HashMap::new(), viewport, inset), 0..0);
+}
+
+#[test]
+fn a_column_taller_than_the_rail_slides_the_read_mark_into_it() {
+    let step = px(MARK_THICK + 2. * MARK_PAD);
+    let room = step * 10.;
+    // Every mark fits, or the pane has not laid out: the column stays centred.
+    assert_eq!(rail_shift(8, 7, room), px(0.));
+    assert_eq!(rail_shift(20, 10, px(0.)), px(0.));
+    // Taller than the opening: its ends come to rest against the opening's.
+    assert_eq!(rail_shift(20, 0, room), step * 5.);
+    assert_eq!(rail_shift(20, 19, room), step * -5.);
+    assert_eq!(rail_shift(20, 10, room), step * -0.5);
+}
