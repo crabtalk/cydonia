@@ -1,5 +1,27 @@
 [
   {
+    "version": "0.1.9",
+    "date": "2026-09-18",
+    "summary": "Split the window into panes, and a sidebar that stays where you put it.",
+    "new": [
+      "Split the window into panes and drag entries between them",
+      "Group a layout’s entries under it in the sidebar, and let one span projects",
+      "Arrange a project’s entries by hand, dragging a row where it belongs",
+      "Pin an entry to the top of its project from the band’s menu"
+    ],
+    "changed": [
+      "List entries where they were left rather than by what was written to last, so an agent’s writes no longer reshuffle the sidebar",
+      "Raise a new entry to the top of the list until it is arranged, and keep pinned rows above it",
+      "Unpin an entry and take it out of its layout when it is archived",
+      "Give the right-hand panel a share of the window instead of a fixed width, and keep a width you dragged",
+      "Look for a new release every hour rather than every six"
+    ],
+    "fixed": [
+      "Draw each pane from its own state, so moving the focus no longer moves what the other panes are showing",
+      "Cover the column with the right-hand panel in a window too narrow to stand it beside the chat"
+    ]
+  },
+  {
     "version": "0.1.8",
     "date": "2026-09-18",
     "summary": "Quote what an agent said, hear when a turn finishes, and boards that arrange themselves.",
