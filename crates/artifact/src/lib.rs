@@ -1,9 +1,12 @@
-//! The artifacts cydonia keeps: the articles, boards, sessions and tables a
-//! project holds, as shapes rather than as files.
+//! The artifacts cydonia keeps: the articles, boards, layouts, sessions and
+//! tables a project holds, as shapes rather than as files.
 //!
-//! One module per kind, which is the same four the app lets a project show.
+//! One module per kind, which is the same five the app lets a project show.
 //! [`project`] is the odd one out and is meant to be: it is what holds the
-//! other four and hands them over, not a fifth thing beside them.
+//! others and hands them over, not one more beside them.
+//!
+//! A [`layout`] is the one that holds no content of its own: it arranges the
+//! others, naming them by the numbers [`entry`] gives them.
 //!
 //! The filesystem is one backend for these and not the definition of them. A
 //! board is a board whether it was read out of `.cydonia/boards/` or handed
@@ -18,6 +21,7 @@ pub mod article;
 pub mod board;
 pub mod entry;
 pub mod id;
+pub mod layout;
 pub mod project;
 pub mod session;
 pub mod stamp;

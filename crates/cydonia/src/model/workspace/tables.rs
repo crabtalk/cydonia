@@ -231,14 +231,13 @@ impl Workspace {
         Some(())
     }
 
-    /// The open table's rows, as the pane last read them.
     /// The rows on screen. Gated beside [`Self::active_table`]: the table pane
     /// reads the page, not the table, so both have to be shut for it to close.
     pub fn active_page(&self) -> Option<&Page> {
         if !self.settings.features.tables {
             return None;
         }
-        self.active_project()?.page.as_ref()
+        self.active_project()?.open_page()
     }
 
     pub fn active_table(&self) -> Option<&Table> {

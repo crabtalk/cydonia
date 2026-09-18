@@ -262,7 +262,8 @@ fn language_status_reopens_install_prompt_in_file_panel(cx: &mut gpui::TestAppCo
         );
         assert_eq!(install.top(), dismiss.top(), "buttons stay together");
         assert!(dismiss.right() <= install.left(), "Install is rightmost");
-        assert_eq!(actions.right(), px(width - 10.), "actions align right");
+        // The notice pads itself by 8px.
+        assert_eq!(actions.right(), px(width - 8.), "actions align right");
         for button in [install, dismiss] {
             assert!(button.left() >= px(0.) && button.right() <= px(width));
         }

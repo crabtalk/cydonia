@@ -27,7 +27,10 @@ pub(super) struct SavedPanel {
 #[serde(default)]
 struct SavedPanels {
     open: bool,
-    width: f32,
+    /// Absent until the split is dragged: a panel nobody has sized is given a
+    /// share of the window, which is not a number to write down.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    width: Option<f32>,
     projects: BTreeMap<PathBuf, BTreeMap<String, SavedPanel>>,
 }
 
@@ -125,9 +128,9 @@ impl Cydonia {
     pub(crate) fn restore_panel_layout(&mut self) {
         let saved = load();
         self.changes_open = saved.open;
-        if saved.width.is_finite() && saved.width >= 200. {
-            self.changes_width = saved.width;
-        }
+        self.changes_width = saved
+            .width
+            .filter(|width| width.is_finite() && *width >= 200.);
     }
 
     pub(crate) fn save_panel_layout(&mut self, cx: &mut App) {

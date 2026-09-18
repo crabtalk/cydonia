@@ -15,6 +15,9 @@ use std::{collections::BTreeMap, path::PathBuf};
 
 /// The four things a project holds. Which one a launch lands on is the last
 /// one that was open, so the window comes back where it was left.
+///
+/// A layout is not among them: it spans projects and is kept beside this file
+/// rather than in any of them — see [`crate::model::layouts`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Kind {
@@ -48,6 +51,21 @@ pub struct State {
     /// belongs to it.
     #[serde(default)]
     pub last: BTreeMap<PathBuf, Entry>,
+    /// The order a project's entries are listed in, by project path — see
+    /// [`crate::model::workspace`]'s `order`.
+    ///
+    /// An entry the list does not name is one made since it was last written,
+    /// and is listed above everything here. Names that no longer resolve are
+    /// left alone: an entry deleted on another checkout of the same path is
+    /// one a branch may bring back, and a stale name costs a lookup that
+    /// already has to miss.
+    #[serde(default)]
+    pub order: BTreeMap<PathBuf, Vec<Entry>>,
+    /// The entries held at the top of each project's list, by project path.
+    /// A list rather than a flag on [`Entry`]: pins are ordered among
+    /// themselves, and `last` has no use for one.
+    #[serde(default)]
+    pub pinned: BTreeMap<PathBuf, Vec<Entry>>,
 }
 
 /// `~/.config/cydonia/state.toml`, beside the settings it is not.
@@ -77,6 +95,8 @@ pub fn restore() -> State {
         active,
         collapsed: stored.collapsed,
         last: stored.last,
+        order: stored.order,
+        pinned: stored.pinned,
     }
 }
 

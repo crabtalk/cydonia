@@ -4,10 +4,12 @@ use crate::{
     memory,
     model::article,
     view::{
-        root::{Cydonia, NewArticle, Pane},
+        leaf::Pane,
+        root::{Cydonia, NewArticle},
         sidebar::{self, Row},
     },
 };
+use artifact::layout::Member;
 use bezel::ui::scroll as scrollbars;
 use bezel::{
     gpui::{
@@ -173,7 +175,7 @@ impl Cydonia {
         self.commit(cx);
         self.workspace
             .update(cx, |workspace, cx| workspace.open_article(project, ix, cx));
-        self.pane = Pane::Article;
+        self.leaf_mut().pane = Pane::Article;
 
         let (field, editor, unnamed) = {
             let article = self.workspace.read(cx).active_article();
@@ -333,10 +335,13 @@ impl Cydonia {
     /// card, with the composer stack still pinned under it.
     pub(crate) fn article(
         &self,
+        project: usize,
+        at: usize,
+        on: Option<&Member>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        let article = self.workspace.read(cx).active_article()?;
+        let article = self.workspace.read(cx).article_in(project, at)?;
         let field = article.field.clone()?;
         let editor = article.editor.clone()?;
         let cover = article.cover.clone();
@@ -423,7 +428,7 @@ impl Cydonia {
                 )
                 // Last, and floated over the document from where the
                 // selection ends — the bar is chrome the page runs under.
-                .children(self.ribbon(window, cx))
+                .children(self.ribbon(on, window, cx))
                 .into_any_element(),
         )
     }
@@ -575,7 +580,8 @@ impl Cydonia {
     ) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
         let workspace = self.workspace.read(cx);
-        let selected = self.showing(cx) == Some(Pane::Article)
+        let selected = !self.arranged(cx)
+            && self.showing(cx) == Some(Pane::Article)
             && workspace.active == Some(project)
             && workspace
                 .projects
@@ -594,7 +600,7 @@ impl Cydonia {
             id,
             "article-row",
             selected,
-            workspace.indent_project_rows,
+            self.indent_of(entry, cx),
             &theme,
         )
         .child(

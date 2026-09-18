@@ -7,10 +7,12 @@ use crate::{
     data::ColType,
     view::{
         component::menu::{self, Menu},
-        root::{Cydonia, NewTable, Pane},
+        leaf::Pane,
+        root::{Cydonia, NewTable},
         sidebar::{self, Renaming, Row},
     },
 };
+use artifact::layout::Member;
 use bezel::ui::scroll as scrollbars;
 use bezel::{
     gpui::{
@@ -104,7 +106,7 @@ impl Cydonia {
         self.commit(cx);
         self.workspace
             .update(cx, |workspace, cx| workspace.open_table(project, ix, cx));
-        self.pane = Pane::Table;
+        self.leaf_mut().pane = Pane::Table;
         cx.notify();
     }
 
@@ -130,10 +132,11 @@ impl Cydonia {
                 .map(|table| table.name.clone())
                 .unwrap_or_default(),
         };
-        self.cell_field
+        self.leaf()
+            .cell_field
             .update(cx, |field, cx| field.set_content(text, cx));
-        self.cell = Some(at);
-        window.focus(&self.cell_field.read(cx).focus_handle(cx), cx);
+        self.leaf_mut().cell = Some(at);
+        window.focus(&self.leaf().cell_field.read(cx).focus_handle(cx), cx);
         cx.notify();
     }
 
@@ -145,11 +148,13 @@ impl Cydonia {
     /// an empty one is a cancel. A *cell* may be emptied: that is how a value
     /// is cleared.
     pub(crate) fn commit_cell(&mut self, cx: &mut Context<Self>) {
-        let Some(at) = self.cell.take() else {
+        let Some(at) = self.leaf_mut().cell.take() else {
             return;
         };
-        let text = self.cell_field.read(cx).content().trim().to_owned();
-        self.cell_field.update(cx, |field, cx| field.clear(cx));
+        let text = self.leaf().cell_field.read(cx).content().trim().to_owned();
+        self.leaf()
+            .cell_field
+            .update(cx, |field, cx| field.clear(cx));
         self.workspace.update(cx, |workspace, cx| match at {
             Cell::Value { rowid, column } => workspace.write_cell(rowid, column, text, cx),
             Cell::Head(ix) if !text.is_empty() => {
@@ -176,8 +181,10 @@ impl Cydonia {
 
     /// Drop the edit and leave what was there.
     pub(crate) fn dismiss_cell(&mut self, _: &DismissCell, _: &mut Window, cx: &mut Context<Self>) {
-        self.cell = None;
-        self.cell_field.update(cx, |field, cx| field.clear(cx));
+        self.leaf_mut().cell = None;
+        self.leaf()
+            .cell_field
+            .update(cx, |field, cx| field.clear(cx));
         cx.notify();
     }
 
@@ -220,10 +227,16 @@ impl Cydonia {
 
     /// The table. Same frame as [`Cydonia::article`]: the body of the content
     /// card, with the composer stack still pinned under it.
-    pub(crate) fn table(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    pub(crate) fn table(
+        &self,
+        project: usize,
+        at: usize,
+        on: Option<&Member>,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         let theme = Theme::of(cx).clone();
         let (name, columns, rows, total) = {
-            let page = self.workspace.read(cx).active_page()?;
+            let page = self.workspace.read(cx).page_in(project, at)?;
             (
                 page.name.clone(),
                 page.columns.clone(),
@@ -256,10 +269,10 @@ impl Cydonia {
             .flex_row()
             .items_baseline()
             .gap(px(8.))
-            .child(match self.cell == Some(Cell::Name) {
+            .child(match self.leaf_of(on).cell == Some(Cell::Name) {
                 true => div()
                     .w(px(240.))
-                    .child(self.cell_editor(cx))
+                    .child(self.cell_editor(on, cx))
                     .into_any_element(),
                 false => div()
                     .id("table-name")
@@ -287,7 +300,7 @@ impl Cydonia {
         let count = columns.len();
         let mut headings: Vec<AnyElement> = Vec::with_capacity(count + 1);
         for (ix, column) in columns.iter().enumerate() {
-            headings.push(self.heading(ix, column.kind, &declared[ix], cx));
+            headings.push(self.heading(ix, column.kind, &declared[ix], on, cx));
         }
         headings.push(
             table::header_cell(&theme, &declared[count], None)
@@ -309,7 +322,7 @@ impl Cydonia {
         for (n, (rowid, held)) in rows.iter().enumerate() {
             let mut cells: Vec<AnyElement> = Vec::with_capacity(count + 1);
             for ix in 0..count {
-                cells.push(self.value(*rowid, ix, held.get(ix), cx));
+                cells.push(self.value(*rowid, ix, held.get(ix), on, cx));
             }
             cells.push(self.row_actions(*rowid, &theme, cx));
             body =
@@ -372,10 +385,10 @@ impl Cydonia {
     /// gpui holds focus until something takes it, and `TextField` carries no
     /// blur policy of its own — it cannot know whether leaving means commit or
     /// cancel. Here it means commit, the same as `enter`.
-    fn cell_editor(&self, cx: &mut Context<Self>) -> Div {
+    fn cell_editor(&self, on: Option<&Member>, cx: &mut Context<Self>) -> Div {
         div()
             .w_full()
-            .child(self.cell_field.clone())
+            .child(self.leaf_of(on).cell_field.clone())
             .on_mouse_down_out(cx.listener(|this, _, _, cx| this.commit_cell(cx)))
     }
 
@@ -385,17 +398,18 @@ impl Cydonia {
         ix: usize,
         kind: ColType,
         shape: &table::Column,
+        on: Option<&Member>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = Theme::of(cx).clone();
-        if self.cell == Some(Cell::Head(ix)) {
+        if self.leaf_of(on).cell == Some(Cell::Head(ix)) {
             // `header_cell` paints the label itself, so the shape handed to it
             // while editing carries none — otherwise the old name sits beside
             // the field that is rewriting it.
             let mut blank = shape.clone();
             blank.label = SharedString::default();
             return table::header_cell(&theme, &blank, None)
-                .child(self.cell_editor(cx))
+                .child(self.cell_editor(on, cx))
                 .into_any_element();
         }
         table::header_cell(&theme, shape, None)
@@ -455,11 +469,12 @@ impl Cydonia {
         rowid: i64,
         column: usize,
         held: Option<&Value>,
+        on: Option<&Member>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = Theme::of(cx).clone();
-        if self.cell == Some(Cell::Value { rowid, column }) {
-            return self.cell_editor(cx).into_any_element();
+        if self.leaf_of(on).cell == Some(Cell::Value { rowid, column }) {
+            return self.cell_editor(on, cx).into_any_element();
         }
         div()
             .id(SharedString::from(format!("cell-{rowid}-{column}")))
@@ -505,7 +520,8 @@ impl Cydonia {
     ) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
         let workspace = self.workspace.read(cx);
-        let selected = self.showing(cx) == Some(Pane::Table)
+        let selected = !self.arranged(cx)
+            && self.showing(cx) == Some(Pane::Table)
             && workspace.active == Some(project)
             && workspace
                 .projects
@@ -529,7 +545,7 @@ impl Cydonia {
             SharedString::from(format!("table-{project}-{ix}")),
             "table-row",
             selected,
-            workspace.indent_project_rows,
+            self.indent_of(entry, cx),
             &theme,
         )
         .child(

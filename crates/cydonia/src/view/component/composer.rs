@@ -211,6 +211,10 @@ pub struct Composer {
     scroll: ScrollHandle,
     /// Whether a turn is in flight — what the button does when pressed.
     streaming: bool,
+    /// Whether the session tools are on offer. Off beside a layout: all three
+    /// of them open the window's own panels, which a layout divides the room
+    /// for — see [`crate::view::arrangement`].
+    tools: bool,
     activity: Option<Activity>,
     activity_open: bool,
     activity_frame: std::rc::Rc<std::cell::RefCell<bezel::agent::orbs::engine::Frame>>,
@@ -282,6 +286,7 @@ impl Composer {
             commands: Vec::new(),
             scroll: ScrollHandle::new(),
             streaming: false,
+            tools: true,
             activity: None,
             activity_open: false,
             activity_frame: Default::default(),
@@ -371,6 +376,13 @@ impl Composer {
         );
         self.command = None;
         cx.notify();
+    }
+
+    pub fn set_tools(&mut self, tools: bool, cx: &mut Context<Self>) {
+        if self.tools != tools {
+            self.tools = tools;
+            cx.notify();
+        }
     }
 
     pub fn set_streaming(&mut self, streaming: bool, cx: &mut Context<Self>) {
@@ -1209,7 +1221,7 @@ impl Composer {
                             )
                             .children(picker),
                     )
-                    .child(self.tools(&theme, window, cx)),
+                    .children(self.tools.then(|| self.tools(&theme, window, cx))),
             )
             .children(self.lightbox(window, cx))
     }

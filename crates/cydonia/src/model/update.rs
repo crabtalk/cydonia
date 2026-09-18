@@ -4,7 +4,7 @@
 //! Three things are kept apart on purpose.
 //!
 //! * **Looking** is the app's own business and happens quietly — on launch and
-//!   every few hours after, unless `auto_update` says no.
+//!   every hour after, unless `auto_update` says no.
 //! * **Fetching** follows a find, also quietly. A release is ~50MB and the
 //!   machine is idle; nothing is asked of anybody to have it ready.
 //! * **Swapping** is nobody's business but the person using the app. It is one
@@ -76,7 +76,7 @@ const SUPPORTED: bool = cfg!(all(target_os = "macos", target_arch = "aarch64"));
 const FIRST: Duration = Duration::from_secs(30);
 
 /// And the gap between the ones after it.
-const EVERY: Duration = Duration::from_secs(6 * 60 * 60);
+const EVERY: Duration = Duration::from_secs(60 * 60);
 
 /// The feed is a few kilobytes and nothing waits on it, so it gives up early.
 const FEED_TIMEOUT: Duration = Duration::from_secs(10);
@@ -311,7 +311,7 @@ impl Updater {
         }
     }
 
-    /// The loop: a check after launch, then one every few hours until there is
+    /// The loop: a check after launch, then one every hour until there is
     /// a release in hand — or, in a build that can hold none, until the feed
     /// names one. Either way that is the last thing there is to find.
     fn poll(&mut self, cx: &mut Context<Self>) {

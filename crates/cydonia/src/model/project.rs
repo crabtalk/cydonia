@@ -44,9 +44,13 @@ pub struct Project {
     pub tables: Vec<Table>,
     /// Which table the table pane shows.
     pub table: Option<usize>,
-    /// The open table's window of rows, read when it is opened rather than
-    /// while it is drawn — a query per frame is a query too many.
-    pub page: Option<Page>,
+    /// The window of rows each table on screen was last read with, by the
+    /// table's key. Read when a table is opened rather than while it is drawn
+    /// — a query per frame is a query too many.
+    ///
+    /// By key rather than one slot: a layout can stand two tables side by
+    /// side, and one page between them would draw the same rows in both.
+    pub pages: HashMap<String, Page>,
     /// Whether the sidebar shows what is under this project's heading.
     pub expanded: bool,
     /// Whether it shows what is under the archived divider. Folded away by
@@ -71,7 +75,7 @@ impl Project {
             article: None,
             tables: Vec::new(),
             table: None,
-            page: None,
+            pages: HashMap::new(),
             expanded: true,
             archive_open: false,
             watch: None,
@@ -141,8 +145,7 @@ impl Project {
     fn shape(&self) -> (Vec<String>, Vec<String>) {
         let keys = self.tables.iter().map(|table| table.key.clone()).collect();
         let columns = self
-            .page
-            .as_ref()
+            .open_page()
             .map(|page| page.columns.iter().map(|col| col.name.clone()).collect())
             .unwrap_or_default();
         (keys, columns)
@@ -245,15 +248,31 @@ impl Project {
     }
 
     /// Read the open table's rows.
+    /// The page the open table is on.
+    pub fn open_page(&self) -> Option<&Page> {
+        let key = &self.tables.get(self.table?)?.key;
+        self.pages.get(key)
+    }
+
+    /// Read the rows for the open table. Any other page is dropped: a page is
+    /// a window on a table nobody is looking at.
     pub fn reload_page(&mut self) {
-        let key = self
+        let wanted: Vec<String> = self
             .table
             .and_then(|ix| self.tables.get(ix))
-            .map(|table| table.key.clone());
-        self.page = match (key, self.data.as_ref()) {
-            (Some(key), Some(data)) => data.read(&key, None, false, PAGE, 0).ok(),
-            _ => None,
+            .map(|table| table.key.clone())
+            .into_iter()
+            .collect();
+        self.pages.retain(|key, _| wanted.contains(key));
+        let Some(data) = self.data.as_ref() else {
+            self.pages.clear();
+            return;
         };
+        for key in wanted {
+            if let Ok(page) = data.read(&key, None, false, PAGE, 0) {
+                self.pages.insert(key, page);
+            }
+        }
     }
 
     /// Where this project's work is kept. The filesystem, for this app —

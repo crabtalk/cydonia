@@ -231,6 +231,10 @@ impl Workspace {
         id: String,
         cx: &mut Context<Self>,
     ) {
+        // Opening any entry leaves the arrangement. Here rather than in each
+        // `open_*`: this is the one place they all come through, so there is
+        // no way to open an entry and forget to.
+        self.leave_layout();
         let Some(open) = self.projects.get(project) else {
             return;
         };
@@ -271,7 +275,7 @@ impl Workspace {
                     .and_then(|at| project.tables.get(at))
                     .is_some_and(|table| table.archived)
             {
-                project.page = None;
+                project.pages.clear();
             }
         }
     }
@@ -307,6 +311,9 @@ impl Workspace {
             cx.emit(Reloaded);
         }
         self.prune_archived(cx);
+        // An entry deleted from under a layout leaves a member naming a
+        // number nothing answers to.
+        self.prune_layouts(cx);
         cx.notify();
     }
 

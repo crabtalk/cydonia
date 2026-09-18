@@ -45,6 +45,9 @@ use std::{
 // scope — see the note at the head of each.
 mod articles;
 mod boards;
+mod layouts;
+pub use layouts::Showing;
+mod order;
 mod projects;
 mod sessions;
 mod tables;
@@ -112,6 +115,18 @@ pub struct Workspace {
     /// What each project was last showing, by project path — where a launch
     /// puts you back.
     last: BTreeMap<PathBuf, state::Entry>,
+    /// The hand-arranged order of each project's entries, by project path.
+    /// Empty for a project nobody has dragged a row in, which lists by stamp
+    /// until they do — see [`order`].
+    pub(super) order: BTreeMap<PathBuf, Vec<state::Entry>>,
+    /// The entries pinned to the top of each project's list, by project path
+    /// — see [`order`].
+    pub(super) pinned: BTreeMap<PathBuf, Vec<state::Entry>>,
+    /// The arrangements this machine holds, and which one the window is
+    /// showing. The window's rather than a project's: a layout can hold panes
+    /// from several — see [`layouts`].
+    pub layouts: Vec<artifact::layout::Layout>,
+    pub layout: Option<usize>,
 }
 
 impl Workspace {
@@ -159,6 +174,10 @@ impl Workspace {
             next_id: 0,
             agent_icons: HashMap::new(),
             last: state.last,
+            order: state.order,
+            pinned: state.pinned,
+            layouts: crate::model::layouts::all(),
+            layout: None,
         };
         for ix in restore {
             this.restore_sessions(ix);
@@ -199,6 +218,8 @@ impl Workspace {
                 .map(|project| project.path.clone())
                 .collect(),
             last: self.last.clone(),
+            order: self.order.clone(),
+            pinned: self.pinned.clone(),
         });
     }
 

@@ -224,6 +224,7 @@ impl super::Project for Project {
                 .and_then(|registry| registry.remove("board", id));
         }
     }
+
     /// Every session filed in this project, most recently updated first.
     fn sessions(&self) -> Vec<Record> {
         let Ok(entries) = std::fs::read_dir(self.sessions_dir()) else {

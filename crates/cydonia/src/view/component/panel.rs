@@ -8,7 +8,8 @@ use super::{
     files::Files,
     terminal::{DirectoryChanged, Exited, Terminal},
 };
-use crate::view::root::{Cydonia, Pane, ToggleChanges};
+use crate::view::leaf::Pane;
+use crate::view::root::{Cydonia, ToggleChanges};
 use bezel::{
     gpui::{
         self, AnyElement, Axis, Context, DragMoveEvent, Empty, Entity, Focusable, Render,
@@ -593,8 +594,11 @@ impl Render for Panel {
                             .on_click(|_, window, cx| {
                                 window.dispatch_action(Box::new(ToggleChanges), cx)
                             })
+                            // The column it acts on, which is this one: a
+                            // left-panel glyph on the right panel's own hide
+                            // button pointed at the wrong side of the window.
                             .child(
-                                icons::icon(icons::layout::PanelLeftClose)
+                                icons::icon(icons::layout::PanelRight)
                                     .size(px(16.))
                                     .text_color(theme.text_muted),
                             ),
