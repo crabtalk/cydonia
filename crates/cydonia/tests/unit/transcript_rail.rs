@@ -206,7 +206,10 @@ fn only_the_reading_tick_is_brightest_during_hover_and_navigation(cx: &mut gpui:
 #[test]
 fn the_run_spans_every_row_painted_over_the_viewport() {
     let row = |top: f32, height: f32| {
-        gpui::Bounds::new(gpui::point(px(0.), px(top)), gpui::size(px(100.), px(height)))
+        gpui::Bounds::new(
+            gpui::point(px(0.), px(top)),
+            gpui::size(px(100.), px(height)),
+        )
     };
     let viewport = row(0., 300.);
     let inset = px(60.);

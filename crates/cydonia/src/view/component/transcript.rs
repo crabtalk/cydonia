@@ -729,11 +729,8 @@ fn rail(chat: &ChatSession, turns: &[Turn], room: Pixels) -> AnyElement {
                         selected.offset = Some(handle.state.logical_scroll_top());
                         selection.set(Some(selected));
                     }
-                    let run = painted_turns(
-                        &painted.borrow(),
-                        handle.state.viewport_bounds(),
-                        inset,
-                    );
+                    let run =
+                        painted_turns(&painted.borrow(), handle.state.viewport_bounds(), inset);
                     painted.borrow_mut().clear();
                     let moved = *shown.borrow() != run;
                     if moved {
@@ -762,49 +759,47 @@ fn rail(chat: &ChatSession, turns: &[Turn], room: Pixels) -> AnyElement {
                 .justify_center()
                 .overflow_hidden()
                 .child(column.children(turns.iter().enumerate().map(|(ix, turn)| {
-            // A turn opens on a question, except the leading chunk of a
-            // session — which is whatever arrived before the first one, and has
-            // nothing to name itself with.
-            let asked = match chat.items.get(turn.range.start) {
-                Some(ChatItem::User(text)) => Some(SharedString::from(clipped(text, ASKED_MAX))),
-                _ => None,
-            }
-            .filter(|asked| !asked.is_empty());
-            let handle = chat.transcript.list.clone();
-            let selection = chat.transcript.rail_selection.clone();
-            div()
-                .id(("rail-mark", ix))
-                // Padding provides the hitbox and gap; the tone is what the
-                // mark says — see [`MARK_READING`].
-                .p(px(MARK_PAD))
-                .cursor_pointer()
-                .when_some(asked, |mark, asked| {
-                    mark.tooltip(move |window, cx| Tooltip::text(asked.clone(), window, cx))
-                })
-                .on_click(move |_, window, _| {
-                    selection.set(Some(RailSelection {
-                        turn: ix,
-                        offset: None,
-                    }));
-                    handle.scroll_to(ix);
-                    if ix + 1 == count {
-                        handle.state.set_follow_mode(bezel::gpui::FollowMode::Tail);
+                    // A turn opens on a question, except the leading chunk of a
+                    // session — which is whatever arrived before the first one, and has
+                    // nothing to name itself with.
+                    let asked = match chat.items.get(turn.range.start) {
+                        Some(ChatItem::User(text)) => {
+                            Some(SharedString::from(clipped(text, ASKED_MAX)))
+                        }
+                        _ => None,
                     }
-                    window.refresh();
-                })
-                .child(
+                    .filter(|asked| !asked.is_empty());
+                    let handle = chat.transcript.list.clone();
+                    let selection = chat.transcript.rail_selection.clone();
                     div()
-                        .w(px(MARK))
-                        .h(px(MARK_THICK))
-                        .rounded_full()
-                        .bg(ink(if ix == at {
-                            MARK_READING
-                        } else if showing.contains(&ix) {
-                            MARK_VISIBLE
-                        } else {
-                            MARK_AWAY
-                        })),
-                )
+                        .id(("rail-mark", ix))
+                        // Padding provides the hitbox and gap; the tone is what the
+                        // mark says — see [`MARK_READING`].
+                        .p(px(MARK_PAD))
+                        .cursor_pointer()
+                        .when_some(asked, |mark, asked| {
+                            mark.tooltip(move |window, cx| Tooltip::text(asked.clone(), window, cx))
+                        })
+                        .on_click(move |_, window, _| {
+                            selection.set(Some(RailSelection {
+                                turn: ix,
+                                offset: None,
+                            }));
+                            handle.scroll_to(ix);
+                            if ix + 1 == count {
+                                handle.state.set_follow_mode(bezel::gpui::FollowMode::Tail);
+                            }
+                            window.refresh();
+                        })
+                        .child(div().w(px(MARK)).h(px(MARK_THICK)).rounded_full().bg(ink(
+                            if ix == at {
+                                MARK_READING
+                            } else if showing.contains(&ix) {
+                                MARK_VISIBLE
+                            } else {
+                                MARK_AWAY
+                            },
+                        )))
                 }))),
         )
         .into_any_element()
