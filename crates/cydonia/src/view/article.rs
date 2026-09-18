@@ -9,6 +9,7 @@ use crate::{
         sidebar::{self, Row},
     },
 };
+use artifact::layout::Member;
 use bezel::ui::scroll as scrollbars;
 use bezel::{
     gpui::{
@@ -24,7 +25,6 @@ use bezel::{
         widgets::{ButtonStyle, Buttons as _, Status as _},
     },
 };
-use artifact::layout::Member;
 use editor::Mode;
 use std::path::{Path, PathBuf};
 

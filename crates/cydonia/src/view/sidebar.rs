@@ -1624,9 +1624,7 @@ impl Cydonia {
             };
             rows.insert(
                 0,
-                menu::row(pin, move |this, _, cx| {
-                    this.pin_entry(entry, !pinned, cx)
-                }),
+                menu::row(pin, move |this, _, cx| this.pin_entry(entry, !pinned, cx)),
             );
         }
         if named {

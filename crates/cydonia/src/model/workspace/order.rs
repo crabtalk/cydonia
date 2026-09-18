@@ -116,7 +116,12 @@ impl Workspace {
     }
 
     /// Write down which of a project's entries are pinned, and in what order.
-    pub fn set_pinned(&mut self, project: usize, pinned: Vec<state::Entry>, cx: &mut Context<Self>) {
+    pub fn set_pinned(
+        &mut self,
+        project: usize,
+        pinned: Vec<state::Entry>,
+        cx: &mut Context<Self>,
+    ) {
         let Some(open) = self.projects.get(project) else {
             return;
         };
@@ -124,7 +129,6 @@ impl Workspace {
         self.save();
         cx.notify();
     }
-
 }
 
 #[cfg(test)]

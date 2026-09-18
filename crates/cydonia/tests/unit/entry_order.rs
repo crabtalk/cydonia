@@ -18,7 +18,8 @@ struct Scratch(std::path::PathBuf);
 
 impl Scratch {
     fn new(name: &str) -> Self {
-        let root = std::env::temp_dir().join(format!("cydonia-order-{name}-{}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("cydonia-order-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("config")).unwrap();
         unsafe { std::env::set_var("XDG_CONFIG_HOME", root.join("config")) };

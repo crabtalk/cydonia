@@ -139,10 +139,6 @@ impl Project {
         Some(board)
     }
 
-
-
-
-
     fn sessions_dir(&self) -> PathBuf {
         self.cydonia().join(SESSIONS)
     }
@@ -228,9 +224,6 @@ impl super::Project for Project {
                 .and_then(|registry| registry.remove("board", id));
         }
     }
-
-
-
 
     /// Every session filed in this project, most recently updated first.
     fn sessions(&self) -> Vec<Record> {

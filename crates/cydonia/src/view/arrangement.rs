@@ -426,9 +426,7 @@ impl Cydonia {
                     // this name is the only thing carrying it. The sidebar's
                     // pair — see [`crate::view::sidebar::row`].
                     .when(focused, |el| el.bg(theme.element_active))
-                    .when(!focused, |el| {
-                        el.hover(|el| el.bg(theme.element_hover))
-                    })
+                    .when(!focused, |el| el.hover(|el| el.bg(theme.element_hover)))
                     .child(div().flex_none().truncate().child(title))
                     .children(
                         toolbar

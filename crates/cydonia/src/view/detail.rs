@@ -776,9 +776,12 @@ impl Cydonia {
                     // was typed into it are still there when the window is
                     // widened again — and the panel paints its own background,
                     // so nothing reads through.
-                    .children(changes.clone().filter(|_| !beside).map(|panel| {
-                        div().absolute().inset_0().child(panel)
-                    }))
+                    .children(
+                        changes
+                            .clone()
+                            .filter(|_| !beside)
+                            .map(|panel| div().absolute().inset_0().child(panel)),
+                    )
                     // No split to drag when there is nothing beside anything.
                     .when(changes.is_some() && beside, |row| {
                         row.child(

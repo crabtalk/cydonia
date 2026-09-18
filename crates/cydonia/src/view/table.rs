@@ -12,6 +12,7 @@ use crate::{
         sidebar::{self, Renaming, Row},
     },
 };
+use artifact::layout::Member;
 use bezel::ui::scroll as scrollbars;
 use bezel::{
     gpui::{
@@ -27,7 +28,6 @@ use bezel::{
         widgets::Buttons,
     },
 };
-use artifact::layout::Member;
 use serde_json::Value;
 
 actions!(cydonia_table, [CommitCell, DismissCell]);

@@ -21,6 +21,7 @@ use crate::view::{
     component::menu::{self, Menu},
     root::Cydonia,
 };
+use artifact::layout::Member;
 use bezel::{
     gpui::{
         self, Anchor, AnyElement, Bounds, Context, Entity, Focusable as _, KeyBinding, Pixels,
@@ -37,7 +38,6 @@ use bezel::{
         widgets::Buttons as _,
     },
 };
-use artifact::layout::Member;
 use editor::{Editor, Formatting, Mode};
 use markdown::{BlockKind, Mark};
 
@@ -264,7 +264,14 @@ impl Cydonia {
         let Some(linking) = self.leaf_mut().ribbon.linking.take() else {
             return;
         };
-        let url = self.leaf().ribbon.field.read(cx).content().trim().to_string();
+        let url = self
+            .leaf()
+            .ribbon
+            .field
+            .read(cx)
+            .content()
+            .trim()
+            .to_string();
         if let Some(editor) = self.open_editor(cx) {
             editor.update(cx, |editor, cx| {
                 if let Some(old) = linking.replacing {

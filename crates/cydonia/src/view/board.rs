@@ -238,7 +238,6 @@ struct Slot<'a> {
     next: Option<&'a str>,
 }
 
-
 impl Cydonia {
     // ── mutations ────────────────────────────────────────────────
 
@@ -310,7 +309,9 @@ impl Cydonia {
             return;
         };
         let text = self.leaf().card_field.read(cx).content().trim().to_owned();
-        self.leaf().card_field.update(cx, |field, cx| field.clear(cx));
+        self.leaf()
+            .card_field
+            .update(cx, |field, cx| field.clear(cx));
         self.workspace.update(cx, |workspace, cx| {
             let Some(board) = workspace.active_board_mut() else {
                 return;
@@ -348,7 +349,9 @@ impl Cydonia {
         };
         if !alive {
             self.leaf_mut().editing = None;
-            self.leaf().card_field.update(cx, |field, cx| field.clear(cx));
+            self.leaf()
+                .card_field
+                .update(cx, |field, cx| field.clear(cx));
         }
     }
 
@@ -360,7 +363,9 @@ impl Cydonia {
     /// Escape abandons the edit — the one way to leave a card as it was.
     fn dismiss_card(&mut self, _: &DismissCard, _: &mut Window, cx: &mut Context<Self>) {
         self.leaf_mut().editing = None;
-        self.leaf().card_field.update(cx, |field, cx| field.clear(cx));
+        self.leaf()
+            .card_field
+            .update(cx, |field, cx| field.clear(cx));
         cx.notify();
     }
 
