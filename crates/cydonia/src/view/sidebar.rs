@@ -927,7 +927,7 @@ impl Cydonia {
         match row {
             Row::Project(ix) => self.select_project(ix, cx),
             Row::Archive(ix) => self.toggle_archive(ix, cx),
-            Row::Session { id, .. } => self.select_session(id, cx),
+            Row::Session { id, .. } => self.select_session(id, window, cx),
             Row::Board { project, ix } => self.open_board(project, ix, cx),
             Row::Article { project, ix } => self.open_article(project, ix, window, cx),
             Row::Table { project, ix } => self.open_table(project, ix, cx),
@@ -1362,8 +1362,8 @@ impl Cydonia {
         )
         .child(label)
         .child(self.archive_button(("session-archive", id), entry, session.archived, cx))
-        .on_click(cx.listener(move |this, _, _, cx| {
-            this.select_session(id, cx);
+        .on_click(cx.listener(move |this, _, window, cx| {
+            this.select_session(id, window, cx);
         }))
         .into_any_element()
     }

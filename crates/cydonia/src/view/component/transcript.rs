@@ -445,6 +445,7 @@ pub fn render(
                     div()
                         .children(queued(window, cx))
                         .h_auto()
+                        .px(px(24.))
                         .pb(px(PAD) + footer_height),
                 )
                 .into_any_element();

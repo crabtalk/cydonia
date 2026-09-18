@@ -1073,9 +1073,9 @@ impl Cydonia {
                                 match live {
                                     Some(session) => self
                                         .card_action("open", id, icons::social::MessageCircle, cx)
-                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                        .on_click(cx.listener(move |this, _, window, cx| {
                                             cx.stop_propagation();
-                                            this.select_session(session, cx);
+                                            this.select_session(session, window, cx);
                                             this.show_pane(Pane::Chat, cx);
                                         })),
                                     None => self

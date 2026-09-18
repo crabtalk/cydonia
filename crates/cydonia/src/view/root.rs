@@ -793,10 +793,24 @@ impl Cydonia {
             .update(cx, |workspace, cx| workspace.close_project(ix, cx));
     }
 
-    pub(crate) fn select_session(&mut self, id: u64, cx: &mut Context<Self>) {
+    /// Land on a session, caret in its composer.
+    ///
+    /// The composer is drawn only over a chat it can send to, and focus on an
+    /// element no frame draws is focus nowhere — so a session that cannot take
+    /// a message leaves the focus where it was.
+    pub(crate) fn select_session(&mut self, id: u64, window: &mut Window, cx: &mut Context<Self>) {
         self.show_pane(Pane::Chat, cx);
         self.workspace
             .update(cx, |workspace, cx| workspace.select_session(id, cx));
+        self.sync_composer(cx);
+        if self
+            .workspace
+            .read(cx)
+            .session(id)
+            .is_some_and(ChatSession::resumable)
+        {
+            window.focus(&self.composer_focus_handle(cx), cx);
+        }
     }
 
     pub(crate) fn open_settings_action(

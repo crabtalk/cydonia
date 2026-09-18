@@ -84,7 +84,7 @@ pub fn on_response(cx: &mut App) {
             let Some(window) = window.downcast::<Cydonia>() else {
                 continue;
             };
-            let _ = window.update(cx, |root, _, cx| root.select_session(id, cx));
+            let _ = window.update(cx, |root, window, cx| root.select_session(id, window, cx));
         }
     });
 }
