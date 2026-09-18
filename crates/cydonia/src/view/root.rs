@@ -25,6 +25,7 @@ use crate::{
     },
 };
 use anyhow::Result;
+use artifact::layout::Member;
 use bezel::{
     gpui::{
         self, AnyElement, App, Axis, Bounds, Context, DragMoveEvent, Empty, Entity, FocusHandle,
@@ -306,7 +307,7 @@ pub struct Cydonia {
     /// pointer, and which of its edges. Written by whichever pane the pointer
     /// is inside and read by the one that draws the mark, the way a card's
     /// landing is — see [`board::Landing`].
-    pub(crate) pane_landing: Option<(u64, artifact::layout::Side)>,
+    pub(crate) pane_landing: Option<(Member, artifact::layout::Side)>,
     /// The board identity panel, while it is open — see [`header::BoardInfo`].
     pub(crate) info: Option<info::BoardInfo>,
     /// The board that has been asked for and not yet made — see
@@ -355,7 +356,7 @@ impl Cydonia {
     /// a pane that is not the focused one moves the focus there first, so what
     /// was typed is sent to the session it was typed under.
     fn pane_parts(
-        on: Option<u64>,
+        on: Option<Member>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> (Entity<Composer>, Entity<TextField>, Entity<TextField>) {
@@ -364,8 +365,8 @@ impl Cydonia {
             &composer,
             window,
             move |this, _, event: &ComposerEvent, window, cx| {
-                if let Some(on) = on {
-                    this.focus_pane(on, window, cx);
+                if let Some(on) = on.clone() {
+                    this.focus_pane(&on, window, cx);
                 }
                 match event {
                     ComposerEvent::Submit(text, attachments) => {
@@ -387,8 +388,6 @@ impl Cydonia {
                     ComposerEvent::Terminal => this.show_terminal(window, cx),
                     ComposerEvent::Changes => this.show_changes(window, cx),
                     ComposerEvent::Files => this.show_files(window, cx),
-                    ComposerEvent::Agent(ix) => this.pick_agent(*ix, cx),
-                    ComposerEvent::Install => this.open_settings(Section::Agents, cx),
                     ComposerEvent::Switch(id, value) => this.switch(id, value, cx),
                 }
             },
@@ -412,27 +411,31 @@ impl Cydonia {
             self.focused = 0;
             return;
         };
-        let focused = self.leaf().entry;
+        let focused = self.leaf().entry.clone();
         let mut kept: Vec<Leaf> = Vec::with_capacity(members.len());
         for entry in &members {
             match self
                 .leaves
                 .iter()
-                .position(|leaf| leaf.entry == Some(*entry))
+                .position(|leaf| leaf.entry.as_ref() == Some(entry))
             {
                 Some(at) => kept.push(self.leaves.remove(at)),
                 None => {
                     let (composer, card_field, cell_field) =
-                        Self::pane_parts(Some(*entry), window, cx);
+                        Self::pane_parts(Some(entry.clone()), window, cx);
                     let mut leaf = Leaf::new(composer, card_field, cell_field, Ribbon::new(cx));
-                    leaf.entry = Some(*entry);
+                    leaf.entry = Some(entry.clone());
                     kept.push(leaf);
                 }
             }
         }
         self.leaves = kept;
         self.focused = focused
-            .and_then(|on| self.leaves.iter().position(|leaf| leaf.entry == Some(on)))
+            .and_then(|on| {
+                self.leaves
+                    .iter()
+                    .position(|leaf| leaf.entry.as_ref() == Some(&on))
+            })
             .unwrap_or(0);
     }
 
@@ -442,11 +445,16 @@ impl Cydonia {
     /// The selection is what every command without a pane of its own reads —
     /// see [`Workspace::active_board`] and the rest. Syncing it here is what
     /// makes "the pane you are in" the thing they act on.
-    pub(crate) fn focus_pane(&mut self, entry: u64, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn focus_pane(
+        &mut self,
+        entry: &Member,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(at) = self
             .leaves
             .iter()
-            .position(|leaf| leaf.entry == Some(entry))
+            .position(|leaf| leaf.entry.as_ref() == Some(entry))
         else {
             return;
         };
@@ -454,10 +462,7 @@ impl Cydonia {
             return;
         }
         self.focused = at;
-        let Some(project) = self.workspace.read(cx).active else {
-            return;
-        };
-        let Some(showing) = self.workspace.read(cx).showing_of(project, entry) else {
+        let Some((project, showing)) = self.workspace.read(cx).showing_of(entry) else {
             return;
         };
         self.leaf_mut().pane = match showing {
@@ -745,8 +750,8 @@ impl Cydonia {
     /// project with a board open from earlier in the session lands on the
     /// board however recently the article beside it was read.
     fn land(&mut self, cx: &mut Context<Self>) {
-        if let Some(pane) = self.workspace.read(cx).landing().and_then(Pane::of) {
-            self.leaf_mut().pane = pane;
+        if let Some(kind) = self.workspace.read(cx).landing() {
+            self.leaf_mut().pane = Pane::of(kind);
         }
     }
 
@@ -925,12 +930,16 @@ impl Render for Cydonia {
             .when(!arranged, |root| {
                 root.on_action(cx.listener(Self::toggle_changes))
                     .on_action(cx.listener(Self::open_session_file))
-                    .on_action(cx.listener(|this, _: &OpenReview, window, cx| {
-                        this.show_changes(window, cx)
-                    }))
-                    .on_action(cx.listener(|this, _: &OpenFiles, window, cx| {
-                        this.toggle_files(window, cx)
-                    }))
+                    .on_action(
+                        cx.listener(|this, _: &OpenReview, window, cx| {
+                            this.show_changes(window, cx)
+                        }),
+                    )
+                    .on_action(
+                        cx.listener(|this, _: &OpenFiles, window, cx| {
+                            this.toggle_files(window, cx)
+                        }),
+                    )
             })
             .on_action(cx.listener(Self::copy_selection))
             .on_action(cx.listener(Self::commit_cell_action))

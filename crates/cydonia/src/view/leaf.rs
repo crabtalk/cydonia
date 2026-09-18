@@ -37,28 +37,25 @@ impl Pane {
     /// The pane a remembered entry is read in — see
     /// [`crate::model::workspace::Workspace::landing`].
     ///
-    /// Nothing for a layout: a layout is not shown *in* a pane, it is what
-    /// decides how many panes there are and what each of them shows.
-    pub(crate) fn of(kind: state::Kind) -> Option<Self> {
+    pub(crate) fn of(kind: state::Kind) -> Self {
         match kind {
-            state::Kind::Session => Some(Self::Chat),
-            state::Kind::Board => Some(Self::Board),
-            state::Kind::Article => Some(Self::Article),
-            state::Kind::Table => Some(Self::Table),
-            state::Kind::Layout => None,
+            state::Kind::Session => Self::Chat,
+            state::Kind::Board => Self::Board,
+            state::Kind::Article => Self::Article,
+            state::Kind::Table => Self::Table,
         }
     }
 }
 
 /// What one pane shows and holds while it shows it.
 pub struct Leaf {
-    /// The entry this pane is on, by the number the project gives it — the
-    /// same number a layout names its members by, which is what ties a pane to
-    /// a member of the arrangement.
+    /// The entry this pane is on, named the way a layout names its members —
+    /// which project it is in and which of that project's things it is. That
+    /// is what ties a pane to a member of the arrangement.
     ///
     /// Nothing for the pane a window with no layout open shows: it is on
     /// whatever the project was last left on, and the project holds that.
-    pub(crate) entry: Option<u64>,
+    pub(crate) entry: Option<artifact::layout::Member>,
     pub(crate) pane: Pane,
     pub(crate) composer: Entity<Composer>,
     pub(crate) queued_galleries: std::collections::HashMap<

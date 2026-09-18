@@ -594,8 +594,11 @@ impl Render for Panel {
                             .on_click(|_, window, cx| {
                                 window.dispatch_action(Box::new(ToggleChanges), cx)
                             })
+                            // The column it acts on, which is this one: a
+                            // left-panel glyph on the right panel's own hide
+                            // button pointed at the wrong side of the window.
                             .child(
-                                icons::icon(icons::layout::PanelLeftClose)
+                                icons::icon(icons::layout::PanelRight)
                                     .size(px(16.))
                                     .text_color(theme.text_muted),
                             ),

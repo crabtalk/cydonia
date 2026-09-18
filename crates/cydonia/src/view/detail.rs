@@ -12,7 +12,7 @@ use crate::{
         settings::Section,
     },
 };
-use artifact::session::chat::PlanStatus;
+use artifact::{layout::Member, session::chat::PlanStatus};
 use bezel::{
     gpui::{
         AnyElement, App, Axis, Context, DragMoveEvent, Empty, FocusHandle, Focusable as _,
@@ -430,7 +430,8 @@ impl Cydonia {
         let Some(text) = text else {
             return;
         };
-        self.composer
+        self.leaf()
+            .composer
             .update(cx, |composer, cx| composer.quote(text, cx));
         self.workspace
             .update(cx, |workspace, cx| workspace.clear_selection(cx));
@@ -472,14 +473,13 @@ impl Cydonia {
             .collect();
         // The session each pane is on: its own where a layout put it there,
         // and whatever the project is on for the single pane.
-        let project = workspace.active;
         let on: Vec<Option<u64>> = self
             .leaves
             .iter()
-            .map(|leaf| match leaf.entry {
-                Some(entry) => project
-                    .and_then(|project| workspace.showing_of(project, entry))
-                    .and_then(|showing| match showing {
+            .map(|leaf| match &leaf.entry {
+                Some(entry) => workspace
+                    .showing_of(entry)
+                    .and_then(|(_, showing)| match showing {
                         Showing::Session(id) => Some(id),
                         _ => None,
                     }),
@@ -551,13 +551,13 @@ impl Cydonia {
                 Some(Pane::Chat) => {
                     self.conversation(self.workspace.read(cx).active_id(), None, window, cx)
                 }
-                Some(Pane::Board) => match self
-                    .workspace
-                    .read(cx)
-                    .active_project()
-                    .and_then(|open| open.board)
-                {
-                    Some(at) => self.board(at, window, cx),
+                Some(Pane::Board) => match self.workspace.read(cx).active.zip(
+                    self.workspace
+                        .read(cx)
+                        .active_project()
+                        .and_then(|open| open.board),
+                ) {
+                    Some((project, at)) => self.board(project, at, window, cx),
                     None => self.launch(cx),
                 },
                 // An entry can be named and not yet loaded — an article holds
@@ -566,16 +566,26 @@ impl Cydonia {
                 Some(Pane::Article) => self
                     .workspace
                     .read(cx)
-                    .active_project()
-                    .and_then(|open| open.article)
-                    .and_then(|at| self.article(at, window, cx))
+                    .active
+                    .zip(
+                        self.workspace
+                            .read(cx)
+                            .active_project()
+                            .and_then(|open| open.article),
+                    )
+                    .and_then(|(project, at)| self.article(project, at, window, cx))
                     .unwrap_or_else(|| self.launch(cx)),
                 Some(Pane::Table) => self
                     .workspace
                     .read(cx)
-                    .active_project()
-                    .and_then(|open| open.table)
-                    .and_then(|at| self.table(at, cx))
+                    .active
+                    .zip(
+                        self.workspace
+                            .read(cx)
+                            .active_project()
+                            .and_then(|open| open.table),
+                    )
+                    .and_then(|(project, at)| self.table(project, at, cx))
                     .unwrap_or_else(|| self.launch(cx)),
             },
         };
@@ -943,13 +953,13 @@ impl Cydonia {
     pub(crate) fn conversation(
         &self,
         on: Option<u64>,
-        entry: Option<u64>,
+        entry: Option<&Member>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let workspace = self.workspace.read(cx);
-        let Some(chat) = on.and_then(|on| workspace.session_by_id(on)) else {
+        let Some(chat) = on.and_then(|on| workspace.session(on)) else {
             // No session, and the pane showing regardless: one was asked for
             // with no agent to open it on — see [`Cydonia::asked_session`].
             return match self.leaf().asked_session {

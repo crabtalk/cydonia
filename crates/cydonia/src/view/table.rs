@@ -226,10 +226,15 @@ impl Cydonia {
 
     /// The table. Same frame as [`Cydonia::article`]: the body of the content
     /// card, with the composer stack still pinned under it.
-    pub(crate) fn table(&self, at: usize, cx: &mut Context<Self>) -> Option<AnyElement> {
+    pub(crate) fn table(
+        &self,
+        project: usize,
+        at: usize,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         let theme = Theme::of(cx).clone();
         let (name, columns, rows, total) = {
-            let page = self.workspace.read(cx).page_at_ix(at)?;
+            let page = self.workspace.read(cx).page_in(project, at)?;
             (
                 page.name.clone(),
                 page.columns.clone(),

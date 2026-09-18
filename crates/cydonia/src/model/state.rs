@@ -13,11 +13,11 @@ use crate::model::settings;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::PathBuf};
 
-/// The things a project holds. Which one a launch lands on is the last one
-/// that was open, so the window comes back where it was left.
+/// The four things a project holds. Which one a launch lands on is the last
+/// one that was open, so the window comes back where it was left.
 ///
-/// A layout is one of them: it is what the window shows, and what it shows is
-/// several of the others at once.
+/// A layout is not among them: it spans projects and is kept beside this file
+/// rather than in any of them — see [`crate::model::layouts`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Kind {
@@ -25,7 +25,6 @@ pub enum Kind {
     Board,
     Article,
     Table,
-    Layout,
 }
 
 /// One remembered entry: which kind, and which of them.

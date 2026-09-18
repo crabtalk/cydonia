@@ -1,16 +1,21 @@
-//! The layouts a project holds: which entries are on screen together, and how
-//! they are arranged.
+//! The layouts this machine holds: which entries are on screen together, and
+//! how they are arranged.
 //!
 //! A continuation of [`Workspace`]'s one `impl`, the way [`super::boards`] is.
 //!
-//! A layout is made by dragging a second entry onto the one already open, so
-//! there is no `new_layout` a menu calls — see [`Workspace::arrange`].
+//! A layout is not a project's. It names entries by the project they are in
+//! and the id they have there, so one arrangement can hold a session from one
+//! repository beside a board from another — which is why the window owns them
+//! and why they are kept beside the config rather than in any `.cydonia/`. See
+//! [`crate::model::layouts`] for where they are written.
+//!
+//! There is no `new_layout` a menu calls: a layout is made by dragging a
+//! second entry onto the one already open — see [`Workspace::arrange`].
 use super::*;
-use artifact::layout::{Layout, Side};
-use std::collections::HashSet;
+use crate::model::layouts as store;
+use artifact::layout::{Kind as MemberKind, Layout, Member, Side};
 
-/// What a pane shows, resolved from the [`crate::model::state::Kind`]-less
-/// number a layout holds.
+/// What a pane shows, resolved from the member a layout names.
 ///
 /// An index into the project's own list, not a borrow: the caller needs the
 /// workspace back to draw with. Resolved fresh for each frame rather than kept
@@ -30,29 +35,46 @@ pub enum Showing {
 impl Workspace {
     /// The layout the window is arranged by, if one is open.
     pub fn active_layout(&self) -> Option<&Layout> {
-        let project = self.active_project()?;
-        project.layouts.get(project.layout?)
+        self.layouts.get(self.layout?)
     }
 
     pub fn active_layout_mut(&mut self) -> Option<&mut Layout> {
-        let project = self.projects.get_mut(self.active?)?;
-        project.layouts.get_mut(project.layout?)
+        self.layouts.get_mut(self.layout?)
     }
 
-    /// Every project's layouts are on show, so picking one brings its project
-    /// forward with it.
-    pub fn open_layout(&mut self, project: usize, ix: usize, cx: &mut Context<Self>) {
-        let Some(open) = self.projects.get_mut(project) else {
+    /// Read every layout back off disk. Called at launch, since nothing else
+    /// writes them.
+    pub fn reload_layouts(&mut self, cx: &mut Context<Self>) {
+        let open = self.active_layout().map(|layout| layout.id.clone());
+        self.layouts = store::all();
+        self.layout = open.and_then(|id| self.layouts.iter().position(|at| at.id == id));
+        cx.notify();
+    }
+
+    /// Show a layout. The projects its panes are in are opened if they are not
+    /// already — an arrangement is a working context, and half of one is not
+    /// what was asked for.
+    pub fn open_layout(&mut self, ix: usize, cx: &mut Context<Self>) {
+        let Some(layout) = self.layouts.get(ix) else {
             return;
         };
-        if ix >= open.layouts.len() {
-            return;
+        let wanted: Vec<PathBuf> = layout
+            .entries()
+            .into_iter()
+            .map(|member| member.project)
+            .filter(|path| !self.projects.iter().any(|open| open.path == *path))
+            .filter(|path| path.is_dir())
+            .collect();
+        for path in wanted {
+            self.open_project(path, cx);
         }
-        open.layout = Some(ix);
-        let id = open.layouts[ix].id.clone();
-        self.active = Some(project);
-        self.remember(project, state::Kind::Layout, id, cx);
+        self.layout = Some(ix);
         cx.notify();
+    }
+
+    /// Leave the arrangement, which is what opening any single entry does.
+    pub fn leave_layout(&mut self) {
+        self.layout = None;
     }
 
     /// Put `arriving` beside `target`, making the layout that holds them if
@@ -60,57 +82,70 @@ impl Workspace {
     ///
     /// This is the whole of how a layout is born: the first drag onto a pane
     /// mints one over the entry already there, and every drag after it lands
-    /// in the same layout. Answers the index of the layout now open.
+    /// in the same layout.
     pub fn arrange(
         &mut self,
-        project: usize,
-        target: u64,
-        arriving: u64,
+        target: &Member,
+        arriving: &Member,
         side: Side,
         cx: &mut Context<Self>,
     ) -> Option<usize> {
-        let open = self.projects.get_mut(project)?;
-        let at = match open.layout {
-            // Already arranging: the drag lands in the layout on screen.
-            Some(at) if at < open.layouts.len() => at,
+        let at = match self.layout {
+            Some(at) if at < self.layouts.len() => at,
             // The first drag. The layout starts as the pane that was there,
             // which is what the arrival is being put beside.
             _ => {
-                let taken: HashSet<String> = open
-                    .layouts
-                    .iter()
-                    .map(|layout| layout.name.clone())
-                    .collect();
-                let name = artifact::layout::next_name(&taken);
-                let layout = open.store().create_layout(&name, target)?;
-                open.layouts.insert(0, layout);
+                let layout = store::create("", target.clone())?;
+                self.layouts.insert(0, layout);
                 0
             }
         };
         // An entry is in one layout at a time, the way a pane is in one tmux
         // window. Dragging it into another moves it: the sidebar lists it
         // under the layout that has it, and it can only be under one.
-        let store = open.store();
-        for (ix, other) in open.layouts.iter_mut().enumerate() {
+        for (ix, other) in self.layouts.iter_mut().enumerate() {
             if ix != at && other.remove(arriving) {
-                store.save_layout(other);
+                store::save(other);
             }
         }
-        let layout = open.layouts.get_mut(at)?;
+        let layout = self.layouts.get_mut(at)?;
         if !layout.insert(target, arriving, side) {
             return None;
         }
-        store.save_layout(layout);
-        let id = layout.id.clone();
-        open.layout = Some(at);
-        self.active = Some(project);
-        self.remember(project, state::Kind::Layout, id, cx);
+        store::save(layout);
+        self.layout = Some(at);
         cx.notify();
         Some(at)
     }
 
+    /// The pane across the seam on this side of the one given, if there is one
+    /// — what says whether a move that way is on offer at all.
+    pub fn neighbour_pane(&self, entry: &Member, side: Side) -> Option<Member> {
+        self.active_layout()?.tree.neighbour(entry, side)
+    }
+
+    /// Exchange a pane with the one across the seam on that side. The
+    /// arrangement keeps its shape and its sizes.
+    pub fn move_pane(&mut self, entry: &Member, side: Side, cx: &mut Context<Self>) -> bool {
+        let Some(across) = self.neighbour_pane(entry, side) else {
+            return false;
+        };
+        let mut moved = false;
+        self.edit_layout(cx, |layout| {
+            moved = layout.tree.swap(entry, &across);
+            moved
+        });
+        moved
+    }
+
     /// Move a pane already on screen to another pane's edge.
-    pub fn relocate_pane(&mut self, entry: u64, target: u64, side: Side, cx: &mut Context<Self>) {
+    pub fn relocate_pane(
+        &mut self,
+        entry: &Member,
+        target: &Member,
+        side: Side,
+        cx: &mut Context<Self>,
+    ) {
         self.edit_layout(cx, |layout| layout.relocate(entry, target, side));
     }
 
@@ -118,51 +153,22 @@ impl Workspace {
     ///
     /// Closing the last one closes the layout: an arrangement of one pane is
     /// not an arrangement, and leaving the file behind would put a row in the
-    /// sidebar for something the window is no longer doing. What that pane was
-    /// on is left open on its own.
-    pub fn close_pane(&mut self, entry: u64, cx: &mut Context<Self>) {
-        let Some(project) = self.active else {
-            return;
-        };
+    /// sidebar for something the window is no longer doing.
+    pub fn close_pane(&mut self, entry: &Member, cx: &mut Context<Self>) {
         let last = self
             .active_layout()
             .is_some_and(|layout| layout.leaves() <= 1);
         if last {
-            let at = self.projects.get(project).and_then(|open| open.layout);
-            if let Some(at) = at {
-                self.delete_layout(project, at, cx);
-            }
-            // The pane that was there stays open, now as the whole window.
-            if let Some(showing) = self.showing_of(project, entry) {
-                self.select_showing(project, showing, cx);
+            if let Some(at) = self.layout {
+                self.delete_layout(at, cx);
             }
             return;
         }
         self.edit_layout(cx, |layout| layout.remove(entry));
     }
 
-    /// The pane across the seam on this side of the one in front, if there is
-    /// one — what says whether a move that way is on offer at all.
-    pub fn neighbour_pane(&self, entry: u64, side: Side) -> Option<u64> {
-        self.active_layout()?.tree.neighbour(entry, side)
-    }
-
-    /// Exchange a pane with the one across the seam on that side. The
-    /// arrangement keeps its shape and its sizes — see [`Node::swap`].
-    pub fn move_pane(&mut self, entry: u64, side: Side, cx: &mut Context<Self>) -> bool {
-        let Some(across) = self.neighbour_pane(entry, side) else {
-            return false;
-        };
-        let mut moved = false;
-        self.edit_layout(cx, |layout| {
-            moved = layout.tree.swap(entry, across);
-            moved
-        });
-        moved
-    }
-
     /// Stand one pane over the others, or put it back.
-    pub fn zoom_pane(&mut self, entry: u64, cx: &mut Context<Self>) {
+    pub fn zoom_pane(&mut self, entry: &Member, cx: &mut Context<Self>) {
         self.edit_layout(cx, |layout| {
             layout.zoom(entry);
             true
@@ -171,17 +177,12 @@ impl Workspace {
 
     /// Drop the layout: the file goes with it. The entries it arranged are
     /// left alone — a layout holds none of them.
-    pub fn delete_layout(&mut self, project: usize, ix: usize, cx: &mut Context<Self>) {
-        let Some(project) = self.projects.get_mut(project) else {
-            return;
-        };
-        if ix >= project.layouts.len() {
+    pub fn delete_layout(&mut self, ix: usize, cx: &mut Context<Self>) {
+        if ix >= self.layouts.len() {
             return;
         }
-        project
-            .store()
-            .remove_layout(&project.layouts.remove(ix).id);
-        project.layout = project
+        store::remove(&self.layouts.remove(ix).id);
+        self.layout = self
             .layout
             .filter(|open| *open != ix)
             .map(|open| if open > ix { open - 1 } else { open });
@@ -189,148 +190,179 @@ impl Workspace {
     }
 
     /// Put the arrangement away, or bring it back. The members go with it —
-    /// see [`Cydonia::archive_entry`], which walks them.
-    pub fn archive_layout(
-        &mut self,
-        project: usize,
-        ix: usize,
-        archived: bool,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(open) = self.projects.get_mut(project) else {
-            return;
-        };
-        let store = open.store();
-        let Some(layout) = open.layouts.get_mut(ix) else {
+    /// see `Cydonia::archive_entry`, which walks them.
+    pub fn archive_layout(&mut self, ix: usize, archived: bool, cx: &mut Context<Self>) {
+        let Some(layout) = self.layouts.get_mut(ix) else {
             return;
         };
         layout.archived = archived;
-        store.save_layout(layout);
+        store::save(layout);
         // An arrangement put away is not the one the window is showing.
-        if archived && open.layout == Some(ix) {
-            open.layout = None;
+        if archived && self.layout == Some(ix) {
+            self.layout = None;
         }
         cx.notify();
     }
 
     pub fn rename_layout(&mut self, id: &str, name: String, cx: &mut Context<Self>) {
-        for open in &mut self.projects {
-            let store = open.store();
-            if let Some(layout) = open.layouts.iter_mut().find(|layout| layout.id == id) {
-                layout.name = name.trim().to_owned();
-                store.save_layout(layout);
-                cx.notify();
-                return;
-            }
+        if let Some(layout) = self.layouts.iter_mut().find(|layout| layout.id == id) {
+            layout.name = name.trim().to_owned();
+            store::save(layout);
+            cx.notify();
         }
     }
 
-    /// Drop members whose entries have gone. A layout names entries by number
-    /// and holds none of them, so a session deleted from the sidebar leaves a
-    /// pane pointing at nothing until this runs.
+    /// The layout a given entry is a member of, if any — what the sidebar
+    /// lists it under. One put away holds nothing: its members are listed
+    /// where they would be without it.
+    pub fn layout_holding(&self, member: &Member) -> Option<usize> {
+        self.layouts
+            .iter()
+            .position(|layout| !layout.archived && layout.contains(member))
+    }
+
+    /// Drop members whose entries have gone. A layout names entries and holds
+    /// none of them, so one deleted from the sidebar leaves a pane pointing at
+    /// nothing until this runs.
+    ///
+    /// Only for projects that are open: a member in a project this window has
+    /// never opened is not missing, only out of reach.
     pub fn prune_layouts(&mut self, cx: &mut Context<Self>) {
-        for open in &mut self.projects {
-            let live: HashSet<u64> = artifact::entry::list(&open.path)
-                .unwrap_or_default()
-                .into_iter()
-                .map(|entry| entry.number)
-                .collect();
-            let store = open.store();
-            for layout in &mut open.layouts {
-                let gone: HashSet<u64> = layout
-                    .entries()
-                    .into_iter()
-                    .filter(|entry| !live.contains(entry))
-                    .collect();
-                if !gone.is_empty() && layout.prune(&gone) {
-                    store.save_layout(layout);
+        let mut live: Vec<Member> = Vec::new();
+        for open in &self.projects {
+            let path = open.path.clone();
+            for chat in &open.sessions {
+                if let Some(record) = chat.record.clone() {
+                    live.push(Member::new(path.clone(), MemberKind::Session, record));
                 }
+            }
+            for board in &open.boards {
+                live.push(Member::new(
+                    path.clone(),
+                    MemberKind::Board,
+                    board.id.clone(),
+                ));
+            }
+            for article in &open.articles {
+                live.push(Member::new(
+                    path.clone(),
+                    MemberKind::Article,
+                    article.path.to_string_lossy().into_owned(),
+                ));
+            }
+            for table in &open.tables {
+                live.push(Member::new(
+                    path.clone(),
+                    MemberKind::Table,
+                    table.key.clone(),
+                ));
+            }
+        }
+        let open: Vec<PathBuf> = self.projects.iter().map(|open| open.path.clone()).collect();
+        for layout in &mut self.layouts {
+            let gone: Vec<Member> = layout
+                .entries()
+                .into_iter()
+                .filter(|member| open.contains(&member.project) && !live.contains(member))
+                .collect();
+            if !gone.is_empty() && layout.prune(&gone) {
+                store::save(layout);
             }
         }
         cx.notify();
     }
 
-    /// What the entry with this number is, and where in the project to find
-    /// it. Nothing for a number nothing answers to — an entry deleted since
-    /// the layout named it, which draws as an empty pane rather than a panic.
-    ///
-    /// A scan of what is already loaded rather than a read of `entries.db`:
-    /// every entry carries the number it was given, and this is asked once per
-    /// pane per frame.
-    pub fn showing_of(&self, project: usize, number: u64) -> Option<Showing> {
-        let open = self.projects.get(project)?;
-        if let Some(chat) = open
-            .sessions
+    /// What the member names, and which open project it is in. Nothing for one
+    /// whose project is shut, or which has gone since the layout named it —
+    /// that draws as an empty pane rather than a panic.
+    pub fn showing_of(&self, member: &Member) -> Option<(usize, Showing)> {
+        let at = self
+            .projects
             .iter()
-            .find(|chat| chat.number == Some(number))
-        {
-            return Some(Showing::Session(chat.id));
-        }
-        if let Some(ix) = open
-            .boards
-            .iter()
-            .position(|board| board.number == Some(number))
-        {
-            return Some(Showing::Board(ix));
-        }
-        if let Some(ix) = open
-            .articles
-            .iter()
-            .position(|article| article.number == Some(number))
-        {
-            return Some(Showing::Article(ix));
-        }
-        open.tables
-            .iter()
-            .position(|table| table.number == Some(number))
-            .map(Showing::Table)
+            .position(|open| open.path == member.project)?;
+        let open = self.projects.get(at)?;
+        let showing = match member.kind {
+            MemberKind::Session => open
+                .sessions
+                .iter()
+                .find(|chat| chat.record.as_deref() == Some(member.id.as_str()))
+                .map(|chat| Showing::Session(chat.id))?,
+            MemberKind::Board => open
+                .boards
+                .iter()
+                .position(|board| board.id == member.id)
+                .map(Showing::Board)?,
+            MemberKind::Article => open
+                .articles
+                .iter()
+                .position(|article| article.path.to_string_lossy() == member.id)
+                .map(Showing::Article)?,
+            MemberKind::Table => open
+                .tables
+                .iter()
+                .position(|table| table.key == member.id)
+                .map(Showing::Table)?,
+        };
+        Some((at, showing))
     }
 
-    /// The board a pane is on, by its place in the project's list. What
-    /// [`Self::active_board`] answers for the focused pane, asked for a pane
-    /// that is not the focused one.
-    pub fn board_at_ix(&self, ix: usize) -> Option<&Board> {
+    /// The member that names what a pane is on, so an entry opened from the
+    /// sidebar can be put into a layout.
+    ///
+    /// Nothing for a session with no file yet: a layout names entries on disk,
+    /// and one that has had no turn is not there to be named.
+    pub fn member_of(&self, project: usize, showing: Showing) -> Option<Member> {
+        let open = self.projects.get(project)?;
+        let path = open.path.clone();
+        Some(match showing {
+            Showing::Session(id) => {
+                Member::new(path, MemberKind::Session, open.session(id)?.record.clone()?)
+            }
+            Showing::Board(ix) => {
+                Member::new(path, MemberKind::Board, open.boards.get(ix)?.id.clone())
+            }
+            Showing::Article(ix) => Member::new(
+                path,
+                MemberKind::Article,
+                open.articles.get(ix)?.path.to_string_lossy().into_owned(),
+            ),
+            Showing::Table(ix) => {
+                Member::new(path, MemberKind::Table, open.tables.get(ix)?.key.clone())
+            }
+        })
+    }
+
+    /// The board a pane is on, by its place in its project. Named apart from
+    /// [`Self::board_at`], which finds one by file wherever it is open.
+    pub fn board_in(&self, project: usize, ix: usize) -> Option<&Board> {
         if !self.settings.features.boards {
             return None;
         }
-        self.active_project()?.boards.get(ix)
+        self.projects.get(project)?.boards.get(ix)
     }
 
-    pub fn article_at_ix(&self, ix: usize) -> Option<&Article> {
-        self.active_project()?.articles.get(ix)
+    pub fn article_in(&self, project: usize, ix: usize) -> Option<&Article> {
+        self.projects.get(project)?.articles.get(ix)
     }
 
-    pub fn table_at_ix(&self, ix: usize) -> Option<&Table> {
+    pub fn table_in(&self, project: usize, ix: usize) -> Option<&Table> {
         if !self.settings.features.tables {
             return None;
         }
-        self.active_project()?.tables.get(ix)
+        self.projects.get(project)?.tables.get(ix)
     }
 
-    /// The rows a table pane is on, by the table's place in the project.
-    pub fn page_at_ix(&self, ix: usize) -> Option<&Page> {
+    /// The rows a table pane is on.
+    pub fn page_in(&self, project: usize, ix: usize) -> Option<&Page> {
         if !self.settings.features.tables {
             return None;
         }
-        let open = self.active_project()?;
+        let open = self.projects.get(project)?;
         open.pages.get(&open.tables.get(ix)?.key)
     }
 
-    pub fn session_by_id(&self, id: u64) -> Option<&ChatSession> {
-        self.active_project()?
-            .sessions
-            .iter()
-            .find(|chat| chat.id == id)
-    }
-
-    /// The layout a given entry is a member of, if any — what the sidebar
-    /// lists it under.
-    pub fn layout_holding(&self, project: usize, number: u64) -> Option<usize> {
-        self.projects
-            .get(project)?
-            .layouts
-            .iter()
-            .position(|layout| layout.contains(number))
+    pub fn session_in(&self, project: usize, id: u64) -> Option<&ChatSession> {
+        self.projects.get(project)?.session(id)
     }
 
     /// Put the project's selection on what a pane is showing.
@@ -358,33 +390,13 @@ impl Workspace {
         cx.notify();
     }
 
-    /// The number the entry a pane is on carries, so a pane opened from the
-    /// sidebar can be put into a layout.
-    pub fn number_of(&self, project: usize, showing: Showing) -> Option<u64> {
-        let open = self.projects.get(project)?;
-        match showing {
-            Showing::Session(id) => open
-                .sessions
-                .iter()
-                .find(|chat| chat.id == id)
-                .and_then(|chat| chat.number),
-            Showing::Board(ix) => open.boards.get(ix).and_then(|board| board.number),
-            Showing::Article(ix) => open.articles.get(ix).and_then(|article| article.number),
-            Showing::Table(ix) => open.tables.get(ix).and_then(|table| table.number),
-        }
-    }
-
     /// Change the open layout and write it back, if the change took.
     fn edit_layout(&mut self, cx: &mut Context<Self>, edit: impl FnOnce(&mut Layout) -> bool) {
-        let Some(open) = self.active.and_then(|ix| self.projects.get_mut(ix)) else {
-            return;
-        };
-        let store = open.store();
-        let Some(layout) = open.layout.and_then(|ix| open.layouts.get_mut(ix)) else {
+        let Some(layout) = self.layout.and_then(|ix| self.layouts.get_mut(ix)) else {
             return;
         };
         if edit(layout) {
-            store.save_layout(layout);
+            store::save(layout);
             cx.notify();
         }
     }

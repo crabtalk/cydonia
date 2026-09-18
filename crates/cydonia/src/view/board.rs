@@ -219,6 +219,7 @@ impl Render for HeldCard {
 /// One value rather than five arguments — what the lane knows about a card's
 /// place travels together.
 struct Slot<'a> {
+    project: usize,
     board: usize,
     id: &'a str,
     column: &'a str,
@@ -526,8 +527,14 @@ impl Cydonia {
 
     /// The lanes. A board opens with none, so the lane that makes one is
     /// always drawn — on an empty board it is the whole pane.
-    pub fn board(&self, board_at: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let Some(board) = self.workspace.read(cx).board_at_ix(board_at) else {
+    pub fn board(
+        &self,
+        project: usize,
+        board_at: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let Some(board) = self.workspace.read(cx).board_in(project, board_at) else {
             return div().flex_1().into_any_element();
         };
         // Read out before drawing: each column borrows the board again.
@@ -540,7 +547,7 @@ impl Cydonia {
         let columns: Vec<AnyElement> = ids
             .iter()
             .enumerate()
-            .map(|(at, id)| self.column(board_at, id, at, lanes, window, cx))
+            .map(|(at, id)| self.column((project, board_at), id, at, lanes, window, cx))
             .collect();
         div()
             .flex_1()
@@ -584,21 +591,23 @@ impl Cydonia {
             .into_any_element()
     }
 
+    /// `board` is the project and the board within it that `id` names a lane of.
     fn column(
         &self,
-        board_at: usize,
+        board: (usize, usize),
         id: &str,
         at: usize,
         lanes: usize,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let (project, board_at) = board;
         let theme = Theme::of(cx).clone();
         let id = id.to_owned();
         let Some((name, cards)) = self
             .workspace
             .read(cx)
-            .board_at_ix(board_at)
+            .board_in(project, board_at)
             .and_then(|board| board.column(&id))
             .map(|column| {
                 let cards: Vec<String> = column.cards.iter().map(|card| card.id.clone()).collect();
@@ -614,6 +623,7 @@ impl Cydonia {
                 let next = cards.get(at + 1).map(String::as_str);
                 self.card(
                     Slot {
+                        project,
                         board: board_at,
                         id: card,
                         column: &id,
@@ -892,6 +902,7 @@ impl Cydonia {
 
     fn card(&self, at: Slot<'_>, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let Slot {
+            project,
             board: board_at,
             id,
             column,
@@ -906,7 +917,7 @@ impl Cydonia {
         let Some((card, handle)) = self
             .workspace
             .read(cx)
-            .board_at_ix(board_at)
+            .board_in(project, board_at)
             .and_then(|board| board.card(id).map(|card| (card, board.handle_of(card))))
         else {
             return div().into_any_element();

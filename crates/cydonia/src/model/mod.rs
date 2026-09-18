@@ -6,6 +6,7 @@ pub mod article;
 pub mod cover;
 pub mod git;
 pub mod language;
+pub mod layouts;
 pub mod media;
 pub mod migrate;
 pub mod notify;

@@ -1,174 +1,11 @@
-//! A layout comes back arranged as it was written, names its members by
-//! number rather than by holding them, and survives one of them going away.
+//! How an arrangement of panes behaves: splitting, walking across the seams,
+//! moving panes about, and losing one.
+//!
+//! The tree is generic over what a pane is on, so these work it with plain
+//! numbers. What a member really is, and where a layout is kept, is the app's
+//! — see `cydonia`'s own layout tests.
 
-mod common;
-
-use common::Scratch;
-use cydonia_artifact::{
-    entry,
-    layout::{self, Axis, Layout, Node, Side},
-    project::Project as _,
-};
-use std::collections::HashSet;
-
-/// A layout is made from the entry already open, so it starts as one pane.
-#[test]
-fn a_new_layout_is_one_pane() {
-    let layout = Layout::new("1757000000000".into(), "layout-1", 12);
-    assert_eq!(layout.leaves(), 1);
-    assert_eq!(layout.entries(), vec![12]);
-}
-
-/// The tree nests, and the whole of it survives a write and a read.
-#[test]
-fn an_arrangement_comes_back_as_it_went() {
-    let scratch = Scratch::new("layout-roundtrip");
-    let store = scratch.store();
-
-    let mut layout = store.create_layout("", 1).expect("a layout");
-    layout.tree = Node::split(
-        Axis::Horizontal,
-        vec![
-            Node::Leaf {
-                ratio: 0.25,
-                entry: 1,
-            },
-            Node::Split {
-                ratio: 0.75,
-                axis: Axis::Vertical,
-                children: vec![Node::leaf(2), Node::leaf(3)],
-            },
-        ],
-    );
-    store.save_layout(&mut layout);
-
-    let read = store.layout(&layout.id).expect("written");
-    assert_eq!(read.tree, layout.tree);
-    assert_eq!(read.entries(), vec![1, 2, 3]);
-    assert_eq!(read.leaves(), 3);
-}
-
-/// Members are numbers, not copies. Nothing of the entry itself is in the file.
-#[test]
-fn a_layout_holds_numbers_and_not_entries() {
-    let scratch = Scratch::new("layout-numbers");
-    let store = scratch.store();
-
-    let mut layout = store.create_layout("", 7).expect("a layout");
-    layout.tree = Node::split(Axis::Horizontal, vec![Node::leaf(7), Node::leaf(9)]);
-    store.save_layout(&mut layout);
-
-    let body = std::fs::read_to_string(
-        scratch
-            .path()
-            .join(".cydonia/layouts")
-            .join(format!("{}.toml", layout.id)),
-    )
-    .expect("written");
-    assert!(body.contains("entry = 7"), "{body}");
-    assert!(body.contains("entry = 9"), "{body}");
-}
-
-/// A layout gets a project number of its own, so it is addressable as `#N` the
-/// way every other entry is.
-#[test]
-fn a_layout_is_numbered_like_any_entry() {
-    let scratch = Scratch::new("layout-numbered");
-    let store = scratch.store();
-
-    let layout = store.create_layout("", 1).expect("a layout");
-    assert!(layout.number.is_some());
-    assert_eq!(
-        store.layout(&layout.id).and_then(|read| read.number),
-        layout.number,
-    );
-}
-
-/// Deleting a layout tombstones its number: a fresh one must not inherit it.
-#[test]
-fn a_deleted_layout_does_not_hand_its_number_on() {
-    let scratch = Scratch::new("layout-tombstone");
-    let store = scratch.store();
-
-    let first = store.create_layout("", 1).expect("a layout");
-    let number = first.number.expect("numbered");
-    store.remove_layout(&first.id);
-
-    let second = store.create_layout("", 2).expect("a layout");
-    assert_ne!(second.number, Some(number));
-}
-
-/// Names climb past the highest taken rather than filling the gap a delete
-/// left: `layout-2` must not come back meaning something new.
-#[test]
-fn names_climb_past_a_deleted_one() {
-    let taken: HashSet<String> = ["layout-1", "layout-2"]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-    assert_eq!(layout::next_name(&taken), "layout-3");
-
-    let gapped: HashSet<String> = ["layout-1", "layout-3"]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-    assert_eq!(layout::next_name(&gapped), "layout-4");
-
-    assert_eq!(layout::next_name(&HashSet::new()), "layout-1");
-}
-
-/// A name that is not one of ours is not counted for the next one.
-#[test]
-fn a_renamed_layout_does_not_hold_a_number() {
-    let taken: HashSet<String> = ["Auth work", "layout-1"]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-    assert_eq!(layout::next_name(&taken), "layout-2");
-}
-
-/// A member that has been deleted leaves the layout, and the split it was the
-/// second half of goes with it.
-#[test]
-fn a_member_that_is_gone_is_pruned() {
-    let mut layout = Layout::new("1757000000000".into(), "layout-1", 1);
-    layout.tree = Node::split(Axis::Horizontal, vec![Node::leaf(1), Node::leaf(2)]);
-
-    assert!(layout.prune(&HashSet::from([2])));
-    assert_eq!(layout.entries(), vec![1]);
-    // One pane left, so there is no split and no divider to catch.
-    assert!(matches!(layout.tree, Node::Leaf { entry: 1, .. }));
-}
-
-/// Pruning reaches nested splits, and an emptied one does not stay as a seam.
-#[test]
-fn pruning_reaches_a_nested_split() {
-    let mut layout = Layout::new("1757000000000".into(), "layout-1", 1);
-    layout.tree = Node::split(
-        Axis::Horizontal,
-        vec![
-            Node::leaf(1),
-            Node::split(Axis::Vertical, vec![Node::leaf(2), Node::leaf(3)]),
-        ],
-    );
-
-    assert!(layout.prune(&HashSet::from([2, 3])));
-    assert_eq!(layout.entries(), vec![1]);
-    assert_eq!(layout.leaves(), 1);
-}
-
-/// Nothing gone means nothing changed — a read that reports a change nobody
-/// made would have the backend writing the file back on every load.
-#[test]
-fn pruning_nothing_changes_nothing() {
-    let mut layout = Layout::new("1757000000000".into(), "layout-1", 1);
-    layout.tree = Node::split(Axis::Horizontal, vec![Node::leaf(1), Node::leaf(2)]);
-    let before = layout.tree.clone();
-
-    assert!(!layout.prune(&HashSet::from([99])));
-    assert_eq!(layout.tree, before);
-}
-
+use cydonia_artifact::layout::{Axis, Node, Side};
 /// Evening a split shares the room out, and reaches the splits inside it.
 #[test]
 fn evening_shares_the_room() {
@@ -201,138 +38,6 @@ fn evening_shares_the_room() {
     assert!((inner[0].ratio() - 0.5).abs() < f64::EPSILON);
 }
 
-/// A layout is listed as an entry of the project, beside the boards and
-/// sessions it arranges.
-#[test]
-fn a_layout_is_listed_among_the_entries() {
-    let scratch = Scratch::new("layout-listed");
-    let store = scratch.store();
-    let layout = store.create_layout("", 1).expect("a layout");
-
-    let entries = entry::list(scratch.path()).expect("listed");
-    let found = entries
-        .iter()
-        .find(|found| found.kind == "layout")
-        .expect("the layout");
-    assert_eq!(found.id, layout.id);
-    assert_eq!(found.title, "layout-1");
-}
-
-/// An unnamed layout still has something to show in the sidebar.
-#[test]
-fn a_layout_with_no_name_is_still_labelled() {
-    let mut layout = Layout::new("1757000000000".into(), "", 1);
-    assert_eq!(layout.label(), layout::UNNAMED);
-    layout.name = "Auth work".into();
-    assert_eq!(layout.label(), "Auth work");
-}
-
-/// Shares are written as they were set. A share held as `f32` and widened on
-/// the way into TOML writes `0.3` as `0.30000001192092896`, which is a diff
-/// nobody can read and a number that is not the one anyone chose.
-#[test]
-fn a_share_is_written_as_it_was_set() {
-    let scratch = Scratch::new("layout-share");
-    let store = scratch.store();
-
-    let mut layout = store.create_layout("", 1).expect("a layout");
-    layout.tree = Node::split(
-        Axis::Horizontal,
-        vec![
-            Node::Leaf {
-                ratio: 0.3,
-                entry: 1,
-            },
-            Node::Leaf {
-                ratio: 0.7,
-                entry: 2,
-            },
-        ],
-    );
-    store.save_layout(&mut layout);
-
-    let body = std::fs::read_to_string(
-        scratch
-            .path()
-            .join(".cydonia/layouts")
-            .join(format!("{}.toml", layout.id)),
-    )
-    .expect("written");
-    assert!(body.contains("ratio = 0.3\n"), "{body}");
-    assert!(body.contains("ratio = 0.7\n"), "{body}");
-}
-
-/// A layout reads back through the catalog, so an agent asking for `#N` gets
-/// the arrangement rather than an unknown-kind error.
-#[test]
-fn a_layout_reads_back_through_the_catalog() {
-    let scratch = Scratch::new("layout-read");
-    let store = scratch.store();
-    let mut layout = store.create_layout("", 1).expect("a layout");
-    layout.tree = Node::split(Axis::Horizontal, vec![Node::leaf(1), Node::leaf(2)]);
-    store.save_layout(&mut layout);
-
-    let entries = entry::list(scratch.path()).expect("listed");
-    let found = entries
-        .iter()
-        .find(|found| found.kind == "layout")
-        .expect("the layout");
-    let value = entry::read(scratch.path(), found).expect("read");
-    assert_eq!(value["name"], "layout-1");
-    assert_eq!(value["tree"]["kind"], "split");
-}
-
-/// Splits nest, and each names its own axis: a column beside a pane beside a
-/// column that itself holds a row. The direction is per split, so an
-/// arrangement alternates as deep as it is built.
-///
-/// A pinwheel — four panes cyclically overlapping, with no straight line
-/// dividing the window — has no spelling here.
-#[test]
-fn splits_nest_with_an_axis_each() {
-    let scratch = Scratch::new("layout-nested-axes");
-    let store = scratch.store();
-    let mut layout = store.create_layout("", 1).expect("a layout");
-
-    layout.tree = Node::Split {
-        ratio: 1.,
-        axis: Axis::Horizontal,
-        children: vec![
-            Node::Split {
-                ratio: 0.25,
-                axis: Axis::Vertical,
-                children: vec![Node::leaf(2), Node::leaf(3)],
-            },
-            Node::Leaf {
-                ratio: 0.4,
-                entry: 1,
-            },
-            Node::Split {
-                ratio: 0.35,
-                axis: Axis::Vertical,
-                children: vec![
-                    Node::Split {
-                        ratio: 0.6,
-                        axis: Axis::Horizontal,
-                        children: vec![Node::leaf(4), Node::leaf(5)],
-                    },
-                    Node::Leaf {
-                        ratio: 0.4,
-                        entry: 6,
-                    },
-                ],
-            },
-        ],
-    };
-    store.save_layout(&mut layout);
-
-    let read = store.layout(&layout.id).expect("written");
-    assert_eq!(read.tree, layout.tree);
-    // Laid out left to right, and each column top to bottom.
-    assert_eq!(read.entries(), vec![2, 3, 1, 4, 5, 6]);
-    assert_eq!(read.leaves(), 6);
-}
-
 /// Three panes side by side are one split of three, not two nested ones — the
 /// `Vec` is what keeps a third pane from deepening the tree.
 #[test]
@@ -355,15 +60,15 @@ fn a_third_pane_joins_the_split_rather_than_nesting() {
 #[test]
 fn dropping_on_an_edge_divides_the_pane() {
     let mut tree = Node::leaf(1);
-    assert!(tree.insert(1, 2, Side::Right));
+    assert!(tree.insert(&1, &2, Side::Right));
     assert_eq!(tree.entries(), vec![1, 2]);
 
     let mut tree = Node::leaf(1);
-    assert!(tree.insert(1, 2, Side::Left));
+    assert!(tree.insert(&1, &2, Side::Left));
     assert_eq!(tree.entries(), vec![2, 1], "dropped left, so it goes left");
 
     let mut tree = Node::leaf(1);
-    assert!(tree.insert(1, 2, Side::Above));
+    assert!(tree.insert(&1, &2, Side::Above));
     assert_eq!(tree.entries(), vec![2, 1]);
 }
 
@@ -372,7 +77,7 @@ fn dropping_on_an_edge_divides_the_pane() {
 #[test]
 fn the_side_decides_the_axis() {
     let mut tree = Node::leaf(1);
-    tree.insert(1, 2, Side::Below);
+    tree.insert(&1, &2, Side::Below);
     assert!(matches!(
         tree,
         Node::Split {
@@ -382,7 +87,7 @@ fn the_side_decides_the_axis() {
     ));
 
     let mut tree = Node::leaf(1);
-    tree.insert(1, 2, Side::Right);
+    tree.insert(&1, &2, Side::Right);
     assert!(matches!(
         tree,
         Node::Split {
@@ -398,7 +103,7 @@ fn the_side_decides_the_axis() {
 #[test]
 fn a_third_pane_joins_the_split_it_was_dropped_along() {
     let mut tree = Node::split(Axis::Horizontal, vec![Node::leaf(1), Node::leaf(2)]);
-    assert!(tree.insert(2, 3, Side::Right));
+    assert!(tree.insert(&2, &3, Side::Right));
 
     let Node::Split { children, .. } = &tree else {
         panic!("a split");
@@ -411,7 +116,7 @@ fn a_third_pane_joins_the_split_it_was_dropped_along() {
 #[test]
 fn a_pane_dropped_across_the_split_nests() {
     let mut tree = Node::split(Axis::Horizontal, vec![Node::leaf(1), Node::leaf(2)]);
-    assert!(tree.insert(2, 3, Side::Below));
+    assert!(tree.insert(&2, &3, Side::Below));
 
     let Node::Split { children, .. } = &tree else {
         panic!("a split");
@@ -446,7 +151,7 @@ fn an_arrival_takes_its_room_from_the_pane_it_landed_on() {
             },
         ],
     };
-    tree.insert(1, 3, Side::Right);
+    tree.insert(&1, &3, Side::Right);
 
     let Node::Split { children, .. } = &tree else {
         panic!("a split");
@@ -469,7 +174,7 @@ fn closing_a_pane_shares_out_what_it_held() {
         vec![Node::leaf(1), Node::leaf(2), Node::leaf(3)],
     );
     tree.even();
-    assert!(tree.remove(2));
+    assert!(tree.remove(&2));
 
     let Node::Split { children, .. } = &tree else {
         panic!("a split");
@@ -490,7 +195,7 @@ fn dragging_a_pane_out_of_a_pair_collapses_the_seam() {
         ],
     );
     // 3 goes to the far left, leaving 2 alone in what was a column.
-    assert!(tree.relocate(3, 1, Side::Left));
+    assert!(tree.relocate(&3, &1, Side::Left));
 
     assert_eq!(tree.entries(), vec![3, 1, 2]);
     let Node::Split { children, .. } = &tree else {
@@ -509,25 +214,10 @@ fn a_drag_that_means_nothing_does_nothing() {
     let mut tree = Node::split(Axis::Horizontal, vec![Node::leaf(1), Node::leaf(2)]);
     let before = tree.clone();
 
-    assert!(!tree.relocate(1, 1, Side::Right), "onto itself");
-    assert!(!tree.relocate(9, 1, Side::Right), "not a member");
-    assert!(!tree.relocate(1, 9, Side::Right), "no such target");
+    assert!(!tree.relocate(&1, &1, Side::Right), "onto itself");
+    assert!(!tree.relocate(&9, &1, Side::Right), "not a member");
+    assert!(!tree.relocate(&1, &9, Side::Right), "no such target");
     assert_eq!(tree, before);
-}
-
-/// An entry already on screen is moved rather than shown twice — one entry,
-/// one pane.
-#[test]
-fn dropping_an_entry_that_is_already_shown_moves_it() {
-    let mut layout = Layout::new("1757000000000".into(), "layout-1", 1);
-    layout.tree = Node::split(
-        Axis::Horizontal,
-        vec![Node::leaf(1), Node::leaf(2), Node::leaf(3)],
-    );
-
-    assert!(layout.insert(3, 1, Side::Right));
-    assert_eq!(layout.entries(), vec![2, 3, 1]);
-    assert_eq!(layout.leaves(), 3, "still three panes, not four");
 }
 
 /// A drop deep in the tree finds its pane.
@@ -546,7 +236,7 @@ fn a_drop_reaches_a_pane_inside_a_nested_split() {
             ),
         ],
     );
-    assert!(tree.insert(4, 5, Side::Right));
+    assert!(tree.insert(&4, &5, Side::Right));
     assert_eq!(tree.entries(), vec![1, 2, 3, 4, 5]);
     assert_eq!(tree.leaves(), 5);
 }
@@ -572,17 +262,17 @@ fn any_run_of_drags_leaves_a_tree_that_can_be_drawn() {
         let target = live[(step as usize * 7) % live.len()];
         match step % 5 {
             0..=2 => {
-                assert!(tree.insert(target, next, side), "step {step}");
+                assert!(tree.insert(&target, &next, side), "step {step}");
                 live.push(next);
                 next += 1;
             }
             3 if live.len() > 2 => {
                 let moving = live[(step as usize * 3) % live.len()];
-                tree.relocate(moving, target, side);
+                tree.relocate(&moving, &target, side);
             }
             _ if live.len() > 1 => {
                 let going = live[(step as usize * 5) % live.len()];
-                assert!(tree.remove(going), "step {step}");
+                assert!(tree.remove(&going), "step {step}");
                 live.retain(|entry| *entry != going);
             }
             _ => {}
@@ -599,7 +289,7 @@ fn any_run_of_drags_leaves_a_tree_that_can_be_drawn() {
 
 /// Every split covers its room and holds more than one child, all the way
 /// down.
-fn check(node: &Node, step: u64) {
+fn check(node: &Node<u64>, step: u64) {
     let Node::Split { children, .. } = node else {
         return;
     };
@@ -619,103 +309,6 @@ fn check(node: &Node, step: u64) {
 }
 
 // ── zoom ─────────────────────────────────────────────────────────
-
-/// One pane stands over the rest, and zooming it again puts it back. The tree
-/// is untouched throughout: unzooming restores the arrangement rather than
-/// rebuilding it.
-#[test]
-fn zooming_stands_one_pane_over_the_rest() {
-    let mut layout = Layout::new("1757000000000".into(), "layout-1", 1);
-    layout.tree = Node::split(Axis::Horizontal, vec![Node::leaf(1), Node::leaf(2)]);
-    let before = layout.tree.clone();
-
-    assert_eq!(layout.zoom(2), Some(2));
-    assert_eq!(layout.tree, before, "the arrangement is kept");
-
-    assert_eq!(layout.zoom(2), None, "zooming it again puts it back");
-    assert_eq!(layout.tree, before);
-}
-
-/// Zooming another pane swaps to it: one is over the rest, or none is.
-#[test]
-fn zooming_another_pane_swaps_to_it() {
-    let mut layout = Layout::new("1757000000000".into(), "layout-1", 1);
-    layout.tree = Node::split(Axis::Horizontal, vec![Node::leaf(1), Node::leaf(2)]);
-
-    layout.zoom(1);
-    assert_eq!(layout.zoom(2), Some(2));
-}
-
-/// A pane that is not here cannot be zoomed, and asking leaves nothing zoomed
-/// rather than pointing at a pane that is not drawn.
-#[test]
-fn a_pane_that_is_not_here_does_not_zoom() {
-    let mut layout = Layout::new("1757000000000".into(), "layout-1", 1);
-    assert_eq!(layout.zoom(9), None);
-    assert_eq!(layout.zoomed(), None);
-}
-
-/// Closing the zoomed pane leaves the rest unzoomed.
-#[test]
-fn closing_the_zoomed_pane_unzooms() {
-    let mut layout = Layout::new("1757000000000".into(), "layout-1", 1);
-    layout.tree = Node::split(Axis::Horizontal, vec![Node::leaf(1), Node::leaf(2)]);
-
-    layout.zoom(2);
-    layout.remove(2);
-    assert_eq!(layout.zoomed(), None);
-    assert_eq!(layout.entries(), vec![1]);
-}
-
-/// A member pruned away takes the zoom with it, even though pruning does not
-/// go through `remove`.
-#[test]
-fn a_pruned_member_is_not_left_zoomed() {
-    let mut layout = Layout::new("1757000000000".into(), "layout-1", 1);
-    layout.tree = Node::split(Axis::Horizontal, vec![Node::leaf(1), Node::leaf(2)]);
-    layout.zoom(2);
-
-    layout.prune(&HashSet::from([2]));
-    assert_eq!(layout.zoomed(), None, "the pane it named has gone");
-}
-
-/// Zoom survives a write and a read: a window closed zoomed comes back zoomed.
-///
-/// `zoomed` is written before `tree`, which is a table — TOML reads a bare key
-/// after a table as belonging to it, so the other order does not round-trip.
-#[test]
-fn zoom_survives_a_write_and_a_read() {
-    let scratch = Scratch::new("layout-zoom");
-    let store = scratch.store();
-
-    let mut layout = store.create_layout("", 1).expect("a layout");
-    layout.tree = Node::split(Axis::Horizontal, vec![Node::leaf(1), Node::leaf(2)]);
-    layout.zoom(2);
-    store.save_layout(&mut layout);
-
-    let read = store.layout(&layout.id).expect("written");
-    assert_eq!(read.zoomed(), Some(2));
-}
-
-/// Nothing zoomed writes no key at all, rather than a `zoomed` nobody set.
-#[test]
-fn nothing_zoomed_writes_no_key() {
-    let scratch = Scratch::new("layout-unzoomed");
-    let store = scratch.store();
-    let mut layout = store.create_layout("", 1).expect("a layout");
-    store.save_layout(&mut layout);
-
-    let body = std::fs::read_to_string(
-        scratch
-            .path()
-            .join(".cydonia/layouts")
-            .join(format!("{}.toml", layout.id)),
-    )
-    .expect("written");
-    assert!(!body.contains("zoomed"), "{body}");
-}
-
-// ── seams ────────────────────────────────────────────────────────
 
 /// Dragging a seam moves the two panes either side of it and leaves the rest
 /// at the widths they were put at.
@@ -833,17 +426,17 @@ fn a_path_that_names_nothing_finds_nothing() {
 fn a_pane_knows_how_much_of_the_window_it_is() {
     let mut tree = Node::split(Axis::Horizontal, vec![Node::leaf(1), Node::leaf(2)]);
     tree.even();
-    assert_eq!(tree.share_of(1, Axis::Horizontal), Some(0.5));
+    assert_eq!(tree.share_of(&1, Axis::Horizontal), Some(0.5));
     assert_eq!(
-        tree.share_of(1, Axis::Vertical),
+        tree.share_of(&1, Axis::Vertical),
         Some(1.),
         "side by side takes nothing off the height"
     );
 
     let mut tree = Node::split(Axis::Vertical, vec![Node::leaf(1), Node::leaf(2)]);
     tree.even();
-    assert_eq!(tree.share_of(1, Axis::Horizontal), Some(1.));
-    assert_eq!(tree.share_of(1, Axis::Vertical), Some(0.5));
+    assert_eq!(tree.share_of(&1, Axis::Horizontal), Some(1.));
+    assert_eq!(tree.share_of(&1, Axis::Vertical), Some(0.5));
 }
 
 /// The shares of every split above a pane multiply, and only those dividing
@@ -887,12 +480,12 @@ fn shares_multiply_down_the_tree() {
 
     // 2 is in the right half, stacked — so half the width, and the vertical
     // split takes a quarter of the height off it.
-    assert_eq!(tree.share_of(2, Axis::Horizontal), Some(0.5));
-    assert_eq!(tree.share_of(2, Axis::Vertical), Some(0.5));
+    assert_eq!(tree.share_of(&2, Axis::Horizontal), Some(0.5));
+    assert_eq!(tree.share_of(&2, Axis::Vertical), Some(0.5));
     // 3 sits in the bottom half of that column, divided across — so its
     // width halves again while its height is the half it already had.
-    assert_eq!(tree.share_of(3, Axis::Horizontal), Some(0.25));
-    assert_eq!(tree.share_of(3, Axis::Vertical), Some(0.5));
+    assert_eq!(tree.share_of(&3, Axis::Horizontal), Some(0.25));
+    assert_eq!(tree.share_of(&3, Axis::Vertical), Some(0.5));
 }
 
 /// A pane on its own is the whole of it, and an entry no pane is on has no
@@ -900,8 +493,8 @@ fn shares_multiply_down_the_tree() {
 #[test]
 fn a_lone_pane_is_the_whole_window() {
     let tree = Node::leaf(1);
-    assert_eq!(tree.share_of(1, Axis::Horizontal), Some(1.));
-    assert_eq!(tree.share_of(9, Axis::Horizontal), None);
+    assert_eq!(tree.share_of(&1, Axis::Horizontal), Some(1.));
+    assert_eq!(tree.share_of(&9, Axis::Horizontal), None);
 }
 
 // ── across the seams ─────────────────────────────────────────────
@@ -911,13 +504,13 @@ fn a_lone_pane_is_the_whole_window() {
 #[test]
 fn a_pane_knows_what_is_across_the_seam() {
     let tree = Node::split(Axis::Horizontal, vec![Node::leaf(1), Node::leaf(2)]);
-    assert_eq!(tree.neighbour(1, Side::Right), Some(2));
-    assert_eq!(tree.neighbour(2, Side::Left), Some(1));
-    assert_eq!(tree.neighbour(1, Side::Left), None, "the window's edge");
-    assert_eq!(tree.neighbour(2, Side::Right), None);
+    assert_eq!(tree.neighbour(&1, Side::Right), Some(2));
+    assert_eq!(tree.neighbour(&2, Side::Left), Some(1));
+    assert_eq!(tree.neighbour(&1, Side::Left), None, "the window's edge");
+    assert_eq!(tree.neighbour(&2, Side::Right), None);
     // Nothing divides them the other way.
-    assert_eq!(tree.neighbour(1, Side::Below), None);
-    assert_eq!(tree.neighbour(1, Side::Above), None);
+    assert_eq!(tree.neighbour(&1, Side::Below), None);
+    assert_eq!(tree.neighbour(&1, Side::Above), None);
 }
 
 /// A pane crossing into a divided neighbour lands on the one against the seam
@@ -933,13 +526,13 @@ fn crossing_into_a_split_lands_against_the_seam() {
         ],
     );
     // Going right from 1 enters the column at its top.
-    assert_eq!(tree.neighbour(1, Side::Right), Some(2));
+    assert_eq!(tree.neighbour(&1, Side::Right), Some(2));
     // Coming back left from either of them is 1.
-    assert_eq!(tree.neighbour(2, Side::Left), Some(1));
-    assert_eq!(tree.neighbour(3, Side::Left), Some(1));
+    assert_eq!(tree.neighbour(&2, Side::Left), Some(1));
+    assert_eq!(tree.neighbour(&3, Side::Left), Some(1));
     // And within the column.
-    assert_eq!(tree.neighbour(2, Side::Below), Some(3));
-    assert_eq!(tree.neighbour(3, Side::Above), Some(2));
+    assert_eq!(tree.neighbour(&2, Side::Below), Some(3));
+    assert_eq!(tree.neighbour(&3, Side::Above), Some(2));
 }
 
 /// The walk goes up past splits dividing the other way: a pane at the bottom
@@ -954,9 +547,9 @@ fn the_walk_climbs_past_splits_the_other_way() {
             Node::split(Axis::Vertical, vec![Node::leaf(3), Node::leaf(4)]),
         ],
     );
-    assert_eq!(tree.neighbour(2, Side::Right), Some(3), "up, across, down");
-    assert_eq!(tree.neighbour(4, Side::Left), Some(1));
-    assert_eq!(tree.neighbour(2, Side::Left), None);
+    assert_eq!(tree.neighbour(&2, Side::Right), Some(3), "up, across, down");
+    assert_eq!(tree.neighbour(&4, Side::Left), Some(1));
+    assert_eq!(tree.neighbour(&2, Side::Left), None);
 }
 
 /// Three across: the middle has a neighbour both ways, the ends only one.
@@ -966,10 +559,10 @@ fn the_ends_of_a_row_have_one_neighbour() {
         Axis::Horizontal,
         vec![Node::leaf(1), Node::leaf(2), Node::leaf(3)],
     );
-    assert_eq!(tree.neighbour(2, Side::Left), Some(1));
-    assert_eq!(tree.neighbour(2, Side::Right), Some(3));
-    assert_eq!(tree.neighbour(1, Side::Left), None);
-    assert_eq!(tree.neighbour(3, Side::Right), None);
+    assert_eq!(tree.neighbour(&2, Side::Left), Some(1));
+    assert_eq!(tree.neighbour(&2, Side::Right), Some(3));
+    assert_eq!(tree.neighbour(&1, Side::Left), None);
+    assert_eq!(tree.neighbour(&3, Side::Right), None);
 }
 
 /// A pane on its own has no neighbours, and an entry no pane is on has no
@@ -977,8 +570,8 @@ fn the_ends_of_a_row_have_one_neighbour() {
 #[test]
 fn a_lone_pane_has_no_neighbours() {
     let tree = Node::leaf(1);
-    assert_eq!(tree.neighbour(1, Side::Right), None);
-    assert_eq!(tree.neighbour(9, Side::Right), None);
+    assert_eq!(tree.neighbour(&1, Side::Right), None);
+    assert_eq!(tree.neighbour(&9, Side::Right), None);
 }
 
 /// Swapping exchanges what two panes are on and leaves the arrangement alone
@@ -1001,7 +594,7 @@ fn swapping_keeps_the_shape_and_the_sizes() {
     };
     let before = tree.clone();
 
-    assert!(tree.swap(1, 2));
+    assert!(tree.swap(&1, &2));
     assert_eq!(tree.entries(), vec![2, 1], "they changed places");
     let Node::Split { children, .. } = &tree else {
         panic!("a split");
@@ -1011,7 +604,7 @@ fn swapping_keeps_the_shape_and_the_sizes() {
         "the wide side is still the wide side"
     );
 
-    assert!(tree.swap(1, 2));
+    assert!(tree.swap(&1, &2));
     assert_eq!(tree, before, "twice is where it started");
 }
 
@@ -1025,7 +618,7 @@ fn swapping_reaches_across_the_tree() {
             Node::split(Axis::Vertical, vec![Node::leaf(2), Node::leaf(3)]),
         ],
     );
-    assert!(tree.swap(1, 3));
+    assert!(tree.swap(&1, &3));
     assert_eq!(tree.entries(), vec![3, 2, 1]);
 }
 
@@ -1035,9 +628,9 @@ fn swapping_reaches_across_the_tree() {
 fn a_swap_that_means_nothing_does_nothing() {
     let mut tree = Node::split(Axis::Horizontal, vec![Node::leaf(1), Node::leaf(2)]);
     let before = tree.clone();
-    assert!(!tree.swap(1, 1));
-    assert!(!tree.swap(1, 9));
-    assert!(!tree.swap(9, 1));
+    assert!(!tree.swap(&1, &1));
+    assert!(!tree.swap(&1, &9));
+    assert!(!tree.swap(&9, &1));
     assert_eq!(tree, before);
 }
 
@@ -1051,11 +644,11 @@ fn a_path_leads_to_the_pane_it_names() {
             Node::split(Axis::Vertical, vec![Node::leaf(2), Node::leaf(3)]),
         ],
     );
-    let path = tree.path_to(3).expect("a path");
+    let path = tree.path_to(&3).expect("a path");
     assert_eq!(path, vec![1, 1]);
     assert!(matches!(
         tree.at_path(&path),
         Some(Node::Leaf { entry: 3, .. })
     ));
-    assert_eq!(tree.path_to(9), None);
+    assert_eq!(tree.path_to(&9), None);
 }

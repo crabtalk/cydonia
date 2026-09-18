@@ -73,6 +73,10 @@ impl Side {
 
 /// One pane, or one split of them.
 ///
+/// Generic over what a pane is *on*, because none of the work here reads a
+/// member: splitting, walking, swapping and sizing only ever ask whether two
+/// are the same one.
+///
 /// Every node carries its own share of the parent rather than the parent
 /// holding a list of shares beside a list of children: two lists are two
 /// things to keep the same length, and a file hand-edited into disagreeing
@@ -83,20 +87,20 @@ impl Side {
 /// `0.30000001192092896`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
-pub enum Node {
-    /// An entry, by the number it holds project-wide. The entry it names may
-    /// since have been deleted; resolving is [`crate::entry::Registry`]'s and
-    /// answers nothing for one that has.
+pub enum Node<T> {
+    /// The entry a pane is on. What it may since have become — deleted,
+    /// renamed, in a project no longer open — is the caller's to resolve, and
+    /// a pane whose entry answers nothing draws as an empty one.
     Leaf {
         #[serde(default = "whole")]
         ratio: f64,
-        entry: u64,
+        entry: T,
     },
     Split {
         #[serde(default = "whole")]
         ratio: f64,
         axis: Axis,
-        children: Vec<Node>,
+        children: Vec<Node<T>>,
     },
 }
 
@@ -106,19 +110,19 @@ fn whole() -> f64 {
 
 /// A leaf taking half of whatever it is put in — what a pane divided in two
 /// leaves on each side of the new seam.
-fn half(entry: u64) -> Node {
+fn half<T>(entry: T) -> Node<T> {
     Node::Leaf { ratio: 0.5, entry }
 }
 
-impl Node {
-    pub fn leaf(entry: u64) -> Self {
+impl<T: Clone + PartialEq> Node<T> {
+    pub fn leaf(entry: T) -> Self {
         Self::Leaf {
             ratio: whole(),
             entry,
         }
     }
 
-    pub fn split(axis: Axis, children: Vec<Node>) -> Self {
+    pub fn split(axis: Axis, children: Vec<Node<T>>) -> Self {
         Self::Split {
             ratio: whole(),
             axis,
@@ -145,9 +149,9 @@ impl Node {
     }
 
     /// Every entry number below here, in the order the panes are laid out.
-    pub fn entries(&self) -> Vec<u64> {
+    pub fn entries(&self) -> Vec<T> {
         match self {
-            Self::Leaf { entry, .. } => vec![*entry],
+            Self::Leaf { entry, .. } => vec![entry.clone()],
             Self::Split { children, .. } => children.iter().flat_map(Node::entries).collect(),
         }
     }
@@ -185,7 +189,7 @@ impl Node {
     ///
     /// What the departed held is shared out among what is left, so a split
     /// still covers the room it was given.
-    pub fn prune(&mut self, gone: &HashSet<u64>) -> bool {
+    pub fn prune(&mut self, gone: &[T]) -> bool {
         let Self::Split { children, .. } = self else {
             return false;
         };
@@ -236,9 +240,9 @@ impl Node {
     }
 
     /// Whether some pane here shows this entry.
-    pub fn contains(&self, entry: u64) -> bool {
+    pub fn contains(&self, entry: &T) -> bool {
         match self {
-            Self::Leaf { entry: held, .. } => *held == entry,
+            Self::Leaf { entry: held, .. } => held == entry,
             Self::Split { children, .. } => children.iter().any(|child| child.contains(entry)),
         }
     }
@@ -251,16 +255,16 @@ impl Node {
     /// three side by side is one split of three. The room for the arrival
     /// comes out of the pane it was dropped on, so the others keep the shares
     /// they were dragged to.
-    pub fn insert(&mut self, target: u64, arriving: u64, side: Side) -> bool {
+    pub fn insert(&mut self, target: &T, arriving: &T, side: Side) -> bool {
         if let Self::Leaf { entry, ratio } = self
-            && *entry == target
+            && entry == target
         {
-            let (kept, ratio) = (*entry, *ratio);
+            let (kept, ratio) = (entry.clone(), *ratio);
             // The arrival takes the side it was dropped on, so the pane that
             // was already there does not jump across the new seam.
             let children = match side.after() {
-                true => vec![half(kept), half(arriving)],
-                false => vec![half(arriving), half(kept)],
+                true => vec![half(kept), half(arriving.clone())],
+                false => vec![half(arriving.clone()), half(kept)],
             };
             *self = Self::Split {
                 ratio,
@@ -274,7 +278,7 @@ impl Node {
         };
         let axis = *axis;
         let at = children.iter().position(|child| match child {
-            Self::Leaf { entry, .. } => *entry == target,
+            Self::Leaf { entry, .. } => entry == target,
             Self::Split { .. } => false,
         });
         if let Some(at) = at {
@@ -283,7 +287,7 @@ impl Node {
                 // the other half: every other child keeps its share.
                 let share = children[at].ratio() / 2.;
                 children[at].set_ratio(share);
-                let mut arrived = Node::leaf(arriving);
+                let mut arrived = Node::leaf(arriving.clone());
                 arrived.set_ratio(share);
                 children.insert(at + usize::from(side.after()), arrived);
                 return true;
@@ -307,9 +311,9 @@ impl Node {
     /// What a pane needs to know to draw itself as a pane rather than as the
     /// window: a rail, a margin or a column that has room in the window may
     /// have none in the fraction of it this pane is.
-    pub fn share_of(&self, entry: u64, axis: Axis) -> Option<f64> {
+    pub fn share_of(&self, entry: &T, axis: Axis) -> Option<f64> {
         match self {
-            Self::Leaf { entry: held, .. } => (*held == entry).then_some(1.),
+            Self::Leaf { entry: held, .. } => (held == entry).then_some(1.),
             Self::Split {
                 axis: split,
                 children,
@@ -326,16 +330,16 @@ impl Node {
 
     /// Take the pane showing this entry out, collapsing whatever it leaves
     /// behind. Answers whether it was there.
-    pub fn remove(&mut self, entry: u64) -> bool {
+    pub fn remove(&mut self, entry: &T) -> bool {
         if !self.contains(entry) {
             return false;
         }
-        self.prune(&HashSet::from([entry]))
+        self.prune(std::slice::from_ref(entry))
     }
 
     /// The node at this path: each step is a child's index in the split
     /// above it, so an empty path is this node.
-    pub fn at_path_mut(&mut self, path: &[usize]) -> Option<&mut Node> {
+    pub fn at_path_mut(&mut self, path: &[usize]) -> Option<&mut Node<T>> {
         let Some((step, rest)) = path.split_first() else {
             return Some(self);
         };
@@ -347,9 +351,9 @@ impl Node {
 
     /// The path from here to the pane on this entry: each step is a child's
     /// index in the split above it.
-    pub fn path_to(&self, entry: u64) -> Option<Vec<usize>> {
+    pub fn path_to(&self, entry: &T) -> Option<Vec<usize>> {
         match self {
-            Self::Leaf { entry: held, .. } => (*held == entry).then(Vec::new),
+            Self::Leaf { entry: held, .. } => (held == entry).then(Vec::new),
             Self::Split { children, .. } => children.iter().enumerate().find_map(|(ix, child)| {
                 let mut path = child.path_to(entry)?;
                 path.insert(0, ix);
@@ -359,7 +363,7 @@ impl Node {
     }
 
     /// The node at this path — see [`Self::at_path_mut`].
-    pub fn at_path(&self, path: &[usize]) -> Option<&Node> {
+    pub fn at_path(&self, path: &[usize]) -> Option<&Node<T>> {
         let Some((step, rest)) = path.split_first() else {
             return Some(self);
         };
@@ -374,9 +378,9 @@ impl Node {
     ///
     /// Nothing for a split holding no children, which a well-formed tree never
     /// has — see [`Self::prune`], which collapses one the moment it could.
-    fn edge_leaf(&self, side: Side) -> Option<u64> {
+    fn edge_leaf(&self, side: Side) -> Option<T> {
         match self {
-            Self::Leaf { entry, .. } => Some(*entry),
+            Self::Leaf { entry, .. } => Some(entry.clone()),
             Self::Split { axis, children, .. } => {
                 // Along this side's own axis the nearest pane is the one at
                 // that end; across it every child touches the seam, and the
@@ -397,7 +401,7 @@ impl Node {
     /// makes in tmux: up to the nearest split dividing the right way where
     /// this is not already the end child, across to the sibling, then down to
     /// whichever of its panes touches the seam.
-    pub fn neighbour(&self, entry: u64, side: Side) -> Option<u64> {
+    pub fn neighbour(&self, entry: &T, side: Side) -> Option<T> {
         let path = self.path_to(entry)?;
         for depth in (0..path.len()).rev() {
             let Some(Self::Split { axis, children, .. }) = self.at_path(&path[..depth]) else {
@@ -428,7 +432,7 @@ impl Node {
     /// Exchange the places of two panes. The arrangement keeps its shape and
     /// its sizes; only what each pane is on changes — so doing it twice puts
     /// everything back.
-    pub fn swap(&mut self, a: u64, b: u64) -> bool {
+    pub fn swap(&mut self, a: &T, b: &T) -> bool {
         if a == b || !self.contains(a) || !self.contains(b) {
             return false;
         }
@@ -437,13 +441,13 @@ impl Node {
     }
 
     /// Put `b` where `a` is and `a` where `b` is.
-    fn replace_entry(&mut self, a: u64, b: u64) {
+    fn replace_entry(&mut self, a: &T, b: &T) {
         match self {
             Self::Leaf { entry, .. } => {
-                if *entry == a {
-                    *entry = b;
-                } else if *entry == b {
-                    *entry = a;
+                if entry == a {
+                    *entry = b.clone();
+                } else if entry == b {
+                    *entry = a.clone();
                 }
             }
             Self::Split { children, .. } => {
@@ -492,12 +496,54 @@ impl Node {
     /// Taken out before it is put back, so the split it leaves collapses the
     /// way it would have if the pane had been closed — a pane dragged out of a
     /// pair does not leave the seam it was holding.
-    pub fn relocate(&mut self, entry: u64, target: u64, side: Side) -> bool {
+    pub fn relocate(&mut self, entry: &T, target: &T, side: Side) -> bool {
         if entry == target || !self.contains(entry) || !self.contains(target) {
             return false;
         }
         self.remove(entry);
         self.insert(target, entry, side)
+    }
+}
+
+/// Which of a project's things a pane is on.
+///
+/// Its own rather than the app's `state::Kind`: nothing in this crate knows
+/// what a window shows, and a layout read by anything outside cydonia needs to
+/// know what it is naming.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Kind {
+    Session,
+    Board,
+    Article,
+    Table,
+}
+
+/// One entry a pane is on: which project it is in, and which of that project's
+/// things it is.
+///
+/// The project by its path, because a layout spans them — it is kept beside
+/// the app's own config rather than inside any one project, and absolute paths
+/// are what it can name from there. That is also why a layout does not travel
+/// with a repository: these paths are this machine's.
+///
+/// By `id` rather than by the `#number` [`crate::entry`] gives out: numbers are
+/// per project, so two projects' `#12` are different entries, and a member has
+/// to say which it means without reading either project's database.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Member {
+    pub project: std::path::PathBuf,
+    pub kind: Kind,
+    pub id: String,
+}
+
+impl Member {
+    pub fn new(project: impl Into<std::path::PathBuf>, kind: Kind, id: impl Into<String>) -> Self {
+        Self {
+            project: project.into(),
+            kind,
+            id: id.into(),
+        }
     }
 }
 
@@ -508,8 +554,6 @@ pub struct Layout {
     /// that keeps layouts in a row has no filename to fall back on.
     #[serde(default)]
     pub id: String,
-    #[serde(skip)]
-    pub number: Option<u64>,
     /// When it was last written, as the backend counts. Never written into the
     /// file, which would be a second copy able to disagree.
     #[serde(skip)]
@@ -527,17 +571,16 @@ pub struct Layout {
     /// Before `tree` in the struct, and so in the file: `tree` is a table, and
     /// TOML reads a bare key after one as belonging to it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub zoomed: Option<u64>,
-    pub tree: Node,
+    pub zoomed: Option<Member>,
+    pub tree: Node<Member>,
 }
 
 impl Layout {
     /// A layout over one entry. Layouts are made by dragging a second entry
     /// onto the first, so the one already open is what a new one starts from.
-    pub fn new(id: String, name: &str, entry: u64) -> Self {
+    pub fn new(id: String, name: &str, entry: Member) -> Self {
         Self {
             id,
-            number: None,
             touched: stamp::now(),
             archived: false,
             name: name.to_owned(),
@@ -554,7 +597,7 @@ impl Layout {
         }
     }
 
-    pub fn entries(&self) -> Vec<u64> {
+    pub fn entries(&self) -> Vec<Member> {
         self.tree.entries()
     }
 
@@ -563,11 +606,11 @@ impl Layout {
     }
 
     /// Drop members that no longer resolve — see [`Node::prune`].
-    pub fn prune(&mut self, gone: &HashSet<u64>) -> bool {
+    pub fn prune(&mut self, gone: &[Member]) -> bool {
         self.tree.prune(gone)
     }
 
-    pub fn contains(&self, entry: u64) -> bool {
+    pub fn contains(&self, entry: &Member) -> bool {
         self.tree.contains(entry)
     }
 
@@ -575,7 +618,7 @@ impl Layout {
     /// pane's edge. Answers whether the pane dropped on was found.
     ///
     /// An entry already shown is moved rather than shown twice.
-    pub fn insert(&mut self, target: u64, arriving: u64, side: Side) -> bool {
+    pub fn insert(&mut self, target: &Member, arriving: &Member, side: Side) -> bool {
         match self.contains(arriving) {
             true => self.tree.relocate(arriving, target, side),
             false => self.tree.insert(target, arriving, side),
@@ -584,7 +627,7 @@ impl Layout {
 
     /// Move a pane already here to another pane's edge — see
     /// [`Node::relocate`].
-    pub fn relocate(&mut self, entry: u64, target: u64, side: Side) -> bool {
+    pub fn relocate(&mut self, entry: &Member, target: &Member, side: Side) -> bool {
         self.tree.relocate(entry, target, side)
     }
 
@@ -593,8 +636,8 @@ impl Layout {
     ///
     /// A zoomed pane that is closed leaves the rest unzoomed rather than
     /// standing something else in its place.
-    pub fn remove(&mut self, entry: u64) -> bool {
-        if self.zoomed == Some(entry) {
+    pub fn remove(&mut self, entry: &Member) -> bool {
+        if self.zoomed.as_ref() == Some(entry) {
             self.zoomed = None;
         }
         self.tree.remove(entry)
@@ -605,19 +648,19 @@ impl Layout {
     ///
     /// Zooming the pane already zoomed unzooms it, and zooming another swaps
     /// to it — one pane is over the rest, or none is.
-    pub fn zoom(&mut self, entry: u64) -> Option<u64> {
-        self.zoomed = match self.zoomed == Some(entry) || !self.contains(entry) {
+    pub fn zoom(&mut self, entry: &Member) -> Option<Member> {
+        self.zoomed = match self.zoomed.as_ref() == Some(entry) || !self.contains(entry) {
             true => None,
-            false => Some(entry),
+            false => Some(entry.clone()),
         };
-        self.zoomed
+        self.zoomed.clone()
     }
 
     /// The pane standing over the others, if it is still here. Read rather
     /// than the field: a member pruned away must not leave the layout showing
     /// a pane that has gone.
-    pub fn zoomed(&self) -> Option<u64> {
-        self.zoomed.filter(|entry| self.contains(*entry))
+    pub fn zoomed(&self) -> Option<Member> {
+        self.zoomed.clone().filter(|entry| self.contains(entry))
     }
 }
 

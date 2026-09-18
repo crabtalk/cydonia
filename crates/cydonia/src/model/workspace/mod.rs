@@ -114,6 +114,11 @@ pub struct Workspace {
     /// What each project was last showing, by project path — where a launch
     /// puts you back.
     last: BTreeMap<PathBuf, state::Entry>,
+    /// The arrangements this machine holds, and which one the window is
+    /// showing. The window's rather than a project's: a layout can hold panes
+    /// from several — see [`layouts`].
+    pub layouts: Vec<artifact::layout::Layout>,
+    pub layout: Option<usize>,
 }
 
 impl Workspace {
@@ -161,6 +166,8 @@ impl Workspace {
             next_id: 0,
             agent_icons: HashMap::new(),
             last: state.last,
+            layouts: crate::model::layouts::all(),
+            layout: None,
         };
         for ix in restore {
             this.restore_sessions(ix);

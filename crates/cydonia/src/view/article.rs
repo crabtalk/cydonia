@@ -334,11 +334,12 @@ impl Cydonia {
     /// card, with the composer stack still pinned under it.
     pub(crate) fn article(
         &self,
+        project: usize,
         at: usize,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        let article = self.workspace.read(cx).article_at_ix(at)?;
+        let article = self.workspace.read(cx).article_in(project, at)?;
         let field = article.field.clone()?;
         let editor = article.editor.clone()?;
         let cover = article.cover.clone();
