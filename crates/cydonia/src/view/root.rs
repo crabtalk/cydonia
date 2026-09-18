@@ -249,6 +249,14 @@ pub fn open(settings: Settings, state: State, cx: &mut App) -> Result<WindowHand
                 root.restore_panel_layout();
                 cx.on_release(|root: &mut Cydonia, cx| root.save_panel_layout(cx))
                     .detach();
+                // ⌘Q tears the process down without releasing the root, so a
+                // release hook alone loses everything dragged in the session
+                // that quit.
+                cx.on_app_quit(|root: &mut Cydonia, cx| {
+                    root.save_panel_layout(cx);
+                    async {}
+                })
+                .detach();
                 root
             })
         },
@@ -289,6 +297,10 @@ pub struct Cydonia {
     /// has dragged — which is given a share of the window instead. See
     /// [`super::detail::panel_width`].
     pub(crate) changes_width: Option<f32>,
+    /// The pending write of a width being dragged — dropped and replaced by
+    /// each move, so only a drag that stopped reaches the disk. See
+    /// [`Cydonia::save_panel_layout_settled`].
+    pub(crate) panel_save: Option<bezel::gpui::Task<()>>,
     pub(crate) terminal_height: f32,
     pub(crate) changes: Option<Entity<super::component::panel::Panel>>,
     pub(crate) right_panels: std::collections::HashMap<u64, Entity<super::component::panel::Panel>>,
@@ -564,6 +576,7 @@ impl Cydonia {
             terminals: Default::default(),
             changes_open: false,
             changes_width: None,
+            panel_save: None,
             terminal_height: 240.,
             changes: None,
             right_panels: Default::default(),

@@ -69,14 +69,15 @@ pub fn panel_beside(available: f32) -> bool {
 /// `preferred` is `None` until somebody drags the split. A width nobody chose
 /// is a share of what there is, bounded at both ends, so the same build is not
 /// giving a third of a laptop screen to the same slab it gives a sixth of a
-/// display. A width somebody *did* choose is theirs, and only the fit is
-/// enforced — a panel sized to hold a diff must not change when the window
-/// does.
+/// display. A width somebody did choose is kept as far as it fits: the chat
+/// keeps [`CHAT_MIN`], and the panel never takes over half the column, so a
+/// width dragged on a display is not the whole of a laptop window.
 pub fn panel_width(preferred: Option<f32>, available: f32) -> f32 {
     let preferred =
         preferred.unwrap_or_else(|| (available * PANEL_SHARE).clamp(PANEL_MIN, PANEL_MAX));
     let min = PANEL_MIN.min(available / 2.);
-    preferred.clamp(min, (available - CHAT_MIN).max(min))
+    let max = (available - CHAT_MIN).min(available / 2.).max(min);
+    preferred.clamp(min, max)
 }
 
 fn panel_height(preferred: f32, available: f32) -> f32 {
@@ -759,6 +760,7 @@ impl Cydonia {
                                 Some(f32::from(event.bounds.right() - event.event.position.x)),
                                 f32::from(event.bounds.size.width),
                             ));
+                            this.save_panel_layout_settled(cx);
                             cx.notify();
                         },
                     ))

@@ -124,7 +124,26 @@ impl Panel {
     }
 }
 
+/// How long a drag stands still before its width is written down. A resize is
+/// a burst of moves, and the file is rewritten whole each time.
+const SETTLE: std::time::Duration = std::time::Duration::from_millis(400);
+
 impl Cydonia {
+    /// Write the layout once the drag it came from has settled.
+    ///
+    /// Quitting is not a save point that can be relied on: ⌘Q, a crash and a
+    /// killed `cargo run` all end the process without running a hook.
+    pub(crate) fn save_panel_layout_settled(&mut self, cx: &mut Context<Self>) {
+        self.panel_save = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(SETTLE).await;
+            this.update(cx, |this, cx| {
+                this.panel_save = None;
+                this.save_panel_layout(cx);
+            })
+            .ok();
+        }));
+    }
+
     pub(crate) fn restore_panel_layout(&mut self) {
         let saved = load();
         self.changes_open = saved.open;
