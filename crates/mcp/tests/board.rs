@@ -393,3 +393,82 @@ fn board_creation_respects_bound_projects_and_read_only_mode() {
     );
     assert_eq!(scratch.store().boards().len(), 1);
 }
+
+/// An agent says how the work on a card is going, and takes the word off when
+/// the turn is over. The board reads back with the tag beside the card.
+#[test]
+fn a_card_is_tagged_and_untagged() {
+    let scratch = Scratch::new("status");
+    scratch
+        .store()
+        .create_board("Roadmap", "ROAD")
+        .expect("a board");
+    let server = scratch.server();
+    said(server.call(
+        "board_add_column",
+        json!({ "project": scratch.path(), "board": "ROAD", "name": "Todo" }),
+        None,
+    ));
+    said(server.call(
+        "board_add_card",
+        json!({ "project": scratch.path(), "board": "ROAD", "column": "Todo", "text": "Wire the model picker" }),
+        None,
+    ));
+
+    let tagged = said(server.call(
+        "board_set_card_status",
+        json!({ "project": scratch.path(), "card": "ROAD-1", "status": "busy" }),
+        None,
+    ));
+    assert_eq!(tagged, "ROAD-1 is busy");
+    let text = said(server.call(
+        "board_read",
+        json!({ "project": scratch.path(), "board": "ROAD" }),
+        None,
+    ));
+    assert!(text.contains("ROAD-1  Wire the model picker  [busy]"), "{text}");
+
+    let cleared = said(server.call(
+        "board_set_card_status",
+        json!({ "project": scratch.path(), "card": "ROAD-1", "status": "none" }),
+        None,
+    ));
+    assert_eq!(cleared, "ROAD-1 is no longer tagged");
+    let text = said(server.call(
+        "board_read",
+        json!({ "project": scratch.path(), "board": "ROAD" }),
+        None,
+    ));
+    assert!(!text.contains("[busy]"), "{text}");
+}
+
+/// A word nobody uses is refused with the ones that are.
+#[test]
+fn an_unknown_status_is_refused_with_the_list() {
+    let scratch = Scratch::new("status-refused");
+    scratch
+        .store()
+        .create_board("Roadmap", "ROAD")
+        .expect("a board");
+    let server = scratch.server();
+    said(server.call(
+        "board_add_column",
+        json!({ "project": scratch.path(), "board": "ROAD", "name": "Todo" }),
+        None,
+    ));
+    said(server.call(
+        "board_add_card",
+        json!({ "project": scratch.path(), "board": "ROAD", "column": "Todo", "text": "Wire it" }),
+        None,
+    ));
+
+    let refusal = refused(server.call(
+        "board_set_card_status",
+        json!({ "project": scratch.path(), "card": "ROAD-1", "status": "working" }),
+        None,
+    ));
+    assert_eq!(
+        refusal,
+        "working is not a status — say busy, blocked, done, none"
+    );
+}

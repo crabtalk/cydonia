@@ -29,9 +29,9 @@ use artifact::layout::Member;
 use bezel::{
     gpui::{
         self, AnyElement, App, Axis, Bounds, Context, DragMoveEvent, Empty, Entity, FocusHandle,
-        Hsla, KeyBinding, PathPromptOptions, Render, TitlebarOptions, UniformListScrollHandle,
-        Window, WindowBounds, WindowHandle, WindowOptions, actions, div, point, prelude::*, px,
-        size,
+        Hsla, KeyBinding, PathPromptOptions, Render, SharedString, TitlebarOptions,
+        UniformListScrollHandle, Window, WindowBounds, WindowHandle, WindowOptions, actions, div,
+        point, prelude::*, px, size,
     },
     motion::{Fade, Painter},
     theme::{Material, TextStyle, Theme, Typeset, appearance},
@@ -308,6 +308,10 @@ pub struct Cydonia {
     pub(crate) terminal_height: f32,
     pub(crate) changes: Option<Entity<super::component::panel::Panel>>,
     pub(crate) right_panels: std::collections::HashMap<u64, Entity<super::component::panel::Panel>>,
+    /// Where each board is scrolled to, by board id — see [`board::Scrolls`].
+    /// On the window rather than on a pane: the same board arranged in a layout
+    /// and opened on its own is one board.
+    pub(crate) boards: board::Scrolls,
     settings_window: Option<WindowHandle<SettingsWindow>>,
     /// The delete waiting to be agreed to, and the name to ask about. Held
     /// with its label rather than looked up when the dialog draws: what is
@@ -326,7 +330,11 @@ pub struct Cydonia {
     /// pointer, and which of its edges. Written by whichever pane the pointer
     /// is inside and read by the one that draws the mark, the way a card's
     /// landing is — see [`board::Landing`].
-    pub(crate) pane_landing: Option<(Member, artifact::layout::Side)>,
+    pub(crate) pane_landing: Option<(Member, super::arrangement::Landing)>,
+    /// Which of each pane's tabs is in front, by the pane's own name — see
+    /// [`Cydonia::front_of`]. Runtime only: where the panes are is the
+    /// layout's, and which tab you happen to be looking at is not.
+    pub(crate) fronts: std::collections::HashMap<SharedString, Member>,
     /// The board identity panel, while it is open — see [`header::BoardInfo`].
     pub(crate) info: Option<info::BoardInfo>,
     /// The board that has been asked for and not yet made — see
@@ -608,9 +616,11 @@ impl Cydonia {
             terminal_height: 240.,
             changes: None,
             right_panels: Default::default(),
+            boards: Default::default(),
             settings_window: None,
             collapsed_layouts: Default::default(),
             pane_landing: None,
+            fronts: Default::default(),
             confirming: None,
             info: None,
             making: None,
@@ -762,6 +772,12 @@ impl Cydonia {
     /// ring over every kind, in the order the sidebar lists them, so a board
     /// standing alone still has the article above it for a neighbour.
     fn cycle_entry(&mut self, step: isize, window: &mut Window, cx: &mut Context<Self>) {
+        // A pane holding tabs answers the chord for its own strip: the tabs
+        // are what is in front of you, and stepping past them to the sidebar's
+        // list would skip what the pane itself is holding.
+        if self.cycle_tab(step, window, cx) {
+            return;
+        }
         // Nothing on screen is nothing to step from: the launch view is not an
         // entry, and its neighbour is not another one.
         let Some(pane) = self.showing(cx) else {
@@ -792,6 +808,28 @@ impl Cydonia {
         };
         self.open_row(landing, window, cx);
         self.reveal(landing, cx);
+    }
+
+    /// Step the focused pane to the next of its own tabs, wrapping at the
+    /// ends. Says whether it did — a pane holding one entry has no strip of
+    /// its own, and the chord means the sidebar's list instead.
+    fn cycle_tab(&mut self, step: isize, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let Some(front) = self.leaf().entry.clone() else {
+            return false;
+        };
+        let stack = self.workspace.read(cx).stack_of(&front);
+        if stack.len() < 2 {
+            return false;
+        }
+        let Some(at) = stack.iter().position(|tab| *tab == front) else {
+            return false;
+        };
+        let landing = (at as isize + step).rem_euclid(stack.len() as isize) as usize;
+        let (Some(pane), Some(tab)) = (stack.first().cloned(), stack.get(landing).cloned()) else {
+            return false;
+        };
+        self.show_tab(&pane, &tab, window, cx);
+        true
     }
 
     /// Leaving a project is the moment a half-written card has to be filed:

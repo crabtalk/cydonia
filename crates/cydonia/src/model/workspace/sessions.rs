@@ -119,7 +119,7 @@ impl Workspace {
             .session(id)
             .and_then(|chat| chat.record.clone())
         {
-            self.remember(ix, state::Kind::Session, record, cx);
+            self.note_landing(ix, state::Kind::Session, record, cx);
         }
         self.wake_session(id, cx);
         self.prune_archived_for(Some(state::Kind::Session), cx);
@@ -228,7 +228,7 @@ impl Workspace {
         chat.send(content);
         let record = chat.record.clone();
         if let (Some(record), Some(ix)) = (record, self.project_of(id)) {
-            self.remember(ix, state::Kind::Session, record, cx);
+            self.note_landing(ix, state::Kind::Session, record, cx);
         }
         cx.notify();
     }

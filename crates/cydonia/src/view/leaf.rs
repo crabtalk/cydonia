@@ -19,8 +19,8 @@ use crate::{
     },
 };
 use bezel::{
-    gpui::{Entity, ScrollHandle},
-    ui::{input::TextField, scroll::DriftState},
+    gpui::Entity,
+    ui::input::TextField,
 };
 
 /// Which pane the detail column shows. A property of the pane, not of a
@@ -74,18 +74,6 @@ pub struct Leaf {
     pub(crate) asked_session: bool,
     pub(crate) editing: Option<Editing>,
     pub(crate) card_field: Entity<TextField>,
-    /// The board's own scroll, and the drift that carries a held card past the
-    /// edge of the window — a lane out of sight is one a drag cannot reach,
-    /// because reaching for it means letting go.
-    pub(crate) board_scroll: ScrollHandle,
-    pub(crate) board_drift: DriftState,
-    /// The same board's list, which scrolls the other way — see
-    /// [`artifact::board::View`]. Its own handle rather than the lanes': one
-    /// offset read along both axes would land the list wherever the lanes were
-    /// scrolled to.
-    pub(crate) board_list: ScrollHandle,
-    /// The same, per lane — see [`board::Lanes`].
-    pub(crate) lanes: board::Lanes,
     /// The board's find field, and whether its bar is up.
     ///
     /// The bar stands whenever the query does: a board narrowed with nothing on
@@ -122,10 +110,6 @@ impl Leaf {
             asked_session: false,
             editing: None,
             card_field,
-            board_scroll: ScrollHandle::new(),
-            board_drift: DriftState::new(),
-            board_list: ScrollHandle::new(),
-            lanes: board::Lanes::default(),
             find_field,
             finding: false,
             landing: None,

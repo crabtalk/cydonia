@@ -42,6 +42,17 @@ pub struct SeamDrag {
     pub at: usize,
 }
 
+/// Where a release on a pane lands the entry being dragged.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Landing {
+    /// On an edge: the pane divides, and the arrival takes that side.
+    Edge(Side),
+    /// On the bar: the arrival joins the pane's strip as a tab, and no seam is
+    /// made. What the bar is *for* — a pane's whole body is four edges, so
+    /// without a target that is not one of them there is nowhere to aim.
+    Bar,
+}
+
 /// The least of a split a pane may be squeezed to. A pane thinner than this
 /// has nothing left to grab it by.
 const MIN_SHARE: f64 = 0.08;
@@ -84,6 +95,8 @@ impl Cydonia {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         match node {
+            // `entry` is the pane's name, not what it is showing — the pane
+            // resolves its own strip and which of it is in front.
             Node::Leaf { entry, .. } => self.pane(entry, window, cx),
             Node::Split { axis, children, .. } => {
                 let axis = *axis;
@@ -184,7 +197,12 @@ impl Cydonia {
         }
     }
 
-    /// One pane, on the entry the layout named.
+    /// One pane: the entries it holds, and whichever of them is in front.
+    ///
+    /// `entry` is the pane's *name* — the first of its strip, which is what
+    /// the layout keeps and what every drop and close here is aimed at. What
+    /// the pane is showing is [`Self::front_of`], and the two are the same
+    /// thing only for a pane holding one entry.
     fn pane(&self, entry: &Member, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         // The pane at the window's top left, which is the one that has to keep
         // clear of the traffic lights.
@@ -194,7 +212,9 @@ impl Cydonia {
             .as_ref()
             == Some(entry);
         let theme = Theme::of(cx).clone();
-        let showing = self.workspace.read(cx).showing_of(entry);
+        let stack = self.workspace.read(cx).stack_of(entry);
+        let front = self.front_of(entry, &stack);
+        let showing = self.workspace.read(cx).showing_of(&front);
         let key = key_of(entry);
         let held = entry.clone();
         let body = match showing {
@@ -209,13 +229,13 @@ impl Cydonia {
                     "It was deleted after the layout was made.",
                 )
                 .into_any_element(),
-            Some((project, showing)) => self.pane_body(project, showing, Some(entry), window, cx),
+            Some((project, showing)) => self.pane_body(project, showing, Some(&front), window, cx),
         };
         let composer = match showing {
             Some((_, Showing::Session(_))) => self
                 .leaves
                 .iter()
-                .find(|leaf| leaf.entry.as_ref() == Some(entry))
+                .find(|leaf| leaf.entry.as_ref() == Some(&front))
                 .map(|leaf| crate::view::detail::footer(leaf.composer.clone(), None)),
             _ => None,
         };
@@ -223,7 +243,7 @@ impl Cydonia {
             .pane_landing
             .as_ref()
             .filter(|(on, _)| on == entry)
-            .map(|(_, side)| *side);
+            .map(|(_, at)| *at);
         div()
             .id(SharedString::from(format!("pane-{key}")))
             .group("pane")
@@ -247,7 +267,7 @@ impl Cydonia {
             .on_drag_move(cx.listener({
                 let on = held.clone();
                 move |this, event: &DragMoveEvent<EntryDrag>, _, cx| {
-                    this.aim_pane(&on, event.bounds, event.event.position, cx);
+                    this.aim_pane(&on, true, event.bounds, event.event.position, cx);
                 }
             }))
             .on_drop(cx.listener({
@@ -265,11 +285,35 @@ impl Cydonia {
                     move |this, _, window, cx| this.focus_pane(&on, window, cx)
                 }),
             )
-            .child(self.pane_bar(entry, showing, first, &theme, window, cx))
+            .child(self.pane_bar(entry, &stack, &front, first, &theme, window, cx))
             .child(body)
             .children(composer)
-            .children(landing.map(|side| landing_mark(side, &theme)))
+            .children(landing.map(|at| landing_mark(at, &theme)))
             .into_any_element()
+    }
+
+    /// Which of a pane's entries it is showing.
+    ///
+    /// Kept on the window and not in the file — see [`Cydonia::fronts`] — so a
+    /// layout reopens with each pane on the first of its strip. What is
+    /// remembered falls back to that as well once it is no longer in the
+    /// strip, which is what a closed tab leaves behind.
+    pub(crate) fn front_of(&self, pane: &Member, stack: &[Member]) -> Member {
+        self.fronts
+            .get(&key_of(pane))
+            .filter(|front| stack.contains(front))
+            .or_else(|| stack.first())
+            .unwrap_or(pane)
+            .clone()
+    }
+
+    /// Show one of a pane's tabs, and put the focus on it — a tab pressed is a
+    /// pane entered, the same as a press anywhere else in one.
+    pub(crate) fn show_tab(&mut self, pane: &Member, tab: &Member, window: &mut Window, cx: &mut Context<Self>) {
+        self.fronts.insert(key_of(pane), tab.clone());
+        self.focused = usize::MAX;
+        self.focus_pane(tab, window, cx);
+        cx.notify();
     }
 
     /// The single pane, wrapped so an entry dropped on its edge makes the
@@ -289,7 +333,7 @@ impl Cydonia {
             .pane_landing
             .as_ref()
             .filter(|(at, _)| *at == on)
-            .map(|(_, side)| *side);
+            .map(|(_, at)| *at);
         div()
             .id("lone-pane")
             .size_full()
@@ -301,7 +345,7 @@ impl Cydonia {
             .on_drag_move(cx.listener({
                 let at = on.clone();
                 move |this, event: &DragMoveEvent<EntryDrag>, _, cx| {
-                    this.aim_pane(&at, event.bounds, event.event.position, cx);
+                    this.aim_pane(&at, false, event.bounds, event.event.position, cx);
                 }
             }))
             .on_drop(cx.listener({
@@ -311,7 +355,7 @@ impl Cydonia {
                 }
             }))
             .child(body)
-            .children(landing.map(|side| landing_mark(side, &theme)))
+            .children(landing.map(|at| landing_mark(at, &theme)))
             .into_any_element()
     }
 
@@ -363,17 +407,15 @@ impl Cydonia {
     #[allow(clippy::too_many_arguments)]
     fn pane_bar(
         &self,
-        entry: &Member,
-        showing: Option<(usize, Showing)>,
+        pane: &Member,
+        stack: &[Member],
+        front: &Member,
         first: bool,
         theme: &Theme,
         window: &Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let toolbar = showing.and_then(|(project, showing)| self.toolbar_of(project, showing, cx));
-        let focused = self.leaf().entry.as_ref() == Some(entry);
-        let key = key_of(entry);
-        let held = entry.clone();
+        let key = key_of(pane);
         // The lights are the window's and are drawn over whatever is at its
         // top left, so their clearance is taken by the pane that lands there
         // and nowhere another pane can see it. Fullscreen has none.
@@ -383,10 +425,9 @@ impl Cydonia {
             (true, false) => crate::view::root::TOOLBAR_INSET,
             (false, _) => TAB_INSET,
         };
-        let title = toolbar
-            .as_ref()
-            .map(|toolbar| toolbar.title.clone())
-            .unwrap_or_default();
+        // The bar is a drop target of its own — see [`Landing::Bar`] — so it
+        // is lit while a drag is aimed at it rather than at an edge.
+        let aimed = self.pane_landing.as_ref() == Some(&(pane.clone(), Landing::Bar));
         div()
             .flex_none()
             .h(px(crate::view::root::HEADER_HEIGHT))
@@ -394,56 +435,17 @@ impl Cydonia {
             .flex()
             .flex_row()
             .items_center()
-            .gap(px(6.))
+            .gap(px(2.))
             .pl(px(lead))
             .pr(px(6.))
+            .when(aimed, |el| el.bg(theme.element_hover))
             // The fold belongs to whichever column runs along the window's left
             // edge, so with the sidebar gone it is this pane's.
             .children(fold.then(|| self.fold_toggle(theme.text, cx).into_any_element()))
-            .child(
-                div()
-                    .id(SharedString::from(format!("pane-tab-{key}")))
-                    // Sized to the name it carries, not to the bar: a tab
-                    // stretched the width of the pane reads as a field to type
-                    // into rather than a label.
-                    .flex_none()
-                    .min_w_0()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(6.))
-                    .h(px(24.))
-                    .px(px(TAB_INSET))
-                    .rounded(px(Theme::control_radius()))
-                    .cursor_pointer()
-                    .text_style(TextStyle::Callout)
-                    .text_color(match focused {
-                        true => theme.text,
-                        false => theme.text_muted,
-                    })
-                    // Where the focus is said, for the whole pane: the panes
-                    // are one plane divided and take no fill of their own, so
-                    // this name is the only thing carrying it. The sidebar's
-                    // pair — see [`crate::view::sidebar::row`].
-                    .when(focused, |el| el.bg(theme.element_active))
-                    .when(!focused, |el| el.hover(|el| el.bg(theme.element_hover)))
-                    .child(div().flex_none().truncate().child(title))
-                    .children(
-                        toolbar
-                            .as_ref()
-                            .and_then(|toolbar| toolbar.number)
-                            .map(|number| {
-                                div()
-                                    .flex_none()
-                                    .text_style(TextStyle::Caption)
-                                    .text_color(theme.text_faint)
-                                    .child(format!("#{number}"))
-                            }),
-                    )
-                    .on_click(cx.listener({
-                        let on = held.clone();
-                        move |this, _, window, cx| this.focus_pane(&on, window, cx)
-                    })),
+            .children(
+                stack
+                    .iter()
+                    .map(|tab| self.pane_tab(pane, tab, tab == front, theme, cx)),
             )
             .child(div().flex_1().min_w_0())
             .child(
@@ -456,26 +458,102 @@ impl Cydonia {
                     Menu::Pane(key.clone()),
                     cx,
                 )
-                .children(self.pane_menu(entry, cx)),
+                .children(self.pane_menu(pane, cx)),
             )
+            .into_any_element()
+    }
+
+    /// One tab: what it is on, and the `×` that takes it out.
+    ///
+    /// Every tab carries the close, the pane's first included. There is no
+    /// separate control for closing the pane, because there is no separate
+    /// thing to close: a pane is its strip, and the last `×` takes the pane
+    /// with the tab. The focus mark is on the tab rather than on the pane,
+    /// since the panes are one plane divided and take no fill of their own.
+    fn pane_tab(
+        &self,
+        pane: &Member,
+        tab: &Member,
+        front: bool,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let toolbar = self
+            .workspace
+            .read(cx)
+            .showing_of(tab)
+            .and_then(|(project, showing)| self.toolbar_of(project, showing, cx));
+        // The pane in front *and* the tab in front of that pane: a background
+        // pane's own front tab is not where the window's attention is.
+        let focused = front && self.leaf().entry.as_ref() == Some(tab);
+        let key = key_of(tab);
+        let group = SharedString::from(format!("tab-{key}"));
+        let title = toolbar
+            .as_ref()
+            .map(|toolbar| toolbar.title.clone())
+            .unwrap_or_default();
+        div()
+            .id(SharedString::from(format!("pane-tab-{key}")))
+            .group(group.clone())
+            // Sized to the name it carries, not to the bar: a tab stretched
+            // the width of the pane reads as a field to type into rather than
+            // a label.
+            .flex_none()
+            .min_w_0()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(6.))
+            .h(px(24.))
+            .px(px(TAB_INSET))
+            .rounded(px(Theme::control_radius()))
+            .cursor_pointer()
+            .text_style(TextStyle::Callout)
+            .text_color(match focused {
+                true => theme.text,
+                false => theme.text_muted,
+            })
+            .when(focused, |el| el.bg(theme.element_active))
+            .when(!focused, |el| el.hover(|el| el.bg(theme.element_hover)))
+            // A tab that is showing but not focused still has to read as the
+            // one its pane is on, or a background pane's strip says nothing
+            // about what is under it.
+            .when(front && !focused, |el| el.text_color(theme.text))
+            .child(div().flex_none().truncate().child(title))
+            .children(
+                toolbar
+                    .as_ref()
+                    .and_then(|toolbar| toolbar.number)
+                    .map(|number| {
+                        div()
+                            .flex_none()
+                            .text_style(TextStyle::Caption)
+                            .text_color(theme.text_faint)
+                            .child(format!("#{number}"))
+                    }),
+            )
+            .on_click(cx.listener({
+                let (on, shown) = (pane.clone(), tab.clone());
+                move |this, _, window, cx| this.show_tab(&on, &shown, window, cx)
+            }))
             .child(
                 theme
-                    .ghost(SharedString::from(format!("close-pane-{key}")))
+                    .ghost(SharedString::from(format!("close-tab-{key}")))
                     .flex_none()
-                    .p(px(3.))
+                    .p(px(2.))
                     .invisible()
-                    .group_hover("pane", |el| el.visible())
+                    .group_hover(group, |el| el.visible())
                     .child(
-                        icons::icon(icons::math::Minus)
-                            .size(px(13.))
+                        icons::icon(icons::notifications::X)
+                            .size(px(11.))
                             .text_color(theme.text_muted),
                     )
-                    .tooltip(move |window, cx| Tooltip::text("Close pane", window, cx))
+                    .tooltip(move |window, cx| Tooltip::text("Close tab", window, cx))
                     .on_click(cx.listener({
-                        let on = held.clone();
+                        let shut = tab.clone();
                         move |this, _, window, cx| {
                             cx.stop_propagation();
-                            this.close_pane(&on, window, cx);
+                            this.close_pane(&shut, window, cx);
                         }
                     })),
             )
@@ -500,6 +578,7 @@ impl Cydonia {
             .arrangement(cx)
             .and_then(|layout| layout.zoomed())
             .is_some_and(|at| at == *entry);
+
         let mut rows = vec![menu::row(
             match zoomed {
                 true => Item::action("Restore").with_icon(icons::arrows::Shrink),
@@ -572,11 +651,31 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // The pane the tab was in, if it survives losing it: what the window
+        // lands on next is that pane's new front, not whatever leaf happens to
+        // sit where the closed one did.
+        let stack = self.workspace.read(cx).stack_of(entry);
+        let kept = stack
+            .iter()
+            .position(|tab| tab == entry)
+            .filter(|_| stack.len() > 1)
+            // The tab to its left, or the one to its right for the first —
+            // whichever way, a neighbour in the strip rather than a jump.
+            .map(|at| match at {
+                0 => stack[1].clone(),
+                at => stack[at - 1].clone(),
+            });
         self.workspace.update(cx, |workspace, cx| {
             workspace.close_pane(entry, cx);
         });
+        self.fronts.remove(&key_of(entry));
+        if let Some(kept) = &kept
+            && let Some(pane) = self.workspace.read(cx).stack_of(kept).first().cloned()
+        {
+            self.fronts.insert(key_of(&pane), kept.clone());
+        }
         self.sync_leaves(window, cx);
-        if let Some(entry) = self.leaf().entry.clone() {
+        if let Some(entry) = kept.or_else(|| self.leaf().entry.clone()) {
             self.focused = usize::MAX;
             self.focus_pane(&entry, window, cx);
         }
@@ -636,17 +735,35 @@ impl Cydonia {
     /// about it. `select-pane -LRUD` measured off the bounds would be truer to
     /// tmux; it needs each pane's frame, which nothing here keeps yet.
     pub(crate) fn step_pane(&mut self, step: isize, window: &mut Window, cx: &mut Context<Self>) {
-        if self.leaves.len() < 2 {
+        // Panes, not members: a pane holding three tabs is one stop on the
+        // walk, and ⌃⇥ is what steps through what it holds.
+        let panes = match self.arrangement(cx) {
+            Some(layout) => layout.panes(),
+            None => return,
+        };
+        if panes.len() < 2 {
             return;
         }
-        let at = (self.focused as isize + step).rem_euclid(self.leaves.len() as isize) as usize;
-        let Some(entry) = self.leaves.get(at).and_then(|leaf| leaf.entry.clone()) else {
+        let here = self.leaf().entry.clone();
+        let at = here
+            .and_then(|front| {
+                let stack = self.workspace.read(cx).stack_of(&front);
+                let pane = stack.first()?;
+                panes.iter().position(|named| named == pane)
+            })
+            .unwrap_or(0);
+        let landing = (at as isize + step).rem_euclid(panes.len() as isize) as usize;
+        let Some(pane) = panes.get(landing) else {
             return;
         };
-        self.focus_pane(&entry, window, cx);
+        let stack = self.workspace.read(cx).stack_of(pane);
+        let front = self.front_of(pane, &stack);
+        self.focused = usize::MAX;
+        self.focus_pane(&front, window, cx);
     }
 
-    /// Close the pane in front, and with it the member the layout named.
+    /// Close the tab in front — and with it the pane, where it was the pane's
+    /// last. The keyboard's half of the `×` on a tab.
     pub(crate) fn close_focused_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(entry) = self.leaf().entry.clone() else {
             return;
@@ -683,9 +800,13 @@ impl Cydonia {
 
     /// Note which edge of a pane the pointer is over, so the mark can say
     /// where a release would put what is in the air.
+    /// `bar` says whether this pane has a strip to drop onto. The window
+    /// showing one entry has none — there is no layout yet, so there is no
+    /// pane to join — and its top row is an edge like any other.
     fn aim_pane(
         &mut self,
         entry: &Member,
+        bar: bool,
         bounds: bezel::gpui::Bounds<bezel::gpui::Pixels>,
         at: bezel::gpui::Point<bezel::gpui::Pixels>,
         cx: &mut Context<Self>,
@@ -703,11 +824,19 @@ impl Cydonia {
             }
             return;
         }
-        let across = f32::from(at.x - bounds.left()) / f32::from(bounds.size.width);
-        let down = f32::from(at.y - bounds.top()) / f32::from(bounds.size.height);
-        let side = Self::side_at(across, down);
-        if self.pane_landing.as_ref() != Some(&(entry.clone(), side)) {
-            self.pane_landing = Some((entry.clone(), side));
+        // The bar wins over the edges it overlaps. It is one row tall against
+        // a whole pane, so without this the top edge would swallow every drop
+        // aimed at a strip and the bar would be unreachable.
+        let landing = match bar && at.y - bounds.top() <= px(crate::view::root::HEADER_HEIGHT) {
+            true => Landing::Bar,
+            false => {
+                let across = f32::from(at.x - bounds.left()) / f32::from(bounds.size.width);
+                let down = f32::from(at.y - bounds.top()) / f32::from(bounds.size.height);
+                Landing::Edge(Self::side_at(across, down))
+            }
+        };
+        if self.pane_landing.as_ref() != Some(&(entry.clone(), landing)) {
+            self.pane_landing = Some((entry.clone(), landing));
             cx.notify();
         }
     }
@@ -721,13 +850,26 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some((_, side)) = self.pane_landing.take() else {
+        let Some((_, landing)) = self.pane_landing.take() else {
             return;
         };
-        self.workspace.update(cx, |workspace, cx| {
-            workspace.arrange(target, arriving, side, cx);
+        self.workspace.update(cx, |workspace, cx| match landing {
+            Landing::Edge(side) => {
+                workspace.arrange(target, arriving, side, cx);
+            }
+            Landing::Bar => workspace.stack_pane(target, arriving, cx),
         });
+        // The pane's name can have changed under the drop — a tab dragged out
+        // of a strip leaves the one behind it holding the pane — so the strip
+        // is read back rather than assumed.
+        if let Landing::Bar = landing {
+            let stack = self.workspace.read(cx).stack_of(arriving);
+            if let Some(pane) = stack.first().cloned() {
+                self.fronts.insert(key_of(&pane), arriving.clone());
+            }
+        }
         self.sync_leaves(window, cx);
+        self.focused = usize::MAX;
         self.focus_pane(arriving, window, cx);
         cx.notify();
     }
@@ -749,13 +891,20 @@ impl Cydonia {
 }
 
 /// The half of the pane a release would give the arrival.
-fn landing_mark(side: Side, theme: &Theme) -> AnyElement {
+fn landing_mark(landing: Landing, theme: &Theme) -> AnyElement {
     let mark = div().absolute().bg(theme.text_muted.opacity(0.28));
-    match side {
-        Side::Left => mark.left_0().top_0().bottom_0().w(relative(HALF)),
-        Side::Right => mark.right_0().top_0().bottom_0().w(relative(HALF)),
-        Side::Above => mark.top_0().left_0().right_0().h(relative(HALF)),
-        Side::Below => mark.bottom_0().left_0().right_0().h(relative(HALF)),
+    match landing {
+        // The bar's own row rather than half the pane: what a drop there makes
+        // is a tab, and shading half the window would promise a seam.
+        Landing::Bar => mark
+            .top_0()
+            .left_0()
+            .right_0()
+            .h(px(crate::view::root::HEADER_HEIGHT)),
+        Landing::Edge(Side::Left) => mark.left_0().top_0().bottom_0().w(relative(HALF)),
+        Landing::Edge(Side::Right) => mark.right_0().top_0().bottom_0().w(relative(HALF)),
+        Landing::Edge(Side::Above) => mark.top_0().left_0().right_0().h(relative(HALF)),
+        Landing::Edge(Side::Below) => mark.bottom_0().left_0().right_0().h(relative(HALF)),
     }
     .into_any_element()
 }

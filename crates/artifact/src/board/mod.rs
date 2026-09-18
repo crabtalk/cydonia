@@ -16,7 +16,7 @@ pub mod card;
 pub mod column;
 pub mod key;
 
-pub use card::Card;
+pub use card::{Card, Status};
 pub use column::Column;
 
 use crate::{id, stamp};
@@ -270,11 +270,26 @@ impl Board {
     /// At the end of the column, which is where a card written into a lane
     /// lands.
     pub fn add_card(&mut self, column: &str, text: String) -> Option<&Card> {
+        self.insert_card(column, text, usize::MAX)
+    }
+
+    /// At the head of the column.
+    pub fn prepend_card(&mut self, column: &str, text: String) -> Option<&Card> {
+        self.insert_card(column, text, 0)
+    }
+
+    /// At `at`, clamped to the column's length — so `usize::MAX` appends.
+    ///
+    /// The id and the handle are minted before the column is looked up, so a
+    /// card that lands nowhere still spends them. A handle is never reused, and
+    /// a gap in the numbers is cheaper than two cards sharing one.
+    fn insert_card(&mut self, column: &str, text: String, at: usize) -> Option<&Card> {
         let id = self.mint_id();
         let handle = self.take_handle();
         let column = self.column_mut(column)?;
-        column.cards.push(Card::new(id, handle, text));
-        column.cards.last()
+        let at = at.min(column.cards.len());
+        column.cards.insert(at, Card::new(id, handle, text));
+        column.cards.get(at)
     }
 
     /// The next number, and the counter moved past it. [`FIRST`] for a board
@@ -289,6 +304,18 @@ impl Board {
     pub fn handle_of(&self, card: &Card) -> Option<String> {
         let handle = card.handle?;
         (!self.key.is_empty()).then(|| format!("{}-{handle}", self.key))
+    }
+
+    /// Say how the work on a card is going, or take the answer off. Says
+    /// whether there was a card to say it about.
+    pub fn set_card_status(&mut self, id: &str, status: Option<Status>) -> bool {
+        match self.card_mut(id) {
+            Some(card) => {
+                card.status = status;
+                true
+            }
+            None => false,
+        }
     }
 
     pub fn rewrite_card(&mut self, id: &str, text: &str) -> bool {

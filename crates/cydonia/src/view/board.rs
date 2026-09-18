@@ -11,7 +11,7 @@ use crate::{
     },
 };
 use artifact::{
-    board::{Card, View},
+    board::{Card, Status, View},
     layout::Member,
 };
 use bezel::ui::scroll as scrollbars;
@@ -35,7 +35,7 @@ use bezel::{
     },
 };
 use markdown::Typography;
-use std::{cell::RefCell, collections::HashMap};
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 actions!(cydonia_board, [CommitCard, DismissCard, FindCard, DismissFind]);
 
@@ -137,6 +137,27 @@ pub fn field(cx: &mut App) -> Entity<TextField> {
     })
 }
 
+/// How the work on a card is going, said in a word — see
+/// [`artifact::board::Status`]. Written by whoever is doing the work, which is
+/// usually an agent through `board_set_card_status`.
+fn status_chip(status: Status, theme: &Theme) -> AnyElement {
+    let tint = match status {
+        Status::Busy => theme.accent,
+        Status::Blocked => theme.danger,
+        Status::Done => theme.text_faint,
+    };
+    div()
+        .flex_none()
+        .px(px(5.))
+        .rounded_full()
+        .border_1()
+        .border_color(tint)
+        .text_style(TextStyle::Caption)
+        .text_color(tint)
+        .child(status.key())
+        .into_any_element()
+}
+
 /// What a lane holds, and what the find query leaves of it. The two are the
 /// same number on a board nobody is searching.
 #[derive(Clone, Copy)]
@@ -185,10 +206,18 @@ fn first_line(text: &str) -> &str {
 /// renumbers, and the field would follow the number onto whatever slid under.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Editing {
-    /// A card being written, to land at the end of this column.
-    New(String),
+    /// A card being written, to land at this end of this column.
+    New(Place, String),
     /// A card being rewritten.
     Card(String),
+}
+
+/// Which end of a lane a card being written lands at. The field is drawn at
+/// that end too, so what is typed is where it will sit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Place {
+    Top,
+    End,
 }
 
 /// Where a [`Cydonia::landing_mark`] hangs.
@@ -234,6 +263,45 @@ pub struct CardDrag {
 pub struct Landing {
     pub column: String,
     pub before: Option<String>,
+}
+
+/// Where one board sits, wherever it is drawn.
+///
+/// Keyed by board id on the window rather than held by the pane: the same board
+/// arranged in a layout and opened on its own is one board, and a handle per
+/// pane leaves the two disagreeing about where it is scrolled to.
+#[derive(Default)]
+pub struct Scrolls(RefCell<HashMap<String, Scroll>>);
+
+/// Everything the panes showing one board scroll by. Cheap to clone — every
+/// field is a handle onto shared state, which is what makes two panes on one
+/// board move together.
+#[derive(Clone, Default)]
+pub struct Scroll {
+    /// The lanes across.
+    pub across: ScrollHandle,
+    /// The list down, which scrolls the other way — see [`artifact::board::View`].
+    /// Its own handle rather than the lanes': one offset read along both axes
+    /// would land the list wherever the lanes were scrolled to.
+    pub down: ScrollHandle,
+    /// What carries a held card past the edge of the window — a lane out of
+    /// sight is one a drag cannot reach, because reaching for it means letting
+    /// go.
+    pub drift: DriftState,
+    /// The same, per lane — see [`Lanes`].
+    pub lanes: Rc<Lanes>,
+}
+
+impl Scrolls {
+    /// What `board` is scrolled to, minted the first time it is drawn. Kept for
+    /// as long as the window is open, on the same terms as [`Lanes`].
+    pub fn of(&self, board: &str) -> Scroll {
+        self.0
+            .borrow_mut()
+            .entry(board.to_owned())
+            .or_default()
+            .clone()
+    }
 }
 
 /// One scroll, one drift and one follow per lane, minted the first time the
@@ -358,7 +426,7 @@ impl Cydonia {
     fn edit(&mut self, at: Editing, window: &mut Window, cx: &mut Context<Self>) {
         self.commit(cx);
         let text = match &at {
-            Editing::New(_) => String::new(),
+            Editing::New(..) => String::new(),
             Editing::Card(id) => self
                 .workspace
                 .read(cx)
@@ -372,8 +440,14 @@ impl Cydonia {
             .update(cx, |field, cx| field.set_content(text, cx));
         // A lane scrolled away from earlier stays where it was left; opening a
         // card at its foot is asking to be taken back there.
-        if let Editing::New(column) = &at {
-            self.leaf_mut().lanes.follow(column);
+        if let Editing::New(Place::End, column) = &at
+            && let Some(id) = self
+                .workspace
+                .read(cx)
+                .active_board()
+                .map(|board| board.id.clone())
+        {
+            self.boards.of(&id).lanes.follow(column);
         }
         self.leaf_mut().editing = Some(at);
         window.focus(&self.leaf().card_field.read(cx).focus_handle(cx), cx);
@@ -400,9 +474,12 @@ impl Cydonia {
                 return;
             };
             match at {
-                Editing::New(column) => {
+                Editing::New(place, column) => {
                     if !text.is_empty() {
-                        board.add_card(&column, text);
+                        match place {
+                            Place::Top => board.prepend_card(&column, text),
+                            Place::End => board.add_card(&column, text),
+                        };
                     }
                 }
                 Editing::Card(id) => {
@@ -427,7 +504,7 @@ impl Cydonia {
         };
         let board = self.workspace.read(cx).active_board();
         let alive = match &at {
-            Editing::New(column) => board.is_some_and(|board| board.column(column).is_some()),
+            Editing::New(_, column) => board.is_some_and(|board| board.column(column).is_some()),
             Editing::Card(card) => board.is_some_and(|board| board.card(card).is_some()),
         };
         if !alive {
@@ -631,6 +708,17 @@ impl Cydonia {
         self.workspace.read(cx).session_by_record(record)
     }
 
+    /// Where the board at `board_at` sits — see [`Scrolls`].
+    fn scrolls(&self, project: usize, board_at: usize, cx: &App) -> Scroll {
+        let id = self
+            .workspace
+            .read(cx)
+            .board_in(project, board_at)
+            .map(|board| board.id.clone())
+            .unwrap_or_default();
+        self.boards.of(&id)
+    }
+
     // ── finding ──────────────────────────────────────────────────
 
     /// What the board is narrowed by right now, and the empty string when it is
@@ -783,11 +871,9 @@ impl Cydonia {
             // can have two boards up, and the focused one is not always the
             // one being dragged over.
             .on_drag_move(cx.listener({
-                let on = on.cloned();
+                let drift = self.boards.of(&id).drift;
                 move |this, event: &DragMoveEvent<CardDrag>, _, cx| {
-                    this.leaf_of(on.as_ref())
-                        .board_drift
-                        .aim(event.event.position);
+                    drift.aim(event.event.position);
                     this.aim_card(None, cx);
                 }
             }))
@@ -868,6 +954,7 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let scroll = self.scrolls(project, board_at, cx);
         let Some(board) = self.workspace.read(cx).board_in(project, board_at) else {
             return div().flex_1().into_any_element();
         };
@@ -906,20 +993,20 @@ impl Cydonia {
                     .flex_row()
                     .px(px(BOARD_INSET))
                     .pt(px(BOARD_INSET))
-                    .track_scroll(&self.leaf_of(on).board_scroll)
+                    .track_scroll(&scroll.across)
                     .children(columns)
                     .child(self.new_column_lane(cx)),
             )
             .child(scrollbars::Overlay::new(
                 "board-bar",
-                &self.leaf_of(on).board_scroll,
+                &scroll.across,
                 bezel::gpui::Axis::Horizontal,
             ))
             // A lane off the side of the window is one a drag cannot reach:
             // reaching for it would mean letting go.
             .child(scroll::drift(
-                &self.leaf_of(on).board_scroll,
-                &self.leaf_of(on).board_drift,
+                &scroll.across,
+                &scroll.drift,
                 Axes::Horizontal,
             ))
             .into_any_element()
@@ -943,6 +1030,7 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let scroll = self.scrolls(project, board_at, cx);
         let Some(board) = self.workspace.read(cx).board_in(project, board_at) else {
             return div().flex_1().into_any_element();
         };
@@ -984,22 +1072,18 @@ impl Cydonia {
                     // need none: what the pill covers there is the empty half of
                     // `Add a column`.
                     .pb(px(BOARD_INSET + PILL_CLEARANCE))
-                    .track_scroll(&self.leaf_of(on).board_list)
+                    .track_scroll(&scroll.down)
                     .children(groups)
                     .child(self.new_column_row(cx)),
             )
             .child(scrollbars::Overlay::new(
                 "board-list-bar",
-                &self.leaf_of(on).board_list,
+                &scroll.down,
                 bezel::gpui::Axis::Vertical,
             ))
             // A group off the foot of the window is one a drag cannot reach:
             // reaching for it would mean letting go.
-            .child(scroll::drift(
-                &self.leaf_of(on).board_list,
-                &self.leaf_of(on).board_drift,
-                Axes::Vertical,
-            ))
+            .child(scroll::drift(&scroll.down, &scroll.drift, Axes::Vertical))
             .into_any_element()
     }
 
@@ -1050,14 +1134,20 @@ impl Cydonia {
         if cards.is_empty() && self.aimed_at(&id, on, cx) {
             rows.push(self.landing_mark(Mark::Flow, cx));
         }
-        if matches!(&self.leaf_of(on).editing, Some(Editing::New(at)) if *at == id) {
-            rows.push(
-                div()
-                    .px(px(BOARD_INSET))
-                    .py(px(6.))
-                    .child(self.card_editor(on, cx))
-                    .into_any_element(),
-            );
+        // At the end the field is written into is drawn at: what is being
+        // typed sits where the card will.
+        if let Some(Editing::New(place, at)) = &self.leaf_of(on).editing
+            && *at == id
+        {
+            let editor = div()
+                .px(px(BOARD_INSET))
+                .py(px(6.))
+                .child(self.card_editor(on, cx))
+                .into_any_element();
+            match place {
+                Place::Top => rows.insert(0, editor),
+                Place::End => rows.push(editor),
+            }
         }
         let lane = id.clone();
         let taken = id.clone();
@@ -1071,7 +1161,7 @@ impl Cydonia {
             // and run before them, so whichever one the pointer is actually
             // over has the last word.
             .on_drag_move(cx.listener({
-                let drift = self.leaf_of(on).board_drift.clone();
+                let drift = self.scrolls(project, board_at, cx).drift;
                 move |this, event: &DragMoveEvent<CardDrag>, _, cx| {
                     if !event.bounds.contains(&event.event.position) {
                         return;
@@ -1112,7 +1202,7 @@ impl Cydonia {
                             .child("Add a card"),
                     )
                     .on_click(cx.listener(move |this, _, window, cx| {
-                        this.edit(Editing::New(written.clone()), window, cx);
+                        this.edit(Editing::New(Place::End, written.clone()), window, cx);
                     }))
             }))
             .into_any_element()
@@ -1224,6 +1314,7 @@ impl Cydonia {
             return div().into_any_element();
         };
         let text = card.text.clone();
+        let status = card.status;
         let chat = self.card_session(card, cx);
         let live = chat.map(|chat| chat.id);
         let sessions = self.workspace.read(cx).settings.features.sessions;
@@ -1250,7 +1341,7 @@ impl Cydonia {
         // The scroller's viewport, to clip the aim below with — a row scrolled
         // out of the pane still answers for the strip of window its bounds
         // landed on. The lanes clip against their lane; here there is one.
-        let viewport = self.leaf_of(on).board_list.clone();
+        let viewport = self.scrolls(project, board_at, cx).down;
         div()
             .id(SharedString::from(format!("list-row-{id}")))
             .group("list-row")
@@ -1286,6 +1377,7 @@ impl Cydonia {
                     .overflow_hidden()
                     .child(card_body(first_line(&text), window, cx)),
             )
+            .children(status.map(|status| status_chip(status, &theme)))
             // On show, not behind a hover — a card's run is what you look at
             // the board to see, and hiding it would mean hunting for the one
             // that is working.
@@ -1441,14 +1533,25 @@ impl Cydonia {
         if cards.is_empty() && self.aimed_at(&id, on, cx) {
             rows.push(self.landing_mark(Mark::Flow, cx));
         }
-        if matches!(&self.leaf_of(on).editing, Some(Editing::New(at)) if *at == id) {
-            rows.push(self.card_editor(on, cx));
+        // At the end the field is written into is drawn at: what is being
+        // typed sits where the card will.
+        if let Some(Editing::New(place, at)) = &self.leaf_of(on).editing
+            && *at == id
+        {
+            let editor = self.card_editor(on, cx);
+            match place {
+                Place::Top => rows.insert(0, editor),
+                Place::End => rows.push(editor),
+            }
         }
 
         let lane = id.clone();
         let taken = id.clone();
-        let composing = matches!(&self.leaf_of(on).editing, Some(Editing::New(at)) if *at == id);
-        let (scroll, drift, follow) = self.leaf_of(on).lanes.of(&id);
+        // Only a card written at the foot pins the lane there — see
+        // [`Self::edit`].
+        let composing =
+            matches!(&self.leaf_of(on).editing, Some(Editing::New(Place::End, at)) if *at == id);
+        let (scroll, drift, follow) = self.scrolls(project, board_at, cx).lanes.of(&id);
         let bar_id = format!("lane-bar-{id}");
         div()
             .flex_none()
@@ -1531,7 +1634,7 @@ impl Cydonia {
                                             .child("Add a card"),
                                     )
                                     .on_click(cx.listener(move |this, _, window, cx| {
-                                        this.edit(Editing::New(id.clone()), window, cx);
+                                        this.edit(Editing::New(Place::End, id.clone()), window, cx);
                                     }))
                             })),
                     )
@@ -1657,7 +1760,16 @@ impl Cydonia {
                 ("Move down", icons::arrows::ArrowDown),
             ),
         };
-        let mut rows = Vec::new();
+        // First, and the only row here that makes something: the `Add a card`
+        // at the lane's foot is a long way down a full lane, and what is
+        // written from the head of one belongs at the head of it.
+        let written = id.to_owned();
+        let mut rows = vec![menu::row(
+            Item::action("Add card").with_icon(icons::math::Plus),
+            move |this, window, cx| {
+                this.edit(Editing::New(Place::Top, written.clone()), window, cx)
+            },
+        )];
         if at > 0 {
             let moved = id.to_owned();
             rows.push(menu::row(
@@ -1760,6 +1872,7 @@ impl Cydonia {
             return div().into_any_element();
         };
         let text = card.text.clone();
+        let status = card.status;
         let chat = self.card_session(card, cx);
         let live = chat.map(|chat| chat.id);
         let sessions = self.workspace.read(cx).settings.features.sessions;
@@ -1793,7 +1906,7 @@ impl Cydonia {
         // bounds, so a card scrolled out of its lane still answers for the
         // strip of window its bounds landed on — the lane's own header, most
         // of the time.
-        let (viewport, ..) = self.leaf_of(on).lanes.of(column);
+        let (viewport, ..) = self.scrolls(project, board_at, cx).lanes.of(column);
         div()
             .id(SharedString::from(format!("card-{id}")))
             .group("card")
@@ -1854,6 +1967,7 @@ impl Cydonia {
                             .text_color(theme.text_faint)
                             .child(handle)
                     }))
+                    .children(status.map(|status| status_chip(status, &theme)))
                     // On show, not behind a hover — a card's run is what you
                     // look at the board to see, and hiding it would mean
                     // hunting for the one that is working.

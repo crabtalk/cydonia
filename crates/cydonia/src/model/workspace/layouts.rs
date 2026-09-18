@@ -118,6 +118,31 @@ impl Workspace {
         Some(at)
     }
 
+    /// Put an arriving entry into the pane holding `target`, as a tab —
+    /// a drop on a pane's bar rather than on its edge. There has to be a
+    /// layout already: a pane with one entry has no bar to drop on.
+    pub fn stack_pane(&mut self, target: &Member, arriving: &Member, cx: &mut Context<Self>) {
+        // An entry is in one layout at a time, the same rule [`Self::arrange`]
+        // follows for the same reason.
+        let Some(at) = self.layout else {
+            return;
+        };
+        for (ix, other) in self.layouts.iter_mut().enumerate() {
+            if ix != at && other.remove(arriving) {
+                store::save(other);
+            }
+        }
+        self.edit_layout(cx, |layout| layout.stack(target, arriving));
+    }
+
+    /// The entries the pane holding this one draws, in strip order. One entry
+    /// for a pane holding one thing, and none at all where no layout is open.
+    pub fn stack_of(&self, entry: &Member) -> Vec<Member> {
+        self.active_layout()
+            .map(|layout| layout.stack_of(entry))
+            .unwrap_or_default()
+    }
+
     /// The pane across the seam on this side of the one given, if there is one
     /// — what says whether a move that way is on offer at all.
     pub fn neighbour_pane(&self, entry: &Member, side: Side) -> Option<Member> {
@@ -151,20 +176,37 @@ impl Workspace {
 
     /// Close one pane.
     ///
-    /// Closing the last one closes the layout: an arrangement of one pane is
-    /// not an arrangement, and leaving the file behind would put a row in the
-    /// sidebar for something the window is no longer doing.
+    /// Closing down to one pane closes the layout: an arrangement of one pane
+    /// is not an arrangement, and leaving the file behind would put a row in
+    /// the sidebar for something the window is no longer doing. The pane that
+    /// would have been left alone is what the window is put on, so the entry
+    /// you were keeping stays in front.
     pub fn close_pane(&mut self, entry: &Member, cx: &mut Context<Self>) {
-        let last = self
-            .active_layout()
-            .is_some_and(|layout| layout.leaves() <= 1);
-        if last {
-            if let Some(at) = self.layout {
-                self.delete_layout(at, cx);
-            }
+        let Some(layout) = self.active_layout() else {
+            return;
+        };
+        // A pane holding tabs loses a tab, not the pane — so none of the rules
+        // below about what is left of the arrangement come into it.
+        if layout.stack_of(entry).len() > 1 {
+            self.edit_layout(cx, |layout| layout.remove(entry));
             return;
         }
-        self.edit_layout(cx, |layout| layout.remove(entry));
+        if layout.leaves() > 2 {
+            self.edit_layout(cx, |layout| layout.remove(entry));
+            return;
+        }
+        let survivor = layout
+            .entries()
+            .into_iter()
+            .find(|member| member != entry)
+            .and_then(|member| self.showing_of(&member));
+
+        if let Some(at) = self.layout {
+            self.delete_layout(at, cx);
+        }
+        if let Some((project, showing)) = survivor {
+            self.select_showing(project, showing, cx);
+        }
     }
 
     /// Take an entry out of whatever layout holds it, open or not.
@@ -181,7 +223,9 @@ impl Workspace {
         let Some(layout) = self.layouts.get_mut(ix) else {
             return;
         };
-        if layout.leaves() <= 1 {
+        // A pane holding tabs loses a tab and stays a pane, so what is left of
+        // the arrangement does not change.
+        if layout.leaves() <= 2 && layout.stack_of(member).len() <= 1 {
             self.delete_layout(ix, cx);
             return;
         }

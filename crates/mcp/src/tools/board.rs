@@ -51,6 +51,14 @@ const TO_PROJECT: Arg = Arg {
     about: "The project that board is in, as a directory path, which must be one cydonia has open. Left out, it is this project. Requires to_board.",
 };
 
+/// The closed set is written into the description as well as into the schema's
+/// `enum`: a client that renders the schema gets the words from one place, and
+/// one that only reads prose gets them from the other.
+const STATUS: Arg = Arg {
+    name: "status",
+    about: "How the work is going: busy (being worked on now), blocked (cannot go on), done (finished), or none to take the answer off.",
+};
+
 const BEFORE_COLUMN: Arg = Arg {
     name: "before",
     about: "The column to put it in front of, by name or id. Left out, it goes to the right-hand end.",
@@ -85,7 +93,7 @@ const KEY: Arg = Arg {
     about: "A unique board key for card handles, such as ROAD. Normalized to uppercase letters and digits.",
 };
 
-pub static TOOLS: [Tool; 11] = [
+pub static TOOLS: [Tool; 12] = [
     Tool {
         name: "board_add",
         description: "Create a board with a name and unique key. Returns its id, project number, key, and columns. Use board_add_column to add columns.",
@@ -120,6 +128,17 @@ pub static TOOLS: [Tool; 11] = [
         schema: |bound| fields(bound, &[PROJECT, CARD, TEXT_NOW]),
         writes: true,
         call: rewrite_card,
+    },
+    Tool {
+        name: "board_set_card_status",
+        description: "Say how the work on a card is going — tag it busy while working on it, and clear the tag when the turn is over. This is not where the card sits: use board_move_card for that.",
+        schema: |bound| {
+            let mut schema = fields(bound, &[PROJECT, CARD, STATUS]);
+            schema["properties"][STATUS.name]["enum"] = json!(statuses());
+            schema
+        },
+        writes: true,
+        call: set_card_status,
     },
     Tool {
         name: "board_move_card",
@@ -255,6 +274,43 @@ fn rewrite_card(args: Args<'_>) -> Outcome {
     board.rewrite_card(&id, text);
     project.save_board(&mut board);
     Ok(Answer::said(format!("{handle} now reads: {}", line(text))))
+}
+
+/// Every word [`STATUS`] takes, `none` among them — the schema's `enum` and
+/// the refusal are built from this one list.
+fn statuses() -> Vec<&'static str> {
+    artifact::board::Status::ALL
+        .iter()
+        .map(|status| status.key())
+        .chain(std::iter::once(NONE))
+        .collect()
+}
+
+/// What a caller says to take a status off. Not a [`Status`] — the absence of
+/// one is what it means.
+const NONE: &str = "none";
+
+fn set_card_status(args: Args<'_>) -> Outcome {
+    let project = &store(&args)?;
+    let (mut board, id) = locate(project, args.text(CARD)?)?;
+    let word = args.text(STATUS)?.trim();
+    let status = match word.eq_ignore_ascii_case(NONE) {
+        true => None,
+        false => Some(artifact::board::Status::parse(word).ok_or_else(|| {
+            Trouble::Refused(format!(
+                "{word} is not a status — say {}",
+                statuses().join(", ")
+            ))
+        })?),
+    };
+    let handle = named(&board, &id);
+    board.set_card_status(&id, status);
+    project.save_board(&mut board);
+    Ok(Answer::said(match status {
+        Some(status) => format!("{handle} is {}", status.key()),
+        None => format!("{handle} is no longer tagged"),
+    })
+    .with(json!({ "id": id, "handle": handle, "status": status })))
 }
 
 fn move_card(args: Args<'_>) -> Outcome {
@@ -560,6 +616,9 @@ fn outline(board: &Board) -> String {
         for card in &column.cards {
             let handle = board.handle_of(card).unwrap_or_else(|| card.id.clone());
             out.push_str(&format!("\n  {handle:<width$}  {}", line(&card.text)));
+            if let Some(status) = card.status {
+                out.push_str(&format!("  [{}]", status.key()));
+            }
             // What the card was handed to, which is what ▶ and 💬 are drawn
             // off. Whether that session is *running* is the app's to know.
             if card.session.is_some() {
@@ -615,6 +674,7 @@ fn shape(board: &Board) -> Value {
                         "handle": board.handle_of(card),
                         "text": card.text,
                         "session": card.session,
+                        "status": card.status,
                     }))
                     .collect::<Vec<_>>(),
             }))
