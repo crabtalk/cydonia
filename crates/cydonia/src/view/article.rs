@@ -597,7 +597,7 @@ impl Cydonia {
             id,
             "article-row",
             selected,
-            workspace.indent_project_rows,
+            self.indent_of(entry, cx),
             &theme,
         )
         .child(

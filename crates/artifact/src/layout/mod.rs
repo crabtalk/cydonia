@@ -59,6 +59,16 @@ impl Side {
     fn after(self) -> bool {
         matches!(self, Self::Right | Self::Below)
     }
+
+    /// The side facing this one.
+    pub fn opposite(self) -> Self {
+        match self {
+            Self::Left => Self::Right,
+            Self::Right => Self::Left,
+            Self::Above => Self::Below,
+            Self::Below => Self::Above,
+        }
+    }
 }
 
 /// One pane, or one split of them.
@@ -333,6 +343,115 @@ impl Node {
             return None;
         };
         children.get_mut(*step)?.at_path_mut(rest)
+    }
+
+    /// The path from here to the pane on this entry: each step is a child's
+    /// index in the split above it.
+    pub fn path_to(&self, entry: u64) -> Option<Vec<usize>> {
+        match self {
+            Self::Leaf { entry: held, .. } => (*held == entry).then(Vec::new),
+            Self::Split { children, .. } => children.iter().enumerate().find_map(|(ix, child)| {
+                let mut path = child.path_to(entry)?;
+                path.insert(0, ix);
+                Some(path)
+            }),
+        }
+    }
+
+    /// The node at this path — see [`Self::at_path_mut`].
+    pub fn at_path(&self, path: &[usize]) -> Option<&Node> {
+        let Some((step, rest)) = path.split_first() else {
+            return Some(self);
+        };
+        let Self::Split { children, .. } = self else {
+            return None;
+        };
+        children.get(*step)?.at_path(rest)
+    }
+
+    /// The pane nearest this side of whatever is under here — what a walk
+    /// across a seam lands on when the other side of it is itself divided.
+    ///
+    /// Nothing for a split holding no children, which a well-formed tree never
+    /// has — see [`Self::prune`], which collapses one the moment it could.
+    fn edge_leaf(&self, side: Side) -> Option<u64> {
+        match self {
+            Self::Leaf { entry, .. } => Some(*entry),
+            Self::Split { axis, children, .. } => {
+                // Along this side's own axis the nearest pane is the one at
+                // that end; across it every child touches the seam, and the
+                // first is as good an answer as any.
+                let at = match *axis == side.axis() && side.after() {
+                    true => children.len().checked_sub(1)?,
+                    false => 0,
+                };
+                children.get(at)?.edge_leaf(side)
+            }
+        }
+    }
+
+    /// The pane across the seam on this side of the one on `entry`, or nothing
+    /// where that side of it is the edge of the window.
+    ///
+    /// The walk tiling window managers use, and the same one `select-pane -L`
+    /// makes in tmux: up to the nearest split dividing the right way where
+    /// this is not already the end child, across to the sibling, then down to
+    /// whichever of its panes touches the seam.
+    pub fn neighbour(&self, entry: u64, side: Side) -> Option<u64> {
+        let path = self.path_to(entry)?;
+        for depth in (0..path.len()).rev() {
+            let Some(Self::Split { axis, children, .. }) = self.at_path(&path[..depth]) else {
+                continue;
+            };
+            if *axis != side.axis() {
+                continue;
+            }
+            let at = path[depth];
+            let across = match side.after() {
+                true => at + 1,
+                false => match at {
+                    // The end child on this side; the answer, if there is
+                    // one, is further up.
+                    0 => continue,
+                    _ => at - 1,
+                },
+            };
+            if let Some(sibling) = children.get(across) {
+                // Entering from the far side, so the pane wanted is the one
+                // against the seam just crossed.
+                return sibling.edge_leaf(side.opposite());
+            }
+        }
+        None
+    }
+
+    /// Exchange the places of two panes. The arrangement keeps its shape and
+    /// its sizes; only what each pane is on changes — so doing it twice puts
+    /// everything back.
+    pub fn swap(&mut self, a: u64, b: u64) -> bool {
+        if a == b || !self.contains(a) || !self.contains(b) {
+            return false;
+        }
+        self.replace_entry(a, b);
+        true
+    }
+
+    /// Put `b` where `a` is and `a` where `b` is.
+    fn replace_entry(&mut self, a: u64, b: u64) {
+        match self {
+            Self::Leaf { entry, .. } => {
+                if *entry == a {
+                    *entry = b;
+                } else if *entry == b {
+                    *entry = a;
+                }
+            }
+            Self::Split { children, .. } => {
+                for child in children.iter_mut() {
+                    child.replace_entry(a, b);
+                }
+            }
+        }
     }
 
     /// Move the seam after child `at` so that everything before it takes

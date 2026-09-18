@@ -7,7 +7,10 @@
 use crate::{
     model::workspace::Showing,
     view::{
-        component::{divider, menu::Menu},
+        component::{
+            divider,
+            menu::{self, Menu},
+        },
         root::Cydonia,
         sidebar::EntryDrag,
     },
@@ -21,6 +24,8 @@ use bezel::{
     theme::{TextStyle, Theme, Typeset},
     ui::{
         icons,
+        menu::Item,
+        popover,
         tooltip::Tooltip,
         widgets::{Buttons, Content},
     },
@@ -412,7 +417,7 @@ impl Cydonia {
                     ),
             )
             .child(div().flex_1().min_w_0())
-            .children(toolbar.and_then(|toolbar| toolbar.entry).map(|at| {
+            .child(
                 self.menu_button(
                     SharedString::from(format!("pane-menu-{entry}")),
                     Some("pane"),
@@ -422,13 +427,8 @@ impl Cydonia {
                     Menu::Pane(entry),
                     cx,
                 )
-                .children(self.entry_menu(
-                    Menu::Pane(entry),
-                    at.row,
-                    at.archived,
-                    cx,
-                ))
-            }))
+                .children(self.pane_menu(entry, cx)),
+            )
             .child(
                 theme
                     .ghost(("close-pane", entry as usize))
@@ -448,6 +448,78 @@ impl Cydonia {
                     })),
             )
             .into_any_element()
+    }
+
+    /// What the `···` on a pane's bar offers: what can be done to the *pane*.
+    ///
+    /// Nothing about the entry it is on — no rename, no archive, no delete.
+    /// Those act on a thing that has its own row in the sidebar and its own
+    /// band when it is opened on its own, and `../desktop`'s rule for a `···`
+    /// is that it carries only what has no affordance elsewhere. A delete one
+    /// click from the moves would also be a delete nobody meant.
+    ///
+    /// Closing is not here either: it keeps the button on the bar.
+    fn pane_menu(&self, entry: u64, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if self.menu.as_ref() != Some(&Menu::Pane(entry)) {
+            return None;
+        }
+        let zoomed = self
+            .arrangement(cx)
+            .and_then(|layout| layout.zoomed())
+            .is_some_and(|at| at == entry);
+        let mut rows = vec![menu::row(
+            match zoomed {
+                true => Item::action("Restore").with_icon(icons::arrows::Shrink),
+                false => Item::action("Expand").with_icon(icons::arrows::Expand),
+            },
+            move |this, _, cx| this.zoom_focused(entry, cx),
+        )];
+        // Only the ways this pane can actually go: a move with nothing across
+        // the seam is a row that does nothing, and a menu of those teaches
+        // that the menu does nothing.
+        for (side, label, icon) in [
+            (Side::Left, "Move left", icons::arrows::ArrowLeft),
+            (Side::Right, "Move right", icons::arrows::ArrowRight),
+            (Side::Above, "Move up", icons::arrows::ArrowUp),
+            (Side::Below, "Move down", icons::arrows::ArrowDown),
+        ] {
+            if self
+                .workspace
+                .read(cx)
+                .neighbour_pane(entry, side)
+                .is_none()
+            {
+                continue;
+            }
+            rows.push(menu::row(
+                Item::action(label).with_icon(icon),
+                move |this, window, cx| this.move_pane(entry, side, window, cx),
+            ));
+        }
+        let id = SharedString::from(format!("pane-menu-card-{entry}"));
+        Some(popover::anchored_menu_below(
+            id.clone(),
+            self.menu_card(id, rows, cx),
+            None,
+        ))
+    }
+
+    /// Exchange a pane with the one across the seam, and keep the focus on it
+    /// — the pane moved, not the attention.
+    fn move_pane(&mut self, entry: u64, side: Side, window: &mut Window, cx: &mut Context<Self>) {
+        let moved = self
+            .workspace
+            .update(cx, |workspace, cx| workspace.move_pane(entry, side, cx));
+        if moved {
+            self.sync_leaves(window, cx);
+            self.focus_pane(entry, window, cx);
+        }
+    }
+
+    /// Stand a pane over the others, or put it back.
+    fn zoom_focused(&mut self, entry: u64, cx: &mut Context<Self>) {
+        self.workspace
+            .update(cx, |workspace, cx| workspace.zoom_pane(entry, cx));
     }
 
     /// Drop one pane from the arrangement.

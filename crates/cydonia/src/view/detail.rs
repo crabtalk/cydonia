@@ -458,6 +458,7 @@ impl Cydonia {
     /// be swapped for.
     pub(crate) fn sync_composer(&mut self, cx: &mut Context<Self>) {
         let workspace = self.workspace.read(cx);
+        let arranged = workspace.active_layout().is_some();
         self.terminals
             .retain(|id, _| workspace.session(*id).is_some());
         let agents: Vec<composer::Agent> = workspace
@@ -517,6 +518,7 @@ impl Cydonia {
             let (session, draft, placeholder, commands, streaming, activity, current, sw, usage) =
                 point;
             leaf.composer.update(cx, |composer, cx| {
+                composer.set_tools(!arranged, cx);
                 composer.set_session(session, &draft, cx);
                 composer.set_placeholder(&placeholder, cx);
                 composer.set_commands(&commands, cx);
@@ -656,12 +658,19 @@ impl Cydonia {
                     ),
                 },
             );
-        let terminal = (showing == Some(Pane::Chat))
+        let terminal = (showing == Some(Pane::Chat) && !arranged)
             .then(|| self.workspace.read(cx).active_id())
             .flatten()
             .and_then(|id| self.terminals.get(&id))
             .filter(|(visible, _)| *visible)
             .map(|(_, terminal)| terminal.clone());
+        // The window's own panels stand beside one entry, not beside an
+        // arrangement of several. Held rather than shut, so leaving the layout
+        // puts them back as they were.
+        let changes = match arranged {
+            true => None,
+            false => self.changes.clone(),
+        };
         let available = f32::from(window.viewport_size().width)
             - if self.sidebar_open {
                 self.sidebar_width
@@ -708,7 +717,7 @@ impl Cydonia {
                         },
                     ))
                     .child(main)
-                    .children(self.changes.clone().map(|panel| {
+                    .children(changes.clone().map(|panel| {
                         div()
                             .relative()
                             .w(px(width))
@@ -716,7 +725,7 @@ impl Cydonia {
                             .flex_none()
                             .child(panel)
                     }))
-                    .when(self.changes.is_some(), |row| {
+                    .when(changes.is_some(), |row| {
                         row.child(
                             crate::view::component::divider::divider(&theme, Axis::Horizontal)
                                 .id("changes-split")
@@ -976,11 +985,14 @@ impl Cydonia {
                 0.
             })
         .max(0.);
+        // The right-hand panel is not drawn beside a layout — see
+        // [`Cydonia::detail`] — so its width is only taken off the column
+        // where it is actually standing there.
+        let beside = self.changes.is_some() && self.workspace.read(cx).active_layout().is_none();
         let column = available
-            - if self.changes.is_some() {
-                panel_width(self.changes_width, available)
-            } else {
-                0.
+            - match beside {
+                true => panel_width(self.changes_width, available),
+                false => 0.,
             };
         // The column, less what a layout gives the panes beside this one. The
         // transcript sizes its margins off this and drops the rail when they

@@ -903,3 +903,159 @@ fn a_lone_pane_is_the_whole_window() {
     assert_eq!(tree.share_of(1, Axis::Horizontal), Some(1.));
     assert_eq!(tree.share_of(9, Axis::Horizontal), None);
 }
+
+// ── across the seams ─────────────────────────────────────────────
+
+/// Two panes side by side are each other's neighbour, and neither has one
+/// past the window's edge.
+#[test]
+fn a_pane_knows_what_is_across_the_seam() {
+    let tree = Node::split(Axis::Horizontal, vec![Node::leaf(1), Node::leaf(2)]);
+    assert_eq!(tree.neighbour(1, Side::Right), Some(2));
+    assert_eq!(tree.neighbour(2, Side::Left), Some(1));
+    assert_eq!(tree.neighbour(1, Side::Left), None, "the window's edge");
+    assert_eq!(tree.neighbour(2, Side::Right), None);
+    // Nothing divides them the other way.
+    assert_eq!(tree.neighbour(1, Side::Below), None);
+    assert_eq!(tree.neighbour(1, Side::Above), None);
+}
+
+/// A pane crossing into a divided neighbour lands on the one against the seam
+/// it crossed, not on whatever happens to be first.
+#[test]
+fn crossing_into_a_split_lands_against_the_seam() {
+    // 1 | (2 over 3)
+    let tree = Node::split(
+        Axis::Horizontal,
+        vec![
+            Node::leaf(1),
+            Node::split(Axis::Vertical, vec![Node::leaf(2), Node::leaf(3)]),
+        ],
+    );
+    // Going right from 1 enters the column at its top.
+    assert_eq!(tree.neighbour(1, Side::Right), Some(2));
+    // Coming back left from either of them is 1.
+    assert_eq!(tree.neighbour(2, Side::Left), Some(1));
+    assert_eq!(tree.neighbour(3, Side::Left), Some(1));
+    // And within the column.
+    assert_eq!(tree.neighbour(2, Side::Below), Some(3));
+    assert_eq!(tree.neighbour(3, Side::Above), Some(2));
+}
+
+/// The walk goes up past splits dividing the other way: a pane at the bottom
+/// of one column still has the column beside it.
+#[test]
+fn the_walk_climbs_past_splits_the_other_way() {
+    // (1 over 2) | (3 over 4)
+    let tree = Node::split(
+        Axis::Horizontal,
+        vec![
+            Node::split(Axis::Vertical, vec![Node::leaf(1), Node::leaf(2)]),
+            Node::split(Axis::Vertical, vec![Node::leaf(3), Node::leaf(4)]),
+        ],
+    );
+    assert_eq!(tree.neighbour(2, Side::Right), Some(3), "up, across, down");
+    assert_eq!(tree.neighbour(4, Side::Left), Some(1));
+    assert_eq!(tree.neighbour(2, Side::Left), None);
+}
+
+/// Three across: the middle has a neighbour both ways, the ends only one.
+#[test]
+fn the_ends_of_a_row_have_one_neighbour() {
+    let tree = Node::split(
+        Axis::Horizontal,
+        vec![Node::leaf(1), Node::leaf(2), Node::leaf(3)],
+    );
+    assert_eq!(tree.neighbour(2, Side::Left), Some(1));
+    assert_eq!(tree.neighbour(2, Side::Right), Some(3));
+    assert_eq!(tree.neighbour(1, Side::Left), None);
+    assert_eq!(tree.neighbour(3, Side::Right), None);
+}
+
+/// A pane on its own has no neighbours, and an entry no pane is on has no
+/// place to walk from.
+#[test]
+fn a_lone_pane_has_no_neighbours() {
+    let tree = Node::leaf(1);
+    assert_eq!(tree.neighbour(1, Side::Right), None);
+    assert_eq!(tree.neighbour(9, Side::Right), None);
+}
+
+/// Swapping exchanges what two panes are on and leaves the arrangement alone
+/// — so doing it twice puts everything back.
+#[test]
+fn swapping_keeps_the_shape_and_the_sizes() {
+    let mut tree = Node::Split {
+        ratio: 1.,
+        axis: Axis::Horizontal,
+        children: vec![
+            Node::Leaf {
+                ratio: 0.7,
+                entry: 1,
+            },
+            Node::Leaf {
+                ratio: 0.3,
+                entry: 2,
+            },
+        ],
+    };
+    let before = tree.clone();
+
+    assert!(tree.swap(1, 2));
+    assert_eq!(tree.entries(), vec![2, 1], "they changed places");
+    let Node::Split { children, .. } = &tree else {
+        panic!("a split");
+    };
+    assert!(
+        (children[0].ratio() - 0.7).abs() < f64::EPSILON,
+        "the wide side is still the wide side"
+    );
+
+    assert!(tree.swap(1, 2));
+    assert_eq!(tree, before, "twice is where it started");
+}
+
+/// A swap reaches across the tree, not just between siblings.
+#[test]
+fn swapping_reaches_across_the_tree() {
+    let mut tree = Node::split(
+        Axis::Horizontal,
+        vec![
+            Node::leaf(1),
+            Node::split(Axis::Vertical, vec![Node::leaf(2), Node::leaf(3)]),
+        ],
+    );
+    assert!(tree.swap(1, 3));
+    assert_eq!(tree.entries(), vec![3, 2, 1]);
+}
+
+/// Swapping something for itself, or for a pane that is not here, changes
+/// nothing.
+#[test]
+fn a_swap_that_means_nothing_does_nothing() {
+    let mut tree = Node::split(Axis::Horizontal, vec![Node::leaf(1), Node::leaf(2)]);
+    let before = tree.clone();
+    assert!(!tree.swap(1, 1));
+    assert!(!tree.swap(1, 9));
+    assert!(!tree.swap(9, 1));
+    assert_eq!(tree, before);
+}
+
+/// A path names the pane it leads to, both ways round.
+#[test]
+fn a_path_leads_to_the_pane_it_names() {
+    let tree = Node::split(
+        Axis::Horizontal,
+        vec![
+            Node::leaf(1),
+            Node::split(Axis::Vertical, vec![Node::leaf(2), Node::leaf(3)]),
+        ],
+    );
+    let path = tree.path_to(3).expect("a path");
+    assert_eq!(path, vec![1, 1]);
+    assert!(matches!(
+        tree.at_path(&path),
+        Some(Node::Leaf { entry: 3, .. })
+    ));
+    assert_eq!(tree.path_to(9), None);
+}

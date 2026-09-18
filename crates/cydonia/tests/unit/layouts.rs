@@ -8,16 +8,33 @@ use crate::model::{settings::Settings, state};
 use artifact::layout::Side;
 use gpui::AppContext as _;
 
-/// A scratch project, torn down when the test ends.
+/// A scratch project, torn down when the test ends — and a config directory
+/// beside it that the test's writes land in.
+///
+/// [`Workspace::save`] writes `state.toml` under [`crate::model::settings::dir`]
+/// for real, and every open goes through it. Without somewhere else to put it a
+/// test rewrites the project list of whoever ran it, with the scratch path that
+/// is about to be deleted — and the app they open next lists nothing.
 struct Scratch(std::path::PathBuf);
 
 impl Scratch {
     fn new(name: &str) -> Self {
-        let path =
+        let root =
             std::env::temp_dir().join(format!("cydonia-layouts-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&path);
+        let _ = std::fs::remove_dir_all(&root);
+        let path = root.join("project");
         std::fs::create_dir_all(&path).unwrap();
-        Self(path)
+        std::fs::create_dir_all(root.join("config")).unwrap();
+        // Before any workspace exists, so nothing has saved yet. Sound here
+        // because nextest gives each test its own process and this runs before
+        // the app spawns a thread.
+        unsafe { std::env::set_var("XDG_CONFIG_HOME", root.join("config")) };
+        Self(root)
+    }
+
+    /// The project directory itself — the thing a project *is*.
+    fn project(&self) -> std::path::PathBuf {
+        self.0.join("project")
     }
 }
 
@@ -32,7 +49,7 @@ fn opened(scratch: &Scratch, cx: &mut gpui::TestAppContext) -> gpui::Entity<Work
     cx.update(|cx| bezel::theme::Theme::install(bezel::theme::Appearance::Light, cx));
     let workspace = cx.new(|cx| Workspace::new(Settings::default(), state::State::default(), cx));
     workspace.update(cx, |workspace, cx| {
-        workspace.open_project(scratch.0.clone(), cx);
+        workspace.open_project(scratch.project(), cx);
     });
     workspace
 }
@@ -86,7 +103,7 @@ fn a_layout_is_written_as_it_is_arranged(cx: &mut gpui::TestAppContext) {
         workspace.active_layout().expect("open").id.clone()
     });
 
-    let store = fs::Project::new(&scratch.0);
+    let store = fs::Project::new(scratch.project());
     let read = store.layout(&id).expect("on disk");
     assert_eq!(read.entries(), vec![1, 2]);
 }
@@ -141,7 +158,9 @@ fn a_rename_is_written(cx: &mut gpui::TestAppContext) {
         id
     });
 
-    let read = fs::Project::new(&scratch.0).layout(&id).expect("on disk");
+    let read = fs::Project::new(scratch.project())
+        .layout(&id)
+        .expect("on disk");
     assert_eq!(read.name, "Auth work");
 }
 
@@ -179,7 +198,8 @@ fn a_member_that_has_gone_is_pruned(cx: &mut gpui::TestAppContext) {
             .store()
             .create_board("Roadmap", "ROAD")
             .expect("a board");
-        let number = artifact::entry::number(&scratch.0, "board", &board.id).expect("numbered");
+        let number =
+            artifact::entry::number(&scratch.project(), "board", &board.id).expect("numbered");
 
         // A number that was never given to anything stands for one that has
         // since been deleted: neither resolves.
@@ -344,7 +364,7 @@ fn closing_the_last_pane_closes_the_layout(cx: &mut gpui::TestAppContext) {
     });
 
     assert!(
-        fs::Project::new(&scratch.0).layout(&id).is_none(),
+        fs::Project::new(scratch.project()).layout(&id).is_none(),
         "the file goes too"
     );
 }
@@ -425,96 +445,131 @@ fn the_middle_belongs_to_an_edge() {
     assert_eq!(Cydonia::side_at(0.55, 0.5), Side::Right);
 }
 
-/// Each pane's bar names its own entry, not whichever one is in front.
-/// Without this every bar in a layout would say the same thing.
+/// An entry is in one layout at a time, the way a pane is in one tmux window.
+/// Dragging it into another moves it — the sidebar lists it under the layout
+/// holding it, and it can only be under one.
 #[gpui::test]
-fn a_pane_bar_names_its_own_entry(cx: &mut gpui::TestAppContext) {
-    use crate::view::root::Cydonia;
-    let scratch = Scratch::new("bars");
-    cx.update(|cx| bezel::theme::Theme::install(bezel::theme::Appearance::Light, cx));
+fn an_entry_belongs_to_one_layout(cx: &mut gpui::TestAppContext) {
+    let scratch = Scratch::new("exclusive");
+    let workspace = opened(&scratch, cx);
 
-    let window = cx.add_window(|window, cx| {
-        let root = Cydonia::new(Settings::default(), state::State::default(), window, cx);
-        root.workspace.update(cx, |workspace, cx| {
-            workspace.open_project(scratch.0.clone(), cx);
-            workspace.new_board(0, "First".into(), "ONE", cx).ok();
-            workspace.new_board(0, "Second".into(), "TWO", cx).ok();
-            // Newest first, so index 0 is Second and the window is on it.
-            workspace.select_showing(0, Showing::Board(0), cx);
-        });
-        root
+    workspace.update(cx, |workspace, cx| {
+        // Two layouts, with #3 first in the one and then dragged into the other.
+        workspace.arrange(0, 1, 3, Side::Right, cx);
+        let first = workspace.active_layout().expect("open").id.clone();
+        assert_eq!(workspace.layout_holding(0, 3), Some(0));
+
+        workspace.projects[0].layout = None;
+        workspace.arrange(0, 2, 4, Side::Right, cx);
+        let second = workspace.active_layout().expect("open").id.clone();
+        assert_ne!(first, second, "a second layout");
+
+        workspace.arrange(0, 4, 3, Side::Below, cx);
+
+        // Held by the second now, and gone from the first.
+        let held = workspace.layout_holding(0, 3).expect("in a layout");
+        assert_eq!(workspace.projects[0].layouts[held].id, second);
+        let left = workspace.projects[0]
+            .layouts
+            .iter()
+            .find(|layout| layout.id == first)
+            .expect("still there");
+        assert!(!left.contains(3), "it left the one it was in");
     });
-
-    window
-        .update(cx, |root, _, cx| {
-            let front = root.toolbar_of(0, Showing::Board(0), cx).expect("in front");
-            let beside = root.toolbar_of(0, Showing::Board(1), cx).expect("beside");
-            assert_eq!(front.title, "Second");
-            assert_eq!(
-                beside.title, "First",
-                "a pane names the entry it is on, not the focused one"
-            );
-        })
-        .unwrap();
 }
 
-/// A pane is told its own width, not the window's. The transcript drops its
-/// rail when the margins are too narrow to hold it, and measured against the
-/// window a pane in a split would keep a rail there is no room for and draw
-/// it over the prose.
+/// The layout it left is written back, so the move survives a re-read.
 #[gpui::test]
-fn a_pane_is_told_its_own_width(cx: &mut gpui::TestAppContext) {
-    use crate::view::root::Cydonia;
-    let scratch = Scratch::new("width");
-    cx.update(|cx| bezel::theme::Theme::install(bezel::theme::Appearance::Light, cx));
+fn leaving_a_layout_is_written(cx: &mut gpui::TestAppContext) {
+    let scratch = Scratch::new("exclusive-write");
+    let workspace = opened(&scratch, cx);
 
-    let window = cx.add_window(|window, cx| {
-        let root = Cydonia::new(Settings::default(), state::State::default(), window, cx);
-        root.workspace.update(cx, |workspace, cx| {
-            workspace.open_project(scratch.0.clone(), cx);
-            workspace.arrange(0, 1, 2, Side::Right, cx);
-        });
-        root
+    let first = workspace.update(cx, |workspace, cx| {
+        workspace.arrange(0, 1, 3, Side::Right, cx);
+        let first = workspace.active_layout().expect("open").id.clone();
+        workspace.projects[0].layout = None;
+        workspace.arrange(0, 2, 4, Side::Right, cx);
+        workspace.arrange(0, 4, 3, Side::Below, cx);
+        first
     });
 
-    window
-        .update(cx, |root, _, cx| {
-            assert_eq!(root.width_share(Some(1), cx), 0.5, "half the column");
-            assert_eq!(root.width_share(Some(2), cx), 0.5);
-            // Nothing a pane is on, and the single-pane case, are the whole of
-            // it rather than nothing at all.
-            assert_eq!(root.width_share(Some(99), cx), 1.);
-            assert_eq!(root.width_share(None, cx), 1.);
-
-            // Zoomed, the pane in front has the window to itself.
-            root.workspace
-                .update(cx, |workspace, cx| workspace.zoom_pane(2, cx));
-            assert_eq!(root.width_share(Some(2), cx), 1., "zoomed");
-        })
-        .unwrap();
+    let read = fs::Project::new(scratch.project())
+        .layout(&first)
+        .expect("on disk");
+    assert!(!read.contains(3), "the file it left was written back");
 }
 
-/// Stacking panes leaves each of them the full width: only a split across
-/// narrows one.
+/// Moving a pane exchanges it with the one across the seam and writes the
+/// arrangement back, so the move survives a re-read.
 #[gpui::test]
-fn stacked_panes_keep_the_width(cx: &mut gpui::TestAppContext) {
-    use crate::view::root::Cydonia;
-    let scratch = Scratch::new("stacked");
-    cx.update(|cx| bezel::theme::Theme::install(bezel::theme::Appearance::Light, cx));
+fn moving_a_pane_swaps_it_and_is_written(cx: &mut gpui::TestAppContext) {
+    let scratch = Scratch::new("move-pane");
+    let workspace = opened(&scratch, cx);
 
-    let window = cx.add_window(|window, cx| {
-        let root = Cydonia::new(Settings::default(), state::State::default(), window, cx);
-        root.workspace.update(cx, |workspace, cx| {
-            workspace.open_project(scratch.0.clone(), cx);
-            workspace.arrange(0, 1, 2, Side::Below, cx);
-        });
-        root
+    let id = workspace.update(cx, |workspace, cx| {
+        workspace.arrange(0, 1, 2, Side::Right, cx);
+        assert_eq!(
+            workspace.active_layout().expect("open").entries(),
+            vec![1, 2]
+        );
+
+        // Nothing to the left of the left-hand pane.
+        assert_eq!(workspace.neighbour_pane(1, Side::Left), None);
+        assert!(!workspace.move_pane(1, Side::Left, cx), "nowhere to go");
+
+        assert!(workspace.move_pane(1, Side::Right, cx));
+        assert_eq!(
+            workspace.active_layout().expect("open").entries(),
+            vec![2, 1],
+            "they changed places"
+        );
+        workspace.active_layout().expect("open").id.clone()
     });
 
-    window
-        .update(cx, |root, _, cx| {
-            assert_eq!(root.width_share(Some(1), cx), 1.);
-            assert_eq!(root.width_share(Some(2), cx), 1.);
-        })
-        .unwrap();
+    let read = fs::Project::new(scratch.project())
+        .layout(&id)
+        .expect("on disk");
+    assert_eq!(read.entries(), vec![2, 1]);
+}
+
+/// Putting a layout away takes its members with it: membership is exclusive,
+/// so the arrangement owns what it holds and archiving the shell alone would
+/// put away nothing.
+#[gpui::test]
+fn archiving_a_layout_takes_its_members(cx: &mut gpui::TestAppContext) {
+    let scratch = Scratch::new("archive-layout");
+    let workspace = opened(&scratch, cx);
+
+    workspace.update(cx, |workspace, cx| {
+        workspace.new_board(0, "First".into(), "ONE", cx).ok();
+        workspace.new_board(0, "Second".into(), "TWO", cx).ok();
+        let a = workspace.projects[0].boards[0].number.expect("numbered");
+        let b = workspace.projects[0].boards[1].number.expect("numbered");
+        workspace.arrange(0, a, b, Side::Right, cx);
+
+        workspace.archive_layout(0, 0, true, cx);
+        assert!(workspace.projects[0].layouts[0].archived);
+        // The arrangement put away is not the one the window is showing.
+        assert_eq!(workspace.projects[0].layout, None);
+    });
+}
+
+/// The archived flag is written, so it survives a re-read.
+#[gpui::test]
+fn archiving_a_layout_is_written(cx: &mut gpui::TestAppContext) {
+    let scratch = Scratch::new("archive-written");
+    let workspace = opened(&scratch, cx);
+
+    let id = workspace.update(cx, |workspace, cx| {
+        workspace.arrange(0, 1, 2, Side::Right, cx);
+        let id = workspace.active_layout().expect("open").id.clone();
+        workspace.archive_layout(0, 0, true, cx);
+        id
+    });
+
+    let read = fs::Project::new(scratch.project())
+        .layout(&id)
+        .expect("on disk");
+    assert!(read.archived, "put away on disk too");
+    assert_eq!(read.entries(), vec![1, 2], "and still arranged as it was");
 }

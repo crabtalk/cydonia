@@ -293,6 +293,15 @@ pub struct Cydonia {
     /// with its label rather than looked up when the dialog draws: what is
     /// being asked about must not change wording under the question.
     pub(crate) confirming: Option<confirm::Confirming>,
+    /// The layouts whose members are folded away, by layout id.
+    ///
+    /// Collapsed rather than expanded, so a layout is open until someone folds
+    /// it: an entry is listed under the layout holding it and nowhere else, and
+    /// a fold remembered across launches would start the window with entries
+    /// hidden behind a row nobody chose to close.
+    ///
+    /// Runtime only, for the same reason.
+    pub(crate) collapsed_layouts: std::collections::HashSet<String>,
     /// Where a pane dropped on a pane's edge would land: the pane under the
     /// pointer, and which of its edges. Written by whichever pane the pointer
     /// is inside and read by the one that draws the mark, the way a card's
@@ -535,6 +544,7 @@ impl Cydonia {
             changes: None,
             right_panels: Default::default(),
             settings_window: None,
+            collapsed_layouts: Default::default(),
             pane_landing: None,
             confirming: None,
             info: None,
@@ -893,6 +903,7 @@ impl Render for Cydonia {
         self.sync_leaves(window, cx);
         self.sync_changes(cx);
         let theme = Theme::of(cx).clone();
+        let arranged = self.workspace.read(cx).active_layout().is_some();
         div()
             .key_context("Cydonia")
             .size_full()
@@ -908,12 +919,19 @@ impl Render for Cydonia {
                 cx.listener(|this, _: &ClosePane, window, cx| this.close_focused_pane(window, cx)),
             )
             .on_action(cx.listener(|this, _: &ZoomPane, _, cx| this.zoom_focused_pane(cx)))
-            .on_action(cx.listener(Self::toggle_changes))
-            .on_action(cx.listener(Self::open_session_file))
-            .on_action(
-                cx.listener(|this, _: &OpenReview, window, cx| this.show_changes(window, cx)),
-            )
-            .on_action(cx.listener(|this, _: &OpenFiles, window, cx| this.toggle_files(window, cx)))
+            // The right-hand panel and what opens into it are not offered
+            // beside a layout: it divides the room they would stand in, and
+            // macOS greys an item nothing is left to handle.
+            .when(!arranged, |root| {
+                root.on_action(cx.listener(Self::toggle_changes))
+                    .on_action(cx.listener(Self::open_session_file))
+                    .on_action(cx.listener(|this, _: &OpenReview, window, cx| {
+                        this.show_changes(window, cx)
+                    }))
+                    .on_action(cx.listener(|this, _: &OpenFiles, window, cx| {
+                        this.toggle_files(window, cx)
+                    }))
+            })
             .on_action(cx.listener(Self::copy_selection))
             .on_action(cx.listener(Self::commit_cell_action))
             .on_action(cx.listener(Self::dismiss_cell))

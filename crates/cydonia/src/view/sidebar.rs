@@ -174,6 +174,7 @@ fn key_of(entry: Row) -> String {
 /// headings and rows alike, because [`uniform_list`] measures a single row and
 /// gives every other one the same.
 const ROW_PILL: f32 = 30.;
+
 pub(crate) const ROW_HEIGHT: f32 = ROW_PILL + 2.;
 
 /// How far the pinned heading's glass runs past the band it is seen in, and is
@@ -187,11 +188,14 @@ pub(crate) const ROW_HEIGHT: f32 = ROW_PILL + 2.;
 const PINNED_BLEED: f32 = 20.;
 
 /// Shared row styling keeps selection backgrounds full-width when indented.
+/// One step in from the row above, for each level a row is under.
+const INDENT_STEP: f32 = 14.;
+
 pub(crate) fn row(
     id: impl Into<gpui::ElementId>,
     group: &'static str,
     selected: bool,
-    indent: bool,
+    indent: u8,
     theme: &Theme,
 ) -> Stateful<Div> {
     div()
@@ -201,7 +205,13 @@ pub(crate) fn row(
         .ml(px(root::SIDEBAR_GUTTER))
         .mr(px(root::SIDEBAR_GUTTER))
         .px(px(root::SIDEBAR_GUTTER))
-        .when(indent, |el| el.pl(px(root::SIDEBAR_GUTTER + 14.)))
+        // Levels rather than a flag: a row a layout holds is one step under
+        // whatever its neighbours are at, and with the project's own indent on
+        // they would otherwise land at the same offset and stop being under
+        // anything.
+        .when(indent > 0, |el| {
+            el.pl(px(root::SIDEBAR_GUTTER + INDENT_STEP * f32::from(indent)))
+        })
         .flex()
         .flex_row()
         .items_center()
@@ -218,11 +228,26 @@ pub(crate) fn row(
 /// gpui's default the label's box is φ×13, and renaming would resize the row
 /// under the name being typed.
 fn row_label(name: String, tint: Hsla) -> AnyElement {
+    labelled(name, tint, TextStyle::Body)
+}
+
+/// The same, in the type a heading is written in — see
+/// [`Cydonia::layout_row`].
+///
+/// One shape behind both: `flex_1` is what fills the row and so what holds a
+/// trailing button out at the edge, and `truncate` is what ellipsizes rather
+/// than clipping a word in half. A label built without them looks right until
+/// the row has something after it or the name is long.
+fn row_heading(name: String, tint: Hsla) -> AnyElement {
+    labelled(name, tint, TextStyle::Callout)
+}
+
+fn labelled(name: String, tint: Hsla, style: TextStyle) -> AnyElement {
     div()
         .flex_1()
         .min_w_0()
         .truncate()
-        .text_style(TextStyle::Body)
+        .text_style(style)
         .line_height(px(18.))
         .text_color(tint)
         .child(name)
@@ -729,7 +754,122 @@ impl Cydonia {
                 rows.extend(entries[split..].iter().map(|(_, _, row)| *row));
             }
         }
-        rows
+        self.grouped(project, rows, cx)
+    }
+
+    /// Put each layout's members under it, and take them out of the list they
+    /// would otherwise be listed in twice.
+    ///
+    /// An entry is in one layout at a time — see
+    /// [`Workspace::arrange`] — so this is a tree and not a second copy of the
+    /// list. What is in no layout keeps its place.
+    fn grouped(&self, project: usize, rows: Vec<Row>, cx: &App) -> Vec<Row> {
+        let workspace = self.workspace.read(cx);
+        let Some(open) = workspace.projects.get(project) else {
+            return rows;
+        };
+        if open.layouts.is_empty() {
+            return rows;
+        }
+        let mut grouped = Vec::with_capacity(rows.len());
+        for row in rows {
+            match row {
+                Row::Layout { ix, .. } => {
+                    grouped.push(row);
+                    let Some(layout) = open.layouts.get(ix) else {
+                        continue;
+                    };
+                    if self.collapsed_layouts.contains(&layout.id) {
+                        continue;
+                    }
+                    // In the order the arrangement lays the panes out, so the
+                    // list reads across the window.
+                    grouped.extend(
+                        layout
+                            .entries()
+                            .into_iter()
+                            .filter_map(|number| self.row_of_number(project, number, cx)),
+                    );
+                }
+                // Listed under its layout above, so not again here.
+                _ => {
+                    let held = self
+                        .number_of_row(row, cx)
+                        .and_then(|number| workspace.layout_holding(project, number));
+                    if held.is_none() {
+                        grouped.push(row);
+                    }
+                }
+            }
+        }
+        grouped
+    }
+
+    /// Fold a layout's members away, or bring them back.
+    pub(crate) fn fold_layout(&mut self, id: &str, cx: &mut Context<Self>) {
+        if !self.collapsed_layouts.remove(id) {
+            self.collapsed_layouts.insert(id.to_owned());
+        }
+        cx.notify();
+    }
+
+    /// How far in a row is drawn: one step for a project's entries when that
+    /// is switched on, and one more for a row an open layout holds.
+    ///
+    /// The indent is the whole of what says a row belongs to the layout above
+    /// it. Nothing else is drawn on it — a rule beside it or a wash behind it
+    /// is a second way of saying what the offset already says.
+    pub(crate) fn indent_of(&self, row: Row, cx: &App) -> u8 {
+        let workspace = self.workspace.read(cx);
+        let base = u8::from(workspace.indent_project_rows);
+        let project = match row {
+            Row::Session { project, .. }
+            | Row::Board { project, .. }
+            | Row::Article { project, .. }
+            | Row::Table { project, .. } => project,
+            _ => return base,
+        };
+        let held = || -> Option<()> {
+            let number = self.number_of_row(row, cx)?;
+            let at = workspace.layout_holding(project, number)?;
+            let layout = workspace.projects.get(project)?.layouts.get(at)?;
+            (!self.collapsed_layouts.contains(&layout.id)).then_some(())
+        };
+        base + u8::from(held().is_some())
+    }
+
+    /// The row for an entry named by its project-wide number — the way back
+    /// from what a layout holds to the line that stands for it.
+    fn row_of_number(&self, project: usize, number: u64, cx: &App) -> Option<Row> {
+        let open = self.workspace.read(cx).projects.get(project)?;
+        if let Some(chat) = open
+            .sessions
+            .iter()
+            .find(|chat| chat.number == Some(number))
+        {
+            return Some(Row::Session {
+                project,
+                id: chat.id,
+            });
+        }
+        if let Some(ix) = open
+            .boards
+            .iter()
+            .position(|board| board.number == Some(number))
+        {
+            return Some(Row::Board { project, ix });
+        }
+        if let Some(ix) = open
+            .articles
+            .iter()
+            .position(|article| article.number == Some(number))
+        {
+            return Some(Row::Article { project, ix });
+        }
+        open.tables
+            .iter()
+            .position(|table| table.number == Some(number))
+            .map(|ix| Row::Table { project, ix })
     }
 
     /// Every line the sidebar shows, in order. Addresses only: a project with a
@@ -904,7 +1044,7 @@ impl Cydonia {
 
     /// The project-wide number the entry on a row carries, which is how a
     /// layout names it.
-    fn number_of_row(&self, row: Row, cx: &Context<Self>) -> Option<u64> {
+    fn number_of_row(&self, row: Row, cx: &App) -> Option<u64> {
         let workspace = self.workspace.read(cx);
         match row {
             // A layout arranges entries; it is not one a pane can be put on.
@@ -950,7 +1090,7 @@ impl Cydonia {
             ("archive", project),
             "archive-row",
             false,
-            self.workspace.read(cx).indent_project_rows,
+            u8::from(self.workspace.read(cx).indent_project_rows),
             &theme,
         )
         .child(theme.disclosure(open).text_color(theme.text_faint))
@@ -1124,7 +1264,7 @@ impl Cydonia {
             ("session", id),
             "session-row",
             selected,
-            self.workspace.read(cx).indent_project_rows,
+            self.indent_of(entry, cx),
             &theme,
         )
         .child(
@@ -1156,47 +1296,85 @@ impl Cydonia {
                 .projects
                 .get(project)
                 .is_some_and(|open| open.layout == Some(ix));
-        let Some((name, panes, id)) = workspace
+        let entry = Row::Layout { project, ix };
+        let Some((name, archived, id)) = workspace
             .projects
             .get(project)
             .and_then(|open| open.layouts.get(ix))
             .map(|layout| {
                 (
                     layout.label().to_owned(),
-                    layout.leaves(),
+                    layout.archived,
                     layout.id.clone(),
                 )
             })
         else {
             return Empty.into_any_element();
         };
-        let indent = workspace.indent_project_rows;
-        let tint = tint(selected, false, &theme);
+        let indent = u8::from(workspace.indent_project_rows);
+        // A heading rather than another entry row. Nothing is drawn on the
+        // rows it holds — a rule has nothing to mark without an indent to run
+        // down, and a wash behind the group reads as a second row state. What
+        // says they belong to it is that it is written as a heading and they
+        // are directly under it, which is what `Archived` above them does and
+        // what the sidebar already reads as.
+        let tint = match selected {
+            true => tint(selected, archived, &theme),
+            false => theme.text_faint,
+        };
         let label = match matches!(&self.renaming, Some(Renaming::Layout(at)) if *at == id) {
             true => self.name_field(cx),
-            false => row_label(name, tint),
+            false => row_heading(name, tint),
         };
+        let folded = self.collapsed_layouts.contains(&id);
+        let held = id.clone();
         row(("layout", ix), "layout-row", selected, indent, &theme)
+            // The fold, which is also the layout's mark: a row that holds
+            // others says so by the way it opens, and a second glyph beside
+            // the disclosure would say it twice.
+            //
+            // `theme.disclosure` rather than a chevron of our own — the same
+            // control the archived divider folds on, which is the heading this
+            // row is written as.
             .child(
                 div()
+                    .id(("layout-fold", ix))
                     .flex_none()
                     .size(px(14.))
                     .flex()
                     .items_center()
                     .justify_center()
-                    .child(
-                        icons::icon(icons::layout::PanelLeftClose)
-                            .size(px(14.))
-                            .text_color(tint),
-                    ),
+                    .cursor_pointer()
+                    .child(theme.disclosure(!folded).text_color(tint))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        // Only the fold: a press on the row itself opens the
+                        // layout, which is the other thing the row is for.
+                        cx.stop_propagation();
+                        this.fold_layout(&held, cx);
+                    })),
             )
             .child(label)
+            // A layout has no archive button of its own: putting one away
+            // takes its members with it, which is a `···` decision rather than
+            // a press in passing. Rename lives here too — a layout has no band
+            // to be renamed in, since the window draws none while one is open.
             .child(
-                div()
-                    .flex_none()
-                    .text_color(theme.text_faint)
-                    .text_style(TextStyle::Caption)
-                    .child(format!("{panes}")),
+                self.menu_button(
+                    SharedString::from(format!("layout-menu-{project}-{ix}")),
+                    None,
+                    icons::icon(icons::layout::Ellipsis)
+                        .size(px(14.))
+                        .text_color(theme.text_faint),
+                    Menu::Entry(entry),
+                    cx,
+                )
+                .flex_none()
+                .when(
+                    self.sidebar_hovered.as_ref() != Some(&Menu::Entry(entry))
+                        && self.menu.as_ref() != Some(&Menu::Entry(entry)),
+                    |el| el.hidden(),
+                )
+                .children(self.entry_menu(Menu::Entry(entry), entry, archived, cx)),
             )
             .on_click(
                 cx.listener(move |this, _, window, cx| this.open_layout(project, ix, window, cx)),
@@ -1236,7 +1414,7 @@ impl Cydonia {
             SharedString::from(format!("board-{project}-{ix}")),
             "board-row",
             selected,
-            workspace.indent_project_rows,
+            self.indent_of(entry, cx),
             &theme,
         )
         .child(
@@ -1327,14 +1505,9 @@ impl Cydonia {
         // neither is offered a second route here. Everywhere else the name is
         // display-only and this is the way.
         let named = !matches!(entry, Row::Article { .. } | Row::Board { .. });
-        // A layout is an arrangement, not work that is put away and brought
-        // back: one no longer in use is deleted.
-        let mut rows = match entry {
-            Row::Layout { .. } => Vec::new(),
-            _ => vec![menu::row(put, move |this, _, cx| {
-                this.archive_entry(entry, !archived, cx)
-            })],
-        };
+        let mut rows = vec![menu::row(put, move |this, _, cx| {
+            this.archive_entry(entry, !archived, cx)
+        })];
         if named {
             rows.insert(
                 0,
@@ -1483,9 +1656,31 @@ impl Cydonia {
     /// kind's own business — a board's file, an article's properties, a row in
     /// the store — and the sidebar asks for it the same way.
     fn archive_entry(&mut self, entry: Row, archived: bool, cx: &mut Context<Self>) {
+        // A layout takes its members with it. Membership is exclusive — an
+        // entry is in one layout at a time — so the arrangement owns what it
+        // holds, and putting it away that holds nothing would be putting away
+        // an empty row.
+        if let Row::Layout { project, ix } = entry {
+            let members: Vec<Row> = self
+                .workspace
+                .read(cx)
+                .projects
+                .get(project)
+                .and_then(|open| open.layouts.get(ix))
+                .map(|layout| layout.entries())
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|number| self.row_of_number(project, number, cx))
+                .collect();
+            for member in members {
+                self.archive_entry(member, archived, cx);
+            }
+            self.workspace.update(cx, |workspace, cx| {
+                workspace.archive_layout(project, ix, archived, cx)
+            });
+            return;
+        }
         self.workspace.update(cx, |workspace, cx| match entry {
-            // A layout is not archived: it is an arrangement, and one not in
-            // use is deleted rather than put away.
             Row::Layout { .. } => {}
             Row::Session { id, .. } => workspace.archive_session(id, archived, cx),
             Row::Board { project, ix } => {

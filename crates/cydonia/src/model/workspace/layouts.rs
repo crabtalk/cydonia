@@ -87,7 +87,15 @@ impl Workspace {
                 0
             }
         };
+        // An entry is in one layout at a time, the way a pane is in one tmux
+        // window. Dragging it into another moves it: the sidebar lists it
+        // under the layout that has it, and it can only be under one.
         let store = open.store();
+        for (ix, other) in open.layouts.iter_mut().enumerate() {
+            if ix != at && other.remove(arriving) {
+                store.save_layout(other);
+            }
+        }
         let layout = open.layouts.get_mut(at)?;
         if !layout.insert(target, arriving, side) {
             return None;
@@ -133,6 +141,26 @@ impl Workspace {
         self.edit_layout(cx, |layout| layout.remove(entry));
     }
 
+    /// The pane across the seam on this side of the one in front, if there is
+    /// one — what says whether a move that way is on offer at all.
+    pub fn neighbour_pane(&self, entry: u64, side: Side) -> Option<u64> {
+        self.active_layout()?.tree.neighbour(entry, side)
+    }
+
+    /// Exchange a pane with the one across the seam on that side. The
+    /// arrangement keeps its shape and its sizes — see [`Node::swap`].
+    pub fn move_pane(&mut self, entry: u64, side: Side, cx: &mut Context<Self>) -> bool {
+        let Some(across) = self.neighbour_pane(entry, side) else {
+            return false;
+        };
+        let mut moved = false;
+        self.edit_layout(cx, |layout| {
+            moved = layout.tree.swap(entry, across);
+            moved
+        });
+        moved
+    }
+
     /// Stand one pane over the others, or put it back.
     pub fn zoom_pane(&mut self, entry: u64, cx: &mut Context<Self>) {
         self.edit_layout(cx, |layout| {
@@ -157,6 +185,31 @@ impl Workspace {
             .layout
             .filter(|open| *open != ix)
             .map(|open| if open > ix { open - 1 } else { open });
+        cx.notify();
+    }
+
+    /// Put the arrangement away, or bring it back. The members go with it —
+    /// see [`Cydonia::archive_entry`], which walks them.
+    pub fn archive_layout(
+        &mut self,
+        project: usize,
+        ix: usize,
+        archived: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(open) = self.projects.get_mut(project) else {
+            return;
+        };
+        let store = open.store();
+        let Some(layout) = open.layouts.get_mut(ix) else {
+            return;
+        };
+        layout.archived = archived;
+        store.save_layout(layout);
+        // An arrangement put away is not the one the window is showing.
+        if archived && open.layout == Some(ix) {
+            open.layout = None;
+        }
         cx.notify();
     }
 
@@ -268,6 +321,16 @@ impl Workspace {
             .sessions
             .iter()
             .find(|chat| chat.id == id)
+    }
+
+    /// The layout a given entry is a member of, if any — what the sidebar
+    /// lists it under.
+    pub fn layout_holding(&self, project: usize, number: u64) -> Option<usize> {
+        self.projects
+            .get(project)?
+            .layouts
+            .iter()
+            .position(|layout| layout.contains(number))
     }
 
     /// Put the project's selection on what a pane is showing.

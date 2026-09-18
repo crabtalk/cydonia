@@ -288,6 +288,7 @@ impl Cydonia {
         // an entry, and its neighbour is not another one.
         let showing = self.showing(cx);
         let entries = showing.is_some();
+        let arranged = workspace.active_layout().is_some();
 
         root.on_action(cx.listener(Self::toggle_sidebar_action))
             .on_action(cx.listener(Self::open_project_action))
@@ -307,8 +308,10 @@ impl Cydonia {
                         root.on_action(cx.listener(Self::new_table_action))
                     })
             })
-            // Pane-specific commands grey themselves everywhere else.
-            .when(showing == Some(Pane::Chat), |root| {
+            // Pane-specific commands grey themselves everywhere else — and
+            // the window's own panels are not on offer beside a layout, which
+            // divides the room they would have stood in.
+            .when(showing == Some(Pane::Chat) && !arranged, |root| {
                 root.on_action(cx.listener(Self::toggle_terminal))
             })
             .when(showing == Some(Pane::Article), |root| {
