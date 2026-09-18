@@ -2,6 +2,7 @@
 //! article and table in it. The window's grid lives in [`crate::view::root`];
 //! this draws on it.
 
+use crate::model::state;
 use crate::model::workspace::Showing;
 use crate::{
     model::{session::ChatSession, settings::Features, update},
@@ -86,6 +87,31 @@ pub(crate) enum Row {
         project: usize,
         ix: usize,
     },
+}
+
+/// Which of a project's four an entry row stands for, and `None` for the two
+/// rows that are not entries.
+fn showing_of(row: Row) -> Option<Showing> {
+    Some(match row {
+        // A layout arranges entries; it is not one a pane can be put on.
+        Row::Project(_) | Row::Archive(_) | Row::Layout(_) => return None,
+        Row::Session { id, .. } => Showing::Session(id),
+        Row::Board { ix, .. } => Showing::Board(ix),
+        Row::Article { ix, .. } => Showing::Article(ix),
+        Row::Table { ix, .. } => Showing::Table(ix),
+    })
+}
+
+/// The project an entry row belongs to.
+fn project_of(row: Row) -> Option<usize> {
+    match row {
+        Row::Project(ix) | Row::Archive(ix) => Some(ix),
+        Row::Session { project, .. }
+        | Row::Board { project, .. }
+        | Row::Article { project, .. }
+        | Row::Table { project, .. } => Some(project),
+        Row::Layout(_) => None,
+    }
 }
 
 /// Whether the kind a row names is switched on. Articles have no switch, and
@@ -691,11 +717,45 @@ impl Cydonia {
     /// you are not. Only the addresses are ordered — each kind's own list keeps
     /// the indices these carry.
     pub(crate) fn entries(&self, project: usize, cx: &App) -> Vec<Row> {
+        let features = &self.workspace.read(cx).settings.features;
+        let mut entries = self.ranked(project, cx);
+        // A project is read off disk whole whatever is switched on, so what a
+        // switch hides it hides here — the entries stay in the project and in
+        // memory, and turning it back on lists them again with nothing to
+        // rescan.
+        entries.retain(|(_, _, row)| shown(*row, features));
+        let split = entries.iter().position(|(archived, ..)| *archived);
+        let mut rows: Vec<Row> = entries
+            .iter()
+            .take(split.unwrap_or(entries.len()))
+            .map(|(_, _, row)| *row)
+            .collect();
+        if let Some(split) = split {
+            rows.push(Row::Archive(project));
+            if self
+                .workspace
+                .read(cx)
+                .projects
+                .get(project)
+                .is_some_and(|open| open.archive_open)
+            {
+                rows.extend(entries[split..].iter().map(|(_, _, row)| *row));
+            }
+        }
+        self.ungrouped(rows, cx)
+    }
+
+    /// Every one of a project's entries in the order the sidebar lists them,
+    /// before anything is hidden or folded away.
+    ///
+    /// What a drag rewrites, which is why it is this list and not the one on
+    /// screen: a kind switched off and an entry held by a layout are both
+    /// still in the project, and both keep the place they were put.
+    fn ranked(&self, project: usize, cx: &App) -> Vec<(bool, u128, Row)> {
         let workspace = self.workspace.read(cx);
         let Some(open) = workspace.projects.get(project) else {
             return Vec::new();
         };
-        let features = &workspace.settings.features;
         let sessions = open.sessions.iter().map(|chat| {
             (
                 chat.closed,
@@ -728,26 +788,20 @@ impl Cydonia {
             .chain(articles)
             .chain(tables)
             .collect();
-        // A project is read off disk whole whatever is switched on, so what a
-        // switch hides it hides here — the entries stay in the project and in
-        // memory, and turning it back on lists them again with nothing to
-        // rescan.
-        entries.retain(|(_, _, row)| shown(*row, features));
-        // Archived entries sink; each half follows the entry's recency stamp.
-        entries.sort_by_key(|(archived, touched, _)| (*archived, Reverse(*touched)));
-        let split = entries.iter().position(|(archived, ..)| *archived);
-        let mut rows: Vec<Row> = entries
-            .iter()
-            .take(split.unwrap_or(entries.len()))
-            .map(|(_, _, row)| *row)
-            .collect();
-        if let Some(split) = split {
-            rows.push(Row::Archive(project));
-            if open.archive_open {
-                rows.extend(entries[split..].iter().map(|(_, _, row)| *row));
-            }
-        }
-        self.ungrouped(rows, cx)
+        // Archived entries sink. Each half then follows the arrangement, or
+        // the entry's stamp where there is none to follow — an entry made
+        // since the order was written has no rank yet, and is listed above the
+        // rows that do rather than under them.
+        entries.sort_by_key(|(archived, touched, row)| {
+            let rank = showing_of(*row).and_then(|showing| workspace.rank_of(project, showing));
+            (
+                *archived,
+                rank.is_some(),
+                rank.unwrap_or_default(),
+                Reverse(*touched),
+            )
+        });
+        entries
     }
 
     /// Drop the rows an open layout holds: they are listed under it instead,
@@ -959,6 +1013,16 @@ impl Cydonia {
                     cx.new(|_| Carried(label))
                 })
             })
+            // And dropped on the row it is to take the place of, the way a
+            // project heading is.
+            .when(showing_of(row).is_some(), |el| {
+                el.drag_over::<EntryDrag>(move |style, _, _, cx| {
+                    style.bg(Theme::of(cx).element_active)
+                })
+                .on_drop(cx.listener(move |this, drag: &EntryDrag, _, cx| {
+                    this.reorder_entry(&drag.0, row, cx);
+                }))
+            })
             .h(px(ROW_HEIGHT))
             .py(px(1.))
             .child(inner)
@@ -1010,17 +1074,47 @@ impl Cydonia {
         self.workspace.read(cx).active_layout().is_some()
     }
 
+    /// Put the carried entry where `onto` is, and write the project's order
+    /// down.
+    ///
+    /// The whole list is rewritten rather than the one row that moved: an
+    /// order held as gaps between the rows that did move is one every later
+    /// read has to reconstruct, and the list on screen is already the answer.
+    fn reorder_entry(&mut self, carried: &Member, onto: Row, cx: &mut Context<Self>) {
+        let Some(project) = project_of(onto) else {
+            return;
+        };
+        let rows: Vec<Row> = self
+            .ranked(project, cx)
+            .into_iter()
+            .map(|(.., row)| row)
+            .collect();
+        let from = rows
+            .iter()
+            .position(|row| self.member_of_row(*row, cx).as_ref() == Some(carried));
+        let to = rows.iter().position(|row| *row == onto);
+        let (Some(from), Some(to)) = (from, to) else {
+            return;
+        };
+        if from == to {
+            return;
+        }
+        let mut moved = rows;
+        let row = moved.remove(from);
+        moved.insert(to, row);
+        let workspace = self.workspace.read(cx);
+        let order: Vec<state::Entry> = moved
+            .iter()
+            .filter_map(|row| workspace.entry_of(project, showing_of(*row)?))
+            .collect();
+        self.workspace
+            .update(cx, |workspace, cx| workspace.set_order(project, order, cx));
+    }
+
     /// What a layout would name this row, so it can be dragged into one.
     fn member_of_row(&self, row: Row, cx: &App) -> Option<Member> {
-        let (project, showing) = match row {
-            // A layout arranges entries; it is not one a pane can be put on.
-            Row::Project(_) | Row::Archive(_) | Row::Layout(_) => return None,
-            Row::Session { project, id } => (project, Showing::Session(id)),
-            Row::Board { project, ix } => (project, Showing::Board(ix)),
-            Row::Article { project, ix } => (project, Showing::Article(ix)),
-            Row::Table { project, ix } => (project, Showing::Table(ix)),
-        };
-        self.workspace.read(cx).member_of(project, showing)
+        let showing = showing_of(row)?;
+        self.workspace.read(cx).member_of(project_of(row)?, showing)
     }
 
     /// What the sidebar needs of a session, read when its row comes on screen.

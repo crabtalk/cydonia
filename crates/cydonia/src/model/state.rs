@@ -51,6 +51,16 @@ pub struct State {
     /// belongs to it.
     #[serde(default)]
     pub last: BTreeMap<PathBuf, Entry>,
+    /// The order a project's entries are listed in, by project path — see
+    /// [`crate::model::workspace`]'s `order`.
+    ///
+    /// An entry the list does not name is one made since it was last written,
+    /// and is listed above everything here. Names that no longer resolve are
+    /// left alone: an entry deleted on another checkout of the same path is
+    /// one a branch may bring back, and a stale name costs a lookup that
+    /// already has to miss.
+    #[serde(default)]
+    pub order: BTreeMap<PathBuf, Vec<Entry>>,
 }
 
 /// `~/.config/cydonia/state.toml`, beside the settings it is not.
@@ -80,6 +90,7 @@ pub fn restore() -> State {
         active,
         collapsed: stored.collapsed,
         last: stored.last,
+        order: stored.order,
     }
 }
 
