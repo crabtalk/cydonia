@@ -779,3 +779,19 @@ fn relocating_a_tab_pulls_it_out_of_its_strip() {
     assert_eq!(tree.entries(), vec![1, 2, 3]);
     assert_eq!(tree.at_path(&[0]).expect("a pane").stack(), vec![1]);
 }
+
+/// A tab let go over the bar it is already in changes nothing. Taking it out
+/// and putting it back would send it to the end of a strip nobody asked to
+/// reorder.
+#[test]
+fn stacking_a_tab_onto_its_own_strip_is_a_no_op() {
+    let mut tree = Node::split(Axis::Horizontal, vec![Node::leaf(1), Node::leaf(2)]);
+    tree.stack_onto(&1, &3);
+    tree.stack_onto(&1, &4);
+
+    // Named from the pane, and from a sibling tab: neither reorders it.
+    assert!(tree.stack_onto(&1, &3));
+    assert!(tree.stack_onto(&4, &3));
+
+    assert_eq!(tree.at_path(&[0]).expect("a pane").stack(), vec![1, 3, 4]);
+}

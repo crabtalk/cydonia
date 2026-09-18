@@ -436,16 +436,35 @@ impl Workspace {
     /// Put the project's selection on what a pane is showing.
     ///
     /// The four slots are what every command without a pane of its own reads,
-    /// so this is what makes the focused pane the one they act on. A session
-    /// is woken, the way landing on one is — see [`Self::wake_session`].
+    /// so this is what makes the focused pane the one they act on.
+    ///
+    /// Each kind is brought up to what drawing it needs, because putting a
+    /// pane on an entry is the whole of how one arrives here — a drop, a tab
+    /// coming forward, a layout opening — and the `open_*` calls are only the
+    /// sidebar's route. An article with no editor draws as the front door and
+    /// an archived board draws as an empty one, so neither can be left to
+    /// whoever asked.
     pub fn select_showing(&mut self, project: usize, showing: Showing, cx: &mut Context<Self>) {
+        // Read before the project is borrowed for the rest of this.
+        let text_size = self.article_font_size();
         let Some(open) = self.projects.get_mut(project) else {
             return;
         };
         match showing {
             Showing::Session(id) => open.active = Some(id),
-            Showing::Board(ix) => open.board = Some(ix),
-            Showing::Article(ix) => open.article = Some(ix),
+            Showing::Board(ix) => {
+                if let Some(id) = open.boards.get(ix).map(|board| board.id.clone())
+                    && open.load_board(&id)
+                {
+                    open.board = Some(ix);
+                }
+            }
+            Showing::Article(ix) => {
+                if let Some(article) = open.articles.get_mut(ix) {
+                    article.open(text_size, cx);
+                    open.article = Some(ix);
+                }
+            }
             Showing::Table(ix) => {
                 open.table = Some(ix);
                 open.reload_page();

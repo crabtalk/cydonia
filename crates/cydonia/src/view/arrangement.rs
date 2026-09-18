@@ -12,7 +12,7 @@ use crate::{
             menu::{self, Menu},
         },
         root::Cydonia,
-        sidebar::EntryDrag,
+        sidebar::{Carried, EntryDrag},
     },
 };
 use artifact::layout::{Axis as Split, Layout, Member, Node, Side};
@@ -488,10 +488,12 @@ impl Cydonia {
         let focused = front && self.leaf().entry.as_ref() == Some(tab);
         let key = key_of(tab);
         let group = SharedString::from(format!("tab-{key}"));
-        let title = toolbar
-            .as_ref()
-            .map(|toolbar| toolbar.title.clone())
-            .unwrap_or_default();
+        let title = SharedString::from(
+            toolbar
+                .as_ref()
+                .map(|toolbar| toolbar.title.clone())
+                .unwrap_or_default(),
+        );
         div()
             .id(SharedString::from(format!("pane-tab-{key}")))
             .group(group.clone())
@@ -519,7 +521,7 @@ impl Cydonia {
             // one its pane is on, or a background pane's strip says nothing
             // about what is under it.
             .when(front && !focused, |el| el.text_color(theme.text))
-            .child(div().flex_none().truncate().child(title))
+            .child(div().flex_none().truncate().child(title.clone()))
             .children(
                 toolbar
                     .as_ref()
@@ -536,6 +538,14 @@ impl Cydonia {
                 let (on, shown) = (pane.clone(), tab.clone());
                 move |this, _, window, cx| this.show_tab(&on, &shown, window, cx)
             }))
+            // Carried to another pane's bar to join its strip, or to an edge
+            // to be pulled out into a pane of its own. The same drag the
+            // sidebar makes, down to the ghost: where a tab came from is not
+            // something the pane it lands on has to know.
+            .on_drag(EntryDrag(tab.clone()), move |_, _, _, cx| {
+                let label = title.clone();
+                cx.new(|_| Carried(label))
+            })
             .child(
                 theme
                     .ghost(SharedString::from(format!("close-tab-{key}")))

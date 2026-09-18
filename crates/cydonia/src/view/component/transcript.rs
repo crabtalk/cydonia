@@ -1362,7 +1362,16 @@ pub fn orb_of(chat: &ChatSession) -> OrbState {
         .rposition(|item| matches!(item, ChatItem::User(_)))
         .unwrap_or(0);
     let question = chat.items.get(at).and_then(item_text).unwrap_or_default();
-    OrbState::ALL_STATES[asked_hash(question) % OrbState::ALL_STATES.len()]
+    orb_for(question)
+}
+
+/// The same choice, made from any text — a card's own words, where there is no
+/// session and so no question to make it from.
+///
+/// Stable for the same text: an orb that changed shape between frames would
+/// read as the work changing.
+pub fn orb_for(asked: &str) -> OrbState {
+    OrbState::ALL_STATES[asked_hash(asked) % OrbState::ALL_STATES.len()]
 }
 
 /// That orb, drawn, at the time the turn has been running — unbounded, which

@@ -4,7 +4,10 @@
 use crate::{
     model::session::ChatSession,
     view::{
-        component::menu::{self, Menu},
+        component::{
+            menu::{self, Menu},
+            transcript,
+        },
         leaf::Pane,
         root::{Cydonia, NewBoard},
         sidebar::Renaming,
@@ -21,12 +24,10 @@ use bezel::{
         FontWeight, KeyBinding, Pixels, Render, ScrollHandle, SharedString, Stateful, Window,
         actions, div, prelude::*, px,
     },
-    motion::Painter,
     theme::{TextStyle, Theme, Typeset},
     ui::{
         icons,
         input::{self, Shape, TextField},
-        loaders,
         menu::Item,
         popover,
         scroll::{self, Axes, DriftState, FollowState},
@@ -34,6 +35,7 @@ use bezel::{
         widgets::Buttons,
     },
 };
+use bezel::agent::orbs::engine::Frame;
 use markdown::Typography;
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
@@ -137,11 +139,19 @@ pub fn field(cx: &mut App) -> Entity<TextField> {
     })
 }
 
+/// The statuses a chip is drawn for, which is the ones with no motion of their
+/// own. `busy` is the orb instead — see the `running` a card is built with.
+fn resting(status: Option<Status>) -> Option<Status> {
+    status.filter(|status| *status != Status::Busy)
+}
+
 /// How the work on a card is going, said in a word — see
 /// [`artifact::board::Status`]. Written by whoever is doing the work, which is
 /// usually an agent through `board_set_card_status`.
 fn status_chip(status: Status, theme: &Theme) -> AnyElement {
     let tint = match status {
+        // Never drawn — see [`resting`]. Named so the match stays total if the
+        // set grows.
         Status::Busy => theme.accent,
         Status::Blocked => theme.danger,
         Status::Done => theme.text_faint,
@@ -303,6 +313,35 @@ impl Scrolls {
             .clone()
     }
 }
+
+/// The buffer each card's orb paints into, by card id — the same shape as
+/// [`Lanes`] and kept on the same terms.
+///
+/// One apiece and never shared: [`bezel::agent::orbs::orb_element`] fills the
+/// buffer as the element is built and reads it back at paint, so two orbs on
+/// one buffer would both draw whatever the second put there.
+#[derive(Default)]
+pub struct Marks(RefCell<HashMap<String, Rc<RefCell<Frame>>>>);
+
+impl Marks {
+    fn of(&self, card: &str) -> Rc<RefCell<Frame>> {
+        self.0.borrow_mut().entry(card.to_owned()).or_default().clone()
+    }
+}
+
+/// A card's orb, read off the model with the card — the thinking orb the
+/// sidebar's session row and the transcript already use, because a card
+/// reporting a run is reporting the same run they are.
+struct Working {
+    state: bezel::agent::orbs::OrbState,
+    since: std::time::Duration,
+    frame: Rc<RefCell<Frame>>,
+}
+
+/// When this window opened, for the one orb with nothing better to count from
+/// — see [`Cydonia::card_working`].
+static SINCE: std::sync::LazyLock<std::time::Instant> =
+    std::sync::LazyLock::new(std::time::Instant::now);
 
 /// One scroll, one drift and one follow per lane, minted the first time the
 /// lane is drawn.
@@ -706,6 +745,35 @@ impl Cydonia {
     fn card_session<'a>(&self, card: &Card, cx: &'a App) -> Option<&'a ChatSession> {
         let record = card.session.as_deref()?;
         self.workspace.read(cx).session_by_record(record)
+    }
+
+    /// The orb a card spins, and nothing for a card at rest.
+    ///
+    /// The thinking orb the sidebar's session row and the transcript already
+    /// use — a card reporting a run is reporting the same run they are, and a
+    /// second kind of orb for it would read as a second kind of work.
+    /// What a card's orb needs, read out of the model before the card is built
+    /// — the sidebar's [`SessionRow`] rule, and for the same reason: the orb
+    /// leases the frame clock, which wants the app mutably.
+    ///
+    /// Nothing for a card at rest.
+    fn card_working(&self, card: &Card, chat: Option<&ChatSession>) -> Option<Working> {
+        match chat.filter(|chat| chat.streaming) {
+            Some(chat) => Some(Working {
+                state: transcript::orb_of(chat),
+                since: chat.elapsed().unwrap_or_default(),
+                frame: chat.transcript.mark.clone(),
+            }),
+            // Tagged busy by an agent with no session in this window — see
+            // `board_set_card_status`. Nothing was written down when the tag
+            // went on, so it runs off the window's own clock: the animation is
+            // periodic, so where in the cycle it starts says nothing.
+            None => (card.status == Some(Status::Busy)).then(|| Working {
+                state: transcript::orb_for(&card.text),
+                since: SINCE.elapsed(),
+                frame: self.card_marks.of(&card.id),
+            }),
+        }
     }
 
     /// Where the board at `board_at` sits — see [`Scrolls`].
@@ -1304,7 +1372,6 @@ impl Cydonia {
                 .into_any_element();
         }
         let theme = Theme::of(cx).clone();
-        let painter = Painter::of(cx);
         let Some((card, handle)) = self
             .workspace
             .read(cx)
@@ -1318,18 +1385,7 @@ impl Cydonia {
         let chat = self.card_session(card, cx);
         let live = chat.map(|chat| chat.id);
         let sessions = self.workspace.read(cx).settings.features.sessions;
-        let running = chat.is_some_and(|chat| chat.streaming);
-        let orb = running.then(|| {
-            loaders::orb(
-                loaders::Orb::Cluster,
-                SharedString::from(format!("list-orb-{id}")),
-                12.,
-                &theme,
-                painter,
-                cx,
-            )
-            .into_any_element()
-        });
+        let working = self.card_working(card, chat);
         let (opened, run) = (id.to_owned(), id.to_owned());
         let ahead = cx.has_active_drag()
             && self
@@ -1377,11 +1433,13 @@ impl Cydonia {
                     .overflow_hidden()
                     .child(card_body(first_line(&text), window, cx)),
             )
-            .children(status.map(|status| status_chip(status, &theme)))
+            .children(resting(status).map(|status| status_chip(status, &theme)))
             // On show, not behind a hover — a card's run is what you look at
             // the board to see, and hiding it would mean hunting for the one
             // that is working.
-            .children(orb)
+            .children(
+                working.map(|at| transcript::orb(at.state, at.since, &at.frame, cx)),
+            )
             .child(
                 div()
                     .invisible()
@@ -1390,23 +1448,27 @@ impl Cydonia {
                     .flex_row()
                     .items_center()
                     .gap(px(2.))
-                    .children(sessions.then(|| {
-                        match live {
-                            Some(session) => self
-                                .card_action("list-open", id, icons::social::MessageCircle, cx)
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    cx.stop_propagation();
-                                    this.select_session(session, window, cx);
-                                    this.show_pane(Pane::Chat, cx);
-                                })),
-                            None => self
-                                .card_action("list-run", id, icons::multimedia::Play, cx)
+                    .children(sessions.then_some(live).flatten().map(|session| {
+                        self.card_action("list-open", id, icons::social::MessageCircle, cx)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                cx.stop_propagation();
+                                this.select_session(session, window, cx);
+                                this.show_pane(Pane::Chat, cx);
+                            }))
+                    }))
+                    // Handing a card to an agent is refused once the card says
+                    // something about itself: a tag is somebody already holding
+                    // it, and a second agent at one task is work done twice.
+                    // Opening the session it has stays — reading is not doing.
+                    .children(
+                        (sessions && live.is_none() && status.is_none()).then(|| {
+                            self.card_action("list-run", id, icons::multimedia::Play, cx)
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     cx.stop_propagation();
                                     this.dispatch_card(&run, cx);
-                                })),
-                        }
-                    })),
+                                }))
+                        }),
+                    ),
             )
             .child(
                 self.menu_button(
@@ -1862,7 +1924,6 @@ impl Cydonia {
             return self.card_editor(on, cx);
         }
         let theme = Theme::of(cx).clone();
-        let painter = Painter::of(cx);
         let Some((card, handle)) = self
             .workspace
             .read(cx)
@@ -1876,20 +1937,7 @@ impl Cydonia {
         let chat = self.card_session(card, cx);
         let live = chat.map(|chat| chat.id);
         let sessions = self.workspace.read(cx).settings.features.sessions;
-        // The same reading as the sidebar's session row: the card and the row are
-        // reporting the same process.
-        let running = chat.is_some_and(|chat| chat.streaming);
-        let orb = running.then(|| {
-            loaders::orb(
-                loaders::Orb::Cluster,
-                SharedString::from(format!("card-orb-{id}")),
-                12.,
-                &theme,
-                painter,
-                cx,
-            )
-            .into_any_element()
-        });
+        let working = self.card_working(card, chat);
         let (opened, run) = (id.to_owned(), id.to_owned());
         // The mark is drawn by the card it names, and by the last card in a
         // lane aimed at its end. Only while something is in the air: what the
@@ -1967,12 +2015,16 @@ impl Cydonia {
                             .text_color(theme.text_faint)
                             .child(handle)
                     }))
-                    .children(status.map(|status| status_chip(status, &theme)))
-                    // On show, not behind a hover — a card's run is what you
-                    // look at the board to see, and hiding it would mean
-                    // hunting for the one that is working.
-                    .children(orb)
+                    .children(resting(status).map(|status| status_chip(status, &theme)))
                     .child(div().flex_1())
+                    // Where ▶ stands, because it is what ▶ becomes: a card is
+                    // either one you can start or one that is running, and the
+                    // two belong in one slot. On show rather than behind the
+                    // hover the actions sit behind — a card's run is what you
+                    // look at the board to see.
+                    .children(
+                        working.map(|at| transcript::orb(at.state, at.since, &at.frame, cx)),
+                    )
                     .child(
                         div()
                             .invisible()
@@ -1985,23 +2037,30 @@ impl Cydonia {
                             // so the control goes with them: with sessions off
                             // the play would start nothing, and the card is
                             // still a card without it.
-                            .children(sessions.then(|| {
-                                match live {
-                                    Some(session) => self
-                                        .card_action("open", id, icons::social::MessageCircle, cx)
-                                        .on_click(cx.listener(move |this, _, window, cx| {
-                                            cx.stop_propagation();
-                                            this.select_session(session, window, cx);
-                                            this.show_pane(Pane::Chat, cx);
-                                        })),
-                                    None => self
-                                        .card_action("run", id, icons::multimedia::Play, cx)
-                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                            cx.stop_propagation();
-                                            this.dispatch_card(&run, cx);
-                                        })),
-                                }
-                            })),
+                            .children(sessions.then_some(live).flatten().map(|session| {
+                                self.card_action("open", id, icons::social::MessageCircle, cx)
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        cx.stop_propagation();
+                                        this.select_session(session, window, cx);
+                                        this.show_pane(Pane::Chat, cx);
+                                    }))
+                            }))
+                            // Handing a card to an agent is refused once the card
+                            // says something about itself: a tag is somebody
+                            // already holding it, and a second agent at one task is
+                            // the work done twice. Opening the session it has
+                            // stays — reading is not doing.
+                            .children(
+                                (sessions && live.is_none() && status.is_none()).then(
+                                    || {
+                                        self.card_action("run", id, icons::multimedia::Play, cx)
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                cx.stop_propagation();
+                                                this.dispatch_card(&run, cx);
+                                            }))
+                                    },
+                                ),
+                            ),
                     ),
             )
             // Below the drag threshold nothing is picked up, so a press is

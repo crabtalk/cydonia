@@ -535,3 +535,124 @@ fn stacking_an_arranged_entry_moves_it(cx: &mut gpui::TestAppContext) {
         assert_eq!(workspace.stack_of(&a), vec![a, c]);
     });
 }
+
+/// A pane put on an article opens it. An article the sidebar has only listed
+/// holds no editor, and a pane handed one draws the front door instead of the
+/// document — which is what a drop onto a pane's bar or its edge used to do.
+#[gpui::test]
+fn a_pane_put_on_an_article_opens_it(cx: &mut gpui::TestAppContext) {
+    let scratch = Scratch::new("article-pane");
+    let path = scratch.project("one");
+    // Written before the project is opened, so the article arrives the way one
+    // read off disk at launch does: listed, and never opened.
+    crate::model::article::create(&path).expect("an article on disk");
+
+    cx.update(|cx| bezel::theme::Theme::install(bezel::theme::Appearance::Light, cx));
+    let workspace = cx.new(|cx| Workspace::new(Settings::default(), state::State::default(), cx));
+
+    workspace.update(cx, |workspace, cx| {
+        workspace.open_project(path, cx);
+        workspace.new_board(0, "First".into(), "ONE", cx).ok();
+        let board = workspace.member_of(0, Showing::Board(0)).expect("a member");
+        let article = workspace
+            .member_of(0, Showing::Article(0))
+            .expect("a member");
+        assert!(
+            workspace.article_in(0, 0).expect("an article").editor.is_none(),
+            "listed, never opened",
+        );
+
+        workspace.arrange(&board, &article, Side::Right, cx);
+        workspace.stack_pane(&board, &article, cx);
+        workspace.select_showing(0, Showing::Article(0), cx);
+
+        assert!(
+            workspace.article_in(0, 0).expect("an article").editor.is_some(),
+            "the pane opened it",
+        );
+        assert_eq!(workspace.projects[0].article, Some(0));
+    });
+}
+
+/// A tab carried from one pane's bar to another's leaves the strip it was in
+/// and joins the one it landed on. The panes stay where they are — a tab
+/// crossing is not a pane moving.
+#[gpui::test]
+fn a_tab_can_be_carried_to_another_pane(cx: &mut gpui::TestAppContext) {
+    let scratch = Scratch::new("carry-tab");
+    cx.update(|cx| bezel::theme::Theme::install(bezel::theme::Appearance::Light, cx));
+    let workspace = cx.new(|cx| Workspace::new(Settings::default(), state::State::default(), cx));
+
+    workspace.update(cx, |workspace, cx| {
+        workspace.open_project(scratch.project("one"), cx);
+        for (name, key) in [("First", "ONE"), ("Second", "TWO"), ("Third", "THR")] {
+            workspace.new_board(0, name.into(), key, cx).ok();
+        }
+        let a = workspace.member_of(0, Showing::Board(0)).expect("a member");
+        let b = workspace.member_of(0, Showing::Board(1)).expect("a member");
+        let c = workspace.member_of(0, Showing::Board(2)).expect("a member");
+        workspace.arrange(&a, &b, Side::Right, cx);
+        workspace.stack_pane(&a, &c, cx);
+        assert_eq!(workspace.stack_of(&a), vec![a.clone(), c.clone()]);
+
+        workspace.stack_pane(&b, &c, cx);
+
+        let layout = workspace.active_layout().expect("open");
+        assert_eq!(layout.leaves(), 2, "the panes did not move");
+        assert_eq!(layout.panes(), vec![a.clone(), b.clone()]);
+        assert_eq!(workspace.stack_of(&a), vec![a.clone()]);
+        assert_eq!(workspace.stack_of(&b), vec![b.clone(), c.clone()]);
+    });
+}
+
+/// The same tab let go over the bar it is already in does nothing at all.
+#[gpui::test]
+fn a_tab_dropped_on_its_own_bar_stays_put(cx: &mut gpui::TestAppContext) {
+    let scratch = Scratch::new("same-bar");
+    cx.update(|cx| bezel::theme::Theme::install(bezel::theme::Appearance::Light, cx));
+    let workspace = cx.new(|cx| Workspace::new(Settings::default(), state::State::default(), cx));
+
+    workspace.update(cx, |workspace, cx| {
+        workspace.open_project(scratch.project("one"), cx);
+        for (name, key) in [("First", "ONE"), ("Second", "TWO"), ("Third", "THR")] {
+            workspace.new_board(0, name.into(), key, cx).ok();
+        }
+        let a = workspace.member_of(0, Showing::Board(0)).expect("a member");
+        let b = workspace.member_of(0, Showing::Board(1)).expect("a member");
+        let c = workspace.member_of(0, Showing::Board(2)).expect("a member");
+        workspace.arrange(&a, &b, Side::Right, cx);
+        workspace.stack_pane(&a, &c, cx);
+
+        workspace.stack_pane(&a, &c, cx);
+
+        assert_eq!(workspace.stack_of(&a), vec![a, c], "order kept");
+    });
+}
+
+/// A tab carried onto a pane's *edge* is pulled out of its strip into a pane
+/// of its own — the other half of the gesture.
+#[gpui::test]
+fn a_tab_carried_to_an_edge_becomes_its_own_pane(cx: &mut gpui::TestAppContext) {
+    let scratch = Scratch::new("tab-to-edge");
+    cx.update(|cx| bezel::theme::Theme::install(bezel::theme::Appearance::Light, cx));
+    let workspace = cx.new(|cx| Workspace::new(Settings::default(), state::State::default(), cx));
+
+    workspace.update(cx, |workspace, cx| {
+        workspace.open_project(scratch.project("one"), cx);
+        for (name, key) in [("First", "ONE"), ("Second", "TWO"), ("Third", "THR")] {
+            workspace.new_board(0, name.into(), key, cx).ok();
+        }
+        let a = workspace.member_of(0, Showing::Board(0)).expect("a member");
+        let b = workspace.member_of(0, Showing::Board(1)).expect("a member");
+        let c = workspace.member_of(0, Showing::Board(2)).expect("a member");
+        workspace.arrange(&a, &b, Side::Right, cx);
+        workspace.stack_pane(&a, &c, cx);
+
+        workspace.arrange(&b, &c, Side::Below, cx);
+
+        let layout = workspace.active_layout().expect("open");
+        assert_eq!(layout.leaves(), 3);
+        assert_eq!(workspace.stack_of(&a), vec![a], "it left the strip");
+        assert_eq!(workspace.stack_of(&c), vec![c], "and holds a pane alone");
+    });
+}

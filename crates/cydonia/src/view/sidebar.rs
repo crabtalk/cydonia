@@ -162,8 +162,10 @@ pub(crate) fn tint(selected: bool, archived: bool, theme: &Theme) -> Hsla {
 #[derive(Clone)]
 pub(crate) struct ProjectDrag(usize);
 
-/// What rides under the cursor while a project is being carried.
-struct Carried(SharedString);
+/// What rides under the cursor while an entry is being carried. Shared with
+/// the panes, so a tab dragged out of a strip looks like the same gesture the
+/// sidebar makes — see [`crate::view::arrangement`].
+pub(crate) struct Carried(pub SharedString);
 
 /// An entry carried out of the sidebar, named the way a layout names its
 /// members.

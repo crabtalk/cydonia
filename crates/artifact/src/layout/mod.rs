@@ -753,7 +753,10 @@ impl Layout {
     /// An entry is in one pane at a time, so one already here is taken out of
     /// the pane it was in first.
     pub fn stack(&mut self, target: &Member, arriving: &Member) -> bool {
-        if target == arriving {
+        // Already in that strip: a tab let go over its own bar is a drag that
+        // changed nothing, and taking it out to put it back would send it to
+        // the end of a strip the reader never asked to reorder.
+        if self.stack_of(target).contains(arriving) {
             return false;
         }
         if self.contains(arriving) {

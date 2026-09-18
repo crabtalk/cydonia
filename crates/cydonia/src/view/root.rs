@@ -308,6 +308,9 @@ pub struct Cydonia {
     pub(crate) terminal_height: f32,
     pub(crate) changes: Option<Entity<super::component::panel::Panel>>,
     pub(crate) right_panels: std::collections::HashMap<u64, Entity<super::component::panel::Panel>>,
+    /// The buffer each card's orb paints into, by card id — see
+    /// [`board::Marks`].
+    pub(crate) card_marks: board::Marks,
     /// Where each board is scrolled to, by board id — see [`board::Scrolls`].
     /// On the window rather than on a pane: the same board arranged in a layout
     /// and opened on its own is one board.
@@ -617,6 +620,7 @@ impl Cydonia {
             changes: None,
             right_panels: Default::default(),
             boards: Default::default(),
+            card_marks: Default::default(),
             settings_window: None,
             collapsed_layouts: Default::default(),
             pane_landing: None,
