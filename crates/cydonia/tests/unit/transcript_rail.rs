@@ -1,16 +1,21 @@
 #[test]
-fn rail_requires_clear_space_in_the_conversation_pane() {
-    let required = bezel::ui::scroll::RAIL_ROOM + 2. * super::MARK_PAD;
+fn rail_room_is_half_of_what_the_content_leaves() {
     assert_eq!(super::rail_room(400.), 0.);
     assert_eq!(super::rail_room(super::CONTENT_MAX_WIDTH), 0.);
-    assert!(super::rail_room(super::CONTENT_MAX_WIDTH + 2. * required - 1.) < required);
-    assert_eq!(
-        super::rail_room(super::CONTENT_MAX_WIDTH + 2. * required),
-        required
-    );
+    assert_eq!(super::rail_room(super::CONTENT_MAX_WIDTH + 60.), 30.);
+}
+
+#[test]
+fn rail_requires_clear_space_in_the_conversation_pane() {
+    // The question `rail` puts to bezel, for a window of this width.
+    let fits = |width: f32| {
+        bezel::ui::scroll::rail_fits(px(super::rail_room(width) - 2. * super::MARK_PAD))
+    };
+    assert!(!fits(400.));
+    assert!(!fits(super::CONTENT_MAX_WIDTH));
+    assert!(fits(1200.));
     // A wide window cannot supply gutter space occupied by the right panel.
-    assert!(super::rail_room(1200.) >= required);
-    assert!(super::rail_room(1200. - 440.) < required);
+    assert!(!fits(1200. - 440.));
 }
 
 use super::*;
@@ -40,6 +45,16 @@ impl Render for RailView {
     }
 }
 
+/// Which marks are painted at the reading tone — one, whatever else is lit.
+fn brightest(ticks: &[(gpui::Bounds<Pixels>, f32)]) -> Vec<usize> {
+    ticks
+        .iter()
+        .enumerate()
+        .filter(|(_, (_, alpha))| *alpha == MARK_READING)
+        .map(|(ix, _)| ix)
+        .collect()
+}
+
 fn ticks(cx: &mut gpui::VisualTestContext) -> Vec<(gpui::Bounds<Pixels>, f32)> {
     cx.update(|window, _| {
         window
@@ -62,7 +77,7 @@ fn ticks(cx: &mut gpui::VisualTestContext) -> Vec<(gpui::Bounds<Pixels>, f32)> {
 }
 
 #[gpui::test]
-fn only_active_tick_is_highlighted_during_hover_and_navigation(cx: &mut gpui::TestAppContext) {
+fn only_the_reading_tick_is_brightest_during_hover_and_navigation(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| Theme::install(bezel::theme::Appearance::Dark, cx));
     let window = cx.add_window(|_, _| {
         let record = serde_json::from_value(serde_json::json!({
@@ -100,7 +115,21 @@ fn only_active_tick_is_highlighted_during_hover_and_navigation(cx: &mut gpui::Te
         .unwrap();
     let initial = ticks(&mut visual);
     assert_eq!(initial.len(), 7);
-    assert_eq!(initial.iter().filter(|(_, alpha)| *alpha == 0.6).count(), 1);
+    assert_eq!(
+        initial
+            .iter()
+            .filter(|(_, alpha)| *alpha == MARK_READING)
+            .count(),
+        1
+    );
+    // The rail says what the pane is showing as well as where it is read from,
+    // so a turn on screen beside the one being read is lit under it.
+    assert!(
+        initial
+            .iter()
+            .any(|(_, alpha)| *alpha == MARK_VISIBLE || *alpha == MARK_AWAY),
+        "a session longer than the pane has marks under the reading one"
+    );
     for ix in [0, 1, 2, 6, 5, 4] {
         visual.simulate_mouse_move(initial[ix].0.center(), None, gpui::Modifiers::default());
         visual.run_until_parked();
@@ -116,8 +145,8 @@ fn only_active_tick_is_highlighted_during_hover_and_navigation(cx: &mut gpui::Te
         visual.update(|window, _| window.refresh());
         visual.run_until_parked();
         let painted = ticks(&mut visual);
-        assert_eq!(painted[ix].1, 0.6);
-        assert_eq!(painted.iter().filter(|(_, alpha)| *alpha > 0.2).count(), 1);
+        assert_eq!(painted[ix].1, MARK_READING);
+        assert_eq!(brightest(&painted).len(), 1);
     }
     visual.simulate_mouse_move(
         gpui::point(px(90.), px(10.)),
@@ -125,13 +154,7 @@ fn only_active_tick_is_highlighted_during_hover_and_navigation(cx: &mut gpui::Te
         gpui::Modifiers::default(),
     );
     visual.run_until_parked();
-    assert_eq!(
-        ticks(&mut visual)
-            .iter()
-            .filter(|(_, alpha)| *alpha > 0.2)
-            .count(),
-        1
-    );
+    assert_eq!(brightest(&ticks(&mut visual)).len(), 1);
     let max = window
         .update(&mut visual, |view, _, _| {
             view.0.transcript.list.state.max_offset_for_scrollbar().y
@@ -151,13 +174,7 @@ fn only_active_tick_is_highlighted_during_hover_and_navigation(cx: &mut gpui::Te
             })
             .unwrap();
         visual.run_until_parked();
-        let painted = ticks(&mut visual);
-        let active: Vec<_> = painted
-            .iter()
-            .enumerate()
-            .filter(|(_, (_, alpha))| *alpha > 0.2)
-            .map(|(ix, _)| ix)
-            .collect();
+        let active = brightest(&ticks(&mut visual));
         assert_eq!(active.len(), 1);
         reached.insert(active[0]);
     }
@@ -179,9 +196,44 @@ fn only_active_tick_is_highlighted_during_hover_and_navigation(cx: &mut gpui::Te
         visual.run_until_parked();
         let painted = ticks(&mut visual);
         assert_eq!(
-            painted[ix].1, 0.6,
+            painted[ix].1, MARK_READING,
             "turn {ix} should be selectable without overflow"
         );
-        assert_eq!(painted.iter().filter(|(_, alpha)| *alpha > 0.2).count(), 1);
+        assert_eq!(brightest(&painted).len(), 1);
     }
+}
+
+#[test]
+fn the_run_spans_every_row_painted_over_the_viewport() {
+    let row = |top: f32, height: f32| {
+        gpui::Bounds::new(
+            gpui::point(px(0.), px(top)),
+            gpui::size(px(100.), px(height)),
+        )
+    };
+    let viewport = row(0., 300.);
+    let inset = px(60.);
+    // Three rows on screen, one scrolled off the top, one under the composer.
+    let painted = HashMap::from([
+        (0, row(-90., 80.)),
+        (1, row(-10., 80.)),
+        (2, row(70., 80.)),
+        (3, row(150., 80.)),
+        (4, row(240., 80.)),
+    ]);
+    assert_eq!(painted_turns(&painted, viewport, inset), 1..4);
+    assert_eq!(painted_turns(&HashMap::new(), viewport, inset), 0..0);
+}
+
+#[test]
+fn a_column_taller_than_the_rail_slides_the_read_mark_into_it() {
+    let step = px(MARK_THICK + 2. * MARK_PAD);
+    let room = step * 10.;
+    // Every mark fits, or the pane has not laid out: the column stays centred.
+    assert_eq!(rail_shift(8, 7, room), px(0.));
+    assert_eq!(rail_shift(20, 10, px(0.)), px(0.));
+    // Taller than the opening: its ends come to rest against the opening's.
+    assert_eq!(rail_shift(20, 0, room), step * 5.);
+    assert_eq!(rail_shift(20, 19, room), step * -5.);
+    assert_eq!(rail_shift(20, 10, room), step * -0.5);
 }

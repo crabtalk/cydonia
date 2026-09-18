@@ -27,7 +27,7 @@ use bezel::{
         popover,
         surface::{self, Surfaced as _},
         tooltip::Tooltip,
-        widgets::Controls as _,
+        widgets::{Buttons as _, Controls as _},
     },
 };
 use std::{collections::HashMap, sync::Arc};
@@ -147,10 +147,6 @@ pub enum ComposerEvent {
     Terminal,
     Changes,
     Files,
-    /// Talk to this agent instead — an index into the configured agents.
-    Agent(usize),
-    /// Nothing here to pick: open settings where agents are installed.
-    Install,
     /// Set a switch to one of its values, by id.
     Switch(SwitchId, SharedString),
 }
@@ -165,6 +161,26 @@ fn set_to(name: &str, value: Option<SharedString>) -> SharedString {
     }
 }
 
+/// What goes to the agent: the quote as markdown above the message, or the
+/// message alone.
+///
+/// Every line marked, blank ones included — a blockquote broken by an unmarked
+/// blank line is two blockquotes with the rest of the passage between them.
+fn quoted(quote: Option<String>, message: &str) -> String {
+    let Some(quote) = quote else {
+        return message.to_owned();
+    };
+    let quoted: String = quote
+        .lines()
+        .map(|line| match line.trim().is_empty() {
+            true => ">".to_owned(),
+            false => format!("> {line}"),
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!("{quoted}\n\n{message}")
+}
+
 pub struct Composer {
     field: Entity<TextField>,
     session: Option<u64>,
@@ -172,6 +188,12 @@ pub struct Composer {
     saved_attachments: HashMap<Option<u64>, Vec<Attachment>>,
     /// Pictures pasted or dropped, sent with the next message.
     attachments: Vec<Attachment>,
+    /// What was picked out of the transcript to answer, sent as a blockquote
+    /// above the message. Kept beside the draft rather than written into the
+    /// field: a quote is a thing to take back off in one press, and text in the
+    /// field is text to delete by hand.
+    quote: Option<String>,
+    saved_quotes: HashMap<Option<u64>, String>,
     /// Which of them is open in the lightbox.
     preview: Option<usize>,
     /// Byte offset of the `/` being typed, or `None` when no picker is open.
@@ -252,6 +274,8 @@ impl Composer {
             local_draft: String::new(),
             saved_attachments: HashMap::new(),
             attachments: Vec::new(),
+            quote: None,
+            saved_quotes: HashMap::new(),
             preview: None,
             command: None,
             filter: popover::Filter::new(Vec::new()),
@@ -287,9 +311,13 @@ impl Composer {
         }
         self.saved_attachments
             .insert(self.session, std::mem::take(&mut self.attachments));
+        if let Some(quote) = self.quote.take() {
+            self.saved_quotes.insert(self.session, quote);
+        }
         self.session = id;
         self.activity_open = false;
         self.attachments = self.saved_attachments.remove(&id).unwrap_or_default();
+        self.quote = self.saved_quotes.remove(&id);
         self.preview = None;
         let draft = if id.is_none() {
             self.local_draft.clone()
@@ -436,6 +464,70 @@ impl Composer {
         );
     }
 
+    /// Answer this. The transcript hands over what was picked out of it — see
+    /// [`crate::view::component::transcript`] — and the composer holds it until
+    /// the message it belongs to is sent.
+    ///
+    /// One at a time: a second quote replaces the first. A message answering
+    /// two places at once is one nobody writes, and a stack of them is a stack
+    /// to manage before a word is typed.
+    pub fn quote(&mut self, text: String, cx: &mut Context<Self>) {
+        let text = text.trim().to_owned();
+        if text.is_empty() {
+            return;
+        }
+        self.quote = Some(text);
+        cx.notify();
+    }
+
+    /// The quote waiting above the message: one line of what is being answered,
+    /// and the way to drop it.
+    fn quote_row(&self, theme: &Theme, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let quote = self.quote.as_ref()?;
+        let line = quote.lines().next().unwrap_or_default().trim().to_owned();
+        Some(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(8.))
+                .pl(px(8.))
+                .pr(px(4.))
+                .py(px(4.))
+                .rounded(px(Theme::control_radius()))
+                .bg(theme.element_hover)
+                // The mark a blockquote is drawn with, so the row says what it
+                // will become rather than naming it.
+                .child(div().w(px(2.)).h(px(14.)).flex_none().bg(theme.text_faint))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .text_style(TextStyle::Caption)
+                        .text_color(theme.text_muted)
+                        .child(line),
+                )
+                .child(
+                    theme
+                        .ghost("composer-quote-drop")
+                        .flex_none()
+                        .p(px(2.))
+                        .tooltip(|window, cx| Tooltip::text("Drop the quote", window, cx))
+                        .child(
+                            icons::icon(icons::notifications::X)
+                                .size(px(12.))
+                                .text_color(theme.text_faint),
+                        )
+                        .on_click(cx.listener(|composer, _, _, cx| {
+                            composer.quote = None;
+                            cx.notify();
+                        })),
+                )
+                .into_any_element(),
+        )
+    }
+
     /// The pictures waiting to go with the message, each with a way to take it
     /// back off.
     fn tray(&self, theme: &Theme, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -559,7 +651,7 @@ impl Composer {
         self.field.update(cx, |field, cx| field.clear(cx));
         self.command = None;
         cx.emit(ComposerEvent::Submit(
-            content.to_string(),
+            quoted(self.quote.take(), &content),
             std::mem::take(&mut self.attachments),
         ));
         cx.notify();
@@ -781,52 +873,34 @@ impl Composer {
         ))
     }
 
-    /// The menu's rows: the agents first, then whatever the live session
-    /// offers. Each switch carries the value it is on in its own name — the
-    /// reason to open one of these is as often to read what it is set to as to
-    /// change it, and a submenu row has one line to say both on.
+    /// The menu's rows: whatever the live session offers, one submenu each.
+    /// Each switch carries the value it is on in its own name — the reason to
+    /// open one of these is as often to read what it is set to as to change it,
+    /// and a submenu row has one line to say both on.
     ///
-    /// The agents are the exception. Picking one opens a session beside this
-    /// one rather than swapping it, so the row says that, and the check inside
-    /// is what says which agent this session is on.
+    /// No agents here. A session is bound to the process serving it, so picking
+    /// one would open a session beside this one rather than change this one —
+    /// which is the sidebar's `+`, and belongs where sessions are made.
     ///
-    /// No leading glyphs here: these rows are words, and one icon among them
-    /// would open an empty gutter down the menu's left. The agents inside the
-    /// first panel keep their marks, where every row has one.
+    /// No leading glyphs either: these rows are words, and one icon among them
+    /// would open an empty gutter down the menu's left.
     fn menu_items(&self) -> Vec<Item> {
-        let mut agents: Vec<Item> = self
-            .agents
+        self.switches
             .iter()
-            .enumerate()
-            .map(|(ix, agent)| {
-                let row = Item::action(agent.name.clone()).checked(Some(ix) == self.agent);
-                match agent.icon.clone() {
-                    Some(mark) => row.with_icon(mark),
-                    None => row,
-                }
+            .map(|switch| {
+                Item::submenu(
+                    set_to(&switch.name, self.value_of(switch)),
+                    switch
+                        .options
+                        .iter()
+                        .map(|option| {
+                            Item::action(option.name.clone())
+                                .checked(switch.current.as_ref() == Some(&option.id))
+                        })
+                        .collect(),
+                )
             })
-            .collect();
-        // Nothing installed is a panel of one row, and a rule above it would
-        // be a rule under nothing.
-        if !agents.is_empty() {
-            agents.push(Item::Separator);
-        }
-        agents.push(Item::action("Install an agent…").with_icon(icons::files::Download));
-        let mut items = vec![Item::submenu("New session with", agents)];
-        items.extend(self.switches.iter().map(|switch| {
-            Item::submenu(
-                set_to(&switch.name, self.value_of(switch)),
-                switch
-                    .options
-                    .iter()
-                    .map(|option| {
-                        Item::action(option.name.clone())
-                            .checked(switch.current.as_ref() == Some(&option.id))
-                    })
-                    .collect(),
-            )
-        }));
-        items
+            .collect()
     }
 
     /// What the pointer did to that menu. A path is one row per level — the
@@ -844,14 +918,7 @@ impl Composer {
                 // Picking anything shuts the menu: every choice here is the
                 // session's, and none of them is made twice in a row.
                 self.close_menu();
-                if row == 0 {
-                    // Past the last agent is the install row — which is also
-                    // the whole panel when nothing is installed.
-                    match at < self.agents.len() {
-                        true => cx.emit(ComposerEvent::Agent(at)),
-                        false => cx.emit(ComposerEvent::Install),
-                    }
-                } else if let Some(switch) = self.switches.get(row - 1)
+                if let Some(switch) = self.switches.get(row)
                     && let Some(option) = switch.options.get(at)
                 {
                     cx.emit(ComposerEvent::Switch(switch.id.clone(), option.id.clone()));
@@ -1119,6 +1186,7 @@ impl Composer {
                                     .flex_col()
                                     .gap(px(root::COMPOSER_INSET))
                                     .children(self.activity_row(&theme, right_inset, cx))
+                                    .children(self.quote_row(&theme, cx))
                                     .children(tray)
                                     .child(
                                         div()

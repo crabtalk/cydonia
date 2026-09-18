@@ -204,7 +204,8 @@ fn renaming_a_column_leaves_its_id_alone() {
     let id = board.add_column("Todo").id.clone();
 
     assert!(board.rename_column(&id, "Backlog"));
-    assert_eq!(board.column(&id).unwrap().name, "Backlog");
+    // Headings are kept in the board's one case, whatever was typed.
+    assert_eq!(board.column(&id).unwrap().name, "BACKLOG");
     assert!(!board.rename_column("nobody", "Backlog"));
 }
 

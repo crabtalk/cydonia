@@ -83,9 +83,14 @@ impl Activity {
     }
 }
 
+/// A running turn's age. Seconds alone under a minute; the minutes are padded
+/// once there are any, so the row does not shuffle as the count climbs.
 fn elapsed(duration: Duration) -> String {
     let seconds = duration.as_secs();
-    format!("{:02}m {:02}s", seconds / 60, seconds % 60)
+    match seconds < 60 {
+        true => format!("{seconds}s"),
+        false => format!("{:02}m {:02}s", seconds / 60, seconds % 60),
+    }
 }
 
 impl Composer {

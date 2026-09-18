@@ -197,9 +197,12 @@ impl FileView {
         let popup = self.external_menu.open.then(|| {
             let mut card = popover::popover_card(&theme)
                 .min_w(px(210.))
+                // Spent on the dismissal, reaching nothing behind the card —
+                // the rule [`popover::dismiss_on_out`] states.
                 .on_mouse_down_out(cx.listener(|this, _, _, cx| {
                     this.external_menu.open = false;
                     cx.notify();
+                    cx.stop_propagation();
                 }));
             for (index, app) in self.external_menu.apps.iter().enumerate() {
                 let app = app.clone();

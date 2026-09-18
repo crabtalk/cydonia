@@ -9,9 +9,14 @@ use bezel::{
 };
 use cydonia::{
     agent, memory,
-    model::{language, media, migrate, settings, state, update, workspace},
+    model::{language, media, migrate, notify, settings, state, update, workspace},
     view::{article, hotkey, keymap, menubar, root},
 };
+
+/// What the system knows this app as, matching `CFBundleIdentifier` in
+/// `bundle/Info.plist`. A notification is posted under it, and a build whose
+/// identity says nothing posts under nothing.
+const BUNDLE_ID: &str = "sh.cydonia";
 
 fn main() -> Result<()> {
     // First of all, and while this is still the only thread: it writes the
@@ -41,6 +46,10 @@ fn main() -> Result<()> {
         let _ = root::open(settings, state::restore(), cx);
     });
     app.run(move |cx: &mut App| {
+        // Before any window or notification: it is the name and identity the
+        // system presents this app under — see [`cydonia::model::notify`].
+        cx.set_app_identity(BUNDLE_ID, "Cydonia");
+        notify::on_response(cx);
         if let Err(err) = ui::register_fonts(cx) {
             eprintln!("font registration failed: {err:?}");
         }

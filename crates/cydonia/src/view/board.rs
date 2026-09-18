@@ -13,8 +13,8 @@ use bezel::ui::scroll as scrollbars;
 use bezel::{
     gpui::{
         self, AnyElement, App, ClipboardItem, Context, Div, DragMoveEvent, Entity, Focusable as _,
-        FontWeight, KeyBinding, Render, ScrollHandle, SharedString, Stateful, Window, actions, div,
-        prelude::*, px,
+        FontWeight, KeyBinding, Pixels, Render, ScrollHandle, SharedString, Stateful, Window,
+        actions, div, prelude::*, px,
     },
     motion::Painter,
     theme::{TextStyle, Theme, Typeset},
@@ -24,7 +24,7 @@ use bezel::{
         loaders,
         menu::Item,
         popover,
-        scroll::{self, Axes, DriftState},
+        scroll::{self, Axes, DriftState, FollowState},
         widgets::Buttons,
     },
 };
@@ -38,6 +38,16 @@ actions!(cydonia_board, [CommitCard, DismissCard]);
 const KEY_CONTEXT: &str = "CydoniaCard";
 
 const COLUMN_WIDTH: f32 = 272.;
+
+/// What the board holds itself off the window's edges by, and how far short of
+/// the foot a lane's bar stops — the session's bar clears its composer the same
+/// way, through [`scroll::Overlay::end_inset`].
+const BOARD_INSET: f32 = 16.;
+
+/// What separates two lanes, and the room the lane's scrollbar sits in. Handed
+/// to the bar through [`scroll::Overlay::channel`], which centres the thumb in
+/// it.
+const LANE_CHANNEL: Pixels = px(18.);
 
 /// How much of a card is shown before it is cut off. A card is a card: what
 /// does not fit in this much of a lane is read by opening it.
@@ -150,7 +160,8 @@ pub struct Landing {
     pub before: Option<String>,
 }
 
-/// One scroll and one drift per lane, minted the first time the lane is drawn.
+/// One scroll, one drift and one follow per lane, minted the first time the
+/// lane is drawn.
 ///
 /// gpui keys a pane's own scroll state by element id and needs nothing from
 /// us, but a drift moves that scroll from outside, and moving it takes a
@@ -158,15 +169,21 @@ pub struct Landing {
 /// deleted and remade is a new id, and a handful of dropped handles is cheaper
 /// than a sweep that has to know which lanes are still on the board.
 #[derive(Default)]
-pub struct Lanes(RefCell<HashMap<String, (ScrollHandle, DriftState)>>);
+pub struct Lanes(RefCell<HashMap<String, (ScrollHandle, DriftState, FollowState)>>);
 
 impl Lanes {
-    fn of(&self, id: &str) -> (ScrollHandle, DriftState) {
+    fn of(&self, id: &str) -> (ScrollHandle, DriftState, FollowState) {
         self.0
             .borrow_mut()
             .entry(id.to_owned())
             .or_default()
             .clone()
+    }
+
+    /// Pin the lane to its end again. A lane remembers being scrolled away
+    /// from, and opening an editor at its foot is asking to be taken there.
+    fn follow(&self, id: &str) {
+        self.of(id).2.follow();
     }
 }
 
@@ -243,6 +260,11 @@ impl Cydonia {
         };
         self.card_field
             .update(cx, |field, cx| field.set_content(text, cx));
+        // A lane scrolled away from earlier stays where it was left; opening a
+        // card at its foot is asking to be taken back there.
+        if let Editing::New(column) = &at {
+            self.lanes.follow(column);
+        }
         self.editing = Some(at);
         window.focus(&self.card_field.read(cx).focus_handle(cx), cx);
         cx.notify();
@@ -497,7 +519,12 @@ impl Cydonia {
             .iter()
             .map(|column| column.id.clone())
             .collect();
-        let columns: Vec<AnyElement> = ids.iter().map(|id| self.column(id, window, cx)).collect();
+        let lanes = ids.len();
+        let columns: Vec<AnyElement> = ids
+            .iter()
+            .enumerate()
+            .map(|(at, id)| self.column(id, at, lanes, window, cx))
+            .collect();
         div()
             .flex_1()
             .min_h_0()
@@ -519,9 +546,8 @@ impl Cydonia {
                     .size_full()
                     .flex()
                     .flex_row()
-                    .gap(px(10.))
-                    .px(px(16.))
-                    .pt(px(16.))
+                    .px(px(BOARD_INSET))
+                    .pt(px(BOARD_INSET))
                     .track_scroll(&self.board_scroll)
                     .children(columns)
                     .child(self.new_column_lane(cx)),
@@ -541,7 +567,14 @@ impl Cydonia {
             .into_any_element()
     }
 
-    fn column(&self, id: &str, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn column(
+        &self,
+        id: &str,
+        at: usize,
+        lanes: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let id = id.to_owned();
         let Some((name, cards)) = self
@@ -575,7 +608,8 @@ impl Cydonia {
 
         let lane = id.clone();
         let taken = id.clone();
-        let (scroll, drift) = self.lanes.of(&id);
+        let composing = matches!(&self.editing, Some(Editing::New(at)) if *at == id);
+        let (scroll, drift, follow) = self.lanes.of(&id);
         let bar_id = format!("lane-bar-{id}");
         div()
             .flex_none()
@@ -610,7 +644,7 @@ impl Cydonia {
             .on_drop(cx.listener(move |this, drag: &CardDrag, _, cx| {
                 this.drop_card(&drag.0, &taken, cx);
             }))
-            .child(self.column_header(&id, name, cards.len(), cx))
+            .child(self.column_header(&id, name, cards.len(), at, lanes, cx))
             .child(
                 div()
                     .relative()
@@ -619,6 +653,18 @@ impl Cydonia {
                     .child(
                         scroll::pane(SharedString::from(format!("column-{id}")), Axes::Vertical)
                             .size_full()
+                            // The space between two lanes, carried by the lane
+                            // rather than as a gap on the row: a bar is clipped
+                            // to the pane it reports on, so only a lane that
+                            // owns the whole channel can put its thumb down the
+                            // middle of it.
+                            .pr(LANE_CHANNEL)
+                            // The foot of the scroll, where `Add a card` sits:
+                            // the lane's own gap ends at the last card, and
+                            // without this the row lands on the lane's edge.
+                            // `../desktop` pads the same place, by enough to
+                            // clear the controls bar it floats there.
+                            .pb(px(8.))
                             .track_scroll(&scroll)
                             .flex()
                             .flex_col()
@@ -650,28 +696,43 @@ impl Cydonia {
                     // The lane's own half of the gesture: a card held at the
                     // foot of a full lane brings the rest of it up.
                     .child(scroll::drift(&scroll, &drift, Axes::Vertical))
-                    .child(scrollbars::Overlay::new(
-                        bar_id,
-                        &scroll,
-                        bezel::gpui::Axis::Vertical,
-                    )),
+                    // A new card is written at the lane's end, and grows as it
+                    // is typed into: the lane stays at that end for as long as
+                    // it is left there, and lets go the moment it is scrolled
+                    // up — the transcript's rule, and the same element.
+                    .children(composing.then(|| scroll::follow(&scroll, &follow)))
+                    .child(
+                        scrollbars::Overlay::new(bar_id, &scroll, bezel::gpui::Axis::Vertical)
+                            .end_inset(px(BOARD_INSET))
+                            .channel(LANE_CHANNEL),
+                    ),
             )
             .into_any_element()
     }
 
-    /// The lane's name and count, and — only while it is empty — the way to be
-    /// rid of it. See [`artifact::board::Board::remove_column`].
+    /// The lane's name and count, and the `···` that moves or drops it.
+    ///
+    /// `at` is where the lane sits among `lanes`, which is what decides whether
+    /// it can step either way — read here rather than in the menu, which is
+    /// built from what the header was drawn with.
     fn column_header(
         &self,
         id: &str,
         name: String,
         count: usize,
+        at: usize,
+        lanes: usize,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let row = div()
             .flex_none()
-            .px(px(4.))
+            .pl(px(4.))
+            // The channel the lane's bar runs in, which the scroll below pads
+            // its content by: the header is a box of its own and outside that
+            // scroll, so it reserves the same room or the `···` stands over the
+            // bar while the cards under it stop short of one.
+            .pr(LANE_CHANNEL)
             .flex()
             .flex_row()
             .items_center()
@@ -681,7 +742,6 @@ impl Cydonia {
             return row.child(self.name_field(cx)).into_any_element();
         }
         let named = id.to_owned();
-        let dropped = id.to_owned();
         row.group("column")
             .child(
                 div()
@@ -696,22 +756,78 @@ impl Cydonia {
             )
             .child(div().text_color(theme.text_faint).child(count.to_string()))
             .child(div().flex_1())
-            .children((count == 0).then(|| {
-                theme
-                    .ghost(SharedString::from(format!("column-delete-{id}")))
-                    .invisible()
-                    .group_hover("column", |el| el.visible())
-                    .p(px(3.))
-                    .child(
-                        icons::icon(icons::files::Trash)
-                            .size(px(12.))
-                            .text_color(theme.text_faint),
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.drop_column(&dropped, cx);
-                    }))
-            }))
+            .child(
+                self.menu_button(
+                    SharedString::from(format!("column-menu-{id}")),
+                    Some("column"),
+                    icons::icon(icons::layout::Ellipsis)
+                        .size(px(14.))
+                        .text_color(theme.text_faint),
+                    Menu::Lane(id.to_owned()),
+                    cx,
+                )
+                .children(self.lane_menu(id, count, at, lanes, cx)),
+            )
             .into_any_element()
+    }
+
+    /// What the `···` does to a lane: which way it moves, and whether it stays.
+    ///
+    /// A lane at an end is not offered the step it cannot take, and one still
+    /// holding cards carries Delete as a row it cannot choose — the refusal is
+    /// worth saying, and a button simply withheld says nothing. The words are
+    /// the tools' — see `mcp::tools::board`.
+    fn lane_menu(
+        &self,
+        id: &str,
+        count: usize,
+        at: usize,
+        lanes: usize,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        if self.menu != Some(Menu::Lane(id.to_owned())) {
+            return None;
+        }
+        let mut rows = Vec::new();
+        if at > 0 {
+            let moved = id.to_owned();
+            rows.push(menu::row(
+                Item::action("Move left").with_icon(icons::arrows::ArrowLeft),
+                move |this, _, cx| this.shift_column(&moved, -1, cx),
+            ));
+        }
+        if at + 1 < lanes {
+            let moved = id.to_owned();
+            rows.push(menu::row(
+                Item::action("Move right").with_icon(icons::arrows::ArrowRight),
+                move |this, _, cx| this.shift_column(&moved, 1, cx),
+            ));
+        }
+        let drop = Item::action("Delete column").with_icon(icons::files::Trash);
+        let drop = match count {
+            0 => drop,
+            _ => drop
+                .disabled()
+                .with_tooltip("A column is only where work sits — move the cards out first."),
+        };
+        let dropped = id.to_owned();
+        rows.push(menu::row(drop, move |this, _, cx| {
+            this.drop_column(&dropped, cx)
+        }));
+        let card = SharedString::from(format!("lane-menu-{id}"));
+        Some(popover::anchored_menu_below(
+            card.clone(),
+            self.menu_card(card, rows, cx),
+            None,
+        ))
+    }
+
+    /// Step a lane one place, and keep the menu on it: moving twice is two
+    /// presses on the same row, not a menu reopened between them.
+    fn shift_column(&mut self, id: &str, step: isize, cx: &mut Context<Self>) {
+        self.workspace
+            .update(cx, |workspace, cx| workspace.move_column(id, step, cx));
+        cx.notify();
     }
 
     /// The lane that makes a lane, always at the right-hand end.
@@ -801,7 +917,7 @@ impl Cydonia {
         // bounds, so a card scrolled out of its lane still answers for the
         // strip of window its bounds landed on — the lane's own header, most
         // of the time.
-        let (viewport, _) = self.lanes.of(column);
+        let (viewport, ..) = self.lanes.of(column);
         div()
             .id(SharedString::from(format!("card-{id}")))
             .group("card")

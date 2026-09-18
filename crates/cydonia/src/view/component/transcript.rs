@@ -17,8 +17,8 @@ use artifact::session::chat::{ChatItem, ToolStatus};
 use bezel::{
     agent::orbs::{OrbSize, OrbState, engine::Frame, orb_element},
     gpui::{
-        AnyElement, ClipboardItem, Context, Empty, Pixels, SharedString, Task, Window, canvas, div,
-        prelude::*, px,
+        AnyElement, Bounds, ClipboardItem, Context, Empty, Pixels, SharedString, Task, Window,
+        canvas, div, prelude::*, px,
     },
     motion::Painter,
     theme::{TextStyle, Theme, Typeset, ink},
@@ -59,6 +59,22 @@ const MARK_THICK: f32 = 2.;
 const MARK_PAD: f32 = 5.;
 const RAIL_INSET: f32 = 12.;
 
+/// What the rail keeps clear of the pane's top and bottom edges. A session
+/// with more marks than fit in what is left is slid under the opening by
+/// [`rail_shift`] rather than squeezed into it.
+const RAIL_PAD: f32 = 64.;
+
+/// What a mark is painted at: the turn being read, one that is on screen with
+/// it, and one that is neither.
+///
+/// Three rather than two, because the rail answers two questions at once — how
+/// much of the session the pane is showing, and which turn of it you are on.
+/// Off one value the second question has no answer; off two the first one is a
+/// single dash whatever is on screen.
+const MARK_READING: f32 = 0.6;
+const MARK_VISIBLE: f32 = 0.38;
+const MARK_AWAY: f32 = 0.16;
+
 /// How much of a question its mark's tooltip carries.
 const ASKED_MAX: usize = 80;
 
@@ -82,6 +98,16 @@ pub struct State {
     list: bezel::ui::list::VariableList<usize>,
     focused_turn: Cell<Option<(usize, usize)>>,
     rail_selection: Rc<Cell<Option<RailSelection>>>,
+    /// Where each turn's row was painted last frame, keyed by turn, and the
+    /// run of turns the rail lights from it.
+    ///
+    /// The rows report their own bounds because the list reports none of its
+    /// own while it follows the tail: its scroll top is then the item past the
+    /// end, and `bounds_for_item` answers `None` for everything before that.
+    /// The rail's canvas drains the first into the second and the marks are
+    /// coloured from it on the frame after.
+    painted: Rc<RefCell<HashMap<usize, Bounds<Pixels>>>>,
+    showing: Rc<RefCell<Range<usize>>>,
     pub(crate) footer_height: Rc<Cell<Pixels>>,
     /// Keyed by the turn's first item index.
     work: HashMap<usize, Takeover>,
@@ -119,6 +145,19 @@ impl State {
         self.layouts.borrow_mut().entry(ix).or_default().clone()
     }
 
+    /// Put the stream back on its newest line, and keep it there as the answer
+    /// arrives.
+    ///
+    /// Sending is the one gesture that says where you want to be looking: a
+    /// wheel upward releases the tail ([`super::transcript::follow`]) and
+    /// nothing puts it back, so a message sent after reading further up lands
+    /// below the fold along with the reply to it.
+    pub fn follow_tail(&self) {
+        self.list
+            .state
+            .set_follow_mode(bezel::gpui::FollowMode::Tail);
+    }
+
     /// What `ix` has selected, if it is the item holding the selection.
     fn selection(&self, ix: usize) -> Option<Selection> {
         self.selection
@@ -141,6 +180,30 @@ impl State {
             }
             Pointer::Up => self.dragging = false,
         }
+    }
+
+    /// Where the bar over a selection stands: the last row the run painted, in
+    /// window coordinates, and the box the stream is read through.
+    ///
+    /// `None` while the pointer is still choosing the run, and for a press that
+    /// collapsed without a drag — a caret in read-only prose is not a selection
+    /// and has nothing for a bar to be about.
+    pub fn selection_perch(&self) -> Option<(Bounds<Pixels>, Bounds<Pixels>)> {
+        if self.dragging {
+            return None;
+        }
+        let (ix, selection) = self.selection?;
+        if selection.is_collapsed() {
+            return None;
+        }
+        let head = *self.layouts(ix).rects(selection).last()?;
+        Some((self.list.state.viewport_bounds(), head))
+    }
+
+    /// Drop the run, and the bar over it with it.
+    pub fn clear_selection(&mut self) {
+        self.selection = None;
+        self.dragging = false;
     }
 
     /// What is selected, as it would be pasted, or nothing when a press
@@ -373,6 +436,7 @@ pub fn render(
     list.set_end_inset(footer_height);
     let workspace = cx.entity().downgrade();
     let visible_workspace = workspace.clone();
+    let painted = chat.transcript.painted.clone();
     let count = turns.len();
     let virtual_content = list.render(
         move |index, window, cx| {
@@ -394,14 +458,28 @@ pub fn render(
                         return Empty.into_any_element();
                     };
                     let running = chat.streaming && index + 1 == count;
+                    let painted = painted.clone();
                     content_row(
                         div()
+                            .relative()
                             .px(px(24.))
                             .when(index == 0, |row| row.pt(px(PAD)))
                             .child(zone(chat, turn, running, window, cx))
                             .when(running && turn.range.len() <= 1, |row| {
                                 row.child(working(chat, turn.range.start, cx))
-                            }),
+                            })
+                            // What the rail reads to know which turns are on
+                            // screen — see [`State::painted`].
+                            .child(
+                                canvas(
+                                    move |bounds, _, _| {
+                                        painted.borrow_mut().insert(index, bounds);
+                                    },
+                                    |_, _, _, _| {},
+                                )
+                                .absolute()
+                                .size_full(),
+                            ),
                     )
                     .into_any_element()
                 })
@@ -552,15 +630,58 @@ fn active_list_turn(
     active
 }
 
+/// The run of turns on screen, from where their rows were last painted.
+///
+/// `inset` is the composer band, taken off the foot: a turn behind it is
+/// painted and covered, and a mark lit for it says the pane is showing
+/// something it is not.
+fn painted_turns(
+    painted: &HashMap<usize, Bounds<Pixels>>,
+    viewport: Bounds<Pixels>,
+    inset: Pixels,
+) -> Range<usize> {
+    let floor = viewport.bottom() - inset;
+    let mut run: Option<Range<usize>> = None;
+    for (ix, bounds) in painted {
+        if bounds.bottom() <= viewport.top() || bounds.top() >= floor {
+            continue;
+        }
+        run = Some(match run {
+            Some(run) => run.start.min(*ix)..run.end.max(ix + 1),
+            None => *ix..ix + 1,
+        });
+    }
+    run.unwrap_or(0..0)
+}
+
+/// How far the column of marks is moved off centre, so that the turn being
+/// read stays inside the rail's opening.
+///
+/// The column is centred in `room` whatever its length, so the shift is
+/// measured from there: zero while every mark fits, and clamped at either end
+/// of a longer column, where the first and last marks sit against the top and
+/// bottom of the opening rather than in its middle. A `room` of zero — the
+/// pane before its first layout — leaves the column centred.
+fn rail_shift(count: usize, at: usize, room: Pixels) -> Pixels {
+    let step = px(MARK_THICK + 2. * MARK_PAD);
+    let total = step * count as f32;
+    if total <= room || room <= px(0.) {
+        return px(0.);
+    }
+    let above = (step * (at as f32 + 0.5) - room / 2.).clamp(px(0.), total - room);
+    (total - room) / 2. - above
+}
+
 fn rail_room(pane_width: f32) -> f32 {
     ((pane_width - CONTENT_MAX_WIDTH) / 2.).max(0.)
 }
 
 /// One clickable mark per turn, with its question as the tooltip.
 fn rail(chat: &ChatSession, turns: &[Turn], room: Pixels) -> AnyElement {
-    // bezel's own floor plus the marks' padding, which reaches toward the
-    // text: a hitbox over the prose would swallow presses meant for it.
-    if turns.is_empty() || room < px(scroll::RAIL_ROOM + 2. * MARK_PAD) {
+    // The marks' padding reaches toward the text, so it comes off the room
+    // before bezel is asked: a hitbox over the prose would swallow presses
+    // meant for it.
+    if turns.is_empty() || !scroll::rail_fits(room - px(2. * MARK_PAD)) {
         return Empty.into_any_element();
     }
     let handle = chat.transcript.list.clone();
@@ -573,16 +694,31 @@ fn rail(chat: &ChatSession, turns: &[Turn], room: Pixels) -> AnyElement {
         .max(px(root::composer_height()))
         + px(root::COMPOSER_BOTTOM + PAD);
     let at = active_list_turn(&handle, count, inset, &selection);
+    // The rows paint before the canvas below, which is what turns their bounds
+    // into the run — a frame behind the marks reading it.
+    let painted = chat.transcript.painted.clone();
+    let shown = chat.transcript.showing.clone();
+    let showing = shown.borrow().clone();
+    // The pane's height, which the marks are placed against: it is unknown
+    // until the list has laid out once, so the canvas below watches it too.
+    let height = handle.state.viewport_bounds().size.height;
+    let room = height - px(2. * RAIL_PAD);
+    let column = div()
+        .relative()
+        .top(rail_shift(count, at, room))
+        .flex()
+        .flex_col()
+        .items_center()
+        .flex_none();
     div()
         .absolute()
         .top_0()
         .bottom_0()
         .left(px(RAIL_INSET))
+        .py(px(RAIL_PAD))
         .flex()
         .flex_col()
         .items_center()
-        .justify_center()
-        .overflow_hidden()
         .child(
             canvas(
                 move |_, window, _| {
@@ -593,7 +729,17 @@ fn rail(chat: &ChatSession, turns: &[Turn], room: Pixels) -> AnyElement {
                         selected.offset = Some(handle.state.logical_scroll_top());
                         selection.set(Some(selected));
                     }
-                    if active_list_turn(&handle, count, inset, &selection) != at {
+                    let run =
+                        painted_turns(&painted.borrow(), handle.state.viewport_bounds(), inset);
+                    painted.borrow_mut().clear();
+                    let moved = *shown.borrow() != run;
+                    if moved {
+                        *shown.borrow_mut() = run;
+                    }
+                    if moved
+                        || handle.state.viewport_bounds().size.height != height
+                        || active_list_turn(&handle, count, inset, &selection) != at
+                    {
                         window.refresh();
                     }
                 },
@@ -601,44 +747,61 @@ fn rail(chat: &ChatSession, turns: &[Turn], room: Pixels) -> AnyElement {
             )
             .absolute(),
         )
-        .children(turns.iter().enumerate().map(|(ix, turn)| {
-            // A turn opens on a question, except the leading chunk of a
-            // session — which is whatever arrived before the first one, and has
-            // nothing to name itself with.
-            let asked = match chat.items.get(turn.range.start) {
-                Some(ChatItem::User(text)) => Some(SharedString::from(clipped(text, ASKED_MAX))),
-                _ => None,
-            }
-            .filter(|asked| !asked.is_empty());
-            let handle = chat.transcript.list.clone();
-            let selection = chat.transcript.rail_selection.clone();
+        // The opening is its own element so that a column longer than it is
+        // cut off at the padding rather than painted through it.
+        .child(
             div()
-                .id(("rail-mark", ix))
-                // Padding provides the hitbox and gap; only the active turn brightens.
-                .p(px(MARK_PAD))
-                .cursor_pointer()
-                .when_some(asked, |mark, asked| {
-                    mark.tooltip(move |window, cx| Tooltip::text(asked.clone(), window, cx))
-                })
-                .on_click(move |_, window, _| {
-                    selection.set(Some(RailSelection {
-                        turn: ix,
-                        offset: None,
-                    }));
-                    handle.scroll_to(ix);
-                    if ix + 1 == count {
-                        handle.state.set_follow_mode(bezel::gpui::FollowMode::Tail);
+                .flex_1()
+                .min_h_0()
+                .flex()
+                .flex_col()
+                .items_center()
+                .justify_center()
+                .overflow_hidden()
+                .child(column.children(turns.iter().enumerate().map(|(ix, turn)| {
+                    // A turn opens on a question, except the leading chunk of a
+                    // session — which is whatever arrived before the first one, and has
+                    // nothing to name itself with.
+                    let asked = match chat.items.get(turn.range.start) {
+                        Some(ChatItem::User(text)) => {
+                            Some(SharedString::from(clipped(text, ASKED_MAX)))
+                        }
+                        _ => None,
                     }
-                    window.refresh();
-                })
-                .child(
+                    .filter(|asked| !asked.is_empty());
+                    let handle = chat.transcript.list.clone();
+                    let selection = chat.transcript.rail_selection.clone();
                     div()
-                        .w(px(MARK))
-                        .h(px(MARK_THICK))
-                        .rounded_full()
-                        .bg(if ix == at { ink(0.6) } else { ink(0.2) }),
-                )
-        }))
+                        .id(("rail-mark", ix))
+                        // Padding provides the hitbox and gap; the tone is what the
+                        // mark says — see [`MARK_READING`].
+                        .p(px(MARK_PAD))
+                        .cursor_pointer()
+                        .when_some(asked, |mark, asked| {
+                            mark.tooltip(move |window, cx| Tooltip::text(asked.clone(), window, cx))
+                        })
+                        .on_click(move |_, window, _| {
+                            selection.set(Some(RailSelection {
+                                turn: ix,
+                                offset: None,
+                            }));
+                            handle.scroll_to(ix);
+                            if ix + 1 == count {
+                                handle.state.set_follow_mode(bezel::gpui::FollowMode::Tail);
+                            }
+                            window.refresh();
+                        })
+                        .child(div().w(px(MARK)).h(px(MARK_THICK)).rounded_full().bg(ink(
+                            if ix == at {
+                                MARK_READING
+                            } else if showing.contains(&ix) {
+                                MARK_VISIBLE
+                            } else {
+                                MARK_AWAY
+                            },
+                        )))
+                }))),
+        )
         .into_any_element()
 }
 

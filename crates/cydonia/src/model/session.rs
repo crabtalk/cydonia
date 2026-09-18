@@ -14,6 +14,7 @@
 use crate::{
     agent::acp::{self, Event, Launch, Reply, Session},
     model::{
+        notify,
         session_preferences::{self, Choices},
         settings,
         workspace::Workspace,
@@ -1097,12 +1098,24 @@ fn pump(id: u64, entry: &settings::Agent, launch: Launch, cx: &mut Context<Works
                 batch.push(event);
             }
             let streaming = this.update(cx, |workspace, cx| {
+                let was_streaming = workspace.session(id).is_some_and(|chat| chat.streaming);
                 workspace.with_session(id, cx, |chat| {
                     for event in batch {
                         chat.apply(event);
                     }
                 });
-                workspace.session(id).is_some_and(|chat| chat.streaming)
+                let streaming = workspace.session(id).is_some_and(|chat| chat.streaming);
+                // The turn's end, as the only place that can see it: `apply`
+                // takes no app to speak to, and a session read from outside
+                // cannot tell a turn that has just stopped from one that was
+                // never running.
+                if was_streaming && !streaming {
+                    let notify = workspace.settings.notify_turns;
+                    if let Some(chat) = workspace.session(id) {
+                        notify::turn_finished(chat, notify, cx);
+                    }
+                }
+                streaming
             });
             match streaming {
                 Ok(true) => cx.background_executor().timer(STREAM_FRAME).await,

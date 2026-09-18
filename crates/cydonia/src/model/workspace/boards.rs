@@ -191,6 +191,33 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Step a lane one place along, by the lane it lands in front of — see
+    /// [`Board::move_column_before`]. `None` at either end is a lane already
+    /// where it is being asked to go.
+    pub fn move_column(&mut self, id: &str, step: isize, cx: &mut Context<Self>) {
+        let Some(board) = self.active_board_mut() else {
+            return;
+        };
+        let Some(at) = board.columns.iter().position(|column| column.id == id) else {
+            return;
+        };
+        let to = match at.checked_add_signed(step) {
+            Some(to) if to < board.columns.len() => to,
+            _ => return,
+        };
+        // The lane it lands in front of, read after the step rather than before
+        // it: moving right means going in front of the one *after* the
+        // neighbour it swaps with, and off the end means no anchor at all.
+        let before = match step > 0 {
+            true => board.columns.get(to + 1).map(|column| column.id.clone()),
+            false => board.columns.get(to).map(|column| column.id.clone()),
+        };
+        if board.move_column_before(id, before.as_deref()) {
+            self.save_board();
+        }
+        cx.notify();
+    }
+
     /// Drop a lane, which a board refuses while it still holds cards — see
     /// [`Board::remove_column`].
     pub fn remove_column(&mut self, id: &str, cx: &mut Context<Self>) {

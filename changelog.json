@@ -1,5 +1,38 @@
 [
   {
+    "version": "0.1.8",
+    "date": "2026-09-18",
+    "summary": "Quote what an agent said, hear when a turn finishes, and boards that arrange themselves.",
+    "media": {
+      "poster": "pics/cydonia/v0.1.8.jpg",
+      "src": "videos/cydonia/v0.1.8.mp4",
+      "alt": "…",
+      "w": 1280,
+      "h": 900
+    },
+    "new": [
+      "Select any message in a session and copy or quote it from the bar that appears",
+      "Get a notification when a turn finishes while cydonia is in the background",
+      "Move or delete a board column from its own menu, and reorder columns through agent tools",
+      "Step between panel tabs with ctrl-tab, the chord that steps between entries elsewhere",
+      "Archive an entry straight from its sidebar row"
+    ],
+    "changed": [
+      "Name board columns in upper case as they are typed",
+      "Scroll to the newest message after sending one, and follow a card being written",
+      "Light every turn the transcript is showing, not only the one being read",
+      "Drop the terminal panel's static label and the composer menu's new-session row",
+      "Upgrade Bezel to 0.1.19"
+    ],
+    "fixed": [
+      "Keep the composer band's presses and scrolling off the transcript beneath it",
+      "Contain a wheel inside an expanded step's output instead of moving the stream with it",
+      "Spend a press that dismisses a popover on the dismissal alone",
+      "Put board scrollbars beside the cards rather than over them",
+      "Say seconds without a leading 00m in the composer's status line"
+    ]
+  },
+  {
     "version": "0.1.7",
     "date": "2026-09-17",
     "summary": "A tabbed workspace, syntax-highlighted files with on-demand grammars, image galleries, and steadier sessions.",

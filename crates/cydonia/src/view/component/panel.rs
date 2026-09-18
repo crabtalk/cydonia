@@ -26,7 +26,14 @@ use std::path::PathBuf;
 
 gpui::actions!(
     session_panel,
-    [OpenFile, NewTerminal, CloseTab, ToggleFiles]
+    [
+        OpenFile,
+        NewTerminal,
+        CloseTab,
+        ToggleFiles,
+        NextTab,
+        PrevTab
+    ]
 );
 
 struct FilesResize;
@@ -191,6 +198,28 @@ impl Panel {
         });
         let watch = cx.observe(&file, |_, _, cx| cx.notify());
         self.push(Content::File(file), vec![watch], cx);
+    }
+
+    /// Step to the tab `step` along, wrapping at the ends — the row is a ring,
+    /// the way a browser's is.
+    ///
+    /// The focus goes with it: the chord is pressed with the hand in the panel,
+    /// and a tab shown without the focus following leaves the next keystroke in
+    /// the one that was left.
+    fn cycle(&mut self, step: isize, window: &mut Window, cx: &mut Context<Self>) {
+        if self.tabs.len() < 2 {
+            return;
+        }
+        let at = self
+            .tabs
+            .iter()
+            .position(|tab| Some(tab.id) == self.active)
+            .unwrap_or(0);
+        let count = self.tabs.len() as isize;
+        let next = (at as isize + step).rem_euclid(count) as usize;
+        self.active = self.tabs.get(next).map(|tab| tab.id);
+        self.focus(window, cx);
+        cx.notify();
     }
 
     fn remove(&mut self, id: usize, cx: &mut Context<Self>) {
@@ -417,6 +446,8 @@ impl Render for Panel {
                     this.close(id, window, cx);
                 }
             }))
+            .on_action(cx.listener(|this, _: &NextTab, window, cx| this.cycle(1, window, cx)))
+            .on_action(cx.listener(|this, _: &PrevTab, window, cx| this.cycle(-1, window, cx)))
             .child(
                 div()
                     .h(px(40.))

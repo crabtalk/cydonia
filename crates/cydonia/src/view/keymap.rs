@@ -174,7 +174,7 @@ impl Command {
         }
     }
 
-    /// The chord it ships with, where it ships with one. The four that do not
+    /// The chord it ships with, where it ships with one. The six that do not
     /// are reachable from the menu and were never worth a default between
     /// them: ⌘N is the session, and three more `New` chords would spend the
     /// letters a person may want for their own.
@@ -187,6 +187,12 @@ impl Command {
             // stays with whoever the project last talked to.
             Self::NewSessionNext => "alt-cmd-n",
             Self::NewBoard | Self::NewArticle | Self::NewTable | Self::CloseProject => return None,
+            // Nothing: ⌃⇥ and ⇧⌃⇥ are what step between entries, and they are
+            // bound where nothing can name them — see [`root::bindings`]. A
+            // second default would go in the menu as a key equivalent, and an
+            // equivalent is claimed by AppKit before the window is offered the
+            // chord (user report: the pair drawn here did nothing at all).
+            Self::NextEntry | Self::PrevEntry => return None,
             Self::OpenProject => "cmd-o",
             // What every app with a sidebar binds it to.
             Self::ToggleSidebar => "cmd-b",
@@ -194,11 +200,6 @@ impl Command {
             Self::ToggleChanges => "cmd-l",
             Self::OpenFiles => "cmd-shift-f",
             Self::OpenReview => "cmd-shift-g",
-            // The pair the View menu draws. `ctrl-tab` reaches these too and
-            // is not movable: gpui has no macOS equivalent for `tab`, so an
-            // item naming it would print ⌃T — see [`root::bindings`].
-            Self::NextEntry => "alt-cmd-right",
-            Self::PrevEntry => "alt-cmd-left",
             Self::PlainText => "cmd-e",
         })
     }
@@ -366,6 +367,21 @@ pub fn bind_all(shortcuts: &Shortcuts, cx: &mut App) {
         KeyBinding::new(
             "cmd-t",
             super::component::panel::NewTerminal,
+            Some("SessionPanel || BottomTerminalPanel"),
+        ),
+        // The chord that steps between entries everywhere else steps between
+        // tabs here — see [`root::bindings`], whose binding this shadows while
+        // a panel holds the focus. `cmd-tab` is the system's and never reaches
+        // an app; the terminal makes no bytes of `ctrl-tab`, so a shell under
+        // the pointer does not eat it either.
+        KeyBinding::new(
+            "ctrl-tab",
+            super::component::panel::NextTab,
+            Some("SessionPanel || BottomTerminalPanel"),
+        ),
+        KeyBinding::new(
+            "ctrl-shift-tab",
+            super::component::panel::PrevTab,
             Some("SessionPanel || BottomTerminalPanel"),
         ),
         KeyBinding::new("cmd-s", super::component::file::Save, Some("FileEditor")),

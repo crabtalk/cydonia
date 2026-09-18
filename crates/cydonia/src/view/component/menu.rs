@@ -36,6 +36,10 @@ pub(crate) enum Menu {
     Header,
     /// The `···` on a table's column heading.
     Column(usize),
+    /// The `···` on a board's lane, by column id. An id and not a position: a
+    /// lane's whole menu is about moving it, and a key that moved with it would
+    /// shut the menu on every press.
+    Lane(String),
     /// The block picker on the article ribbon — see
     /// [`crate::view::component::ribbon`].
     Turn,

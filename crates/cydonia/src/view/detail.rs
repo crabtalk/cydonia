@@ -3,7 +3,7 @@
 use crate::{
     model::session::{ChatSession, Choice},
     view::{
-        component::{composer, transcript},
+        component::{composer, ribbon, transcript},
         root::{self, Cydonia, NewSession, Pane},
         settings::Section,
     },
@@ -17,8 +17,9 @@ use bezel::{
     motion::{Fade, Painter},
     theme::{TextStyle, Theme, Typeset},
     ui::{
+        floating,
         icons::{self, Icon},
-        surface,
+        popover, surface,
         tooltip::Tooltip,
         widgets::{ButtonStyle, Buttons, Content, Controls, Status},
     },
@@ -332,6 +333,104 @@ impl Cydonia {
                 true => workspace.send(id, text, cx),
                 false => workspace.send_attached(id, text, &attachments, cx),
             });
+        // On the newest line, whatever was being read a moment ago — see
+        // [`transcript::State::follow_tail`].
+        if let Some(chat) = self.workspace.read(cx).session(id) {
+            chat.transcript.follow_tail();
+        }
+    }
+
+    /// The bar over a run picked out of the transcript: what to do with it,
+    /// where it was picked.
+    ///
+    /// The article's ribbon in a second place — same perch, same layer, and
+    /// the same rule that a bar belongs to a run rather than to a pointer, so
+    /// it arrives when the drag ends and goes when the run does. Two words
+    /// rather than glyphs: there is room for them, and neither has a mark
+    /// anybody reads without being told.
+    fn selection_bar(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let (view, head) = self
+            .workspace
+            .read(cx)
+            .active_session()?
+            .transcript
+            .selection_perch()?;
+        let at = ribbon::perch(view, head)?;
+        let theme = Theme::of(cx).clone();
+        let card = popover::popover_card(&theme)
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(2.))
+            .child(
+                self.selection_action("Copy", icons::text::Copy, &theme, cx, |this, _, cx| {
+                    this.workspace.update(cx, |workspace, cx| {
+                        workspace.copy_selection(cx);
+                        workspace.clear_selection(cx);
+                    });
+                }),
+            )
+            .child(self.selection_action(
+                "Quote",
+                icons::text::TextQuote,
+                &theme,
+                cx,
+                |this, window, cx| this.quote_selection(window, cx),
+            ));
+        Some(ribbon::floated(
+            "transcript-selection",
+            at,
+            card.into_any_element(),
+        ))
+    }
+
+    /// One of the bar's two, as a word beside its mark.
+    fn selection_action(
+        &self,
+        label: &'static str,
+        glyph: &'static [u8],
+        theme: &Theme,
+        cx: &Context<Self>,
+        act: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
+    ) -> AnyElement {
+        theme
+            .ghost(SharedString::from(format!("selection-{label}")))
+            .px(px(8.))
+            .py(px(4.))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(6.))
+            .text_style(TextStyle::Callout)
+            .text_color(theme.text)
+            .child(
+                icons::icon(glyph)
+                    .size(px(13.))
+                    .flex_none()
+                    .text_color(theme.text_muted),
+            )
+            .child(label)
+            .on_click(cx.listener(move |this, _, window, cx| act(this, window, cx)))
+            .into_any_element()
+    }
+
+    /// Answer the run: the composer takes it, and the caret goes where the
+    /// reply is written. The run is dropped with it — the bar has done what it
+    /// was for, and a highlight with nothing over it reads as half a state.
+    fn quote_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let text = self
+            .workspace
+            .read(cx)
+            .active_session()
+            .and_then(|chat| chat.transcript.copied(chat));
+        let Some(text) = text else {
+            return;
+        };
+        self.composer
+            .update(cx, |composer, cx| composer.quote(text, cx));
+        self.workspace
+            .update(cx, |workspace, cx| workspace.clear_selection(cx));
+        window.focus(&self.composer_focus_handle(cx), cx);
     }
 
     pub(crate) fn cancel_turn(&mut self, cx: &mut Context<Self>) {
@@ -447,6 +546,10 @@ impl Cydonia {
             .child(content)
             // After the content, so it draws over it.
             .child(self.pane_header(window, cx))
+            .children(match showing == Some(Pane::Chat) {
+                true => self.selection_bar(cx),
+                false => None,
+            })
             // Scroll content beneath the glass; bottom padding clears the last message.
             //
             // A chat with nowhere to send stands the reason there in its place
@@ -580,7 +683,9 @@ fn footer(
         .flex()
         .justify_center()
         .child(
-            div()
+            // A layer, not a box: the band floats over the stream, and what it
+            // covers is its own — see [`floating::layer`].
+            floating::layer("composer-band")
                 .w_full()
                 .max_w(px(root::COMPOSER_COLUMN))
                 .px(px(root::COMPOSER_MARGIN))

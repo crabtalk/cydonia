@@ -509,13 +509,13 @@ fn divider(theme: &Theme) -> impl IntoElement {
 
 /// The bar's own layer: over everything, at a window position, with its
 /// **bottom** left corner at `at` so it stands above the line rather than on
-/// it.
+/// it. The transcript's selection bar stands on this too.
 ///
 /// Its own rather than [`popover::menu_at`], which pins a card's top-left —
 /// the one corner a bar over a line of text must not be pinned by. Near the
 /// top of the window gpui's `anchored` switches the corner itself and the bar
 /// drops below the line, which is where Notion's goes there too.
-fn floated(id: &'static str, at: Point<Pixels>, content: AnyElement) -> AnyElement {
+pub(crate) fn floated(id: &'static str, at: Point<Pixels>, content: AnyElement) -> AnyElement {
     gpui::deferred(
         gpui::anchored()
             .position(at)

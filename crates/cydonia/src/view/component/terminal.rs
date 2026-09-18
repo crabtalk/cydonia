@@ -472,6 +472,27 @@ impl TerminalPanel {
         cx.notify();
     }
 
+    /// Step to the tab `step` along, wrapping at the ends, with the focus — the
+    /// panel's half of [`super::panel::NextTab`].
+    fn cycle(&mut self, step: isize, window: &mut Window, cx: &mut Context<Self>) {
+        if self.tabs.len() < 2 {
+            return;
+        }
+        let at = self
+            .tabs
+            .iter()
+            .position(|tab| tab.id == self.active)
+            .unwrap_or(0);
+        let count = self.tabs.len() as isize;
+        let next = (at as isize + step).rem_euclid(count) as usize;
+        let Some(tab) = self.tabs.get(next) else {
+            return;
+        };
+        self.active = tab.id;
+        window.focus(&tab.terminal.focus_handle(cx), cx);
+        cx.notify();
+    }
+
     fn close(&mut self, id: usize, window: &mut Window, cx: &mut Context<Self>) {
         let Some(index) = self.tabs.iter().position(|tab| tab.id == id) else {
             return;
@@ -525,6 +546,12 @@ impl Render for TerminalPanel {
             )
             .on_action(cx.listener(|this, _: &super::panel::CloseTab, window, cx| {
                 this.close(this.active, window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &super::panel::NextTab, window, cx| {
+                this.cycle(1, window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &super::panel::PrevTab, window, cx| {
+                this.cycle(-1, window, cx);
             }))
             .bg(crate::view::root::content_bg(&theme))
             .child(

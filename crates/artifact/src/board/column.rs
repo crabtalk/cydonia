@@ -4,7 +4,7 @@ use crate::board::Card;
 use serde::{Deserialize, Serialize};
 
 /// What a lane is called before you name it.
-pub const NAMED: &str = "Column";
+pub const NAMED: &str = "COLUMN";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Column {
@@ -17,13 +17,20 @@ pub struct Column {
     pub cards: Vec<Card>,
 }
 
+/// What a lane is called, in the one case a board writes: upper. Applied where
+/// a name is taken in rather than where it is drawn, so the file holds the name
+/// the board shows and an agent reading it back sees the same string.
+pub fn heading(name: &str) -> String {
+    name.to_uppercase()
+}
+
 impl Column {
     /// Under an id its board has found free — see
     /// [`super::Board::add_column`].
     pub fn new(id: String, name: &str) -> Self {
         Self {
             id,
-            name: name.to_owned(),
+            name: heading(name),
             cards: Vec::new(),
         }
     }
