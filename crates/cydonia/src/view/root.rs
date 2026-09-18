@@ -479,6 +479,22 @@ impl Cydonia {
         cx.notify();
     }
 
+    /// The pane showing this entry, falling back to the focused one where the
+    /// window has no layout open and the caller has no entry to name.
+    ///
+    /// Drawing reads a pane's state through this rather than through
+    /// [`Self::leaf`]: every pane drawn against the focused leaf shares one
+    /// scroll, one editor and one landing between them, so moving the focus
+    /// moves what the other panes are showing.
+    pub(crate) fn leaf_of(&self, on: Option<&Member>) -> &Leaf {
+        on.and_then(|on| {
+            self.leaves
+                .iter()
+                .find(|leaf| leaf.entry.as_ref() == Some(on))
+        })
+        .unwrap_or_else(|| self.leaf())
+    }
+
     pub(crate) fn leaf_mut(&mut self) -> &mut Leaf {
         let at = self.focused.min(self.leaves.len().saturating_sub(1));
         &mut self.leaves[at]

@@ -37,6 +37,7 @@ use bezel::{
         widgets::Buttons as _,
     },
 };
+use artifact::layout::Member;
 use editor::{Editor, Formatting, Mode};
 use markdown::{BlockKind, Mark};
 
@@ -301,7 +302,19 @@ impl Cydonia {
     // ── chrome ───────────────────────────────────────────────────
 
     /// The bar, when there is a run of text for it to be about.
-    pub(crate) fn ribbon(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+    /// `on` is the pane drawing it. The bar is built from the selection in the
+    /// focused pane's editor, so a pane that is not the focused one draws none
+    /// — otherwise every article pane on screen carries a copy of it, perched
+    /// where another pane's document put its selection.
+    pub(crate) fn ribbon(
+        &self,
+        on: Option<&Member>,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        if on.is_some() && self.leaf().entry.as_ref() != on {
+            return None;
+        }
         // Held down: the run is still being chosen.
         if self.leaf().ribbon.selecting {
             return None;

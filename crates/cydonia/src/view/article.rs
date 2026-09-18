@@ -24,6 +24,7 @@ use bezel::{
         widgets::{ButtonStyle, Buttons as _, Status as _},
     },
 };
+use artifact::layout::Member;
 use editor::Mode;
 use std::path::{Path, PathBuf};
 
@@ -336,6 +337,7 @@ impl Cydonia {
         &self,
         project: usize,
         at: usize,
+        on: Option<&Member>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
@@ -426,7 +428,7 @@ impl Cydonia {
                 )
                 // Last, and floated over the document from where the
                 // selection ends — the bar is chrome the page runs under.
-                .children(self.ribbon(window, cx))
+                .children(self.ribbon(on, window, cx))
                 .into_any_element(),
         )
     }

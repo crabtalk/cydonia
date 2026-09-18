@@ -50,6 +50,12 @@ const MIN_SHARE: f64 = 0.08;
 /// what the split leaves the two of them at.
 const HALF: f32 = 0.5;
 
+/// What the pane's name is padded by, and what a bar that is not the window's
+/// leading one starts its name at: the fill that marks the focused pane needs
+/// room around the text, and room off the pane's own edge so it does not run
+/// into the seam.
+const TAB_INSET: f32 = 8.;
+
 impl Cydonia {
     /// The layout the window is arranged by, taken whole: the tree is walked
     /// while the workspace is drawn from, so it is cloned out first.
@@ -189,7 +195,6 @@ impl Cydonia {
             == Some(entry);
         let theme = Theme::of(cx).clone();
         let showing = self.workspace.read(cx).showing_of(entry);
-        let focused = self.leaf().entry.as_ref() == Some(entry);
         let key = key_of(entry);
         let held = entry.clone();
         let body = match showing {
@@ -231,14 +236,10 @@ impl Cydonia {
             .flex_col()
             .relative()
             .overflow_hidden()
-            // No fill at rest: the panes sit on the detail column's one
-            // surface, and a wash per pane would draw the arrangement as a row
-            // of cards rather than one plane divided.
-            //
-            // The pane in front takes one, behind its content rather than over
-            // it — what has the focus is a whole pane, and saying so on its
-            // name alone leaves the rest of it looking inert.
-            .when(focused, |el| el.bg(theme.element_hover))
+            // No fill: the panes sit on the detail column's one surface, and a
+            // wash per pane would draw the arrangement as a row of cards
+            // rather than one plane divided. The focus is said on the pane's
+            // name — see [`Self::pane_bar`].
             //
             // Which edge the pointer is over decides what a release does, so
             // it is tracked while the drag is in the air and drawn by the mark
@@ -264,7 +265,7 @@ impl Cydonia {
                     move |this, _, window, cx| this.focus_pane(&on, window, cx)
                 }),
             )
-            .child(self.pane_bar(entry, showing, first, &theme, cx))
+            .child(self.pane_bar(entry, showing, first, &theme, window, cx))
             .child(body)
             .children(composer)
             .children(landing.map(|side| landing_mark(side, &theme)))
@@ -355,9 +356,10 @@ impl Cydonia {
     /// that is what a tab has always meant here — see
     /// [`crate::view::component::panel`], which holds several.
     ///
-    /// The first pane takes the window's own inset when the sidebar is folded
-    /// away: the traffic lights are AppKit's and are drawn over whatever is at
-    /// the top left, so the pane that lands there keeps clear of them.
+    /// The first pane is the one at the window's top left, so it carries what
+    /// the window puts there: the traffic lights' clearance, and the fold that
+    /// brings the sidebar back. Both are the band's when no layout is open —
+    /// see [`Self::pane_header`], which this follows.
     #[allow(clippy::too_many_arguments)]
     fn pane_bar(
         &self,
@@ -365,15 +367,21 @@ impl Cydonia {
         showing: Option<(usize, Showing)>,
         first: bool,
         theme: &Theme,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let toolbar = showing.and_then(|(project, showing)| self.toolbar_of(project, showing, cx));
         let focused = self.leaf().entry.as_ref() == Some(entry);
         let key = key_of(entry);
         let held = entry.clone();
-        let lead = match first && !self.sidebar_open {
-            true => crate::view::root::TOOLBAR_INSET,
-            false => 8.,
+        // The lights are the window's and are drawn over whatever is at its
+        // top left, so their clearance is taken by the pane that lands there
+        // and nowhere another pane can see it. Fullscreen has none.
+        let fold = first && !self.sidebar_open;
+        let lead = match (first, self.sidebar_open || window.is_fullscreen()) {
+            (true, true) => crate::view::root::HEADER_INSET,
+            (true, false) => crate::view::root::TOOLBAR_INSET,
+            (false, _) => TAB_INSET,
         };
         let title = toolbar
             .as_ref()
@@ -389,6 +397,9 @@ impl Cydonia {
             .gap(px(6.))
             .pl(px(lead))
             .pr(px(6.))
+            // The fold belongs to whichever column runs along the window's left
+            // edge, so with the sidebar gone it is this pane's.
+            .children(fold.then(|| self.fold_toggle(theme.text, cx).into_any_element()))
             .child(
                 div()
                     .id(SharedString::from(format!("pane-tab-{key}")))
@@ -402,11 +413,21 @@ impl Cydonia {
                     .items_center()
                     .gap(px(6.))
                     .h(px(24.))
+                    .px(px(TAB_INSET))
+                    .rounded(px(Theme::control_radius()))
                     .cursor_pointer()
                     .text_style(TextStyle::Callout)
                     .text_color(match focused {
                         true => theme.text,
                         false => theme.text_muted,
+                    })
+                    // Where the focus is said, for the whole pane: the panes
+                    // are one plane divided and take no fill of their own, so
+                    // this name is the only thing carrying it. The sidebar's
+                    // pair — see [`crate::view::sidebar::row`].
+                    .when(focused, |el| el.bg(theme.element_active))
+                    .when(!focused, |el| {
+                        el.hover(|el| el.bg(theme.element_hover))
                     })
                     .child(div().flex_none().truncate().child(title))
                     .children(
@@ -575,15 +596,15 @@ impl Cydonia {
     ) -> AnyElement {
         match showing {
             Showing::Session(id) => self.conversation(Some(id), on, window, cx),
-            Showing::Board(at) => self.board(project, at, window, cx),
+            Showing::Board(at) => self.board(project, at, on, window, cx),
             // An entry can be named and not yet loaded — an article holds no
             // editor until it is opened. The front door stands in for the
             // moment in between.
             Showing::Article(at) => self
-                .article(project, at, window, cx)
+                .article(project, at, on, window, cx)
                 .unwrap_or_else(|| self.launch(cx)),
             Showing::Table(at) => self
-                .table(project, at, cx)
+                .table(project, at, on, cx)
                 .unwrap_or_else(|| self.launch(cx)),
         }
     }

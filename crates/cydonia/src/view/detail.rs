@@ -557,7 +557,7 @@ impl Cydonia {
                         .active_project()
                         .and_then(|open| open.board),
                 ) {
-                    Some((project, at)) => self.board(project, at, window, cx),
+                    Some((project, at)) => self.board(project, at, None, window, cx),
                     None => self.launch(cx),
                 },
                 // An entry can be named and not yet loaded — an article holds
@@ -573,7 +573,7 @@ impl Cydonia {
                             .active_project()
                             .and_then(|open| open.article),
                     )
-                    .and_then(|(project, at)| self.article(project, at, window, cx))
+                    .and_then(|(project, at)| self.article(project, at, None, window, cx))
                     .unwrap_or_else(|| self.launch(cx)),
                 Some(Pane::Table) => self
                     .workspace
@@ -585,7 +585,7 @@ impl Cydonia {
                             .active_project()
                             .and_then(|open| open.table),
                     )
-                    .and_then(|(project, at)| self.table(project, at, cx))
+                    .and_then(|(project, at)| self.table(project, at, None, cx))
                     .unwrap_or_else(|| self.launch(cx)),
             },
         };
@@ -962,7 +962,7 @@ impl Cydonia {
         let Some(chat) = on.and_then(|on| workspace.session(on)) else {
             // No session, and the pane showing regardless: one was asked for
             // with no agent to open it on — see [`Cydonia::asked_session`].
-            return match self.leaf().asked_session {
+            return match self.leaf_of(entry).asked_session {
                 true => self.no_agent(None, false, cx),
                 false => div().flex_1().into_any_element(),
             };
