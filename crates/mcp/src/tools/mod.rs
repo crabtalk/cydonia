@@ -17,7 +17,10 @@ pub mod article;
 pub mod board;
 pub mod project;
 
-use crate::tool::{Arg, Args, Trouble};
+use crate::{
+    rail,
+    tool::{Arg, Args, Trouble},
+};
 use serde_json::{Value, json};
 use std::path::Path;
 
@@ -25,23 +28,25 @@ use std::path::Path;
 /// directory a call is about is the call's to say.
 pub(crate) const PROJECT: Arg = Arg {
     name: "project",
-    about: "The project: the path of the directory the work is in.",
+    about: "The project: the path of the directory the work is in. A session \
+already in a project may leave this out to mean that one, and must name a \
+project cydonia has open to mean another.",
 };
 
-/// The directory a call is about: the one the caller was opened in, or the one
-/// it named.
+/// The directory a call is about: the one it named, or the one the caller was
+/// opened in.
 ///
-/// The binding wins, and there is no argument to override it with — a session
-/// is a project's, and a client that could reach past its own would be one
-/// mistake away from writing to somebody else's work.
+/// A named project wins over the binding, which is a default. A named one must
+/// be on the rail; a binding is taken as given and is not checked against it.
 ///
 /// Either way it has to be a directory. A path with a typo in it would
 /// otherwise read as a project with nothing in it, which is a thing a model
 /// would believe.
 pub(crate) fn root<'a>(args: &Args<'a>) -> Result<&'a Path, Trouble> {
-    let path = match args.at() {
-        Some(at) => at,
-        None => Path::new(args.text(PROJECT)?),
+    let path = match (args.maybe(PROJECT), args.at()) {
+        (Some(named), _) => on_the_rail(Path::new(named))?,
+        (None, Some(at)) => at,
+        (None, None) => Path::new(args.text(PROJECT)?),
     };
     match path.is_dir() {
         true => Ok(path),
@@ -52,20 +57,47 @@ pub(crate) fn root<'a>(args: &Args<'a>) -> Result<&'a Path, Trouble> {
     }
 }
 
+/// A named project, where cydonia has it open. Anywhere else is refused, and
+/// no `.cydonia/` is made there.
+fn on_the_rail(path: &Path) -> Result<&Path, Trouble> {
+    if rail::is_open(path) {
+        return Ok(path);
+    }
+    Err(Trouble::Refused(match held() {
+        None => format!(
+            "cydonia has no project open, so {} is not one to work in",
+            path.display()
+        ),
+        Some(open) => format!(
+            "cydonia does not have {} open — it has {open}",
+            path.display()
+        ),
+    }))
+}
+
+/// The rail, for a refusal to name — a model that named the wrong directory
+/// can see the right one without a second call.
+pub(crate) fn held() -> Option<String> {
+    let open = rail::open();
+    (!open.is_empty()).then(|| {
+        open.iter()
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    })
+}
+
 /// An object schema over required strings. Tools can add optional fields.
 ///
 /// `bound` is whether the caller already has a project, in which case the
-/// argument that names one is left out: an argument a model must supply and
-/// the server will ignore is an argument that costs a turn to get wrong.
+/// argument that names one is offered but not required — a model that says
+/// nothing gets its own project, and can still name another.
 pub(crate) fn fields(bound: bool, args: &[Arg]) -> Value {
-    let args: Vec<Arg> = match bound {
-        true => args
-            .iter()
-            .filter(|arg| arg.name != PROJECT.name)
-            .copied()
-            .collect(),
-        false => args.to_vec(),
-    };
+    let required: Vec<&str> = args
+        .iter()
+        .map(|arg| arg.name)
+        .filter(|name| !(bound && *name == PROJECT.name))
+        .collect();
     let properties = args
         .iter()
         .map(|arg| {
@@ -78,6 +110,6 @@ pub(crate) fn fields(bound: bool, args: &[Arg]) -> Value {
     json!({
         "type": "object",
         "properties": properties,
-        "required": args.iter().map(|arg| arg.name).collect::<Vec<_>>(),
+        "required": required,
     })
 }

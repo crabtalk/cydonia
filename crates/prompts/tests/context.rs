@@ -31,6 +31,10 @@ fn catalog_delivery_never_embeds_full_resource_content() {
 
 #[test]
 fn tool_context_distinguishes_project_binding() {
-    assert!(prompts::tool_context(true).contains("project bound to this connection"));
+    let bound = prompts::tool_context(true);
+    assert!(bound.contains("project bound to this connection"));
+    // A bound caller is told it can still name another project, which is the
+    // half of the binding a session would otherwise never try.
+    assert!(bound.contains("unless a call names"));
     assert!(prompts::tool_context(false).contains("project's directory path"));
 }

@@ -59,8 +59,16 @@ pub fn open() -> Vec<PathBuf> {
     OPEN.read().map(|held| held.clone()).unwrap_or_default()
 }
 
+/// Whether the rail is holding a project at `path`.
+///
+/// Either spelling of it counts. The sidebar holds whatever the directory
+/// picker was given and the tools settle a path before asking about one, so
+/// `/tmp/x` and `/private/tmp/x` reach here as one project — the app resolves
+/// the same pair on its side, in `Workspace::project_at`.
 pub fn is_open(path: &Path) -> bool {
-    open().iter().any(|held| held == path)
+    let settled = |path: &Path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let want = settled(path);
+    open().iter().any(|held| held == path || settled(held) == want)
 }
 
 /// Ask for the change, which is as far as a tool can take it.

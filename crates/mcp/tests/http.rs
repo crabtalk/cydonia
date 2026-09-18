@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::Scratch;
+use common::{Rail, Scratch};
 use cydonia_mcp::{Server, http, tools};
 use std::{
     io::{Read as _, Write as _},
@@ -62,6 +62,9 @@ fn there_is_no_stream_to_open() {
 /// returned, because dropping either closes it.
 fn door(name: &str) -> (Scratch, tokio::runtime::Runtime, String) {
     let scratch = Scratch::new(name);
+    // A call reaches the projects cydonia has open, and over the socket there
+    // is no binding to stand in for one.
+    Rail::also(scratch.path());
     let runtime = tokio::runtime::Runtime::new().expect("a runtime");
     let server = Arc::new(Server::new().mount(&tools::board::TOOLS));
     let door = runtime
@@ -142,12 +145,14 @@ fn a_taken_port_is_stepped_past() {
     );
 }
 
-/// A caller opened in a project is told which on the way in, so its tools take
-/// no directory at all — an argument a model has to supply is one it can
-/// supply wrongly, about something already known here.
+/// A caller opened in a project is told which on the way in, so it is never
+/// asked for a directory — an argument a model has to supply is one it can
+/// supply wrongly, about something already known here. Still offered, because
+/// a session that cannot name a project cannot reach the one next to it.
 #[test]
-fn a_bound_caller_never_names_its_project() {
+fn a_bound_caller_is_never_asked_for_its_project() {
     let scratch = Scratch::new("bound");
+    Rail::also(scratch.path());
     let runtime = tokio::runtime::Runtime::new().expect("a runtime");
     let server = Arc::new(Server::new().mount(&tools::article::TOOLS));
     let door = runtime
@@ -156,15 +161,32 @@ fn a_bound_caller_never_names_its_project() {
     let bound = http::encoded(scratch.path());
     let list = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
 
-    let told = send(door.url(), list, &[(http::PROJECT, &bound)]);
-    assert!(!told.contains("\"project\""), "{told}");
-    let loose = send(door.url(), list, &[]);
-    assert!(loose.contains("\"project\""), "{loose}");
+    let told = listed(&send(door.url(), list, &[(http::PROJECT, &bound)]));
+    let loose = listed(&send(door.url(), list, &[]));
+    for tool in told.iter().chain(&loose) {
+        assert!(tool["inputSchema"]["properties"]["project"].is_object());
+    }
+    let asked = |tool: &serde_json::Value| {
+        tool["inputSchema"]["required"]
+            .as_array()
+            .expect("a list")
+            .iter()
+            .any(|name| name == "project")
+    };
+    assert!(!told.iter().any(asked));
+    assert!(loose.iter().all(asked));
 
     // And a call lands in the bound directory without being given one.
     let call = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"article_list","arguments":{}}}"#;
     let answer = send(door.url(), call, &[(http::PROJECT, &bound)]);
     assert!(answer.contains("no articles"), "{answer}");
+}
+
+/// The tools out of a `tools/list` answer, past the headers.
+fn listed(response: &str) -> Vec<serde_json::Value> {
+    let body = response.split("\r\n\r\n").nth(1).expect("a body");
+    let answer: serde_json::Value = serde_json::from_str(body).expect("a frame");
+    answer["result"]["tools"].as_array().expect("a list").clone()
 }
 
 /// A project is whatever somebody called their directory, and a header value

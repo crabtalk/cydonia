@@ -4,7 +4,7 @@
 mod common;
 
 use artifact::project::Project as _;
-use common::{Scratch, invalid, refused, said};
+use common::{Rail, Scratch, invalid, refused, said};
 use cydonia_mcp::proto::Request;
 use serde_json::json;
 
@@ -293,6 +293,7 @@ fn a_read_only_server_offers_no_way_to_write() {
     use std::sync::{Arc, atomic::AtomicBool};
 
     let scratch = Scratch::new("read-only");
+    Rail::also(scratch.path());
     scratch.store_create("Roadmap", "ROAD").expect("a board");
     let switch = Arc::new(AtomicBool::new(false));
     let server = cydonia_mcp::Server::new()

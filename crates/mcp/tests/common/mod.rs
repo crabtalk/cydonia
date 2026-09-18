@@ -44,7 +44,14 @@ impl Scratch {
 
     /// A server with every tool set on it — the same call the app makes, and
     /// holding no project, because a call says which one it is about.
+    ///
+    /// Puts the scratch directory on the rail, which is what a call naming a
+    /// project needs: the tools reach the projects cydonia has open, and a
+    /// test that skipped this would be testing a directory the app never
+    /// opened. Left on beside whatever else is held, so a test with two
+    /// scratches can have a call name the one it is not bound to.
     pub fn server(&self) -> Server {
+        Rail::also(self.path());
         Server::new()
             .mount(&tools::article::TOOLS)
             .mount(&tools::board::TOOLS)
@@ -74,6 +81,16 @@ impl Rail {
         rail::install(|change| ASKED.lock().unwrap().push(change));
         rail::set_open(open.iter().map(PathBuf::from).collect());
         Self
+    }
+
+    /// Put one more project on the rail, leaving what is already there.
+    pub fn also(path: &Path) {
+        rail::install(|change| ASKED.lock().unwrap().push(change));
+        let mut open = rail::open();
+        if !open.iter().any(|held| held == path) {
+            open.push(path.to_path_buf());
+        }
+        rail::set_open(open);
     }
 
     pub fn asked(&self) -> Vec<Change> {
