@@ -285,7 +285,10 @@ pub struct Cydonia {
     pub(crate) terminals:
         std::collections::HashMap<u64, (bool, Entity<super::component::terminal::TerminalPanel>)>,
     pub(crate) changes_open: bool,
-    pub(crate) changes_width: f32,
+    /// How wide the right-hand panel was dragged, and `None` for one nobody
+    /// has dragged — which is given a share of the window instead. See
+    /// [`super::detail::panel_width`].
+    pub(crate) changes_width: Option<f32>,
     pub(crate) terminal_height: f32,
     pub(crate) changes: Option<Entity<super::component::panel::Panel>>,
     pub(crate) right_panels: std::collections::HashMap<u64, Entity<super::component::panel::Panel>>,
@@ -560,7 +563,7 @@ impl Cydonia {
             sidebar_width: SIDEBAR_WIDTH,
             terminals: Default::default(),
             changes_open: false,
-            changes_width: 440.,
+            changes_width: None,
             terminal_height: 240.,
             changes: None,
             right_panels: Default::default(),

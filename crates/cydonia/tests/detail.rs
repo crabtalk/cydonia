@@ -114,3 +114,57 @@ fn the_strip_names_where_to_go() {
         assert!(line.contains("Settings › Agents"), "{line}");
     }
 }
+
+mod panel_sizing {
+    use cydonia::view::detail::{panel_beside, panel_width};
+
+    /// A width nobody chose is a share of the window, so the same build does
+    /// not hand a laptop the slab it hands a display.
+    #[test]
+    fn an_unsized_panel_takes_a_share_of_the_window() {
+        let about = |width: f32, expected: f32| {
+            assert!(
+                (width - expected).abs() < 0.01,
+                "{width} is not about {expected}"
+            );
+        };
+        // A third, until the ceiling.
+        about(panel_width(None, 1800.), 440.);
+        about(panel_width(None, 1200.), 396.);
+        about(panel_width(None, 900.), 297.);
+        // And never below what a diff needs to be readable.
+        about(panel_width(None, 600.), 280.);
+    }
+
+    /// The panel never takes more than half of a window it is standing in.
+    #[test]
+    fn an_unsized_panel_leaves_the_chat_the_larger_half() {
+        for available in [560., 700., 900., 1200., 1800.] {
+            let width = panel_width(None, available);
+            assert!(
+                width <= available / 2.,
+                "{width} of {available} is more than half"
+            );
+        }
+    }
+
+    /// A width somebody dragged is theirs. Only the fit is enforced — a panel
+    /// sized to hold a diff must not change because the window did.
+    #[test]
+    fn a_dragged_width_is_kept() {
+        assert_eq!(panel_width(Some(700.), 1800.), 700.);
+        assert_eq!(panel_width(Some(300.), 1800.), 300.);
+        // Down to what the chat keeps beside it.
+        assert_eq!(panel_width(Some(700.), 800.), 560.);
+    }
+
+    /// Below the two minimums together the column is not split at all: the
+    /// panel covers it instead.
+    #[test]
+    fn a_narrow_window_does_not_stand_them_side_by_side() {
+        assert!(panel_beside(520.));
+        assert!(panel_beside(1200.));
+        assert!(!panel_beside(519.));
+        assert!(!panel_beside(400.));
+    }
+}

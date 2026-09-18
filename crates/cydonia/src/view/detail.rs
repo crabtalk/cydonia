@@ -40,10 +40,43 @@ struct ChangesResize;
 
 struct TerminalResize;
 
-/// Reserve 240px for chat, or split narrow windows evenly.
-fn panel_width(preferred: f32, available: f32) -> f32 {
-    let min = 240.0_f32.min(available / 2.);
-    preferred.clamp(min, (available - 240.).max(min))
+/// What the chat keeps for itself while the panel stands beside it.
+const CHAT_MIN: f32 = 240.;
+
+/// What the panel needs to be worth standing there at all. A diff narrower
+/// than this is one nobody can read, so the column is not split below it —
+/// see [`panel_beside`].
+const PANEL_MIN: f32 = 280.;
+
+/// The widest the panel is given before anybody drags it.
+const PANEL_MAX: f32 = 440.;
+
+/// And the share of the column it takes between the two.
+const PANEL_SHARE: f32 = 0.33;
+
+/// Whether there is room to stand the panel beside the chat.
+///
+/// Below this the panel covers the column instead — see [`Cydonia::detail`].
+/// Squeezing both is the answer neither of them wants: the platform's own
+/// split view collapses a sidebar at a minimum thickness rather than thinning
+/// it past use, and a 200px diff is past use.
+pub fn panel_beside(available: f32) -> bool {
+    available >= CHAT_MIN + PANEL_MIN
+}
+
+/// How wide the panel is drawn.
+///
+/// `preferred` is `None` until somebody drags the split. A width nobody chose
+/// is a share of what there is, bounded at both ends, so the same build is not
+/// giving a third of a laptop screen to the same slab it gives a sixth of a
+/// display. A width somebody *did* choose is theirs, and only the fit is
+/// enforced — a panel sized to hold a diff must not change when the window
+/// does.
+pub fn panel_width(preferred: Option<f32>, available: f32) -> f32 {
+    let preferred =
+        preferred.unwrap_or_else(|| (available * PANEL_SHARE).clamp(PANEL_MIN, PANEL_MAX));
+    let min = PANEL_MIN.min(available / 2.);
+    preferred.clamp(min, (available - CHAT_MIN).max(min))
 }
 
 fn panel_height(preferred: f32, available: f32) -> f32 {
@@ -687,7 +720,10 @@ impl Cydonia {
             } else {
                 0.
             };
-        let width = panel_width(self.changes_width, available.max(0.));
+        let available = available.max(0.);
+        // Beside the chat, or over it in a window too narrow to hold both.
+        let beside = panel_beside(available);
+        let width = panel_width(self.changes_width, available);
         let height = panel_height(
             self.terminal_height,
             f32::from(window.viewport_size().height),
@@ -719,15 +755,15 @@ impl Cydonia {
                     .flex_row()
                     .on_drag_move(cx.listener(
                         |this, event: &DragMoveEvent<ChangesResize>, _, cx| {
-                            this.changes_width = panel_width(
-                                f32::from(event.bounds.right() - event.event.position.x),
+                            this.changes_width = Some(panel_width(
+                                Some(f32::from(event.bounds.right() - event.event.position.x)),
                                 f32::from(event.bounds.size.width),
-                            );
+                            ));
                             cx.notify();
                         },
                     ))
                     .child(main)
-                    .children(changes.clone().map(|panel| {
+                    .children(changes.clone().filter(|_| beside).map(|panel| {
                         div()
                             .relative()
                             .w(px(width))
@@ -735,7 +771,16 @@ impl Cydonia {
                             .flex_none()
                             .child(panel)
                     }))
-                    .when(changes.is_some(), |row| {
+                    // Over the chat rather than beside it. The chat stays in
+                    // the tree behind it, so what it was scrolled to and what
+                    // was typed into it are still there when the window is
+                    // widened again — and the panel paints its own background,
+                    // so nothing reads through.
+                    .children(changes.clone().filter(|_| !beside).map(|panel| {
+                        div().absolute().inset_0().child(panel)
+                    }))
+                    // No split to drag when there is nothing beside anything.
+                    .when(changes.is_some() && beside, |row| {
                         row.child(
                             crate::view::component::divider::divider(&theme, Axis::Horizontal)
                                 .id("changes-split")
@@ -998,7 +1043,11 @@ impl Cydonia {
         // The right-hand panel is not drawn beside a layout — see
         // [`Cydonia::detail`] — so its width is only taken off the column
         // where it is actually standing there.
-        let beside = self.changes.is_some() && self.workspace.read(cx).active_layout().is_none();
+        // A panel covering the column takes none of it away — the chat is
+        // still laid out at full width underneath.
+        let beside = self.changes.is_some()
+            && self.workspace.read(cx).active_layout().is_none()
+            && panel_beside(available);
         let column = available
             - match beside {
                 true => panel_width(self.changes_width, available),
