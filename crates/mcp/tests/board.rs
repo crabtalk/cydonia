@@ -53,7 +53,7 @@ fn a_card_is_addressed_by_the_handle_it_is_given() {
         "board_add_card",
         json!({ "project": scratch.path(), "board": "ROAD", "column": "Todo", "text": "Wire the model picker" }),
     None));
-    assert_eq!(added, "ROAD-1 added to Todo");
+    assert_eq!(added, "ROAD-1 added to TODO");
 
     // No board argument anywhere below: the handle carries it.
     let moved = said(server.call(
@@ -61,14 +61,14 @@ fn a_card_is_addressed_by_the_handle_it_is_given() {
         json!({ "project": scratch.path(), "card": "ROAD-1", "column": "Doing" }),
         None,
     ));
-    assert_eq!(moved, "ROAD-1 moved to Doing");
+    assert_eq!(moved, "ROAD-1 moved to DOING");
     let text = said(server.call(
         "board_read",
         json!({ "project": scratch.path(), "board": "ROAD" }),
         None,
     ));
     assert!(
-        text.contains("Doing\n  ROAD-1  Wire the model picker"),
+        text.contains("DOING\n  ROAD-1  Wire the model picker"),
         "{text}"
     );
 }
@@ -128,7 +128,7 @@ fn a_refusal_says_what_is_there() {
         json!({ "project": scratch.path(), "board": "ROAD", "column": "Doing", "text": "x" }),
         None,
     ));
-    assert!(why.contains("Todo"), "{why}");
+    assert!(why.contains("TODO"), "{why}");
 
     let why = refused(server.call(
         "board_move_card",
@@ -175,7 +175,7 @@ fn a_column_holding_cards_is_not_dropped() {
         json!({ "project": scratch.path(), "board": "ROAD", "column": "Todo" }),
         None,
     ));
-    assert_eq!(text, "Todo removed from Roadmap");
+    assert_eq!(text, "TODO removed from Roadmap");
 }
 
 /// A missing argument is the client being wrong, not the model — so it leaves

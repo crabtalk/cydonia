@@ -519,7 +519,12 @@ impl Cydonia {
             .iter()
             .map(|column| column.id.clone())
             .collect();
-        let columns: Vec<AnyElement> = ids.iter().map(|id| self.column(id, window, cx)).collect();
+        let lanes = ids.len();
+        let columns: Vec<AnyElement> = ids
+            .iter()
+            .enumerate()
+            .map(|(at, id)| self.column(id, at, lanes, window, cx))
+            .collect();
         div()
             .flex_1()
             .min_h_0()
@@ -562,7 +567,14 @@ impl Cydonia {
             .into_any_element()
     }
 
-    fn column(&self, id: &str, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn column(
+        &self,
+        id: &str,
+        at: usize,
+        lanes: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let id = id.to_owned();
         let Some((name, cards)) = self
@@ -632,7 +644,7 @@ impl Cydonia {
             .on_drop(cx.listener(move |this, drag: &CardDrag, _, cx| {
                 this.drop_card(&drag.0, &taken, cx);
             }))
-            .child(self.column_header(&id, name, cards.len(), cx))
+            .child(self.column_header(&id, name, cards.len(), at, lanes, cx))
             .child(
                 div()
                     .relative()
@@ -698,19 +710,29 @@ impl Cydonia {
             .into_any_element()
     }
 
-    /// The lane's name and count, and — only while it is empty — the way to be
-    /// rid of it. See [`artifact::board::Board::remove_column`].
+    /// The lane's name and count, and the `···` that moves or drops it.
+    ///
+    /// `at` is where the lane sits among `lanes`, which is what decides whether
+    /// it can step either way — read here rather than in the menu, which is
+    /// built from what the header was drawn with.
     fn column_header(
         &self,
         id: &str,
         name: String,
         count: usize,
+        at: usize,
+        lanes: usize,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let row = div()
             .flex_none()
-            .px(px(4.))
+            .pl(px(4.))
+            // The channel the lane's bar runs in, which the scroll below pads
+            // its content by: the header is a box of its own and outside that
+            // scroll, so it reserves the same room or the `···` stands over the
+            // bar while the cards under it stop short of one.
+            .pr(LANE_CHANNEL)
             .flex()
             .flex_row()
             .items_center()
@@ -720,7 +742,6 @@ impl Cydonia {
             return row.child(self.name_field(cx)).into_any_element();
         }
         let named = id.to_owned();
-        let dropped = id.to_owned();
         row.group("column")
             .child(
                 div()
@@ -735,22 +756,78 @@ impl Cydonia {
             )
             .child(div().text_color(theme.text_faint).child(count.to_string()))
             .child(div().flex_1())
-            .children((count == 0).then(|| {
-                theme
-                    .ghost(SharedString::from(format!("column-delete-{id}")))
-                    .invisible()
-                    .group_hover("column", |el| el.visible())
-                    .p(px(3.))
-                    .child(
-                        icons::icon(icons::files::Trash)
-                            .size(px(12.))
-                            .text_color(theme.text_faint),
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.drop_column(&dropped, cx);
-                    }))
-            }))
+            .child(
+                self.menu_button(
+                    SharedString::from(format!("column-menu-{id}")),
+                    Some("column"),
+                    icons::icon(icons::layout::Ellipsis)
+                        .size(px(14.))
+                        .text_color(theme.text_faint),
+                    Menu::Lane(id.to_owned()),
+                    cx,
+                )
+                .children(self.lane_menu(id, count, at, lanes, cx)),
+            )
             .into_any_element()
+    }
+
+    /// What the `···` does to a lane: which way it moves, and whether it stays.
+    ///
+    /// A lane at an end is not offered the step it cannot take, and one still
+    /// holding cards carries Delete as a row it cannot choose — the refusal is
+    /// worth saying, and a button simply withheld says nothing. The words are
+    /// the tools' — see `mcp::tools::board`.
+    fn lane_menu(
+        &self,
+        id: &str,
+        count: usize,
+        at: usize,
+        lanes: usize,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        if self.menu != Some(Menu::Lane(id.to_owned())) {
+            return None;
+        }
+        let mut rows = Vec::new();
+        if at > 0 {
+            let moved = id.to_owned();
+            rows.push(menu::row(
+                Item::action("Move left").with_icon(icons::arrows::ArrowLeft),
+                move |this, _, cx| this.shift_column(&moved, -1, cx),
+            ));
+        }
+        if at + 1 < lanes {
+            let moved = id.to_owned();
+            rows.push(menu::row(
+                Item::action("Move right").with_icon(icons::arrows::ArrowRight),
+                move |this, _, cx| this.shift_column(&moved, 1, cx),
+            ));
+        }
+        let drop = Item::action("Delete column").with_icon(icons::files::Trash);
+        let drop = match count {
+            0 => drop,
+            _ => drop
+                .disabled()
+                .with_tooltip("A column is only where work sits — move the cards out first."),
+        };
+        let dropped = id.to_owned();
+        rows.push(menu::row(drop, move |this, _, cx| {
+            this.drop_column(&dropped, cx)
+        }));
+        let card = SharedString::from(format!("lane-menu-{id}"));
+        Some(popover::anchored_menu_below(
+            card.clone(),
+            self.menu_card(card, rows, cx),
+            None,
+        ))
+    }
+
+    /// Step a lane one place, and keep the menu on it: moving twice is two
+    /// presses on the same row, not a menu reopened between them.
+    fn shift_column(&mut self, id: &str, step: isize, cx: &mut Context<Self>) {
+        self.workspace
+            .update(cx, |workspace, cx| workspace.move_column(id, step, cx));
+        cx.notify();
     }
 
     /// The lane that makes a lane, always at the right-hand end.

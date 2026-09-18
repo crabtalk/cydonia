@@ -190,16 +190,20 @@ pub(crate) const TOOLBAR_INSET: f32 = if cfg!(target_os = "macos") {
 /// be moved.
 pub fn bindings() -> Vec<KeyBinding> {
     vec![
-        // What a browser binds its tabs to, and an alternate rather than a
-        // command: it is the one chord the menu bar cannot draw — gpui has no
-        // macOS equivalent for `tab`, so AppKit is handed the word where the
-        // API takes one character and shows ⌃T. ⌥⌘→ and ⌥⌘← are the pair the
-        // View menu carries and the pair a person may move.
+        // What a browser binds its tabs to, and the only chord these answer to:
+        // the menu bar cannot draw it — gpui has no macOS equivalent for `tab`,
+        // so AppKit is handed the word where the API takes one character and
+        // shows ⌃T — and a chord it *can* draw is claimed by AppKit before the
+        // window is ever offered it.
         //
-        // Global, because the point is to move between documents without
-        // taking the hand out of the editor — where `tab` itself is indent.
-        KeyBinding::new("ctrl-tab", NextEntry, None),
-        KeyBinding::new("ctrl-shift-tab", PrevEntry, None),
+        // Scoped to the root rather than left contextless, so that a surface
+        // with a row of its own can take the chord for its own row: a binding
+        // with no predicate ranks at the depth of the whole stack, which puts
+        // it *above* every scoped one rather than below — see
+        // `Keymap::binding_enabled`. The `cmd-c` fallback below is the same
+        // trick for the same reason.
+        KeyBinding::new("ctrl-tab", NextEntry, Some("Cydonia")),
+        KeyBinding::new("ctrl-shift-tab", PrevEntry, Some("Cydonia")),
         // Scope the fallback to the root so focused text surfaces take priority.
         KeyBinding::new("cmd-c", CopySelection, Some("Cydonia")),
         KeyBinding::new("enter", CommitName, Some(RENAME_CONTEXT)),

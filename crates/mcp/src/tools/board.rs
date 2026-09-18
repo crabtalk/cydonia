@@ -39,6 +39,10 @@ const COLUMN: Arg = Arg {
     name: "column",
     about: "The column: its name, or its id.",
 };
+const BEFORE_COLUMN: Arg = Arg {
+    name: "before",
+    about: "The column to put it in front of, by name or id. Left out, it goes to the right-hand end.",
+};
 
 /// The two `text` arguments and the two `name` ones carry the same key and a
 /// different line: what a card says when it is made is not what it should say
@@ -69,7 +73,7 @@ const KEY: Arg = Arg {
     about: "A unique board key for card handles, such as ROAD. Normalized to uppercase letters and digits.",
 };
 
-pub static TOOLS: [Tool; 10] = [
+pub static TOOLS: [Tool; 11] = [
     Tool {
         name: "board_add",
         description: "Create a board with a name and unique key. Returns its id, project number, key, and columns. Use board_add_column to add columns.",
@@ -132,6 +136,20 @@ pub static TOOLS: [Tool; 10] = [
         schema: |bound| fields(bound, &[PROJECT, BOARD, COLUMN, NAME_NOW]),
         writes: true,
         call: rename_column,
+    },
+    Tool {
+        name: "board_move_column",
+        description: "Put a column in front of another, or at the right-hand end.",
+        schema: |bound| {
+            let mut schema = fields(bound, &[PROJECT, BOARD, COLUMN]);
+            schema["properties"][BEFORE_COLUMN.name] = json!({
+                "type": "string",
+                "description": BEFORE_COLUMN.about,
+            });
+            schema
+        },
+        writes: true,
+        call: move_column,
     },
     Tool {
         name: "board_remove_column",
@@ -272,6 +290,34 @@ fn rename_column(args: Args<'_>) -> Outcome {
     board.rename_column(&id, name);
     project.save_board(&mut board);
     Ok(Answer::said(format!("{was} is now {name}")))
+}
+
+fn move_column(args: Args<'_>) -> Outcome {
+    let project = &store(&args)?;
+    let mut board = board(project, args.text(BOARD)?)?;
+    let id = column(&board, args.text(COLUMN)?)?;
+    let before = match args.maybe(BEFORE_COLUMN) {
+        Some(named) => Some(column(&board, named)?),
+        None => None,
+    };
+    let name = board
+        .column(&id)
+        .map(|column| column.name.clone())
+        .unwrap_or_default();
+    let anchor = before
+        .as_deref()
+        .and_then(|before| board.column(before))
+        .map(|column| column.name.clone());
+    if !board.move_column_before(&id, before.as_deref()) {
+        return Err(Trouble::Refused(format!(
+            "{name} is already where it is being sent"
+        )));
+    }
+    project.save_board(&mut board);
+    Ok(Answer::said(match anchor {
+        Some(anchor) => format!("{name} now sits in front of {anchor}"),
+        None => format!("{name} now sits at the end"),
+    }))
 }
 
 fn remove_column(args: Args<'_>) -> Outcome {

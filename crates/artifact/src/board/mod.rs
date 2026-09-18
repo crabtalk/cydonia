@@ -175,6 +175,27 @@ impl Board {
         }
     }
 
+    /// Put a lane in front of another, or at the right-hand end with no anchor
+    /// — [`Self::move_card_before`]'s shape, and for the same reason: an index
+    /// means whatever the board looked like when it was counted, and a board is
+    /// written by a pane and a tool at once.
+    ///
+    /// A lane asked to go in front of itself stays where it is.
+    pub fn move_column_before(&mut self, id: &str, before: Option<&str>) -> bool {
+        if before == Some(id) {
+            return false;
+        }
+        let Some(from) = self.columns.iter().position(|column| column.id == id) else {
+            return false;
+        };
+        let column = self.columns.remove(from);
+        let at = before
+            .and_then(|before| self.columns.iter().position(|column| column.id == before))
+            .unwrap_or(self.columns.len());
+        self.columns.insert(at, column);
+        true
+    }
+
     /// Drop a lane, refusing while it holds cards: "delete this column" has no
     /// reading that means "and the work in it".
     pub fn remove_column(&mut self, id: &str) -> bool {
