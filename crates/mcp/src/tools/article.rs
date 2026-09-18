@@ -14,7 +14,7 @@
 
 use crate::{
     tool::{Answer, Arg, Args, Outcome, Tool, Trouble},
-    tools::{PROJECT, fields, root},
+    tools::{PROJECT, fields, on_the_rail, root},
 };
 use artifact::{
     article::{self, properties},
@@ -48,6 +48,13 @@ const MARKDOWN_NOW: Arg = Arg {
     about: "The markdown it should hold now.",
 };
 
+/// Where a move puts it. Its own argument rather than [`PROJECT`], which is
+/// the project the article is in now.
+const TO_PROJECT: Arg = Arg {
+    name: "to_project",
+    about: "The project to move it to: the path of the directory, which must be one cydonia has open.",
+};
+
 const OLD_STRING: Arg = Arg {
     name: "old_string",
     about: "The exact text to replace, including whitespace. Include surrounding text to identify a unique occurrence. Must not be empty.",
@@ -61,7 +68,7 @@ const REPLACE_ALL: Arg = Arg {
     about: "Replace every non-overlapping occurrence. Defaults to false, requiring exactly one match.",
 };
 
-pub static TOOLS: [Tool; 6] = [
+pub static TOOLS: [Tool; 7] = [
     Tool {
         name: "article_list",
         description: "List the project's articles, most recently written first.",
@@ -105,6 +112,13 @@ pub static TOOLS: [Tool; 6] = [
         },
         writes: true,
         call: edit,
+    },
+    Tool {
+        name: "article_move",
+        description: "Move an article to another project, with its cover and the pictures in its body. Its project reference (#12) changes, since numbers are per project.",
+        schema: |bound| fields(bound, &[PROJECT, ARTICLE, TO_PROJECT]),
+        writes: true,
+        call: move_article,
     },
     Tool {
         name: "article_rename",
@@ -253,6 +267,34 @@ impl Held {
 /// migrated here: a read reaching in from a port has no business rearranging
 /// somebody's files, and the app will have done it by the time an agent is
 /// running in there.
+fn move_article(args: Args<'_>) -> Outcome {
+    let from = root(&args)?;
+    let found = locate(from, args.text(ARTICLE)?)?;
+    let to = on_the_rail(Path::new(args.text(TO_PROJECT)?))?;
+    if to == from {
+        return Err(Trouble::Refused(format!(
+            "{} is already in {}",
+            found.label(),
+            from.display()
+        )));
+    }
+    let label = found.label().to_owned();
+    let arrived = article::move_to(&found.content, to)
+        .map_err(|e| Trouble::Refused(format!("{label} cannot be moved — {e}")))?;
+    let id = article::id_of(&arrived);
+    let number = artifact::entry::number(to, "article", &id)
+        .map_err(|e| Trouble::Refused(e.to_string()))?;
+    Ok(
+        Answer::said(format!("{label} moved to {} as #{number}", to.display())).with(json!({
+            "id": id,
+            "number": number,
+            "title": found.title,
+            "project": to,
+            "assets_path": assets_path(to)?,
+        })),
+    )
+}
+
 fn articles(project: &Path) -> Vec<Held> {
     let Ok(entries) = std::fs::read_dir(article::dir(project)) else {
         return Vec::new();

@@ -59,7 +59,7 @@ pub(crate) fn root<'a>(args: &Args<'a>) -> Result<&'a Path, Trouble> {
 
 /// A named project, where cydonia has it open. Anywhere else is refused, and
 /// no `.cydonia/` is made there.
-fn on_the_rail(path: &Path) -> Result<&Path, Trouble> {
+pub(crate) fn on_the_rail(path: &Path) -> Result<&Path, Trouble> {
     if rail::is_open(path) {
         return Ok(path);
     }

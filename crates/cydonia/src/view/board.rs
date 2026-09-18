@@ -146,8 +146,16 @@ enum Mark {
 /// A card in flight, named rather than carried: the board is read afresh
 /// wherever the drop lands, and a copy of the card travelling with the pointer
 /// would be a second one to keep in step with it.
+///
+/// It says which board it left as well as which card it is. A layout can have
+/// two boards on screen, so where a card came from is not something the lane
+/// it lands on can work out.
 #[derive(Clone)]
-pub struct CardDrag(String);
+pub struct CardDrag {
+    card: String,
+    project: usize,
+    board: usize,
+}
 
 /// Where the card in the air would land — the lane, and the card it would go
 /// in front of, `None` being the end of the lane.
@@ -392,7 +400,9 @@ impl Cydonia {
     /// go without moving, and the aim still names the lane that was there.
     /// Aimed at another lane means the end of this one, which is where a lane
     /// nothing was aimed at takes a card anyway.
-    fn drop_card(&mut self, card: &str, column: &str, cx: &mut Context<Self>) {
+    /// Let a carried card go on `at` — the board under the pointer, which is
+    /// not always the board it was picked up from.
+    fn drop_card(&mut self, drag: &CardDrag, at: (usize, usize), column: &str, cx: &mut Context<Self>) {
         let before = self
             .leaf_mut()
             .landing
@@ -400,13 +410,20 @@ impl Cydonia {
             .filter(|landing| landing.column == column)
             .and_then(|landing| landing.before);
         self.commit(cx);
-        let (card, column) = (card.to_owned(), column.to_owned());
+        let (card, column) = (drag.card.clone(), column.to_owned());
+        let from = (drag.project, drag.board);
         self.workspace.update(cx, |workspace, cx| {
-            let moved = workspace
-                .active_board_mut()
-                .is_some_and(|board| board.move_card_before(&card, &column, before.as_deref()));
-            if moved {
-                workspace.save_board();
+            match from == at {
+                true => {
+                    workspace.move_card_within(at, &card, &column, before.as_deref());
+                }
+                // A card that came off another board arrives under a handle of
+                // this one's. Where it lands is the lane it was dropped on,
+                // and the place within that lane is not carried over: it is a
+                // new card here.
+                false => {
+                    workspace.carry_card(from, at, &card, Some(&column));
+                }
             }
             cx.notify();
         });
@@ -589,9 +606,18 @@ impl Cydonia {
             // the lane and card the pointer is inside put it back. A pointer
             // over no lane at all leaves nothing aimed, which is what makes
             // dragging a card off the board mean nothing.
-            .on_drag_move(cx.listener(|this, event: &DragMoveEvent<CardDrag>, _, cx| {
-                this.leaf().board_drift.aim(event.event.position);
-                this.aim_card(None, cx);
+            //
+            // The drift aimed is this pane's, the one drawn below — a layout
+            // can have two boards up, and the focused one is not always the
+            // one being dragged over.
+            .on_drag_move(cx.listener({
+                let on = on.cloned();
+                move |this, event: &DragMoveEvent<CardDrag>, _, cx| {
+                    this.leaf_of(on.as_ref())
+                        .board_drift
+                        .aim(event.event.position);
+                    this.aim_card(None, cx);
+                }
             }))
             // A release no lane took.
             .on_drop(cx.listener(|this, _: &CardDrag, _, cx| this.aim_card(None, cx)))
@@ -709,7 +735,7 @@ impl Cydonia {
                 }
             }))
             .on_drop(cx.listener(move |this, drag: &CardDrag, _, cx| {
-                this.drop_card(&drag.0, &taken, cx);
+                this.drop_card(drag, (project, board_at), &taken, cx);
             }))
             .child(self.column_header(&id, name, cards.len(), at, lanes, cx))
             .child(
@@ -1092,10 +1118,17 @@ impl Cydonia {
             // still the click that opens the card — and gpui drops the click
             // outright once a drag does start, so a card that was carried
             // somewhere does not also open where it landed.
-            .on_drag(CardDrag(id.to_owned()), move |_, _, _, cx| {
-                let text = text.clone();
-                cx.new(|_| HeldCard { text })
-            })
+            .on_drag(
+                CardDrag {
+                    card: id.to_owned(),
+                    project,
+                    board: board_at,
+                },
+                move |_, _, _, cx| {
+                    let text = text.clone();
+                    cx.new(|_| HeldCard { text })
+                },
+            )
             .on_drag_move(cx.listener({
                 let (column, card, next) =
                     (column.to_owned(), id.to_owned(), next.map(str::to_owned));

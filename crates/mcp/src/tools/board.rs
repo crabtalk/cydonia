@@ -19,13 +19,14 @@
 
 use crate::{
     tool::{Answer, Arg, Args, Outcome, Tool, Trouble},
-    tools::{PROJECT, fields, root},
+    tools::{PROJECT, fields, on_the_rail, root},
 };
 use artifact::{
     board::Board,
     project::{Project, fs},
 };
 use serde_json::{Value, json};
+use std::path::Path;
 
 const BOARD: Arg = Arg {
     name: "board",
@@ -39,6 +40,17 @@ const COLUMN: Arg = Arg {
     name: "column",
     about: "The column: its name, or its id.",
 };
+/// Where a move takes the card. Their own arguments rather than [`BOARD`] and
+/// [`PROJECT`], which are where it is now.
+const TO_BOARD: Arg = Arg {
+    name: "to_board",
+    about: "The board to move it to, by reference (#12), key, name or id. Left out, it stays on the board it is on.",
+};
+const TO_PROJECT: Arg = Arg {
+    name: "to_project",
+    about: "The project that board is in, as a directory path, which must be one cydonia has open. Left out, it is this project. Requires to_board.",
+};
+
 const BEFORE_COLUMN: Arg = Arg {
     name: "before",
     about: "The column to put it in front of, by name or id. Left out, it goes to the right-hand end.",
@@ -111,8 +123,15 @@ pub static TOOLS: [Tool; 11] = [
     },
     Tool {
         name: "board_move_card",
-        description: "Carry a card to the end of another column on the same board.",
-        schema: |bound| fields(bound, &[PROJECT, CARD, COLUMN]),
+        description: "Carry a card to the end of another column, another board, or a board in another project. Moving to another board gives it a new handle and clears the session it was dispatched to.",
+        schema: |bound| {
+            let mut schema = fields(bound, &[PROJECT, CARD, COLUMN, TO_BOARD, TO_PROJECT]);
+            schema["required"] = json!([PROJECT.name, CARD.name]
+                .iter()
+                .filter(|name| !bound || **name != PROJECT.name)
+                .collect::<Vec<_>>());
+            schema
+        },
         writes: true,
         call: move_card,
     },
@@ -239,12 +258,70 @@ fn rewrite_card(args: Args<'_>) -> Outcome {
 }
 
 fn move_card(args: Args<'_>) -> Outcome {
-    let project = &store(&args)?;
+    let here = root(&args)?;
+    let project = &fs::Project::new(here);
     let (mut board, id) = locate(project, args.text(CARD)?)?;
-    let to = column(&board, args.text(COLUMN)?)?;
     let handle = named(&board, &id);
+    let landing = match args.maybe(TO_PROJECT) {
+        Some(named) => on_the_rail(Path::new(named))?,
+        None => here,
+    };
+    // Another board is named, or another project is — a project on its own is
+    // not a destination, since a card sits on a board and not in a directory.
+    let elsewhere = match (args.maybe(TO_BOARD), landing == here) {
+        (None, true) => None,
+        (None, false) => {
+            return Err(Trouble::Refused(format!(
+                "name the board in {} to move {handle} to — it has {}",
+                landing.display(),
+                keys(&fs::Project::new(landing).boards())
+            )));
+        }
+        (Some(needle), _) => Some(needle),
+    };
+    let Some(needle) = elsewhere else {
+        return within(project, board, &id, &handle, args.text(COLUMN)?);
+    };
+    let destination = &fs::Project::new(landing);
+    let mut to = self::board(destination, needle)?;
+    if to.id == board.id && landing == here {
+        return within(project, board, &id, &handle, args.text(COLUMN)?);
+    }
+    let lane = match args.maybe(COLUMN) {
+        Some(named) => Some(column(&to, named)?),
+        None => None,
+    };
+    let landed = artifact::board::carry_card(&mut board, &mut to, &id, lane.as_deref())
+        .ok_or_else(|| {
+            Trouble::Refused(format!(
+                "{handle} has nowhere to land on {} — it has no columns",
+                to.label()
+            ))
+        })?;
+    let label = to.label().to_owned();
+    destination.save_board(&mut to);
+    project.save_board(&mut board);
+    Ok(
+        Answer::said(format!("{handle} moved to {label} as {landed}")).with(json!({
+            "card": landed,
+            "board": to.id,
+            "project": landing,
+        })),
+    )
+}
+
+/// The same move, between two lanes of one board — where the column is what
+/// the move is, so it is asked for rather than guessed at.
+fn within(
+    project: &fs::Project,
+    mut board: Board,
+    id: &str,
+    handle: &str,
+    named: &str,
+) -> Outcome {
+    let to = column(&board, named)?;
     let name = board.column(&to).map(|column| column.name.clone());
-    if !board.move_card(&id, &to) {
+    if !board.move_card(id, &to) {
         return Err(Trouble::Refused(format!("{handle} would not move")));
     }
     project.save_board(&mut board);
