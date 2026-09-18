@@ -22,20 +22,16 @@ fn a_command_nobody_moved_keeps_its_default() {
     assert_eq!(keymap::chord(Command::NewBoard, &held), None);
 }
 
-/// Stepping is the whole of how a pane is reached by key. The four commands
-/// that jumped straight to one are gone — the ring is at most four long, one
-/// entry per kind, so there was never more than three presses in it.
+/// Stepping is the whole of how a pane is reached by key — the four commands
+/// that jumped straight to one are gone. The chords for it are ⌃⇥ and ⇧⌃⇥,
+/// bound in `root::bindings` rather than shipped as defaults here: a default
+/// would also go in the menu as a key equivalent, which AppKit claims before
+/// the window is offered the chord.
 #[test]
-fn stepping_between_panes_is_the_only_chord_that_ships_for_it() {
+fn stepping_between_entries_ships_no_chord_of_its_own() {
     let bare = Shortcuts::default();
-    assert_eq!(
-        keymap::chord(Command::NextEntry, &bare),
-        Some("alt-cmd-right")
-    );
-    assert_eq!(
-        keymap::chord(Command::PrevEntry, &bare),
-        Some("alt-cmd-left")
-    );
+    assert_eq!(keymap::chord(Command::NextEntry, &bare), None);
+    assert_eq!(keymap::chord(Command::PrevEntry, &bare), None);
     assert!(!Command::ALL.iter().any(|command| command.title() == "Chat"));
 }
 
