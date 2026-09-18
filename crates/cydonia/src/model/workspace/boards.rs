@@ -25,6 +25,9 @@ impl Workspace {
         }
         let key = artifact::board::key::normalize(key)
             .ok_or("A key needs at least one letter or digit.".to_owned())?;
+        // Read before the project is taken: the seed is the workspace's and the
+        // borrow below is over the whole of it.
+        let view = self.board_view;
         let open = self
             .projects
             .get_mut(project)
@@ -34,10 +37,15 @@ impl Workspace {
         if open.boards.iter().any(|board| board.key == key) {
             return Err(format!("{key} is another board's key here."));
         }
-        let board = open
+        let mut board = open
             .store()
             .create_board(name.trim(), &key)
             .ok_or("The board could not be written.".to_owned())?;
+        // What the app is set to, written into the board as it is made — see
+        // [`artifact::board::Board::view`]. From here the board answers for
+        // itself, and the setting moving does not move it.
+        board.view = view;
+        open.store().save_board(&mut board);
         open.boards.insert(0, board);
         self.open_board(project, 0, cx);
         Ok(0)
@@ -127,8 +135,9 @@ impl Workspace {
         Ok(())
     }
 
-    /// Lay the board out the other way — see [`artifact::board::View`]. By id,
-    /// because the row that asks may be a board other than the one in front.
+    /// Lay one board out the other way — see [`artifact::board::View`]. By id,
+    /// because the pane that asks may be showing a board other than the one in
+    /// front.
     pub fn set_board_view(
         &mut self,
         id: &str,

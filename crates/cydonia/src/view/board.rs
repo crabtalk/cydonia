@@ -1,4 +1,5 @@
-//! The board pane: lanes of cards, and the one field that writes them.
+//! The board pane: lanes of cards or a list of them, and the one field that
+//! writes them.
 
 use crate::{
     model::session::ChatSession,
@@ -9,7 +10,10 @@ use crate::{
         sidebar::Renaming,
     },
 };
-use artifact::{board::Card, layout::Member};
+use artifact::{
+    board::{Card, View},
+    layout::Member,
+};
 use bezel::ui::scroll as scrollbars;
 use bezel::{
     gpui::{
@@ -26,6 +30,7 @@ use bezel::{
         menu::Item,
         popover,
         scroll::{self, Axes, DriftState, FollowState},
+        tooltip::Tooltip,
         widgets::Buttons,
     },
 };
@@ -49,6 +54,18 @@ const BOARD_INSET: f32 = 16.;
 /// to the bar through [`scroll::Overlay::channel`], which centres the thumb in
 /// it.
 const LANE_CHANNEL: Pixels = px(18.);
+
+/// The list's metrics: the heading over a group, a card's row, the line the
+/// row shows of the card, and the column its handle is set in. A row is one
+/// line tall by construction — see [`first_line`].
+const LIST_HEADING_HEIGHT: f32 = 30.;
+const LIST_ROW_HEIGHT: f32 = 36.;
+const LIST_LINE: f32 = 22.;
+const LIST_HANDLE_WIDTH: f32 = 64.;
+
+/// What the list leaves clear at its foot for the pill floating there — see
+/// [`Cydonia::view_pill`].
+const PILL_CLEARANCE: f32 = 32.;
 
 /// How much of a card is shown before it is cut off. A card is a card: what
 /// does not fit in this much of a lane is read by opening it.
@@ -118,6 +135,18 @@ fn card_body(text: &str, window: &mut Window, cx: &mut App) -> AnyElement {
     )
 }
 
+/// The card's first line, which is what a row of the list shows of it.
+///
+/// A card can be a document, and a row is one line tall: what a row leaves out
+/// is read by opening the card, the way a lane cuts one off at
+/// [`CARD_MAX_HEIGHT`].
+fn first_line(text: &str) -> &str {
+    text.lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or("")
+}
+
 /// What the field is attached to. By id, never by position: a re-read
 /// renumbers, and the field would follow the number onto whatever slid under.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -139,6 +168,10 @@ enum Mark {
     Top,
     /// In the gap under the last card, which is a drop at the end of the lane.
     Below,
+    /// On the foot of the last row of a group in the list, which is a drop at
+    /// the end of that group. The list's rows meet with no gap between them, so
+    /// a mark hung in one would lie over the row under it.
+    Foot,
     /// In the flow of an empty lane, which has nothing under it to push down.
     Flow,
 }
@@ -147,9 +180,9 @@ enum Mark {
 /// wherever the drop lands, and a copy of the card travelling with the pointer
 /// would be a second one to keep in step with it.
 ///
-/// It says which board it left as well as which card it is. A layout can have
-/// two boards on screen, so where a card came from is not something the lane
-/// it lands on can work out.
+/// It says which board it left as well as which card it is: a layout can have
+/// two boards on screen, and the lane a card lands on cannot tell where it came
+/// from.
 #[derive(Clone)]
 pub struct CardDrag {
     card: String,
@@ -280,6 +313,14 @@ impl Cydonia {
 
     /// Point the field at `at`, filing whatever was already open first — so
     /// clicking straight from one card to another never drops an edit.
+    /// Lay a board out the other way — the pill at its foot. The board the pane
+    /// is showing rather than the one in front: a layout can have two on screen.
+    fn set_board_view(&mut self, id: &str, view: View, cx: &mut Context<Self>) {
+        self.workspace
+            .update(cx, |workspace, cx| workspace.set_board_view(id, view, cx));
+        cx.notify();
+    }
+
     fn edit(&mut self, at: Editing, window: &mut Window, cx: &mut Context<Self>) {
         self.commit(cx);
         let text = match &at {
@@ -558,9 +599,121 @@ impl Cydonia {
 
     // ── chrome ───────────────────────────────────────────────────
 
-    /// The lanes. A board opens with none, so the lane that makes one is
-    /// always drawn — on an empty board it is the whole pane.
+    /// The board, laid out the way the board says — see
+    /// [`artifact::board::View`]. Everything either layout shares sits here:
+    /// the pane's actions, and the aim a drag leaving every lane clears.
     pub fn board(
+        &self,
+        project: usize,
+        board_at: usize,
+        on: Option<&Member>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let Some((id, view)) = self
+            .workspace
+            .read(cx)
+            .board_in(project, board_at)
+            .map(|board| (board.id.clone(), board.view))
+        else {
+            return div().flex_1().into_any_element();
+        };
+        let body = match view {
+            View::Lanes => self.lanes(project, board_at, on, window, cx),
+            View::List => self.list(project, board_at, on, window, cx),
+        };
+        div()
+            .flex_1()
+            .min_h_0()
+            .relative()
+            .on_action(cx.listener(Self::commit_card))
+            .on_action(cx.listener(Self::dismiss_card))
+            // Outermost, so it runs first: every move starts from nowhere, and
+            // the lane and card the pointer is inside put it back. A pointer
+            // over no lane at all leaves nothing aimed, which is what makes
+            // dragging a card off the board mean nothing.
+            //
+            // The drift aimed is this pane's, the one drawn below — a layout
+            // can have two boards up, and the focused one is not always the
+            // one being dragged over.
+            .on_drag_move(cx.listener({
+                let on = on.cloned();
+                move |this, event: &DragMoveEvent<CardDrag>, _, cx| {
+                    this.leaf_of(on.as_ref())
+                        .board_drift
+                        .aim(event.event.position);
+                    this.aim_card(None, cx);
+                }
+            }))
+            // A release no lane took.
+            .on_drop(cx.listener(|this, _: &CardDrag, _, cx| this.aim_card(None, cx)))
+            .child(body)
+            .children(self.view_pill(&id, view, cx))
+            .into_any_element()
+    }
+
+    /// The pill at the foot of a board: which way it is laid out, and the press
+    /// that lays it out the other way.
+    ///
+    /// In the pane rather than in the band, because a pane of a layout has no
+    /// band — see [`crate::view::arrangement`]. `../desktop` floats its controls
+    /// at the same edge.
+    ///
+    /// Nothing at all while a card is in the air: the pill stands over the
+    /// corner the card would be dropped in, and a drop it swallowed would be a
+    /// card put back where it came from.
+    fn view_pill(&self, id: &str, view: View, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if cx.has_active_drag() {
+            return None;
+        }
+        let theme = Theme::of(cx).clone();
+        let mut pill = div()
+            .absolute()
+            .right(px(BOARD_INSET))
+            .bottom(px(BOARD_INSET))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(2.))
+            .p(px(2.))
+            .rounded_full()
+            .border_1()
+            .border_color(theme.border)
+            .bg(theme.surface_raised);
+        for (at, glyph, label) in [
+            (View::Lanes, icons::development::SquareKanban, "Lanes"),
+            (View::List, icons::layout::LayoutList, "List"),
+        ] {
+            let held = id.to_owned();
+            let on = at == view;
+            pill = pill.child(
+                theme
+                    .ghost(SharedString::from(format!("board-view-{}", at.key())))
+                    .p(px(5.))
+                    .rounded_full()
+                    .when(on, |el| el.bg(theme.element_active))
+                    .child(
+                        icons::icon(glyph).size(px(14.)).text_color(match on {
+                            true => theme.text,
+                            false => theme.text_faint,
+                        }),
+                    )
+                    .tooltip(move |window, cx| Tooltip::text(label, window, cx))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        // The pill floats over the board, so the card or row
+                        // under it answers for the same press — see the run on
+                        // a card, which is held off its own card this way.
+                        cx.stop_propagation();
+                        this.set_board_view(&held, at, cx);
+                    })),
+            );
+        }
+        Some(pill.into_any_element())
+    }
+
+    /// The lanes across. A board opens with none, so the lane that makes one is
+    /// always drawn — on an empty board it is the whole pane.
+    fn lanes(
         &self,
         project: usize,
         board_at: usize,
@@ -597,30 +750,8 @@ impl Cydonia {
             })
             .collect();
         div()
-            .flex_1()
-            .min_h_0()
+            .size_full()
             .relative()
-            .on_action(cx.listener(Self::commit_card))
-            .on_action(cx.listener(Self::dismiss_card))
-            // Outermost, so it runs first: every move starts from nowhere, and
-            // the lane and card the pointer is inside put it back. A pointer
-            // over no lane at all leaves nothing aimed, which is what makes
-            // dragging a card off the board mean nothing.
-            //
-            // The drift aimed is this pane's, the one drawn below — a layout
-            // can have two boards up, and the focused one is not always the
-            // one being dragged over.
-            .on_drag_move(cx.listener({
-                let on = on.cloned();
-                move |this, event: &DragMoveEvent<CardDrag>, _, cx| {
-                    this.leaf_of(on.as_ref())
-                        .board_drift
-                        .aim(event.event.position);
-                    this.aim_card(None, cx);
-                }
-            }))
-            // A release no lane took.
-            .on_drop(cx.listener(|this, _: &CardDrag, _, cx| this.aim_card(None, cx)))
             .child(
                 scroll::pane("board", Axes::Horizontal)
                     .size_full()
@@ -646,6 +777,476 @@ impl Cydonia {
             ))
             .into_any_element()
     }
+
+
+    // ── the list ─────────────────────────────────────────────────
+
+    /// The list down: every card of the board in one scroller, under the
+    /// heading of the lane it sits in.
+    ///
+    /// The same cards, the same handles and the same drags as the lanes — a
+    /// list is where they are drawn, not a second board. What it trades away is
+    /// the lanes side by side; what it buys is a card's whole line at the width
+    /// of the pane.
+    fn list(
+        &self,
+        project: usize,
+        board_at: usize,
+        on: Option<&Member>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let Some(board) = self.workspace.read(cx).board_in(project, board_at) else {
+            return div().flex_1().into_any_element();
+        };
+        // Read out before drawing: each group borrows the board again.
+        let ids: Vec<String> = board
+            .columns
+            .iter()
+            .map(|column| column.id.clone())
+            .collect();
+        let lanes = ids.len();
+        let groups: Vec<AnyElement> = ids
+            .iter()
+            .enumerate()
+            .map(|(at, id)| {
+                self.list_group(
+                    Lane {
+                        project,
+                        board: board_at,
+                        id,
+                        at,
+                        lanes,
+                        on,
+                    },
+                    window,
+                    cx,
+                )
+            })
+            .collect();
+        div()
+            .size_full()
+            .relative()
+            .child(
+                scroll::pane("board-list", Axes::Vertical)
+                    .size_full()
+                    .flex()
+                    .flex_col()
+                    // Room at the foot for the pill, which floats over the full
+                    // width of the last row — see [`Self::view_pill`]. The lanes
+                    // need none: what the pill covers there is the empty half of
+                    // `Add a column`.
+                    .pb(px(BOARD_INSET + PILL_CLEARANCE))
+                    .track_scroll(&self.leaf_of(on).board_list)
+                    .children(groups)
+                    .child(self.new_column_row(cx)),
+            )
+            .child(scrollbars::Overlay::new(
+                "board-list-bar",
+                &self.leaf_of(on).board_list,
+                bezel::gpui::Axis::Vertical,
+            ))
+            // A group off the foot of the window is one a drag cannot reach:
+            // reaching for it would mean letting go.
+            .child(scroll::drift(
+                &self.leaf_of(on).board_list,
+                &self.leaf_of(on).board_drift,
+                Axes::Vertical,
+            ))
+            .into_any_element()
+    }
+
+    /// One lane as a group: its heading, its rows, and the row that writes a
+    /// card into it.
+    fn list_group(
+        &self,
+        lane: Lane<'_>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let Lane {
+            project,
+            board: board_at,
+            id,
+            at,
+            lanes,
+            on,
+        } = lane;
+        let theme = Theme::of(cx).clone();
+        let id = id.to_owned();
+        let Some((name, cards)) = self
+            .workspace
+            .read(cx)
+            .board_in(project, board_at)
+            .and_then(|board| board.column(&id))
+            .map(|column| {
+                let cards: Vec<String> = column.cards.iter().map(|card| card.id.clone()).collect();
+                (column.name.clone(), cards)
+            })
+        else {
+            return div().into_any_element();
+        };
+        let mut rows: Vec<AnyElement> = cards
+            .iter()
+            .enumerate()
+            .map(|(row, card)| {
+                let next = cards.get(row + 1).map(String::as_str);
+                self.list_row(
+                    Slot {
+                        project,
+                        board: board_at,
+                        id: card,
+                        column: &id,
+                        first: row == 0,
+                        next,
+                    },
+                    on,
+                    window,
+                    cx,
+                )
+            })
+            .collect();
+        // An empty group has no row to hang the mark off, and nothing under it
+        // to be pushed down by one drawn in the flow.
+        if cards.is_empty() && self.aimed_at(&id, on, cx) {
+            rows.push(self.landing_mark(Mark::Flow, cx));
+        }
+        if matches!(&self.leaf_of(on).editing, Some(Editing::New(at)) if *at == id) {
+            rows.push(
+                div()
+                    .px(px(BOARD_INSET))
+                    .py(px(6.))
+                    .child(self.card_editor(on, cx))
+                    .into_any_element(),
+            );
+        }
+        let lane = id.clone();
+        let taken = id.clone();
+        let written = id.clone();
+        div()
+            .flex_none()
+            .flex()
+            .flex_col()
+            // The whole group, heading and all: a card held over the name of a
+            // lane is being put in that lane. Coarser than the rows below it
+            // and run before them, so whichever one the pointer is actually
+            // over has the last word.
+            .on_drag_move(cx.listener({
+                let drift = self.leaf_of(on).board_drift.clone();
+                move |this, event: &DragMoveEvent<CardDrag>, _, cx| {
+                    if !event.bounds.contains(&event.event.position) {
+                        return;
+                    }
+                    drift.aim(event.event.position);
+                    this.aim_card(
+                        Some(Landing {
+                            column: lane.clone(),
+                            before: None,
+                        }),
+                        cx,
+                    );
+                }
+            }))
+            .on_drop(cx.listener(move |this, drag: &CardDrag, _, cx| {
+                this.drop_card(drag, (project, board_at), &taken, cx);
+            }))
+            .child(self.list_group_header(&id, name, cards.len(), at, lanes, cx))
+            .children(rows)
+            .child(
+                theme
+                    .ghost(SharedString::from(format!("list-add-card-{id}")))
+                    .flex_none()
+                    .px(px(BOARD_INSET))
+                    .py(px(6.))
+                    .gap(px(6.))
+                    .child(
+                        icons::icon(icons::math::Plus)
+                            .size(px(12.))
+                            .text_color(theme.text_faint),
+                    )
+                    .child(
+                        div()
+                            .text_style(TextStyle::Callout)
+                            .text_color(theme.text_faint)
+                            .child("Add a card"),
+                    )
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.edit(Editing::New(written.clone()), window, cx);
+                    })),
+            )
+            .into_any_element()
+    }
+
+    /// A group's heading: the lane's name and count, and the `···` that moves
+    /// or drops it — the lane's own header, on a row the width of the pane.
+    fn list_group_header(
+        &self,
+        id: &str,
+        name: String,
+        count: usize,
+        at: usize,
+        lanes: usize,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        let row = div()
+            .flex_none()
+            .h(px(LIST_HEADING_HEIGHT))
+            .px(px(BOARD_INSET))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(6.))
+            .bg(theme.surface_raised)
+            .border_b_1()
+            .border_color(theme.border)
+            .text_style(TextStyle::Subheadline);
+        if matches!(&self.renaming, Some(Renaming::Column(at)) if at == id) {
+            return row.child(self.name_field(cx)).into_any_element();
+        }
+        let named = id.to_owned();
+        row.group("list-group")
+            .child(
+                div()
+                    .id(SharedString::from(format!("list-group-name-{id}")))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(theme.text_muted)
+                    .cursor_pointer()
+                    .child(name)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.start_rename(Renaming::Column(named.clone()), window, cx);
+                    })),
+            )
+            .child(div().text_color(theme.text_faint).child(count.to_string()))
+            .child(div().flex_1())
+            .child(
+                self.menu_button(
+                    SharedString::from(format!("list-group-menu-{id}")),
+                    Some("list-group"),
+                    icons::icon(icons::layout::Ellipsis)
+                        .size(px(14.))
+                        .text_color(theme.text_faint),
+                    Menu::Lane(id.to_owned()),
+                    cx,
+                )
+                .children(self.lane_menu(id, count, at, lanes, View::List, cx)),
+            )
+            .into_any_element()
+    }
+
+    /// One card as a row: what it is called, its first line, and what is being
+    /// done with it.
+    ///
+    /// The first line rather than the card's whole text — see [`first_line`].
+    fn list_row(
+        &self,
+        at: Slot<'_>,
+        on: Option<&Member>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let Slot {
+            project,
+            board: board_at,
+            id,
+            column,
+            next,
+            ..
+        } = at;
+        if matches!(&self.leaf_of(on).editing, Some(Editing::Card(at)) if at == id) {
+            return div()
+                .px(px(BOARD_INSET))
+                .py(px(6.))
+                .child(self.card_editor(on, cx))
+                .into_any_element();
+        }
+        let theme = Theme::of(cx).clone();
+        let painter = Painter::of(cx);
+        let Some((card, handle)) = self
+            .workspace
+            .read(cx)
+            .board_in(project, board_at)
+            .and_then(|board| board.card(id).map(|card| (card, board.handle_of(card))))
+        else {
+            return div().into_any_element();
+        };
+        let text = card.text.clone();
+        let chat = self.card_session(card, cx);
+        let live = chat.map(|chat| chat.id);
+        let sessions = self.workspace.read(cx).settings.features.sessions;
+        let running = chat.is_some_and(|chat| chat.streaming);
+        let orb = running.then(|| {
+            loaders::orb(
+                loaders::Orb::Cluster,
+                SharedString::from(format!("list-orb-{id}")),
+                12.,
+                &theme,
+                painter,
+                cx,
+            )
+            .into_any_element()
+        });
+        let (opened, run) = (id.to_owned(), id.to_owned());
+        let ahead = cx.has_active_drag()
+            && self
+                .leaf_of(on)
+                .landing
+                .as_ref()
+                .is_some_and(|at| at.before.as_deref() == Some(id));
+        let behind = next.is_none() && self.aimed_at(column, on, cx);
+        // The scroller's viewport, to clip the aim below with — a row scrolled
+        // out of the pane still answers for the strip of window its bounds
+        // landed on. The lanes clip against their lane; here there is one.
+        let viewport = self.leaf_of(on).board_list.clone();
+        div()
+            .id(SharedString::from(format!("list-row-{id}")))
+            .group("list-row")
+            .flex_none()
+            .relative()
+            .h(px(LIST_ROW_HEIGHT))
+            .px(px(BOARD_INSET))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(8.))
+            .border_b_1()
+            .border_color(theme.border)
+            .cursor_pointer()
+            .hover(|el| el.bg(theme.element_hover))
+            // What to call this card out loud, in the mono face for the reason
+            // the delete dialog sets a path there. Ahead of the text and at a
+            // width of its own, so the lines under one another start together.
+            .child(
+                div()
+                    .flex_none()
+                    .w(px(LIST_HANDLE_WIDTH))
+                    .text_style(TextStyle::Caption)
+                    .font_family(theme.font_mono.clone())
+                    .text_color(theme.text_faint)
+                    .child(handle.unwrap_or_default()),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .h(px(LIST_LINE))
+                    .overflow_hidden()
+                    .child(card_body(first_line(&text), window, cx)),
+            )
+            // On show, not behind a hover — a card's run is what you look at
+            // the board to see, and hiding it would mean hunting for the one
+            // that is working.
+            .children(orb)
+            .child(
+                div()
+                    .invisible()
+                    .group_hover("list-row", |el| el.visible())
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(2.))
+                    .children(sessions.then(|| {
+                        match live {
+                            Some(session) => self
+                                .card_action("list-open", id, icons::social::MessageCircle, cx)
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    cx.stop_propagation();
+                                    this.select_session(session, window, cx);
+                                    this.show_pane(Pane::Chat, cx);
+                                })),
+                            None => self
+                                .card_action("list-run", id, icons::multimedia::Play, cx)
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    cx.stop_propagation();
+                                    this.dispatch_card(&run, cx);
+                                })),
+                        }
+                    })),
+            )
+            .child(
+                self.menu_button(
+                    SharedString::from(format!("list-card-menu-{id}")),
+                    Some("list-row"),
+                    icons::icon(icons::layout::Ellipsis)
+                        .size(px(14.))
+                        .text_color(theme.text_faint),
+                    Menu::Card(id.to_owned()),
+                    cx,
+                )
+                .children(self.card_menu(id, cx)),
+            )
+            .on_drag(
+                CardDrag {
+                    card: id.to_owned(),
+                    project,
+                    board: board_at,
+                },
+                move |_, _, _, cx| {
+                    let text = text.clone();
+                    cx.new(|_| HeldCard { text })
+                },
+            )
+            .on_drag_move(cx.listener({
+                let (column, card, next) =
+                    (column.to_owned(), id.to_owned(), next.map(str::to_owned));
+                move |this, event: &DragMoveEvent<CardDrag>, _, cx| {
+                    let at = event.event.position;
+                    if !event.bounds.contains(&at) || !viewport.bounds().contains(&at) {
+                        return;
+                    }
+                    // Which half of the row the pointer is in says which side
+                    // of it the drop goes: in front of this one, or in front of
+                    // whatever is under it — and under the last row is the end
+                    // of the group.
+                    let before = match at.y < event.bounds.center().y {
+                        true => Some(card.clone()),
+                        false => next.clone(),
+                    };
+                    this.aim_card(
+                        Some(Landing {
+                            column: column.clone(),
+                            before,
+                        }),
+                        cx,
+                    );
+                }
+            }))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.edit(Editing::Card(opened.clone()), window, cx);
+            }))
+            .children(ahead.then(|| self.landing_mark(Mark::Top, cx)))
+            .children(behind.then(|| self.landing_mark(Mark::Foot, cx)))
+            .into_any_element()
+    }
+
+    /// The row that makes a lane, at the foot of the list — the list's answer
+    /// to [`Self::new_column_lane`].
+    fn new_column_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        theme
+            .ghost("list-add-column")
+            .flex_none()
+            .px(px(BOARD_INSET))
+            .py(px(8.))
+            .gap(px(6.))
+            .child(
+                icons::icon(icons::math::Plus)
+                    .size(px(12.))
+                    .text_color(theme.text_faint),
+            )
+            .child(
+                div()
+                    .text_style(TextStyle::Callout)
+                    .text_color(theme.text_faint)
+                    .child("Add a column"),
+            )
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.new_column(window, cx);
+            }))
+            .into_any_element()
+    }
+
+    // ── the lanes ────────────────────────────────────────────────
 
     fn column(&self, lane: Lane<'_>, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let Lane {
@@ -859,7 +1460,7 @@ impl Cydonia {
                     Menu::Lane(id.to_owned()),
                     cx,
                 )
-                .children(self.lane_menu(id, count, at, lanes, cx)),
+                .children(self.lane_menu(id, count, at, lanes, View::Lanes, cx)),
             )
             .into_any_element()
     }
@@ -868,31 +1469,46 @@ impl Cydonia {
     ///
     /// A lane at an end is not offered the step it cannot take, and one still
     /// holding cards carries Delete as a row it cannot choose — the refusal is
-    /// worth saying, and a button simply withheld says nothing. The words are
-    /// the tools' — see `mcp::tools::board`.
+    /// worth saying, and a button simply withheld says nothing.
+    ///
+    /// The step is one place along the board's own order of its columns, which
+    /// is the order the tools speak in — see `mcp::tools::board`. What `view`
+    /// decides is only what to call it: that order runs across the lanes and
+    /// down the list, so the same step is left in one and up in the other.
     fn lane_menu(
         &self,
         id: &str,
         count: usize,
         at: usize,
         lanes: usize,
+        view: View,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         if self.menu != Some(Menu::Lane(id.to_owned())) {
             return None;
         }
+        let (back, on) = match view {
+            View::Lanes => (
+                ("Move left", icons::arrows::ArrowLeft),
+                ("Move right", icons::arrows::ArrowRight),
+            ),
+            View::List => (
+                ("Move up", icons::arrows::ArrowUp),
+                ("Move down", icons::arrows::ArrowDown),
+            ),
+        };
         let mut rows = Vec::new();
         if at > 0 {
             let moved = id.to_owned();
             rows.push(menu::row(
-                Item::action("Move left").with_icon(icons::arrows::ArrowLeft),
+                Item::action(back.0).with_icon(back.1),
                 move |this, _, cx| this.shift_column(&moved, -1, cx),
             ));
         }
         if at + 1 < lanes {
             let moved = id.to_owned();
             rows.push(menu::row(
-                Item::action("Move right").with_icon(icons::arrows::ArrowRight),
+                Item::action(on.0).with_icon(on.1),
                 move |this, _, cx| this.shift_column(&moved, 1, cx),
             ));
         }
@@ -1188,6 +1804,7 @@ impl Cydonia {
         match at {
             Mark::Above => mark.top(px(-5.)),
             Mark::Top => mark.top_0(),
+            Mark::Foot => mark.bottom_0(),
             _ => mark.bottom(px(-5.)),
         }
         .into_any_element()

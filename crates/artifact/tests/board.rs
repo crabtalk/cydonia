@@ -5,7 +5,7 @@ mod common;
 
 use common::Scratch;
 use cydonia_artifact::{
-    board::{Board, Card, Column},
+    board::{Board, Card, Column, View},
     project::Project as _,
 };
 use std::{collections::HashSet, fs};
@@ -375,4 +375,21 @@ fn ids(board: &Board) -> Vec<String> {
         })
         .cloned()
         .collect()
+}
+
+/// The view survives the file. A board written before the field existed opens
+/// in lanes rather than refusing to parse.
+#[test]
+fn a_board_keeps_the_view_it_was_left_in() {
+    let mut board = Board::new("1757000000000".into(), "Roadmap");
+    let todo = board.add_column("Todo").id.clone();
+    board.add_card(&todo, "Retire Spot".into());
+    board.view = View::List;
+
+    let body = toml::to_string_pretty(&board).unwrap();
+    let read: Board = toml::from_str(&body).unwrap();
+    assert_eq!(read.view, View::List);
+
+    let old: Board = toml::from_str("name = 'Roadmap'").unwrap();
+    assert_eq!(old.view, View::Lanes);
 }

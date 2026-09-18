@@ -35,7 +35,9 @@ pub const UNNAMED: &str = "Untitled";
 ///
 /// On the board rather than on the pane showing it, so it is written into the
 /// file and travels with the project — a board opened in a second window is
-/// laid out the way it was left.
+/// laid out the way it was left. A new board starts on the app's own answer —
+/// see `settings::Appearance::board_view`, which seeds a board and does not
+/// steer it.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum View {
@@ -44,6 +46,16 @@ pub enum View {
     Lanes,
     /// One list down, grouped under its columns.
     List,
+}
+
+impl View {
+    /// The word this is written under, in a settings file and nowhere else.
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Lanes => "lanes",
+            Self::List => "list",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -79,6 +79,11 @@ pub struct Leaf {
     /// because reaching for it means letting go.
     pub(crate) board_scroll: ScrollHandle,
     pub(crate) board_drift: DriftState,
+    /// The same board's list, which scrolls the other way — see
+    /// [`artifact::board::View`]. Its own handle rather than the lanes': one
+    /// offset read along both axes would land the list wherever the lanes were
+    /// scrolled to.
+    pub(crate) board_list: ScrollHandle,
     /// The same, per lane — see [`board::Lanes`].
     pub(crate) lanes: board::Lanes,
     /// Where the card now in the air would land. Written by the lanes and
@@ -110,6 +115,7 @@ impl Leaf {
             card_field,
             board_scroll: ScrollHandle::new(),
             board_drift: DriftState::new(),
+            board_list: ScrollHandle::new(),
             lanes: board::Lanes::default(),
             landing: None,
             cell: None,

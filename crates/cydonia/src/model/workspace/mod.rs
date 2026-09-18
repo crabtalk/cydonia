@@ -102,6 +102,9 @@ pub struct Workspace {
     /// How wide a page that has not been set either way is drawn — see
     /// [`crate::model::state::State::wide_pages`].
     pub wide_pages: bool,
+    /// How a new board is laid out — see
+    /// [`crate::model::settings::Appearance::board_view`].
+    pub board_view: artifact::board::View,
     pub indent_project_rows: bool,
     /// Whether a long line in a code block wraps rather than scrolling — see
     /// [`apply_wrap_code`].
@@ -168,6 +171,7 @@ impl Workspace {
             file_font_size: look.file_font_size,
             tint: Tint::new(look.hue, look.chroma),
             wide_pages: look.wide_pages,
+            board_view: look.board_view,
             indent_project_rows: look.indent_project_rows,
             wrap_code: look.wrap_code,
             meter: false,
@@ -239,6 +243,7 @@ impl Workspace {
             hue: self.tint.hue,
             chroma: self.tint.chroma,
             wide_pages: self.wide_pages,
+            board_view: self.board_view,
             indent_project_rows: self.indent_project_rows,
             scrollbars: self.settings.appearance.scrollbars,
             sidebar_scrollbars: self.settings.appearance.sidebar_scrollbars,
@@ -526,6 +531,14 @@ impl Workspace {
     /// the rest follow this.
     pub fn set_wide_pages(&mut self, wide: bool, cx: &mut Context<Self>) {
         self.wide_pages = wide;
+        self.save_appearance();
+        cx.notify();
+    }
+
+    /// How the next board made will be laid out. Nothing on screen moves: a
+    /// board already made carries its own answer.
+    pub fn set_default_board_view(&mut self, view: artifact::board::View, cx: &mut Context<Self>) {
+        self.board_view = view;
         self.save_appearance();
         cx.notify();
     }
