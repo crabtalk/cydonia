@@ -9,7 +9,7 @@
 	.frame {
 		width: 100%;
 		border: 1px solid var(--line);
-		border-radius: 14px;
+		border-radius: var(--radius-lg);
 		background: var(--panel);
 	}
 </style>

@@ -12,6 +12,12 @@
 	--faint: #8b8f96;
 	--mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
 
+	/* Three radii for the whole site. Controls and inline marks share the small
+	   one, bordered boxes the middle, and only full-bleed media gets the large. */
+	--radius-sm: 4px;
+	--radius: 6px;
+	--radius-lg: 12px;
+
 	/* The gutter the header, every section and the footer share. Named here so
 	   the step down for narrow screens happens once, not in each of them. */
 	--gutter: 28px;
@@ -81,14 +87,14 @@ code {
 	font-family: var(--mono);
 	font-size: 0.875em;
 	background: var(--panel-high);
-	border-radius: 5px;
+	border-radius: var(--radius-sm);
 	padding: 0.12em 0.4em;
 }
 
 pre {
 	background: var(--panel);
 	border: 1px solid var(--line);
-	border-radius: 10px;
+	border-radius: var(--radius);
 	padding: 14px 16px;
 	overflow-x: auto;
 	font-size: 13px;
@@ -124,7 +130,7 @@ h3 {
 	height: 32px;
 	padding: 0;
 	border: 0;
-	border-radius: 7px;
+	border-radius: var(--radius);
 	background: transparent;
 	color: var(--faint);
 	cursor: pointer;

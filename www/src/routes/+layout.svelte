@@ -39,18 +39,8 @@
 	</a>
 
 	<nav>
-		<a
-			class="community"
-			href={discord}
-			target="_blank"
-			rel="noreferrer"
-			aria-label="Cydonia community on Discord"
-		>
-			<Brand icon={siDiscord} size={16} />
-			<span>Community</span>
-		</a>
 		<a class="button" href="{base}/#download">
-			<Brand icon={siApple} size={16} />
+			<Brand icon={siApple} size={14} />
 			Download
 		</a>
 	</nav>
@@ -148,29 +138,16 @@
 		font-size: 14.5px;
 	}
 
-	.community {
-		display: inline-flex;
-		align-items: center;
-		gap: 8px;
-		color: var(--muted);
-	}
-
-	@media (hover: hover) {
-		.community:hover {
-			color: var(--text);
-			text-decoration: none;
-		}
-	}
-
 	.button {
 		display: inline-flex;
 		align-items: center;
-		gap: 8px;
-		height: 36px;
-		padding: 0 16px;
-		border-radius: 9px;
+		gap: 7px;
+		height: 32px;
+		padding: 0 12px;
+		border-radius: var(--radius);
 		background: var(--accent);
 		color: var(--accent-ink);
+		font-size: 13px;
 		font-weight: 500;
 	}
 
@@ -178,18 +155,6 @@
 		.button:hover {
 			background: var(--accent-hover);
 			text-decoration: none;
-		}
-	}
-
-	/* On a phone the three of these together are wider than the bar. The mark
-	   alone still says Discord, and the link keeps its name for screen readers. */
-	@media (max-width: 560px) {
-		header nav {
-			gap: 14px;
-		}
-
-		.community span {
-			display: none;
 		}
 	}
 </style>

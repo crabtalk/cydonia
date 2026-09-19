@@ -236,7 +236,7 @@
 		width: 100%;
 		aspect-ratio: 1280 / 804;
 		border: 1px solid var(--line);
-		border-radius: 14px;
+		border-radius: var(--radius-lg);
 		background: var(--panel);
 		object-fit: cover;
 	}
@@ -256,12 +256,12 @@
 	.button {
 		display: inline-flex;
 		align-items: center;
-		gap: 9px;
-		height: 46px;
-		padding: 0 22px;
+		gap: 8px;
+		height: 36px;
+		padding: 0 14px;
 		border: 1px solid var(--line-strong);
-		border-radius: 11px;
-		font-size: 15px;
+		border-radius: var(--radius);
+		font-size: 14px;
 		font-weight: 500;
 	}
 
@@ -396,7 +396,7 @@
 	.paths div {
 		padding: 16px 18px;
 		border: 1px solid var(--line);
-		border-radius: 12px;
+		border-radius: 8px;
 	}
 
 	.paths dt {
@@ -497,7 +497,7 @@
 		max-width: 100%;
 		padding: 6px 40px 6px 12px;
 		border: 1px solid var(--line);
-		border-radius: 8px;
+		border-radius: var(--radius);
 		background: var(--panel);
 		overflow-x: auto;
 	}
