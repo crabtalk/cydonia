@@ -18,7 +18,6 @@ fn startup_logs_do_not_create_a_turn() {
     ]);
     assert_eq!(turns.len(), 1);
     assert_eq!(turns[0].range, 1..3);
-    assert_eq!(turns[0].answer_from, 2);
 }
 
 #[test]
@@ -28,7 +27,7 @@ fn a_failure_before_the_first_prompt_is_visible() {
         failed: true,
     }]);
     assert_eq!(turns.len(), 1);
-    assert_eq!(turns[0].answer_from, 0);
+    assert_eq!(turns[0].range, 0..1);
 }
 
 #[test]
@@ -42,7 +41,25 @@ fn startup_tool_failures_are_included_in_the_work() {
     }]);
     assert_eq!(turns.len(), 1);
     assert_eq!(turns[0].range, 0..1);
-    assert_eq!(turns[0].answer_from, 1);
+}
+
+#[test]
+fn prose_before_a_trailing_tool_call_is_not_work() {
+    let items = [
+        ChatItem::User("why".into()),
+        ChatItem::Agent("the long answer".into()),
+        ChatItem::Tool {
+            id: "status".into(),
+            kind: ToolKind::Other,
+            label: "board_set_card_status".into(),
+            status: ToolStatus::Success,
+            output: String::new(),
+        },
+        ChatItem::Agent("tagged".into()),
+    ];
+    assert!(!interim(&items[1]));
+    assert!(interim(&items[2]));
+    assert!(!interim(&items[3]));
 }
 
 #[gpui::test]

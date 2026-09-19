@@ -246,6 +246,11 @@ impl Cydonia {
             .map(|(_, at)| *at);
         div()
             .id(SharedString::from(format!("pane-{key}")))
+            // With the context but without this, a pane claims chords that
+            // never reach it: an action runs through the focused element's
+            // ancestors, and a pane showing a board holds nothing that takes
+            // the focus — see [`crate::view::leaf::Leaf::focus`].
+            .track_focus(&self.leaf_of(Some(entry)).focus.clone())
             .group("pane")
             .size_full()
             .min_w_0()

@@ -19,7 +19,7 @@ use crate::{
     },
 };
 use bezel::{
-    gpui::Entity,
+    gpui::{Entity, FocusHandle},
     ui::input::TextField,
 };
 
@@ -56,6 +56,12 @@ pub struct Leaf {
     /// Nothing for the pane a window with no layout open shows: it is on
     /// whatever the project was last left on, and the project holds that.
     pub(crate) entry: Option<artifact::layout::Member>,
+    /// Tracked on the pane this leaf draws, so the pane is an ancestor of the
+    /// focused element and the chords claimed on it are reached — an action
+    /// runs only through the focused element's ancestors. Where the focus lands
+    /// for a pane holding nothing to type into; a session's composer and a
+    /// document's editor are inside the pane already.
+    pub(crate) focus: FocusHandle,
     pub(crate) pane: Pane,
     pub(crate) composer: Entity<Composer>,
     pub(crate) queued_galleries: std::collections::HashMap<
@@ -96,6 +102,7 @@ pub struct Leaf {
 
 impl Leaf {
     pub(crate) fn new(
+        focus: FocusHandle,
         composer: Entity<Composer>,
         card_field: Entity<TextField>,
         cell_field: Entity<TextField>,
@@ -104,6 +111,7 @@ impl Leaf {
     ) -> Self {
         Self {
             entry: None,
+            focus,
             pane: Pane::Chat,
             composer,
             queued_galleries: Default::default(),

@@ -1,9 +1,10 @@
 //! The transcript — one zone per turn: the question, the work it took, the
 //! answer.
 //!
-//! The zone split is a `rposition`: **the answer is the prose after the last
-//! tool call or thought; everything before it is interim.** That one rule is
-//! what stops a model's thinking-out-loud being presented as its reply.
+//! A zone is a run split: **prose the agent addressed to you is the answer
+//! wherever it falls, and tool calls and thoughts are the work.** Each run of
+//! work collapses under its own header, in the place it happened, so a turn
+//! that ends on a tool call still shows the prose before it as prose.
 
 use crate::{
     model::{
@@ -232,8 +233,6 @@ fn item_text(item: &ChatItem) -> Option<&str> {
 /// A question and the answer it drew.
 struct Turn {
     range: Range<usize>,
-    /// Where the interim half ends and the reply begins.
-    answer_from: usize,
 }
 
 /// Start a turn at every question. The leading chunk of a session has none —
@@ -250,17 +249,7 @@ fn turns(items: &[ChatItem]) -> Vec<Turn> {
             start = ix;
             continue;
         }
-        let interim =
-            |item: &ChatItem| matches!(item, ChatItem::Tool { .. } | ChatItem::Thinking { .. });
-        let answer_from = items[start..ix]
-            .iter()
-            .rposition(interim)
-            .map_or(start, |last| start + last + 1);
-        turns.push(Turn {
-            range: start..ix,
-            answer_from: answer_from
-                .max(start + usize::from(matches!(items[start], ChatItem::User(_)))),
-        });
+        turns.push(Turn { range: start..ix });
         start = ix;
     }
     turns
@@ -815,22 +804,6 @@ fn zone(
 ) -> AnyElement {
     let theme = Theme::of(cx).clone();
     let first = turn.range.start;
-    let body =
-        (first + usize::from(matches!(chat.items[first], ChatItem::User(_))))..turn.answer_from;
-    let steps = chat.items[body.clone()]
-        .iter()
-        .filter(|item| matches!(item, ChatItem::Tool { .. }))
-        .count();
-    // Auto-follow while the turn runs, and the person who presses the
-    // header wins from then on.
-    let open = chat
-        .transcript
-        .work
-        .get(&first)
-        .copied()
-        .unwrap_or_default()
-        .get(running);
-
     let mut zone = div().flex().flex_col().gap(px(10.)).pb(px(28.));
     if let Some(ChatItem::User(text)) = chat.items.get(first) {
         let (doc, images) = gallery::document(text);
@@ -993,8 +966,43 @@ fn zone(
                 ),
         );
     }
-    if !body.is_empty() {
-        zone = zone.child(work_header(chat.id, first, steps, open, cx));
+    let body = (first + usize::from(matches!(chat.items[first], ChatItem::User(_))))..turn.range.end;
+    let mut at = body.start;
+    for run in chat.items[body.clone()].chunk_by(|a, b| interim(a) == interim(b)) {
+        let span = at..at + run.len();
+        at = span.end;
+        if !interim(&run[0]) {
+            for ix in span {
+                zone = zone.child(match &chat.items[ix] {
+                    ChatItem::Agent(text) => prose(chat, ix, text, window, cx),
+                    ChatItem::Notice { text, .. } => div()
+                        .opacity(0.65)
+                        .child(prose(chat, ix, text, window, cx))
+                        .into_any_element(),
+                    ChatItem::Process { command, output } => {
+                        let (command, output) = (command.clone(), output.clone());
+                        process(chat, ix, &command, &output, cx)
+                    }
+                    _ => div().into_any_element(),
+                });
+            }
+            continue;
+        }
+        let steps = run
+            .iter()
+            .filter(|item| matches!(item, ChatItem::Tool { .. }))
+            .count();
+        // Auto-follow the run the turn is still inside, and the person who
+        // presses the header wins from then on.
+        let live = running && span.end == turn.range.end;
+        let open = chat
+            .transcript
+            .work
+            .get(&span.start)
+            .copied()
+            .unwrap_or_default()
+            .get(live);
+        zone = zone.child(work_header(chat.id, span.start, steps, open, cx));
         if open {
             zone = zone.child(
                 div()
@@ -1005,31 +1013,23 @@ fn zone(
                     .flex()
                     .flex_col()
                     .gap(px(8.))
-                    .children(work(chat, body, cx)),
+                    .children(work(chat, span, cx)),
             );
         }
-    }
-    for ix in turn.answer_from..turn.range.end {
-        zone = zone.child(match &chat.items[ix] {
-            ChatItem::Agent(text) => prose(chat, ix, text, window, cx),
-            ChatItem::Notice { text, .. } => div()
-                .opacity(0.65)
-                .child(prose(chat, ix, text, window, cx))
-                .into_any_element(),
-            ChatItem::Process { command, output } => {
-                let (command, output) = (command.clone(), output.clone());
-                process(chat, ix, &command, &output, cx)
-            }
-            _ => div().into_any_element(),
-        });
     }
     zone.into_any_element()
 }
 
-/// How much happened, and a chevron to see it.
+/// Work rather than answer: what the agent did, as against what it said.
+fn interim(item: &ChatItem) -> bool {
+    matches!(item, ChatItem::Tool { .. } | ChatItem::Thinking { .. })
+}
+
+/// How much happened, and a chevron to see it. `at` is the run's first item,
+/// which is what its open state is keyed by.
 fn work_header(
     id: u64,
-    turn: usize,
+    at: usize,
     steps: usize,
     open: bool,
     cx: &mut Context<Workspace>,
@@ -1041,7 +1041,7 @@ fn work_header(
         n => format!("Worked · {n} steps"),
     };
     div()
-        .id(("work", turn))
+        .id(("work", at))
         .self_start()
         .flex()
         .flex_row()
@@ -1055,11 +1055,7 @@ fn work_header(
         .on_click(cx.listener(move |this, _, _, cx| {
             this.with_session(id, cx, |chat| {
                 let running = chat.streaming;
-                chat.transcript
-                    .work
-                    .entry(turn)
-                    .or_default()
-                    .toggle(running);
+                chat.transcript.work.entry(at).or_default().toggle(running);
             });
         }))
         .child(theme.disclosure(open))
@@ -1072,9 +1068,9 @@ fn work_header(
         .into_any_element()
 }
 
-/// The interim half: thoughts, prose, and runs of adjacent tool calls boxed
-/// together — the run boundary is "is this a tool", so a sentence between
-/// two calls breaks the box exactly where it should.
+/// One run of work: thoughts, and runs of adjacent tool calls boxed together —
+/// the box boundary is "is this a tool", so a thought between two calls breaks
+/// the box exactly where it should.
 fn work(chat: &ChatSession, body: Range<usize>, cx: &mut Context<Workspace>) -> Vec<AnyElement> {
     let theme = Theme::of(cx).clone();
     let is_tool = |item: &ChatItem| matches!(item, ChatItem::Tool { .. });
@@ -1107,14 +1103,6 @@ fn work(chat: &ChatSession, body: Range<usize>, cx: &mut Context<Workspace>) -> 
                                 .size(px(12.))
                                 .text_color(theme.text_faint),
                         )
-                        .child(text.clone())
-                        .into_any_element(),
-                    ChatItem::Agent(text) | ChatItem::Notice { text, .. } => div()
-                        .text_style(TextStyle::Callout)
-                        .text_color(theme.text_muted)
-                        .when(matches!(item, ChatItem::Notice { .. }), |el| {
-                            el.opacity(0.65)
-                        })
                         .child(text.clone())
                         .into_any_element(),
                     _ => div().into_any_element(),

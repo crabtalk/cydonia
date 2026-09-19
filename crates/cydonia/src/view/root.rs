@@ -11,6 +11,7 @@ use crate::{
     },
     view::{
         board,
+        menubar::CloseWindow,
         component::{
             composer::{Composer, ComposerEvent},
             menu::Menu,
@@ -213,11 +214,6 @@ pub fn bindings() -> Vec<KeyBinding> {
         // through entries.
         KeyBinding::new("ctrl-alt-tab", NextPane, Some("Cydonia")),
         KeyBinding::new("ctrl-alt-shift-tab", PrevPane, Some("Cydonia")),
-        // `ctrl-w` alongside the pane chord: it closes the tab in front, and
-        // does nothing where there is no layout to hold one. A terminal under
-        // the focus writes the byte and stops the event, so a shell keeps its
-        // delete-word.
-        KeyBinding::new("ctrl-w", ClosePane, Some("Cydonia")),
         KeyBinding::new("ctrl-alt-w", ClosePane, Some("Cydonia")),
         KeyBinding::new("ctrl-alt-z", ZoomPane, Some("Cydonia")),
         // Scope the fallback to the root so focused text surfaces take priority.
@@ -471,6 +467,7 @@ impl Cydonia {
                     let (composer, card_field, cell_field, find_field) =
                         Self::pane_parts(Some(entry.clone()), window, cx);
                     let mut leaf = Leaf::new(
+                        cx.focus_handle(),
                         composer,
                         card_field,
                         cell_field,
@@ -561,7 +558,11 @@ impl Cydonia {
                 .map(|editor| editor.focus_handle(cx)),
             Showing::Board(_) | Showing::Table(_) => None,
         };
-        window.focus(caret.as_ref().unwrap_or(&self.focus), cx);
+        // The pane's own handle, not the window's: the root's is tracked on a
+        // sibling of the panes, so landing there puts the focus outside the
+        // pane and the chords the pane claims stop being reached.
+        let here = self.leaf().focus.clone();
+        window.focus(caret.as_ref().unwrap_or(&here), cx);
         cx.notify();
     }
 
@@ -641,6 +642,7 @@ impl Cydonia {
             meter_at: Floating::new(Painter::of(cx)),
             workspace,
             leaves: vec![Leaf::new(
+                cx.focus_handle(),
                 composer,
                 card_field,
                 cell_field,
@@ -1144,6 +1146,21 @@ impl Render for Cydonia {
             .on_action(
                 cx.listener(|this, _: &ClosePane, window, cx| this.close_focused_pane(window, cx)),
             )
+            // `cmd-w` closes the tab in front, and the window where there is no
+            // tab to close. Taken on the action rather than on the chord: the
+            // window's binding is contextless, which `Keymap::binding_enabled`
+            // ranks at the depth of the whole stack and so above every scoped
+            // binding — a `cmd-w` claimed for a pane is outranked wherever
+            // anything inside the pane holds the focus, which is everywhere
+            // worth closing a tab from. An element handler runs before the
+            // global one that removes the window, so this is where the two
+            // meanings part.
+            .on_action(cx.listener(|this, _: &CloseWindow, window, cx| {
+                match this.leaf().entry.is_some() {
+                    true => this.close_focused_pane(window, cx),
+                    false => window.remove_window(),
+                }
+            }))
             .on_action(cx.listener(|this, _: &ZoomPane, _, cx| this.zoom_focused_pane(cx)))
             // The right-hand panel and what opens into it are not offered
             // beside a layout: it divides the room they would stand in, and
