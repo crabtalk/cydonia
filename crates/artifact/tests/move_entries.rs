@@ -104,7 +104,10 @@ fn an_id_already_taken_is_landed_beside() {
     let arrived = article::move_to(&content, there.path()).unwrap();
 
     assert_eq!(fs::read_to_string(&arrived).unwrap(), "mine");
-    assert_eq!(fs::read_to_string(article::content(&taken)).unwrap(), "theirs");
+    assert_eq!(
+        fs::read_to_string(article::content(&taken)).unwrap(),
+        "theirs"
+    );
     assert_ne!(article::id_of(&arrived), id);
 }
 

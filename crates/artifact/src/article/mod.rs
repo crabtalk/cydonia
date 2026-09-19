@@ -117,7 +117,8 @@ pub fn free(dir: &Path, stamp: u128) -> PathBuf {
 /// The `#number` does not come along: the source tombstones its own, and the
 /// destination issues one on the next read.
 pub fn move_to(content: &Path, to: &Path) -> std::io::Result<PathBuf> {
-    let missing = |what: &str| std::io::Error::new(std::io::ErrorKind::InvalidInput, what.to_owned());
+    let missing =
+        |what: &str| std::io::Error::new(std::io::ErrorKind::InvalidInput, what.to_owned());
     let from_dir = content.parent().ok_or_else(|| missing("no article here"))?;
     let from = project_of(content).ok_or_else(|| missing("no project here"))?;
     if from == to {
@@ -178,13 +179,19 @@ fn carry_assets(content: &Path, from: &Path, to: &Path) {
     let Ok(text) = std::fs::read_to_string(content) else {
         return;
     };
-    let (here, there) = (fs::Project::new(from).assets(), fs::Project::new(to).assets());
+    let (here, there) = (
+        fs::Project::new(from).assets(),
+        fs::Project::new(to).assets(),
+    );
     let (here, there) = (here.to_string_lossy(), there.to_string_lossy());
     if !text.contains(here.as_ref()) {
         return;
     }
     for name in assets_named(&text, &here) {
-        let (source, target) = (Path::new(here.as_ref()).join(&name), Path::new(there.as_ref()).join(&name));
+        let (source, target) = (
+            Path::new(here.as_ref()).join(&name),
+            Path::new(there.as_ref()).join(&name),
+        );
         if target.exists() {
             continue;
         }

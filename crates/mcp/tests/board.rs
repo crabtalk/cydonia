@@ -426,7 +426,10 @@ fn a_card_is_tagged_and_untagged() {
         json!({ "project": scratch.path(), "board": "ROAD" }),
         None,
     ));
-    assert!(text.contains("ROAD-1  Wire the model picker  [busy]"), "{text}");
+    assert!(
+        text.contains("ROAD-1  Wire the model picker  [busy]"),
+        "{text}"
+    );
 
     let cleared = said(server.call(
         "board_set_card_status",

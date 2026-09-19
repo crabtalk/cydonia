@@ -282,8 +282,8 @@ fn move_article(args: Args<'_>) -> Outcome {
     let arrived = article::move_to(&found.content, to)
         .map_err(|e| Trouble::Refused(format!("{label} cannot be moved — {e}")))?;
     let id = article::id_of(&arrived);
-    let number = artifact::entry::number(to, "article", &id)
-        .map_err(|e| Trouble::Refused(e.to_string()))?;
+    let number =
+        artifact::entry::number(to, "article", &id).map_err(|e| Trouble::Refused(e.to_string()))?;
     Ok(
         Answer::said(format!("{label} moved to {} as #{number}", to.display())).with(json!({
             "id": id,

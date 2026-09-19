@@ -17,6 +17,7 @@ use artifact::{
     board::{Card, Status, View},
     layout::Member,
 };
+use bezel::agent::orbs::engine::Frame;
 use bezel::ui::scroll as scrollbars;
 use bezel::{
     gpui::{
@@ -35,11 +36,13 @@ use bezel::{
         widgets::Buttons,
     },
 };
-use bezel::agent::orbs::engine::Frame;
 use markdown::Typography;
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
-actions!(cydonia_board, [CommitCard, DismissCard, FindCard, DismissFind]);
+actions!(
+    cydonia_board,
+    [CommitCard, DismissCard, FindCard, DismissFind]
+);
 
 /// Claimed on top of `TextField`, so `enter` files the card here and stays a
 /// newline in every other multi-line field.
@@ -325,7 +328,11 @@ pub struct Marks(RefCell<HashMap<String, Rc<RefCell<Frame>>>>);
 
 impl Marks {
     fn of(&self, card: &str) -> Rc<RefCell<Frame>> {
-        self.0.borrow_mut().entry(card.to_owned()).or_default().clone()
+        self.0
+            .borrow_mut()
+            .entry(card.to_owned())
+            .or_default()
+            .clone()
     }
 }
 
@@ -593,7 +600,13 @@ impl Cydonia {
     /// nothing was aimed at takes a card anyway.
     /// Let a carried card go on `at` — the board under the pointer, which is
     /// not always the board it was picked up from.
-    fn drop_card(&mut self, drag: &CardDrag, at: (usize, usize), column: &str, cx: &mut Context<Self>) {
+    fn drop_card(
+        &mut self,
+        drag: &CardDrag,
+        at: (usize, usize),
+        column: &str,
+        cx: &mut Context<Self>,
+    ) {
         let before = self
             .leaf_mut()
             .landing
@@ -659,11 +672,9 @@ impl Cydonia {
     ) {
         self.commit(cx);
         let id = id.to_owned();
-        let minted = self
-            .workspace
-            .update(cx, |workspace, cx| {
-                workspace.new_column_beside(&id, after, cx)
-            });
+        let minted = self.workspace.update(cx, |workspace, cx| {
+            workspace.new_column_beside(&id, after, cx)
+        });
         if let Some(minted) = minted {
             self.start_rename(Renaming::Column(minted), window, cx);
         }
@@ -858,12 +869,7 @@ impl Cydonia {
     }
 
     /// Done finding: the field goes and takes its query with it.
-    pub(crate) fn dismiss_find(
-        &mut self,
-        _: &DismissFind,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub(crate) fn dismiss_find(&mut self, _: &DismissFind, _: &mut Window, cx: &mut Context<Self>) {
         let field = self.leaf().find_field.clone();
         self.leaf_mut().finding = false;
         field.update(cx, |field, cx| field.clear(cx));
@@ -1021,12 +1027,10 @@ impl Cydonia {
                     .p(px(5.))
                     .rounded_full()
                     .when(on, |el| el.bg(theme.element_active))
-                    .child(
-                        icons::icon(glyph).size(px(14.)).text_color(match on {
-                            true => theme.text,
-                            false => theme.text_faint,
-                        }),
-                    )
+                    .child(icons::icon(glyph).size(px(14.)).text_color(match on {
+                        true => theme.text,
+                        false => theme.text_faint,
+                    }))
                     .tooltip(move |window, cx| Tooltip::text(label, window, cx))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         // The pill floats over the board, so the card or row
@@ -1107,7 +1111,6 @@ impl Cydonia {
             ))
             .into_any_element()
     }
-
 
     // ── the list ─────────────────────────────────────────────────
 
@@ -1275,7 +1278,17 @@ impl Cydonia {
             .on_drop(cx.listener(move |this, drag: &CardDrag, _, cx| {
                 this.drop_card(drag, (project, board_at), &taken, cx);
             }))
-            .child(self.list_group_header(&id, name, Tally { held, shown: cards.len() }, at, lanes, cx))
+            .child(self.list_group_header(
+                &id,
+                name,
+                Tally {
+                    held,
+                    shown: cards.len(),
+                },
+                at,
+                lanes,
+                cx,
+            ))
             .children(rows)
             // Nothing to write into a narrowed lane: a card that does not
             // answer the query would be filed and vanish in one gesture.
@@ -1465,9 +1478,7 @@ impl Cydonia {
             // On show, not behind a hover — a card's run is what you look at
             // the board to see, and hiding it would mean hunting for the one
             // that is working.
-            .children(
-                working.map(|at| transcript::orb(at.state, at.since, &at.frame, cx)),
-            )
+            .children(working.map(|at| transcript::orb(at.state, at.since, &at.frame, cx)))
             .child(
                 div()
                     .invisible()
@@ -1488,15 +1499,13 @@ impl Cydonia {
                     // something about itself: a tag is somebody already holding
                     // it, and a second agent at one task is work done twice.
                     // Opening the session it has stays — reading is not doing.
-                    .children(
-                        (sessions && live.is_none() && status.is_none()).then(|| {
-                            self.card_action("list-run", id, icons::multimedia::Play, cx)
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    cx.stop_propagation();
-                                    this.dispatch_card(&run, cx);
-                                }))
-                        }),
-                    ),
+                    .children((sessions && live.is_none() && status.is_none()).then(|| {
+                        self.card_action("list-run", id, icons::multimedia::Play, cx)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                cx.stop_propagation();
+                                this.dispatch_card(&run, cx);
+                            }))
+                    })),
             )
             .child(
                 self.menu_button(
@@ -1676,7 +1685,17 @@ impl Cydonia {
             .on_drop(cx.listener(move |this, drag: &CardDrag, _, cx| {
                 this.drop_card(drag, (project, board_at), &taken, cx);
             }))
-            .child(self.column_header(&id, name, Tally { held, shown: cards.len() }, at, lanes, cx))
+            .child(self.column_header(
+                &id,
+                name,
+                Tally {
+                    held,
+                    shown: cards.len(),
+                },
+                at,
+                lanes,
+                cx,
+            ))
             .child(
                 div()
                     .relative()
@@ -2065,9 +2084,7 @@ impl Cydonia {
                     // two belong in one slot. On show rather than behind the
                     // hover the actions sit behind — a card's run is what you
                     // look at the board to see.
-                    .children(
-                        working.map(|at| transcript::orb(at.state, at.since, &at.frame, cx)),
-                    )
+                    .children(working.map(|at| transcript::orb(at.state, at.since, &at.frame, cx)))
                     .child(
                         div()
                             .invisible()
@@ -2093,17 +2110,15 @@ impl Cydonia {
                             // already holding it, and a second agent at one task is
                             // the work done twice. Opening the session it has
                             // stays — reading is not doing.
-                            .children(
-                                (sessions && live.is_none() && status.is_none()).then(
-                                    || {
-                                        self.card_action("run", id, icons::multimedia::Play, cx)
-                                            .on_click(cx.listener(move |this, _, _, cx| {
-                                                cx.stop_propagation();
-                                                this.dispatch_card(&run, cx);
-                                            }))
-                                    },
-                                ),
-                            ),
+                            .children((sessions && live.is_none() && status.is_none()).then(
+                                || {
+                                    self.card_action("run", id, icons::multimedia::Play, cx)
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            cx.stop_propagation();
+                                            this.dispatch_card(&run, cx);
+                                        }))
+                                },
+                            )),
                     ),
             )
             // Below the drag threshold nothing is picked up, so a press is

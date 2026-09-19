@@ -159,11 +159,7 @@ fn a_card_moves_to_a_board_in_another_project() {
     assert!(landed.contains("ship it"), "{landed}");
     assert!(landed.contains("PLAN-1"), "{landed}");
     // And it is gone from where it was.
-    let left = said(server.call(
-        "board_read",
-        json!({"board": "ROAD"}),
-        Some(here.path()),
-    ));
+    let left = said(server.call("board_read", json!({"board": "ROAD"}), Some(here.path())));
     assert!(!left.contains("ship it"), "{left}");
 }
 

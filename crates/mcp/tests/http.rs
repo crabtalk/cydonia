@@ -186,7 +186,10 @@ fn a_bound_caller_is_never_asked_for_its_project() {
 fn listed(response: &str) -> Vec<serde_json::Value> {
     let body = response.split("\r\n\r\n").nth(1).expect("a body");
     let answer: serde_json::Value = serde_json::from_str(body).expect("a frame");
-    answer["result"]["tools"].as_array().expect("a list").clone()
+    answer["result"]["tools"]
+        .as_array()
+        .expect("a list")
+        .clone()
 }
 
 /// A project is whatever somebody called their directory, and a header value

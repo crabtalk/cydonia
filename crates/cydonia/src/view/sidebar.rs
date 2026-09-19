@@ -175,7 +175,10 @@ pub enum EntryDrag {
     /// A session that has had no turn. A layout names its members by file and
     /// this one has none, so it is carried by the id it holds in this process
     /// and the file is minted where it lands.
-    Session { project: usize, id: u64 },
+    Session {
+        project: usize,
+        id: u64,
+    },
 }
 
 impl Render for Carried {

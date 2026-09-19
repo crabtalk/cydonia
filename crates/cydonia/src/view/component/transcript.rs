@@ -966,7 +966,8 @@ fn zone(
                 ),
         );
     }
-    let body = (first + usize::from(matches!(chat.items[first], ChatItem::User(_))))..turn.range.end;
+    let body =
+        (first + usize::from(matches!(chat.items[first], ChatItem::User(_))))..turn.range.end;
     let mut at = body.start;
     for run in chat.items[body.clone()].chunk_by(|a, b| interim(a) == interim(b)) {
         let span = at..at + run.len();

@@ -149,10 +149,7 @@ impl<T: Clone + PartialEq> Node<T> {
     /// for a split, which holds none of its own.
     pub fn stack(&self) -> Vec<T> {
         match self {
-            Self::Leaf { entry, tabs, .. } => std::iter::once(entry)
-                .chain(tabs)
-                .cloned()
-                .collect(),
+            Self::Leaf { entry, tabs, .. } => std::iter::once(entry).chain(tabs).cloned().collect(),
             Self::Split { .. } => Vec::new(),
         }
     }
@@ -161,7 +158,9 @@ impl<T: Clone + PartialEq> Node<T> {
     /// of its tabs. A split holds nothing itself.
     fn holds(&self, entry: &T) -> bool {
         match self {
-            Self::Leaf { entry: named, tabs, .. } => named == entry || tabs.contains(entry),
+            Self::Leaf {
+                entry: named, tabs, ..
+            } => named == entry || tabs.contains(entry),
             Self::Split { .. } => false,
         }
     }
@@ -776,7 +775,10 @@ impl Layout {
         let Some(path) = self.tree.path_to(entry) else {
             return Vec::new();
         };
-        self.tree.at_path(&path).map(Node::stack).unwrap_or_default()
+        self.tree
+            .at_path(&path)
+            .map(Node::stack)
+            .unwrap_or_default()
     }
 
     /// Take one entry out. A pane holding tabs keeps the pane and loses a tab;

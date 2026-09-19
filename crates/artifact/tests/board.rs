@@ -494,7 +494,9 @@ fn a_column_can_be_added_either_side_of_another() {
         .collect();
     assert_eq!(order, vec![&before, &todo, &between, &done, &after]);
     assert!(
-        board.add_column_beside("Nowhere", "no-such-lane", true).is_none(),
+        board
+            .add_column_beside("Nowhere", "no-such-lane", true)
+            .is_none(),
         "and nothing to anchor to writes nothing",
     );
 }

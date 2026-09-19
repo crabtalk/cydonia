@@ -56,8 +56,14 @@ fn callers_with_tools_are_told_to_tag_and_untag_cards() {
             context.contains("A request that names a card is a card you are working"),
             "{context}",
         );
-        assert!(context.contains("clear it with none when you answer"), "{context}");
-        assert!(context.contains("however often one card comes back"), "{context}");
+        assert!(
+            context.contains("clear it with none when you answer"),
+            "{context}"
+        );
+        assert!(
+            context.contains("however often one card comes back"),
+            "{context}"
+        );
     }
     // Nothing is said to a caller with no tools to say it about.
     let unavailable = prompts::session_context(Path::new("/project"), false);

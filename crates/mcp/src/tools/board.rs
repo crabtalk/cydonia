@@ -161,10 +161,12 @@ pub static TOOLS: [Tool; 12] = [
         description: "Carry a card to the end of another column, another board, or a board in another project. Moving to another board gives it a new handle and clears the session it was dispatched to.",
         schema: |bound| {
             let mut schema = fields(bound, &[PROJECT, CARD, COLUMN, TO_BOARD, TO_PROJECT]);
-            schema["required"] = json!([PROJECT.name, CARD.name]
-                .iter()
-                .filter(|name| !bound || **name != PROJECT.name)
-                .collect::<Vec<_>>());
+            schema["required"] = json!(
+                [PROJECT.name, CARD.name]
+                    .iter()
+                    .filter(|name| !bound || **name != PROJECT.name)
+                    .collect::<Vec<_>>()
+            );
             schema
         },
         writes: true,
@@ -416,13 +418,7 @@ fn move_card(args: Args<'_>) -> Outcome {
 
 /// The same move, between two lanes of one board — where the column is what
 /// the move is, so it is asked for rather than guessed at.
-fn within(
-    project: &fs::Project,
-    mut board: Board,
-    id: &str,
-    handle: &str,
-    named: &str,
-) -> Outcome {
+fn within(project: &fs::Project, mut board: Board, id: &str, handle: &str, named: &str) -> Outcome {
     let to = column(&board, named)?;
     let name = board.column(&to).map(|column| column.name.clone());
     if !board.move_card(id, &to) {

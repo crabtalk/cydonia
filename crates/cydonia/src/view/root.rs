@@ -11,7 +11,6 @@ use crate::{
     },
     view::{
         board,
-        menubar::CloseWindow,
         component::{
             composer::{Composer, ComposerEvent},
             menu::Menu,
@@ -20,6 +19,7 @@ use crate::{
         },
         confirm, create, info,
         leaf::{Leaf, Pane},
+        menubar::CloseWindow,
         settings::{self, Section, SettingsWindow},
         sidebar::{Renaming, Row},
         table,
@@ -973,7 +973,9 @@ impl Cydonia {
                     self.show_tab(&pane, &member, window, cx);
                     return;
                 }
-                None => self.workspace.update(cx, |workspace, _| workspace.leave_layout()),
+                None => self
+                    .workspace
+                    .update(cx, |workspace, _| workspace.leave_layout()),
             }
         }
         self.show_pane(Pane::Chat, cx);

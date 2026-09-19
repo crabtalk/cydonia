@@ -246,25 +246,27 @@ impl SettingsWindow {
                 .gap(px(settings::LABEL_GAP))
                 .child(theme.field_label("Boards"))
                 .child(
-                    theme.group_box().child(self.switch_row(
-                        Switch::new(
-                            "board-view",
-                            "New boards in list view",
-                            "Start a board as one list down rather than lanes across.",
-                            on,
-                        )
-                        .first(true),
-                        cx,
-                        move |this, cx| {
-                            let view = match on {
-                                true => View::Lanes,
-                                false => View::List,
-                            };
-                            this.workspace.update(cx, |workspace, cx| {
-                                workspace.set_default_board_view(view, cx);
-                            });
-                        },
-                    )),
+                    theme.group_box().child(
+                        self.switch_row(
+                            Switch::new(
+                                "board-view",
+                                "New boards in list view",
+                                "Start a board as one list down rather than lanes across.",
+                                on,
+                            )
+                            .first(true),
+                            cx,
+                            move |this, cx| {
+                                let view = match on {
+                                    true => View::Lanes,
+                                    false => View::List,
+                                };
+                                this.workspace.update(cx, |workspace, cx| {
+                                    workspace.set_default_board_view(view, cx);
+                                });
+                            },
+                        ),
+                    ),
                 )
                 .into_any_element(),
         )

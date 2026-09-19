@@ -68,7 +68,9 @@ pub fn open() -> Vec<PathBuf> {
 pub fn is_open(path: &Path) -> bool {
     let settled = |path: &Path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     let want = settled(path);
-    open().iter().any(|held| held == path || settled(held) == want)
+    open()
+        .iter()
+        .any(|held| held == path || settled(held) == want)
 }
 
 /// Ask for the change, which is as far as a tool can take it.

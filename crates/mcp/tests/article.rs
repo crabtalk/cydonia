@@ -139,7 +139,10 @@ fn a_refusal_says_what_is_there() {
         json!({ "project": "/no/such/directory" }),
         None,
     ));
-    assert!(why.contains("does not have /no/such/directory open"), "{why}");
+    assert!(
+        why.contains("does not have /no/such/directory open"),
+        "{why}"
+    );
     assert!(why.contains(&scratch.path().display().to_string()), "{why}");
 
     // A binding is taken as given, so a directory that went away under one is

@@ -558,7 +558,11 @@ fn a_pane_put_on_an_article_opens_it(cx: &mut gpui::TestAppContext) {
             .member_of(0, Showing::Article(0))
             .expect("a member");
         assert!(
-            workspace.article_in(0, 0).expect("an article").editor.is_none(),
+            workspace
+                .article_in(0, 0)
+                .expect("an article")
+                .editor
+                .is_none(),
             "listed, never opened",
         );
 
@@ -567,7 +571,11 @@ fn a_pane_put_on_an_article_opens_it(cx: &mut gpui::TestAppContext) {
         workspace.select_showing(0, Showing::Article(0), cx);
 
         assert!(
-            workspace.article_in(0, 0).expect("an article").editor.is_some(),
+            workspace
+                .article_in(0, 0)
+                .expect("an article")
+                .editor
+                .is_some(),
             "the pane opened it",
         );
         assert_eq!(workspace.projects[0].article, Some(0));
@@ -724,7 +732,9 @@ fn a_session_with_no_file_can_be_given_one_and_arranged(cx: &mut gpui::TestAppCo
         );
 
         workspace.retain_session(7, cx).expect("a file is minted");
-        let session = workspace.member_of_session(7).expect("and now it names one");
+        let session = workspace
+            .member_of_session(7)
+            .expect("and now it names one");
 
         workspace.arrange(&board, &session, Side::Right, cx);
         let layout = workspace.active_layout().expect("arranged");
@@ -745,6 +755,9 @@ fn a_pane_holding_one_tab_closes(cx: &mut gpui::TestAppContext) {
 
         workspace.close_pane(&b, cx);
         assert!(workspace.active_layout().is_none(), "the layout goes too");
-        assert!(workspace.active_board().is_some(), "landing on the survivor");
+        assert!(
+            workspace.active_board().is_some(),
+            "landing on the survivor"
+        );
     });
 }

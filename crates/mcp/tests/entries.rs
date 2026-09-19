@@ -136,8 +136,7 @@ fn a_bound_session_writes_into_another_open_project() {
         "findings"
     );
     assert!(
-        said(server.call("article_list", json!({}), Some(here.path())))
-            .contains("no articles")
+        said(server.call("article_list", json!({}), Some(here.path()))).contains("no articles")
     );
 }
 

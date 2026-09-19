@@ -316,7 +316,13 @@ impl Cydonia {
 
     /// Show one of a pane's tabs, and put the focus on it — a tab pressed is a
     /// pane entered, the same as a press anywhere else in one.
-    pub(crate) fn show_tab(&mut self, pane: &Member, tab: &Member, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn show_tab(
+        &mut self,
+        pane: &Member,
+        tab: &Member,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.fronts.insert(key_of(pane), tab.clone());
         self.focused = usize::MAX;
         self.focus_pane(tab, window, cx);
