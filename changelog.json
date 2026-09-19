@@ -1,5 +1,38 @@
 [
   {
+    "version": "0.1.10",
+    "date": "2026-09-19",
+    "summary": "Tabs in every pane, a board that reads as a list, and entries that move between projects.",
+    "new": [
+      "Open several entries in one pane and step between them as tabs, carrying a tab to another pane",
+      "Lay a board out as a list instead of columns, switched from its foot",
+      "Find cards on a board by typing, and jump to the one you meant",
+      "Move an article to another project, and a card to another board",
+      "Give a card the status an agent is working under: an orb while it is busy and a slot for the run",
+      "Let a session work in any project cydonia has open, not only the one it started in",
+      "Open the terminal across the width of the window, and keep the right-hand panel toggled where you left it",
+      "Close a layout tab with cmd-w"
+    ],
+    "media": {
+      "poster": "pics/cydonia/v0.1.10.jpg",
+      "src": "videos/cydonia/v0.1.10.mp4",
+      "alt": "…",
+      "w": 1280,
+      "h": 900
+    },
+    "changed": [
+      "Split a turn into runs of work in the transcript rather than one unbroken stream",
+      "Keep ctrl-tab inside the arrangement, stepping between the panes on screen",
+      "Tag several cards in one write from the agent tools",
+      "Put a cover on a new article as it is created"
+    ],
+    "fixed": [
+      "Move the caret with the pane the focus lands in",
+      "Land the caret in the composer when a session opens, and align the pending row",
+      "Cap a dragged panel at half the column and keep the width across restarts"
+    ]
+  },
+  {
     "version": "0.1.9",
     "date": "2026-09-18",
     "summary": "Split the window into panes, and a sidebar that stays where you put it.",
@@ -9,6 +42,13 @@
       "Arrange a project’s entries by hand, dragging a row where it belongs",
       "Pin an entry to the top of its project from the band’s menu"
     ],
+    "media": {
+      "poster": "pics/cydonia/v0.1.9.jpg",
+      "src": "videos/cydonia/v0.1.9.mp4",
+      "alt": "…",
+      "w": 1280,
+      "h": 900
+    },
     "changed": [
       "List entries where they were left rather than by what was written to last, so an agent’s writes no longer reshuffle the sidebar",
       "Raise a new entry to the top of the list until it is arranged, and keep pinned rows above it",
