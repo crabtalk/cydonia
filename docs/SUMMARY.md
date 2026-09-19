@@ -19,6 +19,7 @@
 
 - [Sessions](./agents/sessions.md)
 - [Installing agents](./agents/install.md)
+- [Running several agents](./agents/orchestration.md)
 - [MCP](./agents/mcp.md)
 
 # Reference

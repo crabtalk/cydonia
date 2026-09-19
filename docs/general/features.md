@@ -1,11 +1,11 @@
 ---
 title: Features
-description: The surfaces a project can hold, and the switches that decide which of them are shown.
+description: The switches that decide what a project can hold, and what may run in it.
 ---
 
-Cydonia ships with most of itself switched off. What a fresh install shows is
-articles and boards; the rest appears once you ask for it, in **Settings ›
-Features** or in `~/.config/cydonia/settings.toml`:
+Cydonia ships with most of itself switched off. A fresh install shows articles
+and boards and runs nothing; the rest appears once you ask for it, in
+**Settings › Features** or in `~/.config/cydonia/settings.toml`:
 
 ```toml
 [features]
@@ -20,11 +20,15 @@ tables = false     # structured records
 | `boards` | on | Cards in columns or as a list |
 | `tables` | off | Structured records |
 
-Articles have no switch. They are the one thing the app is for.
+**`sessions` is the one that matters.** A session is the only thing that starts
+an agent, and an agent is a package this machine downloads and runs, so the
+switch is the gate over that as much as over the pane. Nothing runs until it is
+on — see [Getting started](./getting-started.md).
 
-`sessions` gates more than a pane. A session is the only thing that starts an
-agent, and an agent is a package this machine downloads and runs, so the switch
-is the gate over that too.
+Boards are on because a board is files in the project and nothing runs to hold
+one.
+
+Articles have no switch.
 
 Turning a feature off hides it. Nothing on disk is deleted, and turning it back
 on shows what was there.

@@ -88,7 +88,7 @@
 		gap: 20px;
 		max-width: var(--shell);
 		margin: 0 auto;
-		padding: 0 var(--gutter) 56px;
+		padding: 0 var(--gutter) 28px;
 		font-size: 14px;
 	}
 

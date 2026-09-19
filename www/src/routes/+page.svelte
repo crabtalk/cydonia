@@ -108,11 +108,11 @@
 		<h1>Agents that leave something behind.</h1>
 		<div class="cta">
 			<a class="button primary" href={dmg}>
-				<Brand icon={siApple} size={16} />
+				<Brand icon={siApple} size={14} />
 				Download
 			</a>
 			<a class="button" href={repo}>
-				<Brand icon={siGithub} size={16} />
+				<Brand icon={siGithub} size={14} />
 				Source
 			</a>
 		</div>
@@ -256,12 +256,12 @@
 	.button {
 		display: inline-flex;
 		align-items: center;
-		gap: 8px;
-		height: 36px;
-		padding: 0 14px;
+		gap: 7px;
+		height: 32px;
+		padding: 0 12px;
 		border: 1px solid var(--line-strong);
 		border-radius: var(--radius);
-		font-size: 14px;
+		font-size: 13px;
 		font-weight: 500;
 	}
 
