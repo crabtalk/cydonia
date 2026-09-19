@@ -168,9 +168,15 @@ pub(crate) struct ProjectDrag(usize);
 pub(crate) struct Carried(pub SharedString);
 
 /// An entry carried out of the sidebar, named the way a layout names its
-/// members.
+/// members — or, for a session with no file yet, named by the session it is.
 #[derive(Clone, Debug)]
-pub struct EntryDrag(pub artifact::layout::Member);
+pub enum EntryDrag {
+    Member(artifact::layout::Member),
+    /// A session that has had no turn. A layout names its members by file and
+    /// this one has none, so it is carried by the id it holds in this process
+    /// and the file is minted where it lands.
+    Session { project: usize, id: u64 },
+}
 
 impl Render for Carried {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1003,7 +1009,7 @@ impl Cydonia {
             }
             Row::Layout(ix) => self.layout_row(ix, cx),
         };
-        let carried = self.member_of_row(row, cx);
+        let carried = self.drag_of_row(row, cx);
         let label = SharedString::from(self.label_of_row(row, cx));
         div()
             .id(SharedString::from(format!("sidebar-hover-{}", key_of(row))))
@@ -1013,10 +1019,9 @@ impl Cydonia {
                 }))
             })
             // Carried onto a pane's edge to put it beside what is there — see
-            // [`crate::view::arrangement`]. An entry with no number yet is not
-            // carried: a layout names its members by number.
-            .when_some(carried, |el, number| {
-                el.on_drag(EntryDrag(number), move |_, _, _, cx| {
+            // [`crate::view::arrangement`].
+            .when_some(carried, |el, carried| {
+                el.on_drag(carried, move |_, _, _, cx| {
                     let label = label.clone();
                     cx.new(|_| Carried(label))
                 })
@@ -1028,7 +1033,9 @@ impl Cydonia {
                     style.bg(Theme::of(cx).element_active)
                 })
                 .on_drop(cx.listener(move |this, drag: &EntryDrag, _, cx| {
-                    this.reorder_entry(&drag.0, row, cx);
+                    if let Some(carried) = this.dropped(drag, cx) {
+                        this.reorder_entry(&carried, row, cx);
+                    }
                 }))
             })
             .h(px(ROW_HEIGHT))
@@ -1142,6 +1149,18 @@ impl Cydonia {
     fn member_of_row(&self, row: Row, cx: &App) -> Option<Member> {
         let showing = showing_of(row)?;
         self.workspace.read(cx).member_of(project_of(row)?, showing)
+    }
+
+    /// What a drag off this row carries. A session with no file yet has no
+    /// name a layout can hold, and is carried as itself — see [`EntryDrag`].
+    fn drag_of_row(&self, row: Row, cx: &App) -> Option<EntryDrag> {
+        match self.member_of_row(row, cx) {
+            Some(member) => Some(EntryDrag::Member(member)),
+            None => match row {
+                Row::Session { project, id } => Some(EntryDrag::Session { project, id }),
+                _ => None,
+            },
+        }
     }
 
     /// What the sidebar needs of a session, read when its row comes on screen.

@@ -462,3 +462,39 @@ fn every_status_round_trips_through_its_word() {
     assert_eq!(Status::parse("none"), None);
     assert_eq!(Status::parse("working"), None);
 }
+
+/// A lane can be written beside another rather than only at the end, on
+/// whichever side the board's own order runs towards.
+#[test]
+fn a_column_can_be_added_either_side_of_another() {
+    let mut board = Board::new("1757000000000".into(), "Roadmap");
+    let todo = board.add_column("Todo").id.clone();
+    let done = board.add_column("Done").id.clone();
+
+    let before = board
+        .add_column_beside("Ideas", &todo, false)
+        .expect("a lane")
+        .id
+        .clone();
+    let between = board
+        .add_column_beside("Doing", &todo, true)
+        .expect("a lane")
+        .id
+        .clone();
+    let after = board
+        .add_column_beside("Shipped", &done, true)
+        .expect("a lane")
+        .id
+        .clone();
+
+    let order: Vec<&str> = board
+        .columns
+        .iter()
+        .map(|column| column.id.as_str())
+        .collect();
+    assert_eq!(order, vec![&before, &todo, &between, &done, &after]);
+    assert!(
+        board.add_column_beside("Nowhere", "no-such-lane", true).is_none(),
+        "and nothing to anchor to writes nothing",
+    );
+}

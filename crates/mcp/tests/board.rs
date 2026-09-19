@@ -442,6 +442,70 @@ fn a_card_is_tagged_and_untagged() {
     assert!(!text.contains("[busy]"), "{text}");
 }
 
+/// Several cards are tagged in one call, across boards — an agent taking a run
+/// of work up should not spend a call per card.
+#[test]
+fn several_cards_are_tagged_in_one_call() {
+    let scratch = Scratch::new("status-batch");
+    let store = scratch.store();
+    store.create_board("Roadmap", "ROAD").expect("a board");
+    store.create_board("Development", "DEV").expect("a board");
+    let server = scratch.server();
+    for board in ["ROAD", "DEV"] {
+        said(server.call(
+            "board_add_column",
+            json!({ "project": scratch.path(), "board": board, "name": "Todo" }),
+            None,
+        ));
+    }
+    for (board, text) in [
+        ("ROAD", "Wire the model picker"),
+        ("ROAD", "Ship the picker"),
+        ("DEV", "Fix the drag"),
+    ] {
+        said(server.call(
+            "board_add_card",
+            json!({ "project": scratch.path(), "board": board, "column": "Todo", "text": text }),
+            None,
+        ));
+    }
+
+    let tagged = said(server.call(
+        "board_set_card_status",
+        json!({
+            "project": scratch.path(),
+            "card": ["ROAD-1", "ROAD-2", "DEV-1"],
+            "status": "busy",
+        }),
+        None,
+    ));
+    assert_eq!(tagged, "ROAD-1, ROAD-2, DEV-1 are busy");
+    // Every named card, not just one per board: two cards of one board are two
+    // reads of it, and a write per card puts back a copy that predates the rest.
+    for (board, tags) in [("ROAD", 2), ("DEV", 1)] {
+        let text = said(server.call(
+            "board_read",
+            json!({ "project": scratch.path(), "board": board }),
+            None,
+        ));
+        assert_eq!(text.matches("[busy]").count(), tags, "{text}");
+    }
+
+    // A card nobody can find refuses the whole call, so the list is never half
+    // applied without saying so.
+    refused(server.call(
+        "board_set_card_status",
+        json!({ "project": scratch.path(), "card": ["ROAD-1", "ROAD-9"], "status": "none" }),
+        None,
+    ));
+    let text = said(server.call(
+        "board_read",
+        json!({ "project": scratch.path(), "board": "ROAD" }),
+        None,
+    ));
+    assert!(text.contains("[busy]"), "and nothing was written: {text}");
+}
+
 /// A word nobody uses is refused with the ones that are.
 #[test]
 fn an_unknown_status_is_refused_with_the_list() {

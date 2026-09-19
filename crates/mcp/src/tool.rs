@@ -112,6 +112,26 @@ impl<'a> Args<'a> {
         }
     }
 
+    /// One or several, for an argument a caller may say twice. A bare string
+    /// is one of them: a client with a single thing to name should not have to
+    /// wrap it, and a tool that takes a list takes a list of one.
+    pub fn list(&self, arg: Arg) -> Result<Vec<&'a str>, Trouble> {
+        let wrong = || {
+            Trouble::Invalid(format!(
+                "{} is required, as a string or a list of strings",
+                arg.name
+            ))
+        };
+        match self.arguments.get(arg.name) {
+            Some(Value::String(one)) => Ok(vec![one.as_str()]),
+            Some(Value::Array(many)) if !many.is_empty() => many
+                .iter()
+                .map(|value| value.as_str().ok_or_else(wrong))
+                .collect(),
+            _ => Err(wrong()),
+        }
+    }
+
     pub fn maybe(&self, arg: Arg) -> Option<&'a str> {
         self.arguments.get(arg.name).and_then(Value::as_str)
     }

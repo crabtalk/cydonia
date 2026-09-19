@@ -205,6 +205,25 @@ impl Workspace {
         Some(id)
     }
 
+    /// A lane beside the one named, on the side given — `after` for the lane
+    /// that follows it in the board's own order of its columns, which runs
+    /// across the lanes and down the list.
+    pub fn new_column_beside(
+        &mut self,
+        id: &str,
+        after: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<String> {
+        let minted = self
+            .active_board_mut()?
+            .add_column_beside(artifact::board::column::NAMED, id, after)?
+            .id
+            .clone();
+        self.save_board();
+        cx.notify();
+        Some(minted)
+    }
+
     pub fn rename_column(&mut self, id: &str, name: String, cx: &mut Context<Self>) {
         let renamed = self
             .active_board_mut()

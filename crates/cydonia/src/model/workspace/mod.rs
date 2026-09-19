@@ -183,6 +183,13 @@ impl Workspace {
             layouts: crate::model::layouts::all(),
             layout: None,
         };
+        // The arrangement the window closed on, before any entry is opened:
+        // `open_last_entry` is a project's answer and a layout spans them.
+        this.layout = state.layout.and_then(|id| {
+            this.layouts
+                .iter()
+                .position(|layout| layout.id == id && !layout.archived)
+        });
         for ix in restore {
             this.restore_sessions(ix);
             this.watch_project(ix, cx);
@@ -224,6 +231,7 @@ impl Workspace {
             last: self.last.clone(),
             order: self.order.clone(),
             pinned: self.pinned.clone(),
+            layout: self.active_layout().map(|layout| layout.id.clone()),
         });
     }
 

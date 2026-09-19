@@ -66,6 +66,11 @@ pub struct State {
     /// themselves, and `last` has no use for one.
     #[serde(default)]
     pub pinned: BTreeMap<PathBuf, Vec<Entry>>,
+    /// The layout the window was showing when it last closed, by its id — see
+    /// [`crate::model::layouts`]. Nothing where it was on a single entry, and
+    /// an id whose file has since gone lands on one too.
+    #[serde(default)]
+    pub layout: Option<String>,
 }
 
 /// `~/.config/cydonia/state.toml`, beside the settings it is not.
@@ -97,6 +102,7 @@ pub fn restore() -> State {
         last: stored.last,
         order: stored.order,
         pinned: stored.pinned,
+        layout: stored.layout,
     }
 }
 

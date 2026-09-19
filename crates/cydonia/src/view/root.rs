@@ -213,6 +213,11 @@ pub fn bindings() -> Vec<KeyBinding> {
         // through entries.
         KeyBinding::new("ctrl-alt-tab", NextPane, Some("Cydonia")),
         KeyBinding::new("ctrl-alt-shift-tab", PrevPane, Some("Cydonia")),
+        // `ctrl-w` alongside the pane chord: it closes the tab in front, and
+        // does nothing where there is no layout to hold one. A terminal under
+        // the focus writes the byte and stops the event, so a shell keeps its
+        // delete-word.
+        KeyBinding::new("ctrl-w", ClosePane, Some("Cydonia")),
         KeyBinding::new("ctrl-alt-w", ClosePane, Some("Cydonia")),
         KeyBinding::new("ctrl-alt-z", ZoomPane, Some("Cydonia")),
         // Scope the fallback to the root so focused text surfaces take priority.
@@ -782,6 +787,13 @@ impl Cydonia {
         if self.cycle_tab(step, window, cx) {
             return;
         }
+        // And an arrangement answers it for what it holds. The sidebar's list
+        // is not what is in front of you there, and every entry the layout
+        // holds is left out of it — see [`Self::ungrouped`] — so stepping into
+        // that list opens something else and leaves the layout behind.
+        if self.cycle_arranged(step, window, cx) {
+            return;
+        }
         // Nothing on screen is nothing to step from: the launch view is not an
         // entry, and its neighbour is not another one.
         let Some(pane) = self.showing(cx) else {
@@ -836,6 +848,38 @@ impl Cydonia {
         true
     }
 
+    /// Step the window to the next entry the open arrangement holds, wrapping
+    /// at the ends — every tab across every pane, in the order they are laid
+    /// out. Says whether the chord was the arrangement's, which is whenever one
+    /// is open: a layout holding a single entry answers it by staying put. The
+    /// sidebar's list leaves the layout and can land in another project
+    /// altogether, so falling through to it is never what the chord meant.
+    ///
+    /// Panes alone are the chord beside this one — see [`Self::step_pane`].
+    fn cycle_arranged(&mut self, step: isize, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let ring = match self.arrangement(cx) {
+            Some(layout) => layout.entries(),
+            None => return false,
+        };
+        if ring.len() < 2 {
+            return true;
+        }
+        let at = self
+            .leaf()
+            .entry
+            .clone()
+            .and_then(|front| ring.iter().position(|member| *member == front))
+            .unwrap_or(0);
+        let landing = (at as isize + step).rem_euclid(ring.len() as isize) as usize;
+        let Some(tab) = ring.get(landing).cloned() else {
+            return true;
+        };
+        let stack = self.workspace.read(cx).stack_of(&tab);
+        let pane = stack.first().cloned().unwrap_or_else(|| tab.clone());
+        self.show_tab(&pane, &tab, window, cx);
+        true
+    }
+
     /// Leaving a project is the moment a half-written card has to be filed:
     /// the spot it points at belongs to the board being navigated away from.
     pub(crate) fn select_project(&mut self, ix: usize, cx: &mut Context<Self>) {
@@ -869,6 +913,34 @@ impl Cydonia {
     /// element no frame draws is focus nowhere — so a session that cannot take
     /// a message leaves the focus where it was.
     pub(crate) fn select_session(&mut self, id: u64, window: &mut Window, cx: &mut Context<Self>) {
+        // While an arrangement is open, a session it holds is focused rather
+        // than opened — opening it would take the window out of the layout the
+        // pane is in. One it does not hold leaves the layout, the way opening
+        // any other entry does: without this the window stays arranged and the
+        // session picked is nowhere on screen.
+        if self.workspace.read(cx).active_layout().is_some() {
+            let member = self
+                .workspace
+                .read(cx)
+                .member_of_session(id)
+                .filter(|member| {
+                    self.workspace
+                        .read(cx)
+                        .active_layout()
+                        .is_some_and(|layout| layout.contains(member))
+                });
+            match member {
+                Some(member) => {
+                    // The pane a tab is in is keyed by the first of its strip
+                    // — see [`Self::show_tab`].
+                    let stack = self.workspace.read(cx).stack_of(&member);
+                    let pane = stack.first().cloned().unwrap_or_else(|| member.clone());
+                    self.show_tab(&pane, &member, window, cx);
+                    return;
+                }
+                None => self.workspace.update(cx, |workspace, _| workspace.leave_layout()),
+            }
+        }
         self.show_pane(Pane::Chat, cx);
         self.workspace
             .update(cx, |workspace, cx| workspace.select_session(id, cx));

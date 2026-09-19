@@ -656,3 +656,95 @@ fn a_tab_carried_to_an_edge_becomes_its_own_pane(cx: &mut gpui::TestAppContext) 
         assert_eq!(workspace.stack_of(&c), vec![c], "and holds a pane alone");
     });
 }
+
+/// A launch lands back in the arrangement the window closed on. The layout is
+/// the window's, so it is written to `state.toml` rather than to any project.
+#[gpui::test]
+fn the_open_layout_is_restored_at_launch(cx: &mut gpui::TestAppContext) {
+    let scratch = Scratch::new("restore");
+    let (workspace, a, b) = two_boards(&scratch, cx);
+
+    let id = workspace.update(cx, |workspace, cx| {
+        workspace.arrange(&a, &b, Side::Right, cx);
+        workspace.active_layout().expect("open").id.clone()
+    });
+
+    let stored = state::restore();
+    assert_eq!(stored.layout.as_deref(), Some(id.as_str()), "written down");
+
+    let next = cx.new(|cx| Workspace::new(Settings::default(), stored, cx));
+    next.update(cx, |workspace, _| {
+        assert_eq!(
+            workspace.active_layout().map(|layout| layout.id.clone()),
+            Some(id),
+            "and opened again"
+        );
+    });
+}
+
+/// Leaving the arrangement for a single entry is remembered too — the next
+/// launch lands on that entry, not back in the layout.
+#[gpui::test]
+fn leaving_the_layout_is_remembered(cx: &mut gpui::TestAppContext) {
+    let scratch = Scratch::new("restore-left");
+    let (workspace, a, b) = two_boards(&scratch, cx);
+
+    workspace.update(cx, |workspace, cx| {
+        workspace.arrange(&a, &b, Side::Right, cx);
+        workspace.open_board(0, 0, cx);
+    });
+
+    assert_eq!(state::restore().layout, None);
+}
+
+/// A session that has had no turn has no file, and a layout names its members
+/// by file. Dropping one into an arrangement mints the file first — see
+/// `Cydonia::dropped`, whose half of this is the gesture.
+#[gpui::test]
+fn a_session_with_no_file_can_be_given_one_and_arranged(cx: &mut gpui::TestAppContext) {
+    let scratch = Scratch::new("fresh-session");
+    cx.update(|cx| bezel::theme::Theme::install(bezel::theme::Appearance::Light, cx));
+    let mut settings = Settings::default();
+    settings.features.sessions = true;
+    let workspace = cx.new(|cx| Workspace::new(settings, state::State::default(), cx));
+
+    workspace.update(cx, |workspace, cx| {
+        workspace.open_project(scratch.project("one"), cx);
+        workspace.new_board(0, "First".into(), "ONE", cx).ok();
+        let board = workspace.member_of(0, Showing::Board(0)).expect("a member");
+
+        let path = workspace.projects[0].path.clone();
+        let mut chat = resting_session(7, &path);
+        chat.record = None;
+        workspace.projects[0].sessions.push(chat);
+
+        assert!(
+            workspace.member_of_session(7).is_none(),
+            "nothing for a layout to name yet",
+        );
+
+        workspace.retain_session(7, cx).expect("a file is minted");
+        let session = workspace.member_of_session(7).expect("and now it names one");
+
+        workspace.arrange(&board, &session, Side::Right, cx);
+        let layout = workspace.active_layout().expect("arranged");
+        assert!(layout.contains(&session), "with the session in it");
+    });
+}
+
+/// Closing a pane that holds one tab, in a layout of two. The layout goes with
+/// it — one pane left is no arrangement — and the window lands on the survivor.
+#[gpui::test]
+fn a_pane_holding_one_tab_closes(cx: &mut gpui::TestAppContext) {
+    let scratch = Scratch::new("close-one-tab");
+    let (workspace, a, b) = two_boards(&scratch, cx);
+
+    workspace.update(cx, |workspace, cx| {
+        workspace.arrange(&a, &b, Side::Right, cx);
+        assert_eq!(workspace.stack_of(&b), vec![b.clone()], "one tab");
+
+        workspace.close_pane(&b, cx);
+        assert!(workspace.active_layout().is_none(), "the layout goes too");
+        assert!(workspace.active_board().is_some(), "landing on the survivor");
+    });
+}

@@ -199,6 +199,20 @@ impl Board {
         self.columns.last().expect("just pushed")
     }
 
+    /// A lane beside another, on the side named — `after` for the side the
+    /// board's own order runs towards. Nothing where the anchor is not a lane
+    /// of this board.
+    pub fn add_column_beside(&mut self, name: &str, beside: &str, after: bool) -> Option<&Column> {
+        let at = self.columns.iter().position(|column| column.id == beside)?;
+        let at = match after {
+            true => at + 1,
+            false => at,
+        };
+        let id = self.mint_id();
+        self.columns.insert(at, Column::new(id, name));
+        self.columns.get(at)
+    }
+
     pub fn rename_column(&mut self, id: &str, name: &str) -> bool {
         match self.column_mut(id) {
             Some(column) => {

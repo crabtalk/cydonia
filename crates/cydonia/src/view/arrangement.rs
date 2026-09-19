@@ -273,7 +273,9 @@ impl Cydonia {
             .on_drop(cx.listener({
                 let on = held.clone();
                 move |this, drag: &EntryDrag, window, cx| {
-                    this.drop_entry(&drag.0, &on, window, cx);
+                    if let Some(arriving) = this.dropped(drag, cx) {
+                        this.drop_entry(&arriving, &on, window, cx);
+                    }
                 }
             }))
             // Pressing anywhere in a pane is how the focus moves to it, the
@@ -351,12 +353,33 @@ impl Cydonia {
             .on_drop(cx.listener({
                 let at = on.clone();
                 move |this, drag: &EntryDrag, window, cx| {
-                    this.drop_entry(&drag.0, &at, window, cx);
+                    if let Some(arriving) = this.dropped(drag, cx) {
+                        this.drop_entry(&arriving, &at, window, cx);
+                    }
                 }
             }))
             .child(body)
             .children(landing.map(|at| landing_mark(at, &theme)))
             .into_any_element()
+    }
+
+    /// The member a drag names, once it has landed.
+    ///
+    /// A session carried with no file yet is given one here: a layout names
+    /// its members by file, so there is nothing to put in one until this runs.
+    /// Minting it at the drop rather than at the drag keeps a gesture that
+    /// went nowhere from leaving a session behind on disk.
+    pub(crate) fn dropped(&mut self, drag: &EntryDrag, cx: &mut Context<Self>) -> Option<Member> {
+        match drag {
+            EntryDrag::Member(member) => Some(member.clone()),
+            EntryDrag::Session { project, id } => {
+                let (project, id) = (*project, *id);
+                self.workspace.update(cx, |workspace, cx| {
+                    workspace.retain_session(id, cx)?;
+                    workspace.member_of(project, Showing::Session(id))
+                })
+            }
+        }
     }
 
     /// The member that names what a single pane is on.
@@ -483,6 +506,16 @@ impl Cydonia {
             .read(cx)
             .showing_of(tab)
             .and_then(|(project, showing)| self.toolbar_of(project, showing, cx));
+        // A number is a project's own, and an arrangement can hold panes from
+        // several — so the tab says which project the number is counted in.
+        let project = self
+            .workspace
+            .read(cx)
+            .projects
+            .iter()
+            .find(|open| open.path == tab.project)
+            .map(|open| open.name())
+            .unwrap_or_default();
         // The pane in front *and* the tab in front of that pane: a background
         // pane's own front tab is not where the window's attention is.
         let focused = front && self.leaf().entry.as_ref() == Some(tab);
@@ -531,7 +564,7 @@ impl Cydonia {
                             .flex_none()
                             .text_style(TextStyle::Caption)
                             .text_color(theme.text_faint)
-                            .child(format!("#{number}"))
+                            .child(format!("{project}#{number}"))
                     }),
             )
             .on_click(cx.listener({
@@ -542,7 +575,7 @@ impl Cydonia {
             // to be pulled out into a pane of its own. The same drag the
             // sidebar makes, down to the ghost: where a tab came from is not
             // something the pane it lands on has to know.
-            .on_drag(EntryDrag(tab.clone()), move |_, _, _, cx| {
+            .on_drag(EntryDrag::Member(tab.clone()), move |_, _, _, cx| {
                 let label = title.clone();
                 cx.new(|_| Carried(label))
             })

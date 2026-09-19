@@ -17,4 +17,5 @@ clear it with none when you answer. This holds however small the request and
 however often one card comes back: a correction to work already done is that
 card again, and so is a question about it. Use blocked or done where one of
 those is the lasting answer. A tag left behind says an agent is on a card that
-nobody is.
+nobody is. A request naming several cards names them to one call: the card
+argument takes a list.

@@ -69,6 +69,7 @@ impl Workspace {
             self.open_project(path, cx);
         }
         self.layout = Some(ix);
+        self.save();
         cx.notify();
     }
 
@@ -114,6 +115,7 @@ impl Workspace {
         }
         store::save(layout);
         self.layout = Some(at);
+        self.save();
         cx.notify();
         Some(at)
     }
@@ -254,6 +256,7 @@ impl Workspace {
             .layout
             .filter(|open| *open != ix)
             .map(|open| if open > ix { open - 1 } else { open });
+        self.save();
         cx.notify();
     }
 
@@ -269,6 +272,7 @@ impl Workspace {
         if archived && self.layout == Some(ix) {
             self.layout = None;
         }
+        self.save();
         cx.notify();
     }
 

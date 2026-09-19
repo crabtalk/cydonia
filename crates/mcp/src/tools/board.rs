@@ -36,6 +36,13 @@ const CARD: Arg = Arg {
     name: "card",
     about: "The card: its handle (ROAD-12), or its id.",
 };
+/// The same argument where several are taken at once — one card, or a list of
+/// them. A second const rather than a flag on [`CARD`]: the line a client reads
+/// is the whole of how it learns a list is allowed here.
+const CARDS: Arg = Arg {
+    name: "card",
+    about: "The card, or several: each its handle (ROAD-12) or its id. They may be on different boards.",
+};
 const COLUMN: Arg = Arg {
     name: "column",
     about: "The column: its name, or its id.",
@@ -131,10 +138,19 @@ pub static TOOLS: [Tool; 12] = [
     },
     Tool {
         name: "board_set_card_status",
-        description: "Say how the work on a card is going — tag it busy while working on it, and clear the tag when the turn is over. This is not where the card sits: use board_move_card for that.",
+        description: "Say how the work on one card or several is going — tag them busy while working on them, and clear the tag when the turn is over. This is not where a card sits: use board_move_card for that.",
         schema: |bound| {
-            let mut schema = fields(bound, &[PROJECT, CARD, STATUS]);
+            let mut schema = fields(bound, &[PROJECT, CARDS, STATUS]);
             schema["properties"][STATUS.name]["enum"] = json!(statuses());
+            // One or a list of them, which is the one argument in these tools
+            // that takes either — see [`CARDS`].
+            schema["properties"][CARDS.name] = json!({
+                "description": CARDS.about,
+                "anyOf": [
+                    { "type": "string" },
+                    { "type": "array", "items": { "type": "string" } },
+                ],
+            });
             schema
         },
         writes: true,
@@ -290,9 +306,12 @@ fn statuses() -> Vec<&'static str> {
 /// one is what it means.
 const NONE: &str = "none";
 
+/// One card or a run of them, which may sit on different boards. Every card is
+/// located, tagged and written in turn: a refusal on any of them is the whole
+/// call refused, so a caller is never left guessing which half of a list took.
+/// The cards are looked up first for that reason.
 fn set_card_status(args: Args<'_>) -> Outcome {
     let project = &store(&args)?;
-    let (mut board, id) = locate(project, args.text(CARD)?)?;
     let word = args.text(STATUS)?.trim();
     let status = match word.eq_ignore_ascii_case(NONE) {
         true => None,
@@ -303,14 +322,43 @@ fn set_card_status(args: Args<'_>) -> Outcome {
             ))
         })?),
     };
-    let handle = named(&board, &id);
-    board.set_card_status(&id, status);
-    project.save_board(&mut board);
+    let found: Vec<(Board, String)> = args
+        .list(CARDS)?
+        .into_iter()
+        .map(|needle| locate(project, needle))
+        .collect::<Result<_, _>>()?;
+    // Two cards on one board arrive as two reads of it, and saving each copy in
+    // turn would put back one that predates the other's edit — the last write
+    // would drop every tag before it. A board is gathered once and written once,
+    // however many of its cards were named.
+    let mut boards: Vec<(Board, Vec<String>)> = Vec::new();
+    for (board, id) in found {
+        match boards.iter_mut().find(|(held, _)| held.id == board.id) {
+            Some((_, ids)) => ids.push(id),
+            None => boards.push((board, vec![id])),
+        }
+    }
+    let mut tagged: Vec<Value> = Vec::new();
+    let mut handles: Vec<String> = Vec::new();
+    for (mut board, ids) in boards {
+        for id in ids {
+            let handle = named(&board, &id);
+            board.set_card_status(&id, status);
+            tagged.push(json!({ "id": id, "handle": handle, "status": status }));
+            handles.push(handle);
+        }
+        project.save_board(&mut board);
+    }
+    let named = handles.join(", ");
+    let are = match handles.len() {
+        1 => "is",
+        _ => "are",
+    };
     Ok(Answer::said(match status {
-        Some(status) => format!("{handle} is {}", status.key()),
-        None => format!("{handle} is no longer tagged"),
+        Some(status) => format!("{named} {are} {}", status.key()),
+        None => format!("{named} {are} no longer tagged"),
     })
-    .with(json!({ "id": id, "handle": handle, "status": status })))
+    .with(json!({ "cards": tagged })))
 }
 
 fn move_card(args: Args<'_>) -> Outcome {

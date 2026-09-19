@@ -648,6 +648,27 @@ impl Cydonia {
         }
     }
 
+    /// A lane beside the one the menu is on, opened straight into its name —
+    /// the same as [`Self::new_column`], which only ever writes at the end.
+    fn new_column_beside(
+        &mut self,
+        id: &str,
+        after: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.commit(cx);
+        let id = id.to_owned();
+        let minted = self
+            .workspace
+            .update(cx, |workspace, cx| {
+                workspace.new_column_beside(&id, after, cx)
+            });
+        if let Some(minted) = minted {
+            self.start_rename(Renaming::Column(minted), window, cx);
+        }
+    }
+
     /// Drop a lane. Offered only while it is empty — see
     /// [`artifact::board::Board::remove_column`].
     fn drop_column(&mut self, id: &str, cx: &mut Context<Self>) {
@@ -821,9 +842,16 @@ impl Cydonia {
         Some((column.name.clone(), column.cards.len(), cards))
     }
 
-    /// Put the find bar up, or take the caret back to a field already up.
+    /// Put the find bar up, take the caret back to a field already up, or —
+    /// where the caret is in it already — put it away. The chord that raises a
+    /// bar is the one a reader reaches for to be rid of it, and the bar is the
+    /// query: dismissing it clears what the board is narrowed by.
     pub(crate) fn find_card(&mut self, _: &FindCard, window: &mut Window, cx: &mut Context<Self>) {
         let field = self.leaf().find_field.clone();
+        if self.leaf().finding && field.read(cx).focus_handle(cx).is_focused(window) {
+            self.dismiss_find(&DismissFind, window, cx);
+            return;
+        }
         self.leaf_mut().finding = true;
         window.focus(&field.read(cx).focus_handle(cx), cx);
         cx.notify();
@@ -1812,6 +1840,12 @@ impl Cydonia {
         if self.menu != Some(Menu::Lane(id.to_owned())) {
             return None;
         }
+        // What each direction is called. The step and the new lane are the
+        // same two directions, said the way the layout reads.
+        let before = match view {
+            View::Lanes => ("Add column left", "Add column right"),
+            View::List => ("Add column above", "Add column below"),
+        };
         let (back, on) = match view {
             View::Lanes => (
                 ("Move left", icons::arrows::ArrowLeft),
@@ -1832,6 +1866,15 @@ impl Cydonia {
                 this.edit(Editing::New(Place::Top, written.clone()), window, cx)
             },
         )];
+        // Then the two that write a lane either side of this one, so a board
+        // is not only ever grown at its right-hand end.
+        for (after, label) in [(false, before.0), (true, before.1)] {
+            let beside = id.to_owned();
+            rows.push(menu::row(
+                Item::action(label).with_icon(icons::math::Plus),
+                move |this, window, cx| this.new_column_beside(&beside, after, window, cx),
+            ));
+        }
         if at > 0 {
             let moved = id.to_owned();
             rows.push(menu::row(
