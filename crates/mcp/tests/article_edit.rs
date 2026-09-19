@@ -136,8 +136,10 @@ fn edit_schema_has_an_optional_boolean_and_respects_project_binding() {
         for name in ["article", "old_string", "new_string"] {
             assert!(required.contains(&json!(name)));
         }
+        // Offered either way; required only where there is no binding to
+        // stand in for it, so a bound session can still name another project.
         assert_eq!(required.contains(&json!("project")), !bound);
-        assert_eq!(schema["properties"].get("project").is_some(), !bound);
+        assert!(schema["properties"].get("project").is_some());
     }
 }
 

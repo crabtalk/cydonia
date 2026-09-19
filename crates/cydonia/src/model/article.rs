@@ -429,13 +429,17 @@ pub fn list(project: &Path) -> Vec<Article> {
     articles
 }
 
+/// A new document, with a cover already cut: an article is made from the
+/// sidebar with nothing in it, so the band is all there is to look at.
 pub fn create(project: &Path) -> Option<Article> {
     let dir = layout::init(project).ok()?;
     let article = layout::free(&dir, artifact::stamp::now());
     std::fs::create_dir_all(&article).ok()?;
     let path = layout::content(&article);
     std::fs::write(&path, "").ok()?;
-    Some(Article::new(path))
+    let mut article = Article::new(path);
+    article.shuffle_cover();
+    Some(article)
 }
 
 /// Articles used to sit loose in `.cydonia/` as `foo.md` beside `foo.cover-N.svg`,

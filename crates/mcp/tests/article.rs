@@ -132,11 +132,23 @@ fn a_refusal_says_what_is_there() {
     ));
     assert!(why.contains("Roadmap"), "{why}");
 
+    // A directory nobody opened is not a project to work in, and the refusal
+    // names what is open so a second call can be right.
     let why = refused(server.call(
         "article_list",
         json!({ "project": "/no/such/directory" }),
         None,
     ));
+    assert!(
+        why.contains("does not have /no/such/directory open"),
+        "{why}"
+    );
+    assert!(why.contains(&scratch.path().display().to_string()), "{why}");
+
+    // A binding is taken as given, so a directory that went away under one is
+    // where the missing-directory answer still comes from.
+    let gone = scratch.path().join("gone");
+    let why = refused(server.call("article_list", json!({}), Some(&gone)));
     assert!(why.contains("no directory"), "{why}");
 
     let why = invalid(server.call("article_read", json!({ "project": scratch.path() }), None));

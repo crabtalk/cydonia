@@ -4,6 +4,7 @@ use crate::{
     model::workspace::Workspace,
     view::settings::{self, SettingsWindow, Switch},
 };
+use artifact::board::View;
 use bezel::{
     gpui::{AnyElement, Context, DragMoveEvent, Empty, div, prelude::*, px},
     theme::{
@@ -46,6 +47,7 @@ impl SettingsWindow {
             .child(self.sidebar_group(cx))
             .child(self.scrollbars_group(cx))
             .child(self.editor_group(cx))
+            .children(self.boards_group(cx))
             .into_any_element()
     }
 
@@ -222,6 +224,52 @@ impl SettingsWindow {
                 ),
             )
             .into_any_element()
+    }
+
+    /// How a new board is laid out. The pill at the foot of a board is what
+    /// moves one already made — every board carries its own answer, so this
+    /// only says what a board starts as.
+    ///
+    /// Nothing at all with boards switched off: a default for a pane that
+    /// cannot be reached is a switch that does nothing.
+    fn boards_group(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let theme = Theme::of(cx).clone();
+        let workspace = self.workspace.read(cx);
+        if !workspace.settings.features.boards {
+            return None;
+        }
+        let on = workspace.board_view == View::List;
+        Some(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(settings::LABEL_GAP))
+                .child(theme.field_label("Boards"))
+                .child(
+                    theme.group_box().child(
+                        self.switch_row(
+                            Switch::new(
+                                "board-view",
+                                "New boards in list view",
+                                "Start a board as one list down rather than lanes across.",
+                                on,
+                            )
+                            .first(true),
+                            cx,
+                            move |this, cx| {
+                                let view = match on {
+                                    true => View::Lanes,
+                                    false => View::List,
+                                };
+                                this.workspace.update(cx, |workspace, cx| {
+                                    workspace.set_default_board_view(view, cx);
+                                });
+                            },
+                        ),
+                    ),
+                )
+                .into_any_element(),
+        )
     }
 
     /// How the caret behaves — the editor's and every field's alike.

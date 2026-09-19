@@ -19,13 +19,14 @@
 
 use crate::{
     tool::{Answer, Arg, Args, Outcome, Tool, Trouble},
-    tools::{PROJECT, fields, root},
+    tools::{PROJECT, fields, on_the_rail, root},
 };
 use artifact::{
     board::Board,
     project::{Project, fs},
 };
 use serde_json::{Value, json};
+use std::path::Path;
 
 const BOARD: Arg = Arg {
     name: "board",
@@ -35,10 +36,36 @@ const CARD: Arg = Arg {
     name: "card",
     about: "The card: its handle (ROAD-12), or its id.",
 };
+/// The same argument where several are taken at once — one card, or a list of
+/// them. A second const rather than a flag on [`CARD`]: the line a client reads
+/// is the whole of how it learns a list is allowed here.
+const CARDS: Arg = Arg {
+    name: "card",
+    about: "The card, or several: each its handle (ROAD-12) or its id. They may be on different boards.",
+};
 const COLUMN: Arg = Arg {
     name: "column",
     about: "The column: its name, or its id.",
 };
+/// Where a move takes the card. Their own arguments rather than [`BOARD`] and
+/// [`PROJECT`], which are where it is now.
+const TO_BOARD: Arg = Arg {
+    name: "to_board",
+    about: "The board to move it to, by reference (#12), key, name or id. Left out, it stays on the board it is on.",
+};
+const TO_PROJECT: Arg = Arg {
+    name: "to_project",
+    about: "The project that board is in, as a directory path, which must be one cydonia has open. Left out, it is this project. Requires to_board.",
+};
+
+/// The closed set is written into the description as well as into the schema's
+/// `enum`: a client that renders the schema gets the words from one place, and
+/// one that only reads prose gets them from the other.
+const STATUS: Arg = Arg {
+    name: "status",
+    about: "How the work is going: busy (being worked on now), blocked (cannot go on), done (finished), or none to take the answer off.",
+};
+
 const BEFORE_COLUMN: Arg = Arg {
     name: "before",
     about: "The column to put it in front of, by name or id. Left out, it goes to the right-hand end.",
@@ -73,7 +100,7 @@ const KEY: Arg = Arg {
     about: "A unique board key for card handles, such as ROAD. Normalized to uppercase letters and digits.",
 };
 
-pub static TOOLS: [Tool; 11] = [
+pub static TOOLS: [Tool; 12] = [
     Tool {
         name: "board_add",
         description: "Create a board with a name and unique key. Returns its id, project number, key, and columns. Use board_add_column to add columns.",
@@ -110,9 +137,38 @@ pub static TOOLS: [Tool; 11] = [
         call: rewrite_card,
     },
     Tool {
+        name: "board_set_card_status",
+        description: "Say how the work on one card or several is going — tag them busy while working on them, and clear the tag when the turn is over. This is not where a card sits: use board_move_card for that.",
+        schema: |bound| {
+            let mut schema = fields(bound, &[PROJECT, CARDS, STATUS]);
+            schema["properties"][STATUS.name]["enum"] = json!(statuses());
+            // One or a list of them, which is the one argument in these tools
+            // that takes either — see [`CARDS`].
+            schema["properties"][CARDS.name] = json!({
+                "description": CARDS.about,
+                "anyOf": [
+                    { "type": "string" },
+                    { "type": "array", "items": { "type": "string" } },
+                ],
+            });
+            schema
+        },
+        writes: true,
+        call: set_card_status,
+    },
+    Tool {
         name: "board_move_card",
-        description: "Carry a card to the end of another column on the same board.",
-        schema: |bound| fields(bound, &[PROJECT, CARD, COLUMN]),
+        description: "Carry a card to the end of another column, another board, or a board in another project. Moving to another board gives it a new handle and clears the session it was dispatched to.",
+        schema: |bound| {
+            let mut schema = fields(bound, &[PROJECT, CARD, COLUMN, TO_BOARD, TO_PROJECT]);
+            schema["required"] = json!(
+                [PROJECT.name, CARD.name]
+                    .iter()
+                    .filter(|name| !bound || **name != PROJECT.name)
+                    .collect::<Vec<_>>()
+            );
+            schema
+        },
         writes: true,
         call: move_card,
     },
@@ -238,13 +294,134 @@ fn rewrite_card(args: Args<'_>) -> Outcome {
     Ok(Answer::said(format!("{handle} now reads: {}", line(text))))
 }
 
-fn move_card(args: Args<'_>) -> Outcome {
+/// Every word [`STATUS`] takes, `none` among them — the schema's `enum` and
+/// the refusal are built from this one list.
+fn statuses() -> Vec<&'static str> {
+    artifact::board::Status::ALL
+        .iter()
+        .map(|status| status.key())
+        .chain(std::iter::once(NONE))
+        .collect()
+}
+
+/// What a caller says to take a status off. Not a [`Status`] — the absence of
+/// one is what it means.
+const NONE: &str = "none";
+
+/// One card or a run of them, which may sit on different boards. Every card is
+/// located, tagged and written in turn: a refusal on any of them is the whole
+/// call refused, so a caller is never left guessing which half of a list took.
+/// The cards are looked up first for that reason.
+fn set_card_status(args: Args<'_>) -> Outcome {
     let project = &store(&args)?;
+    let word = args.text(STATUS)?.trim();
+    let status = match word.eq_ignore_ascii_case(NONE) {
+        true => None,
+        false => Some(artifact::board::Status::parse(word).ok_or_else(|| {
+            Trouble::Refused(format!(
+                "{word} is not a status — say {}",
+                statuses().join(", ")
+            ))
+        })?),
+    };
+    let found: Vec<(Board, String)> = args
+        .list(CARDS)?
+        .into_iter()
+        .map(|needle| locate(project, needle))
+        .collect::<Result<_, _>>()?;
+    // Two cards on one board arrive as two reads of it, and saving each copy in
+    // turn would put back one that predates the other's edit — the last write
+    // would drop every tag before it. A board is gathered once and written once,
+    // however many of its cards were named.
+    let mut boards: Vec<(Board, Vec<String>)> = Vec::new();
+    for (board, id) in found {
+        match boards.iter_mut().find(|(held, _)| held.id == board.id) {
+            Some((_, ids)) => ids.push(id),
+            None => boards.push((board, vec![id])),
+        }
+    }
+    let mut tagged: Vec<Value> = Vec::new();
+    let mut handles: Vec<String> = Vec::new();
+    for (mut board, ids) in boards {
+        for id in ids {
+            let handle = named(&board, &id);
+            board.set_card_status(&id, status);
+            tagged.push(json!({ "id": id, "handle": handle, "status": status }));
+            handles.push(handle);
+        }
+        project.save_board(&mut board);
+    }
+    let named = handles.join(", ");
+    let are = match handles.len() {
+        1 => "is",
+        _ => "are",
+    };
+    Ok(Answer::said(match status {
+        Some(status) => format!("{named} {are} {}", status.key()),
+        None => format!("{named} {are} no longer tagged"),
+    })
+    .with(json!({ "cards": tagged })))
+}
+
+fn move_card(args: Args<'_>) -> Outcome {
+    let here = root(&args)?;
+    let project = &fs::Project::new(here);
     let (mut board, id) = locate(project, args.text(CARD)?)?;
-    let to = column(&board, args.text(COLUMN)?)?;
     let handle = named(&board, &id);
+    let landing = match args.maybe(TO_PROJECT) {
+        Some(named) => on_the_rail(Path::new(named))?,
+        None => here,
+    };
+    // Another board is named, or another project is — a project on its own is
+    // not a destination, since a card sits on a board and not in a directory.
+    let elsewhere = match (args.maybe(TO_BOARD), landing == here) {
+        (None, true) => None,
+        (None, false) => {
+            return Err(Trouble::Refused(format!(
+                "name the board in {} to move {handle} to — it has {}",
+                landing.display(),
+                keys(&fs::Project::new(landing).boards())
+            )));
+        }
+        (Some(needle), _) => Some(needle),
+    };
+    let Some(needle) = elsewhere else {
+        return within(project, board, &id, &handle, args.text(COLUMN)?);
+    };
+    let destination = &fs::Project::new(landing);
+    let mut to = self::board(destination, needle)?;
+    if to.id == board.id && landing == here {
+        return within(project, board, &id, &handle, args.text(COLUMN)?);
+    }
+    let lane = match args.maybe(COLUMN) {
+        Some(named) => Some(column(&to, named)?),
+        None => None,
+    };
+    let landed = artifact::board::carry_card(&mut board, &mut to, &id, lane.as_deref())
+        .ok_or_else(|| {
+            Trouble::Refused(format!(
+                "{handle} has nowhere to land on {} — it has no columns",
+                to.label()
+            ))
+        })?;
+    let label = to.label().to_owned();
+    destination.save_board(&mut to);
+    project.save_board(&mut board);
+    Ok(
+        Answer::said(format!("{handle} moved to {label} as {landed}")).with(json!({
+            "card": landed,
+            "board": to.id,
+            "project": landing,
+        })),
+    )
+}
+
+/// The same move, between two lanes of one board — where the column is what
+/// the move is, so it is asked for rather than guessed at.
+fn within(project: &fs::Project, mut board: Board, id: &str, handle: &str, named: &str) -> Outcome {
+    let to = column(&board, named)?;
     let name = board.column(&to).map(|column| column.name.clone());
-    if !board.move_card(&id, &to) {
+    if !board.move_card(id, &to) {
         return Err(Trouble::Refused(format!("{handle} would not move")));
     }
     project.save_board(&mut board);
@@ -483,6 +660,9 @@ fn outline(board: &Board) -> String {
         for card in &column.cards {
             let handle = board.handle_of(card).unwrap_or_else(|| card.id.clone());
             out.push_str(&format!("\n  {handle:<width$}  {}", line(&card.text)));
+            if let Some(status) = card.status {
+                out.push_str(&format!("  [{}]", status.key()));
+            }
             // What the card was handed to, which is what ▶ and 💬 are drawn
             // off. Whether that session is *running* is the app's to know.
             if card.session.is_some() {
@@ -538,6 +718,7 @@ fn shape(board: &Board) -> Value {
                         "handle": board.handle_of(card),
                         "text": card.text,
                         "session": card.session,
+                        "status": card.status,
                     }))
                     .collect::<Vec<_>>(),
             }))

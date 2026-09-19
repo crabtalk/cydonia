@@ -162,13 +162,24 @@ pub(crate) fn tint(selected: bool, archived: bool, theme: &Theme) -> Hsla {
 #[derive(Clone)]
 pub(crate) struct ProjectDrag(usize);
 
-/// What rides under the cursor while a project is being carried.
-struct Carried(SharedString);
+/// What rides under the cursor while an entry is being carried. Shared with
+/// the panes, so a tab dragged out of a strip looks like the same gesture the
+/// sidebar makes — see [`crate::view::arrangement`].
+pub(crate) struct Carried(pub SharedString);
 
 /// An entry carried out of the sidebar, named the way a layout names its
-/// members.
+/// members — or, for a session with no file yet, named by the session it is.
 #[derive(Clone, Debug)]
-pub struct EntryDrag(pub artifact::layout::Member);
+pub enum EntryDrag {
+    Member(artifact::layout::Member),
+    /// A session that has had no turn. A layout names its members by file and
+    /// this one has none, so it is carried by the id it holds in this process
+    /// and the file is minted where it lands.
+    Session {
+        project: usize,
+        id: u64,
+    },
+}
 
 impl Render for Carried {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -927,7 +938,7 @@ impl Cydonia {
         match row {
             Row::Project(ix) => self.select_project(ix, cx),
             Row::Archive(ix) => self.toggle_archive(ix, cx),
-            Row::Session { id, .. } => self.select_session(id, cx),
+            Row::Session { id, .. } => self.select_session(id, window, cx),
             Row::Board { project, ix } => self.open_board(project, ix, cx),
             Row::Article { project, ix } => self.open_article(project, ix, window, cx),
             Row::Table { project, ix } => self.open_table(project, ix, cx),
@@ -1001,7 +1012,7 @@ impl Cydonia {
             }
             Row::Layout(ix) => self.layout_row(ix, cx),
         };
-        let carried = self.member_of_row(row, cx);
+        let carried = self.drag_of_row(row, cx);
         let label = SharedString::from(self.label_of_row(row, cx));
         div()
             .id(SharedString::from(format!("sidebar-hover-{}", key_of(row))))
@@ -1011,10 +1022,9 @@ impl Cydonia {
                 }))
             })
             // Carried onto a pane's edge to put it beside what is there — see
-            // [`crate::view::arrangement`]. An entry with no number yet is not
-            // carried: a layout names its members by number.
-            .when_some(carried, |el, number| {
-                el.on_drag(EntryDrag(number), move |_, _, _, cx| {
+            // [`crate::view::arrangement`].
+            .when_some(carried, |el, carried| {
+                el.on_drag(carried, move |_, _, _, cx| {
                     let label = label.clone();
                     cx.new(|_| Carried(label))
                 })
@@ -1026,7 +1036,9 @@ impl Cydonia {
                     style.bg(Theme::of(cx).element_active)
                 })
                 .on_drop(cx.listener(move |this, drag: &EntryDrag, _, cx| {
-                    this.reorder_entry(&drag.0, row, cx);
+                    if let Some(carried) = this.dropped(drag, cx) {
+                        this.reorder_entry(&carried, row, cx);
+                    }
                 }))
             })
             .h(px(ROW_HEIGHT))
@@ -1140,6 +1152,18 @@ impl Cydonia {
     fn member_of_row(&self, row: Row, cx: &App) -> Option<Member> {
         let showing = showing_of(row)?;
         self.workspace.read(cx).member_of(project_of(row)?, showing)
+    }
+
+    /// What a drag off this row carries. A session with no file yet has no
+    /// name a layout can hold, and is carried as itself — see [`EntryDrag`].
+    fn drag_of_row(&self, row: Row, cx: &App) -> Option<EntryDrag> {
+        match self.member_of_row(row, cx) {
+            Some(member) => Some(EntryDrag::Member(member)),
+            None => match row {
+                Row::Session { project, id } => Some(EntryDrag::Session { project, id }),
+                _ => None,
+            },
+        }
     }
 
     /// What the sidebar needs of a session, read when its row comes on screen.
@@ -1362,8 +1386,8 @@ impl Cydonia {
         )
         .child(label)
         .child(self.archive_button(("session-archive", id), entry, session.archived, cx))
-        .on_click(cx.listener(move |this, _, _, cx| {
-            this.select_session(id, cx);
+        .on_click(cx.listener(move |this, _, window, cx| {
+            this.select_session(id, window, cx);
         }))
         .into_any_element()
     }
@@ -1558,11 +1582,11 @@ impl Cydonia {
                     cx,
                 )
             })
-            .on_click(cx.listener(move |this, _, _, cx| {
+            .on_click(cx.listener(move |this, _, window, cx| {
                 cx.stop_propagation();
                 match pinned {
                     true => this.pin_entry(entry, false, cx),
-                    false => this.archive_entry(entry, !archived, cx),
+                    false => this.archive_entry(entry, !archived, window, cx),
                 }
             }))
     }
@@ -1611,8 +1635,8 @@ impl Cydonia {
         // neither is offered a second route here. Everywhere else the name is
         // display-only and this is the way.
         let named = !matches!(entry, Row::Article { .. } | Row::Board { .. });
-        let mut rows = vec![menu::row(put, move |this, _, cx| {
-            this.archive_entry(entry, !archived, cx)
+        let mut rows = vec![menu::row(put, move |this, window, cx| {
+            this.archive_entry(entry, !archived, window, cx)
         })];
         // Above archive, and only for an entry still in hand: what is put away
         // is not held at the top of anything.
@@ -1773,7 +1797,18 @@ impl Cydonia {
     /// Put an entry away, or bring it back. Where the flag lives is each
     /// kind's own business — a board's file, an article's properties, a row in
     /// the store — and the sidebar asks for it the same way.
-    fn archive_entry(&mut self, entry: Row, archived: bool, cx: &mut Context<Self>) {
+    fn archive_entry(
+        &mut self,
+        entry: Row,
+        archived: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Read before the flag moves: once the entry is away it is no longer
+        // what any pane is on.
+        let landing = (archived && self.in_front(entry, cx))
+            .then(|| project_of(entry))
+            .flatten();
         // A layout takes its members with it. Membership is exclusive — an
         // entry is in one layout at a time — so the arrangement owns what it
         // holds, and putting it away that holds nothing would be putting away
@@ -1790,7 +1825,7 @@ impl Cydonia {
                 .filter_map(|member| self.row_of_member(member, cx))
                 .collect();
             for member in members {
-                self.archive_entry(member, archived, cx);
+                self.archive_entry(member, archived, window, cx);
             }
             self.workspace.update(cx, |workspace, cx| {
                 workspace.archive_layout(ix, archived, cx)
@@ -1846,6 +1881,45 @@ impl Cydonia {
             }
             Row::Project(_) | Row::Archive(_) => {}
         });
+        if let Some(project) = landing {
+            self.open_top_entry(project, window, cx);
+        }
+    }
+
+    /// Whether the pane in front is on this entry.
+    fn in_front(&self, entry: Row, cx: &App) -> bool {
+        let (Some(project), Some(showing)) = (project_of(entry), showing_of(entry)) else {
+            return false;
+        };
+        let workspace = self.workspace.read(cx);
+        let Some(open) = workspace.projects.get(project) else {
+            return false;
+        };
+        if workspace.active != Some(project) || self.arranged(cx) {
+            return false;
+        }
+        let pane = self.showing(cx);
+        match showing {
+            Showing::Session(id) => pane == Some(Pane::Chat) && open.active == Some(id),
+            Showing::Board(ix) => pane == Some(Pane::Board) && open.board == Some(ix),
+            Showing::Article(ix) => pane == Some(Pane::Article) && open.article == Some(ix),
+            Showing::Table(ix) => pane == Some(Pane::Table) && open.table == Some(ix),
+        }
+    }
+
+    /// Put the pane on the first entry the project still lists. What the pane
+    /// falls back to when the entry it was on is put away — [`Self::entries`]
+    /// sorts the archived below the divider, so the first row is one still in
+    /// hand or the divider itself.
+    fn open_top_entry(&mut self, project: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(top) = self
+            .entries(project, cx)
+            .into_iter()
+            .find(|row| showing_of(*row).is_some())
+        else {
+            return;
+        };
+        self.open_row(top, window, cx);
     }
 
     /// The field, in the row's place. It carries its own press: `TextField`

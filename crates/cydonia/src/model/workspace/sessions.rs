@@ -32,6 +32,23 @@ impl Workspace {
         Some(id)
     }
 
+    /// The member that names a session wherever it is open — what finds the
+    /// pane holding it. Nothing for one with no file yet: a layout names its
+    /// members by file, and a session has none until its first turn.
+    pub fn member_of_session(&self, id: u64) -> Option<artifact::layout::Member> {
+        self.member_of(self.project_of(id)?, super::Showing::Session(id))
+    }
+
+    /// Give a session the name that keeps, minting its file if it has none —
+    /// what anything pointing at a session from outside the process needs, and
+    /// a session has no file until its first turn is written.
+    pub fn retain_session(&mut self, id: u64, cx: &mut Context<Self>) -> Option<String> {
+        let ix = self.project_of(id)?;
+        let record = self.projects[ix].session_mut(id)?.retain_panel()?;
+        cx.notify();
+        Some(record)
+    }
+
     pub fn retain_panel_session(
         &mut self,
         id: u64,
@@ -39,7 +56,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Option<(PathBuf, String)> {
         let ix = self.project_of(id)?;
-        let record = self.projects[ix].session_mut(id)?.retain_panel()?;
+        let record = self.retain_session(id, cx)?;
         let cwd = self.projects[ix].path.clone();
         if remember {
             self.remember(ix, state::Kind::Session, record.clone(), cx);
@@ -119,7 +136,7 @@ impl Workspace {
             .session(id)
             .and_then(|chat| chat.record.clone())
         {
-            self.remember(ix, state::Kind::Session, record, cx);
+            self.note_landing(ix, state::Kind::Session, record, cx);
         }
         self.wake_session(id, cx);
         self.prune_archived_for(Some(state::Kind::Session), cx);
@@ -228,7 +245,7 @@ impl Workspace {
         chat.send(content);
         let record = chat.record.clone();
         if let (Some(record), Some(ix)) = (record, self.project_of(id)) {
-            self.remember(ix, state::Kind::Session, record, cx);
+            self.note_landing(ix, state::Kind::Session, record, cx);
         }
         cx.notify();
     }

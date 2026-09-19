@@ -5,7 +5,7 @@ mod common;
 
 use common::Scratch;
 use cydonia_artifact::{
-    board::{Board, Card, Column},
+    board::{Board, Card, Column, Status, View},
     project::Project as _,
 };
 use std::{collections::HashSet, fs};
@@ -350,6 +350,7 @@ fn unnamed(name: &str, cards: usize) -> Column {
             handle: None,
             text: format!("card {n}"),
             session: None,
+            status: None,
         })
         .collect();
     column
@@ -375,4 +376,127 @@ fn ids(board: &Board) -> Vec<String> {
         })
         .cloned()
         .collect()
+}
+
+/// The view survives the file. A board written before the field existed opens
+/// in lanes rather than refusing to parse.
+#[test]
+fn a_board_keeps_the_view_it_was_left_in() {
+    let mut board = Board::new("1757000000000".into(), "Roadmap");
+    let todo = board.add_column("Todo").id.clone();
+    board.add_card(&todo, "Retire Spot".into());
+    board.view = View::List;
+
+    let body = toml::to_string_pretty(&board).unwrap();
+    let read: Board = toml::from_str(&body).unwrap();
+    assert_eq!(read.view, View::List);
+
+    let old: Board = toml::from_str("name = 'Roadmap'").unwrap();
+    assert_eq!(old.view, View::Lanes);
+}
+
+/// A card written from the lane's head lands there, and takes the next handle
+/// like any other — the number follows when the card was written, not where it
+/// sits.
+#[test]
+fn a_prepended_card_lands_at_the_head_of_its_column() {
+    let mut board = Board::new("1757000000000".into(), "Roadmap");
+    board.key = "ROA".into();
+    let todo = board.add_column("Todo").id.clone();
+    board.add_card(&todo, "one".into());
+    board.add_card(&todo, "two".into());
+
+    let first = board.prepend_card(&todo, "zero".into()).unwrap().id.clone();
+
+    let cards: Vec<&str> = board
+        .column(&todo)
+        .unwrap()
+        .cards
+        .iter()
+        .map(|card| card.text.as_str())
+        .collect();
+    assert_eq!(cards, ["zero", "one", "two"]);
+    assert_eq!(
+        board.handle_of(board.card(&first).unwrap()).unwrap(),
+        "ROA-3"
+    );
+}
+
+/// Prepending into a lane that is not there spends nothing anyone can see, and
+/// says so rather than panicking.
+#[test]
+fn prepending_into_a_missing_column_adds_nothing() {
+    let mut board = Board::new("1757000000000".into(), "Roadmap");
+    assert!(board.prepend_card("nowhere", "zero".into()).is_none());
+    assert!(board.columns.is_empty());
+}
+
+/// A status is the agent's word on how the work is going, set and cleared
+/// through the same call.
+#[test]
+fn a_cards_status_is_set_and_taken_off_again() {
+    let mut board = Board::new("1757000000000".into(), "Roadmap");
+    board.key = "ROA".into();
+    let todo = board.add_column("Todo").id.clone();
+    let card = board.add_card(&todo, "ship it".into()).unwrap().id.clone();
+    assert_eq!(board.card(&card).unwrap().status, None, "none to start");
+
+    assert!(board.set_card_status(&card, Some(Status::Busy)));
+    assert_eq!(board.card(&card).unwrap().status, Some(Status::Busy));
+
+    assert!(board.set_card_status(&card, None));
+    assert_eq!(board.card(&card).unwrap().status, None);
+
+    assert!(!board.set_card_status("nowhere", Some(Status::Busy)));
+}
+
+/// The words a tool call and a file both use.
+#[test]
+fn every_status_round_trips_through_its_word() {
+    for status in Status::ALL {
+        assert_eq!(Status::parse(status.key()), Some(status));
+    }
+    assert_eq!(Status::parse("BUSY"), Some(Status::Busy));
+    assert_eq!(Status::parse(" busy "), Some(Status::Busy));
+    // `none` is the absence of a status, never one of them.
+    assert_eq!(Status::parse("none"), None);
+    assert_eq!(Status::parse("working"), None);
+}
+
+/// A lane can be written beside another rather than only at the end, on
+/// whichever side the board's own order runs towards.
+#[test]
+fn a_column_can_be_added_either_side_of_another() {
+    let mut board = Board::new("1757000000000".into(), "Roadmap");
+    let todo = board.add_column("Todo").id.clone();
+    let done = board.add_column("Done").id.clone();
+
+    let before = board
+        .add_column_beside("Ideas", &todo, false)
+        .expect("a lane")
+        .id
+        .clone();
+    let between = board
+        .add_column_beside("Doing", &todo, true)
+        .expect("a lane")
+        .id
+        .clone();
+    let after = board
+        .add_column_beside("Shipped", &done, true)
+        .expect("a lane")
+        .id
+        .clone();
+
+    let order: Vec<&str> = board
+        .columns
+        .iter()
+        .map(|column| column.id.as_str())
+        .collect();
+    assert_eq!(order, vec![&before, &todo, &between, &done, &after]);
+    assert!(
+        board
+            .add_column_beside("Nowhere", "no-such-lane", true)
+            .is_none(),
+        "and nothing to anchor to writes nothing",
+    );
 }

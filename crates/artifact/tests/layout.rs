@@ -144,10 +144,12 @@ fn an_arrival_takes_its_room_from_the_pane_it_landed_on() {
             Node::Leaf {
                 ratio: 0.8,
                 entry: 1,
+                tabs: Vec::new(),
             },
             Node::Leaf {
                 ratio: 0.2,
                 entry: 2,
+                tabs: Vec::new(),
             },
         ],
     };
@@ -450,6 +452,7 @@ fn shares_multiply_down_the_tree() {
             Node::Leaf {
                 ratio: 0.5,
                 entry: 1,
+                tabs: Vec::new(),
             },
             Node::Split {
                 ratio: 0.5,
@@ -458,6 +461,7 @@ fn shares_multiply_down_the_tree() {
                     Node::Leaf {
                         ratio: 0.5,
                         entry: 2,
+                        tabs: Vec::new(),
                     },
                     Node::Split {
                         ratio: 0.5,
@@ -466,10 +470,12 @@ fn shares_multiply_down_the_tree() {
                             Node::Leaf {
                                 ratio: 0.5,
                                 entry: 3,
+                                tabs: Vec::new(),
                             },
                             Node::Leaf {
                                 ratio: 0.5,
                                 entry: 4,
+                                tabs: Vec::new(),
                             },
                         ],
                     },
@@ -585,10 +591,12 @@ fn swapping_keeps_the_shape_and_the_sizes() {
             Node::Leaf {
                 ratio: 0.7,
                 entry: 1,
+                tabs: Vec::new(),
             },
             Node::Leaf {
                 ratio: 0.3,
                 entry: 2,
+                tabs: Vec::new(),
             },
         ],
     };
@@ -651,4 +659,139 @@ fn a_path_leads_to_the_pane_it_names() {
         Some(Node::Leaf { entry: 3, .. })
     ));
     assert_eq!(tree.path_to(&9), None);
+}
+
+// ── tabs ─────────────────────────────────────────────────────────
+
+/// An entry dropped on a pane's bar joins its strip at the end, and the pane
+/// stays one pane.
+#[test]
+fn stacking_puts_an_entry_behind_the_one_it_was_dropped_on() {
+    let mut tree = Node::split(Axis::Horizontal, vec![Node::leaf(1), Node::leaf(2)]);
+
+    assert!(tree.stack_onto(&1, &3));
+    assert!(tree.stack_onto(&1, &4));
+
+    assert_eq!(tree.leaves(), 2, "still two panes");
+    assert_eq!(tree.entries(), vec![1, 3, 4, 2]);
+    let pane = tree.at_path(&[0]).expect("the first pane");
+    assert_eq!(pane.stack(), vec![1, 3, 4], "in the order they arrived");
+    // A tab names its pane as well as the pane's own first entry does.
+    assert!(tree.stack_onto(&4, &5));
+    assert_eq!(
+        tree.at_path(&[0]).expect("the first pane").stack(),
+        vec![1, 3, 4, 5],
+    );
+}
+
+/// An entry the pane already holds is not taken twice, wherever it is named
+/// from.
+#[test]
+fn stacking_what_a_pane_already_holds_changes_nothing() {
+    let mut tree = Node::split(Axis::Horizontal, vec![Node::leaf(1), Node::leaf(2)]);
+    tree.stack_onto(&1, &3);
+
+    assert!(tree.stack_onto(&1, &3));
+    assert!(tree.stack_onto(&3, &1));
+
+    assert_eq!(tree.at_path(&[0]).expect("a pane").stack(), vec![1, 3]);
+}
+
+/// Closing a tab loses the tab; closing the last of them loses the pane.
+#[test]
+fn a_pane_outlives_its_tabs_until_the_last_one() {
+    let mut tree = Node::split(Axis::Horizontal, vec![Node::leaf(1), Node::leaf(2)]);
+    tree.stack_onto(&1, &3);
+    tree.stack_onto(&1, &4);
+
+    assert!(tree.remove(&3), "a tab in the middle");
+    assert_eq!(tree.at_path(&[0]).expect("a pane").stack(), vec![1, 4]);
+    assert_eq!(tree.leaves(), 2);
+
+    // The pane's own name goes: the tab behind it takes the name, and the
+    // pane stays where it was.
+    assert!(tree.remove(&1));
+    assert_eq!(tree.at_path(&[0]).expect("a pane").stack(), vec![4]);
+    assert_eq!(tree.leaves(), 2);
+
+    // Nothing left to hold the pane up, so the split collapses to its other
+    // child — the rule a pane closed by hand has always followed.
+    assert!(tree.remove(&4));
+    assert_eq!(tree.leaves(), 1);
+    assert_eq!(tree.entries(), vec![2]);
+}
+
+/// A pane divides whole: a drop on its edge leaves its tabs on the side they
+/// were, rather than scattering them across the new seam.
+#[test]
+fn splitting_a_pane_keeps_its_tabs_together() {
+    let mut tree = Node::leaf(1);
+    tree.stack_onto(&1, &2);
+
+    assert!(tree.insert(&1, &3, Side::Right));
+
+    assert_eq!(tree.leaves(), 2);
+    assert_eq!(tree.at_path(&[0]).expect("a pane").stack(), vec![1, 2]);
+    assert_eq!(tree.at_path(&[1]).expect("a pane").stack(), vec![3]);
+}
+
+/// A pane crossing a seam takes its tabs with it, and going back puts
+/// everything where it was.
+#[test]
+fn swapping_carries_whole_panes() {
+    let mut tree = Node::split(Axis::Horizontal, vec![Node::leaf(1), Node::leaf(2)]);
+    tree.stack_onto(&1, &3);
+
+    // Named by a tab rather than by the pane's own first entry: either says
+    // which pane is meant.
+    assert!(tree.swap(&3, &2));
+    assert_eq!(tree.at_path(&[0]).expect("a pane").stack(), vec![2]);
+    assert_eq!(tree.at_path(&[1]).expect("a pane").stack(), vec![1, 3]);
+
+    assert!(tree.swap(&1, &2));
+    assert_eq!(tree.at_path(&[0]).expect("a pane").stack(), vec![1, 3]);
+    assert_eq!(tree.at_path(&[1]).expect("a pane").stack(), vec![2]);
+}
+
+/// Two entries of one pane are one pane, so there is no seam between them to
+/// walk across and no way to swap them with each other.
+#[test]
+fn tabs_of_one_pane_are_not_neighbours() {
+    let mut tree = Node::split(Axis::Horizontal, vec![Node::leaf(1), Node::leaf(2)]);
+    tree.stack_onto(&1, &3);
+
+    assert_eq!(tree.neighbour(&1, Side::Right), Some(2));
+    assert_eq!(tree.neighbour(&3, Side::Right), Some(2), "same pane");
+    assert_eq!(tree.neighbour(&1, Side::Left), None);
+    assert!(!tree.swap(&1, &3), "one pane cannot cross itself");
+}
+
+/// Dragging a tab onto another pane's edge takes it out of the strip it was in
+/// and gives it a pane of its own.
+#[test]
+fn relocating_a_tab_pulls_it_out_of_its_strip() {
+    let mut tree = Node::split(Axis::Horizontal, vec![Node::leaf(1), Node::leaf(2)]);
+    tree.stack_onto(&1, &3);
+
+    assert!(tree.relocate(&3, &2, Side::Right));
+
+    assert_eq!(tree.leaves(), 3);
+    assert_eq!(tree.entries(), vec![1, 2, 3]);
+    assert_eq!(tree.at_path(&[0]).expect("a pane").stack(), vec![1]);
+}
+
+/// A tab let go over the bar it is already in changes nothing. Taking it out
+/// and putting it back would send it to the end of a strip nobody asked to
+/// reorder.
+#[test]
+fn stacking_a_tab_onto_its_own_strip_is_a_no_op() {
+    let mut tree = Node::split(Axis::Horizontal, vec![Node::leaf(1), Node::leaf(2)]);
+    tree.stack_onto(&1, &3);
+    tree.stack_onto(&1, &4);
+
+    // Named from the pane, and from a sibling tab: neither reorders it.
+    assert!(tree.stack_onto(&1, &3));
+    assert!(tree.stack_onto(&4, &3));
+
+    assert_eq!(tree.at_path(&[0]).expect("a pane").stack(), vec![1, 3, 4]);
 }

@@ -809,11 +809,6 @@ impl Cydonia {
                     |tab| matches!(&tab.content, Content::File(file) if file.read(cx).dirty(cx)),
                 )
         });
-        self.terminals.retain(|id, _| {
-            workspace
-                .session(*id)
-                .is_some_and(|chat| !chat.closed || visible == Some(*id))
-        });
         let session = (self.changes_open && self.showing(cx) == Some(Pane::Chat))
             .then(|| {
                 workspace

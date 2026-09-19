@@ -235,6 +235,19 @@ impl Workspace {
         // `open_*`: this is the one place they all come through, so there is
         // no way to open an entry and forget to.
         self.leave_layout();
+        self.note_landing(project, kind, id, cx);
+    }
+
+    /// The same, for something that touched an entry without being asked to
+    /// open it — sending into a session is the case, and it must not take the
+    /// window out of the arrangement the session is a pane of.
+    pub(super) fn note_landing(
+        &mut self,
+        project: usize,
+        kind: state::Kind,
+        id: String,
+        cx: &mut Context<Self>,
+    ) {
         let Some(open) = self.projects.get(project) else {
             return;
         };

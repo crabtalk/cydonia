@@ -10,13 +10,13 @@ use crate::model::workspace::Showing;
 use crate::view::{
     component::menu::Menu,
     leaf::Pane,
-    root::{self, Cydonia},
+    root::{self, Cydonia, ToggleChanges},
     sidebar::{Renaming, Row},
 };
 use bezel::{
     gpui::{AnyElement, App, Context, FontWeight, SharedString, Window, div, prelude::*, px},
     theme::{TextStyle, Theme, Typeset},
-    ui::icons,
+    ui::{icons, tooltip::Tooltip, widgets::Buttons as _},
 };
 /// What a pane puts in the band.
 pub(crate) struct Toolbar {
@@ -270,6 +270,28 @@ impl Cydonia {
                         })),
                 }
             }))
+            .children(
+                (!self.changes_open && self.showing(cx) == Some(Pane::Chat))
+                    .then(|| self.changes_toggle(cx)),
+            )
             .into_any_element()
+    }
+
+    /// The control that brings the right panel back, on the band rather than
+    /// on the panel: the panel's own hide button goes down with the panel. Only
+    /// drawn while the panel is closed. Mirrors [`Cydonia::fold_toggle`].
+    fn changes_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let theme = Theme::of(cx).clone();
+        theme
+            .ghost("toggle-changes")
+            .flex_none()
+            .p(px(4.))
+            .tooltip(|window, cx| Tooltip::text("Show right panel", window, cx))
+            .child(
+                icons::icon(icons::layout::PanelRight)
+                    .size(px(14.))
+                    .text_color(theme.text_faint),
+            )
+            .on_click(|_, window, cx| window.dispatch_action(Box::new(ToggleChanges), cx))
     }
 }

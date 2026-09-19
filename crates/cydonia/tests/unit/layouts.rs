@@ -229,20 +229,28 @@ fn an_entry_belongs_to_one_layout(cx: &mut gpui::TestAppContext) {
     });
 }
 
-/// Closing the last pane closes the layout with it.
+/// Closing a pane down to one closes the layout with it — an arrangement of
+/// one pane is not an arrangement — and the window is left on the pane that
+/// would have been alone in it.
 #[gpui::test]
-fn closing_the_last_pane_closes_the_layout(cx: &mut gpui::TestAppContext) {
+fn closing_down_to_one_pane_closes_the_layout(cx: &mut gpui::TestAppContext) {
     let scratch = Scratch::new("close-last");
     let (workspace, a, b) = two_boards(&scratch, cx);
 
     let id = workspace.update(cx, |workspace, cx| {
         workspace.arrange(&a, &b, Side::Right, cx);
         let id = workspace.active_layout().expect("open").id.clone();
+
         workspace.close_pane(&b, cx);
-        assert_eq!(workspace.active_layout().expect("open").leaves(), 1);
-        workspace.close_pane(&a, cx);
+
         assert!(workspace.active_layout().is_none(), "the layout is gone");
         assert!(workspace.layouts.is_empty());
+        assert_eq!(
+            workspace.member_of(0, Showing::Board(0)).as_ref(),
+            Some(&a),
+            "and the window is on the pane that was left",
+        );
+        assert_eq!(workspace.projects[0].board, Some(0));
         id
     });
     assert!(store::read(&id).is_none(), "the file goes too");
@@ -352,18 +360,404 @@ fn an_entry_can_be_dropped_from_the_layout_holding_it(cx: &mut gpui::TestAppCont
     });
 }
 
-/// Taking the last pane out takes the layout with it — the same rule closing
-/// one by hand follows.
+/// Taking a pane out down to one takes the layout with it — the same rule
+/// closing one by hand follows.
 #[gpui::test]
-fn dropping_the_last_pane_drops_the_layout(cx: &mut gpui::TestAppContext) {
+fn dropping_a_pane_down_to_one_drops_the_layout(cx: &mut gpui::TestAppContext) {
     let scratch = Scratch::new("last");
     let (workspace, a, b) = two_boards(&scratch, cx);
 
     workspace.update(cx, |workspace, cx| {
         workspace.arrange(&a, &b, Side::Right, cx);
         workspace.drop_from_layouts(&a, cx);
-        workspace.drop_from_layouts(&b, cx);
 
         assert!(workspace.layouts.is_empty(), "nothing left to arrange");
+        assert_eq!(workspace.layout_holding(&b), None, "and b is loose again");
+    });
+}
+
+/// Sending into a session that is a pane of the open layout leaves the window
+/// where it was. Sending is not opening — the arrangement is the working
+/// context, and a message must not throw it away.
+#[gpui::test]
+fn sending_into_a_pane_stays_in_the_layout(cx: &mut gpui::TestAppContext) {
+    let scratch = Scratch::new("send-in-layout");
+    cx.update(|cx| bezel::theme::Theme::install(bezel::theme::Appearance::Light, cx));
+    // `send` refuses and says so while sessions are off, and would never reach
+    // the bookkeeping under test.
+    let mut settings = Settings::default();
+    settings.features.sessions = true;
+    let workspace = cx.new(|cx| Workspace::new(settings, state::State::default(), cx));
+
+    workspace.update(cx, |workspace, cx| {
+        workspace.open_project(scratch.project("one"), cx);
+        workspace.new_board(0, "First".into(), "ONE", cx).ok();
+        let board = workspace.member_of(0, Showing::Board(0)).expect("a member");
+
+        // Restored rather than opened: a session made through `new_session`
+        // starts an agent, and what is under test is the bookkeeping `send`
+        // does around one.
+        let path = workspace.projects[0].path.clone();
+        workspace.projects[0]
+            .sessions
+            .push(resting_session(7, &path));
+        workspace.projects[0].active = Some(7);
+        let chat = workspace
+            .member_of(0, Showing::Session(7))
+            .expect("a member");
+
+        workspace.arrange(&board, &chat, Side::Right, cx);
+        assert!(workspace.active_layout().is_some(), "arranged to start");
+
+        workspace.send(7, "ship it".into(), cx);
+
+        assert!(
+            workspace.active_layout().is_some(),
+            "and still arranged after",
+        );
+    });
+}
+
+/// A session with a record and no agent behind it — and none it could start,
+/// since `send` resumes a session whose entry names a command and that would
+/// put a process behind a unit test.
+fn resting_session(id: u64, project: &std::path::Path) -> crate::model::session::ChatSession {
+    let record = serde_json::from_value(serde_json::json!({
+        "id": "test", "agent": "test", "title": "", "name": null,
+        "updated": 1, "items": []
+    }))
+    .expect("a record");
+    crate::model::session::ChatSession::restore(
+        id,
+        project.to_path_buf(),
+        crate::model::settings::Agent {
+            name: "test".into(),
+            id: None,
+            command: String::new(),
+            args: Vec::new(),
+            env: Default::default(),
+        },
+        record,
+    )
+}
+
+/// An entry dropped on a pane's bar joins that pane rather than splitting it,
+/// and the arrangement stays the shape it was.
+#[gpui::test]
+fn stacking_joins_a_pane_instead_of_splitting_it(cx: &mut gpui::TestAppContext) {
+    let scratch = Scratch::new("stack");
+    cx.update(|cx| bezel::theme::Theme::install(bezel::theme::Appearance::Light, cx));
+    let workspace = cx.new(|cx| Workspace::new(Settings::default(), state::State::default(), cx));
+
+    workspace.update(cx, |workspace, cx| {
+        workspace.open_project(scratch.project("one"), cx);
+        for (name, key) in [("First", "ONE"), ("Second", "TWO"), ("Third", "THR")] {
+            workspace.new_board(0, name.into(), key, cx).ok();
+        }
+        let a = workspace.member_of(0, Showing::Board(0)).expect("a member");
+        let b = workspace.member_of(0, Showing::Board(1)).expect("a member");
+        let c = workspace.member_of(0, Showing::Board(2)).expect("a member");
+        workspace.arrange(&a, &b, Side::Right, cx);
+        assert_eq!(workspace.active_layout().expect("open").leaves(), 2);
+
+        workspace.stack_pane(&a, &c, cx);
+
+        let layout = workspace.active_layout().expect("open");
+        assert_eq!(layout.leaves(), 2, "still two panes");
+        assert_eq!(layout.panes(), vec![a.clone(), b.clone()]);
+        assert_eq!(workspace.stack_of(&a), vec![a.clone(), c.clone()]);
+        // Named from the tab as well as from the pane: either says which pane.
+        assert_eq!(workspace.stack_of(&c), vec![a, c]);
+        assert_eq!(workspace.stack_of(&b), vec![b]);
+    });
+}
+
+/// Closing a tab of a pane holding several leaves the pane — and so the
+/// layout — exactly where it was.
+#[gpui::test]
+fn closing_a_tab_leaves_the_pane_and_the_layout_alone(cx: &mut gpui::TestAppContext) {
+    let scratch = Scratch::new("close-tab");
+    cx.update(|cx| bezel::theme::Theme::install(bezel::theme::Appearance::Light, cx));
+    let workspace = cx.new(|cx| Workspace::new(Settings::default(), state::State::default(), cx));
+
+    workspace.update(cx, |workspace, cx| {
+        workspace.open_project(scratch.project("one"), cx);
+        for (name, key) in [("First", "ONE"), ("Second", "TWO"), ("Third", "THR")] {
+            workspace.new_board(0, name.into(), key, cx).ok();
+        }
+        let a = workspace.member_of(0, Showing::Board(0)).expect("a member");
+        let b = workspace.member_of(0, Showing::Board(1)).expect("a member");
+        let c = workspace.member_of(0, Showing::Board(2)).expect("a member");
+        workspace.arrange(&a, &b, Side::Right, cx);
+        workspace.stack_pane(&a, &c, cx);
+
+        // Two panes and one of them holding a tab: closing that tab must not
+        // read as closing down to one pane, which drops the layout.
+        workspace.close_pane(&c, cx);
+
+        let layout = workspace.active_layout().expect("still open");
+        assert_eq!(layout.leaves(), 2);
+        assert_eq!(workspace.stack_of(&a), vec![a.clone()]);
+
+        // Now it is the pane's last, so the pane goes — and with it the
+        // layout, which is down to one.
+        workspace.close_pane(&a, cx);
+        assert!(workspace.active_layout().is_none(), "the layout is gone");
+        assert_eq!(workspace.projects[0].board, Some(1), "left on what remains");
+    });
+}
+
+/// An entry is in one pane at a time: stacking one already arranged elsewhere
+/// moves it rather than showing it twice.
+#[gpui::test]
+fn stacking_an_arranged_entry_moves_it(cx: &mut gpui::TestAppContext) {
+    let scratch = Scratch::new("stack-move");
+    cx.update(|cx| bezel::theme::Theme::install(bezel::theme::Appearance::Light, cx));
+    let workspace = cx.new(|cx| Workspace::new(Settings::default(), state::State::default(), cx));
+
+    workspace.update(cx, |workspace, cx| {
+        workspace.open_project(scratch.project("one"), cx);
+        for (name, key) in [("First", "ONE"), ("Second", "TWO"), ("Third", "THR")] {
+            workspace.new_board(0, name.into(), key, cx).ok();
+        }
+        let a = workspace.member_of(0, Showing::Board(0)).expect("a member");
+        let b = workspace.member_of(0, Showing::Board(1)).expect("a member");
+        let c = workspace.member_of(0, Showing::Board(2)).expect("a member");
+        workspace.arrange(&a, &b, Side::Right, cx);
+        workspace.arrange(&b, &c, Side::Below, cx);
+        assert_eq!(workspace.active_layout().expect("open").leaves(), 3);
+
+        workspace.stack_pane(&a, &c, cx);
+
+        let layout = workspace.active_layout().expect("open");
+        assert_eq!(layout.leaves(), 2, "the pane it left collapsed");
+        assert_eq!(layout.entries().len(), 3, "and nothing is shown twice");
+        assert_eq!(workspace.stack_of(&a), vec![a, c]);
+    });
+}
+
+/// A pane put on an article opens it. An article the sidebar has only listed
+/// holds no editor, and a pane handed one draws the front door instead of the
+/// document — which is what a drop onto a pane's bar or its edge used to do.
+#[gpui::test]
+fn a_pane_put_on_an_article_opens_it(cx: &mut gpui::TestAppContext) {
+    let scratch = Scratch::new("article-pane");
+    let path = scratch.project("one");
+    // Written before the project is opened, so the article arrives the way one
+    // read off disk at launch does: listed, and never opened.
+    crate::model::article::create(&path).expect("an article on disk");
+
+    cx.update(|cx| bezel::theme::Theme::install(bezel::theme::Appearance::Light, cx));
+    let workspace = cx.new(|cx| Workspace::new(Settings::default(), state::State::default(), cx));
+
+    workspace.update(cx, |workspace, cx| {
+        workspace.open_project(path, cx);
+        workspace.new_board(0, "First".into(), "ONE", cx).ok();
+        let board = workspace.member_of(0, Showing::Board(0)).expect("a member");
+        let article = workspace
+            .member_of(0, Showing::Article(0))
+            .expect("a member");
+        assert!(
+            workspace
+                .article_in(0, 0)
+                .expect("an article")
+                .editor
+                .is_none(),
+            "listed, never opened",
+        );
+
+        workspace.arrange(&board, &article, Side::Right, cx);
+        workspace.stack_pane(&board, &article, cx);
+        workspace.select_showing(0, Showing::Article(0), cx);
+
+        assert!(
+            workspace
+                .article_in(0, 0)
+                .expect("an article")
+                .editor
+                .is_some(),
+            "the pane opened it",
+        );
+        assert_eq!(workspace.projects[0].article, Some(0));
+    });
+}
+
+/// A tab carried from one pane's bar to another's leaves the strip it was in
+/// and joins the one it landed on. The panes stay where they are — a tab
+/// crossing is not a pane moving.
+#[gpui::test]
+fn a_tab_can_be_carried_to_another_pane(cx: &mut gpui::TestAppContext) {
+    let scratch = Scratch::new("carry-tab");
+    cx.update(|cx| bezel::theme::Theme::install(bezel::theme::Appearance::Light, cx));
+    let workspace = cx.new(|cx| Workspace::new(Settings::default(), state::State::default(), cx));
+
+    workspace.update(cx, |workspace, cx| {
+        workspace.open_project(scratch.project("one"), cx);
+        for (name, key) in [("First", "ONE"), ("Second", "TWO"), ("Third", "THR")] {
+            workspace.new_board(0, name.into(), key, cx).ok();
+        }
+        let a = workspace.member_of(0, Showing::Board(0)).expect("a member");
+        let b = workspace.member_of(0, Showing::Board(1)).expect("a member");
+        let c = workspace.member_of(0, Showing::Board(2)).expect("a member");
+        workspace.arrange(&a, &b, Side::Right, cx);
+        workspace.stack_pane(&a, &c, cx);
+        assert_eq!(workspace.stack_of(&a), vec![a.clone(), c.clone()]);
+
+        workspace.stack_pane(&b, &c, cx);
+
+        let layout = workspace.active_layout().expect("open");
+        assert_eq!(layout.leaves(), 2, "the panes did not move");
+        assert_eq!(layout.panes(), vec![a.clone(), b.clone()]);
+        assert_eq!(workspace.stack_of(&a), vec![a.clone()]);
+        assert_eq!(workspace.stack_of(&b), vec![b.clone(), c.clone()]);
+    });
+}
+
+/// The same tab let go over the bar it is already in does nothing at all.
+#[gpui::test]
+fn a_tab_dropped_on_its_own_bar_stays_put(cx: &mut gpui::TestAppContext) {
+    let scratch = Scratch::new("same-bar");
+    cx.update(|cx| bezel::theme::Theme::install(bezel::theme::Appearance::Light, cx));
+    let workspace = cx.new(|cx| Workspace::new(Settings::default(), state::State::default(), cx));
+
+    workspace.update(cx, |workspace, cx| {
+        workspace.open_project(scratch.project("one"), cx);
+        for (name, key) in [("First", "ONE"), ("Second", "TWO"), ("Third", "THR")] {
+            workspace.new_board(0, name.into(), key, cx).ok();
+        }
+        let a = workspace.member_of(0, Showing::Board(0)).expect("a member");
+        let b = workspace.member_of(0, Showing::Board(1)).expect("a member");
+        let c = workspace.member_of(0, Showing::Board(2)).expect("a member");
+        workspace.arrange(&a, &b, Side::Right, cx);
+        workspace.stack_pane(&a, &c, cx);
+
+        workspace.stack_pane(&a, &c, cx);
+
+        assert_eq!(workspace.stack_of(&a), vec![a, c], "order kept");
+    });
+}
+
+/// A tab carried onto a pane's *edge* is pulled out of its strip into a pane
+/// of its own — the other half of the gesture.
+#[gpui::test]
+fn a_tab_carried_to_an_edge_becomes_its_own_pane(cx: &mut gpui::TestAppContext) {
+    let scratch = Scratch::new("tab-to-edge");
+    cx.update(|cx| bezel::theme::Theme::install(bezel::theme::Appearance::Light, cx));
+    let workspace = cx.new(|cx| Workspace::new(Settings::default(), state::State::default(), cx));
+
+    workspace.update(cx, |workspace, cx| {
+        workspace.open_project(scratch.project("one"), cx);
+        for (name, key) in [("First", "ONE"), ("Second", "TWO"), ("Third", "THR")] {
+            workspace.new_board(0, name.into(), key, cx).ok();
+        }
+        let a = workspace.member_of(0, Showing::Board(0)).expect("a member");
+        let b = workspace.member_of(0, Showing::Board(1)).expect("a member");
+        let c = workspace.member_of(0, Showing::Board(2)).expect("a member");
+        workspace.arrange(&a, &b, Side::Right, cx);
+        workspace.stack_pane(&a, &c, cx);
+
+        workspace.arrange(&b, &c, Side::Below, cx);
+
+        let layout = workspace.active_layout().expect("open");
+        assert_eq!(layout.leaves(), 3);
+        assert_eq!(workspace.stack_of(&a), vec![a], "it left the strip");
+        assert_eq!(workspace.stack_of(&c), vec![c], "and holds a pane alone");
+    });
+}
+
+/// A launch lands back in the arrangement the window closed on. The layout is
+/// the window's, so it is written to `state.toml` rather than to any project.
+#[gpui::test]
+fn the_open_layout_is_restored_at_launch(cx: &mut gpui::TestAppContext) {
+    let scratch = Scratch::new("restore");
+    let (workspace, a, b) = two_boards(&scratch, cx);
+
+    let id = workspace.update(cx, |workspace, cx| {
+        workspace.arrange(&a, &b, Side::Right, cx);
+        workspace.active_layout().expect("open").id.clone()
+    });
+
+    let stored = state::restore();
+    assert_eq!(stored.layout.as_deref(), Some(id.as_str()), "written down");
+
+    let next = cx.new(|cx| Workspace::new(Settings::default(), stored, cx));
+    next.update(cx, |workspace, _| {
+        assert_eq!(
+            workspace.active_layout().map(|layout| layout.id.clone()),
+            Some(id),
+            "and opened again"
+        );
+    });
+}
+
+/// Leaving the arrangement for a single entry is remembered too — the next
+/// launch lands on that entry, not back in the layout.
+#[gpui::test]
+fn leaving_the_layout_is_remembered(cx: &mut gpui::TestAppContext) {
+    let scratch = Scratch::new("restore-left");
+    let (workspace, a, b) = two_boards(&scratch, cx);
+
+    workspace.update(cx, |workspace, cx| {
+        workspace.arrange(&a, &b, Side::Right, cx);
+        workspace.open_board(0, 0, cx);
+    });
+
+    assert_eq!(state::restore().layout, None);
+}
+
+/// A session that has had no turn has no file, and a layout names its members
+/// by file. Dropping one into an arrangement mints the file first — see
+/// `Cydonia::dropped`, whose half of this is the gesture.
+#[gpui::test]
+fn a_session_with_no_file_can_be_given_one_and_arranged(cx: &mut gpui::TestAppContext) {
+    let scratch = Scratch::new("fresh-session");
+    cx.update(|cx| bezel::theme::Theme::install(bezel::theme::Appearance::Light, cx));
+    let mut settings = Settings::default();
+    settings.features.sessions = true;
+    let workspace = cx.new(|cx| Workspace::new(settings, state::State::default(), cx));
+
+    workspace.update(cx, |workspace, cx| {
+        workspace.open_project(scratch.project("one"), cx);
+        workspace.new_board(0, "First".into(), "ONE", cx).ok();
+        let board = workspace.member_of(0, Showing::Board(0)).expect("a member");
+
+        let path = workspace.projects[0].path.clone();
+        let mut chat = resting_session(7, &path);
+        chat.record = None;
+        workspace.projects[0].sessions.push(chat);
+
+        assert!(
+            workspace.member_of_session(7).is_none(),
+            "nothing for a layout to name yet",
+        );
+
+        workspace.retain_session(7, cx).expect("a file is minted");
+        let session = workspace
+            .member_of_session(7)
+            .expect("and now it names one");
+
+        workspace.arrange(&board, &session, Side::Right, cx);
+        let layout = workspace.active_layout().expect("arranged");
+        assert!(layout.contains(&session), "with the session in it");
+    });
+}
+
+/// Closing a pane that holds one tab, in a layout of two. The layout goes with
+/// it — one pane left is no arrangement — and the window lands on the survivor.
+#[gpui::test]
+fn a_pane_holding_one_tab_closes(cx: &mut gpui::TestAppContext) {
+    let scratch = Scratch::new("close-one-tab");
+    let (workspace, a, b) = two_boards(&scratch, cx);
+
+    workspace.update(cx, |workspace, cx| {
+        workspace.arrange(&a, &b, Side::Right, cx);
+        assert_eq!(workspace.stack_of(&b), vec![b.clone()], "one tab");
+
+        workspace.close_pane(&b, cx);
+        assert!(workspace.active_layout().is_none(), "the layout goes too");
+        assert!(
+            workspace.active_board().is_some(),
+            "landing on the survivor"
+        );
     });
 }

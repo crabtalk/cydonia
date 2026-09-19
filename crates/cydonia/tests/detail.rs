@@ -148,14 +148,26 @@ mod panel_sizing {
         }
     }
 
-    /// A width somebody dragged is theirs. Only the fit is enforced — a panel
-    /// sized to hold a diff must not change because the window did.
+    /// A width somebody dragged is kept as far as it fits.
     #[test]
     fn a_dragged_width_is_kept() {
         assert_eq!(panel_width(Some(700.), 1800.), 700.);
         assert_eq!(panel_width(Some(300.), 1800.), 300.);
-        // Down to what the chat keeps beside it.
-        assert_eq!(panel_width(Some(700.), 800.), 560.);
+        // Down to half the column in a window too narrow to hold it.
+        assert_eq!(panel_width(Some(700.), 800.), 400.);
+    }
+
+    /// A dragged width does not take more than half of a narrower window,
+    /// which is what a width dragged on a display did to a laptop.
+    #[test]
+    fn a_dragged_width_never_takes_more_than_half() {
+        for available in [560., 700., 900., 1200., 1800.] {
+            let width = panel_width(Some(713.6), available);
+            assert!(
+                width <= available / 2.,
+                "{width} of {available} is more than half"
+            );
+        }
     }
 
     /// Below the two minimums together the column is not split at all: the

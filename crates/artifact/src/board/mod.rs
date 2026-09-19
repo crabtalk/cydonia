@@ -16,7 +16,7 @@ pub mod card;
 pub mod column;
 pub mod key;
 
-pub use card::Card;
+pub use card::{Card, Status};
 pub use column::Column;
 
 use crate::{id, stamp};
@@ -30,6 +30,33 @@ pub const NAMED: &str = "Board";
 /// The number the first card takes. One, not nought: a person reads it.
 pub const FIRST: u64 = 1;
 pub const UNNAMED: &str = "Untitled";
+
+/// How a board's cards are laid out: in lanes across, or in one list down.
+///
+/// On the board rather than on the pane showing it, so it is written into the
+/// file and travels with the project — a board opened in a second window is
+/// laid out the way it was left. A new board starts on the app's own answer —
+/// see `settings::Appearance::board_view`, which seeds a board and does not
+/// steer it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum View {
+    /// Lanes across, a column to each.
+    #[default]
+    Lanes,
+    /// One list down, grouped under its columns.
+    List,
+}
+
+impl View {
+    /// The word this is written under, in a settings file and nowhere else.
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Lanes => "lanes",
+            Self::List => "list",
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Board {
@@ -64,6 +91,12 @@ pub struct Board {
     /// coming back as somebody else's.
     #[serde(default)]
     pub next_handle: u64,
+    /// How the pane lays this board out — see [`View`].
+    ///
+    /// Ahead of the columns: TOML takes no value after a table, so a scalar
+    /// written under the array of columns would not round-trip.
+    #[serde(default)]
+    pub view: View,
     #[serde(default)]
     pub columns: Vec<Column>,
 }
@@ -82,6 +115,7 @@ impl Board {
             // — see [`key::derive`]. Empty until then, the way the ids are.
             key: String::new(),
             next_handle: FIRST,
+            view: View::default(),
             columns: Vec::new(),
         }
     }
@@ -165,6 +199,20 @@ impl Board {
         self.columns.last().expect("just pushed")
     }
 
+    /// A lane beside another, on the side named — `after` for the side the
+    /// board's own order runs towards. Nothing where the anchor is not a lane
+    /// of this board.
+    pub fn add_column_beside(&mut self, name: &str, beside: &str, after: bool) -> Option<&Column> {
+        let at = self.columns.iter().position(|column| column.id == beside)?;
+        let at = match after {
+            true => at + 1,
+            false => at,
+        };
+        let id = self.mint_id();
+        self.columns.insert(at, Column::new(id, name));
+        self.columns.get(at)
+    }
+
     pub fn rename_column(&mut self, id: &str, name: &str) -> bool {
         match self.column_mut(id) {
             Some(column) => {
@@ -219,6 +267,13 @@ impl Board {
             .find(|card| card.id == id)
     }
 
+    /// The lane a card is sitting in.
+    pub fn column_of(&self, card: &str) -> Option<&Column> {
+        self.columns
+            .iter()
+            .find(|column| column.cards.iter().any(|held| held.id == card))
+    }
+
     pub fn card_mut(&mut self, id: &str) -> Option<&mut Card> {
         self.columns
             .iter_mut()
@@ -229,11 +284,26 @@ impl Board {
     /// At the end of the column, which is where a card written into a lane
     /// lands.
     pub fn add_card(&mut self, column: &str, text: String) -> Option<&Card> {
+        self.insert_card(column, text, usize::MAX)
+    }
+
+    /// At the head of the column.
+    pub fn prepend_card(&mut self, column: &str, text: String) -> Option<&Card> {
+        self.insert_card(column, text, 0)
+    }
+
+    /// At `at`, clamped to the column's length — so `usize::MAX` appends.
+    ///
+    /// The id and the handle are minted before the column is looked up, so a
+    /// card that lands nowhere still spends them. A handle is never reused, and
+    /// a gap in the numbers is cheaper than two cards sharing one.
+    fn insert_card(&mut self, column: &str, text: String, at: usize) -> Option<&Card> {
         let id = self.mint_id();
         let handle = self.take_handle();
         let column = self.column_mut(column)?;
-        column.cards.push(Card::new(id, handle, text));
-        column.cards.last()
+        let at = at.min(column.cards.len());
+        column.cards.insert(at, Card::new(id, handle, text));
+        column.cards.get(at)
     }
 
     /// The next number, and the counter moved past it. [`FIRST`] for a board
@@ -248,6 +318,18 @@ impl Board {
     pub fn handle_of(&self, card: &Card) -> Option<String> {
         let handle = card.handle?;
         (!self.key.is_empty()).then(|| format!("{}-{handle}", self.key))
+    }
+
+    /// Say how the work on a card is going, or take the answer off. Says
+    /// whether there was a card to say it about.
+    pub fn set_card_status(&mut self, id: &str, status: Option<Status>) -> bool {
+        match self.card_mut(id) {
+            Some(card) => {
+                card.status = status;
+                true
+            }
+            None => false,
+        }
     }
 
     pub fn rewrite_card(&mut self, id: &str, text: &str) -> bool {
@@ -359,4 +441,52 @@ fn mint(taken: &mut HashSet<String>) -> String {
         n += 1;
     }
     fresh
+}
+
+// ── moving a card to another board ───────────────────────────────
+
+/// Carry a card from one board to another, which may be in another project.
+///
+/// The card arrives under a fresh id and a handle off the destination's own
+/// counter, so a card that was `ROAD-12` is `PLAN-3` from here on. Anything
+/// that already said `ROAD-12` still says it.
+///
+/// Its session is left behind — see [`Card::session`].
+///
+/// Lands in `column` where one is named, otherwise in the lane of the same name
+/// as the one it came out of, otherwise in the first lane. A board with no lanes
+/// answers `None`, with the card where it was.
+pub fn carry_card(
+    from: &mut Board,
+    to: &mut Board,
+    card: &str,
+    column: Option<&str>,
+) -> Option<String> {
+    let source = from.column_of(card)?;
+    let (came_from, named) = (source.id.clone(), source.name.clone());
+    let landing = column
+        .and_then(|named| to.column(named).map(|column| column.id.clone()))
+        .or_else(|| {
+            to.columns
+                .iter()
+                .find(|column| column.name == named)
+                .map(|column| column.id.clone())
+        })
+        .or_else(|| to.columns.first().map(|column| column.id.clone()))?;
+    let mut card = from.remove_card(card)?;
+    card.id = to.mint_id();
+    card.handle = Some(to.take_handle());
+    card.session = None;
+    let handle = to.handle_of(&card);
+    let id = card.id.clone();
+    match to.column_mut(&landing) {
+        Some(column) => column.cards.push(card),
+        // Unreachable: the lane was here when it was chosen. Putting the card
+        // back where it came from rather than dropping it on the floor.
+        None => {
+            from.add_card(&came_from, card.text.clone());
+            return None;
+        }
+    }
+    Some(handle.unwrap_or(id))
 }

@@ -18,7 +18,9 @@ pub fn resource_catalog() -> String {
 /// Instructions for callers with or without a bound project.
 pub fn tool_context(bound: bool) -> String {
     let project = if bound {
-        "Project tools operate on the project bound to this connection."
+        "Project tools work in the project bound to this connection unless a call names \
+another one. A named project must be one cydonia has open; the project argument takes its \
+directory path."
     } else {
         "Project tools take the project's directory path. Resources are independent of projects."
     };

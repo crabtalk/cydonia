@@ -1,6 +1,6 @@
 mod common;
 
-use common::{Scratch, refused, said};
+use common::{Rail, Scratch, refused, said};
 use serde_json::json;
 
 #[test]
@@ -78,11 +78,15 @@ fn external_and_bound_agents_share_references_across_renames() {
     );
 }
 
+/// A number means something only next to the project it was issued in, and
+/// which project a call is about is the call's to say: the binding where it
+/// names none, and the one it names where it does.
 #[test]
-fn references_are_scoped_to_the_bound_project() {
+fn references_are_scoped_to_the_project_a_call_is_about() {
     let one = Scratch::new("entry-scope-one");
     let two = Scratch::new("entry-scope-two");
     let server = one.server();
+    Rail::also(two.path());
     for (root, text) in [(one.path(), "one"), (two.path(), "two")] {
         said(server.call(
             "article_add",
@@ -93,9 +97,63 @@ fn references_are_scoped_to_the_bound_project() {
     assert_eq!(
         said(server.call(
             "project_read_entry",
-            json!({"project": two.path(), "entry": "#1"}),
+            json!({"entry": "#1"}),
             Some(one.path())
         )),
         "one"
     );
+    assert_eq!(
+        said(server.call(
+            "project_read_entry",
+            json!({"project": two.path(), "entry": "#1"}),
+            Some(one.path())
+        )),
+        "two"
+    );
+}
+
+/// The whole of the thing this session was about: a session in one project
+/// writes an article into another, and the article lands there and not here.
+#[test]
+fn a_bound_session_writes_into_another_open_project() {
+    let here = Scratch::new("cross-here");
+    let there = Scratch::new("cross-there");
+    let server = here.server();
+    Rail::also(there.path());
+
+    said(server.call(
+        "article_add",
+        json!({"project": there.path(), "title": "What A knows about B", "text": "findings"}),
+        Some(here.path()),
+    ));
+
+    assert_eq!(
+        said(server.call(
+            "article_read",
+            json!({"article": "What A knows about B"}),
+            Some(there.path())
+        )),
+        "findings"
+    );
+    assert!(
+        said(server.call("article_list", json!({}), Some(here.path()))).contains("no articles")
+    );
+}
+
+/// A project cydonia does not have open is not one a call can name, however
+/// real the directory is.
+#[test]
+fn a_project_that_is_not_open_cannot_be_named() {
+    let here = Scratch::new("cross-closed");
+    let elsewhere = Scratch::new("cross-elsewhere");
+    let server = here.server();
+
+    let why = refused(server.call(
+        "article_add",
+        json!({"project": elsewhere.path(), "title": "Notes", "text": "x"}),
+        Some(here.path()),
+    ));
+
+    assert!(why.contains("does not have"), "{why}");
+    assert!(!elsewhere.path().join(".cydonia").exists());
 }

@@ -25,6 +25,9 @@ impl Workspace {
         }
         let key = artifact::board::key::normalize(key)
             .ok_or("A key needs at least one letter or digit.".to_owned())?;
+        // Read before the project is taken: the seed is the workspace's and the
+        // borrow below is over the whole of it.
+        let view = self.board_view;
         let open = self
             .projects
             .get_mut(project)
@@ -34,10 +37,15 @@ impl Workspace {
         if open.boards.iter().any(|board| board.key == key) {
             return Err(format!("{key} is another board's key here."));
         }
-        let board = open
+        let mut board = open
             .store()
             .create_board(name.trim(), &key)
             .ok_or("The board could not be written.".to_owned())?;
+        // What the app is set to, written into the board as it is made — see
+        // [`artifact::board::Board::view`]. From here the board answers for
+        // itself, and the setting moving does not move it.
+        board.view = view;
+        open.store().save_board(&mut board);
         open.boards.insert(0, board);
         self.open_board(project, 0, cx);
         Ok(0)
@@ -127,6 +135,22 @@ impl Workspace {
         Ok(())
     }
 
+    /// Lay one board out the other way — see [`artifact::board::View`]. By id,
+    /// because the pane that asks may be showing a board other than the one in
+    /// front.
+    pub fn set_board_view(
+        &mut self,
+        id: &str,
+        view: artifact::board::View,
+        cx: &mut Context<Self>,
+    ) {
+        self.with_board(id, |store, board| {
+            board.view = view;
+            store.save_board(board);
+        });
+        cx.notify();
+    }
+
     pub fn archive_board(&mut self, id: &str, archived: bool, cx: &mut Context<Self>) {
         self.with_board(id, |store, board| {
             board.archived = archived;
@@ -179,6 +203,25 @@ impl Workspace {
         self.save_board();
         cx.notify();
         Some(id)
+    }
+
+    /// A lane beside the one named, on the side given — `after` for the lane
+    /// that follows it in the board's own order of its columns, which runs
+    /// across the lanes and down the list.
+    pub fn new_column_beside(
+        &mut self,
+        id: &str,
+        after: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<String> {
+        let minted = self
+            .active_board_mut()?
+            .add_column_beside(artifact::board::column::NAMED, id, after)?
+            .id
+            .clone();
+        self.save_board();
+        cx.notify();
+        Some(minted)
     }
 
     pub fn rename_column(&mut self, id: &str, name: String, cx: &mut Context<Self>) {
@@ -244,6 +287,89 @@ impl Workspace {
     }
 
     /// Write the open board back, for an edit the pane made in place.
+    /// Move a card between the lanes of one board, named by where it sits
+    /// rather than by being the active one: a layout can have two boards on
+    /// screen, and the one dropped onto is not always the one in front.
+    pub fn move_card_within(
+        &mut self,
+        (project, ix): (usize, usize),
+        card: &str,
+        column: &str,
+        before: Option<&str>,
+    ) -> bool {
+        let Some(open) = self.projects.get_mut(project) else {
+            return false;
+        };
+        let Some(id) = open.boards.get(ix).map(|board| board.id.clone()) else {
+            return false;
+        };
+        if !open.load_board(&id) {
+            return false;
+        }
+        let store = open.store();
+        let Some(board) = open.boards.get_mut(ix) else {
+            return false;
+        };
+        if !board.move_card_before(card, column, before) {
+            return false;
+        }
+        store.save_board(board);
+        true
+    }
+
+    /// Carry a card to another board, which may be in another project.
+    ///
+    /// Answers what it is called where it landed — `PLAN-3` — and nothing where
+    /// it did not move. It arrives under a new handle with no session on it;
+    /// see [`artifact::board::carry_card`].
+    ///
+    /// A card whose session is still open does not move.
+    pub fn carry_card(
+        &mut self,
+        from: (usize, usize),
+        to: (usize, usize),
+        card: &str,
+        column: Option<&str>,
+    ) -> Option<String> {
+        if from == to {
+            return None;
+        }
+        let live = self
+            .board_in(from.0, from.1)
+            .and_then(|board| board.card(card))
+            .and_then(|card| card.session.clone())
+            .is_some_and(|record| self.session_by_record(&record).is_some());
+        if live {
+            return None;
+        }
+        // Both boards in hand before either is touched: a board listed in the
+        // sidebar may not have been read off the disk yet, and moving a card
+        // onto the half of one that is in memory would write the other half
+        // away.
+        let mut source = self.loaded_board(from)?;
+        let mut landing = self.loaded_board(to)?;
+        let landed = artifact::board::carry_card(&mut source, &mut landing, card, column)?;
+        for ((project, _), mut board) in [(from, source), (to, landing)] {
+            let Some(open) = self.projects.get_mut(project) else {
+                continue;
+            };
+            let store = open.store();
+            store.save_board(&mut board);
+            if let Some(held) = open.boards.iter_mut().find(|held| held.id == board.id) {
+                *held = board;
+            }
+        }
+        Some(landed)
+    }
+
+    /// A board by where it sits, read off the disk if it has not been yet.
+    fn loaded_board(&mut self, (project, ix): (usize, usize)) -> Option<Board> {
+        let open = self.projects.get_mut(project)?;
+        let id = open.boards.get(ix)?.id.clone();
+        open.load_board(&id).then_some(())?;
+        open.boards.get(ix).cloned()
+    }
+
     pub fn save_board(&mut self) {
         let Some(open) = self.active.and_then(|ix| self.projects.get_mut(ix)) else {
             return;

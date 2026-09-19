@@ -3,7 +3,7 @@
 use crate::{
     rail::{self, Change},
     tool::{Answer, Arg, Args, Outcome, Tool, Trouble},
-    tools::{PROJECT, fields, root},
+    tools::{PROJECT, fields, held, root},
 };
 use serde_json::json;
 use std::path::{Path, PathBuf};
@@ -135,18 +135,6 @@ fn whole(args: &Args<'_>, named: &str) -> Result<PathBuf, Trouble> {
 /// `project_close` on a directory that has since been deleted.
 fn settled(path: PathBuf) -> PathBuf {
     path.canonicalize().unwrap_or(path)
-}
-
-/// The rail, for a refusal to name — a model that named the wrong directory
-/// can see the right one without a second call.
-fn held() -> Option<String> {
-    let open = rail::open();
-    (!open.is_empty()).then(|| {
-        open.iter()
-            .map(|path| path.display().to_string())
-            .collect::<Vec<_>>()
-            .join(", ")
-    })
 }
 
 fn entries(args: Args<'_>) -> Outcome {

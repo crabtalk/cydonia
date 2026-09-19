@@ -118,6 +118,10 @@ pub struct Appearance {
     /// *has* been decided about carries the decision in its own
     /// `properties.toml` and ignores this.
     pub wide_pages: bool,
+    /// How a new board is laid out. Every board carries its own answer from the
+    /// moment it is made — see [`artifact::board::Board::view`] — so this seeds
+    /// one and never steers it afterwards.
+    pub board_view: artifact::board::View,
     /// Indent sidebar items beneath project headings by one icon width.
     pub indent_project_rows: bool,
     pub scrollbars: Scrollbars,
@@ -180,6 +184,7 @@ impl Default for Appearance {
             hue: 0.,
             chroma: 0.,
             wide_pages: false,
+            board_view: artifact::board::View::Lanes,
             indent_project_rows: true,
             scrollbars: Scrollbars::default(),
             sidebar_scrollbars: Scrollbars::Never,
@@ -566,6 +571,7 @@ fn write_appearance(doc: &mut toml_edit::DocumentMut, appearance: &Appearance) -
     held["hue"] = toml_edit::value(f64::from(appearance.hue));
     held["chroma"] = toml_edit::value(f64::from(appearance.chroma));
     held["wide_pages"] = toml_edit::value(appearance.wide_pages);
+    held["board_view"] = toml_edit::value(appearance.board_view.key());
     held["indent_project_rows"] = toml_edit::value(appearance.indent_project_rows);
     held["scrollbars"] = toml_edit::value(appearance.scrollbars.key());
     held["sidebar_scrollbars"] = toml_edit::value(appearance.sidebar_scrollbars.key());

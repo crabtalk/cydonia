@@ -94,7 +94,19 @@ pub enum Node<T> {
     Leaf {
         #[serde(default = "whole")]
         ratio: f64,
+        /// The first of the entries this pane holds, and the name the pane
+        /// keeps for as long as it exists — what a neighbour walk lands on and
+        /// what the window hangs its own state off.
+        ///
+        /// Not "the one in front". Which tab a pane is showing is the window's
+        /// and is not written down: the strip's order is fixed here, so
+        /// switching tabs never rewrites the file, and a layout reopens with
+        /// each pane on its first tab.
         entry: T,
+        /// The rest of them, in the order the strip draws them behind `entry`.
+        /// Empty for the pane that holds one thing, which is most of them.
+        #[serde(default = "none", skip_serializing_if = "Vec::is_empty")]
+        tabs: Vec<T>,
     },
     Split {
         #[serde(default = "whole")]
@@ -108,10 +120,20 @@ fn whole() -> f64 {
     1.
 }
 
+/// A pane holding nothing but its name — the shape every leaf written before
+/// tabs existed reads back as.
+fn none<T>() -> Vec<T> {
+    Vec::new()
+}
+
 /// A leaf taking half of whatever it is put in — what a pane divided in two
 /// leaves on each side of the new seam.
 fn half<T>(entry: T) -> Node<T> {
-    Node::Leaf { ratio: 0.5, entry }
+    Node::Leaf {
+        ratio: 0.5,
+        entry,
+        tabs: Vec::new(),
+    }
 }
 
 impl<T: Clone + PartialEq> Node<T> {
@@ -119,6 +141,27 @@ impl<T: Clone + PartialEq> Node<T> {
         Self::Leaf {
             ratio: whole(),
             entry,
+            tabs: Vec::new(),
+        }
+    }
+
+    /// The entries one pane holds, in the order its strip draws them. Empty
+    /// for a split, which holds none of its own.
+    pub fn stack(&self) -> Vec<T> {
+        match self {
+            Self::Leaf { entry, tabs, .. } => std::iter::once(entry).chain(tabs).cloned().collect(),
+            Self::Split { .. } => Vec::new(),
+        }
+    }
+
+    /// Whether this node is the pane holding `entry` — as its name or as one
+    /// of its tabs. A split holds nothing itself.
+    fn holds(&self, entry: &T) -> bool {
+        match self {
+            Self::Leaf {
+                entry: named, tabs, ..
+            } => named == entry || tabs.contains(entry),
+            Self::Split { .. } => false,
         }
     }
 
@@ -151,8 +194,19 @@ impl<T: Clone + PartialEq> Node<T> {
     /// Every entry number below here, in the order the panes are laid out.
     pub fn entries(&self) -> Vec<T> {
         match self {
-            Self::Leaf { entry, .. } => vec![entry.clone()],
+            Self::Leaf { .. } => self.stack(),
             Self::Split { children, .. } => children.iter().flat_map(Node::entries).collect(),
+        }
+    }
+
+    /// The name of every pane below here, in the order they are laid out —
+    /// left to right, and each column top to bottom. One per pane however many
+    /// tabs it holds, which is what makes this the list a walk across the
+    /// window steps through.
+    pub fn panes(&self) -> Vec<T> {
+        match self {
+            Self::Leaf { entry, .. } => vec![entry.clone()],
+            Self::Split { children, .. } => children.iter().flat_map(Node::panes).collect(),
         }
     }
 
@@ -181,8 +235,12 @@ impl<T: Clone + PartialEq> Node<T> {
         }
     }
 
-    /// Drop every leaf holding one of `gone`, and any split left empty by it.
-    /// Answers whether anything went.
+    /// Take every one of `gone` out of whatever pane holds it, dropping the
+    /// panes and splits left with nothing. Answers whether anything went.
+    ///
+    /// A pane whose name goes while it still holds tabs keeps the pane: the
+    /// first tab takes the name, and the strip loses a tab rather than the
+    /// window losing a pane.
     ///
     /// A split down to one child is replaced by that child: a division with
     /// nothing on one side of it is a divider the pointer can still catch.
@@ -190,6 +248,16 @@ impl<T: Clone + PartialEq> Node<T> {
     /// What the departed held is shared out among what is left, so a split
     /// still covers the room it was given.
     pub fn prune(&mut self, gone: &[T]) -> bool {
+        if let Self::Leaf { entry, tabs, .. } = self {
+            let before = tabs.len();
+            tabs.retain(|tab| !gone.contains(tab));
+            let mut changed = tabs.len() != before;
+            if gone.contains(entry) && !tabs.is_empty() {
+                *entry = tabs.remove(0);
+                changed = true;
+            }
+            return changed;
+        }
         let Self::Split { children, .. } = self else {
             return false;
         };
@@ -198,6 +266,9 @@ impl<T: Clone + PartialEq> Node<T> {
         for child in children.iter_mut() {
             changed |= child.prune(gone);
         }
+        // The recursion above has already promoted a tab into any pane whose
+        // name went, so a leaf still named by one of `gone` is a pane with
+        // nothing left in it.
         children.retain(|child| match child {
             Self::Leaf { entry, .. } => !gone.contains(entry),
             Self::Split { children, .. } => !children.is_empty(),
@@ -242,8 +313,32 @@ impl<T: Clone + PartialEq> Node<T> {
     /// Whether some pane here shows this entry.
     pub fn contains(&self, entry: &T) -> bool {
         match self {
-            Self::Leaf { entry: held, .. } => held == entry,
+            Self::Leaf { .. } => self.holds(entry),
             Self::Split { children, .. } => children.iter().any(|child| child.contains(entry)),
+        }
+    }
+
+    /// Put `arriving` at the end of the strip of the pane holding `target` —
+    /// a drop on a pane's bar rather than on its edge. Answers whether that
+    /// pane was found.
+    ///
+    /// At the end, never in front of what is there: the strip's order is the
+    /// order tabs arrived in, and one that reshuffled itself would move the
+    /// tab under the pointer out from under it.
+    pub fn stack_onto(&mut self, target: &T, arriving: &T) -> bool {
+        match self {
+            Self::Leaf { entry, tabs, .. } => {
+                if !(entry == target || tabs.contains(target)) {
+                    return false;
+                }
+                if entry != arriving && !tabs.contains(arriving) {
+                    tabs.push(arriving.clone());
+                }
+                true
+            }
+            Self::Split { children, .. } => children
+                .iter_mut()
+                .any(|child| child.stack_onto(target, arriving)),
         }
     }
 
@@ -256,15 +351,22 @@ impl<T: Clone + PartialEq> Node<T> {
     /// comes out of the pane it was dropped on, so the others keep the shares
     /// they were dragged to.
     pub fn insert(&mut self, target: &T, arriving: &T, side: Side) -> bool {
-        if let Self::Leaf { entry, ratio } = self
-            && entry == target
+        if self.holds(target)
+            && let Self::Leaf { entry, ratio, tabs } = self
         {
-            let (kept, ratio) = (entry.clone(), *ratio);
+            let ratio = *ratio;
+            // The pane divides whole: its tabs go with it rather than being
+            // scattered across the new seam.
+            let kept = Self::Leaf {
+                ratio: 0.5,
+                entry: entry.clone(),
+                tabs: std::mem::take(tabs),
+            };
             // The arrival takes the side it was dropped on, so the pane that
             // was already there does not jump across the new seam.
             let children = match side.after() {
-                true => vec![half(kept), half(arriving.clone())],
-                false => vec![half(arriving.clone()), half(kept)],
+                true => vec![kept, half(arriving.clone())],
+                false => vec![half(arriving.clone()), kept],
             };
             *self = Self::Split {
                 ratio,
@@ -277,10 +379,7 @@ impl<T: Clone + PartialEq> Node<T> {
             return false;
         };
         let axis = *axis;
-        let at = children.iter().position(|child| match child {
-            Self::Leaf { entry, .. } => entry == target,
-            Self::Split { .. } => false,
-        });
+        let at = children.iter().position(|child| child.holds(target));
         if let Some(at) = at {
             if axis == side.axis() {
                 // Halve what the dropped-on pane holds and hand the arrival
@@ -313,7 +412,7 @@ impl<T: Clone + PartialEq> Node<T> {
     /// have none in the fraction of it this pane is.
     pub fn share_of(&self, entry: &T, axis: Axis) -> Option<f64> {
         match self {
-            Self::Leaf { entry: held, .. } => (held == entry).then_some(1.),
+            Self::Leaf { .. } => self.holds(entry).then_some(1.),
             Self::Split {
                 axis: split,
                 children,
@@ -353,7 +452,7 @@ impl<T: Clone + PartialEq> Node<T> {
     /// index in the split above it.
     pub fn path_to(&self, entry: &T) -> Option<Vec<usize>> {
         match self {
-            Self::Leaf { entry: held, .. } => (held == entry).then(Vec::new),
+            Self::Leaf { .. } => self.holds(entry).then(Vec::new),
             Self::Split { children, .. } => children.iter().enumerate().find_map(|(ix, child)| {
                 let mut path = child.path_to(entry)?;
                 path.insert(0, ix);
@@ -432,30 +531,39 @@ impl<T: Clone + PartialEq> Node<T> {
     /// Exchange the places of two panes. The arrangement keeps its shape and
     /// its sizes; only what each pane is on changes — so doing it twice puts
     /// everything back.
+    ///
+    /// Whole panes, tabs and all: `a` and `b` name the panes holding them, and
+    /// a pane of three tabs crossing a seam arrives with the three.
     pub fn swap(&mut self, a: &T, b: &T) -> bool {
-        if a == b || !self.contains(a) || !self.contains(b) {
+        let (Some(here), Some(there)) = (self.path_to(a), self.path_to(b)) else {
+            return false;
+        };
+        if here == there {
             return false;
         }
-        self.replace_entry(a, b);
+        let (Some(from), Some(to)) = (
+            self.at_path(&here).map(Node::stack),
+            self.at_path(&there).map(Node::stack),
+        ) else {
+            return false;
+        };
+        self.put_stack(&here, to);
+        self.put_stack(&there, from);
         true
     }
 
-    /// Put `b` where `a` is and `a` where `b` is.
-    fn replace_entry(&mut self, a: &T, b: &T) {
-        match self {
-            Self::Leaf { entry, .. } => {
-                if entry == a {
-                    *entry = b.clone();
-                } else if entry == b {
-                    *entry = a.clone();
-                }
-            }
-            Self::Split { children, .. } => {
-                for child in children.iter_mut() {
-                    child.replace_entry(a, b);
-                }
-            }
+    /// Stand the pane at this path on `stack`, keeping the room it was given.
+    /// The stack is never empty — it came off a pane, and every pane has a
+    /// name.
+    fn put_stack(&mut self, path: &[usize], mut stack: Vec<T>) {
+        let Some(Self::Leaf { entry, tabs, .. }) = self.at_path_mut(path) else {
+            return;
+        };
+        if stack.is_empty() {
+            return;
         }
+        *entry = stack.remove(0);
+        *tabs = stack;
     }
 
     /// Move the seam after child `at` so that everything before it takes
@@ -601,6 +709,12 @@ impl Layout {
         self.tree.entries()
     }
 
+    /// The name of every pane, in the order they are laid out — see
+    /// [`Node::panes`].
+    pub fn panes(&self) -> Vec<Member> {
+        self.tree.panes()
+    }
+
     pub fn leaves(&self) -> usize {
         self.tree.leaves()
     }
@@ -631,8 +745,45 @@ impl Layout {
         self.tree.relocate(entry, target, side)
     }
 
-    /// Close a pane. The layout stays when its last pane goes: it is deleted
-    /// from the sidebar and nowhere else.
+    /// Put an entry into the pane holding `target`, as a tab at the end of its
+    /// strip — a drop on a pane's bar rather than on its edge. Answers whether
+    /// that pane was found.
+    ///
+    /// An entry is in one pane at a time, so one already here is taken out of
+    /// the pane it was in first.
+    pub fn stack(&mut self, target: &Member, arriving: &Member) -> bool {
+        // Already in that strip: a tab let go over its own bar is a drag that
+        // changed nothing, and taking it out to put it back would send it to
+        // the end of a strip the reader never asked to reorder.
+        if self.stack_of(target).contains(arriving) {
+            return false;
+        }
+        if self.contains(arriving) {
+            // Taking it out can collapse the split it was holding, which is
+            // why the target is found again afterwards rather than before.
+            self.remove(arriving);
+            if !self.contains(target) {
+                return false;
+            }
+        }
+        self.tree.stack_onto(target, arriving)
+    }
+
+    /// The entries the pane holding this one draws, in strip order. Empty for
+    /// an entry no pane here is on.
+    pub fn stack_of(&self, entry: &Member) -> Vec<Member> {
+        let Some(path) = self.tree.path_to(entry) else {
+            return Vec::new();
+        };
+        self.tree
+            .at_path(&path)
+            .map(Node::stack)
+            .unwrap_or_default()
+    }
+
+    /// Take one entry out. A pane holding tabs keeps the pane and loses a tab;
+    /// the last one out closes the pane. The layout stays when its last pane
+    /// goes: it is deleted from the sidebar and nowhere else.
     ///
     /// A zoomed pane that is closed leaves the rest unzoomed rather than
     /// standing something else in its place.
@@ -648,10 +799,14 @@ impl Layout {
     ///
     /// Zooming the pane already zoomed unzooms it, and zooming another swaps
     /// to it — one pane is over the rest, or none is.
+    ///
+    /// Held by the pane's name however the caller named it, so a pane zoomed
+    /// from one of its tabs stays zoomed when another tab comes forward.
     pub fn zoom(&mut self, entry: &Member) -> Option<Member> {
-        self.zoomed = match self.zoomed.as_ref() == Some(entry) || !self.contains(entry) {
+        let pane = self.stack_of(entry).first().cloned();
+        self.zoomed = match self.zoomed == pane {
             true => None,
-            false => Some(entry.clone()),
+            false => pane,
         };
         self.zoomed.clone()
     }

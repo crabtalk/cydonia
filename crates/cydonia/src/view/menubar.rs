@@ -191,6 +191,7 @@ fn menus(cx: &App) -> Vec<Menu> {
             // a chord before the focused surface is offered it — see
             // [`crate::view::keymap::Command::PlainText`].
             MenuItem::action("Plain Text", TogglePlainText),
+            MenuItem::action("Find Card", crate::view::board::FindCard),
             MenuItem::separator(),
             MenuItem::action("Enter Full Screen", ToggleFullScreen),
         ]),
@@ -288,7 +289,6 @@ impl Cydonia {
         // an entry, and its neighbour is not another one.
         let showing = self.showing(cx);
         let entries = showing.is_some();
-        let arranged = workspace.active_layout().is_some();
 
         root.on_action(cx.listener(Self::toggle_sidebar_action))
             .on_action(cx.listener(Self::open_project_action))
@@ -308,14 +308,18 @@ impl Cydonia {
                         root.on_action(cx.listener(Self::new_table_action))
                     })
             })
-            // Pane-specific commands grey themselves everywhere else — and
-            // the window's own panels are not on offer beside a layout, which
-            // divides the room they would have stood in.
-            .when(showing == Some(Pane::Chat) && !arranged, |root| {
+            // The bottom panel is the window's, not a pane's: it stands under
+            // whatever is showing, a layout included. A project is what it
+            // needs, for the directory its first shell opens in.
+            .when(project, |root| {
                 root.on_action(cx.listener(Self::toggle_terminal))
             })
+            // Pane-specific commands grey themselves everywhere else.
             .when(showing == Some(Pane::Article), |root| {
                 root.on_action(cx.listener(Self::toggle_plain_text))
+            })
+            .when(showing == Some(Pane::Board), |root| {
+                root.on_action(cx.listener(Self::find_card))
             })
             .when(entries, |root| {
                 root.on_action(cx.listener(Self::next_entry))

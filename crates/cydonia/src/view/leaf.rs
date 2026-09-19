@@ -19,8 +19,8 @@ use crate::{
     },
 };
 use bezel::{
-    gpui::{Entity, ScrollHandle},
-    ui::{input::TextField, scroll::DriftState},
+    gpui::{Entity, FocusHandle},
+    ui::input::TextField,
 };
 
 /// Which pane the detail column shows. A property of the pane, not of a
@@ -56,6 +56,12 @@ pub struct Leaf {
     /// Nothing for the pane a window with no layout open shows: it is on
     /// whatever the project was last left on, and the project holds that.
     pub(crate) entry: Option<artifact::layout::Member>,
+    /// Tracked on the pane this leaf draws, so the pane is an ancestor of the
+    /// focused element and the chords claimed on it are reached — an action
+    /// runs only through the focused element's ancestors. Where the focus lands
+    /// for a pane holding nothing to type into; a session's composer and a
+    /// document's editor are inside the pane already.
+    pub(crate) focus: FocusHandle,
     pub(crate) pane: Pane,
     pub(crate) composer: Entity<Composer>,
     pub(crate) queued_galleries: std::collections::HashMap<
@@ -74,13 +80,14 @@ pub struct Leaf {
     pub(crate) asked_session: bool,
     pub(crate) editing: Option<Editing>,
     pub(crate) card_field: Entity<TextField>,
-    /// The board's own scroll, and the drift that carries a held card past the
-    /// edge of the window — a lane out of sight is one a drag cannot reach,
-    /// because reaching for it means letting go.
-    pub(crate) board_scroll: ScrollHandle,
-    pub(crate) board_drift: DriftState,
-    /// The same, per lane — see [`board::Lanes`].
-    pub(crate) lanes: board::Lanes,
+    /// The board's find field, and whether its bar is up.
+    ///
+    /// The bar stands whenever the query does: a board narrowed with nothing on
+    /// screen saying so is a board quietly missing cards, and a drag that lands
+    /// in a lane it cannot see is worse. Closing it is what clears the query —
+    /// see [`crate::view::root::Cydonia::dismiss_find`].
+    pub(crate) find_field: Entity<TextField>,
+    pub(crate) finding: bool,
     /// Where the card now in the air would land. Written by the lanes and
     /// cards the pointer crosses and read by the one that draws the mark —
     /// see [`board::Landing`].
@@ -95,22 +102,24 @@ pub struct Leaf {
 
 impl Leaf {
     pub(crate) fn new(
+        focus: FocusHandle,
         composer: Entity<Composer>,
         card_field: Entity<TextField>,
         cell_field: Entity<TextField>,
+        find_field: Entity<TextField>,
         ribbon: Ribbon,
     ) -> Self {
         Self {
             entry: None,
+            focus,
             pane: Pane::Chat,
             composer,
             queued_galleries: Default::default(),
             asked_session: false,
             editing: None,
             card_field,
-            board_scroll: ScrollHandle::new(),
-            board_drift: DriftState::new(),
-            lanes: board::Lanes::default(),
+            find_field,
+            finding: false,
             landing: None,
             cell: None,
             cell_field,
