@@ -1,5 +1,9 @@
 export const repo = 'https://github.com/crabtalk/cydonia';
 
+/** The people behind cydonia. Their site, not their GitHub org: the org is
+    what the source link already points into. */
+export const crabtalk = 'https://crabtalk.ai';
+
 /** The invite is permanent — a link with an expiry would rot on the page. */
 export const discord = 'https://discord.gg/yGZDYnwbx6';
 
