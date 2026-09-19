@@ -29,7 +29,7 @@ use artifact::layout::Member;
 use bezel::{
     gpui::{
         self, AnyElement, App, Axis, Bounds, Context, DragMoveEvent, Empty, Entity, FocusHandle,
-        Hsla, KeyBinding, PathPromptOptions, Render, SharedString, TitlebarOptions,
+        Focusable, Hsla, KeyBinding, PathPromptOptions, Render, SharedString, TitlebarOptions,
         UniformListScrollHandle, Window, WindowBounds, WindowHandle, WindowOptions, actions, div,
         point, prelude::*, px, size,
     },
@@ -511,24 +511,57 @@ impl Cydonia {
         else {
             return;
         };
-        if self.focused == at {
-            return;
-        }
+        // Which leaf is the focused one and where the window's focus actually
+        // sits are two facts, and they come apart: a pane can already be the
+        // focused leaf while the caret is still in the composer of the pane
+        // left behind. So the selection below is skipped for a leaf that was
+        // already focused, and the caret is settled every time regardless.
+        let moved = self.focused != at;
         self.focused = at;
         let Some((project, showing)) = self.workspace.read(cx).showing_of(entry) else {
+            // A member whose project is shut draws an empty pane, which takes
+            // no caret — so the focus comes back to the window rather than
+            // staying wherever it was.
+            window.focus(&self.focus, cx);
+            cx.notify();
             return;
         };
-        self.leaf_mut().pane = match showing {
-            Showing::Session(_) => Pane::Chat,
-            Showing::Board(_) => Pane::Board,
-            Showing::Article(_) => Pane::Article,
-            Showing::Table(_) => Pane::Table,
-        };
-        self.workspace.update(cx, |workspace, cx| {
-            workspace.select_showing(project, showing, cx);
-        });
+        if moved {
+            self.leaf_mut().pane = match showing {
+                Showing::Session(_) => Pane::Chat,
+                Showing::Board(_) => Pane::Board,
+                Showing::Article(_) => Pane::Article,
+                Showing::Table(_) => Pane::Table,
+            };
+            self.workspace.update(cx, |workspace, cx| {
+                workspace.select_showing(project, showing, cx);
+            });
+        }
         self.sync_composer(cx);
-        let _ = window;
+        // The caret follows the pane into whatever it can be typed into: a
+        // session's composer, a document's editor. A board or a table takes
+        // none, and neither does a session that cannot be sent to.
+        //
+        // Those land on the window's own handle rather than being left alone.
+        // The caret belongs to the pane in front, so a focus left behind is a
+        // composer blinking in a pane nobody is looking at — and the next thing
+        // typed goes to the session that pane is on.
+        let caret = match showing {
+            Showing::Session(id) => self
+                .workspace
+                .read(cx)
+                .session(id)
+                .is_some_and(ChatSession::resumable)
+                .then(|| self.composer_focus_handle(cx)),
+            Showing::Article(at) => self
+                .workspace
+                .read(cx)
+                .article_in(project, at)
+                .and_then(|article| article.editor.clone())
+                .map(|editor| editor.focus_handle(cx)),
+            Showing::Board(_) | Showing::Table(_) => None,
+        };
+        window.focus(caret.as_ref().unwrap_or(&self.focus), cx);
         cx.notify();
     }
 
