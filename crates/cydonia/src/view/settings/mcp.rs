@@ -27,10 +27,12 @@ use bezel::{
 enum Door {
     Serve,
     Write,
+    /// Last, and read only once Write is on: the narrower of the two.
+    Delete,
 }
 
 impl Door {
-    const ALL: [Self; 2] = [Self::Serve, Self::Write];
+    const ALL: [Self; 3] = [Self::Serve, Self::Write, Self::Delete];
 
     /// The mark, the name, and what turning it on means. The two reasons are
     /// not the same kind of thing — one is whether there is a server, the
@@ -47,6 +49,11 @@ impl Door {
                 "Agents may edit",
                 "Off offers the tools that read a project and none that change it.",
             ),
+            Self::Delete => (
+                icons::files::Trash,
+                "Agents may delete",
+                "Offers the tools that delete an article or a board. Archiving needs only Edit.",
+            ),
         }
     }
 
@@ -54,6 +61,7 @@ impl Door {
         match self {
             Self::Serve => workspace.settings.mcp.serve,
             Self::Write => workspace.settings.mcp.write,
+            Self::Delete => workspace.settings.mcp.delete,
         }
     }
 }
@@ -96,6 +104,7 @@ impl SettingsWindow {
                 this.workspace.update(cx, |workspace, cx| match switch {
                     Door::Serve => workspace.set_mcp_serve(!on, cx),
                     Door::Write => workspace.set_mcp_write(!on, cx),
+                    Door::Delete => workspace.set_mcp_delete(!on, cx),
                 });
             },
         )

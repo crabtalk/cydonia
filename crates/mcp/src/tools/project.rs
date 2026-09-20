@@ -32,6 +32,7 @@ pub static TOOLS: [Tool; 4] = [
         description: "List articles, boards, tables, and saved chats with stable project-wide numeric references, including archived entries.",
         schema: |bound| fields(bound, &[PROJECT]),
         writes: false,
+        deletes: false,
         call: entries,
     },
     Tool {
@@ -39,6 +40,7 @@ pub static TOOLS: [Tool; 4] = [
         description: "Read a project entry by its numeric reference (#12). Tables return up to 200 rows with the total count.",
         schema: |bound| fields(bound, &[PROJECT, ENTRY]),
         writes: false,
+        deletes: false,
         call: read_entry,
     },
     Tool {
@@ -47,6 +49,7 @@ pub static TOOLS: [Tool; 4] = [
             directory first if it is not there yet.",
         schema: |bound| fields(bound, &[PATH]),
         writes: true,
+        deletes: false,
         call: open,
     },
     Tool {
@@ -59,6 +62,7 @@ pub static TOOLS: [Tool; 4] = [
             schema
         },
         writes: true,
+        deletes: false,
         call: close,
     },
 ];

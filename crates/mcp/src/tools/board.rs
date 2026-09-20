@@ -32,6 +32,18 @@ const BOARD: Arg = Arg {
     name: "board",
     about: "The board: its project reference (#12), key (ROAD), name, or storage id.",
 };
+/// The same argument where several are taken at once, the way [`CARDS`] stands
+/// beside [`CARD`].
+const BOARDS: Arg = Arg {
+    name: "board",
+    about: "The board, or several: each its project reference (#12), key, name or id.",
+};
+/// Which way the switch goes — the same wording `article::ARCHIVED` carries,
+/// because it is the same act on the other surface.
+const ARCHIVED: Arg = Arg {
+    name: "archived",
+    about: "true to put it away, false to bring it back. Left out, it is put away.",
+};
 const CARD: Arg = Arg {
     name: "card",
     about: "The card: its handle (ROAD-12), or its id.",
@@ -117,12 +129,13 @@ const KEY_NOW: Arg = Arg {
     about: "A new key for card handles, such as ROAD. Every handle on the board is read off it, so ROAD-12 becomes BACK-12. Left out, the key does not change.",
 };
 
-pub static TOOLS: [Tool; 13] = [
+pub static TOOLS: [Tool; 15] = [
     Tool {
         name: "board_add",
         description: "Create a board with a name and unique key. Returns its id, project number, key, and columns. Use board_add_column to add columns.",
         schema: |bound| fields(bound, &[PROJECT, BOARD_NAME, KEY]),
         writes: true,
+        deletes: false,
         call: add,
     },
     Tool {
@@ -130,6 +143,7 @@ pub static TOOLS: [Tool; 13] = [
         description: "List the project's boards, with how much is on each.",
         schema: |bound| fields(bound, &[PROJECT]),
         writes: false,
+        deletes: false,
         call: list,
     },
     Tool {
@@ -144,6 +158,7 @@ pub static TOOLS: [Tool; 13] = [
             schema
         },
         writes: true,
+        deletes: false,
         call: rename,
     },
     Tool {
@@ -151,7 +166,37 @@ pub static TOOLS: [Tool; 13] = [
         description: "Read one board: its columns, and the cards under them by handle.",
         schema: |bound| fields(bound, &[PROJECT, BOARD]),
         writes: false,
+        deletes: false,
         call: read,
+    },
+    Tool {
+        name: "board_archive",
+        description: "Put a board away, or bring one back. An archived board is listed under the divider rather than gone, and its cards keep their handles.",
+        schema: |bound| {
+            let mut schema = fields(bound, &[PROJECT, BOARDS]);
+            many(&mut schema, BOARDS);
+            schema["properties"][ARCHIVED.name] = json!({
+                "type": "boolean",
+                "description": ARCHIVED.about,
+                "default": true,
+            });
+            schema
+        },
+        writes: true,
+        deletes: false,
+        call: archive,
+    },
+    Tool {
+        name: "board_remove",
+        description: "Delete a board and every card on it. This cannot be undone; archive it instead to put it away.",
+        schema: |bound| {
+            let mut schema = fields(bound, &[PROJECT, BOARDS]);
+            many(&mut schema, BOARDS);
+            schema
+        },
+        writes: true,
+        deletes: true,
+        call: remove,
     },
     Tool {
         name: "board_add_card",
@@ -162,6 +207,7 @@ pub static TOOLS: [Tool; 13] = [
             schema
         },
         writes: true,
+        deletes: false,
         call: add_card,
     },
     Tool {
@@ -169,6 +215,7 @@ pub static TOOLS: [Tool; 13] = [
         description: "Replace what a card says.",
         schema: |bound| fields(bound, &[PROJECT, CARD, TEXT_NOW]),
         writes: true,
+        deletes: false,
         call: rewrite_card,
     },
     Tool {
@@ -181,6 +228,7 @@ pub static TOOLS: [Tool; 13] = [
             schema
         },
         writes: true,
+        deletes: false,
         call: set_card_status,
     },
     Tool {
@@ -198,6 +246,7 @@ pub static TOOLS: [Tool; 13] = [
             schema
         },
         writes: true,
+        deletes: false,
         call: move_card,
     },
     Tool {
@@ -209,6 +258,7 @@ pub static TOOLS: [Tool; 13] = [
             schema
         },
         writes: true,
+        deletes: false,
         call: remove_card,
     },
     Tool {
@@ -220,6 +270,7 @@ pub static TOOLS: [Tool; 13] = [
             schema
         },
         writes: true,
+        deletes: false,
         call: add_column,
     },
     Tool {
@@ -227,6 +278,7 @@ pub static TOOLS: [Tool; 13] = [
         description: "Rename a column. Cards keep the handles they already have.",
         schema: |bound| fields(bound, &[PROJECT, BOARD, COLUMN, NAME_NOW]),
         writes: true,
+        deletes: false,
         call: rename_column,
     },
     Tool {
@@ -241,6 +293,7 @@ pub static TOOLS: [Tool; 13] = [
             schema
         },
         writes: true,
+        deletes: false,
         call: move_column,
     },
     Tool {
@@ -252,6 +305,7 @@ pub static TOOLS: [Tool; 13] = [
             schema
         },
         writes: true,
+        deletes: false,
         call: remove_column,
     },
 ];
@@ -326,6 +380,50 @@ fn rename(args: Args<'_>) -> Outcome {
         None => format!("{was} is now {name}"),
     };
     Ok(Answer::said(said).with(shape(&board)))
+}
+
+/// One board or a run of them, put away or brought back in one write.
+fn archive(args: Args<'_>) -> Outcome {
+    let project = &store(&args)?;
+    let archived = args.boolean(ARCHIVED, true)?;
+    let mut said: Vec<String> = Vec::new();
+    for needle in args.list(BOARDS)? {
+        let mut board = board(project, needle)?;
+        board.archived = archived;
+        said.push(spoken(&board));
+        project.save_board(&mut board);
+    }
+    let what = match archived {
+        true => "put away",
+        false => "brought back",
+    };
+    Ok(Answer::said(format!("{} {what}", said.join(", "))))
+}
+
+/// One board or a run of them, off the disk for good.
+///
+/// Every one is found before any is removed, the way a run of columns is —
+/// a half-emptied project is not what a refused call should leave behind.
+fn remove(args: Args<'_>) -> Outcome {
+    let project = &store(&args)?;
+    let mut found = Vec::new();
+    for needle in args.list(BOARDS)? {
+        found.push(board(project, needle)?);
+    }
+    let gone: Vec<String> = found.iter().map(spoken).collect();
+    for board in &found {
+        project.remove_board(&board.id);
+    }
+    Ok(Answer::said(format!("{} deleted", gone.join(", "))))
+}
+
+/// What to call a board out loud: its key and name, which is how the listing
+/// says it.
+fn spoken(board: &Board) -> String {
+    match board.name.is_empty() {
+        true => board.key.clone(),
+        false => format!("{} ({})", board.key, board.name),
+    }
 }
 
 fn list(args: Args<'_>) -> Outcome {

@@ -404,6 +404,7 @@ impl Workspace {
     fn refresh_door(&self) {
         agent::serve::serve(self.settings.mcp.serve && self.settings.features.sessions);
         agent::serve::set_write(self.settings.mcp.write);
+        agent::serve::set_delete(self.settings.mcp.delete);
     }
 
     pub fn set_mcp_serve(&mut self, on: bool, cx: &mut Context<Self>) {
@@ -422,6 +423,16 @@ impl Workspace {
             return;
         }
         self.settings.mcp.write = on;
+        self.refresh_door();
+        cx.notify();
+    }
+
+    /// Offer the tools that delete an entry, or withhold them.
+    pub fn set_mcp_delete(&mut self, on: bool, cx: &mut Context<Self>) {
+        if settings::set_mcp("delete", on).is_err() {
+            return;
+        }
+        self.settings.mcp.delete = on;
         self.refresh_door();
         cx.notify();
     }

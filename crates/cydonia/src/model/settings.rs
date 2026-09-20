@@ -313,6 +313,13 @@ pub struct Mcp {
     /// are left out of the list rather than refused on the call, because a
     /// tool an agent can see is one it will spend a turn trying.
     pub write: bool,
+    /// Whether the tools that take an entry off the disk are offered at all.
+    ///
+    /// Apart from [`Self::write`] and read after it: an agent that may edit a
+    /// project is the ordinary case, and one that may empty it is not. A
+    /// deletion leaves nothing to read back, which is the whole of why it is
+    /// its own switch.
+    pub delete: bool,
 }
 
 impl Default for Mcp {
@@ -320,6 +327,7 @@ impl Default for Mcp {
         Self {
             serve: true,
             write: false,
+            delete: false,
         }
     }
 }

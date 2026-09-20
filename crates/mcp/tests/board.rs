@@ -724,3 +724,103 @@ fn a_rename_onto_a_taken_key_changes_nothing() {
         None,
     ));
 }
+
+/// Deleting is its own door: a server that may write is not thereby a server
+/// that may empty a project.
+#[test]
+fn deleting_is_withheld_until_its_own_switch_is_on() {
+    use std::sync::{Arc, atomic::AtomicBool};
+
+    let scratch = Scratch::new("delete-switch");
+    Rail::also(scratch.path());
+    scratch.store_create("Roadmap", "ROAD").expect("a board");
+    let writable = Arc::new(AtomicBool::new(true));
+    let deletes = Arc::new(AtomicBool::new(false));
+    let server = cydonia_mcp::Server::new()
+        .mount(&cydonia_mcp::tools::board::TOOLS)
+        .writable(writable.clone())
+        .deletes(deletes.clone());
+
+    let listed = |server: &cydonia_mcp::Server| {
+        let call: Request =
+            serde_json::from_value(json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" }))
+                .expect("a frame");
+        server
+            .handle(&call, None)
+            .expect("an answer")
+            .result
+            .expect("a result")["tools"]
+            .as_array()
+            .expect("a list")
+            .iter()
+            .filter_map(|tool| tool["name"].as_str().map(str::to_owned))
+            .collect::<Vec<_>>()
+    };
+
+    let names = listed(&server);
+    assert!(
+        names.iter().any(|name| name == "board_archive"),
+        "putting away is ordinary editing: {names:?}"
+    );
+    assert!(
+        !names.iter().any(|name| name == "board_remove"),
+        "and deleting is not: {names:?}"
+    );
+
+    deletes.store(true, std::sync::atomic::Ordering::Relaxed);
+    assert!(listed(&server).iter().any(|name| name == "board_remove"));
+
+    // Writing off takes deleting with it, whatever the narrower switch says.
+    writable.store(false, std::sync::atomic::Ordering::Relaxed);
+    let names = listed(&server);
+    assert!(
+        !names.iter().any(|name| name == "board_remove"),
+        "a server that may not change a project may not empty one: {names:?}"
+    );
+}
+
+/// Archiving puts a board under the divider; deleting takes it off the disk.
+#[test]
+fn a_board_is_put_away_and_then_deleted() {
+    let scratch = Scratch::new("archive-board");
+    scratch.store_create("Roadmap", "ROAD").expect("a board");
+    scratch.store_create("Backlog", "BACK").expect("a board");
+    let server = scratch.server();
+
+    let text = said(server.call(
+        "board_archive",
+        json!({ "project": scratch.path(), "board": "ROAD" }),
+        None,
+    ));
+    assert!(text.contains("put away"), "{text}");
+    let boards = scratch.store().boards();
+    assert_eq!(boards.len(), 2, "archived is not gone");
+    assert!(
+        boards
+            .iter()
+            .any(|board| board.key == "ROAD" && board.archived),
+        "and the board says so"
+    );
+
+    // Back again, which is the half a delete does not have.
+    said(server.call(
+        "board_archive",
+        json!({ "project": scratch.path(), "board": "ROAD", "archived": false }),
+        None,
+    ));
+    assert!(
+        scratch
+            .store()
+            .boards()
+            .iter()
+            .any(|board| board.key == "ROAD" && !board.archived)
+    );
+
+    let text = said(server.call(
+        "board_remove",
+        json!({ "project": scratch.path(), "board": ["ROAD", "BACK"] }),
+        None,
+    ));
+    assert!(text.contains("deleted"), "{text}");
+    assert!(scratch.store().boards().is_empty(), "both are off the disk");
+}

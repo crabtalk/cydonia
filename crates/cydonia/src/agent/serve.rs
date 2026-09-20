@@ -37,6 +37,19 @@ pub fn set_write(on: bool) {
     write().store(on, Ordering::Relaxed);
 }
 
+static DELETE: OnceLock<Arc<AtomicBool>> = OnceLock::new();
+
+fn delete() -> &'static Arc<AtomicBool> {
+    DELETE.get_or_init(|| Arc::new(AtomicBool::new(false)))
+}
+
+/// Offer the tools that take an entry off the disk, or withhold them. Reads
+/// the same way [`set_write`] does, and is read after it: a server that may
+/// not change a project may not empty one either.
+pub fn set_delete(on: bool) {
+    delete().store(on, Ordering::Relaxed);
+}
+
 /// Open the door, or close it. Idempotent, because the switches that reach it
 /// move for their own reasons and most moves are not about this.
 ///
@@ -82,4 +95,5 @@ fn server() -> Server {
         .mount(&tools::board::TOOLS)
         .mount(&tools::project::TOOLS)
         .writable(write().clone())
+        .deletes(delete().clone())
 }

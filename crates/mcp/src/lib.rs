@@ -35,6 +35,8 @@ pub struct Server {
     /// one the agent must not be told about at all — a tool that is listed and
     /// refuses has already cost the turn its tokens.
     tools: Vec<&'static Tool>,
+    /// Whether the tools that take an entry off the disk are offered.
+    deletes: Arc<AtomicBool>,
     /// Whether the tools that change a project are offered.
     ///
     /// Shared and read per call rather than settled when the server is built:
@@ -48,6 +50,9 @@ impl Default for Server {
         Self {
             tools: Vec::new(),
             writable: Arc::new(AtomicBool::new(true)),
+            // Off, unlike writing: a caller with no switch of its own gets a
+            // server that cannot empty a project.
+            deletes: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -64,12 +69,27 @@ impl Server {
         self
     }
 
+    /// Take the delete switch from whoever owns it. Without this a server
+    /// deletes nothing, which is what a caller that has no switch means: a
+    /// tool that cannot be undone is not one to be given by default.
+    pub fn deletes(mut self, switch: Arc<AtomicBool>) -> Self {
+        self.deletes = switch;
+        self
+    }
+
     /// The tools on offer this call.
+    ///
+    /// Left out of the listing rather than refused on the call — see
+    /// [`Server::tools`]. A deletion is gated twice over: writing off takes
+    /// the delete tools with it, because a server that may not change a
+    /// project certainly may not empty one.
     fn offered(&self) -> impl Iterator<Item = &&'static Tool> {
         let writable = self.writable.load(Ordering::Relaxed);
+        let deletes = self.deletes.load(Ordering::Relaxed);
         self.tools
             .iter()
             .filter(move |tool| writable || !tool.writes)
+            .filter(move |tool| (writable && deletes) || !tool.deletes)
     }
 
     /// Offer a set of tools. Called once per surface the features leave on.
@@ -120,10 +140,14 @@ impl Server {
         // Withheld rather than absent, which is worth saying: the model asked
         // for something that exists and is switched off, and a flat "no such
         // tool" would have it hunting for the right name.
-        if self.tools.iter().any(|tool| tool.name == name) {
-            return Err(Trouble::Refused(format!(
-                "{name} changes the project, and cydonia is set to let agents read only"
-            )));
+        if let Some(tool) = self.tools.iter().find(|tool| tool.name == name) {
+            // Which switch is holding it: a delete tool refused for the wrong
+            // reason would have somebody turning on the wrong one.
+            let why = match tool.deletes && self.writable.load(Ordering::Relaxed) {
+                true => "deletes, and cydonia is set not to let agents delete",
+                false => "changes the project, and cydonia is set to let agents read only",
+            };
+            return Err(Trouble::Refused(format!("{name} {why}")));
         }
         Err(Trouble::Invalid(format!("no tool {name}")))
     }

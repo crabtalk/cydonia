@@ -242,3 +242,76 @@ fn a_cover_that_is_not_there_is_refused() {
     ));
     assert!(why.contains("no picture at"), "{why}");
 }
+
+/// Archiving is reversible and deleting is not, which is the whole reason they
+/// are two tools behind two switches.
+#[test]
+fn an_article_is_put_away_and_then_deleted() {
+    let scratch = Scratch::new("archive-article");
+    let server = scratch.server();
+    let made = server.call(
+        "article_add",
+        json!({ "project": scratch.path(), "title": "Notes", "text": "# Notes" }),
+        None,
+    );
+    let folder = structured(made)["article_path"]
+        .as_str()
+        .expect("the article's own folder")
+        .to_owned();
+
+    let text = said(server.call(
+        "article_archive",
+        json!({ "project": scratch.path(), "article": "Notes" }),
+        None,
+    ));
+    assert!(text.contains("put away"), "{text}");
+    assert!(
+        std::path::Path::new(&folder).is_dir(),
+        "archived is not gone"
+    );
+    let listed = said(server.call("article_list", json!({ "project": scratch.path() }), None));
+    assert!(listed.contains("archived"), "{listed}");
+
+    said(server.call(
+        "article_archive",
+        json!({ "project": scratch.path(), "article": "Notes", "archived": false }),
+        None,
+    ));
+    let listed = said(server.call("article_list", json!({ "project": scratch.path() }), None));
+    assert!(!listed.contains("archived"), "and back again: {listed}");
+
+    let text = said(server.call(
+        "article_remove",
+        json!({ "project": scratch.path(), "article": "Notes" }),
+        None,
+    ));
+    assert!(text.contains("deleted"), "{text}");
+    assert!(
+        !std::path::Path::new(&folder).exists(),
+        "the whole directory goes"
+    );
+}
+
+/// A name that answers nothing refuses the run whole, rather than deleting the
+/// ones it did find.
+#[test]
+fn a_run_that_names_a_stranger_deletes_none_of_it() {
+    let scratch = Scratch::new("delete-run");
+    let server = scratch.server();
+    for title in ["First", "Second"] {
+        said(server.call(
+            "article_add",
+            json!({ "project": scratch.path(), "title": title, "text": "body" }),
+            None,
+        ));
+    }
+    let why = refused(server.call(
+        "article_remove",
+        json!({ "project": scratch.path(), "article": ["First", "Nothing"] }),
+        None,
+    ));
+    assert!(!why.is_empty(), "{why}");
+    let listed = said(server.call("article_list", json!({ "project": scratch.path() }), None));
+    assert!(listed.contains("First"), "still there: {listed}");
+    assert!(listed.contains("Second"), "still there: {listed}");
+}

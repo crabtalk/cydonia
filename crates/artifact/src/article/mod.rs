@@ -138,6 +138,27 @@ pub fn move_to(content: &Path, to: &Path) -> std::io::Result<PathBuf> {
     Ok(arrived)
 }
 
+/// Take an article off the disk: the directory is the article, cover and
+/// properties included.
+///
+/// The number it was issued goes with it — a reference that outlived the thing
+/// it named would be read back as an article nobody can open. Best effort on
+/// the registry alone: the files are gone either way, and a number left behind
+/// is retired by the next read.
+pub fn remove(content: &Path) -> std::io::Result<()> {
+    let dir = content
+        .parent()
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "no article here"))?;
+    let id = id_of(content);
+    let project = project_of(content).map(Path::to_path_buf);
+    std::fs::remove_dir_all(dir)?;
+    if let Some(project) = project {
+        let _ =
+            entry::Registry::open(&project).and_then(|registry| registry.remove("article", &id));
+    }
+    Ok(())
+}
+
 /// The project a `content.md` is in: `<project>/.cydonia/articles/<id>/content.md`.
 pub fn project_of(content: &Path) -> Option<&Path> {
     content.ancestors().nth(4)

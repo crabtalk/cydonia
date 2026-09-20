@@ -44,6 +44,14 @@ const COVER: Arg = Arg {
     about: "The picture, as an absolute path on the Cydonia host. Draw or crop it 5:2 — 1500x600 is the size the app cuts its own at, and a picture of another shape is not cropped to fit. Left out, the cover is taken off.",
 };
 
+/// Which way the switch goes. Defaulted to putting away, because that is what
+/// a caller reaching for this almost always means — and the other way is
+/// spelled out rather than left to a bare call.
+const ARCHIVED: Arg = Arg {
+    name: "archived",
+    about: "true to put it away, false to bring it back. Left out, it is put away.",
+};
+
 /// `title` and `text` each carry one line when the article is written and
 /// another when it is rewritten, so there is a const for each rather than one
 /// wording made to cover both.
@@ -84,12 +92,13 @@ const REPLACE_ALL: Arg = Arg {
     about: "Replace every non-overlapping occurrence. Defaults to false, requiring exactly one match.",
 };
 
-pub static TOOLS: [Tool; 8] = [
+pub static TOOLS: [Tool; 10] = [
     Tool {
         name: "article_list",
         description: "List the project's articles, most recently written first.",
         schema: |bound| fields(bound, &[PROJECT]),
         writes: false,
+        deletes: false,
         call: list,
     },
     Tool {
@@ -97,6 +106,7 @@ pub static TOOLS: [Tool; 8] = [
         description: "Read one article's markdown. The result includes assets_path, the shared media directory on the Cydonia host; filesystem access is needed to place images there.",
         schema: |bound| fields(bound, &[PROJECT, ARTICLE]),
         writes: false,
+        deletes: false,
         call: read,
     },
     Tool {
@@ -104,6 +114,7 @@ pub static TOOLS: [Tool; 8] = [
         description: "Write a new article, and answer its id and assets_path, the shared media directory on the Cydonia host. This tool writes Markdown, not image bytes.",
         schema: |bound| fields(bound, &[PROJECT, TITLE, MARKDOWN]),
         writes: true,
+        deletes: false,
         call: add,
     },
     Tool {
@@ -111,6 +122,7 @@ pub static TOOLS: [Tool; 8] = [
         description: "Replace an article's markdown. The title is left alone.",
         schema: |bound| fields(bound, &[PROJECT, ARTICLE, MARKDOWN_NOW]),
         writes: true,
+        deletes: false,
         call: rewrite,
     },
     Tool {
@@ -127,6 +139,7 @@ pub static TOOLS: [Tool; 8] = [
             schema
         },
         writes: true,
+        deletes: false,
         call: edit,
     },
     Tool {
@@ -141,6 +154,7 @@ pub static TOOLS: [Tool; 8] = [
             schema
         },
         writes: true,
+        deletes: false,
         call: set_cover,
     },
     Tool {
@@ -152,13 +166,44 @@ pub static TOOLS: [Tool; 8] = [
             schema
         },
         writes: true,
+        deletes: false,
         call: move_article,
+    },
+    Tool {
+        name: "article_archive",
+        description: "Put an article away, or bring one back. An archived article is listed under the divider rather than gone, and is still read and written by every other tool.",
+        schema: |bound| {
+            let mut schema = fields(bound, &[PROJECT, ARTICLES]);
+            many(&mut schema, ARTICLES);
+            schema["properties"][ARCHIVED.name] = json!({
+                "type": "boolean",
+                "description": ARCHIVED.about,
+                "default": true,
+            });
+            schema
+        },
+        writes: true,
+        deletes: false,
+        call: archive,
+    },
+    Tool {
+        name: "article_remove",
+        description: "Delete an article and everything filed with it — its cover, its pictures and its number. This cannot be undone; archive it instead to put it away.",
+        schema: |bound| {
+            let mut schema = fields(bound, &[PROJECT, ARTICLES]);
+            many(&mut schema, ARTICLES);
+            schema
+        },
+        writes: true,
+        deletes: true,
+        call: remove,
     },
     Tool {
         name: "article_rename",
         description: "Rename an article. What it is filed under does not change.",
         schema: |bound| fields(bound, &[PROJECT, ARTICLE, TITLE_NOW]),
         writes: true,
+        deletes: false,
         call: rename,
     },
 ];
@@ -336,6 +381,44 @@ fn rename(args: Args<'_>) -> Outcome {
     let title = args.text(TITLE_NOW)?;
     properties::set_title(&found.content, title);
     Ok(Answer::said(format!("{} is now {title}", found.label())))
+}
+
+/// One article or a run of them, put away or brought back in one write.
+fn archive(args: Args<'_>) -> Outcome {
+    let root = root(&args)?;
+    let archived = args.boolean(ARCHIVED, true)?;
+    let mut said: Vec<String> = Vec::new();
+    for needle in args.list(ARTICLES)? {
+        let found = locate(root, needle)?;
+        properties::set_archived(&found.content, archived);
+        said.push(found.label().to_owned());
+    }
+    let what = match archived {
+        true => "put away",
+        false => "brought back",
+    };
+    Ok(Answer::said(format!("{} {what}", said.join(", "))))
+}
+
+/// One article or a run of them, off the disk for good.
+///
+/// Every one is found before any is removed: a run half deleted is not what a
+/// refused call should leave behind, and a name that does not answer is the
+/// usual reason one is refused.
+fn remove(args: Args<'_>) -> Outcome {
+    let root = root(&args)?;
+    let mut found = Vec::new();
+    for needle in args.list(ARTICLES)? {
+        found.push(locate(root, needle)?);
+    }
+    let mut gone: Vec<String> = Vec::new();
+    for article in &found {
+        artifact::article::remove(&article.content).map_err(|e| {
+            Trouble::Refused(format!("{} cannot be deleted — {e}", article.label()))
+        })?;
+        gone.push(article.label().to_owned());
+    }
+    Ok(Answer::said(format!("{} deleted", gone.join(", "))))
 }
 
 // ── addressing ───────────────────────────────────────────────────
