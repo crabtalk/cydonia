@@ -1780,30 +1780,6 @@ impl Cydonia {
                     move |this, _, cx| this.set_full_width(Some(!wide), cx),
                 ),
             );
-            // The cover band, on the same footing as the measure: a default in
-            // Settings, and a page that has said otherwise keeping its answer.
-            let held_cover = workspace
-                .active_article()
-                .and_then(|article| article.covers);
-            let covered = held_cover.unwrap_or(workspace.covers);
-            if held_cover.is_some() {
-                rows.insert(
-                    0,
-                    menu::row(
-                        Item::action("Use default cover").with_icon(icons::layout::Columns2),
-                        move |this, _, cx| this.set_article_covers(None, cx),
-                    ),
-                );
-            }
-            rows.insert(
-                0,
-                menu::row(
-                    Item::action("Show cover")
-                        .with_icon(icons::files::Image)
-                        .checked(covered),
-                    move |this, _, cx| this.set_article_covers(Some(!covered), cx),
-                ),
-            );
             // The markdown itself, for the times the document is in the way of
             // it. Above the width, which is about the page rather than what is
             // being edited on it.

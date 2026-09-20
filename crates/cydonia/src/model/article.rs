@@ -73,10 +73,6 @@ pub struct Article {
     /// see [`Article::wide`]. Cached like [`Article::archived`]: the frame
     /// reads it, and a frame is not somewhere to open a file.
     pub full_width: Option<bool>,
-    /// Whether the cover band stands over the first line, and `None` for a
-    /// page nobody has decided about — see [`Article::shows_cover`]. Cached
-    /// the way [`Article::full_width`] is, and for the same reason.
-    pub covers: Option<bool>,
     /// The file moved under an open document that has edits of its own — see
     /// [`Article::adopt`]. Runtime only: what it marks is a disagreement
     /// between the buffer and the disk, and reopening the app ends it by
@@ -96,7 +92,6 @@ impl Article {
             touched: layout::touched(&path),
             archived: held.archived,
             full_width: held.full_width,
-            covers: held.covers,
             path,
             field: None,
             editor: None,
@@ -133,19 +128,6 @@ impl Article {
     /// One answer, so the pane and the menu that toggles it cannot disagree.
     pub fn wide(&self, default: bool) -> bool {
         self.full_width.unwrap_or(default)
-    }
-
-    /// Show the cover band over this page, or take it away. `None` hands it
-    /// back to the reader's default and takes the key out of the file.
-    pub fn set_covers(&mut self, shown: Option<bool>) {
-        self.covers = shown;
-        properties::set_covers(&self.path, shown);
-    }
-
-    /// Whether this page's cover band is actually drawn, against the app's own
-    /// default. One answer, the way [`Self::wide`] is.
-    pub fn shows_cover(&self, default: bool) -> bool {
-        self.covers.unwrap_or(default)
     }
 
     /// Edit the markdown itself, or the document it spells. Runtime only: the
@@ -293,7 +275,6 @@ impl Article {
         self.cover = fresh.cover.clone();
         self.archived = fresh.archived;
         self.full_width = fresh.full_width;
-        self.covers = fresh.covers;
         self.touched = fresh.touched;
         // Never opened: the label is the whole of what is held, and the file
         // is where it came from.
@@ -332,7 +313,6 @@ impl Article {
         self.cover = cover::of(&self.path);
         self.archived = held.archived;
         self.full_width = held.full_width;
-        self.covers = held.covers;
         let text_size = self
             .editor
             .as_ref()
