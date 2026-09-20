@@ -71,9 +71,11 @@ const ARCH: &str = "arm64";
 /// hand them and nothing here ever offers one.
 const SUPPORTED: bool = cfg!(all(target_os = "macos", target_arch = "aarch64"));
 
-/// How long after launch the first check waits. Long enough to be behind the
-/// window, the first paint and whatever agents were resumed.
-const FIRST: Duration = Duration::from_secs(30);
+/// How long after launch the first check waits. Behind the window and the
+/// first paint, and no longer: opening the app is when being out of date is
+/// worth hearing about, and the read itself is a few kilobytes on a background
+/// thread.
+const FIRST: Duration = Duration::from_secs(3);
 
 /// And the gap between the ones after it.
 const EVERY: Duration = Duration::from_secs(60 * 60);

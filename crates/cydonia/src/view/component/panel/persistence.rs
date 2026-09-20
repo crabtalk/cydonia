@@ -16,7 +16,12 @@ enum SavedTab {
 }
 
 #[derive(Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub(super) struct SavedPanel {
+    /// Whether the panel was up in this session when the app last wrote. Read
+    /// back by [`Cydonia::sync_changes`], which is the only thing that opens a
+    /// panel nobody pressed for.
+    pub(super) open: bool,
     tabs: Vec<SavedTab>,
     active: Option<usize>,
     files_open: bool,
@@ -26,7 +31,6 @@ pub(super) struct SavedPanel {
 #[derive(Default, Serialize, Deserialize)]
 #[serde(default)]
 struct SavedPanels {
-    open: bool,
     /// Absent until the split is dragged: a panel nobody has sized is given a
     /// share of the window, which is not a number to write down.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -48,11 +52,15 @@ fn load() -> SavedPanels {
 }
 
 impl Panel {
-    fn snapshot(&self, cx: &App) -> SavedPanel {
+    fn snapshot(&self, open: bool, cx: &App) -> SavedPanel {
         if let Some(saved) = &self.restore_pending {
-            return saved.clone();
+            return SavedPanel {
+                open,
+                ..saved.clone()
+            };
         }
         SavedPanel {
+            open,
             tabs: self
                 .tabs
                 .iter()
@@ -146,7 +154,6 @@ impl Cydonia {
 
     pub(crate) fn restore_panel_layout(&mut self) {
         let saved = load();
-        self.changes_open = saved.open;
         self.changes_width = saved
             .width
             .filter(|width| width.is_finite() && *width >= 200.);
@@ -154,15 +161,20 @@ impl Cydonia {
 
     pub(crate) fn save_panel_layout(&mut self, cx: &mut App) {
         let mut saved = load();
-        saved.open = self.changes_open;
         saved.width = self.changes_width;
         let active = if self.showing(cx) == Some(Pane::Chat) {
             self.workspace.read(cx).active_id()
         } else {
             None
         };
+        // What the session in front is at has not been written back to the map
+        // yet — `follow_changes` only does that on the way out of a session.
         for (id, panel) in &self.right_panels {
-            let panel = panel.read(cx).snapshot(cx);
+            let open = match self.changes_for == Some(*id) {
+                true => self.changes_open,
+                false => self.changes_shown.get(id).copied().unwrap_or(false),
+            };
+            let panel = panel.read(cx).snapshot(open, cx);
             let identity = self.workspace.update(cx, |workspace, cx| {
                 workspace.retain_panel_session(*id, active == Some(*id), cx)
             });

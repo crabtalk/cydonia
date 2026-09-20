@@ -297,7 +297,16 @@ pub struct Cydonia {
     /// alive. It opens in the directory of whatever was in front at the time
     /// and stays there; `cmd-t` is how a tab somewhere else is had.
     pub(crate) terminal: Option<(bool, Entity<super::component::terminal::TerminalPanel>)>,
+    /// Whether the right panel is up for the session in front. Which session
+    /// that is lives in [`Cydonia::changes_for`]: the answer is per session,
+    /// and this field is the one it is currently speaking for.
     pub(crate) changes_open: bool,
+    /// The session [`Cydonia::changes_open`] answers for, and what every other
+    /// session was left at. Read back through [`Cydonia::sync_changes`] on the
+    /// way into a session, and seeded from what was written down for one that
+    /// has not been looked at yet this run.
+    pub(crate) changes_for: Option<u64>,
+    pub(crate) changes_shown: std::collections::HashMap<u64, bool>,
     /// How wide the right-hand panel was dragged, and `None` for one nobody
     /// has dragged — which is given a share of the window instead. See
     /// [`super::detail::panel_width`].
@@ -536,6 +545,11 @@ impl Cydonia {
             None => {
                 self.workspace
                     .update(cx, |workspace, _| workspace.leave_layout());
+                // Down to one pane before the caller writes anything: it
+                // reaches for the leaf through [`Self::leaf_mut`], which
+                // indexes by [`Self::focused`] — still pointing into the panes
+                // the layout had, and at a leaf this is about to drop.
+                self.sync_leaves(window, cx);
                 false
             }
         }
@@ -558,6 +572,11 @@ impl Cydonia {
             .iter()
             .position(|leaf| leaf.entry.as_ref() == Some(entry))
         else {
+            // [`Cydonia::show_tab`] parks the index past the end to force the
+            // selection below, and [`Self::leaf`] clamps — so a miss left here
+            // reads as the pane at the end of the layout, which is some entry
+            // nobody pressed.
+            self.focused = self.focused.min(self.leaves.len().saturating_sub(1));
             return;
         };
         // Which leaf is the focused one and where the window's focus actually
@@ -588,8 +607,9 @@ impl Cydonia {
         }
         self.sync_composer(cx);
         // The caret follows the pane into whatever it can be typed into: a
-        // session's composer, a document's editor. A board or a table takes
-        // none, and neither does a session that cannot be sent to.
+        // session's composer, a document's editor, an open card or cell. A
+        // board or a table with nothing open takes none, and neither does a
+        // session that cannot be sent to.
         //
         // Those land on the window's own handle rather than being left alone.
         // The caret belongs to the pane in front, so a focus left behind is a
@@ -608,7 +628,20 @@ impl Cydonia {
                 .article_in(project, at)
                 .and_then(|article| article.editor.clone())
                 .map(|editor| editor.focus_handle(cx)),
-            Showing::Board(_) | Showing::Table(_) => None,
+            // A board or a table takes no caret of its own, but an open card
+            // or cell is a field inside one: pressing into the text a second
+            // time is how the caret is moved, and settling on the pane instead
+            // would take the field's focus off it every time.
+            Showing::Board(_) => self
+                .leaf()
+                .editing
+                .is_some()
+                .then(|| self.leaf().card_field.read(cx).focus_handle(cx)),
+            Showing::Table(_) => self
+                .leaf()
+                .cell
+                .is_some()
+                .then(|| self.leaf().cell_field.read(cx).focus_handle(cx)),
         };
         // The pane's own handle, not the window's: the root's is tracked on a
         // sibling of the panes, so landing there puts the focus outside the
@@ -706,6 +739,8 @@ impl Cydonia {
             sidebar_width: SIDEBAR_WIDTH,
             terminal: None,
             changes_open: false,
+            changes_for: None,
+            changes_shown: Default::default(),
             changes_width: None,
             panel_save: None,
             terminal_height: 240.,

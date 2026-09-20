@@ -719,7 +719,7 @@ impl Cydonia {
         {
             return;
         }
-        self.changes_open = true;
+        self.set_changes_open(true, cx);
         self.sync_changes(cx);
         if let Some(panel) = self.changes.clone() {
             panel.update(cx, |panel, cx| {
@@ -752,7 +752,7 @@ impl Cydonia {
 
     pub(crate) fn show_files(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.showing(cx) == Some(Pane::Chat) {
-            self.changes_open = true;
+            self.set_changes_open(true, cx);
             self.sync_changes(cx);
             if let Some(panel) = self.changes.clone() {
                 panel.update(cx, |panel, cx| panel.files(window, cx));
@@ -763,7 +763,7 @@ impl Cydonia {
 
     pub(crate) fn show_changes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.showing(cx) == Some(Pane::Chat) {
-            self.changes_open = true;
+            self.set_changes_open(true, cx);
             self.sync_changes(cx);
             if let Some(panel) = self.changes.clone() {
                 panel.update(cx, |panel, cx| {
@@ -783,7 +783,7 @@ impl Cydonia {
         cx: &mut Context<Self>,
     ) {
         if self.showing(cx) == Some(Pane::Chat) {
-            self.changes_open = !self.changes_open;
+            self.set_changes_open(!self.changes_open, cx);
             if !self.changes_open {
                 window.focus(&self.composer_focus_handle(cx), cx);
             } else {
@@ -796,7 +796,65 @@ impl Cydonia {
         }
     }
 
+    /// Put the panel up or down for the session in front, and write that down.
+    ///
+    /// Written on the change and not at the quit: ⌘Q, a crash and a killed
+    /// `cargo run` all end the process without running a release hook, which is
+    /// the same reason the panel's width is written on a settle — see
+    /// [`Cydonia::save_panel_layout_settled`].
+    fn set_changes_open(&mut self, open: bool, cx: &mut Context<Self>) {
+        self.changes_open = open;
+        // Which session this is about, in case the first sync of the frame has
+        // not run yet: leaving it unanswered would let `follow_changes` read
+        // the saved bit back over what was just pressed.
+        self.changes_for = self
+            .changes_for
+            .or_else(|| self.workspace.read(cx).active_id());
+        if let Some(id) = self.changes_for {
+            self.changes_shown.insert(id, open);
+        }
+        self.save_panel_layout_settled(cx);
+    }
+
+    /// Carry [`Cydonia::changes_open`] from one session to the next.
+    ///
+    /// The panel is a property of the session in front, not of the window: what
+    /// it was left at there is what it comes back as, and a session nobody has
+    /// opened it in gets no panel. A session first seen this run is read off
+    /// disk once and kept, which is what survives a quit.
+    fn follow_changes(&mut self, cx: &mut Context<Self>) {
+        let showing = self.showing(cx) == Some(Pane::Chat);
+        let workspace = self.workspace.read(cx);
+        let active = showing.then(|| workspace.active_id()).flatten();
+        if self.changes_for == active {
+            return;
+        }
+        if let Some(previous) = self.changes_for {
+            self.changes_shown.insert(previous, self.changes_open);
+        }
+        self.changes_open = match active {
+            Some(id) => {
+                let saved = || {
+                    let chat = workspace.session(id)?;
+                    let record = chat.record.as_deref()?;
+                    Some(persistence::saved_panel(&chat.cwd, record)?.open)
+                };
+                match self.changes_shown.get(&id) {
+                    Some(open) => *open,
+                    None => {
+                        let open = saved().unwrap_or(false);
+                        self.changes_shown.insert(id, open);
+                        open
+                    }
+                }
+            }
+            None => false,
+        };
+        self.changes_for = active;
+    }
+
     pub(crate) fn sync_changes(&mut self, cx: &mut Context<Self>) {
+        self.follow_changes(cx);
         let workspace = self.workspace.read(cx);
         let visible = (self.showing(cx) == Some(Pane::Chat))
             .then(|| workspace.active_id())

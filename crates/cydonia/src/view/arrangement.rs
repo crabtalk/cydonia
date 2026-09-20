@@ -251,7 +251,14 @@ impl Cydonia {
             // never reach it: an action runs through the focused element's
             // ancestors, and a pane showing a board holds nothing that takes
             // the focus — see [`crate::view::leaf::Leaf::focus`].
-            .track_focus(&self.leaf_of(Some(entry)).focus.clone())
+            // The front's leaf, not the pane's own name: the body, the
+            // composer and [`Cydonia::focus_pane`] all answer for the tab in
+            // front, and a pane tracking a handle nothing focuses reads as
+            // unfocused while the window's focus sits on an element no frame
+            // draws — which the root then takes back. See
+            // [`Cydonia::leaf_of`], whose fallback is the focused leaf: two
+            // panes that both miss would track one handle and both light up.
+            .track_focus(&self.leaf_of(Some(&front)).focus.clone())
             .group("pane")
             .size_full()
             .min_w_0()
@@ -325,6 +332,10 @@ impl Cydonia {
         cx: &mut Context<Self>,
     ) {
         self.fronts.insert(key_of(pane), tab.clone());
+        // Before the focus moves: a tab the layout has gained since the last
+        // frame has no leaf yet, and [`Cydonia::focus_pane`] moves nothing it
+        // cannot find.
+        self.sync_leaves(window, cx);
         self.focused = usize::MAX;
         self.focus_pane(tab, window, cx);
         cx.notify();

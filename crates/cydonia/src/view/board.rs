@@ -469,8 +469,6 @@ impl Cydonia {
         cx.notify();
     }
 
-    /// Point the field at `at`, filing whatever was already open first — so
-    /// clicking straight from one card to another never drops an edit.
     /// Lay a board out the other way — the pill at its foot. The board the pane
     /// is showing rather than the one in front: a layout can have two on screen.
     fn set_board_view(&mut self, id: &str, view: View, cx: &mut Context<Self>) {
@@ -479,6 +477,8 @@ impl Cydonia {
         cx.notify();
     }
 
+    /// Point the field at `at`, filing whatever was already open first — so
+    /// clicking straight from one card to another never drops an edit.
     fn edit(&mut self, at: Editing, window: &mut Window, cx: &mut Context<Self>) {
         self.commit(cx);
         let text = match &at {
@@ -691,8 +691,9 @@ impl Cydonia {
     }
 
     /// Drop a lane. Offered only while it is empty — see
-    /// [`artifact::board::Board::remove_column`].
-    fn drop_column(&mut self, id: &str, cx: &mut Context<Self>) {
+    /// [`artifact::board::Board::remove_column`] — and asked about first, in
+    /// [`crate::view::confirm`].
+    pub(crate) fn drop_column(&mut self, id: &str, cx: &mut Context<Self>) {
         self.commit(cx);
         let id = id.to_owned();
         self.workspace
@@ -1976,7 +1977,7 @@ impl Cydonia {
         };
         let dropped = id.to_owned();
         rows.push(menu::row(drop, move |this, _, cx| {
-            this.drop_column(&dropped, cx)
+            this.ask_delete_column(&dropped, cx)
         }));
         let card = SharedString::from(format!("lane-menu-{id}"));
         Some(popover::anchored_menu_below(
