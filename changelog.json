@@ -1,5 +1,32 @@
 [
   {
+    "version": "0.1.11",
+    "date": "2026-09-20",
+    "summary": "A layout is a space, the docs are on the site, and a selection follows the pointer off the text.",
+    "new": [
+      "Pick the families the app is set in, and one size for everything fixed pitch",
+      "Open the right panel beside an article or a board, not only beside a session — one panel per project, with its terminals and files kept there",
+      "Start a session with any ACP client the registry publishes, not a fixed few",
+      "Order layouts by hand, and open a new shell tab where you already are",
+      "Fold a list's lanes, and reach a column's menu nested inside it",
+      "Give any agent tool a list wherever it took one thing",
+      "Read the docs at /docs"
+    ],
+    "changed": [
+      "A layout is a space, named the same on screen and on disk",
+      "The right panel stands beside a space as the shell does, rather than going down when one opens",
+      "Pane tabs and the right panel's tabs are one strip: an icon, a reference, a mark for unsaved work, and a row that scrolls once it fills",
+      "Reach the Developer section with a feature rather than a debug build",
+      "Lead with running agents on the front page, and tighten the site's radii and buttons"
+    ],
+    "fixed": [
+      "Keep extending a selection when the pointer leaves the text it started in",
+      "Draw the queue of the session the pane is on",
+      "One layout per entry, and one meaning per sidebar row",
+      "Keep a right panel per session, land the caret in an open card, and put the focus in the pane that was pressed"
+    ]
+  },
+  {
     "version": "0.1.10",
     "date": "2026-09-19",
     "summary": "Tabs in every pane, a board that reads as a list, and entries that move between projects.",
