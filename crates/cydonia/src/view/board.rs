@@ -188,9 +188,9 @@ struct Tally {
 /// whatever was typed on it, and a list, a fence or a link is no less a card for
 /// being one. What does not fit is cut off by [`CARD_MAX_HEIGHT`], the same as a
 /// long paragraph.
-fn card_body(text: &str, window: &mut Window, cx: &mut App) -> AnyElement {
+fn card_body(doc: &markdown::Doc, window: &mut Window, cx: &mut App) -> AnyElement {
     markdown::render_with(
-        &markdown::parse(text),
+        doc,
         markdown::Editing {
             // A picture in a lane this narrow is a picture. Its alt text spelled
             // out underneath would be most of the card.
@@ -326,6 +326,34 @@ impl Scrolls {
 #[derive(Default)]
 pub struct Marks(RefCell<HashMap<String, Rc<RefCell<Frame>>>>);
 
+/// What a card's text parses to, by the text itself.
+///
+/// A board is rebuilt whole on every frame and a scroll is a frame per wheel
+/// event, so without this a lane costs one markdown parse per card per frame —
+/// [`card_body`] renders a document, not a string.
+///
+/// Keyed by the source rather than by the card, which is what lets the lane and
+/// the list hold one board at once: a row shows [`first_line`] and a lane the
+/// whole card, and keyed by card those two would take turns evicting each
+/// other. Edited text is a key nothing asks for again, so nothing has to be
+/// invalidated.
+///
+/// Never pruned, the way [`Marks`] is not: an entry is a parsed document, and
+/// a board's worth of them is smaller than the board.
+#[derive(Default)]
+pub struct Docs(RefCell<HashMap<String, Rc<markdown::Doc>>>);
+
+impl Docs {
+    fn of(&self, text: &str) -> Rc<markdown::Doc> {
+        if let Some(doc) = self.0.borrow().get(text) {
+            return doc.clone();
+        }
+        let doc = Rc::new(markdown::parse(text));
+        self.0.borrow_mut().insert(text.to_owned(), doc.clone());
+        doc
+    }
+}
+
 impl Marks {
     fn of(&self, card: &str) -> Rc<RefCell<Frame>> {
         self.0
@@ -398,7 +426,7 @@ impl Render for HeldCard {
             .border_1()
             .border_color(theme.accent)
             .bg(theme.surface_raised)
-            .child(card_body(&self.text, window, cx))
+            .child(card_body(&markdown::parse(&self.text), window, cx))
     }
 }
 
@@ -1528,7 +1556,7 @@ impl Cydonia {
                     .min_w_0()
                     .h(px(LIST_LINE))
                     .overflow_hidden()
-                    .child(card_body(first_line(&text), window, cx)),
+                    .child(card_body(&self.card_docs.of(first_line(&text)), window, cx)),
             )
             .children(resting(status).map(|status| status_chip(status, &theme)))
             // On show, not behind a hover — a card's run is what you look at
@@ -2104,7 +2132,7 @@ impl Cydonia {
                             .min_w_0()
                             .max_h(px(CARD_MAX_HEIGHT))
                             .overflow_hidden()
-                            .child(card_body(&text, window, cx)),
+                            .child(card_body(&self.card_docs.of(&text), window, cx)),
                     )
                     // What is done *to* the card. The row underneath carries
                     // the run; where the card sits is the drag.
@@ -2308,3 +2336,7 @@ impl Cydonia {
 #[cfg(test)]
 #[path = "../../tests/unit/board_find.rs"]
 mod find_tests;
+
+#[cfg(test)]
+#[path = "../../tests/unit/board_docs.rs"]
+mod doc_tests;

@@ -328,6 +328,8 @@ pub struct Cydonia {
     /// The buffer each card's orb paints into, by card id — see
     /// [`board::Marks`].
     pub(crate) card_marks: board::Marks,
+    /// What each card's text parses to, by card id — see [`board::Docs`].
+    pub(crate) card_docs: board::Docs,
     /// Where each board is scrolled to, by board id — see [`board::Scrolls`].
     /// On the window rather than on a pane: the same board arranged in a space
     /// and opened on its own is one board.
@@ -781,6 +783,7 @@ impl Cydonia {
             right_panels: Default::default(),
             boards: Default::default(),
             card_marks: Default::default(),
+            card_docs: Default::default(),
             settings_window: None,
             collapsed_spaces: Default::default(),
             pane_landing: None,

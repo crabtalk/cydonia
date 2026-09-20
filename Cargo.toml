@@ -10,12 +10,6 @@ license = "MIT"
 repository = "https://github.com/crabtalk/cydonia"
 homepage = "https://cydonia.sh"
 
-[profile.release]
-opt-level = "z"
-lto = "fat"
-codegen-units = 1
-strip = "symbols"
-
 [workspace.dependencies]
 artifact = { version = "0.1.11", path = "crates/artifact", package = "cydonia-artifact" }
 anyhow = "1"
@@ -50,3 +44,9 @@ url = { version = "2", features = ["serde"] }
 
 [profile.dev]
 debug = "line-tables-only"
+
+[profile.release]
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
