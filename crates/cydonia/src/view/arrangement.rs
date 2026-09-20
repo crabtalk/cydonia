@@ -11,6 +11,7 @@ use crate::{
             divider,
             menu::{self, Menu},
         },
+        leaf::Pane,
         root::Cydonia,
         sidebar::{Carried, EntryDrag},
     },
@@ -719,9 +720,12 @@ impl Cydonia {
                 0 => stack[1].clone(),
                 at => stack[at - 1].clone(),
             });
-        self.workspace.update(cx, |workspace, cx| {
-            workspace.close_pane(entry, cx);
-        });
+        // The entry left when this close took the layout with it. Without
+        // putting the pane on its kind the window drops back to whatever the
+        // single pane was last showing, which is not what was on screen.
+        let alone = self
+            .workspace
+            .update(cx, |workspace, cx| workspace.close_pane(entry, cx));
         self.fronts.remove(&key_of(entry));
         if let Some(kept) = &kept
             && let Some(pane) = self.workspace.read(cx).stack_of(kept).first().cloned()
@@ -729,6 +733,9 @@ impl Cydonia {
             self.fronts.insert(key_of(&pane), kept.clone());
         }
         self.sync_leaves(window, cx);
+        if let Some(showing) = alone {
+            self.show_pane(pane_of(showing), cx);
+        }
         if let Some(entry) = kept.or_else(|| self.leaf().entry.clone()) {
             self.focused = usize::MAX;
             self.focus_pane(&entry, window, cx);
@@ -981,4 +988,14 @@ fn seam_id(path: &[usize], at: usize) -> usize {
         .fold(1usize, |id, step| id.wrapping_mul(31).wrapping_add(*step))
         .wrapping_mul(31)
         .wrapping_add(at)
+}
+
+/// The pane one entry is read in.
+fn pane_of(showing: Showing) -> Pane {
+    match showing {
+        Showing::Session(_) => Pane::Chat,
+        Showing::Board(_) => Pane::Board,
+        Showing::Article(_) => Pane::Article,
+        Showing::Table(_) => Pane::Table,
+    }
 }

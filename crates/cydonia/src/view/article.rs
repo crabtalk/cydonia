@@ -2,7 +2,7 @@
 
 use crate::{
     memory,
-    model::article,
+    model::{article, workspace::Showing},
     view::{
         leaf::Pane,
         root::{Cydonia, NewArticle},
@@ -177,6 +177,13 @@ impl Cydonia {
         cx: &mut Context<Self>,
     ) {
         self.commit(cx);
+        let member = self
+            .workspace
+            .read(cx)
+            .member_of(project, Showing::Article(ix));
+        if self.enter_member(member, window, cx) {
+            return;
+        }
         self.workspace
             .update(cx, |workspace, cx| workspace.open_article(project, ix, cx));
         self.leaf_mut().pane = Pane::Article;
@@ -625,7 +632,7 @@ impl Cydonia {
                 .text_color(tint)
                 .child(title),
         )
-        .child(self.archive_button(("article-archive", ix), entry, archived, cx))
+        .child(self.archive_button(("article-archive", ix), "article-row", entry, archived, cx))
         .on_click(cx.listener(move |this, _, window, cx| {
             this.open_article(project, ix, window, cx);
         }))

@@ -44,6 +44,9 @@ pub(crate) enum Menu {
     /// lane's whole menu is about moving it, and a key that moved with it would
     /// shut the menu on every press.
     Lane(String),
+    /// The agents on offer under `New session`, on the screen a project with
+    /// nothing open shows — see [`crate::view::root::Cydonia::launch`].
+    Launch,
     /// The block picker on the article ribbon — see
     /// [`crate::view::component::ribbon`].
     Turn,

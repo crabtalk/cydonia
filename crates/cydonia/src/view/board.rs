@@ -2,7 +2,7 @@
 //! writes them.
 
 use crate::{
-    model::session::ChatSession,
+    model::{session::ChatSession, workspace::Showing},
     view::{
         component::{
             menu::{self, Menu},
@@ -169,14 +169,6 @@ fn status_chip(status: Status, theme: &Theme) -> AnyElement {
         .text_color(tint)
         .child(status.key())
         .into_any_element()
-}
-
-/// What a lane holds, and what the find query leaves of it. The two are the
-/// same number on a board nobody is searching.
-#[derive(Clone, Copy)]
-struct Tally {
-    held: usize,
-    shown: usize,
 }
 
 /// A card's text, read as the document it is. Somebody writing `- [ ] ship it`
@@ -451,8 +443,18 @@ impl Cydonia {
         self.ask_new_board(project, window, cx);
     }
 
-    pub(crate) fn open_board(&mut self, project: usize, ix: usize, cx: &mut Context<Self>) {
+    pub(crate) fn open_board(
+        &mut self,
+        project: usize,
+        ix: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.commit(cx);
+        let member = self.workspace.read(cx).member_of(project, Showing::Board(ix));
+        if self.enter_member(member, window, cx) {
+            return;
+        }
         self.workspace
             .update(cx, |workspace, cx| workspace.open_board(project, ix, cx));
         self.leaf_mut().pane = Pane::Board;
@@ -1208,9 +1210,26 @@ impl Cydonia {
         let Some((name, held, cards)) = self.lane_cards(project, board_at, &id, &query, cx) else {
             return div().into_any_element();
         };
+        let Some((board_id, folded)) = self
+            .workspace
+            .read(cx)
+            .board_in(project, board_at)
+            .and_then(|board| {
+                let column = board.column(&id)?;
+                Some((board.id.clone(), column.collapsed))
+            })
+        else {
+            return div().into_any_element();
+        };
+        // A lane folded shut still opens for the two things that would
+        // otherwise happen out of sight: a query narrowing the board, and the
+        // field writing a card into this lane.
+        let writing = matches!(&self.leaf_of(on).editing, Some(Editing::New(_, at)) if *at == id);
+        let folded = folded && query.trim().is_empty() && !writing;
         let mut rows: Vec<AnyElement> = cards
             .iter()
             .enumerate()
+            .filter(|_| !folded)
             .map(|(row, card)| {
                 let next = cards.get(row + 1).map(String::as_str);
                 self.list_row(
@@ -1230,7 +1249,7 @@ impl Cydonia {
             .collect();
         // An empty group has no row to hang the mark off, and nothing under it
         // to be pushed down by one drawn in the flow.
-        if cards.is_empty() && self.aimed_at(&id, on, cx) {
+        if !folded && cards.is_empty() && self.aimed_at(&id, on, cx) {
             rows.push(self.landing_mark(Mark::Flow, cx));
         }
         // At the end the field is written into is drawn at: what is being
@@ -1278,21 +1297,11 @@ impl Cydonia {
             .on_drop(cx.listener(move |this, drag: &CardDrag, _, cx| {
                 this.drop_card(drag, (project, board_at), &taken, cx);
             }))
-            .child(self.list_group_header(
-                &id,
-                name,
-                Tally {
-                    held,
-                    shown: cards.len(),
-                },
-                at,
-                lanes,
-                cx,
-            ))
+            .child(self.list_group_header(&id, name, held, at, lanes, folded, &board_id, cx))
             .children(rows)
             // Nothing to write into a narrowed lane: a card that does not
             // answer the query would be filed and vanish in one gesture.
-            .children((query.trim().is_empty()).then(|| {
+            .children((!folded && query.trim().is_empty()).then(|| {
                 theme
                     .ghost(SharedString::from(format!("list-add-card-{id}")))
                     .flex_none()
@@ -1317,22 +1326,24 @@ impl Cydonia {
             .into_any_element()
     }
 
-    /// A group's heading: the lane's name and count, and the `···` that moves
-    /// or drops it — the lane's own header, on a row the width of the pane.
+    /// A group's heading: the chevron that folds the lane, its name, and the
+    /// `···` that moves or drops it — the lane's own header, on a row the
+    /// width of the pane.
     ///
-    /// `held` is the whole lane and `shown` what the query left of it. The
-    /// `···` is built from `held`: Delete is refused on a lane holding cards,
-    /// not on one showing them.
+    /// `held` is the whole lane, narrowing or not: Delete is refused on a lane
+    /// holding cards, not on one showing them.
+    #[allow(clippy::too_many_arguments)]
     fn list_group_header(
         &self,
         id: &str,
         name: String,
-        tally: Tally,
+        held: usize,
         at: usize,
         lanes: usize,
+        folded: bool,
+        board: &str,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let Tally { held, shown } = tally;
         let theme = Theme::of(cx).clone();
         let row = div()
             .flex_none()
@@ -1350,7 +1361,29 @@ impl Cydonia {
             return row.child(self.name_field(cx)).into_any_element();
         }
         let named = id.to_owned();
+        let folding = (board.to_owned(), id.to_owned());
         row.group("list-group")
+            .child(
+                theme
+                    .ghost(SharedString::from(format!("list-group-fold-{id}")))
+                    .flex_none()
+                    .p(px(2.))
+                    .child(
+                        icons::icon(match folded {
+                            true => icons::arrows::ChevronRight,
+                            false => icons::arrows::ChevronDown,
+                        })
+                        .size(px(12.))
+                        .text_color(theme.text_faint),
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        let (board, id) = folding.clone();
+                        this.workspace.update(cx, |workspace, cx| {
+                            workspace.toggle_column_collapsed(&board, &id, cx)
+                        });
+                        cx.notify();
+                    })),
+            )
             .child(
                 div()
                     .id(SharedString::from(format!("list-group-name-{id}")))
@@ -1361,14 +1394,6 @@ impl Cydonia {
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.start_rename(Renaming::Column(named.clone()), window, cx);
                     })),
-            )
-            .child(
-                div()
-                    .text_color(theme.text_faint)
-                    .child(match shown == held {
-                        true => held.to_string(),
-                        false => format!("{shown}/{held}"),
-                    }),
             )
             .child(div().flex_1())
             .child(
@@ -1685,17 +1710,7 @@ impl Cydonia {
             .on_drop(cx.listener(move |this, drag: &CardDrag, _, cx| {
                 this.drop_card(drag, (project, board_at), &taken, cx);
             }))
-            .child(self.column_header(
-                &id,
-                name,
-                Tally {
-                    held,
-                    shown: cards.len(),
-                },
-                at,
-                lanes,
-                cx,
-            ))
+            .child(self.column_header(&id, name, held, at, lanes, cx))
             .child(
                 div()
                     .relative()
@@ -1764,25 +1779,23 @@ impl Cydonia {
             .into_any_element()
     }
 
-    /// The lane's name and count, and the `···` that moves or drops it.
+    /// The lane's name, and the `···` that moves or drops it.
     ///
     /// `at` is where the lane sits among `lanes`, which is what decides whether
     /// it can step either way — read here rather than in the menu, which is
     /// built from what the header was drawn with.
     ///
-    /// `held` is the whole lane and `shown` what the query left of it. The
-    /// `···` is built from `held`: Delete is refused on a lane holding cards,
-    /// not on one showing them.
+    /// `held` is the whole lane, narrowing or not: Delete is refused on a lane
+    /// holding cards, not on one showing them.
     fn column_header(
         &self,
         id: &str,
         name: String,
-        tally: Tally,
+        held: usize,
         at: usize,
         lanes: usize,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let Tally { held, shown } = tally;
         let theme = Theme::of(cx).clone();
         let row = div()
             .flex_none()
@@ -1812,14 +1825,6 @@ impl Cydonia {
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.start_rename(Renaming::Column(named.clone()), window, cx);
                     })),
-            )
-            .child(
-                div()
-                    .text_color(theme.text_faint)
-                    .child(match shown == held {
-                        true => held.to_string(),
-                        false => format!("{shown}/{held}"),
-                    }),
             )
             .child(div().flex_1())
             .child(
@@ -1859,20 +1864,19 @@ impl Cydonia {
         if self.menu != Some(Menu::Lane(id.to_owned())) {
             return None;
         }
-        // What each direction is called. The step and the new lane are the
-        // same two directions, said the way the layout reads.
-        let before = match view {
-            View::Lanes => ("Add column left", "Add column right"),
-            View::List => ("Add column above", "Add column below"),
-        };
-        let (back, on) = match view {
+        // What each direction is called, and the arrow that stands for it. The
+        // step and the new lane are the same two directions, said the way the
+        // layout reads.
+        let (back, on, both) = match view {
             View::Lanes => (
-                ("Move left", icons::arrows::ArrowLeft),
-                ("Move right", icons::arrows::ArrowRight),
+                ("Left", icons::arrows::ArrowLeft),
+                ("Right", icons::arrows::ArrowRight),
+                icons::arrows::ArrowLeftRight,
             ),
             View::List => (
-                ("Move up", icons::arrows::ArrowUp),
-                ("Move down", icons::arrows::ArrowDown),
+                ("Above", icons::arrows::ArrowUp),
+                ("Below", icons::arrows::ArrowDown),
+                icons::arrows::ArrowUpDown,
             ),
         };
         // First, and the only row here that makes something: the `Add a card`
@@ -1887,26 +1891,31 @@ impl Cydonia {
         )];
         // Then the two that write a lane either side of this one, so a board
         // is not only ever grown at its right-hand end.
-        for (after, label) in [(false, before.0), (true, before.1)] {
-            let beside = id.to_owned();
-            rows.push(menu::row(
-                Item::action(label).with_icon(icons::math::Plus),
-                move |this, window, cx| this.new_column_beside(&beside, after, window, cx),
-            ));
-        }
-        if at > 0 {
-            let moved = id.to_owned();
-            rows.push(menu::row(
-                Item::action(back.0).with_icon(back.1),
-                move |this, _, cx| this.shift_column(&moved, -1, cx),
-            ));
-        }
-        if at + 1 < lanes {
-            let moved = id.to_owned();
-            rows.push(menu::row(
-                Item::action(on.0).with_icon(on.1),
-                move |this, _, cx| this.shift_column(&moved, 1, cx),
-            ));
+        let beside = [(false, back), (true, on)]
+            .map(|(after, (label, icon))| {
+                let beside = id.to_owned();
+                menu::row(
+                    Item::action(label).with_icon(icon),
+                    move |this, window, cx| this.new_column_beside(&beside, after, window, cx),
+                )
+            })
+            .into_iter()
+            .collect();
+        rows.push(menu::submenu("Add column", icons::math::Plus, beside));
+        // The step is offered only the way the lane can take it, so a lane at
+        // an end carries the one direction and a board of one carries neither.
+        let steps: Vec<_> = [(at > 0, -1, back), (at + 1 < lanes, 1, on)]
+            .into_iter()
+            .filter(|(can, ..)| *can)
+            .map(|(_, step, (label, icon))| {
+                let moved = id.to_owned();
+                menu::row(Item::action(label).with_icon(icon), move |this, _, cx| {
+                    this.shift_column(&moved, step, cx)
+                })
+            })
+            .collect();
+        if !steps.is_empty() {
+            rows.push(menu::submenu("Move column", both, steps));
         }
         let drop = Item::action("Delete column").with_icon(icons::files::Trash);
         let drop = match count {

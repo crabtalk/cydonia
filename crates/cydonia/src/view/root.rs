@@ -489,6 +489,48 @@ impl Cydonia {
             .unwrap_or(0);
     }
 
+    /// Arrive at an entry while an arrangement is open.
+    ///
+    /// A pane already on it is focused rather than opened — opening it would
+    /// take the window out of the layout that pane is in. An entry the layout
+    /// does not hold leaves the layout: without that the window stays arranged
+    /// and the entry picked is nowhere on screen.
+    ///
+    /// `true` when the entry was found on a pane and the focus went there, so
+    /// the caller has nothing left to open. `false` with no layout open, which
+    /// is the plain single-pane case.
+    pub(crate) fn enter_member(
+        &mut self,
+        member: Option<Member>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.workspace.read(cx).active_layout().is_none() {
+            return false;
+        }
+        let member = member.filter(|member| {
+            self.workspace
+                .read(cx)
+                .active_layout()
+                .is_some_and(|layout| layout.contains(member))
+        });
+        match member {
+            Some(member) => {
+                // The pane a tab is in is keyed by the first of its strip —
+                // see [`Self::show_tab`].
+                let stack = self.workspace.read(cx).stack_of(&member);
+                let pane = stack.first().cloned().unwrap_or_else(|| member.clone());
+                self.show_tab(&pane, &member, window, cx);
+                true
+            }
+            None => {
+                self.workspace
+                    .update(cx, |workspace, _| workspace.leave_layout());
+                false
+            }
+        }
+    }
+
     /// Move the focus to the pane on this entry, and put the project's
     /// selection on what that pane shows.
     ///
@@ -948,35 +990,9 @@ impl Cydonia {
     /// element no frame draws is focus nowhere — so a session that cannot take
     /// a message leaves the focus where it was.
     pub(crate) fn select_session(&mut self, id: u64, window: &mut Window, cx: &mut Context<Self>) {
-        // While an arrangement is open, a session it holds is focused rather
-        // than opened — opening it would take the window out of the layout the
-        // pane is in. One it does not hold leaves the layout, the way opening
-        // any other entry does: without this the window stays arranged and the
-        // session picked is nowhere on screen.
-        if self.workspace.read(cx).active_layout().is_some() {
-            let member = self
-                .workspace
-                .read(cx)
-                .member_of_session(id)
-                .filter(|member| {
-                    self.workspace
-                        .read(cx)
-                        .active_layout()
-                        .is_some_and(|layout| layout.contains(member))
-                });
-            match member {
-                Some(member) => {
-                    // The pane a tab is in is keyed by the first of its strip
-                    // — see [`Self::show_tab`].
-                    let stack = self.workspace.read(cx).stack_of(&member);
-                    let pane = stack.first().cloned().unwrap_or_else(|| member.clone());
-                    self.show_tab(&pane, &member, window, cx);
-                    return;
-                }
-                None => self
-                    .workspace
-                    .update(cx, |workspace, _| workspace.leave_layout()),
-            }
+        let member = self.workspace.read(cx).member_of_session(id);
+        if self.enter_member(member, window, cx) {
+            return;
         }
         self.show_pane(Pane::Chat, cx);
         self.workspace

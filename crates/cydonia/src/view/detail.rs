@@ -6,7 +6,11 @@ use crate::{
         workspace::Showing,
     },
     view::{
-        component::{composer, ribbon, transcript},
+        component::{
+            composer,
+            menu::{self, Menu},
+            ribbon, transcript,
+        },
         leaf::Pane,
         root::{self, Cydonia, NewSession},
         settings::Section,
@@ -15,14 +19,15 @@ use crate::{
 use artifact::{layout::Member, session::chat::PlanStatus};
 use bezel::{
     gpui::{
-        AnyElement, App, Axis, Context, DragMoveEvent, Empty, FocusHandle, Focusable as _,
-        SharedString, Window, div, prelude::*, px,
+        AnyElement, App, Axis, Context, Div, DragMoveEvent, Empty, FocusHandle, Focusable as _,
+        SharedString, Stateful, Window, div, prelude::*, px,
     },
     motion::{Fade, Painter},
     theme::{TextStyle, Theme, Typeset},
     ui::{
         floating,
         icons::{self, Icon},
+        menu::Item,
         popover, surface,
         tooltip::Tooltip,
         widgets::{ButtonStyle, Buttons, Content, Controls, Status},
@@ -919,53 +924,84 @@ impl Cydonia {
             .map(|entry| (entry.name.clone(), workspace.agent_icon(&entry.name)))
             .collect();
         let mut rows: Vec<AnyElement> = Vec::new();
-        // One row per agent once there is a choice to make: a single "New
-        // session" opens on whichever agent is first, and nothing on this
-        // screen would say which.
+        // One row, and a panel of agents under it once there is a choice to
+        // make: a bare "New session" opens on whichever agent is first, and
+        // nothing on this screen would say which.
         if sessions && agents.len() > 1 {
-            for (at, (name, icon)) in agents.into_iter().enumerate() {
-                let icon = icon.unwrap_or_else(|| icons::social::MessageCircle.into());
-                rows.push(self.make_row(
-                    format!("session-{at}"),
-                    format!("New {name} session"),
-                    icon,
-                    cx,
-                    move |this, _, cx| this.pick_agent(at, cx),
-                ));
-            }
-        } else if sessions {
-            rows.push(self.make_row(
+            let picks: Vec<_> = agents
+                .into_iter()
+                .enumerate()
+                .map(|(at, (name, icon))| {
+                    let icon = icon.unwrap_or_else(|| icons::social::MessageCircle.into());
+                    menu::row(Item::action(name).with_icon(icon), move |this, _, cx| {
+                        this.pick_agent(at, cx)
+                    })
+                })
+                .collect();
+            let trigger = self.make_row(
                 "session",
                 "New session",
                 icons::social::MessageCirclePlus,
                 cx,
-                move |this, window, cx| this.new_session_action(&NewSession, window, cx),
-            ));
+                move |this, _, cx| this.toggle_menu(Menu::Launch, cx),
+            );
+            rows.push(
+                self.menu_press(trigger, Menu::Launch, cx)
+                    .relative()
+                    .children((self.menu == Some(Menu::Launch)).then(|| {
+                        popover::anchored_menu_below(
+                            "launch-menu",
+                            self.menu_card("launch-menu", picks, cx),
+                            None,
+                        )
+                    }))
+                    .into_any_element(),
+            );
+        } else if sessions {
+            rows.push(
+                self.make_row(
+                    "session",
+                    "New session",
+                    icons::social::MessageCirclePlus,
+                    cx,
+                    move |this, window, cx| this.new_session_action(&NewSession, window, cx),
+                )
+                .into_any_element(),
+            );
         }
         if boards {
-            rows.push(self.make_row(
-                "board",
-                "New board",
-                icons::development::SquareKanban,
-                cx,
-                move |this, window, cx| this.ask_new_board(ix, window, cx),
-            ));
+            rows.push(
+                self.make_row(
+                    "board",
+                    "New board",
+                    icons::development::SquareKanban,
+                    cx,
+                    move |this, window, cx| this.ask_new_board(ix, window, cx),
+                )
+                .into_any_element(),
+            );
         }
-        rows.push(self.make_row(
-            "article",
-            "New article",
-            icons::files::FilePlus,
-            cx,
-            move |this, window, cx| this.new_article(ix, window, cx),
-        ));
-        if tables {
-            rows.push(self.make_row(
-                "table",
-                "New table",
-                icons::files::Table2,
+        rows.push(
+            self.make_row(
+                "article",
+                "New article",
+                icons::files::FilePlus,
                 cx,
-                move |this, _, cx| this.new_table(ix, cx),
-            ));
+                move |this, window, cx| this.new_article(ix, window, cx),
+            )
+            .into_any_element(),
+        );
+        if tables {
+            rows.push(
+                self.make_row(
+                    "table",
+                    "New table",
+                    icons::files::Table2,
+                    cx,
+                    move |this, window, cx| this.new_table(ix, window, cx),
+                )
+                .into_any_element(),
+            );
         }
         theme
             .empty_state(icons::files::Folder, "Nothing open", format!("in {name}"))
@@ -982,7 +1018,7 @@ impl Cydonia {
         glyph: impl Into<Icon>,
         cx: &mut Context<Self>,
         make: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
-    ) -> AnyElement {
+    ) -> Stateful<Div> {
         let theme = Theme::of(cx).clone();
         let (id, label) = (id.into(), label.into());
         // An svg paints in its own `text_color` and inherits none, so the glyph
@@ -1011,7 +1047,6 @@ impl Cydonia {
                     .child(label),
             )
             .on_click(cx.listener(move |this, _, window, cx| make(this, window, cx)))
-            .into_any_element()
     }
 
     /// The session a chat pane is on. Nothing where one was asked for with no

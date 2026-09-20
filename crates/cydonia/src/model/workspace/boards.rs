@@ -261,6 +261,21 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Fold a lane shut in the list view, or open it back up. Named by the
+    /// board it sits on rather than taken from the active one: a layout can
+    /// have two boards on screen, and the lane pressed is not always on the
+    /// one in front.
+    pub fn toggle_column_collapsed(&mut self, board: &str, id: &str, cx: &mut Context<Self>) {
+        self.with_board(board, |store, board| {
+            let Some(column) = board.columns.iter_mut().find(|column| column.id == id) else {
+                return;
+            };
+            column.collapsed = !column.collapsed;
+            store.save_board(board);
+        });
+        cx.notify();
+    }
+
     /// Drop a lane, which a board refuses while it still holds cards — see
     /// [`Board::remove_column`].
     pub fn remove_column(&mut self, id: &str, cx: &mut Context<Self>) {

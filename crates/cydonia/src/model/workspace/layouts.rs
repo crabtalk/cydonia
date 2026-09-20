@@ -182,20 +182,16 @@ impl Workspace {
     /// is not an arrangement, and leaving the file behind would put a row in
     /// the sidebar for something the window is no longer doing. The pane that
     /// would have been left alone is what the window is put on, so the entry
-    /// you were keeping stays in front.
-    pub fn close_pane(&mut self, entry: &Member, cx: &mut Context<Self>) {
-        let Some(layout) = self.active_layout() else {
-            return;
-        };
+    /// you were keeping stays in front — and is returned, so the caller can
+    /// put the single pane on its kind. Nothing while the arrangement
+    /// survives, which leaves the panes to say what they show.
+    pub fn close_pane(&mut self, entry: &Member, cx: &mut Context<Self>) -> Option<Showing> {
+        let layout = self.active_layout()?;
         // A pane holding tabs loses a tab, not the pane — so none of the rules
         // below about what is left of the arrangement come into it.
-        if layout.stack_of(entry).len() > 1 {
+        if layout.stack_of(entry).len() > 1 || layout.leaves() > 2 {
             self.edit_layout(cx, |layout| layout.remove(entry));
-            return;
-        }
-        if layout.leaves() > 2 {
-            self.edit_layout(cx, |layout| layout.remove(entry));
-            return;
+            return None;
         }
         let survivor = layout
             .entries()
@@ -206,9 +202,9 @@ impl Workspace {
         if let Some(at) = self.layout {
             self.delete_layout(at, cx);
         }
-        if let Some((project, showing)) = survivor {
-            self.select_showing(project, showing, cx);
-        }
+        let (project, showing) = survivor?;
+        self.select_showing(project, showing, cx);
+        Some(showing)
     }
 
     /// Take an entry out of whatever layout holds it, open or not.

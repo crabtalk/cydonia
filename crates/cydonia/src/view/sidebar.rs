@@ -939,9 +939,9 @@ impl Cydonia {
             Row::Project(ix) => self.select_project(ix, cx),
             Row::Archive(ix) => self.toggle_archive(ix, cx),
             Row::Session { id, .. } => self.select_session(id, window, cx),
-            Row::Board { project, ix } => self.open_board(project, ix, cx),
+            Row::Board { project, ix } => self.open_board(project, ix, window, cx),
             Row::Article { project, ix } => self.open_article(project, ix, window, cx),
-            Row::Table { project, ix } => self.open_table(project, ix, cx),
+            Row::Table { project, ix } => self.open_table(project, ix, window, cx),
             Row::Layout(ix) => self.open_layout(ix, window, cx),
         }
     }
@@ -1296,7 +1296,7 @@ impl Cydonia {
         if tables {
             rows.push(menu::row(
                 Item::action("New table").with_icon(icons::files::Table2),
-                move |this, _, cx| this.new_table(ix, cx),
+                move |this, window, cx| this.new_table(ix, window, cx),
             ));
         }
         let id = SharedString::from(format!("add-menu-{ix}"));
@@ -1385,7 +1385,13 @@ impl Cydonia {
                 .child(mark),
         )
         .child(label)
-        .child(self.archive_button(("session-archive", id), entry, session.archived, cx))
+        .child(self.archive_button(
+            ("session-archive", id),
+            "session-row",
+            entry,
+            session.archived,
+            cx,
+        ))
         .on_click(cx.listener(move |this, _, window, cx| {
             this.select_session(id, window, cx);
         }))
@@ -1526,11 +1532,12 @@ impl Cydonia {
         .child(label)
         .child(self.archive_button(
             SharedString::from(format!("board-archive-{project}-{ix}")),
+            "board-row",
             entry,
             archived,
             cx,
         ))
-        .on_click(cx.listener(move |this, _, _, cx| this.open_board(project, ix, cx)))
+        .on_click(cx.listener(move |this, _, window, cx| this.open_board(project, ix, window, cx)))
         .into_any_element()
     }
 
@@ -1551,6 +1558,7 @@ impl Cydonia {
     pub(crate) fn archive_button(
         &self,
         id: impl Into<gpui::ElementId>,
+        group: &'static str,
         entry: Row,
         archived: bool,
         cx: &Context<Self>,
@@ -1565,10 +1573,18 @@ impl Cydonia {
         theme
             .ghost(id)
             .flex_none()
-            .when(
-                self.sidebar_hovered.as_ref() != Some(&Menu::Entry(entry)),
-                |el| el.hidden(),
-            )
+            // Out of sight but laid out, and revealed off the row's own hover
+            // group rather than [`Cydonia::sidebar_hovered`].
+            //
+            // A group resolves inside the frame the pointer arrives on; a
+            // field read at render is a frame behind, because the hover has to
+            // go through the model and come back as a repaint. An element out
+            // of sight registers no mouse handler either way, so that frame is
+            // one in which the button cannot be pressed — and a press landing
+            // in it goes to the row instead and reads as a click that did
+            // nothing.
+            .invisible()
+            .group_hover(group, |el| el.visible())
             .p(px(3.))
             .child(icons::icon(mark).size(px(14.)).text_color(theme.text_faint))
             .tooltip(move |window, cx| {
@@ -1768,7 +1784,7 @@ impl Cydonia {
                 .and_then(|open| open.boards.get(ix))
                 .map(|board| board.id.clone());
             if let Some(id) = id {
-                self.open_board(project, ix, cx);
+                self.open_board(project, ix, window, cx);
                 self.open_info(&id, window, cx);
             }
             return;
