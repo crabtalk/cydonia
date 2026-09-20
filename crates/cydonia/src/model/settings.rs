@@ -60,6 +60,19 @@ pub struct Settings {
     /// two that are already here and never above a bare key.
     #[serde(default)]
     pub mcp: Mcp,
+    /// Which agents the installer has been told to go ahead on, by registry
+    /// id, against the source that was agreed to — see
+    /// [`crate::agent::source_mark`].
+    ///
+    /// The mark and not a bare `true`: agreeing to install an agent is
+    /// agreeing to run what that publisher ships, and an entry whose package
+    /// or download host has changed since is not the thing that was agreed to.
+    /// A version is deliberately not in it — a new release of the same package
+    /// is the same decision.
+    ///
+    /// A table, so it belongs below the bare keys and above `[[agents]]`.
+    #[serde(default)]
+    pub trusted_agents: BTreeMap<String, String>,
     #[serde(default)]
     pub agents: Vec<Agent>,
 }
@@ -449,6 +462,9 @@ impl Default for Settings {
             shortcuts: Shortcuts::default(),
             features: Features::default(),
             mcp: Mcp::default(),
+            // Nothing agreed to yet, which is what makes the first install of
+            // each agent ask.
+            trusted_agents: BTreeMap::new(),
             // None, and named by nobody but the person who put one here.
             //
             // A fresh install used to ship `npx` lines for claude and codex,
@@ -713,6 +729,21 @@ pub fn set_notify_turns(on: bool) -> Result<()> {
 /// install claims the hand-written `@latest` entry that shipped as a default
 /// instead of sitting next to it. A replaced entry keeps its own `name`: the
 /// person who wrote it chose that, and only the command underneath has moved.
+/// Write down that this agent's source was agreed to.
+///
+/// Recorded before the install runs, not after: what is being agreed to is the
+/// fetch, and an install that fails is one that was still allowed to try.
+pub fn trust_agent(id: &str, mark: &str) -> Result<()> {
+    edit(|doc| {
+        let held = table(doc, "trusted_agents")?;
+        if held.get(id).and_then(|held| held.as_str()) == Some(mark) {
+            return Ok(false);
+        }
+        held[id] = toml_edit::value(mark);
+        Ok(true)
+    })
+}
+
 pub fn put_agent(agent: &Agent, supersedes: Option<&str>) -> Result<()> {
     edit(|doc| {
         let agents = doc["agents"].or_insert(toml_edit::Item::ArrayOfTables(

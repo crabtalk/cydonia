@@ -188,6 +188,37 @@ pub fn record(held: &mut Vec<String>, line: String) {
 /// `downloaded 24 MB`, `unpacking` — which is the only account of a step that
 /// can run for a minute. It is called on whichever thread this is, so a caller
 /// on the background executor sends rather than paints.
+/// What an agent's install is agreed to, as a line that outlives a version.
+///
+/// A package by name and a download by the host that serves it: those are what
+/// decide whose code ends up on the machine. The version is left out on
+/// purpose — see [`settings::Settings::trusted_agents`].
+///
+/// An agent whose distribution cannot be installed still gets a mark, so that
+/// a catalogue entry which becomes installable later is a fresh decision
+/// rather than one already agreed to.
+pub fn source_mark(agent: &registry::Agent) -> String {
+    match &agent.distribution {
+        Distribution::Npm { package, .. } => {
+            format!("npm:{}", cacp_agents::package_name(package))
+        }
+        Distribution::Binary(binary) => format!("binary:{}", archive_host(&binary.archive)),
+        Distribution::Unsupported { kind } => format!("unsupported:{kind}"),
+    }
+}
+
+/// The host an archive is served from, or the whole URL where it has none to
+/// read — a string that cannot be parsed is not one to quietly shorten.
+fn archive_host(archive: &str) -> &str {
+    let rest = archive
+        .strip_prefix("https://")
+        .or_else(|| archive.strip_prefix("http://"));
+    match rest {
+        Some(rest) => rest.split('/').next().unwrap_or(archive),
+        None => archive,
+    }
+}
+
 pub fn install(agent: &registry::Agent, on_line: impl FnMut(&str)) -> anyhow::Result<()> {
     let installed = agent.install(&settings::data_dir()?, on_line)?;
     let entry = Agent {
@@ -209,3 +240,7 @@ pub fn remove(id: &str) -> anyhow::Result<()> {
     Installed::remove(&settings::data_dir()?, id)?;
     settings::remove_agent(id)
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/agent_trust.rs"]
+mod trust_tests;
