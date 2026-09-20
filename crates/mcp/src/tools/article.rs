@@ -36,6 +36,14 @@ const ARTICLES: Arg = Arg {
     about: "The article, or several: each its project reference (#12), title, or storage id.",
 };
 
+/// The picture to stand over the article. A path on the Cydonia host, so a
+/// client without filesystem access there has nothing to name — see
+/// [`artifact::article::cover`] for where it lands.
+const COVER: Arg = Arg {
+    name: "image",
+    about: "The picture, as an absolute path on the Cydonia host. Draw or crop it 5:2 — 1500x600 is the size the app cuts its own at, and a picture of another shape is not cropped to fit. Left out, the cover is taken off.",
+};
+
 /// `title` and `text` each carry one line when the article is written and
 /// another when it is rewritten, so there is a const for each rather than one
 /// wording made to cover both.
@@ -76,7 +84,7 @@ const REPLACE_ALL: Arg = Arg {
     about: "Replace every non-overlapping occurrence. Defaults to false, requiring exactly one match.",
 };
 
-pub static TOOLS: [Tool; 7] = [
+pub static TOOLS: [Tool; 8] = [
     Tool {
         name: "article_list",
         description: "List the project's articles, most recently written first.",
@@ -120,6 +128,20 @@ pub static TOOLS: [Tool; 7] = [
         },
         writes: true,
         call: edit,
+    },
+    Tool {
+        name: "article_set_cover",
+        description: "Put a picture over an article, or take the one it has off. The file is filed under the article's own folder, which is not where body images go. Draw it 5:2 (1500x600): it is shown at that shape and not cropped to it.",
+        schema: |bound| {
+            let mut schema = fields(bound, &[PROJECT, ARTICLE]);
+            schema["properties"][COVER.name] = json!({
+                "type": "string",
+                "description": COVER.about,
+            });
+            schema
+        },
+        writes: true,
+        call: set_cover,
     },
     Tool {
         name: "article_move",
@@ -169,8 +191,14 @@ fn read(args: Args<'_>) -> Outcome {
     let found = locate(project, args.text(ARTICLE)?)?;
     let text = std::fs::read_to_string(&found.content)
         .map_err(|e| Trouble::Refused(format!("{} cannot be read — {e}", found.label())))?;
-    Ok(Answer::said(text)
-        .with(json!({ "id": found.id, "number": found.number, "title": found.title, "assets_path": assets })))
+    Ok(Answer::said(text).with(json!({
+        "id": found.id,
+        "number": found.number,
+        "title": found.title,
+        "assets_path": assets,
+        "article_path": folder(&found.content),
+        "cover_path": article::cover::of(&found.content),
+    })))
 }
 
 fn add(args: Args<'_>) -> Outcome {
@@ -192,8 +220,70 @@ fn add(args: Args<'_>) -> Outcome {
     let id = article::id_of(&content);
     let number = artifact::entry::number(project, "article", &id)
         .map_err(|e| Trouble::Refused(e.to_string()))?;
-    Ok(Answer::said(format!("#{number} {title} written"))
-        .with(json!({ "id": id, "number": number, "title": title, "assets_path": assets })))
+    Ok(
+        Answer::said(format!("#{number} {title} written")).with(json!({
+            "id": id,
+            "number": number,
+            "title": title,
+            "assets_path": assets,
+            "article_path": folder(&content),
+        })),
+    )
+}
+
+/// The article's own directory: where its cover goes, and nothing else an
+/// agent writes.
+fn folder(content: &Path) -> Option<PathBuf> {
+    content.parent().map(Path::to_path_buf)
+}
+
+/// File a picture as the article's cover, or take the one it has off.
+///
+/// The bytes are copied rather than moved: the source is the caller's, and a
+/// picture generated into `assets_path` is one it may well link to as well.
+/// What was there before goes, which is what keeps one article to one cover —
+/// `cover::of` reads the directory and a second file would shadow the first.
+fn set_cover(args: Args<'_>) -> Outcome {
+    let found = locate(root(&args)?, args.text(ARTICLE)?)?;
+    let previous = article::cover::of(&found.content);
+    let Some(source) = args.maybe(COVER) else {
+        if let Some(old) = previous {
+            std::fs::remove_file(&old).map_err(|e| {
+                Trouble::Refused(format!("{} cannot be uncovered — {e}", found.label()))
+            })?;
+        }
+        return Ok(Answer::said(format!("{} has no cover now", found.label())));
+    };
+    let source = Path::new(source);
+    if !source.is_file() {
+        return Err(Trouble::Refused(format!(
+            "no picture at {} on this host",
+            source.display()
+        )));
+    }
+    let ext = source
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(str::to_ascii_lowercase)
+        .ok_or_else(|| {
+            Trouble::Refused(format!(
+                "{} has no extension to name its format by",
+                source.display()
+            ))
+        })?;
+    // Named for when it was filed, so a second cover never lands on the name
+    // the first is cached under.
+    let to = article::cover::path(&found.content, stamp::now(), &ext);
+    if article::cover::is_cover(source) && source == to {
+        return Ok(Answer::said(format!("{} keeps its cover", found.label())));
+    }
+    std::fs::copy(source, &to)
+        .map_err(|e| Trouble::Refused(format!("the cover cannot be written — {e}")))?;
+    if let Some(old) = previous.filter(|old| *old != to) {
+        let _ = std::fs::remove_file(old);
+    }
+    Ok(Answer::said(format!("{} is covered", found.label()))
+        .with(json!({ "cover_path": to, "article_path": folder(&found.content) })))
 }
 
 fn assets_path(project: &Path) -> Result<PathBuf, Trouble> {

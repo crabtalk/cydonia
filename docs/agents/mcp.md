@@ -29,7 +29,7 @@ external MCP client at it to reach the same projects the app has open.
 | Area | Tools |
 | --- | --- |
 | Projects | `project_open`, `project_close`, `project_entries`, `project_read_entry` |
-| Articles | `article_list`, `article_read`, `article_add`, `article_edit`, `article_rewrite`, `article_rename`, `article_move` |
+| Articles | `article_list`, `article_read`, `article_add`, `article_edit`, `article_rewrite`, `article_rename`, `article_move`, `article_set_cover` |
 | Boards | `board_list`, `board_read`, `board_add`, `board_rename`, `board_add_column`, `board_rename_column`, `board_move_column`, `board_remove_column`, `board_add_card`, `board_rewrite_card`, `board_move_card`, `board_remove_card`, `board_set_card_status` |
 
 A board is named by its key (`ROAD`), its name or its id; a card by its handle

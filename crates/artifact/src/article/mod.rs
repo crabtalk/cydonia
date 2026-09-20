@@ -14,6 +14,7 @@
 //! The document a reader opens is the whole of an article that is here. What
 //! it is opened *in* is the app's, and stays there.
 
+pub mod cover;
 pub mod properties;
 
 use crate::{entry, project::fs, stamp};

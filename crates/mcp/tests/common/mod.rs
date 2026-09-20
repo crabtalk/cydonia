@@ -122,6 +122,16 @@ pub fn refused(outcome: Outcome) -> String {
     }
 }
 
+/// What a call answered beside its words — the `data` a tool puts structured
+/// results in.
+pub fn structured(outcome: Outcome) -> serde_json::Value {
+    match outcome {
+        Ok(answer) => answer.data.expect("the call answered with data"),
+        Err(Trouble::Refused(why)) => panic!("refused: {why}"),
+        Err(Trouble::Invalid(why)) => panic!("invalid: {why}"),
+    }
+}
+
 pub fn invalid(outcome: Outcome) -> String {
     match outcome {
         Err(Trouble::Invalid(why)) => why,
