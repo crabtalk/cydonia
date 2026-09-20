@@ -45,8 +45,8 @@ use std::{
 // scope — see the note at the head of each.
 mod articles;
 mod boards;
-mod layouts;
-pub use layouts::Showing;
+mod spaces;
+pub use spaces::Showing;
 mod order;
 mod projects;
 mod sessions;
@@ -126,10 +126,10 @@ pub struct Workspace {
     /// — see [`order`].
     pub(super) pinned: BTreeMap<PathBuf, Vec<state::Entry>>,
     /// The arrangements this machine holds, and which one the window is
-    /// showing. The window's rather than a project's: a layout can hold panes
-    /// from several — see [`layouts`].
-    pub layouts: Vec<artifact::layout::Layout>,
-    pub layout: Option<usize>,
+    /// showing. The window's rather than a project's: a space can hold panes
+    /// from several — see [`spaces`].
+    pub spaces: Vec<artifact::space::Space>,
+    pub space: Option<usize>,
 }
 
 impl Workspace {
@@ -180,15 +180,15 @@ impl Workspace {
             last: state.last,
             order: state.order,
             pinned: state.pinned,
-            layouts: Self::in_order(crate::model::layouts::all(), &state.layouts),
-            layout: None,
+            spaces: Self::in_order(crate::model::spaces::all(), &state.spaces),
+            space: None,
         };
         // The arrangement the window closed on, before any entry is opened:
-        // `open_last_entry` is a project's answer and a layout spans them.
-        this.layout = state.layout.and_then(|id| {
-            this.layouts
+        // `open_last_entry` is a project's answer and a space spans them.
+        this.space = state.space.and_then(|id| {
+            this.spaces
                 .iter()
-                .position(|layout| layout.id == id)
+                .position(|space| space.id == id)
         });
         for ix in restore {
             this.restore_sessions(ix);
@@ -231,11 +231,11 @@ impl Workspace {
             last: self.last.clone(),
             order: self.order.clone(),
             pinned: self.pinned.clone(),
-            layout: self.active_layout().map(|layout| layout.id.clone()),
-            layouts: self
-                .layouts
+            space: self.active_space().map(|space| space.id.clone()),
+            spaces: self
+                .spaces
                 .iter()
-                .map(|layout| layout.id.clone())
+                .map(|space| space.id.clone())
                 .collect(),
         });
     }

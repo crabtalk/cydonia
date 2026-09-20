@@ -27,7 +27,7 @@ description: The default chords, and how to change one.
 
 The commands without a chord are reachable from the menu. ⌘N is the session, and
 three more `New` chords would spend letters you may want for your own. ⌘W closes
-a layout tab.
+a tab in a space.
 
 ## Changing one
 

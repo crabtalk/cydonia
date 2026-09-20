@@ -16,7 +16,7 @@ use crate::{
         settings::Section,
     },
 };
-use artifact::{layout::Member, session::chat::PlanStatus};
+use artifact::{space::Member, session::chat::PlanStatus};
 use bezel::{
     gpui::{
         AnyElement, App, Axis, Context, Div, DragMoveEvent, Empty, FocusHandle, Focusable as _,
@@ -294,7 +294,7 @@ pub fn adrift_line(agent: &str, others: bool) -> String {
 }
 
 impl Cydonia {
-    /// Where the window's shell opens: under a layout, the project the first
+    /// Where the window's shell opens: under a space, the project the first
     /// pane is in; the session's working directory when a chat is in front —
     /// its worktree, where it has one — and the project's otherwise.
     ///
@@ -302,8 +302,8 @@ impl Cydonia {
     /// whatever was in front when it was opened.
     pub(crate) fn shell_cwd(&self, cx: &App) -> Option<PathBuf> {
         let workspace = self.workspace.read(cx);
-        if let Some(layout) = workspace.active_layout() {
-            return layout.panes().into_iter().next().map(|pane| pane.project);
+        if let Some(space) = workspace.active_space() {
+            return space.panes().into_iter().next().map(|pane| pane.project);
         }
         if self.showing(cx) == Some(Pane::Chat)
             && let Some(chat) = workspace.active_session()
@@ -518,8 +518,8 @@ impl Cydonia {
         let entry = self.workspace.read(cx).settings.agents.get(ix).cloned();
         if let Some(entry) = entry {
             // A session that does not exist yet is in no arrangement — it has
-            // no file, so a layout has nothing to name it by. `None` is that
-            // said plainly, and leaving the layout is what puts the window
+            // no file, so a space has nothing to name it by. `None` is that
+            // said plainly, and leaving the space is what puts the window
             // where the new session is about to be.
             self.enter_member(None, window, cx);
             self.show_pane(Pane::Chat, cx);
@@ -533,7 +533,7 @@ impl Cydonia {
     /// be swapped for.
     pub(crate) fn sync_composer(&mut self, cx: &mut Context<Self>) {
         let workspace = self.workspace.read(cx);
-        let arranged = workspace.active_layout().is_some();
+        let arranged = workspace.active_space().is_some();
         let agents: Vec<composer::Agent> = workspace
             .settings
             .agents
@@ -543,7 +543,7 @@ impl Cydonia {
                 icon: workspace.agent_icon(&entry.name),
             })
             .collect();
-        // The session each pane is on: its own where a layout put it there,
+        // The session each pane is on: its own where a space put it there,
         // and whatever the project is on for the single pane.
         let on: Vec<Option<u64>> = self
             .leaves
@@ -613,8 +613,8 @@ impl Cydonia {
         // from settings.toml, leaving nothing to reconnect it to.
         let live = self.workspace.read(cx).reachable();
         let showing = self.showing(cx);
-        let arranged = self.workspace.read(cx).active_layout().is_some();
-        // A layout arranges several entries, so it draws its own panes. One
+        let arranged = self.workspace.read(cx).active_space().is_some();
+        // A space arranges several entries, so it draws its own panes. One
         // entry open on its own is the single pane below.
         let body = match self.panes(window, cx) {
             Some(panes) => panes,
@@ -665,7 +665,7 @@ impl Cydonia {
         let body = match arranged {
             true => body,
             // One pane takes a drop on its edge too: that is where the first
-            // layout comes from.
+            // space comes from.
             false => self.lone_pane(body, cx),
         };
         let content = div()
@@ -680,7 +680,7 @@ impl Cydonia {
             // inside the scroll so content slides under the glass, and doing
             // that means every pane's own scroll box, not this one div.
             //
-            // A layout takes none of it: its panes carry a bar each, and the
+            // A space takes none of it: its panes carry a bar each, and the
             // one at the top left keeps clear of the lights itself.
             .when(!arranged, |el| el.pt(px(root::HEADER_HEIGHT)))
             .child(body);
@@ -699,7 +699,7 @@ impl Cydonia {
             .flex()
             .flex_col()
             .child(content)
-            // After the content, so it draws over it. A layout has no band of
+            // After the content, so it draws over it. A space has no band of
             // its own: one title over several panes would name whichever is in
             // front and say nothing about the rest.
             .children((!arranged).then(|| self.pane_header(window, cx)))
@@ -740,7 +740,7 @@ impl Cydonia {
                     ),
                 },
             );
-        // The one panel the window has, under whatever is showing: a layout's
+        // The one panel the window has, under whatever is showing: a space's
         // panes included, which is what the right panel cannot do.
         let terminal = self
             .terminal
@@ -748,7 +748,7 @@ impl Cydonia {
             .filter(|(visible, _)| *visible)
             .map(|(_, terminal)| terminal.clone());
         // The window's own panels stand beside one entry, not beside an
-        // arrangement of several. Held rather than shut, so leaving the layout
+        // arrangement of several. Held rather than shut, so leaving the space
         // puts them back as they were.
         let changes = match arranged {
             true => None,
@@ -1115,20 +1115,20 @@ impl Cydonia {
                 0.
             })
         .max(0.);
-        // The right-hand panel is not drawn beside a layout — see
+        // The right-hand panel is not drawn beside a space — see
         // [`Cydonia::detail`] — so its width is only taken off the column
         // where it is actually standing there.
         // A panel covering the column takes none of it away — the chat is
         // still laid out at full width underneath.
         let beside = self.changes.is_some()
-            && self.workspace.read(cx).active_layout().is_none()
+            && self.workspace.read(cx).active_space().is_none()
             && panel_beside(available);
         let column = available
             - match beside {
                 true => panel_width(self.changes_width, available),
                 false => 0.,
             };
-        // The column, less what a layout gives the panes beside this one. The
+        // The column, less what a space gives the panes beside this one. The
         // transcript sizes its margins off this and drops the rail when they
         // are too narrow to hold it — measured against the window, a pane in a
         // split would keep a rail there is no room for and draw it over the
@@ -1252,7 +1252,7 @@ impl Cydonia {
         let prompt = chat.permission.as_ref()?;
         let id = chat.id;
         let painter = Painter::of(cx);
-        // One button, whichever layout it lands in. `key` is the element's and
+        // One button, whichever space it lands in. `key` is the element's and
         // the hover wash's both — the wash store is one map for the whole app,
         // so the session is in it too.
         let answer = |key: &str, option_id: String, label: &str, style| {

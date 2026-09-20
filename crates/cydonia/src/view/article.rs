@@ -9,7 +9,7 @@ use crate::{
         sidebar::{self, Row},
     },
 };
-use artifact::layout::Member;
+use artifact::space::Member;
 use bezel::ui::scroll as scrollbars;
 use bezel::{
     gpui::{

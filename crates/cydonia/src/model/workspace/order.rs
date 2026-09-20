@@ -3,8 +3,8 @@
 //!
 //! The list is held by project path and written to `state.toml`, beside the
 //! entry each project was last showing. Not in the project's own `.cydonia/`:
-//! an arrangement is what one person likes looking at, the way a layout is,
-//! and neither is the project's source — see [`crate::model::layouts`].
+//! an arrangement is what one person likes looking at, the way a space is,
+//! and neither is the project's source — see [`crate::model::spaces`].
 //!
 //! Identity here is the pair `state.toml` already keeps — a session's record,
 //! a board's id, an article's path, a table's key — never an index, which
@@ -12,7 +12,7 @@
 
 use super::{Showing, Workspace};
 use crate::model::state;
-use artifact::layout::Kind as MemberKind;
+use artifact::space::Kind as MemberKind;
 use bezel::gpui::Context;
 
 impl Workspace {

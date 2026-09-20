@@ -254,7 +254,7 @@ impl Workspace {
         // Opening any entry leaves the arrangement. Here rather than in each
         // `open_*`: this is the one place they all come through, so there is
         // no way to open an entry and forget to.
-        self.leave_layout();
+        self.leave_space();
         self.note_landing(project, kind, id, cx);
     }
 
@@ -344,9 +344,9 @@ impl Workspace {
             cx.emit(Reloaded);
         }
         self.prune_archived(cx);
-        // An entry deleted from under a layout leaves a member naming a
+        // An entry deleted from under a space leaves a member naming a
         // number nothing answers to.
-        self.prune_layouts(cx);
+        self.prune_spaces(cx);
         cx.notify();
     }
 

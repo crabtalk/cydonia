@@ -26,7 +26,7 @@ agent's writes do not reshuffle the sidebar under you.
 - Drag a row to arrange a project's entries by hand.
 - Pin an entry to the top of its project from the band's menu.
 - A new entry stays at the top until it is arranged, below anything pinned.
-- Archiving an entry unpins it and takes it out of its layout.
+- Archiving an entry unpins it and takes it out of its space.
 
 ## Moving between projects
 

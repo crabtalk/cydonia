@@ -309,7 +309,7 @@ impl Cydonia {
                     })
             })
             // The bottom panel is the window's, not a pane's: it stands under
-            // whatever is showing, a layout included. A project is what it
+            // whatever is showing, a space included. A project is what it
             // needs, for the directory its first shell opens in.
             .when(project, |root| {
                 root.on_action(cx.listener(Self::toggle_terminal))

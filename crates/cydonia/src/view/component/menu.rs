@@ -34,7 +34,7 @@ pub(crate) enum Menu {
     /// the header is showing: that entry has a row in the sidebar too, and a
     /// key naming the entry would have one click open both of them.
     Header,
-    /// The `···` in one pane's bar, by the entry the pane is on. A layout has
+    /// The `···` in one pane's bar, by the entry the pane is on. A space has
     /// several bars on screen at once, so `Header` alone would open every one
     /// of them together.
     Pane(gpui::SharedString),
@@ -143,7 +143,7 @@ impl Cydonia {
                 group.filter(|_| self.menu.as_ref() != Some(&menu)),
                 |el, group| {
                     if matches!(menu, Menu::Add(_) | Menu::Entry(_)) {
-                        // Resolve layout during render, never in a hover style:
+                        // Resolve space during render, never in a hover style:
                         // GPUI can resolve hover differently in prepaint and paint.
                         el.when(self.sidebar_hovered.as_ref() != Some(&menu), |el| {
                             el.hidden()

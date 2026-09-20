@@ -1,18 +1,18 @@
-//! Opening an entry while an arrangement is up: the window leaves the layout
+//! Opening an entry while an arrangement is up: the window leaves the space
 //! and lands on what was picked.
 //!
-//! The pane a layout leaves behind is the one it was focused on, and the pane
+//! The pane a space leaves behind is the one it was focused on, and the pane
 //! kind is written through `leaf_mut` — an index into the leaves that
 //! `sync_leaves` is about to rewrite. These run that reconciliation by hand,
 //! the way a frame would.
 
 use super::*;
 use crate::model::{settings::Settings, state};
-use artifact::layout::Side;
+use artifact::space::Side;
 use bezel::gpui;
 
 /// A scratch project, and a config directory beside it that the test's writes
-/// land in — see the same guard in `tests/unit/layouts.rs`.
+/// land in — see the same guard in `tests/unit/spaces.rs`.
 struct Scratch(std::path::PathBuf);
 
 impl Scratch {
@@ -40,7 +40,7 @@ impl Drop for Scratch {
 /// Picking a board no pane is on leaves the arrangement and shows it, from
 /// whichever pane the focus was in.
 #[gpui::test]
-fn opening_an_entry_outside_the_layout_lands_on_it(cx: &mut gpui::TestAppContext) {
+fn opening_an_entry_outside_the_space_lands_on_it(cx: &mut gpui::TestAppContext) {
     let scratch = Scratch::new("outside");
     cx.update(|cx| Theme::install(bezel::theme::Appearance::Light, cx));
     let window = cx
@@ -74,8 +74,8 @@ fn opening_an_entry_outside_the_layout_lands_on_it(cx: &mut gpui::TestAppContext
             root.open_board(0, 2, window, cx);
 
             assert!(
-                root.workspace.read(cx).active_layout().is_none(),
-                "the layout is left"
+                root.workspace.read(cx).active_space().is_none(),
+                "the space is left"
             );
             // And the frame after it.
             root.sync_leaves(window, cx);
@@ -90,11 +90,11 @@ fn opening_an_entry_outside_the_layout_lands_on_it(cx: &mut gpui::TestAppContext
         .unwrap();
 }
 
-/// Making an entry while an arrangement is up does the same: the layout is
+/// Making an entry while an arrangement is up does the same: the space is
 /// left and the window lands on the thing just made, not on whichever pane
 /// the arrangement had first.
 #[gpui::test]
-fn making_an_entry_inside_a_layout_lands_on_it(cx: &mut gpui::TestAppContext) {
+fn making_an_entry_inside_a_space_lands_on_it(cx: &mut gpui::TestAppContext) {
     let scratch = Scratch::new("making");
     cx.update(|cx| {
         Theme::install(bezel::theme::Appearance::Light, cx);
@@ -123,8 +123,8 @@ fn making_an_entry_inside_a_layout_lands_on_it(cx: &mut gpui::TestAppContext) {
             root.new_article(0, window, cx);
 
             assert!(
-                root.workspace.read(cx).active_layout().is_none(),
-                "the layout is left"
+                root.workspace.read(cx).active_space().is_none(),
+                "the space is left"
             );
             root.sync_leaves(window, cx);
             assert_eq!(root.leaf().pane, Pane::Article);
@@ -132,12 +132,12 @@ fn making_an_entry_inside_a_layout_lands_on_it(cx: &mut gpui::TestAppContext) {
         .unwrap();
 }
 
-/// A new session leaves the layout too — the case a member cannot cover, since
+/// A new session leaves the space too — the case a member cannot cover, since
 /// a session has no file until its first turn and so is in no arrangement by
 /// name. Without this the window stays arranged and the session just started
 /// is nowhere on screen.
 #[gpui::test]
-fn starting_a_session_inside_a_layout_lands_on_it(cx: &mut gpui::TestAppContext) {
+fn starting_a_session_inside_a_space_lands_on_it(cx: &mut gpui::TestAppContext) {
     let scratch = Scratch::new("session");
     cx.update(|cx| Theme::install(bezel::theme::Appearance::Light, cx));
     let window = cx
@@ -170,8 +170,8 @@ fn starting_a_session_inside_a_layout_lands_on_it(cx: &mut gpui::TestAppContext)
             root.pick_agent(0, window, cx);
 
             assert!(
-                root.workspace.read(cx).active_layout().is_none(),
-                "the layout is left"
+                root.workspace.read(cx).active_space().is_none(),
+                "the space is left"
             );
             root.sync_leaves(window, cx);
             assert_eq!(root.leaf().pane, Pane::Chat);
@@ -180,14 +180,14 @@ fn starting_a_session_inside_a_layout_lands_on_it(cx: &mut gpui::TestAppContext)
         .unwrap();
 }
 
-/// Picking an entry a layout holds goes to that layout's pane, from a window
-/// that is not in the layout at all.
+/// Picking an entry a space holds goes to that space's pane, from a window
+/// that is not in the space at all.
 ///
 /// The gesture means one thing wherever it is made: the sidebar lists an entry
-/// under the layout holding it or under its project, never both, and that one
+/// under the space holding it or under its project, never both, and that one
 /// place is what opening it goes to — see [`Cydonia::enter_member`].
 #[gpui::test]
-fn opening_an_entry_a_layout_holds_enters_the_layout(cx: &mut gpui::TestAppContext) {
+fn opening_an_entry_a_space_holds_enters_the_space(cx: &mut gpui::TestAppContext) {
     let scratch = Scratch::new("enter");
     cx.update(|cx| Theme::install(bezel::theme::Appearance::Light, cx));
     let window = cx.add_window(|window, cx| {
@@ -211,12 +211,12 @@ fn opening_an_entry_a_layout_holds_enters_the_layout(cx: &mut gpui::TestAppConte
                 .update(cx, |workspace, cx| workspace.arrange(&a, &b, Side::Right, cx));
             root.sync_leaves(window, cx);
 
-            // Out of the layout, onto a board no layout holds.
+            // Out of the space, onto a board no space holds.
             root.open_board(0, 2, window, cx);
             root.sync_leaves(window, cx);
-            assert!(root.workspace.read(cx).active_layout().is_none(), "left it");
+            assert!(root.workspace.read(cx).active_space().is_none(), "left it");
 
-            // And back to one the layout does hold, from outside it.
+            // And back to one the space does hold, from outside it.
             root.open_board(0, 1, window, cx);
             root.sync_leaves(window, cx);
             assert_eq!(
@@ -233,7 +233,7 @@ fn opening_an_entry_a_layout_holds_enters_the_layout(cx: &mut gpui::TestAppConte
             root.open_board(0, 0, window, cx);
 
             assert!(
-                root.workspace.read(cx).active_layout().is_some(),
+                root.workspace.read(cx).active_space().is_some(),
                 "the arrangement holding it is what opening it opens"
             );
             root.sync_leaves(window, cx);

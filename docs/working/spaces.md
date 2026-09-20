@@ -1,5 +1,5 @@
 ---
-title: Panes, tabs and layouts
+title: Panes, tabs and spaces
 description: Splitting the window, carrying entries between panes, and the panels around them.
 ---
 
@@ -12,12 +12,12 @@ showing. ⌃⇥ and ⇧⌃⇥ step between the panes on screen.
 ## Tabs
 
 A pane holds several entries as tabs, and a tab can be carried to another pane.
-⌘W closes a layout tab.
+⌘W closes a tab in a space.
 
-## Layouts
+## Spaces
 
-A layout is an arrangement of entries, saved and listed in the sidebar with its
-entries grouped under it. One layout can span projects.
+A space is an arrangement of entries, saved and listed in the sidebar with its
+entries grouped under it. One space can span projects.
 
 ## The panels around them
 
@@ -29,7 +29,7 @@ entries grouped under it. One layout can span projects.
 
 The right panel remembers the tab you left it on and the width you dragged it
 to, capped at half the column. In a window too narrow to stand it beside a chat
-it covers the column instead. It is not offered beside a layout, which divides
+it covers the column instead. It is not offered beside a space, which divides
 the room it would stand in.
 
 ⌘⇧F opens Files in it, and ⌘⇧G opens Review.

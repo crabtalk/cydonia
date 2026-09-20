@@ -102,16 +102,16 @@ impl Cydonia {
         let workspace = self.workspace.read(cx);
         let at = |path: Option<String>| (path, UNDONE.to_owned());
         match entry {
-            // A layout holds none of what it arranges, so nothing but the
+            // A space holds none of what it arranges, so nothing but the
             // arrangement itself goes.
-            Row::Layout(ix) => workspace
-                .layouts
+            Row::Space(ix) => workspace
+                .spaces
                 .get(ix)
-                .map(|layout| {
+                .map(|space| {
                     (
-                        // Beside the config, not in a project: a layout spans
-                        // them — see [`crate::model::layouts`].
-                        Some(format!("~/.config/cydonia/layouts/{}.toml", layout.id)),
+                        // Beside the config, not in a project: a space spans
+                        // them — see [`crate::model::spaces`].
+                        Some(format!("~/.config/cydonia/spaces/{}.toml", space.id)),
                         format!("The entries it arranges stay where they are. {UNDONE}"),
                     )
                 })
@@ -156,7 +156,7 @@ impl Cydonia {
                     format!("Its {rows} rows are dropped; the database stays. {UNDONE}"),
                 )
             }
-            Row::Project(_) | Row::Archive(_) => (None, UNDONE.to_owned()),
+            Row::Project(_) | Row::Archive(_) | Row::Spaces => (None, UNDONE.to_owned()),
         }
     }
 

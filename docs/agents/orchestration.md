@@ -36,13 +36,13 @@ was dispatched to.
 | What | Chord |
 | --- | --- |
 | Step between the panes on screen | ⌃⇥ and ⇧⌃⇥ |
-| Close a layout tab | ⌘W |
+| Close a tab in a space | ⌘W |
 | Toggle the sidebar | ⌘B |
 
 Split the window into panes and drag a session into each, or save the
-arrangement as a layout — one layout can span projects. Each pane draws from
+arrangement as a space — one space can span projects. Each pane draws from
 its own state, so moving the focus does not move what the others are showing.
-See [Panes, tabs and layouts](./../working/layouts.md).
+See [Panes, tabs and spaces](./../working/spaces.md).
 
 ## The board as the status of the work
 

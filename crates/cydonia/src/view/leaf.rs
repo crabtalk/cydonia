@@ -49,13 +49,13 @@ impl Pane {
 
 /// What one pane shows and holds while it shows it.
 pub struct Leaf {
-    /// The entry this pane is on, named the way a layout names its members —
+    /// The entry this pane is on, named the way a space names its members —
     /// which project it is in and which of that project's things it is. That
     /// is what ties a pane to a member of the arrangement.
     ///
-    /// Nothing for the pane a window with no layout open shows: it is on
+    /// Nothing for the pane a window with no space open shows: it is on
     /// whatever the project was last left on, and the project holds that.
-    pub(crate) entry: Option<artifact::layout::Member>,
+    pub(crate) entry: Option<artifact::space::Member>,
     /// Tracked on the pane this leaf draws, so the pane is an ancestor of the
     /// focused element and the chords claimed on it are reached — an action
     /// runs only through the focused element's ancestors. Where the focus lands

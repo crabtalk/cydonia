@@ -2,10 +2,10 @@
 //! moving panes about, and losing one.
 //!
 //! The tree is generic over what a pane is on, so these work it with plain
-//! numbers. What a member really is, and where a layout is kept, is the app's
-//! — see `cydonia`'s own layout tests.
+//! numbers. What a member really is, and where a space is kept, is the app's
+//! — see `cydonia`'s own space tests.
 
-use cydonia_artifact::layout::{Axis, Node, Side};
+use cydonia_artifact::space::{Axis, Node, Side};
 /// Evening a split shares the room out, and reaches the splits inside it.
 #[test]
 fn evening_shares_the_room() {

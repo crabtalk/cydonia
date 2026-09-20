@@ -19,7 +19,7 @@ no sync.
 - A **session** is one agent working in one project. ⌘N starts one, ⌥⌘N starts
   one on the next agent you have installed, and a session can work in any
   project Cydonia has open.
-- **Panes, tabs and layouts** put several of those on screen at once, so a
+- **Panes, tabs and spaces** put several of those on screen at once, so a
   running agent is something you watch rather than something you poll.
 - A **card** on a board can be handed to an agent: it opens a session of its
   own with the card's text as the first prompt, and spins an orb while the run

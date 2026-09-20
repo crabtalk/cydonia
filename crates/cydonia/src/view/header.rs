@@ -67,7 +67,7 @@ impl Cydonia {
     }
 
     /// The same, for an entry named outright rather than read off the
-    /// project's selection — what a pane of a layout puts in its own bar,
+    /// project's selection — what a pane of a space puts in its own bar,
     /// which is some entry other than the one in front.
     pub(crate) fn toolbar_of(&self, project: usize, showing: Showing, cx: &App) -> Option<Toolbar> {
         let workspace = self.workspace.read(cx);
@@ -128,7 +128,7 @@ impl Cydonia {
     /// place: the sidebar row asks this before drawing it, and the band wins
     /// because it is what is left when the sidebar is folded away.
     pub(crate) fn header_renaming(&self, cx: &App) -> Option<&Renaming> {
-        // A layout draws no band, so there is no field here to be the one
+        // A space draws no band, so there is no field here to be the one
         // place — the sidebar row draws it instead. Without this the field
         // would be nowhere: the row stands down for a band that is not there.
         if self.arranged(cx) {

@@ -15,7 +15,7 @@ use crate::{
 };
 use artifact::{
     board::{Card, Status, View},
-    layout::Member,
+    space::Member,
 };
 use bezel::agent::orbs::engine::Frame;
 use bezel::ui::scroll as scrollbars;
@@ -256,7 +256,7 @@ enum Mark {
 /// wherever the drop lands, and a copy of the card travelling with the pointer
 /// would be a second one to keep in step with it.
 ///
-/// It says which board it left as well as which card it is: a layout can have
+/// It says which board it left as well as which card it is: a space can have
 /// two boards on screen, and the lane a card lands on cannot tell where it came
 /// from.
 #[derive(Clone)]
@@ -281,7 +281,7 @@ pub struct Landing {
 /// Where one board sits, wherever it is drawn.
 ///
 /// Keyed by board id on the window rather than held by the pane: the same board
-/// arranged in a layout and opened on its own is one board, and a handle per
+/// arranged in a space and opened on its own is one board, and a handle per
 /// pane leaves the two disagreeing about where it is scrolled to.
 #[derive(Default)]
 pub struct Scrolls(RefCell<HashMap<String, Scroll>>);
@@ -470,7 +470,7 @@ impl Cydonia {
     }
 
     /// Lay a board out the other way — the pill at its foot. The board the pane
-    /// is showing rather than the one in front: a layout can have two on screen.
+    /// is showing rather than the one in front: a space can have two on screen.
     fn set_board_view(&mut self, id: &str, view: View, cx: &mut Context<Self>) {
         self.workspace
             .update(cx, |workspace, cx| workspace.set_board_view(id, view, cx));
@@ -980,7 +980,7 @@ impl Cydonia {
             // over no lane at all leaves nothing aimed, which is what makes
             // dragging a card off the board mean nothing.
             //
-            // The drift aimed is this pane's, the one drawn below — a layout
+            // The drift aimed is this pane's, the one drawn below — a space
             // can have two boards up, and the focused one is not always the
             // one being dragged over.
             .on_drag_move(cx.listener({
@@ -1001,7 +1001,7 @@ impl Cydonia {
     /// The pill at the foot of a board: which way it is laid out, and the press
     /// that lays it out the other way.
     ///
-    /// In the pane rather than in the band, because a pane of a layout has no
+    /// In the pane rather than in the band, because a pane of a space has no
     /// band — see [`crate::view::arrangement`]. `../desktop` floats its controls
     /// at the same edge.
     ///
@@ -1917,7 +1917,7 @@ impl Cydonia {
         }
         // What each direction is called, and the arrow that stands for it. The
         // step and the new lane are the same two directions, said the way the
-        // layout reads.
+        // space reads.
         let (back, on, both) = match view {
             View::Lanes => (
                 ("Left", icons::arrows::ArrowLeft),
@@ -2242,7 +2242,7 @@ impl Cydonia {
     }
 
     /// Where the card would land, drawn in the gap between two cards rather
-    /// than in the flow: a mark taking layout would push every card under it
+    /// than in the flow: a mark taking space would push every card under it
     /// down, and the aim is read off the bounds it just moved — the mark would
     /// chase the pointer it is answering.
     fn landing_mark(&self, at: Mark, cx: &Context<Self>) -> AnyElement {

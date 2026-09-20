@@ -13,7 +13,7 @@
 - [Projects and entries](./working/projects.md)
 - [Articles](./working/articles.md)
 - [Boards and tables](./working/boards.md)
-- [Panes, tabs and layouts](./working/layouts.md)
+- [Panes, tabs and spaces](./working/spaces.md)
 
 # Agents
 

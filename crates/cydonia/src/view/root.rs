@@ -26,7 +26,7 @@ use crate::{
     },
 };
 use anyhow::Result;
-use artifact::layout::Member;
+use artifact::space::Member;
 use bezel::{
     gpui::{
         self, AnyElement, App, Axis, Bounds, Context, DragMoveEvent, Empty, Entity, FocusHandle,
@@ -210,7 +210,7 @@ pub fn bindings() -> Vec<KeyBinding> {
         // trick for the same reason.
         KeyBinding::new("ctrl-tab", NextEntry, Some("Cydonia")),
         KeyBinding::new("ctrl-shift-tab", PrevEntry, Some("Cydonia")),
-        // The panes of a layout, on the chords beside the ones that step
+        // The panes of a space, on the chords beside the ones that step
         // through entries.
         KeyBinding::new("ctrl-alt-tab", NextPane, Some("Cydonia")),
         KeyBinding::new("ctrl-alt-shift-tab", PrevPane, Some("Cydonia")),
@@ -283,7 +283,7 @@ pub struct Cydonia {
     pub(crate) workspace: Entity<Workspace>,
     /// The panes on screen, and which of them has the focus.
     ///
-    /// One unless a layout is open — see [`Leaf`]. The order is the order the
+    /// One unless a space is open — see [`Leaf`]. The order is the order the
     /// arrangement lays them out, so stepping through them is stepping across
     /// the window.
     pub(crate) leaves: Vec<Leaf>,
@@ -293,7 +293,7 @@ pub struct Cydonia {
     /// The window's bottom panel: its shell, and whether it is up.
     ///
     /// One to a window, like the sidebar and the right panel — every pane and
-    /// every layout shows this same one, and hiding it keeps its processes
+    /// every space shows this same one, and hiding it keeps its processes
     /// alive. It opens in the directory of whatever was in front at the time
     /// and stays there; `cmd-t` is how a tab somewhere else is had.
     pub(crate) terminal: Option<(bool, Entity<super::component::terminal::TerminalPanel>)>,
@@ -322,7 +322,7 @@ pub struct Cydonia {
     /// [`board::Marks`].
     pub(crate) card_marks: board::Marks,
     /// Where each board is scrolled to, by board id — see [`board::Scrolls`].
-    /// On the window rather than on a pane: the same board arranged in a layout
+    /// On the window rather than on a pane: the same board arranged in a space
     /// and opened on its own is one board.
     pub(crate) boards: board::Scrolls,
     settings_window: Option<WindowHandle<SettingsWindow>>,
@@ -330,15 +330,15 @@ pub struct Cydonia {
     /// with its label rather than looked up when the dialog draws: what is
     /// being asked about must not change wording under the question.
     pub(crate) confirming: Option<confirm::Confirming>,
-    /// The layouts whose members are folded away, by layout id.
+    /// The spaces whose members are folded away, by space id.
     ///
-    /// Collapsed rather than expanded, so a layout is open until someone folds
-    /// it: an entry is listed under the layout holding it and nowhere else, and
+    /// Collapsed rather than expanded, so a space is open until someone folds
+    /// it: an entry is listed under the space holding it and nowhere else, and
     /// a fold remembered across launches would start the window with entries
     /// hidden behind a row nobody chose to close.
     ///
     /// Runtime only, for the same reason.
-    pub(crate) collapsed_layouts: std::collections::HashSet<String>,
+    pub(crate) collapsed_spaces: std::collections::HashSet<String>,
     /// Where a pane dropped on a pane's edge would land: the pane under the
     /// pointer, and which of its edges. Written by whichever pane the pointer
     /// is inside and read by the one that draws the mark, the way a card's
@@ -346,7 +346,7 @@ pub struct Cydonia {
     pub(crate) pane_landing: Option<(Member, super::arrangement::Landing)>,
     /// Which of each pane's tabs is in front, by the pane's own name — see
     /// [`Cydonia::front_of`]. Runtime only: where the panes are is the
-    /// layout's, and which tab you happen to be looking at is not.
+    /// space's, and which tab you happen to be looking at is not.
     pub(crate) fronts: std::collections::HashMap<SharedString, Member>,
     /// The board identity panel, while it is open — see [`header::BoardInfo`].
     pub(crate) info: Option<info::BoardInfo>,
@@ -384,7 +384,7 @@ impl Cydonia {
     /// on, and what the sidebar lights.
     ///
     /// Never empty: a window always draws at least one pane, and closing the
-    /// last one is closing the layout, not the pane.
+    /// last one is closing the space, not the pane.
     pub(crate) fn leaf(&self) -> &Leaf {
         let at = self.focused.min(self.leaves.len().saturating_sub(1));
         &self.leaves[at]
@@ -461,21 +461,21 @@ impl Cydonia {
         (composer, board::field(cx), table::field(cx), find)
     }
 
-    /// Reconcile the panes on screen with the open layout.
+    /// Reconcile the panes on screen with the open space.
     ///
-    /// A pane already on an entry is kept, so switching layouts does not throw
+    /// A pane already on an entry is kept, so switching spaces does not throw
     /// away a composer with a draft in it. Panes are ordered as the
     /// arrangement lays them out — stepping through them steps across the
     /// window.
     pub(crate) fn sync_leaves(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let members = self.arrangement(cx).map(|layout| layout.entries());
+        let members = self.arrangement(cx).map(|space| space.entries());
         let Some(members) = members else {
-            // No layout: one pane, and the leaf kept is the focused one
+            // No space: one pane, and the leaf kept is the focused one
             // rather than the first — leaving an arrangement leaves you in
             // the pane you were standing in, composer and draft included.
             //
             // [`Self::leaf_mut`] indexes by `self.focused`, so anything
-            // written through it between a layout closing and this running
+            // written through it between a space closing and this running
             // lands on a leaf that is about to be dropped.
             let front = self.focused.min(self.leaves.len().saturating_sub(1));
             if front > 0 {
@@ -524,41 +524,41 @@ impl Cydonia {
     /// Arrive at an entry, wherever the sidebar lists it.
     ///
     /// One gesture, one meaning: a row goes to where that row lives. An entry
-    /// is in one layout at a time — see [`Workspace::arrange`] — so it is
-    /// listed either under a layout or under its project, never both, and that
-    /// one place says what opening it means. Under a layout, the arrangement is
+    /// is in one space at a time — see [`Workspace::arrange`] — so it is
+    /// listed either under a space or under its project, never both, and that
+    /// one place says what opening it means. Under a space, the arrangement is
     /// opened and the pane focused; under a project, the window shows it alone.
     /// Where the window happened to be standing does not enter into it.
     ///
-    /// `true` when the entry was found in a layout and the focus went to its
+    /// `true` when the entry was found in a space and the focus went to its
     /// pane, so the caller has nothing left to open. `false` for an entry no
-    /// layout holds, which is the plain single-pane case.
+    /// space holds, which is the plain single-pane case.
     pub(crate) fn enter_member(
         &mut self,
         member: Option<Member>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        // A layout names entries by the file they have, so one with no file yet
+        // A space names entries by the file they have, so one with no file yet
         // — a session that has had no turn — is in none of them.
         let held = member.as_ref().and_then(|member| {
-            let at = self.workspace.read(cx).layout_holding(member)?;
+            let at = self.workspace.read(cx).space_holding(member)?;
             Some((at, member.clone()))
         });
         let Some((at, member)) = held else {
-            if self.workspace.read(cx).active_layout().is_some() {
+            if self.workspace.read(cx).active_space().is_some() {
                 self.workspace
-                    .update(cx, |workspace, _| workspace.leave_layout());
+                    .update(cx, |workspace, _| workspace.leave_space());
                 // Down to one pane before the caller writes anything: it
                 // reaches for the leaf through [`Self::leaf_mut`], which
                 // indexes by [`Self::focused`] — still pointing into the panes
-                // the layout had, and at a leaf this is about to drop.
+                // the space had, and at a leaf this is about to drop.
                 self.sync_leaves(window, cx);
             }
             return false;
         };
-        if self.workspace.read(cx).layout != Some(at) {
-            self.open_layout(at, window, cx);
+        if self.workspace.read(cx).space != Some(at) {
+            self.open_space(at, window, cx);
         }
         // The pane a tab is in is keyed by the first of its strip — see
         // [`Self::show_tab`].
@@ -587,7 +587,7 @@ impl Cydonia {
         else {
             // [`Cydonia::show_tab`] parks the index past the end to force the
             // selection below, and [`Self::leaf`] clamps — so a miss left here
-            // reads as the pane at the end of the layout, which is some entry
+            // reads as the pane at the end of the space, which is some entry
             // nobody pressed.
             self.focused = self.focused.min(self.leaves.len().saturating_sub(1));
             return;
@@ -665,7 +665,7 @@ impl Cydonia {
     }
 
     /// The pane showing this entry, falling back to the focused one where the
-    /// window has no layout open and the caller has no entry to name.
+    /// window has no space open and the caller has no entry to name.
     ///
     /// Drawing reads a pane's state through this rather than through
     /// [`Self::leaf`]: every pane drawn against the focused leaf shares one
@@ -762,7 +762,7 @@ impl Cydonia {
             boards: Default::default(),
             card_marks: Default::default(),
             settings_window: None,
-            collapsed_layouts: Default::default(),
+            collapsed_spaces: Default::default(),
             pane_landing: None,
             fronts: Default::default(),
             confirming: None,
@@ -827,7 +827,7 @@ impl Cydonia {
     ) {
         let asked = self.workspace.read(cx).preferred_agent();
         // Same as [`Self::pick_agent`]: a session with no file yet is in no
-        // arrangement, so making one leaves whatever layout is up.
+        // arrangement, so making one leaves whatever space is up.
         self.enter_member(None, window, cx);
         // Nothing to open one on: the pane says so and offers the install,
         // which is the same notice a session whose agent has gone stands
@@ -926,9 +926,9 @@ impl Cydonia {
             return;
         }
         // And an arrangement answers it for what it holds. The sidebar's list
-        // is not what is in front of you there, and every entry the layout
+        // is not what is in front of you there, and every entry the space
         // holds is left out of it — see [`Self::ungrouped`] — so stepping into
-        // that list opens something else and leaves the layout behind.
+        // that list opens something else and leaves the space behind.
         if self.cycle_arranged(step, window, cx) {
             return;
         }
@@ -989,14 +989,14 @@ impl Cydonia {
     /// Step the window to the next entry the open arrangement holds, wrapping
     /// at the ends — every tab across every pane, in the order they are laid
     /// out. Says whether the chord was the arrangement's, which is whenever one
-    /// is open: a layout holding a single entry answers it by staying put. The
-    /// sidebar's list leaves the layout and can land in another project
+    /// is open: a space holding a single entry answers it by staying put. The
+    /// sidebar's list leaves the space and can land in another project
     /// altogether, so falling through to it is never what the chord meant.
     ///
     /// Panes alone are the chord beside this one — see [`Self::step_pane`].
     fn cycle_arranged(&mut self, step: isize, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let ring = match self.arrangement(cx) {
-            Some(layout) => layout.entries(),
+            Some(space) => space.entries(),
             None => return false,
         };
         if ring.len() < 2 {
@@ -1210,7 +1210,7 @@ impl Render for Cydonia {
         self.sync_leaves(window, cx);
         self.sync_changes(cx);
         let theme = Theme::of(cx).clone();
-        let arranged = self.workspace.read(cx).active_layout().is_some();
+        let arranged = self.workspace.read(cx).active_space().is_some();
         div()
             .key_context("Cydonia")
             .size_full()
@@ -1242,7 +1242,7 @@ impl Render for Cydonia {
             }))
             .on_action(cx.listener(|this, _: &ZoomPane, _, cx| this.zoom_focused_pane(cx)))
             // The right-hand panel and what opens into it are not offered
-            // beside a layout: it divides the room they would stand in, and
+            // beside a space: it divides the room they would stand in, and
             // macOS greys an item nothing is left to handle.
             .when(!arranged, |root| {
                 root.on_action(cx.listener(Self::toggle_changes))

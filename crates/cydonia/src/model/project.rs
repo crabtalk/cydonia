@@ -48,7 +48,7 @@ pub struct Project {
     /// table's key. Read when a table is opened rather than while it is drawn
     /// — a query per frame is a query too many.
     ///
-    /// By key rather than one slot: a layout can stand two tables side by
+    /// By key rather than one slot: a space can stand two tables side by
     /// side, and one page between them would draw the same rows in both.
     pub pages: HashMap<String, Page>,
     /// Whether the sidebar shows what is under this project's heading.

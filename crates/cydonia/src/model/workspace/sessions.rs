@@ -34,9 +34,9 @@ impl Workspace {
     }
 
     /// The member that names a session wherever it is open — what finds the
-    /// pane holding it. Nothing for one with no file yet: a layout names its
+    /// pane holding it. Nothing for one with no file yet: a space names its
     /// members by file, and a session has none until its first turn.
-    pub fn member_of_session(&self, id: u64) -> Option<artifact::layout::Member> {
+    pub fn member_of_session(&self, id: u64) -> Option<artifact::space::Member> {
         self.member_of(self.project_of(id)?, super::Showing::Session(id))
     }
 

@@ -1,7 +1,7 @@
-//! Drawing a layout: the panes it arranges, the seams between them, and the
+//! Drawing a space: the panes it arranges, the seams between them, and the
 //! edges a drag can drop on.
 //!
-//! The tree is [`artifact::layout::Node`] — see there for what the shape
+//! The tree is [`artifact::space::Node`] — see there for what the shape
 //! means. This is only how it lands on the window.
 
 use crate::{
@@ -16,7 +16,7 @@ use crate::{
         sidebar::{Carried, EntryDrag},
     },
 };
-use artifact::layout::{Axis as Split, Layout, Member, Node, Side};
+use artifact::space::{Axis as Split, Member, Node, Side, Space};
 use bezel::{
     gpui::{
         AnyElement, App, Axis, Context, DragMoveEvent, Empty, MouseButton, SharedString, Window,
@@ -69,22 +69,22 @@ const HALF: f32 = 0.5;
 const TAB_INSET: f32 = 8.;
 
 impl Cydonia {
-    /// The layout the window is arranged by, taken whole: the tree is walked
+    /// The space the window is arranged by, taken whole: the tree is walked
     /// while the workspace is drawn from, so it is cloned out first.
-    pub(crate) fn arrangement(&self, cx: &App) -> Option<Layout> {
-        self.workspace.read(cx).active_layout().cloned()
+    pub(crate) fn arrangement(&self, cx: &App) -> Option<Space> {
+        self.workspace.read(cx).active_space().cloned()
     }
 
-    /// The panes of the open layout, or nothing where none is open and the
+    /// The panes of the open space, or nothing where none is open and the
     /// window is showing one entry.
     pub(crate) fn panes(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let layout = self.arrangement(cx)?;
+        let space = self.arrangement(cx)?;
         // A zoomed pane stands over the rest, which keep their places
-        // underneath — see [`Layout::zoom`].
-        if let Some(entry) = layout.zoomed() {
+        // underneath — see [`Space::zoom`].
+        if let Some(entry) = space.zoomed() {
             return Some(self.pane(&entry, window, cx));
         }
-        Some(self.node(&layout.tree, &mut Vec::new(), window, cx))
+        Some(self.node(&space.tree, &mut Vec::new(), window, cx))
     }
 
     /// One node: a pane, or a split of them laid out along its axis.
@@ -201,7 +201,7 @@ impl Cydonia {
     /// One pane: the entries it holds, and whichever of them is in front.
     ///
     /// `entry` is the pane's *name* — the first of its strip, which is what
-    /// the layout keeps and what every drop and close here is aimed at. What
+    /// the space keeps and what every drop and close here is aimed at. What
     /// the pane is showing is [`Self::front_of`], and the two are the same
     /// thing only for a pane holding one entry.
     fn pane(&self, entry: &Member, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -209,7 +209,7 @@ impl Cydonia {
         // clear of the traffic lights.
         let first = self
             .arrangement(cx)
-            .and_then(|layout| layout.entries().first().cloned())
+            .and_then(|space| space.entries().first().cloned())
             .as_ref()
             == Some(entry);
         let theme = Theme::of(cx).clone();
@@ -219,15 +219,15 @@ impl Cydonia {
         let key = key_of(entry);
         let held = entry.clone();
         let body = match showing {
-            // The entry has gone since the layout named it. The pane says so
+            // The entry has gone since the space named it. The pane says so
             // rather than standing empty: a blank pane reads as a bug, and the
-            // layout is about to drop the member anyway — see
-            // [`crate::model::workspace::Workspace::prune_layouts`].
+            // space is about to drop the member anyway — see
+            // [`crate::model::workspace::Workspace::prune_spaces`].
             None => theme
                 .empty_state(
                     icons::files::File,
                     "This entry has gone",
-                    "It was deleted after the layout was made.",
+                    "It was deleted after the space was made.",
                 )
                 .into_any_element(),
             Some((project, showing)) => self.pane_body(project, showing, Some(&front), window, cx),
@@ -310,7 +310,7 @@ impl Cydonia {
     /// Which of a pane's entries it is showing.
     ///
     /// Kept on the window and not in the file — see [`Cydonia::fronts`] — so a
-    /// layout reopens with each pane on the first of its strip. What is
+    /// space reopens with each pane on the first of its strip. What is
     /// remembered falls back to that as well once it is no longer in the
     /// strip, which is what a closed tab leaves behind.
     pub(crate) fn front_of(&self, pane: &Member, stack: &[Member]) -> Member {
@@ -332,7 +332,7 @@ impl Cydonia {
         cx: &mut Context<Self>,
     ) {
         self.fronts.insert(key_of(pane), tab.clone());
-        // Before the focus moves: a tab the layout has gained since the last
+        // Before the focus moves: a tab the space has gained since the last
         // frame has no leaf yet, and [`Cydonia::focus_pane`] moves nothing it
         // cannot find.
         self.sync_leaves(window, cx);
@@ -342,7 +342,7 @@ impl Cydonia {
     }
 
     /// The single pane, wrapped so an entry dropped on its edge makes the
-    /// layout that puts the two side by side.
+    /// space that puts the two side by side.
     pub(crate) fn lone_pane(&self, body: AnyElement, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let Some(on) = self
@@ -388,7 +388,7 @@ impl Cydonia {
 
     /// The member a drag names, once it has landed.
     ///
-    /// A session carried with no file yet is given one here: a layout names
+    /// A session carried with no file yet is given one here: a space names
     /// its members by file, so there is nothing to put in one until this runs.
     /// Minting it at the drop rather than at the drag keeps a gesture that
     /// went nowhere from leaving a session behind on disk.
@@ -425,17 +425,17 @@ impl Cydonia {
     }
 
     /// How much of the detail column's width a pane has. The whole of it where
-    /// no layout is open, or where the entry is not one a pane is on.
+    /// no space is open, or where the entry is not one a pane is on.
     pub(crate) fn width_share(&self, entry: Option<&Member>, cx: &App) -> f32 {
         let Some(entry) = entry else {
             return 1.;
         };
         self.arrangement(cx)
-            .and_then(|layout| match layout.zoomed() {
+            .and_then(|space| match space.zoomed() {
                 // A zoomed pane has the window to itself.
                 Some(zoomed) if zoomed == *entry => Some(1.),
                 Some(_) => None,
-                None => layout.tree.share_of(entry, Split::Horizontal),
+                None => space.tree.share_of(entry, Split::Horizontal),
             })
             .unwrap_or(1.) as f32
     }
@@ -448,7 +448,7 @@ impl Cydonia {
     ///
     /// The first pane is the one at the window's top left, so it carries what
     /// the window puts there: the traffic lights' clearance, and the fold that
-    /// brings the sidebar back. Both are the band's when no layout is open —
+    /// brings the sidebar back. Both are the band's when no space is open —
     /// see [`Self::pane_header`], which this follows.
     #[allow(clippy::too_many_arguments)]
     fn pane_bar(
@@ -642,7 +642,7 @@ impl Cydonia {
         }
         let zoomed = self
             .arrangement(cx)
-            .and_then(|layout| layout.zoomed())
+            .and_then(|space| space.zoomed())
             .is_some_and(|at| at == *entry);
 
         let mut rows = vec![menu::row(
@@ -731,7 +731,7 @@ impl Cydonia {
                 0 => stack[1].clone(),
                 at => stack[at - 1].clone(),
             });
-        // The entry left when this close took the layout with it. Without
+        // The entry left when this close took the space with it. Without
         // putting the pane on its kind the window drops back to whatever the
         // single pane was last showing, which is not what was on screen.
         let alone = self
@@ -745,7 +745,7 @@ impl Cydonia {
         }
         // The pane left alone is the one to keep, not the one just closed:
         // [`Cydonia::sync_leaves`] keeps whichever leaf is focused when it
-        // finds no layout, and the focus is still on the pane going away.
+        // finds no space, and the focus is still on the pane going away.
         if let Some((member, _)) = &alone
             && let Some(at) = self
                 .leaves
@@ -821,7 +821,7 @@ impl Cydonia {
         // Panes, not members: a pane holding three tabs is one stop on the
         // walk, and ⌃⇥ is what steps through what it holds.
         let panes = match self.arrangement(cx) {
-            Some(layout) => layout.panes(),
+            Some(space) => space.panes(),
             None => return,
         };
         if panes.len() < 2 {
@@ -865,11 +865,11 @@ impl Cydonia {
         cx.notify();
     }
 
-    /// Open a layout: the window is arranged by it until another entry is
+    /// Open a space: the window is arranged by it until another entry is
     /// opened on its own.
-    pub(crate) fn open_layout(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn open_space(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
         self.workspace.update(cx, |workspace, cx| {
-            workspace.open_layout(ix, cx);
+            workspace.open_space(ix, cx);
         });
         self.sync_leaves(window, cx);
         // The focus lands on the first pane the arrangement lays out, which is
@@ -884,7 +884,7 @@ impl Cydonia {
     /// Note which edge of a pane the pointer is over, so the mark can say
     /// where a release would put what is in the air.
     /// `bar` says whether this pane has a strip to drop onto. The window
-    /// showing one entry has none — there is no layout yet, so there is no
+    /// showing one entry has none — there is no space yet, so there is no
     /// pane to join — and its top row is an edge like any other.
     fn aim_pane(
         &mut self,
@@ -960,10 +960,10 @@ impl Cydonia {
     /// Put the seam after `at` where the pointer left it.
     fn move_seam(&mut self, path: &[usize], at: usize, fraction: f64, cx: &mut Context<Self>) {
         self.workspace.update(cx, |workspace, cx| {
-            let Some(layout) = workspace.active_layout_mut() else {
+            let Some(space) = workspace.active_space_mut() else {
                 return;
             };
-            let Some(split) = layout.tree.at_path_mut(path) else {
+            let Some(split) = space.tree.at_path_mut(path) else {
                 return;
             };
             if split.resize(at, fraction, MIN_SHARE) {

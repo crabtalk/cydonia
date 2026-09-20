@@ -263,7 +263,7 @@ impl Workspace {
     }
 
     /// Fold a lane shut in the list view, or open it back up. Named by the
-    /// board it sits on rather than taken from the active one: a layout can
+    /// board it sits on rather than taken from the active one: a space can
     /// have two boards on screen, and the lane pressed is not always on the
     /// one in front.
     pub fn toggle_column_collapsed(&mut self, board: &str, id: &str, cx: &mut Context<Self>) {
@@ -304,7 +304,7 @@ impl Workspace {
 
     /// Write the open board back, for an edit the pane made in place.
     /// Move a card between the lanes of one board, named by where it sits
-    /// rather than by being the active one: a layout can have two boards on
+    /// rather than by being the active one: a space can have two boards on
     /// screen, and the one dropped onto is not always the one in front.
     pub fn move_card_within(
         &mut self,
