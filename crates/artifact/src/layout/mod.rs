@@ -666,8 +666,6 @@ pub struct Layout {
     /// file, which would be a second copy able to disagree.
     #[serde(skip)]
     pub touched: u128,
-    #[serde(default)]
-    pub archived: bool,
     /// Given by [`next_name`] when the layout is made, and replaced by
     /// whatever it is renamed to.
     #[serde(default)]
@@ -690,7 +688,6 @@ impl Layout {
         Self {
             id,
             touched: stamp::now(),
-            archived: false,
             name: name.to_owned(),
             zoomed: None,
             tree: Node::leaf(entry),

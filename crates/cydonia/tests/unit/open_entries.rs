@@ -179,3 +179,146 @@ fn starting_a_session_inside_a_layout_lands_on_it(cx: &mut gpui::TestAppContext)
         })
         .unwrap();
 }
+
+/// Picking an entry a layout holds goes to that layout's pane, from a window
+/// that is not in the layout at all.
+///
+/// The gesture means one thing wherever it is made: the sidebar lists an entry
+/// under the layout holding it or under its project, never both, and that one
+/// place is what opening it goes to — see [`Cydonia::enter_member`].
+#[gpui::test]
+fn opening_an_entry_a_layout_holds_enters_the_layout(cx: &mut gpui::TestAppContext) {
+    let scratch = Scratch::new("enter");
+    cx.update(|cx| Theme::install(bezel::theme::Appearance::Light, cx));
+    let window = cx.add_window(|window, cx| {
+        Cydonia::new(Settings::default(), state::State::default(), window, cx)
+    });
+
+    window
+        .update(cx, |root, window, cx| {
+            // Newest first, so the third made is board 0 and the first is 2.
+            let (a, b) = root.workspace.update(cx, |workspace, cx| {
+                workspace.open_project(scratch.project("one"), cx);
+                workspace.new_board(0, "First".into(), "ONE", cx).ok();
+                workspace.new_board(0, "Second".into(), "TWO", cx).ok();
+                workspace.new_board(0, "Third".into(), "THR", cx).ok();
+                (
+                    workspace.member_of(0, Showing::Board(0)).expect("a member"),
+                    workspace.member_of(0, Showing::Board(1)).expect("a member"),
+                )
+            });
+            root.workspace
+                .update(cx, |workspace, cx| workspace.arrange(&a, &b, Side::Right, cx));
+            root.sync_leaves(window, cx);
+
+            // Out of the layout, onto a board no layout holds.
+            root.open_board(0, 2, window, cx);
+            root.sync_leaves(window, cx);
+            assert!(root.workspace.read(cx).active_layout().is_none(), "left it");
+
+            // And back to one the layout does hold, from outside it.
+            root.open_board(0, 1, window, cx);
+            root.sync_leaves(window, cx);
+            assert_eq!(
+                root.leaf().entry.as_ref(),
+                Some(&b),
+                "the second pane, which is the one picked"
+            );
+
+            // Out again, and back onto the *first* pane this time: a miss in
+            // `focus_pane` clamps to the last leaf, so picking the last pane
+            // cannot tell a hit from a miss.
+            root.open_board(0, 2, window, cx);
+            root.sync_leaves(window, cx);
+            root.open_board(0, 0, window, cx);
+
+            assert!(
+                root.workspace.read(cx).active_layout().is_some(),
+                "the arrangement holding it is what opening it opens"
+            );
+            root.sync_leaves(window, cx);
+            assert_eq!(root.leaves.len(), 2, "arranged, not alone");
+            assert_eq!(
+                root.leaf().entry.as_ref(),
+                Some(&a),
+                "focused on the pane that was picked"
+            );
+        })
+        .unwrap();
+}
+
+/// A session pane does not pull the focus to itself as the frame syncs.
+///
+/// `sync_composer` writes the draft into every pane's composer, which the
+/// field reports as a change and the composer as a draft. Moving the focus on
+/// that put it on the last session in the arrangement — whatever pane was
+/// picked — because the sync runs over the leaves in order.
+#[gpui::test]
+fn syncing_the_composers_leaves_the_focus_where_it_was(cx: &mut gpui::TestAppContext) {
+    let scratch = Scratch::new("sync-composer");
+    cx.update(|cx| Theme::install(bezel::theme::Appearance::Light, cx));
+    let mut settings = Settings::default();
+    settings.features.sessions = true;
+    let window =
+        cx.add_window(|window, cx| Cydonia::new(settings, state::State::default(), window, cx));
+
+    let board = window
+        .update(cx, |root, window, cx| {
+            let (board, session) = root.workspace.update(cx, |workspace, cx| {
+                workspace.open_project(scratch.project("one"), cx);
+                workspace.new_board(0, "First".into(), "ONE", cx).ok();
+                let board = workspace.member_of(0, Showing::Board(0)).expect("a member");
+
+                let path = workspace.projects[0].path.clone();
+                let mut chat = crate::model::session::ChatSession::restore(
+                    7,
+                    path,
+                    crate::model::settings::Agent {
+                        name: "test".into(),
+                        id: None,
+                        command: String::new(),
+                        args: Vec::new(),
+                        env: Default::default(),
+                    },
+                    serde_json::from_value(serde_json::json!({
+                        "id": "test", "agent": "test", "title": "", "name": null,
+                        "updated": 1, "items": []
+                    }))
+                    .expect("a record"),
+                );
+                // A draft to write in, which is what the sync does to the
+                // field and what the field reports as a change.
+                chat.draft = "half a thought".into();
+                workspace.projects[0].sessions.push(chat);
+                let session = workspace.member_of_session(7).expect("a member");
+                (board, session)
+            });
+
+            // The session second, so it is the pane the old focus would have
+            // been dragged to.
+            root.workspace.update(cx, |workspace, cx| {
+                workspace.arrange(&board, &session, Side::Right, cx)
+            });
+            root.sync_leaves(window, cx);
+            root.focus_pane(&board, window, cx);
+            assert_eq!(root.leaf().entry.as_ref(), Some(&board), "on the board");
+
+            root.sync_composer(cx);
+            board
+        })
+        .unwrap();
+
+    // The composer's event is emitted, not delivered: the subscription runs
+    // when the effects flush, which is after the frame that synced.
+    cx.run_until_parked();
+
+    window
+        .update(cx, |root, _, _| {
+            assert_eq!(
+                root.leaf().entry.as_ref(),
+                Some(&board),
+                "and still on the board after the sync"
+            );
+        })
+        .unwrap();
+}

@@ -853,10 +853,17 @@ impl Cydonia {
             }
             // In the order the arrangement lays the panes out, so the list
             // reads across the window.
+            //
+            // Only what this layout is the holder of. One entry is in one
+            // layout at a time — see [`Workspace::arrange`] — and the same
+            // answer decides both lists, so a file written before that held
+            // lists its entry once here rather than twice, and never beside the
+            // copy [`Self::ungrouped`] took out of the project.
             rows.extend(
                 layout
                     .entries()
                     .iter()
+                    .filter(|member| workspace.layout_holding(member) == Some(ix))
                     .filter_map(|member| self.row_of_member(member, cx)),
             );
         }
@@ -1400,20 +1407,18 @@ impl Cydonia {
 
     /// One layout: the arrangement, and how many panes it holds.
     ///
-    /// Its members keep their own rows — a layout references entries and holds
-    /// none of them, so nothing disappears into it.
+    /// While it is open its members are listed under it rather than under their
+    /// projects — see [`Self::ungrouped`].
     fn layout_row(&self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let workspace = self.workspace.read(cx);
         let selected = workspace.layout == Some(ix);
         let entry = Row::Layout(ix);
-        let Some((name, archived, id)) = workspace.layouts.get(ix).map(|layout| {
-            (
-                layout.label().to_owned(),
-                layout.archived,
-                layout.id.clone(),
-            )
-        }) else {
+        let Some((name, id)) = workspace
+            .layouts
+            .get(ix)
+            .map(|layout| (layout.label().to_owned(), layout.id.clone()))
+        else {
             return Empty.into_any_element();
         };
         let indent = self.indent_of(entry, cx);
@@ -1424,7 +1429,7 @@ impl Cydonia {
         // are directly under it, which is what `Archived` above them does and
         // what the sidebar already reads as.
         let tint = match selected {
-            true => tint(selected, archived, &theme),
+            true => tint(selected, false, &theme),
             false => theme.text_faint,
         };
         let label = match matches!(&self.renaming, Some(Renaming::Layout(at)) if *at == id) {
@@ -1482,7 +1487,10 @@ impl Cydonia {
                         && self.menu.as_ref() != Some(&Menu::Entry(entry)),
                     |el| el.hidden(),
                 )
-                .children(self.entry_menu(Menu::Entry(entry), entry, archived, cx)),
+                // Never archived: archiving a layout puts its members away and
+                // drops the arrangement — see [`Self::archive_entry`] — so the
+                // row it was pressed on is gone rather than put away.
+                .children(self.entry_menu(Menu::Entry(entry), entry, false, cx)),
             )
             .on_click(cx.listener(move |this, _, window, cx| this.open_layout(ix, window, cx)))
             .into_any_element()
@@ -1829,23 +1837,29 @@ impl Cydonia {
         // entry is in one layout at a time — so the arrangement owns what it
         // holds, and putting it away that holds nothing would be putting away
         // an empty row.
+        //
+        // The arrangement itself is dropped rather than put away: a layout
+        // names entries and holds none, so there is nothing in one to come
+        // back to, and it is remade by dragging one entry onto another. By id,
+        // because archiving a member takes it out of the layout as it goes —
+        // see [`Workspace::drop_from_layouts`] — and that shifts every index
+        // past it.
         if let Row::Layout(ix) = entry {
-            let members: Vec<Row> = self
-                .workspace
-                .read(cx)
-                .layouts
-                .get(ix)
-                .map(|layout| layout.entries())
-                .unwrap_or_default()
+            let workspace = self.workspace.read(cx);
+            let Some(layout) = workspace.layouts.get(ix) else {
+                return;
+            };
+            let id = layout.id.clone();
+            let members: Vec<Row> = layout
+                .entries()
                 .iter()
                 .filter_map(|member| self.row_of_member(member, cx))
                 .collect();
             for member in members {
                 self.archive_entry(member, archived, window, cx);
             }
-            self.workspace.update(cx, |workspace, cx| {
-                workspace.archive_layout(ix, archived, cx)
-            });
+            self.workspace
+                .update(cx, |workspace, cx| workspace.delete_layout_id(&id, cx));
             return;
         }
         // Putting an entry away takes it out of the two places that hold it

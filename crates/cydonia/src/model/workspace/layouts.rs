@@ -101,14 +101,13 @@ impl Workspace {
                 0
             }
         };
-        // An entry is in one layout at a time, the way a pane is in one tmux
-        // window. Dragging it into another moves it: the sidebar lists it
-        // under the layout that has it, and it can only be under one.
-        for (ix, other) in self.layouts.iter_mut().enumerate() {
-            if ix != at && other.remove(arriving) {
-                store::save(other);
-            }
-        }
+        // Both of them, not only the arrival: a layout minted over a target
+        // another one already holds would put that entry in two at once. By id,
+        // because an eviction can take a layout with it.
+        let keep = self.layouts.get(at)?.id.clone();
+        self.evict_from_layouts(target, &keep, cx);
+        self.evict_from_layouts(arriving, &keep, cx);
+        let at = self.layouts.iter().position(|layout| layout.id == keep)?;
         let layout = self.layouts.get_mut(at)?;
         if !layout.insert(target, arriving, side) {
             return None;
@@ -126,15 +125,42 @@ impl Workspace {
     pub fn stack_pane(&mut self, target: &Member, arriving: &Member, cx: &mut Context<Self>) {
         // An entry is in one layout at a time, the same rule [`Self::arrange`]
         // follows for the same reason.
-        let Some(at) = self.layout else {
+        let Some(keep) = self.active_layout().map(|layout| layout.id.clone()) else {
             return;
         };
-        for (ix, other) in self.layouts.iter_mut().enumerate() {
-            if ix != at && other.remove(arriving) {
-                store::save(other);
-            }
-        }
+        self.evict_from_layouts(arriving, &keep, cx);
+        self.layout = self.layouts.iter().position(|layout| layout.id == keep);
         self.edit_layout(cx, |layout| layout.stack(target, arriving));
+    }
+
+    /// Take an entry out of every layout but the one named.
+    ///
+    /// An entry is in one layout at a time, the way a pane is in one tmux
+    /// window: dragging it into another moves it. What is left with one pane is
+    /// deleted rather than kept — an arrangement of one is not an arrangement,
+    /// which is the rule [`Self::close_pane`] and [`Self::drop_from_layouts`]
+    /// already follow.
+    ///
+    /// By id and not by index, because a layout dropped in here shifts every
+    /// index past it.
+    fn evict_from_layouts(&mut self, member: &Member, keep: &str, cx: &mut Context<Self>) {
+        while let Some(ix) = self
+            .layouts
+            .iter()
+            .position(|layout| layout.id != keep && layout.contains(member))
+        {
+            if self.layouts[ix].leaves() <= 2 && self.layouts[ix].stack_of(member).len() <= 1 {
+                self.delete_layout(ix, cx);
+                continue;
+            }
+            // A layout that says it holds the member but will not give it up
+            // would spin this loop, so the refusal ends it.
+            if !self.layouts[ix].remove(member) {
+                return;
+            }
+            store::save(&mut self.layouts[ix]);
+            cx.notify();
+        }
     }
 
     /// The entries the pane holding this one draws, in strip order. One entry
@@ -260,20 +286,16 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Put the arrangement away, or bring it back. The members go with it —
-    /// see `Cydonia::archive_entry`, which walks them.
-    pub fn archive_layout(&mut self, ix: usize, archived: bool, cx: &mut Context<Self>) {
-        let Some(layout) = self.layouts.get_mut(ix) else {
-            return;
-        };
-        layout.archived = archived;
-        store::save(layout);
-        // An arrangement put away is not the one the window is showing.
-        if archived && self.layout == Some(ix) {
-            self.layout = None;
+    /// Drop the layout named, wherever it has got to in the list.
+    ///
+    /// By id and not by place: archiving what a layout arranges takes each
+    /// member out of it as it goes — see [`Self::drop_from_layouts`] — so an
+    /// index read before that walk names some other layout by the end of it,
+    /// or nothing.
+    pub fn delete_layout_id(&mut self, id: &str, cx: &mut Context<Self>) {
+        if let Some(ix) = self.layouts.iter().position(|layout| layout.id == id) {
+            self.delete_layout(ix, cx);
         }
-        self.save();
-        cx.notify();
     }
 
     pub fn rename_layout(&mut self, id: &str, name: String, cx: &mut Context<Self>) {
@@ -290,7 +312,7 @@ impl Workspace {
     pub fn layout_holding(&self, member: &Member) -> Option<usize> {
         self.layouts
             .iter()
-            .position(|layout| !layout.archived && layout.contains(member))
+            .position(|layout| layout.contains(member))
     }
 
     /// Drop members whose entries have gone. A layout names entries and holds

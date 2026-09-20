@@ -188,7 +188,7 @@ impl Workspace {
         this.layout = state.layout.and_then(|id| {
             this.layouts
                 .iter()
-                .position(|layout| layout.id == id && !layout.archived)
+                .position(|layout| layout.id == id)
         });
         for ix in restore {
             this.restore_sessions(ix);

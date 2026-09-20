@@ -410,7 +410,20 @@ impl Cydonia {
             &composer,
             window,
             move |this, _, event: &ComposerEvent, window, cx| {
-                if let Some(on) = on.clone() {
+                // Every one of these but a draft is somebody pressing in this
+                // pane's composer, and the focus goes there first so that what
+                // was typed is sent to the session it was typed under.
+                //
+                // A draft is the field's content changing, which
+                // [`Cydonia::sync_composer`] does to every pane's composer as
+                // a session is read — panes nobody pressed in included. The
+                // focus would follow the last of those, which is not where
+                // anybody is looking. Somebody typing has the focus already:
+                // the press that put the caret in the field went through the
+                // pane, which is what moves it.
+                if let Some(on) = on.clone()
+                    && !matches!(event, ComposerEvent::Draft(..))
+                {
                     this.focus_pane(&on, window, cx);
                 }
                 match event {
@@ -508,41 +521,32 @@ impl Cydonia {
             .unwrap_or(0);
     }
 
-    /// Arrive at an entry while an arrangement is open.
+    /// Arrive at an entry, wherever the sidebar lists it.
     ///
-    /// A pane already on it is focused rather than opened — opening it would
-    /// take the window out of the layout that pane is in. An entry the layout
-    /// does not hold leaves the layout: without that the window stays arranged
-    /// and the entry picked is nowhere on screen.
+    /// One gesture, one meaning: a row goes to where that row lives. An entry
+    /// is in one layout at a time — see [`Workspace::arrange`] — so it is
+    /// listed either under a layout or under its project, never both, and that
+    /// one place says what opening it means. Under a layout, the arrangement is
+    /// opened and the pane focused; under a project, the window shows it alone.
+    /// Where the window happened to be standing does not enter into it.
     ///
-    /// `true` when the entry was found on a pane and the focus went there, so
-    /// the caller has nothing left to open. `false` with no layout open, which
-    /// is the plain single-pane case.
+    /// `true` when the entry was found in a layout and the focus went to its
+    /// pane, so the caller has nothing left to open. `false` for an entry no
+    /// layout holds, which is the plain single-pane case.
     pub(crate) fn enter_member(
         &mut self,
         member: Option<Member>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        if self.workspace.read(cx).active_layout().is_none() {
-            return false;
-        }
-        let member = member.filter(|member| {
-            self.workspace
-                .read(cx)
-                .active_layout()
-                .is_some_and(|layout| layout.contains(member))
+        // A layout names entries by the file they have, so one with no file yet
+        // — a session that has had no turn — is in none of them.
+        let held = member.as_ref().and_then(|member| {
+            let at = self.workspace.read(cx).layout_holding(member)?;
+            Some((at, member.clone()))
         });
-        match member {
-            Some(member) => {
-                // The pane a tab is in is keyed by the first of its strip —
-                // see [`Self::show_tab`].
-                let stack = self.workspace.read(cx).stack_of(&member);
-                let pane = stack.first().cloned().unwrap_or_else(|| member.clone());
-                self.show_tab(&pane, &member, window, cx);
-                true
-            }
-            None => {
+        let Some((at, member)) = held else {
+            if self.workspace.read(cx).active_layout().is_some() {
                 self.workspace
                     .update(cx, |workspace, _| workspace.leave_layout());
                 // Down to one pane before the caller writes anything: it
@@ -550,9 +554,18 @@ impl Cydonia {
                 // indexes by [`Self::focused`] — still pointing into the panes
                 // the layout had, and at a leaf this is about to drop.
                 self.sync_leaves(window, cx);
-                false
             }
+            return false;
+        };
+        if self.workspace.read(cx).layout != Some(at) {
+            self.open_layout(at, window, cx);
         }
+        // The pane a tab is in is keyed by the first of its strip — see
+        // [`Self::show_tab`].
+        let stack = self.workspace.read(cx).stack_of(&member);
+        let pane = stack.first().cloned().unwrap_or_else(|| member.clone());
+        self.show_tab(&pane, &member, window, cx);
+        true
     }
 
     /// Move the focus to the pane on this entry, and put the project's

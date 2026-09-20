@@ -204,6 +204,8 @@ fn opening_another_entry_leaves_the_layout(cx: &mut gpui::TestAppContext) {
 }
 
 /// An entry is in one layout at a time, the way a pane is in one tmux window.
+/// Dragged into a second one it moves, and the one it came out of is left with
+/// a single pane — which is no arrangement, so it goes.
 #[gpui::test]
 fn an_entry_belongs_to_one_layout(cx: &mut gpui::TestAppContext) {
     let scratch = Scratch::new("exclusive");
@@ -211,7 +213,7 @@ fn an_entry_belongs_to_one_layout(cx: &mut gpui::TestAppContext) {
 
     workspace.update(cx, |workspace, cx| {
         workspace.new_board(0, "Third".into(), "THR", cx).ok();
-        let c = workspace.member_of(0, Showing::Board(0)).expect("a member");
+        let c = workspace.member_of(0, Showing::Board(2)).expect("a member");
 
         workspace.arrange(&a, &c, Side::Right, cx);
         let first = workspace.active_layout().expect("open").id.clone();
@@ -220,12 +222,10 @@ fn an_entry_belongs_to_one_layout(cx: &mut gpui::TestAppContext) {
 
         let held = workspace.layout_holding(&c).expect("in a layout");
         assert_ne!(workspace.layouts[held].id, first, "it moved");
-        let left = workspace
-            .layouts
-            .iter()
-            .find(|layout| layout.id == first)
-            .expect("still there");
-        assert!(!left.contains(&c), "and left the one it was in");
+        assert!(
+            !workspace.layouts.iter().any(|layout| layout.id == first),
+            "and the one it left had nothing else to arrange"
+        );
     });
 }
 
@@ -279,10 +279,14 @@ fn moving_a_pane_swaps_it_and_is_written(cx: &mut gpui::TestAppContext) {
     assert_eq!(store::read(&id).expect("on disk").entries(), vec![b, a]);
 }
 
-/// Putting a layout away keeps the arrangement and stops it holding its
-/// members — the sidebar lists them where they would be without it.
+/// Archiving a layout is archiving what it arranges, and the arrangement goes
+/// with them — there is no put-away layout to come back to.
+///
+/// The walk that archives the members takes each one out of the layout as it
+/// goes, which is why the drop is by id: an index read before the walk names
+/// some other layout by the end of it.
 #[gpui::test]
-fn archiving_a_layout_releases_its_members(cx: &mut gpui::TestAppContext) {
+fn a_layout_is_dropped_by_the_id_it_was_named_with(cx: &mut gpui::TestAppContext) {
     let scratch = Scratch::new("archive");
     let (workspace, a, b) = two_boards(&scratch, cx);
 
@@ -291,15 +295,55 @@ fn archiving_a_layout_releases_its_members(cx: &mut gpui::TestAppContext) {
         let id = workspace.active_layout().expect("open").id.clone();
         assert_eq!(workspace.layout_holding(&a), Some(0));
 
-        workspace.archive_layout(0, true, cx);
-        assert_eq!(workspace.layout_holding(&a), None, "released");
+        // What archiving a member does, and what leaves the index stale: the
+        // pane it took out was one of two, so the arrangement went with it.
+        workspace.drop_from_layouts(&a, cx);
+        assert!(workspace.layouts.is_empty(), "an arrangement of one is none");
+
+        // And the drop that follows names one that is already gone, which is
+        // the case an index would have got wrong.
+        workspace.delete_layout_id(&id, cx);
         assert!(workspace.active_layout().is_none(), "and not on screen");
         id
     });
 
-    let read = store::read(&id).expect("on disk");
-    assert!(read.archived);
-    assert_eq!(read.entries().len(), 2, "still arranged as it was");
+    assert!(store::read(&id).is_none(), "the file goes too");
+}
+
+/// An entry is in one layout at a time, and that holds for the pane dropped
+/// *on* as much as for the one arriving.
+///
+/// A layout minted over a target another layout already holds would put that
+/// entry in two at once — which the sidebar then lists twice, once under each.
+#[gpui::test]
+fn the_pane_dropped_on_leaves_the_layout_that_held_it(cx: &mut gpui::TestAppContext) {
+    let scratch = Scratch::new("exclusive");
+    let (workspace, a, b) = two_boards(&scratch, cx);
+    let c = workspace.update(cx, |workspace, cx| {
+        workspace.new_board(0, "Third".into(), "THR", cx).ok();
+        workspace.member_of(0, Showing::Board(2)).expect("a member")
+    });
+
+    workspace.update(cx, |workspace, cx| {
+        workspace.arrange(&a, &b, Side::Right, cx);
+        let first = workspace.active_layout().expect("open").id.clone();
+
+        // Out on its own and dragged into a second arrangement, which is what
+        // opening an entry the layout does not hold and then dropping beside it
+        // does.
+        workspace.leave_layout();
+        workspace.arrange(&a, &c, Side::Right, cx);
+
+        let open = workspace.active_layout().expect("open");
+        assert_ne!(open.id, first, "a new one, over the pane that was there");
+        assert_eq!(open.entries(), vec![a.clone(), c]);
+        assert_eq!(
+            workspace.layouts.len(),
+            1,
+            "the one it left held two panes, so it was not left holding one"
+        );
+        assert_eq!(workspace.layout_holding(&a), Some(0), "and in just the one");
+    });
 }
 
 /// A renamed layout keeps its name across a re-read.
