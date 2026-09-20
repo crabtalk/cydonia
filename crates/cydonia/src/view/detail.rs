@@ -747,13 +747,7 @@ impl Cydonia {
             .as_ref()
             .filter(|(visible, _)| *visible)
             .map(|(_, terminal)| terminal.clone());
-        // The window's own panels stand beside one entry, not beside an
-        // arrangement of several. Held rather than shut, so leaving the space
-        // puts them back as they were.
-        let changes = match arranged {
-            true => None,
-            false => self.changes.clone(),
-        };
+        let changes = self.changes.clone();
         let available = f32::from(window.viewport_size().width)
             - if self.sidebar_open {
                 self.sidebar_width
@@ -1115,14 +1109,9 @@ impl Cydonia {
                 0.
             })
         .max(0.);
-        // The right-hand panel is not drawn beside a space — see
-        // [`Cydonia::detail`] — so its width is only taken off the column
-        // where it is actually standing there.
         // A panel covering the column takes none of it away — the chat is
         // still laid out at full width underneath.
-        let beside = self.changes.is_some()
-            && self.workspace.read(cx).active_space().is_none()
-            && panel_beside(available);
+        let beside = self.changes.is_some() && panel_beside(available);
         let column = available
             - match beside {
                 true => panel_width(self.changes_width, available),

@@ -50,20 +50,18 @@ impl Workspace {
         Some(record)
     }
 
-    pub fn retain_panel_session(
-        &mut self,
-        id: u64,
-        remember: bool,
-        cx: &mut Context<Self>,
-    ) -> Option<(PathBuf, String)> {
+    /// Keep the session in front on disk, and remember it as its project's
+    /// last entry.
+    ///
+    /// Called from [`Cydonia::save_panel_layout`], which is the only thing
+    /// that runs often enough to catch a quit: nothing else writes a session's
+    /// record between the one that opened it and the one that closes it.
+    pub fn retain_active_session(&mut self, id: u64, cx: &mut Context<Self>) -> Option<String> {
         let ix = self.project_of(id)?;
         let record = self.retain_session(id, cx)?;
-        let cwd = self.projects[ix].path.clone();
-        if remember {
-            self.remember(ix, state::Kind::Session, record.clone(), cx);
-        }
+        self.remember(ix, state::Kind::Session, record.clone(), cx);
         cx.notify();
-        Some((cwd, record))
+        Some(record)
     }
 
     pub fn fork_session(

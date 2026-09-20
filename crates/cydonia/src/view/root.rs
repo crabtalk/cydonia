@@ -297,16 +297,22 @@ pub struct Cydonia {
     /// alive. It opens in the directory of whatever was in front at the time
     /// and stays there; `cmd-t` is how a tab somewhere else is had.
     pub(crate) terminal: Option<(bool, Entity<super::component::terminal::TerminalPanel>)>,
-    /// Whether the right panel is up for the session in front. Which session
-    /// that is lives in [`Cydonia::changes_for`]: the answer is per session,
-    /// and this field is the one it is currently speaking for.
+    /// Whether the right panel is up for the directory in front. Which
+    /// directory that is lives in [`Cydonia::changes_for`]: the answer is per
+    /// directory, and this field is the one it is currently speaking for.
     pub(crate) changes_open: bool,
-    /// The session [`Cydonia::changes_open`] answers for, and what every other
-    /// session was left at. Read back through [`Cydonia::sync_changes`] on the
-    /// way into a session, and seeded from what was written down for one that
-    /// has not been looked at yet this run.
-    pub(crate) changes_for: Option<u64>,
-    pub(crate) changes_shown: std::collections::HashMap<u64, bool>,
+    /// The directory [`Cydonia::changes_open`] answers for, and what every
+    /// other directory was left at. Read back through
+    /// [`Cydonia::sync_changes`] on the way into one, and seeded from what was
+    /// written down for a directory that has not been looked at yet this run.
+    ///
+    /// A directory rather than an entry: every tab the panel holds is about
+    /// one — a diff of it, a tree of it, a shell in it — so a session, an
+    /// article and a board that share a working directory share the panel.
+    /// [`Cydonia::shell_cwd`] is what names it, the same answer the bottom
+    /// panel's shells open in.
+    pub(crate) changes_for: Option<std::path::PathBuf>,
+    pub(crate) changes_shown: std::collections::HashMap<std::path::PathBuf, bool>,
     /// How wide the right-hand panel was dragged, and `None` for one nobody
     /// has dragged — which is given a share of the window instead. See
     /// [`super::detail::panel_width`].
@@ -317,7 +323,8 @@ pub struct Cydonia {
     pub(crate) panel_save: Option<bezel::gpui::Task<()>>,
     pub(crate) terminal_height: f32,
     pub(crate) changes: Option<Entity<super::component::panel::Panel>>,
-    pub(crate) right_panels: std::collections::HashMap<u64, Entity<super::component::panel::Panel>>,
+    pub(crate) right_panels:
+        std::collections::HashMap<std::path::PathBuf, Entity<super::component::panel::Panel>>,
     /// The buffer each card's orb paints into, by card id — see
     /// [`board::Marks`].
     pub(crate) card_marks: board::Marks,

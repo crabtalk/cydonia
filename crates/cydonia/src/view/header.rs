@@ -271,7 +271,9 @@ impl Cydonia {
                 }
             }))
             .children(
-                (!self.changes_open && self.showing(cx) == Some(Pane::Chat))
+                // Nothing to open it on where there is no directory in front
+                // — see [`Cydonia::shell_cwd`].
+                (!self.changes_open && self.shell_cwd(cx).is_some())
                     .then(|| self.changes_toggle(cx)),
             )
             .into_any_element()

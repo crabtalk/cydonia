@@ -708,9 +708,6 @@ impl Cydonia {
     }
 
     pub(crate) fn toggle_files(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.showing(cx) != Some(Pane::Chat) {
-            return;
-        }
         if self.changes_open
             && let Some(panel) = self.changes.clone()
         {
@@ -721,29 +718,25 @@ impl Cydonia {
     }
 
     pub(crate) fn show_files(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.showing(cx) == Some(Pane::Chat) {
-            self.set_changes_open(true, cx);
-            self.sync_changes(cx);
-            if let Some(panel) = self.changes.clone() {
-                panel.update(cx, |panel, cx| panel.files(window, cx));
-            }
-            cx.notify();
+        self.set_changes_open(true, cx);
+        self.sync_changes(cx);
+        if let Some(panel) = self.changes.clone() {
+            panel.update(cx, |panel, cx| panel.files(window, cx));
         }
+        cx.notify();
     }
 
     pub(crate) fn show_changes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.showing(cx) == Some(Pane::Chat) {
-            self.set_changes_open(true, cx);
-            self.sync_changes(cx);
-            if let Some(panel) = self.changes.clone() {
-                panel.update(cx, |panel, cx| {
-                    panel.restore_tabs(window, cx);
-                    panel.review(cx);
-                    panel.focus(window, cx);
-                });
-            }
-            cx.notify();
+        self.set_changes_open(true, cx);
+        self.sync_changes(cx);
+        if let Some(panel) = self.changes.clone() {
+            panel.update(cx, |panel, cx| {
+                panel.restore_tabs(window, cx);
+                panel.review(cx);
+                panel.focus(window, cx);
+            });
         }
+        cx.notify();
     }
 
     pub(crate) fn toggle_changes(
@@ -752,21 +745,20 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.showing(cx) == Some(Pane::Chat) {
-            self.set_changes_open(!self.changes_open, cx);
-            if !self.changes_open {
-                window.focus(&self.composer_focus_handle(cx), cx);
-            } else {
-                self.sync_changes(cx);
-                if let Some(panel) = self.changes.clone() {
-                    panel.update(cx, |panel, cx| panel.focus(window, cx));
-                }
+        self.set_changes_open(!self.changes_open, cx);
+        if !self.changes_open {
+            window.focus(&self.composer_focus_handle(cx), cx);
+        } else {
+            self.sync_changes(cx);
+            if let Some(panel) = self.changes.clone() {
+                panel.update(cx, |panel, cx| panel.focus(window, cx));
             }
-            cx.notify();
         }
+        cx.notify();
     }
 
-    /// Put the panel up or down for the session in front, and write that down.
+    /// Put the panel up or down for the directory in front, and write that
+    /// down.
     ///
     /// Written on the change and not at the quit: ⌘Q, a crash and a killed
     /// `cargo run` all end the process without running a release hook, which is
@@ -774,50 +766,39 @@ impl Cydonia {
     /// [`Cydonia::save_panel_layout_settled`].
     fn set_changes_open(&mut self, open: bool, cx: &mut Context<Self>) {
         self.changes_open = open;
-        // Which session this is about, in case the first sync of the frame has
-        // not run yet: leaving it unanswered would let `follow_changes` read
-        // the saved bit back over what was just pressed.
-        self.changes_for = self
-            .changes_for
-            .or_else(|| self.workspace.read(cx).active_id());
-        if let Some(id) = self.changes_for {
-            self.changes_shown.insert(id, open);
+        // Which directory this is about, in case the first sync of the frame
+        // has not run yet: leaving it unanswered would let `follow_changes`
+        // read the saved bit back over what was just pressed.
+        self.changes_for = self.changes_for.take().or_else(|| self.shell_cwd(cx));
+        if let Some(cwd) = self.changes_for.clone() {
+            self.changes_shown.insert(cwd, open);
         }
         self.save_panel_layout_settled(cx);
     }
 
-    /// Carry [`Cydonia::changes_open`] from one session to the next.
+    /// Carry [`Cydonia::changes_open`] from one directory to the next.
     ///
-    /// The panel is a property of the session in front, not of the window: what
-    /// it was left at there is what it comes back as, and a session nobody has
-    /// opened it in gets no panel. A session first seen this run is read off
-    /// disk once and kept, which is what survives a quit.
+    /// The panel is a property of the directory in front, not of the window:
+    /// what it was left at there is what it comes back as, and a directory
+    /// nobody has opened it in gets no panel. A directory first seen this run
+    /// is read off disk once and kept, which is what survives a quit.
     fn follow_changes(&mut self, cx: &mut Context<Self>) {
-        let showing = self.showing(cx) == Some(Pane::Chat);
-        let workspace = self.workspace.read(cx);
-        let active = showing.then(|| workspace.active_id()).flatten();
+        let active = self.shell_cwd(cx);
         if self.changes_for == active {
             return;
         }
-        if let Some(previous) = self.changes_for {
+        if let Some(previous) = self.changes_for.take() {
             self.changes_shown.insert(previous, self.changes_open);
         }
-        self.changes_open = match active {
-            Some(id) => {
-                let saved = || {
-                    let chat = workspace.session(id)?;
-                    let record = chat.record.as_deref()?;
-                    Some(persistence::saved_panel(&chat.cwd, record)?.open)
-                };
-                match self.changes_shown.get(&id) {
-                    Some(open) => *open,
-                    None => {
-                        let open = saved().unwrap_or(false);
-                        self.changes_shown.insert(id, open);
-                        open
-                    }
+        self.changes_open = match &active {
+            Some(cwd) => match self.changes_shown.get(cwd) {
+                Some(open) => *open,
+                None => {
+                    let open = persistence::saved_panel(cwd).is_some_and(|saved| saved.open);
+                    self.changes_shown.insert(cwd.clone(), open);
+                    open
                 }
-            }
+            },
             None => false,
         };
         self.changes_for = active;
@@ -825,49 +806,55 @@ impl Cydonia {
 
     pub(crate) fn sync_changes(&mut self, cx: &mut Context<Self>) {
         self.follow_changes(cx);
-        let workspace = self.workspace.read(cx);
-        let visible = (self.showing(cx) == Some(Pane::Chat))
-            .then(|| workspace.active_id())
-            .flatten();
-        self.right_panels.retain(|id, panel| {
-            workspace
-                .session(*id)
-                .is_some_and(|chat| !chat.closed || visible == Some(*id))
+        let here = self.shell_cwd(cx);
+        // A panel outlives the directory going out of front, and is dropped
+        // once nothing open leads back to it — except while it holds work
+        // nobody has saved, which no amount of closing may throw away.
+        let reachable = self.panel_directories(cx);
+        self.right_panels.retain(|cwd, panel| {
+            reachable.contains(cwd)
                 || panel.read(cx).ordered().any(
                     |(_, tab)| matches!(&tab.content, Content::File(file) if file.read(cx).dirty(cx)),
                 )
         });
-        let session = (self.changes_open && self.showing(cx) == Some(Pane::Chat))
-            .then(|| {
-                workspace
-                    .active_session()
-                    .map(|chat| (chat.id, chat.cwd.clone(), chat.record.clone()))
-            })
-            .flatten();
-        let project_root = workspace
-            .active_project()
-            .map(|project| project.path.clone());
-        self.changes = session.map(|(id, cwd, record)| {
+        self.changes = here.filter(|_| self.changes_open).map(|cwd| {
             self.right_panels
-                .entry(id)
+                .entry(cwd.clone())
                 .or_insert_with(|| {
                     cx.new(|cx| {
-                        let saved = record
-                            .as_deref()
-                            .and_then(|record| persistence::saved_panel(&cwd, record));
-                        let mut panel = Panel::new(cwd, cx);
-                        panel.restore_pending = saved;
-                        if let Some(root) = project_root {
-                            panel.project_root = root.canonicalize().unwrap_or(root);
-                        }
+                        let mut panel = Panel::new(cwd.clone(), cx);
+                        panel.restore_pending = persistence::saved_panel(&cwd);
+                        panel.project_root = cwd.canonicalize().unwrap_or(cwd);
                         panel
                     })
                 })
                 .clone()
         });
     }
+
+    /// Every directory the window can still reach a panel through: the open
+    /// projects, and the working directory of each of their sessions.
+    ///
+    /// A session's own directory is in here because it is not always its
+    /// project's — a session on a worktree has its diff, its tree and its
+    /// shells in the worktree.
+    fn panel_directories(&self, cx: &gpui::App) -> std::collections::HashSet<std::path::PathBuf> {
+        let workspace = self.workspace.read(cx);
+        workspace
+            .projects
+            .iter()
+            .flat_map(|project| {
+                std::iter::once(project.path.clone())
+                    .chain(project.sessions.iter().map(|chat| chat.cwd.clone()))
+            })
+            .collect()
+    }
 }
 
 #[cfg(test)]
 #[path = "../../../tests/unit/panel.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../../../tests/unit/right_panel.rs"]
+mod right_panel_tests;

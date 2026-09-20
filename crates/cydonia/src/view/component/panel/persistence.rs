@@ -35,7 +35,10 @@ struct SavedPanels {
     /// share of the window, which is not a number to write down.
     #[serde(skip_serializing_if = "Option::is_none")]
     width: Option<f32>,
-    projects: BTreeMap<PathBuf, BTreeMap<String, SavedPanel>>,
+    /// One panel per working directory — see [`Cydonia::changes_for`]. Up to
+    /// 0.1.11 this held one per session inside each project, which
+    /// [`crate::model::migrate::v0_1_11`] clears.
+    projects: BTreeMap<PathBuf, SavedPanel>,
 }
 
 fn path() -> Option<PathBuf> {
@@ -163,25 +166,25 @@ impl Cydonia {
     pub(crate) fn save_panel_layout(&mut self, cx: &mut App) {
         let mut saved = load();
         saved.width = self.changes_width;
-        let active = if self.showing(cx) == Some(Pane::Chat) {
-            self.workspace.read(cx).active_id()
-        } else {
-            None
-        };
-        // What the session in front is at has not been written back to the map
-        // yet — `follow_changes` only does that on the way out of a session.
-        for (id, panel) in &self.right_panels {
-            let open = match self.changes_for == Some(*id) {
+        // The session in front is kept on disk and remembered as its
+        // project's last entry here, which is the one write that still happens
+        // per session rather than per directory.
+        if self.showing(cx) == Some(Pane::Chat)
+            && let Some(id) = self.workspace.read(cx).active_id()
+        {
+            self.workspace
+                .update(cx, |workspace, cx| workspace.retain_active_session(id, cx));
+        }
+        // What the directory in front is at has not been written back to the
+        // map yet — `follow_changes` only does that on the way out of one.
+        for (cwd, panel) in &self.right_panels {
+            let open = match self.changes_for.as_ref() == Some(cwd) {
                 true => self.changes_open,
-                false => self.changes_shown.get(id).copied().unwrap_or(false),
+                false => self.changes_shown.get(cwd).copied().unwrap_or(false),
             };
-            let panel = panel.read(cx).snapshot(open, cx);
-            let identity = self.workspace.update(cx, |workspace, cx| {
-                workspace.retain_panel_session(*id, active == Some(*id), cx)
-            });
-            if let Some((cwd, record)) = identity {
-                saved.projects.entry(cwd).or_default().insert(record, panel);
-            }
+            saved
+                .projects
+                .insert(cwd.clone(), panel.read(cx).snapshot(open, cx));
         }
         let Some(path) = path() else {
             return;
@@ -198,6 +201,6 @@ impl Cydonia {
     }
 }
 
-pub(super) fn saved_panel(cwd: &std::path::Path, record: &str) -> Option<SavedPanel> {
-    load().projects.get(cwd)?.get(record).cloned()
+pub(super) fn saved_panel(cwd: &std::path::Path) -> Option<SavedPanel> {
+    load().projects.get(cwd).cloned()
 }

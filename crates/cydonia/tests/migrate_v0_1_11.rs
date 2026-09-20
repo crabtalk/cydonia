@@ -56,3 +56,46 @@ space = "new"
     assert_eq!(state["space"].as_str(), Some("new"));
     assert!(state.get("layout").is_none());
 }
+
+/// `right-panels.json` as 0.1.10 wrote it: a panel per session, inside a map
+/// per project.
+const LEGACY_PANELS: &str = r#"{
+  "width": 380.0,
+  "projects": {
+    "/Users/someone/work": {
+      "1789769788615": { "open": true, "tabs": [], "active": null,
+                         "files_open": false, "files_width": 220.0 }
+    }
+  }
+}"#;
+
+/// The same file once 0.1.11 has written it: a panel per working directory.
+const CURRENT_PANELS: &str = r#"{
+  "width": 380.0,
+  "projects": {
+    "/Users/someone/work": { "open": true, "tabs": [], "active": null,
+                             "files_open": false, "files_width": 220.0 }
+  }
+}"#;
+
+#[test]
+fn the_panels_a_session_held_are_dropped_and_the_width_is_kept() {
+    assert_eq!(
+        cydonia::model::migrate::v0_1_11::legacy_width(LEGACY_PANELS),
+        Some(Some(380.0))
+    );
+}
+
+#[test]
+fn a_file_already_carried_is_left_alone() {
+    assert_eq!(
+        cydonia::model::migrate::v0_1_11::legacy_width(CURRENT_PANELS),
+        None,
+        "a second pass must not throw away a panel written since"
+    );
+    assert_eq!(
+        cydonia::model::migrate::v0_1_11::legacy_width(r#"{"projects":{}}"#),
+        None,
+        "a file with no panels in it is not the old shape"
+    );
+}
