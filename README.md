@@ -1,5 +1,7 @@
 # Cydonia
 
+[![Discord](https://img.shields.io/badge/discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/yGZDYnwbx6)
+
 https://github.com/user-attachments/assets/dfe51807-a24a-49f0-b702-918c317ee21d
 
 A desktop workspace for the coding agents you run. Open a directory as a

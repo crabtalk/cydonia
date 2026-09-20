@@ -10,20 +10,29 @@
       "Order layouts by hand, and open a new shell tab where you already are",
       "Fold a list's lanes, and reach a column's menu nested inside it",
       "Give any agent tool a list wherever it took one thing",
-      "Read the docs at /docs"
+      "Read the docs at /docs",
+      "Rename a board from an agent, and re-key it when the handles should change with it",
+      "Put a cover on an article from an agent, filed where the app looks for it and cut to the shape it is shown at",
+      "Put an article or a board away from an agent, and bring it back",
+      "Let agents delete an article or a board, behind a switch of its own in Settings › MCP",
+      "Turn article covers off for the app, giving the band's space back to the page",
+      "See which installed agents the registry has moved on from, and update them in place"
     ],
     "changed": [
       "A layout is a space, named the same on screen and on disk",
       "The right panel stands beside a space as the shell does, rather than going down when one opens",
       "Pane tabs and the right panel's tabs are one strip: an icon, a reference, a mark for unsaved work, and a row that scrolls once it fills",
       "Reach the Developer section with a feature rather than a debug build",
-      "Lead with running agents on the front page, and tighten the site's radii and buttons"
+      "Lead with running agents on the front page, and tighten the site's radii and buttons",
+      "An agent is asked about before it is installed: what it fetches, where from, and whether the download is checked",
+      "Install, update and remove are glyphs on the agent row, and the version is the link to what it was published from"
     ],
     "fixed": [
       "Keep extending a selection when the pointer leaves the text it started in",
       "Draw the queue of the session the pane is on",
       "One layout per entry, and one meaning per sidebar row",
-      "Keep a right panel per session, land the caret in an open card, and put the focus in the pane that was pressed"
+      "Keep a right panel per session, land the caret in an open card, and put the focus in the pane that was pressed",
+      "Scroll a board, a list of cards or the agent catalogue without the window working for it"
     ]
   },
   {
