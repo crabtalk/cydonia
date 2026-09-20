@@ -106,6 +106,9 @@ pub struct Workspace {
     /// How wide a page that has not been set either way is drawn — see
     /// [`crate::model::state::State::wide_pages`].
     pub wide_pages: bool,
+    /// Whether an article shows its cover band when it has not said otherwise
+    /// — see [`crate::model::settings::Appearance::covers`].
+    pub covers: bool,
     /// How a new board is laid out — see
     /// [`crate::model::settings::Appearance::board_view`].
     pub board_view: artifact::board::View,
@@ -175,6 +178,7 @@ impl Workspace {
             fonts: fonts::families(),
             tint: Tint::new(look.hue, look.chroma),
             wide_pages: look.wide_pages,
+            covers: look.covers,
             board_view: look.board_view,
             indent_project_rows: look.indent_project_rows,
             wrap_code: look.wrap_code,
@@ -262,6 +266,7 @@ impl Workspace {
             hue: self.tint.hue,
             chroma: self.tint.chroma,
             wide_pages: self.wide_pages,
+            covers: self.covers,
             board_view: self.board_view,
             indent_project_rows: self.indent_project_rows,
             scrollbars: self.settings.appearance.scrollbars,
@@ -555,6 +560,15 @@ impl Workspace {
     /// the rest follow this.
     pub fn set_wide_pages(&mut self, wide: bool, cx: &mut Context<Self>) {
         self.wide_pages = wide;
+        self.save_appearance();
+        cx.notify();
+    }
+
+    /// Whether a page that has not been decided about shows its cover band.
+    /// A page carrying its own answer keeps it — see
+    /// [`crate::model::article::Article::shows_cover`].
+    pub fn set_covers(&mut self, shown: bool, cx: &mut Context<Self>) {
+        self.covers = shown;
         self.save_appearance();
         cx.notify();
     }

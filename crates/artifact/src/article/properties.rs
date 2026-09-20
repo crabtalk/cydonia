@@ -19,6 +19,7 @@ const ARCHIVED: &str = "archived";
 /// Whether the page is set across the pane rather than in the reading column.
 /// Absent for a page that has never been told either way.
 const FULL_WIDTH: &str = "full_width";
+const COVERS: &str = "covers";
 
 /// Where this article's properties live — beside its content, in the directory
 /// that is the article.
@@ -37,6 +38,7 @@ pub struct Properties {
     pub title: String,
     pub archived: bool,
     pub full_width: Option<bool>,
+    pub covers: Option<bool>,
 }
 
 /// Read the whole file once and answer with all of it.
@@ -56,6 +58,7 @@ pub fn all(content: &Path) -> Properties {
             .and_then(|archived| archived.as_bool())
             .unwrap_or_default(),
         full_width: doc.get(FULL_WIDTH).and_then(|wide| wide.as_bool()),
+        covers: doc.get(COVERS).and_then(|shown| shown.as_bool()),
     }
 }
 
@@ -95,6 +98,21 @@ pub fn full_width(content: &Path) -> Option<bool> {
 /// `None` takes the key out, handing the page back to the reader's default.
 pub fn set_full_width(content: &Path, wide: Option<bool>) {
     set(content, FULL_WIDTH, wide.map(toml_edit::value));
+}
+
+/// Whether this page shows its cover, against the reader's default. The same
+/// three answers [`full_width`] has: yes, no, and nothing of its own to say.
+///
+/// A page with no cover file is unaffected either way — this is about the band
+/// over the first line, not about whether a picture exists. See
+/// [`super::cover`].
+pub fn covers(content: &Path) -> Option<bool> {
+    all(content).covers
+}
+
+/// `None` takes the key out, handing the page back to the reader's default.
+pub fn set_covers(content: &Path, shown: Option<bool>) {
+    set(content, COVERS, shown.map(toml_edit::value));
 }
 
 /// Put a key in, or take it out when there is nothing to say. A properties file

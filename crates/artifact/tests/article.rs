@@ -158,3 +158,60 @@ fn a_page_given_back_to_the_default_keeps_no_key() {
     );
     assert!(text.contains("Roadmap"), "and takes nothing else with it");
 }
+
+/// The cover's visibility is the page's own answer, kept beside it the way the
+/// measure is — and the three states are told apart on disk.
+#[test]
+fn a_page_says_whether_it_shows_its_cover() {
+    let scratch = Scratch::new("article-covers");
+    let dir = article::dir(scratch.path()).join("1757000000000");
+    fs::create_dir_all(&dir).unwrap();
+    let content = article::content(&dir);
+    fs::write(&content, "").unwrap();
+
+    assert_eq!(
+        article::properties::covers(&content),
+        None,
+        "a page nobody has decided about answers with nothing"
+    );
+
+    // Hidden against a default that shows them, so `false` is written down.
+    article::properties::set_covers(&content, Some(false));
+    assert_eq!(article::properties::covers(&content), Some(false));
+    let properties = article::properties::path(&content).unwrap();
+    assert!(
+        fs::read_to_string(&properties).unwrap().contains("covers"),
+        "written down rather than left to the default"
+    );
+
+    // The measure is its own key and is not disturbed by the cover's.
+    article::properties::set_full_width(&content, Some(true));
+    article::properties::set_covers(&content, None);
+    assert_eq!(article::properties::covers(&content), None);
+    assert_eq!(article::properties::full_width(&content), Some(true));
+    let text = fs::read_to_string(&properties).unwrap();
+    assert!(
+        !text.contains("covers"),
+        "the key goes with the answer: {text}"
+    );
+}
+
+/// Turning covers off is about the band, not about the file: the picture stays
+/// where it is and comes back when the page is shown again.
+#[test]
+fn hiding_the_cover_leaves_the_picture_alone() {
+    let scratch = Scratch::new("article-cover-kept");
+    let dir = article::dir(scratch.path()).join("1757000000000");
+    fs::create_dir_all(&dir).unwrap();
+    let content = article::content(&dir);
+    fs::write(&content, "").unwrap();
+    let picture = article::cover::path(&content, 42, "png");
+    fs::write(&picture, b"a picture").unwrap();
+
+    article::properties::set_covers(&content, Some(false));
+    assert_eq!(
+        article::cover::of(&content),
+        Some(picture),
+        "the cover file is still there to come back to"
+    );
+}

@@ -260,6 +260,14 @@ impl Cydonia {
     /// Set the open page across the pane, or back in the reading column — the
     /// header menu's Full width, and `None` for its Use default width. The
     /// open one, since that is the page the menu was asked from.
+    /// Show or hide this page's cover band, or hand it back to the default —
+    /// see [`crate::model::article::Article::set_covers`].
+    pub(crate) fn set_article_covers(&mut self, shown: Option<bool>, cx: &mut Context<Self>) {
+        self.workspace
+            .update(cx, |workspace, cx| workspace.set_article_covers(shown, cx));
+        cx.notify();
+    }
+
     pub(crate) fn set_full_width(&mut self, wide: Option<bool>, cx: &mut Context<Self>) {
         self.workspace
             .update(cx, |workspace, cx| workspace.set_full_width(wide, cx));
@@ -357,6 +365,7 @@ impl Cydonia {
         let editor = article.editor.clone()?;
         let cover = article.cover.clone();
         let wide = article.wide(self.workspace.read(cx).wide_pages);
+        let covered = article.shows_cover(self.workspace.read(cx).covers);
         let source_offset = source_offset(editor.read(cx), cx);
         let stale = article.stale.then(|| article.path.clone());
         let document = div()
@@ -379,7 +388,7 @@ impl Cydonia {
             .track_scroll(&article.scroll)
             .flex()
             .flex_col()
-            .child(self.header(cover, field, wide, cx))
+            .child(self.header(cover, field, wide, covered, cx))
             // Its own height, not the box's share of one: a long document
             // overflows and scrolls instead of being squashed and clipped,
             // and `min_h_full` is what leaves the band something to scroll
@@ -487,6 +496,7 @@ impl Cydonia {
         cover: Option<PathBuf>,
         field: Entity<TextField>,
         wide: bool,
+        covered: bool,
         cx: &Context<Self>,
     ) -> impl IntoElement + use<> {
         div()
@@ -494,7 +504,7 @@ impl Cydonia {
             .flex_none()
             .flex()
             .flex_col()
-            .child(self.cover_band(cover, cx))
+            .children(covered.then(|| self.cover_band(cover, cx)))
             .child(
                 div().w_full().flex().justify_center().child(
                     column(wide)
@@ -508,9 +518,10 @@ impl Cydonia {
 
     /// What sits above the first line — the cover, or the room one would take.
     ///
-    /// The band is there either way, because the alternative is a title flush
-    /// against the top of the card, and it is the same height either way, so
-    /// the document starts in the same place whichever it is.
+    /// A page with no cover keeps the band: it is the same height either way,
+    /// so the document starts in the same place, and an empty one is where a
+    /// picture is added from. A page whose covers are turned off has no band at
+    /// all — see [`crate::model::article::Article::shows_cover`].
     fn cover_band(&self, cover: Option<PathBuf>, cx: &Context<Self>) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
         let has_cover = cover.is_some();

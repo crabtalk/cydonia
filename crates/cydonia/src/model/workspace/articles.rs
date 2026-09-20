@@ -109,6 +109,16 @@ impl Workspace {
         }
     }
 
+    /// Show or hide the open article's cover band, or hand it back to the
+    /// app's default — see [`Article::set_covers`]. The open one and not one
+    /// the sidebar names, the way the width is.
+    pub fn set_article_covers(&mut self, shown: Option<bool>, cx: &mut Context<Self>) {
+        if let Some(article) = self.article_mut() {
+            article.set_covers(shown);
+            cx.notify();
+        }
+    }
+
     /// Set the open page across the pane, or back in the column — see
     /// [`Article::set_full_width`]. The open one and not one the sidebar names:
     /// the width is asked for from the page you are looking at.
