@@ -680,6 +680,19 @@ impl Cydonia {
         .unwrap_or_else(|| self.leaf())
     }
 
+    /// The same, to write to — what a pane keeps for itself is kept on the
+    /// pane, not on whichever one has the focus.
+    pub(crate) fn leaf_of_mut(&mut self, on: Option<&Member>) -> &mut Leaf {
+        match on.and_then(|on| {
+            self.leaves
+                .iter()
+                .position(|leaf| leaf.entry.as_ref() == Some(on))
+        }) {
+            Some(at) => &mut self.leaves[at],
+            None => self.leaf_mut(),
+        }
+    }
+
     pub(crate) fn leaf_mut(&mut self) -> &mut Leaf {
         let at = self.focused.min(self.leaves.len().saturating_sub(1));
         &mut self.leaves[at]

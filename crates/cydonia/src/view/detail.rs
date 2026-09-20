@@ -1135,9 +1135,15 @@ impl Cydonia {
         // prose.
         let pane_width = column * self.width_share(entry, cx);
         let root = cx.entity().downgrade();
+        // The pane's own session and the pane's own leaf, not the window's:
+        // every pane of a space draws this, and the focused one's queue drawn
+        // under all of them reads as the message having gone to each.
+        let on = entry.cloned();
         let queued = move |window: &mut Window, cx: &mut bezel::gpui::App| {
+            let on = on.clone();
             root.update(cx, |root, cx| {
-                root.queue(window, cx).map(IntoElement::into_any_element)
+                root.queue(id, on.as_ref(), window, cx)
+                    .map(IntoElement::into_any_element)
             })
             .ok()
             .flatten()
@@ -1424,15 +1430,17 @@ impl Cydonia {
     /// Prompts waiting for the current turn, with edit and cancel actions.
     fn queue(
         &mut self,
+        id: u64,
+        on: Option<&Member>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<impl IntoElement + use<>> {
         let theme = Theme::of(cx).clone();
-        let chat = self.workspace.read(cx).active_session()?;
-        let id = chat.id;
+        let chat = self.workspace.read(cx).session(id)?;
         let cwd = chat.cwd.clone();
         let queue = chat.queue.clone();
-        self.leaf_mut()
+        let pane = on.cloned();
+        self.leaf_of_mut(pane.as_ref())
             .queued_galleries
             .retain(|(session, ix, text), _| *session == id && queue.get(*ix) == Some(text));
         if queue.is_empty() {
@@ -1450,7 +1458,7 @@ impl Cydonia {
                     let cancel_text = text.clone();
                     let (doc, images) = transcript::gallery::document(text);
                     let gallery = (!images.is_empty()).then(|| {
-                        self.leaf_mut()
+                        self.leaf_of_mut(pane.as_ref())
                             .queued_galleries
                             .entry((id, ix, text.clone()))
                             .or_insert_with(|| {
@@ -1510,15 +1518,26 @@ impl Cydonia {
                                         .tooltip(|window, cx| {
                                             Tooltip::text("Edit queued message", window, cx)
                                         })
-                                        .on_click(cx.listener(move |this, _, window, cx| {
-                                            if let Some(text) =
-                                                this.take_queued(id, ix, &edit_text, cx)
-                                            {
-                                                this.leaf().composer.update(cx, |composer, cx| {
-                                                    composer.restore_queued(text, window, cx);
-                                                });
-                                            }
-                                        })),
+                                        .on_click({
+                                            let pane = pane.clone();
+                                            cx.listener(move |this, _, window, cx| {
+                                                let Some(text) =
+                                                    this.take_queued(id, ix, &edit_text, cx)
+                                                else {
+                                                    return;
+                                                };
+                                                // Back into the composer it was
+                                                // typed in, which is the one
+                                                // under this pane.
+                                                this.leaf_of(pane.as_ref())
+                                                    .composer
+                                                    .clone()
+                                                    .update(cx, |composer, cx| {
+                                                        composer
+                                                            .restore_queued(text, window, cx);
+                                                    });
+                                            })
+                                        }),
                                 )
                                 .child(
                                     theme
