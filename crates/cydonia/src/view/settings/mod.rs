@@ -87,11 +87,14 @@ impl Section {
     /// looking at what has not happened yet, which is not something to hand
     /// somebody who installed the app — so it is absent from a release build
     /// rather than empty in one, and every build anyone installs is a release
-    /// one. `make bundle PROFILE=debug` is the bundle that still has it, which
-    /// is what the updater switches want: the updater runs in a bundle and
-    /// nowhere else.
+    /// one.
+    ///
+    /// The `developer` feature is the other way in, for what the updater
+    /// switches need: the updater runs in a bundle and nowhere else, and
+    /// `make bundle FEATURES=developer` is that bundle built at the profile
+    /// that ships rather than at `debug`.
     fn listed(self) -> bool {
-        !matches!(self, Self::Developer) || cfg!(debug_assertions)
+        !matches!(self, Self::Developer) || cfg!(debug_assertions) || cfg!(feature = "developer")
     }
 
     fn title(self) -> &'static str {
