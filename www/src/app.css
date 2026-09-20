@@ -12,9 +12,23 @@
 	--faint: #8b8f96;
 	--mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
 
+	/* Three radii for the whole site. Controls and inline marks share the small
+	   one, bordered boxes the middle, and only full-bleed media gets the large. */
+	--radius-sm: 4px;
+	--radius: 6px;
+	--radius-lg: 12px;
+
 	/* The gutter the header, every section and the footer share. Named here so
 	   the step down for narrow screens happens once, not in each of them. */
 	--gutter: 28px;
+
+	/* How wide the centred column is. The bar and the foot read it from
+	   whichever page is under them: the docs stand two columns beside the
+	   page and need more room than the marketing pages want. */
+	--shell: 1080px;
+
+	/* The bar's height, and what anything sticky below it has to clear. */
+	--header: 56px;
 
 	/* The filled button: its own ink and hover, because in dark the surface it
 	   sits on is the text colour and `#fff` on it would be invisible. */
@@ -81,14 +95,14 @@ code {
 	font-family: var(--mono);
 	font-size: 0.875em;
 	background: var(--panel-high);
-	border-radius: 5px;
+	border-radius: var(--radius-sm);
 	padding: 0.12em 0.4em;
 }
 
 pre {
 	background: var(--panel);
 	border: 1px solid var(--line);
-	border-radius: 10px;
+	border-radius: var(--radius);
 	padding: 14px 16px;
 	overflow-x: auto;
 	font-size: 13px;
@@ -99,6 +113,23 @@ pre code {
 	background: none;
 	padding: 0;
 	font-size: inherit;
+}
+
+/* Shiki paints the tokens and ships both themes on every span, as
+   `--shiki-light` and `--shiki-dark`; which one is read is this site's answer
+   about appearance rather than the highlighter's. The block keeps the surface
+   and border `pre` already has. */
+.shiki,
+.shiki span {
+	color: var(--shiki-light);
+	background: none;
+}
+
+@media (prefers-color-scheme: dark) {
+	.shiki,
+	.shiki span {
+		color: var(--shiki-dark);
+	}
 }
 
 h1,
@@ -124,7 +155,7 @@ h3 {
 	height: 32px;
 	padding: 0;
 	border: 0;
-	border-radius: 7px;
+	border-radius: var(--radius);
 	background: transparent;
 	color: var(--faint);
 	cursor: pointer;

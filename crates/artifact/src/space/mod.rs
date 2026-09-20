@@ -1,11 +1,11 @@
-//! A project's layouts: several entries on screen at once, and how they are
+//! A project's spaces: several entries on screen at once, and how they are
 //! arranged.
 //!
-//! One file per layout under `.cydonia/layouts/`, named for the millisecond it
+//! One file per space under `.cydonia/spaces/`, named for the millisecond it
 //! was made, the way boards are.
 //!
-//! A layout holds no entry. It holds the [`crate::entry`] numbers of entries
-//! that exist beside it, so the same session can be a member of two layouts
+//! A space holds no entry. It holds the [`crate::entry`] numbers of entries
+//! that exist beside it, so the same session can be a member of two spaces
 //! and stay one session. A number outlives a rename — see
 //! [`crate::entry::Registry::rename`] — and a removed entry leaves its number
 //! behind as a tombstone, so a member that has been deleted resolves to
@@ -18,11 +18,11 @@ use crate::{id, stamp};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
-/// What a layout is shown as before it is named.
+/// What a space is shown as before it is named.
 pub const UNNAMED: &str = "Untitled";
 
-/// The stem every auto-given name is built on: `layout-1`, `layout-2`.
-pub const STEM: &str = "layout";
+/// The stem every auto-given name is built on: `space-1`, `space-2`.
+pub const STEM: &str = "space";
 
 /// Which way a split divides the room it is given.
 ///
@@ -100,7 +100,7 @@ pub enum Node<T> {
         ///
         /// Not "the one in front". Which tab a pane is showing is the window's
         /// and is not written down: the strip's order is fixed here, so
-        /// switching tabs never rewrites the file, and a layout reopens with
+        /// switching tabs never rewrites the file, and a space reopens with
         /// each pane on its first tab.
         entry: T,
         /// The rest of them, in the order the strip draws them behind `entry`.
@@ -177,7 +177,7 @@ impl<T: Clone + PartialEq> Node<T> {
     /// root's is the whole of it.
     ///
     /// A share rather than a width in pixels: the window is resized between
-    /// one launch and the next, and a layout written in pixels would come back
+    /// one launch and the next, and a space written in pixels would come back
     /// either overflowing it or leaving a strip of it empty.
     pub fn ratio(&self) -> f64 {
         match self {
@@ -616,7 +616,7 @@ impl<T: Clone + PartialEq> Node<T> {
 /// Which of a project's things a pane is on.
 ///
 /// Its own rather than the app's `state::Kind`: nothing in this crate knows
-/// what a window shows, and a layout read by anything outside cydonia needs to
+/// what a window shows, and a space read by anything outside cydonia needs to
 /// know what it is naming.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -630,9 +630,9 @@ pub enum Kind {
 /// One entry a pane is on: which project it is in, and which of that project's
 /// things it is.
 ///
-/// The project by its path, because a layout spans them — it is kept beside
+/// The project by its path, because a space spans them — it is kept beside
 /// the app's own config rather than inside any one project, and absolute paths
-/// are what it can name from there. That is also why a layout does not travel
+/// are what it can name from there. That is also why a space does not travel
 /// with a repository: these paths are this machine's.
 ///
 /// By `id` rather than by the `#number` [`crate::entry`] gives out: numbers are
@@ -656,19 +656,17 @@ impl Member {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Layout {
-    /// What names this layout for as long as it exists, and what its file is
+pub struct Space {
+    /// What names this space for as long as it exists, and what its file is
     /// called. Written into the file as well, the way a board's is: a backend
-    /// that keeps layouts in a row has no filename to fall back on.
+    /// that keeps spaces in a row has no filename to fall back on.
     #[serde(default)]
     pub id: String,
     /// When it was last written, as the backend counts. Never written into the
     /// file, which would be a second copy able to disagree.
     #[serde(skip)]
     pub touched: u128,
-    #[serde(default)]
-    pub archived: bool,
-    /// Given by [`next_name`] when the layout is made, and replaced by
+    /// Given by [`next_name`] when the space is made, and replaced by
     /// whatever it is renamed to.
     #[serde(default)]
     pub name: String,
@@ -683,14 +681,13 @@ pub struct Layout {
     pub tree: Node<Member>,
 }
 
-impl Layout {
-    /// A layout over one entry. Layouts are made by dragging a second entry
+impl Space {
+    /// A space over one entry. Spaces are made by dragging a second entry
     /// onto the first, so the one already open is what a new one starts from.
     pub fn new(id: String, name: &str, entry: Member) -> Self {
         Self {
             id,
             touched: stamp::now(),
-            archived: false,
             name: name.to_owned(),
             zoomed: None,
             tree: Node::leaf(entry),
@@ -782,7 +779,7 @@ impl Layout {
     }
 
     /// Take one entry out. A pane holding tabs keeps the pane and loses a tab;
-    /// the last one out closes the pane. The layout stays when its last pane
+    /// the last one out closes the pane. The space stays when its last pane
     /// goes: it is deleted from the sidebar and nowhere else.
     ///
     /// A zoomed pane that is closed leaves the rest unzoomed rather than
@@ -812,18 +809,18 @@ impl Layout {
     }
 
     /// The pane standing over the others, if it is still here. Read rather
-    /// than the field: a member pruned away must not leave the layout showing
+    /// than the field: a member pruned away must not leave the space showing
     /// a pane that has gone.
     pub fn zoomed(&self) -> Option<Member> {
         self.zoomed.clone().filter(|entry| self.contains(entry))
     }
 }
 
-/// The name a new layout takes: `layout-1`, then `layout-2`.
+/// The name a new space takes: `space-1`, then `space-2`.
 ///
 /// Counted above the highest taken rather than into the first gap. A name is
-/// how a layout is asked for, and one reused after a delete would answer for a
-/// layout the asker never saw.
+/// how a space is asked for, and one reused after a delete would answer for a
+/// space the asker never saw.
 pub fn next_name(taken: &HashSet<String>) -> String {
     let highest = taken
         .iter()
@@ -838,7 +835,7 @@ pub fn next_name(taken: &HashSet<String>) -> String {
     format!("{STEM}-{}", highest + 1)
 }
 
-/// An id for a layout a backend has no file to name one from.
+/// An id for a space a backend has no file to name one from.
 pub fn mint() -> String {
     id::mint()
 }

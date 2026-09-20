@@ -13,6 +13,14 @@ pub struct Column {
     #[serde(default)]
     pub id: String,
     pub name: String,
+    /// Folded shut in the list view, where a lane is a section of one long
+    /// column and a long one buries the lanes under it. The lanes view ignores
+    /// it.
+    ///
+    /// Ahead of the cards: TOML takes no value after an array of tables, so a
+    /// scalar written under them would not round-trip.
+    #[serde(default)]
+    pub collapsed: bool,
     #[serde(default)]
     pub cards: Vec<Card>,
 }
@@ -31,6 +39,7 @@ impl Column {
         Self {
             id,
             name: heading(name),
+            collapsed: false,
             cards: Vec::new(),
         }
     }

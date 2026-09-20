@@ -112,3 +112,31 @@ fn closing_what_is_not_open_says_what_is() {
     assert!(why.contains("is not open"), "{why}");
     assert!(why.contains(&held.display().to_string()), "{why}");
 }
+
+/// Several projects close in one call, and one of them that is not open
+/// refuses the whole call — nothing is asked for until every path has checked
+/// out, so a list with a typo in it leaves the rail as it was.
+#[test]
+fn several_projects_close_in_one_call() {
+    let one = Scratch::new("close-batch-one");
+    let two = Scratch::new("close-batch-two");
+    let held = one.path().canonicalize().unwrap();
+    let also = two.path().canonicalize().unwrap();
+    let rail = Rail::holding(&[&held, &also]);
+    let server = one.server();
+    let stranger = one.path().join("elsewhere");
+    std::fs::create_dir_all(&stranger).unwrap();
+
+    let why = refused(server.call("project_close", json!({ "path": [&held, &stranger] }), None));
+    assert!(why.contains("is not open"), "{why}");
+    assert!(!rail.was_asked(Change::Close(held.clone())));
+
+    let text = said(server.call("project_close", json!({ "path": [&held, &also] }), None));
+
+    assert_eq!(
+        text,
+        format!("closed {}, {}", held.display(), also.display())
+    );
+    assert!(rail.was_asked(Change::Close(held)));
+    assert!(rail.was_asked(Change::Close(also)));
+}

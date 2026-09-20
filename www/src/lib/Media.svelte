@@ -59,7 +59,7 @@
 		max-width: 100%;
 		margin: 20px 0 0;
 		border: 1px solid var(--line);
-		border-radius: 12px;
+		border-radius: var(--radius-lg);
 		/* Safari ignores the attribute on its own. */
 		-webkit-user-drag: none;
 	}

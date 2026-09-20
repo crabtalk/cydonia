@@ -26,6 +26,13 @@ pub struct Tool {
     /// and a property of the tool rather than a second list somewhere that
     /// could disagree with it.
     pub writes: bool,
+    /// Whether calling this takes an entry off the disk for good.
+    ///
+    /// Apart from [`Self::writes`] because the two answer different questions.
+    /// Writing is the ordinary work of an agent and a project keeps its
+    /// history of it; a deletion leaves nothing to read back. Every tool that
+    /// deletes also writes, so the delete switch is the narrower of the two.
+    pub deletes: bool,
     pub call: fn(Args<'_>) -> Outcome,
 }
 

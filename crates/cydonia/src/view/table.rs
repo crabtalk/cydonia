@@ -5,6 +5,7 @@
 
 use crate::{
     data::ColType,
+    model::workspace::Showing,
     view::{
         component::menu::{self, Menu},
         leaf::Pane,
@@ -12,7 +13,7 @@ use crate::{
         sidebar::{self, Renaming, Row},
     },
 };
-use artifact::layout::Member;
+use artifact::space::Member;
 use bezel::ui::scroll as scrollbars;
 use bezel::{
     gpui::{
@@ -83,27 +84,45 @@ impl Cydonia {
     pub(crate) fn new_table_action(
         &mut self,
         _: &NewTable,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let Some(project) = self.workspace.read(cx).active else {
             return;
         };
-        self.new_table(project, cx);
+        self.new_table(project, window, cx);
     }
 
-    pub(crate) fn new_table(&mut self, project: usize, cx: &mut Context<Self>) {
+    pub(crate) fn new_table(
+        &mut self,
+        project: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.select_project(project, cx);
         let ix = self
             .workspace
             .update(cx, |workspace, cx| workspace.new_table(cx));
         if let Some(ix) = ix {
-            self.open_table(project, ix, cx);
+            self.open_table(project, ix, window, cx);
         }
     }
 
-    pub(crate) fn open_table(&mut self, project: usize, ix: usize, cx: &mut Context<Self>) {
+    pub(crate) fn open_table(
+        &mut self,
+        project: usize,
+        ix: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.commit(cx);
+        let member = self
+            .workspace
+            .read(cx)
+            .member_of(project, Showing::Table(ix));
+        if self.enter_member(member, window, cx) {
+            return;
+        }
         self.workspace
             .update(cx, |workspace, cx| workspace.open_table(project, ix, cx));
         self.leaf_mut().pane = Pane::Table;
@@ -565,9 +584,9 @@ impl Cydonia {
                 .child(name)
                 .into_any_element(),
         })
-        .child(self.archive_button(("table-archive", ix), entry, archived, cx))
-        .on_click(cx.listener(move |this, _, _, cx| {
-            this.open_table(project, ix, cx);
+        .child(self.archive_button(("table-archive", ix), "table-row", entry, archived, cx))
+        .on_click(cx.listener(move |this, _, window, cx| {
+            this.open_table(project, ix, window, cx);
         }))
     }
 }

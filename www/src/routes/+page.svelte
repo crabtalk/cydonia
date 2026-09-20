@@ -108,11 +108,11 @@
 		<h1>Agents that leave something behind.</h1>
 		<div class="cta">
 			<a class="button primary" href={dmg}>
-				<Brand icon={siApple} size={16} />
+				<Brand icon={siApple} size={14} />
 				Download
 			</a>
 			<a class="button" href={repo}>
-				<Brand icon={siGithub} size={16} />
+				<Brand icon={siGithub} size={14} />
 				Source
 			</a>
 		</div>
@@ -236,7 +236,7 @@
 		width: 100%;
 		aspect-ratio: 1280 / 804;
 		border: 1px solid var(--line);
-		border-radius: 14px;
+		border-radius: var(--radius-lg);
 		background: var(--panel);
 		object-fit: cover;
 	}
@@ -256,12 +256,12 @@
 	.button {
 		display: inline-flex;
 		align-items: center;
-		gap: 9px;
-		height: 46px;
-		padding: 0 22px;
+		gap: 7px;
+		height: 32px;
+		padding: 0 12px;
 		border: 1px solid var(--line-strong);
-		border-radius: 11px;
-		font-size: 15px;
+		border-radius: var(--radius);
+		font-size: 13px;
 		font-weight: 500;
 	}
 
@@ -396,7 +396,7 @@
 	.paths div {
 		padding: 16px 18px;
 		border: 1px solid var(--line);
-		border-radius: 12px;
+		border-radius: 8px;
 	}
 
 	.paths dt {
@@ -497,7 +497,7 @@
 		max-width: 100%;
 		padding: 6px 40px 6px 12px;
 		border: 1px solid var(--line);
-		border-radius: 8px;
+		border-radius: var(--radius);
 		background: var(--panel);
 		overflow-x: auto;
 	}

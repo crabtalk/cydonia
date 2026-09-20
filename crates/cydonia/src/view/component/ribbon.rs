@@ -21,7 +21,7 @@ use crate::view::{
     component::menu::{self, Menu},
     root::Cydonia,
 };
-use artifact::layout::Member;
+use artifact::space::Member;
 use bezel::{
     gpui::{
         self, Anchor, AnyElement, Bounds, Context, Entity, Focusable as _, KeyBinding, Pixels,

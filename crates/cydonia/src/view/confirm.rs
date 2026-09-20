@@ -16,6 +16,8 @@ pub(crate) enum Doomed {
     Entry(Row),
     /// One card on the open board, by id.
     Card(String),
+    /// One column on the open board, by id.
+    Column(String),
 }
 
 /// A delete that has been asked for and not yet agreed to.
@@ -72,6 +74,27 @@ impl Cydonia {
         cx.notify();
     }
 
+    /// The same for one lane of the open board. A lane is only droppable while
+    /// it is empty — see [`artifact::board::Board::remove_column`] — so nothing
+    /// in here speaks for the cards.
+    pub(crate) fn ask_delete_column(&mut self, column: &str, cx: &mut Context<Self>) {
+        let label = self
+            .workspace
+            .read(cx)
+            .active_board()
+            .and_then(|board| board.column(column))
+            .map(|column| column.name.clone())
+            .unwrap_or_default();
+        self.menu = None;
+        self.confirming = Some(Confirming {
+            doomed: Doomed::Column(column.to_owned()),
+            label,
+            goes: None,
+            note: "This cannot be undone.".to_owned(),
+        });
+        cx.notify();
+    }
+
     /// Where this entry lives and what to say about losing it: a path under
     /// `.cydonia/`, or for a table the database it is dropped out of.
     fn goes_with(&self, entry: Row, cx: &App) -> (Option<String>, String) {
@@ -79,16 +102,16 @@ impl Cydonia {
         let workspace = self.workspace.read(cx);
         let at = |path: Option<String>| (path, UNDONE.to_owned());
         match entry {
-            // A layout holds none of what it arranges, so nothing but the
+            // A space holds none of what it arranges, so nothing but the
             // arrangement itself goes.
-            Row::Layout(ix) => workspace
-                .layouts
+            Row::Space(ix) => workspace
+                .spaces
                 .get(ix)
-                .map(|layout| {
+                .map(|space| {
                     (
-                        // Beside the config, not in a project: a layout spans
-                        // them — see [`crate::model::layouts`].
-                        Some(format!("~/.config/cydonia/layouts/{}.toml", layout.id)),
+                        // Beside the config, not in a project: a space spans
+                        // them — see [`crate::model::spaces`].
+                        Some(format!("~/.config/cydonia/spaces/{}.toml", space.id)),
                         format!("The entries it arranges stay where they are. {UNDONE}"),
                     )
                 })
@@ -133,7 +156,7 @@ impl Cydonia {
                     format!("Its {rows} rows are dropped; the database stays. {UNDONE}"),
                 )
             }
-            Row::Project(_) | Row::Archive(_) => (None, UNDONE.to_owned()),
+            Row::Project(_) | Row::Archive(_) | Row::Spaces => (None, UNDONE.to_owned()),
         }
     }
 
@@ -215,6 +238,9 @@ impl Cydonia {
                                                     this.delete_entry(*entry, window, cx)
                                                 }
                                                 Doomed::Card(card) => this.delete_card(card, cx),
+                                                Doomed::Column(column) => {
+                                                    this.drop_column(column, cx)
+                                                }
                                             }
                                         })),
                                 ),

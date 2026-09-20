@@ -140,7 +140,12 @@ impl Cydonia {
         key::derive(name, &taken).into()
     }
 
-    pub(crate) fn make_board(&mut self, _: &CommitBoard, _: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn make_board(
+        &mut self,
+        _: &CommitBoard,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(making) = self.making.as_ref() else {
             return;
         };
@@ -158,7 +163,7 @@ impl Cydonia {
         match made {
             Ok(ix) => {
                 self.making = None;
-                self.open_board(project, ix, cx);
+                self.open_board(project, ix, window, cx);
             }
             // Left open, holding what was typed.
             Err(why) => {

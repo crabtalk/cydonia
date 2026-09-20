@@ -158,3 +158,25 @@ fn a_page_given_back_to_the_default_keeps_no_key() {
     );
     assert!(text.contains("Roadmap"), "and takes nothing else with it");
 }
+
+/// Turning covers off is the app's own switch and never touches the file: the
+/// picture stays where it is and comes back when they are switched on again.
+#[test]
+fn a_cover_is_not_a_property_of_the_page() {
+    let scratch = Scratch::new("article-cover-kept");
+    let dir = article::dir(scratch.path()).join("1757000000000");
+    fs::create_dir_all(&dir).unwrap();
+    let content = article::content(&dir);
+    fs::write(&content, "").unwrap();
+    let picture = article::cover::path(&content, 42, "png");
+    fs::write(&picture, b"a picture").unwrap();
+
+    article::properties::set_title(&content, "Roadmap");
+    let properties = article::properties::path(&content).unwrap();
+    let text = fs::read_to_string(&properties).unwrap();
+    assert!(
+        !text.contains("cover"),
+        "nothing about the cover is written per page: {text}"
+    );
+    assert_eq!(article::cover::of(&content), Some(picture));
+}

@@ -3,7 +3,7 @@
 use crate::{
     rail::{self, Change},
     tool::{Answer, Arg, Args, Outcome, Tool, Trouble},
-    tools::{PROJECT, fields, held, root},
+    tools::{PROJECT, fields, held, many, root},
 };
 use serde_json::json;
 use std::path::{Path, PathBuf};
@@ -12,6 +12,13 @@ const PATH: Arg = Arg {
     name: "path",
     about: "The project's directory, as a whole path — or one relative \
 to the project this session is already in.",
+};
+/// The same argument where several are taken at once. A second const rather
+/// than a flag on [`PATH`], the way `board::CARDS` stands beside `board::CARD`.
+const PATHS: Arg = Arg {
+    name: "path",
+    about: "The project's directory, or several: each a whole path, or one \
+relative to the project this session is already in.",
 };
 
 const ENTRY: Arg = Arg {
@@ -25,6 +32,7 @@ pub static TOOLS: [Tool; 4] = [
         description: "List articles, boards, tables, and saved chats with stable project-wide numeric references, including archived entries.",
         schema: |bound| fields(bound, &[PROJECT]),
         writes: false,
+        deletes: false,
         call: entries,
     },
     Tool {
@@ -32,6 +40,7 @@ pub static TOOLS: [Tool; 4] = [
         description: "Read a project entry by its numeric reference (#12). Tables return up to 200 rows with the total count.",
         schema: |bound| fields(bound, &[PROJECT, ENTRY]),
         writes: false,
+        deletes: false,
         call: read_entry,
     },
     Tool {
@@ -40,14 +49,20 @@ pub static TOOLS: [Tool; 4] = [
             directory first if it is not there yet.",
         schema: |bound| fields(bound, &[PATH]),
         writes: true,
+        deletes: false,
         call: open,
     },
     Tool {
         name: "project_close",
-        description: "Close a project in cydonia: it leaves the sidebar and its \
+        description: "Close a project in cydonia, or several in one call: each leaves the sidebar and its \
             agents stop. Nothing on disk is touched.",
-        schema: |bound| fields(bound, &[PATH]),
+        schema: |bound| {
+            let mut schema = fields(bound, &[PATHS]);
+            many(&mut schema, PATHS);
+            schema
+        },
         writes: true,
+        deletes: false,
         call: close,
     },
 ];
@@ -88,19 +103,30 @@ fn open(args: Args<'_>) -> Outcome {
     )
 }
 
+/// One project or several. Every path is read and checked open before any of
+/// them is closed, so a path that names nothing open refuses the whole call
+/// rather than the half that was left.
 fn close(args: Args<'_>) -> Outcome {
-    let path = settled(whole(&args, args.text(PATH)?)?);
-    if !rail::is_open(&path) {
-        return Err(Trouble::Refused(match held() {
-            None => format!(
-                "{} is not open, and neither is anything else",
-                path.display()
-            ),
-            Some(open) => format!("{} is not open — cydonia has {open}", path.display()),
-        }));
+    let mut shutting: Vec<PathBuf> = Vec::new();
+    for named in args.list(PATHS)? {
+        let path = settled(whole(&args, named)?);
+        if !rail::is_open(&path) {
+            return Err(Trouble::Refused(match held() {
+                None => format!(
+                    "{} is not open, and neither is anything else",
+                    path.display()
+                ),
+                Some(open) => format!("{} is not open — cydonia has {open}", path.display()),
+            }));
+        }
+        shutting.push(path);
     }
-    rail::ask(Change::Close(path.clone()))?;
-    Ok(Answer::said(format!("closed {}", path.display())).with(json!({ "path": path })))
+    let mut shut: Vec<String> = Vec::new();
+    for path in &shutting {
+        rail::ask(Change::Close(path.clone()))?;
+        shut.push(path.display().to_string());
+    }
+    Ok(Answer::said(format!("closed {}", shut.join(", "))).with(json!({ "paths": shutting })))
 }
 
 // ── the path ─────────────────────────────────────────────────────

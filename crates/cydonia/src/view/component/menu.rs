@@ -34,7 +34,7 @@ pub(crate) enum Menu {
     /// the header is showing: that entry has a row in the sidebar too, and a
     /// key naming the entry would have one click open both of them.
     Header,
-    /// The `···` in one pane's bar, by the entry the pane is on. A layout has
+    /// The `···` in one pane's bar, by the entry the pane is on. A space has
     /// several bars on screen at once, so `Header` alone would open every one
     /// of them together.
     Pane(gpui::SharedString),
@@ -44,6 +44,9 @@ pub(crate) enum Menu {
     /// lane's whole menu is about moving it, and a key that moved with it would
     /// shut the menu on every press.
     Lane(String),
+    /// The agents on offer under `New session`, on the screen a project with
+    /// nothing open shows — see [`crate::view::root::Cydonia::launch`].
+    Launch,
     /// The block picker on the article ribbon — see
     /// [`crate::view::component::ribbon`].
     Turn,
@@ -140,7 +143,7 @@ impl Cydonia {
                 group.filter(|_| self.menu.as_ref() != Some(&menu)),
                 |el, group| {
                     if matches!(menu, Menu::Add(_) | Menu::Entry(_)) {
-                        // Resolve layout during render, never in a hover style:
+                        // Resolve space during render, never in a hover style:
                         // GPUI can resolve hover differently in prepaint and paint.
                         el.when(self.sidebar_hovered.as_ref() != Some(&menu), |el| {
                             el.hidden()

@@ -60,6 +60,19 @@ pub struct Settings {
     /// two that are already here and never above a bare key.
     #[serde(default)]
     pub mcp: Mcp,
+    /// Which agents the installer has been told to go ahead on, by registry
+    /// id, against the source that was agreed to — see
+    /// [`crate::agent::source_mark`].
+    ///
+    /// The mark and not a bare `true`: agreeing to install an agent is
+    /// agreeing to run what that publisher ships, and an entry whose package
+    /// or download host has changed since is not the thing that was agreed to.
+    /// A version is deliberately not in it — a new release of the same package
+    /// is the same decision.
+    ///
+    /// A table, so it belongs below the bare keys and above `[[agents]]`.
+    #[serde(default)]
+    pub trusted_agents: BTreeMap<String, String>,
     #[serde(default)]
     pub agents: Vec<Agent>,
 }
@@ -89,7 +102,7 @@ pub fn clamp_content_text_size(points: f32) -> f32 {
 /// nothing to do with which projects happened to be open. `state.toml` keeps
 /// what only this machine can answer — see [`crate::model::state`], and
 /// [`crate::model::migrate`] for the move.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Appearance {
     /// Light, dark, or whatever the OS is doing.
@@ -108,8 +121,25 @@ pub struct Appearance {
     /// Unset keeps existing articles following the UI's base size.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub article_font_size: Option<f32>,
-    pub terminal_font_size: f32,
-    pub file_font_size: f32,
+    /// The size fixed-pitch surfaces are set at: terminals, file source and
+    /// previews. One size for both, the way [`Self::mono_font`] is one family
+    /// for both. Each surface still zooms on its own — see
+    /// [`crate::model::typography`].
+    #[serde(alias = "terminal_font_size")]
+    pub mono_font_size: f32,
+    /// The family the interface is set in, as the system names it. Unset is
+    /// the system UI font — see [`crate::model::fonts`], which resolves these
+    /// and holds what a missing family falls back to.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ui_font: Option<String>,
+    /// The family prose is set in — articles, transcripts, anything rendered
+    /// as a document. Unset follows [`Self::ui_font`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub article_font: Option<String>,
+    /// The family for terminals, code and anything else set in a fixed pitch.
+    /// Unset is the system's monospace face.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mono_font: Option<String>,
     /// The greys' oklch hue in degrees, and how much of it they carry. Zero
     /// chroma is the shipped neutral, whatever the hue says.
     pub hue: f32,
@@ -118,6 +148,12 @@ pub struct Appearance {
     /// *has* been decided about carries the decision in its own
     /// `properties.toml` and ignores this.
     pub wide_pages: bool,
+    /// Whether an article shows the band over its first line. A page that
+    /// *has* been decided about carries the decision in its own
+    /// `properties.toml` and ignores this, the way [`Self::wide_pages`] works.
+    ///
+    /// On, which is how covers shipped.
+    pub covers: bool,
     /// How a new board is laid out. Every board carries its own answer from the
     /// moment it is made — see [`artifact::board::Board::view`] — so this seeds
     /// one and never steers it afterwards.
@@ -179,11 +215,14 @@ impl Default for Appearance {
             cursor_blink: true,
             text_size: TextStyle::Body.size(),
             article_font_size: None,
-            terminal_font_size: terminal::view::TERM_FONT_SIZE,
-            file_font_size: TextStyle::Body.size(),
+            mono_font_size: terminal::view::TERM_FONT_SIZE,
+            ui_font: None,
+            article_font: None,
+            mono_font: None,
             hue: 0.,
             chroma: 0.,
             wide_pages: false,
+            covers: true,
             board_view: artifact::board::View::Lanes,
             indent_project_rows: true,
             scrollbars: Scrollbars::default(),
@@ -207,8 +246,15 @@ impl Appearance {
             Self::default().text_size
         };
         self.article_font_size = self.article_font_size.map(clamp_content_text_size);
-        self.terminal_font_size = clamp_content_text_size(self.terminal_font_size);
-        self.file_font_size = clamp_content_text_size(self.file_font_size);
+        self.mono_font_size = clamp_content_text_size(self.mono_font_size);
+        // A family hand-edited to the empty string names nothing; it is the
+        // same answer as the key being absent.
+        self.ui_font = self.ui_font.take().filter(|name| !name.trim().is_empty());
+        self.article_font = self
+            .article_font
+            .take()
+            .filter(|name| !name.trim().is_empty());
+        self.mono_font = self.mono_font.take().filter(|name| !name.trim().is_empty());
     }
 }
 
@@ -267,6 +313,13 @@ pub struct Mcp {
     /// are left out of the list rather than refused on the call, because a
     /// tool an agent can see is one it will spend a turn trying.
     pub write: bool,
+    /// Whether the tools that take an entry off the disk are offered at all.
+    ///
+    /// Apart from [`Self::write`] and read after it: an agent that may edit a
+    /// project is the ordinary case, and one that may empty it is not. A
+    /// deletion leaves nothing to read back, which is the whole of why it is
+    /// its own switch.
+    pub delete: bool,
 }
 
 impl Default for Mcp {
@@ -274,6 +327,7 @@ impl Default for Mcp {
         Self {
             serve: true,
             write: false,
+            delete: false,
         }
     }
 }
@@ -416,6 +470,9 @@ impl Default for Settings {
             shortcuts: Shortcuts::default(),
             features: Features::default(),
             mcp: Mcp::default(),
+            // Nothing agreed to yet, which is what makes the first install of
+            // each agent ask.
+            trusted_agents: BTreeMap::new(),
             // None, and named by nobody but the person who put one here.
             //
             // A fresh install used to ship `npx` lines for claude and codex,
@@ -566,11 +623,27 @@ fn write_appearance(doc: &mut toml_edit::DocumentMut, appearance: &Appearance) -
             held.remove("article_font_size");
         }
     }
-    held["terminal_font_size"] = toml_edit::value(f64::from(appearance.terminal_font_size));
-    held["file_font_size"] = toml_edit::value(f64::from(appearance.file_font_size));
+    held["mono_font_size"] = toml_edit::value(f64::from(appearance.mono_font_size));
+    // The two keys this one replaced. Left behind they would read as switches
+    // that still do something.
+    held.remove("terminal_font_size");
+    held.remove("file_font_size");
+    for (key, family) in [
+        ("ui_font", &appearance.ui_font),
+        ("article_font", &appearance.article_font),
+        ("mono_font", &appearance.mono_font),
+    ] {
+        match family {
+            Some(family) => held[key] = toml_edit::value(family.as_str()),
+            None => {
+                held.remove(key);
+            }
+        }
+    }
     held["hue"] = toml_edit::value(f64::from(appearance.hue));
     held["chroma"] = toml_edit::value(f64::from(appearance.chroma));
     held["wide_pages"] = toml_edit::value(appearance.wide_pages);
+    held["covers"] = toml_edit::value(appearance.covers);
     held["board_view"] = toml_edit::value(appearance.board_view.key());
     held["indent_project_rows"] = toml_edit::value(appearance.indent_project_rows);
     held["scrollbars"] = toml_edit::value(appearance.scrollbars.key());
@@ -664,6 +737,21 @@ pub fn set_notify_turns(on: bool) -> Result<()> {
 /// install claims the hand-written `@latest` entry that shipped as a default
 /// instead of sitting next to it. A replaced entry keeps its own `name`: the
 /// person who wrote it chose that, and only the command underneath has moved.
+/// Write down that this agent's source was agreed to.
+///
+/// Recorded before the install runs, not after: what is being agreed to is the
+/// fetch, and an install that fails is one that was still allowed to try.
+pub fn trust_agent(id: &str, mark: &str) -> Result<()> {
+    edit(|doc| {
+        let held = table(doc, "trusted_agents")?;
+        if held.get(id).and_then(|held| held.as_str()) == Some(mark) {
+            return Ok(false);
+        }
+        held[id] = toml_edit::value(mark);
+        Ok(true)
+    })
+}
+
 pub fn put_agent(agent: &Agent, supersedes: Option<&str>) -> Result<()> {
     edit(|doc| {
         let agents = doc["agents"].or_insert(toml_edit::Item::ArrayOfTables(

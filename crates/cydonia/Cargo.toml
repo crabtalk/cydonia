@@ -46,8 +46,14 @@ toml_edit.workspace = true
 ureq.workspace = true
 url.workspace = true
 
+[features]
+# Lists the Developer section in settings — see
+# `crate::view::settings::Section::listed`. Off, so what ships does not carry
+# it; `make bundle FEATURES=developer` is a release-profile bundle that does.
+developer = []
+
 [dev-dependencies]
-syntax-std = { version = "0.1.19", package = "bezel-syntax-std" }
+syntax-std = { version = "0.1.21", package = "bezel-syntax-std" }
 gpui = { version = "0.3.10", package = "bezel-gpui", features = ["test-support"] }
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]

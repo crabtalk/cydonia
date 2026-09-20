@@ -4,11 +4,20 @@
 	import { base } from '$app/paths';
 	import Brand from '$lib/Brand.svelte';
 	import Logo from '$lib/Logo.svelte';
-	import { discord, repo } from '$lib/meta.js';
+	import Crab from '$lib/Crab.svelte';
+	import { crabtalk, discord, repo } from '$lib/meta.js';
+	import { page } from '$app/state';
 
 	const author = 'https://x.com/tianyi_gc';
 
 	let { children } = $props();
+
+	// The docs stand a sidebar and a contents column beside the page, which
+	// needs more room than the marketing pages want. The bar and the foot
+	// follow that width so the wordmark stays over the sidebar; the band
+	// itself is full width either way.
+	const docs = $derived(page.url.pathname.startsWith('/docs'));
+	const shell = $derived(docs ? '1400px' : '1080px');
 
 	// One delegated handler for the whole site: every `.code-block` gets a working
 	// copy button without an `onclick` of its own.
@@ -33,45 +42,43 @@
 </script>
 
 <header>
-	<a class="wordmark" href="{base}/">
-		<Logo size={18} />
-		Cydonia
-	</a>
+	<div class="bar" style:--shell={shell}>
+		<a class="wordmark" href="{base}/">
+			<Logo size={18} />
+			Cydonia
+		</a>
 
-	<nav>
-		<a
-			class="community"
-			href={discord}
-			target="_blank"
-			rel="noreferrer"
-			aria-label="Cydonia community on Discord"
-		>
-			<Brand icon={siDiscord} size={16} />
-			<span>Community</span>
-		</a>
-		<a class="button" href="{base}/#download">
-			<Brand icon={siApple} size={16} />
-			Download
-		</a>
-	</nav>
+		<nav>
+			<a class="docs" href="{base}/docs/">Docs</a>
+			<a class="button" href="{base}/#download">
+				<Brand icon={siApple} size={14} />
+				Download
+			</a>
+		</nav>
+	</div>
 </header>
 
 {@render children()}
 
-<footer>
-	<nav class="left">
-		<a href="https://github.com/crabtalk">crabtalk</a>
-	</nav>
-	<nav class="right">
-		<a href={discord} target="_blank" rel="noreferrer" aria-label="Cydonia on Discord">
-			<Brand icon={siDiscord} size={16} />
-		</a>
-		<a href={repo} aria-label="Cydonia on GitHub"><Brand icon={siGithub} size={16} /></a>
-		<a href={author} target="_blank" rel="noreferrer" aria-label="The author on X">
-			<Brand icon={siX} size={15} />
-		</a>
-	</nav>
-</footer>
+{#if !docs}
+	<footer style:--shell={shell}>
+		<nav class="left">
+			<a class="by" href={crabtalk}>
+				<Crab size={14} />
+				crabtalk
+			</a>
+		</nav>
+		<nav class="right">
+			<a href={discord} target="_blank" rel="noreferrer" aria-label="Cydonia on Discord">
+				<Brand icon={siDiscord} size={16} />
+			</a>
+			<a href={repo} aria-label="Cydonia on GitHub"><Brand icon={siGithub} size={16} /></a>
+			<a href={author} target="_blank" rel="noreferrer" aria-label="The author on X">
+				<Brand icon={siX} size={15} />
+			</a>
+		</nav>
+	</footer>
+{/if}
 
 <style>
 	footer {
@@ -79,9 +86,9 @@
 		align-items: center;
 		justify-content: space-between;
 		gap: 20px;
-		max-width: 1080px;
+		max-width: var(--shell);
 		margin: 0 auto;
-		padding: 0 var(--gutter) 56px;
+		padding: 0 var(--gutter) 28px;
 		font-size: 14px;
 	}
 
@@ -93,6 +100,12 @@
 
 	footer .left a {
 		color: var(--muted);
+	}
+
+	.by {
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
 	}
 
 	footer .right {
@@ -113,13 +126,26 @@
 		}
 	}
 
+	/* A band across the window, with the page's own column inside it: pinned,
+	   the row alone would leave the scrolling page showing either side of it. */
 	header {
+		position: sticky;
+		top: 0;
+		z-index: 20;
+		height: var(--header);
+		border-bottom: 1px solid var(--line);
+		background: color-mix(in srgb, var(--bg) 85%, transparent);
+		backdrop-filter: blur(16px);
+		-webkit-backdrop-filter: blur(16px);
+	}
+
+	.bar {
 		display: flex;
 		align-items: center;
-		max-width: 1080px;
+		height: 100%;
+		max-width: var(--shell);
 		margin: 0 auto;
 		padding: 0 var(--gutter);
-		height: 68px;
 	}
 
 	.wordmark {
@@ -140,7 +166,7 @@
 		}
 	}
 
-	header nav {
+	.bar nav {
 		display: flex;
 		align-items: center;
 		gap: 20px;
@@ -148,15 +174,13 @@
 		font-size: 14.5px;
 	}
 
-	.community {
-		display: inline-flex;
-		align-items: center;
-		gap: 8px;
+	.docs {
 		color: var(--muted);
+		font-size: 14px;
 	}
 
 	@media (hover: hover) {
-		.community:hover {
+		.docs:hover {
 			color: var(--text);
 			text-decoration: none;
 		}
@@ -165,12 +189,13 @@
 	.button {
 		display: inline-flex;
 		align-items: center;
-		gap: 8px;
-		height: 36px;
-		padding: 0 16px;
-		border-radius: 9px;
+		gap: 7px;
+		height: 32px;
+		padding: 0 12px;
+		border-radius: var(--radius);
 		background: var(--accent);
 		color: var(--accent-ink);
+		font-size: 13px;
 		font-weight: 500;
 	}
 
@@ -178,18 +203,6 @@
 		.button:hover {
 			background: var(--accent-hover);
 			text-decoration: none;
-		}
-	}
-
-	/* On a phone the three of these together are wider than the bar. The mark
-	   alone still says Discord, and the link keeps its name for screen readers. */
-	@media (max-width: 560px) {
-		header nav {
-			gap: 14px;
-		}
-
-		.community span {
-			display: none;
 		}
 	}
 </style>

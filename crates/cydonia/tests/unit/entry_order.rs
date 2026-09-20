@@ -11,7 +11,7 @@ use crate::model::{settings::Settings, state};
 use gpui::AppContext as _;
 
 /// A scratch project and a config directory of its own, for the same reason
-/// [`super::super::layouts`]'s tests have one: [`Workspace::save`] writes
+/// [`super::super::spaces`]'s tests have one: [`Workspace::save`] writes
 /// `state.toml` for real, and a test must not rewrite the project list of
 /// whoever ran it.
 struct Scratch(std::path::PathBuf);

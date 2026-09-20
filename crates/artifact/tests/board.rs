@@ -340,6 +340,27 @@ fn a_dispatched_card_keeps_its_session() {
     );
 }
 
+/// A folded lane survives the file, cards and all: `collapsed` is written
+/// ahead of the array of cards, and TOML takes no scalar after one.
+#[test]
+fn a_folded_column_round_trips_with_its_cards() {
+    let mut board = Board::new("1757000000000".into(), "Roadmap");
+    let todo = board.add_column("Todo").id.clone();
+    board.add_card(&todo, "Retire Spot".into());
+    board
+        .columns
+        .iter_mut()
+        .find(|column| column.id == todo)
+        .unwrap()
+        .collapsed = true;
+
+    let body = toml::to_string_pretty(&board).unwrap();
+    let back: Board = toml::from_str(&body).unwrap();
+    let column = back.column(&todo).unwrap();
+    assert!(column.collapsed, "{body}");
+    assert_eq!(column.cards.len(), 1, "{body}");
+}
+
 /// A column of cards, none of them named yet — what a board written before
 /// ids is read as.
 fn unnamed(name: &str, cards: usize) -> Column {

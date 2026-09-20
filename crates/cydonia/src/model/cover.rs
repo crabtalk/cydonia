@@ -15,11 +15,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// What a cover's name begins with. The article's own directory says which
-/// document it belongs to, so this only has to tell it from the content and
-/// the properties beside it.
-const MARK: &str = "cover-";
-
 /// How many pictures there are to land on.
 const SEEDS: u64 = 1_000_000;
 
@@ -31,10 +26,10 @@ const SEEDS: u64 = 1_000_000;
 /// size and never again — so a picture declared at the band's own width would
 /// be resampled up on any window wide enough to stretch it, and a field of
 /// squares resampled up is a field of squares with soft edges.
-const WIDTH: u32 = 1500;
+const WIDTH: u32 = artifact::article::cover::WIDTH;
 
 /// The 5:2 a cover is cut at.
-const HEIGHT: u32 = WIDTH * 2 / 5;
+const HEIGHT: u32 = WIDTH * artifact::article::cover::RATIO.1 / artifact::article::cover::RATIO.0;
 
 /// What a generated cover costs in memory once it is on screen: gpui rasterises
 /// an SVG at `SMOOTH_SVG_SCALE_FACTOR` — two — in each direction and keeps the
@@ -109,20 +104,12 @@ const ANCHORS: [(f64, f64); 2] = [(0., 0.), (1., 0.)];
 
 /// The cover in this article's directory, if it has been given one.
 pub fn of(article: &Path) -> Option<PathBuf> {
-    std::fs::read_dir(article.parent()?)
-        .ok()?
-        .flatten()
-        .map(|entry| entry.path())
-        .find(|path| {
-            path.file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| name.starts_with(MARK))
-        })
+    artifact::article::cover::of(article)
 }
 
 /// Where this document's next cover goes.
 pub fn path(article: &Path, seed: u64, ext: &str) -> Option<PathBuf> {
-    Some(article.with_file_name(format!("{MARK}{seed}.{ext}")))
+    Some(artifact::article::cover::path(article, seed, ext))
 }
 
 /// The seed to cut the next one from: the document's own path the first time,
@@ -221,7 +208,10 @@ fn cell(col: i64, row: i64, seed: u64, anchor: (f64, f64)) -> Option<bool> {
 
 /// The seed the cover at this path was cut from.
 fn seed_of(cover: &Path) -> Option<u64> {
-    let (_, tail) = cover.file_name()?.to_str()?.split_once(MARK)?;
+    let (_, tail) = cover
+        .file_name()?
+        .to_str()?
+        .split_once(artifact::article::cover::MARK)?;
     tail.split_once('.')?.0.parse().ok()
 }
 

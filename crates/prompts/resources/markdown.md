@@ -76,6 +76,23 @@ filesystem access to the host must use an existing accessible image or an
 HTTP(S) image URL. A local path on a remote client's machine is not a path on
 the Cydonia host. Do not claim to upload or copy an image through article tools.
 
+### The cover
+
+The cover is the picture over the top of an article, and is not a body image:
+it is never written into the Markdown, and it does not live in `assets/`. It
+sits in the article's own folder, which `article_read` and `article_add` return
+as `article_path`, under a name starting `cover-`. One article has one cover.
+
+Set it with `article_set_cover`, which takes the path of a picture on the
+Cydonia host and files it under the right name, removing whatever was there.
+Do not write a `cover-` file into the folder by hand — the name carries a stamp
+that keeps a replaced cover from being served from cache.
+
+Draw or crop it **5:2** — 1500x600 is the size the app cuts its own at, and the
+widest it keeps. A picture of another shape is shown at its own proportions
+rather than cropped to fit, so a square one stands far taller than the band it
+is meant to fill.
+
 ## Links and previews
 
 The spelling controls whether a link stays text or becomes a rich preview:

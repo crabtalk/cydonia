@@ -337,15 +337,10 @@ impl Article {
                 .is_some_and(|field| *field.read(cx).content() != self.title)
     }
 
-    /// All of it: the directory is the article.
+    /// All of it: the directory is the article — see
+    /// [`artifact::article::remove`], which the tools delete through as well.
     pub fn remove(&self) {
-        if let Some(dir) = self.path.parent()
-            && std::fs::remove_dir_all(dir).is_ok()
-            && let Some(project) = self.path.ancestors().nth(4)
-        {
-            let _ = artifact::entry::Registry::open(project)
-                .and_then(|registry| registry.remove("article", &layout::id_of(&self.path)));
-        }
+        let _ = artifact::article::remove(&self.path);
     }
 
     /// Put a cover on the document, or take it off: `Some` brings that image

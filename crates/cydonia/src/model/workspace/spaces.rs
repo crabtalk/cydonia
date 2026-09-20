@@ -1,21 +1,21 @@
-//! The layouts this machine holds: which entries are on screen together, and
+//! The spaces this machine holds: which entries are on screen together, and
 //! how they are arranged.
 //!
 //! A continuation of [`Workspace`]'s one `impl`, the way [`super::boards`] is.
 //!
-//! A layout is not a project's. It names entries by the project they are in
+//! A space is not a project's. It names entries by the project they are in
 //! and the id they have there, so one arrangement can hold a session from one
 //! repository beside a board from another — which is why the window owns them
 //! and why they are kept beside the config rather than in any `.cydonia/`. See
-//! [`crate::model::layouts`] for where they are written.
+//! [`crate::model::spaces`] for where they are written.
 //!
-//! There is no `new_layout` a menu calls: a layout is made by dragging a
+//! There is no `new_space` a menu calls: a space is made by dragging a
 //! second entry onto the one already open — see [`Workspace::arrange`].
 use super::*;
-use crate::model::layouts as store;
-use artifact::layout::{Kind as MemberKind, Layout, Member, Side};
+use crate::model::spaces as store;
+use artifact::space::{Kind as MemberKind, Member, Side, Space};
 
-/// What a pane shows, resolved from the member a layout names.
+/// What a pane shows, resolved from the member a space names.
 ///
 /// An index into the project's own list, not a borrow: the caller needs the
 /// workspace back to draw with. Resolved fresh for each frame rather than kept
@@ -33,32 +33,69 @@ pub enum Showing {
 }
 
 impl Workspace {
-    /// The layout the window is arranged by, if one is open.
-    pub fn active_layout(&self) -> Option<&Layout> {
-        self.layouts.get(self.layout?)
+    /// The space the window is arranged by, if one is open.
+    pub fn active_space(&self) -> Option<&Space> {
+        self.spaces.get(self.space?)
     }
 
-    pub fn active_layout_mut(&mut self) -> Option<&mut Layout> {
-        self.layouts.get_mut(self.layout?)
+    pub fn active_space_mut(&mut self) -> Option<&mut Space> {
+        self.spaces.get_mut(self.space?)
     }
 
-    /// Read every layout back off disk. Called at launch, since nothing else
-    /// writes them.
-    pub fn reload_layouts(&mut self, cx: &mut Context<Self>) {
-        let open = self.active_layout().map(|layout| layout.id.clone());
-        self.layouts = store::all();
-        self.layout = open.and_then(|id| self.layouts.iter().position(|at| at.id == id));
+    /// Put `spaces` in the order `ids` names them, with anything that list
+    /// does not name in front, newest first.
+    ///
+    /// A space's file carries no place in the list: [`store::all`] reads them
+    /// back by the time they were written, and the hand order is kept beside
+    /// the rest of the window's bookkeeping — see
+    /// [`crate::model::state::State::spaces`].
+    pub(super) fn in_order(spaces: Vec<Space>, ids: &[String]) -> Vec<Space> {
+        let mut spaces = spaces;
+        spaces.sort_by_key(|space| {
+            ids.iter()
+                .position(|id| *id == space.id)
+                .map_or(0, |at| at + 1)
+        });
+        spaces
+    }
+
+    /// Carry a space to another place in the list. `space` follows the one
+    /// it points at rather than the index it sits on, the way `active` does
+    /// for projects — see [`Workspace::move_project`].
+    pub fn move_space(&mut self, from: usize, to: usize, cx: &mut Context<Self>) {
+        if from == to || from >= self.spaces.len() || to >= self.spaces.len() {
+            return;
+        }
+        let space = self.spaces.remove(from);
+        self.spaces.insert(to, space);
+        self.space = self.space.map(|at| match at {
+            at if at == from => to,
+            at if from < to && (from..=to).contains(&at) => at - 1,
+            at if to < from && (to..=from).contains(&at) => at + 1,
+            at => at,
+        });
+        self.save();
         cx.notify();
     }
 
-    /// Show a layout. The projects its panes are in are opened if they are not
+    /// Read every space back off disk. Called at launch, since nothing else
+    /// writes them.
+    pub fn reload_spaces(&mut self, cx: &mut Context<Self>) {
+        let open = self.active_space().map(|space| space.id.clone());
+        let order: Vec<String> = self.spaces.iter().map(|at| at.id.clone()).collect();
+        self.spaces = Self::in_order(store::all(), &order);
+        self.space = open.and_then(|id| self.spaces.iter().position(|at| at.id == id));
+        cx.notify();
+    }
+
+    /// Show a space. The projects its panes are in are opened if they are not
     /// already — an arrangement is a working context, and half of one is not
     /// what was asked for.
-    pub fn open_layout(&mut self, ix: usize, cx: &mut Context<Self>) {
-        let Some(layout) = self.layouts.get(ix) else {
+    pub fn open_space(&mut self, ix: usize, cx: &mut Context<Self>) {
+        let Some(space) = self.spaces.get(ix) else {
             return;
         };
-        let wanted: Vec<PathBuf> = layout
+        let wanted: Vec<PathBuf> = space
             .entries()
             .into_iter()
             .map(|member| member.project)
@@ -68,22 +105,22 @@ impl Workspace {
         for path in wanted {
             self.open_project(path, cx);
         }
-        self.layout = Some(ix);
+        self.space = Some(ix);
         self.save();
         cx.notify();
     }
 
     /// Leave the arrangement, which is what opening any single entry does.
-    pub fn leave_layout(&mut self) {
-        self.layout = None;
+    pub fn leave_space(&mut self) {
+        self.space = None;
     }
 
-    /// Put `arriving` beside `target`, making the layout that holds them if
+    /// Put `arriving` beside `target`, making the space that holds them if
     /// there is not one yet.
     ///
-    /// This is the whole of how a layout is born: the first drag onto a pane
+    /// This is the whole of how a space is born: the first drag onto a pane
     /// mints one over the entry already there, and every drag after it lands
-    /// in the same layout.
+    /// in the same space.
     pub fn arrange(
         &mut self,
         target: &Member,
@@ -91,30 +128,29 @@ impl Workspace {
         side: Side,
         cx: &mut Context<Self>,
     ) -> Option<usize> {
-        let at = match self.layout {
-            Some(at) if at < self.layouts.len() => at,
-            // The first drag. The layout starts as the pane that was there,
+        let at = match self.space {
+            Some(at) if at < self.spaces.len() => at,
+            // The first drag. The space starts as the pane that was there,
             // which is what the arrival is being put beside.
             _ => {
-                let layout = store::create("", target.clone())?;
-                self.layouts.insert(0, layout);
+                let space = store::create("", target.clone())?;
+                self.spaces.insert(0, space);
                 0
             }
         };
-        // An entry is in one layout at a time, the way a pane is in one tmux
-        // window. Dragging it into another moves it: the sidebar lists it
-        // under the layout that has it, and it can only be under one.
-        for (ix, other) in self.layouts.iter_mut().enumerate() {
-            if ix != at && other.remove(arriving) {
-                store::save(other);
-            }
-        }
-        let layout = self.layouts.get_mut(at)?;
-        if !layout.insert(target, arriving, side) {
+        // Both of them, not only the arrival: a space minted over a target
+        // another one already holds would put that entry in two at once. By id,
+        // because an eviction can take a space with it.
+        let keep = self.spaces.get(at)?.id.clone();
+        self.evict_from_spaces(target, &keep, cx);
+        self.evict_from_spaces(arriving, &keep, cx);
+        let at = self.spaces.iter().position(|space| space.id == keep)?;
+        let space = self.spaces.get_mut(at)?;
+        if !space.insert(target, arriving, side) {
             return None;
         }
-        store::save(layout);
-        self.layout = Some(at);
+        store::save(space);
+        self.space = Some(at);
         self.save();
         cx.notify();
         Some(at)
@@ -122,33 +158,60 @@ impl Workspace {
 
     /// Put an arriving entry into the pane holding `target`, as a tab —
     /// a drop on a pane's bar rather than on its edge. There has to be a
-    /// layout already: a pane with one entry has no bar to drop on.
+    /// space already: a pane with one entry has no bar to drop on.
     pub fn stack_pane(&mut self, target: &Member, arriving: &Member, cx: &mut Context<Self>) {
-        // An entry is in one layout at a time, the same rule [`Self::arrange`]
+        // An entry is in one space at a time, the same rule [`Self::arrange`]
         // follows for the same reason.
-        let Some(at) = self.layout else {
+        let Some(keep) = self.active_space().map(|space| space.id.clone()) else {
             return;
         };
-        for (ix, other) in self.layouts.iter_mut().enumerate() {
-            if ix != at && other.remove(arriving) {
-                store::save(other);
+        self.evict_from_spaces(arriving, &keep, cx);
+        self.space = self.spaces.iter().position(|space| space.id == keep);
+        self.edit_space(cx, |space| space.stack(target, arriving));
+    }
+
+    /// Take an entry out of every space but the one named.
+    ///
+    /// An entry is in one space at a time, the way a pane is in one tmux
+    /// window: dragging it into another moves it. What is left with one pane is
+    /// deleted rather than kept — an arrangement of one is not an arrangement,
+    /// which is the rule [`Self::close_pane`] and [`Self::drop_from_spaces`]
+    /// already follow.
+    ///
+    /// By id and not by index, because a space dropped in here shifts every
+    /// index past it.
+    fn evict_from_spaces(&mut self, member: &Member, keep: &str, cx: &mut Context<Self>) {
+        while let Some(ix) = self
+            .spaces
+            .iter()
+            .position(|space| space.id != keep && space.contains(member))
+        {
+            if self.spaces[ix].leaves() <= 2 && self.spaces[ix].stack_of(member).len() <= 1 {
+                self.delete_space(ix, cx);
+                continue;
             }
+            // A space that says it holds the member but will not give it up
+            // would spin this loop, so the refusal ends it.
+            if !self.spaces[ix].remove(member) {
+                return;
+            }
+            store::save(&mut self.spaces[ix]);
+            cx.notify();
         }
-        self.edit_layout(cx, |layout| layout.stack(target, arriving));
     }
 
     /// The entries the pane holding this one draws, in strip order. One entry
-    /// for a pane holding one thing, and none at all where no layout is open.
+    /// for a pane holding one thing, and none at all where no space is open.
     pub fn stack_of(&self, entry: &Member) -> Vec<Member> {
-        self.active_layout()
-            .map(|layout| layout.stack_of(entry))
+        self.active_space()
+            .map(|space| space.stack_of(entry))
             .unwrap_or_default()
     }
 
     /// The pane across the seam on this side of the one given, if there is one
     /// — what says whether a move that way is on offer at all.
     pub fn neighbour_pane(&self, entry: &Member, side: Side) -> Option<Member> {
-        self.active_layout()?.tree.neighbour(entry, side)
+        self.active_space()?.tree.neighbour(entry, side)
     }
 
     /// Exchange a pane with the one across the seam on that side. The
@@ -158,8 +221,8 @@ impl Workspace {
             return false;
         };
         let mut moved = false;
-        self.edit_layout(cx, |layout| {
-            moved = layout.tree.swap(entry, &across);
+        self.edit_space(cx, |space| {
+            moved = space.tree.swap(entry, &across);
             moved
         });
         moved
@@ -173,133 +236,127 @@ impl Workspace {
         side: Side,
         cx: &mut Context<Self>,
     ) {
-        self.edit_layout(cx, |layout| layout.relocate(entry, target, side));
+        self.edit_space(cx, |space| space.relocate(entry, target, side));
     }
 
     /// Close one pane.
     ///
-    /// Closing down to one pane closes the layout: an arrangement of one pane
+    /// Closing down to one pane closes the space: an arrangement of one pane
     /// is not an arrangement, and leaving the file behind would put a row in
     /// the sidebar for something the window is no longer doing. The pane that
     /// would have been left alone is what the window is put on, so the entry
-    /// you were keeping stays in front.
-    pub fn close_pane(&mut self, entry: &Member, cx: &mut Context<Self>) {
-        let Some(layout) = self.active_layout() else {
-            return;
-        };
+    /// you were keeping stays in front — and is returned, so the caller can
+    /// put the single pane on it. Nothing while the arrangement survives,
+    /// which leaves the panes to say what they show.
+    pub fn close_pane(
+        &mut self,
+        entry: &Member,
+        cx: &mut Context<Self>,
+    ) -> Option<(Member, Showing)> {
+        let space = self.active_space()?;
         // A pane holding tabs loses a tab, not the pane — so none of the rules
         // below about what is left of the arrangement come into it.
-        if layout.stack_of(entry).len() > 1 {
-            self.edit_layout(cx, |layout| layout.remove(entry));
-            return;
+        if space.stack_of(entry).len() > 1 || space.leaves() > 2 {
+            self.edit_space(cx, |space| space.remove(entry));
+            return None;
         }
-        if layout.leaves() > 2 {
-            self.edit_layout(cx, |layout| layout.remove(entry));
-            return;
-        }
-        let survivor = layout
+        let survivor = space
             .entries()
             .into_iter()
             .find(|member| member != entry)
-            .and_then(|member| self.showing_of(&member));
+            .and_then(|member| Some((member.clone(), self.showing_of(&member)?)));
 
-        if let Some(at) = self.layout {
-            self.delete_layout(at, cx);
+        if let Some(at) = self.space {
+            self.delete_space(at, cx);
         }
-        if let Some((project, showing)) = survivor {
-            self.select_showing(project, showing, cx);
-        }
+        let (member, (project, showing)) = survivor?;
+        self.select_showing(project, showing, cx);
+        Some((member, showing))
     }
 
-    /// Take an entry out of whatever layout holds it, open or not.
+    /// Take an entry out of whatever space holds it, open or not.
     ///
     /// [`Self::close_pane`] is the gesture's version of this and works on the
-    /// layout in front; this one is for an entry that is going away from the
+    /// space in front; this one is for an entry that is going away from the
     /// list altogether, which can be holding a pane in an arrangement nobody
-    /// is looking at. Taking the last pane out takes the layout with it, the
+    /// is looking at. Taking the last pane out takes the space with it, the
     /// same rule and for the same reason.
-    pub fn drop_from_layouts(&mut self, member: &Member, cx: &mut Context<Self>) {
-        let Some(ix) = self.layout_holding(member) else {
+    pub fn drop_from_spaces(&mut self, member: &Member, cx: &mut Context<Self>) {
+        let Some(ix) = self.space_holding(member) else {
             return;
         };
-        let Some(layout) = self.layouts.get_mut(ix) else {
+        let Some(space) = self.spaces.get_mut(ix) else {
             return;
         };
         // A pane holding tabs loses a tab and stays a pane, so what is left of
         // the arrangement does not change.
-        if layout.leaves() <= 2 && layout.stack_of(member).len() <= 1 {
-            self.delete_layout(ix, cx);
+        if space.leaves() <= 2 && space.stack_of(member).len() <= 1 {
+            self.delete_space(ix, cx);
             return;
         }
-        if layout.remove(member) {
-            store::save(layout);
+        if space.remove(member) {
+            store::save(space);
             cx.notify();
         }
     }
 
     /// Stand one pane over the others, or put it back.
     pub fn zoom_pane(&mut self, entry: &Member, cx: &mut Context<Self>) {
-        self.edit_layout(cx, |layout| {
-            layout.zoom(entry);
+        self.edit_space(cx, |space| {
+            space.zoom(entry);
             true
         });
     }
 
-    /// Drop the layout: the file goes with it. The entries it arranged are
-    /// left alone — a layout holds none of them.
-    pub fn delete_layout(&mut self, ix: usize, cx: &mut Context<Self>) {
-        if ix >= self.layouts.len() {
+    /// Drop the space: the file goes with it. The entries it arranged are
+    /// left alone — a space holds none of them.
+    pub fn delete_space(&mut self, ix: usize, cx: &mut Context<Self>) {
+        if ix >= self.spaces.len() {
             return;
         }
-        store::remove(&self.layouts.remove(ix).id);
-        self.layout = self
-            .layout
+        store::remove(&self.spaces.remove(ix).id);
+        self.space = self
+            .space
             .filter(|open| *open != ix)
             .map(|open| if open > ix { open - 1 } else { open });
         self.save();
         cx.notify();
     }
 
-    /// Put the arrangement away, or bring it back. The members go with it —
-    /// see `Cydonia::archive_entry`, which walks them.
-    pub fn archive_layout(&mut self, ix: usize, archived: bool, cx: &mut Context<Self>) {
-        let Some(layout) = self.layouts.get_mut(ix) else {
-            return;
-        };
-        layout.archived = archived;
-        store::save(layout);
-        // An arrangement put away is not the one the window is showing.
-        if archived && self.layout == Some(ix) {
-            self.layout = None;
+    /// Drop the space named, wherever it has got to in the list.
+    ///
+    /// By id and not by place: archiving what a space arranges takes each
+    /// member out of it as it goes — see [`Self::drop_from_spaces`] — so an
+    /// index read before that walk names some other space by the end of it,
+    /// or nothing.
+    pub fn delete_space_id(&mut self, id: &str, cx: &mut Context<Self>) {
+        if let Some(ix) = self.spaces.iter().position(|space| space.id == id) {
+            self.delete_space(ix, cx);
         }
-        self.save();
-        cx.notify();
     }
 
-    pub fn rename_layout(&mut self, id: &str, name: String, cx: &mut Context<Self>) {
-        if let Some(layout) = self.layouts.iter_mut().find(|layout| layout.id == id) {
-            layout.name = name.trim().to_owned();
-            store::save(layout);
+    pub fn rename_space(&mut self, id: &str, name: String, cx: &mut Context<Self>) {
+        if let Some(space) = self.spaces.iter_mut().find(|space| space.id == id) {
+            space.name = name.trim().to_owned();
+            store::save(space);
             cx.notify();
         }
     }
 
-    /// The layout a given entry is a member of, if any — what the sidebar
+    /// The space a given entry is a member of, if any — what the sidebar
     /// lists it under. One put away holds nothing: its members are listed
     /// where they would be without it.
-    pub fn layout_holding(&self, member: &Member) -> Option<usize> {
-        self.layouts
-            .iter()
-            .position(|layout| !layout.archived && layout.contains(member))
+    pub fn space_holding(&self, member: &Member) -> Option<usize> {
+        self.spaces.iter().position(|space| space.contains(member))
     }
 
-    /// Drop members whose entries have gone. A layout names entries and holds
+    /// Drop members whose entries have gone. A space names entries and holds
     /// none of them, so one deleted from the sidebar leaves a pane pointing at
     /// nothing until this runs.
     ///
     /// Only for projects that are open: a member in a project this window has
     /// never opened is not missing, only out of reach.
-    pub fn prune_layouts(&mut self, cx: &mut Context<Self>) {
+    pub fn prune_spaces(&mut self, cx: &mut Context<Self>) {
         let mut live: Vec<Member> = Vec::new();
         for open in &self.projects {
             let path = open.path.clone();
@@ -331,21 +388,21 @@ impl Workspace {
             }
         }
         let open: Vec<PathBuf> = self.projects.iter().map(|open| open.path.clone()).collect();
-        for layout in &mut self.layouts {
-            let gone: Vec<Member> = layout
+        for space in &mut self.spaces {
+            let gone: Vec<Member> = space
                 .entries()
                 .into_iter()
                 .filter(|member| open.contains(&member.project) && !live.contains(member))
                 .collect();
-            if !gone.is_empty() && layout.prune(&gone) {
-                store::save(layout);
+            if !gone.is_empty() && space.prune(&gone) {
+                store::save(space);
             }
         }
         cx.notify();
     }
 
     /// What the member names, and which open project it is in. Nothing for one
-    /// whose project is shut, or which has gone since the layout named it —
+    /// whose project is shut, or which has gone since the space named it —
     /// that draws as an empty pane rather than a panic.
     pub fn showing_of(&self, member: &Member) -> Option<(usize, Showing)> {
         let at = self
@@ -379,9 +436,9 @@ impl Workspace {
     }
 
     /// The member that names what a pane is on, so an entry opened from the
-    /// sidebar can be put into a layout.
+    /// sidebar can be put into a space.
     ///
-    /// Nothing for a session with no file yet: a layout names entries on disk,
+    /// Nothing for a session with no file yet: a space names entries on disk,
     /// and one that has had no turn is not there to be named.
     pub fn member_of(&self, project: usize, showing: Showing) -> Option<Member> {
         let open = self.projects.get(project)?;
@@ -444,7 +501,7 @@ impl Workspace {
     ///
     /// Each kind is brought up to what drawing it needs, because putting a
     /// pane on an entry is the whole of how one arrives here — a drop, a tab
-    /// coming forward, a layout opening — and the `open_*` calls are only the
+    /// coming forward, a space opening — and the `open_*` calls are only the
     /// sidebar's route. An article with no editor draws as the front door and
     /// an archived board draws as an empty one, so neither can be left to
     /// whoever asked.
@@ -481,18 +538,18 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Change the open layout and write it back, if the change took.
-    fn edit_layout(&mut self, cx: &mut Context<Self>, edit: impl FnOnce(&mut Layout) -> bool) {
-        let Some(layout) = self.layout.and_then(|ix| self.layouts.get_mut(ix)) else {
+    /// Change the open space and write it back, if the change took.
+    fn edit_space(&mut self, cx: &mut Context<Self>, edit: impl FnOnce(&mut Space) -> bool) {
+        let Some(space) = self.space.and_then(|ix| self.spaces.get_mut(ix)) else {
             return;
         };
-        if edit(layout) {
-            store::save(layout);
+        if edit(space) {
+            store::save(space);
             cx.notify();
         }
     }
 }
 
 #[cfg(test)]
-#[path = "../../../tests/unit/layouts.rs"]
-mod layout_tests;
+#[path = "../../../tests/unit/spaces.rs"]
+mod space_tests;

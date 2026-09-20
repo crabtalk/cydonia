@@ -24,7 +24,9 @@ use bezel::{
 const FLOOR: u64 = cover::RASTER_BYTES / 1_000_000 + 1;
 
 /// How wide the ceiling's dialog sits.
-const DIALOG_WIDTH: f32 = 320.;
+/// How wide a dialog the settings window stands over its body. Shared with
+/// [`super::agents`], so the two land on the same shape.
+pub(super) const DIALOG_WIDTH: f32 = 320.;
 
 /// The watch delays the row offers, named for what they buy rather than for
 /// what they are. The middle one is [`watch::BOUNCE`], which is what a file

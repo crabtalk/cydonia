@@ -3,7 +3,7 @@
 
 mod common;
 
-use common::{Scratch, invalid, refused, said};
+use common::{Scratch, invalid, refused, said, structured};
 use serde_json::json;
 
 #[test]
@@ -162,4 +162,156 @@ fn nothing_written_yet_is_said_plainly() {
     let server = scratch.server();
     let text = said(server.call("article_list", json!({ "project": scratch.path() }), None));
     assert_eq!(text, "this project has no articles");
+}
+
+/// The cover is filed in the article's own folder under the `cover-` name,
+/// which is what an agent could not work out for itself.
+#[test]
+fn a_cover_is_filed_beside_the_article_and_replaced_whole() {
+    let scratch = Scratch::new("cover");
+    let server = scratch.server();
+    let made = server.call(
+        "article_add",
+        json!({ "project": scratch.path(), "title": "Notes", "text": "# Notes" }),
+        None,
+    );
+    let folder = structured(made)["article_path"]
+        .as_str()
+        .expect("the article's own folder")
+        .to_owned();
+
+    let drawn = scratch.path().join("drawn.png");
+    std::fs::write(&drawn, b"not really a png").unwrap();
+    let text = said(server.call(
+        "article_set_cover",
+        json!({ "project": scratch.path(), "article": "Notes", "image": drawn.to_str() }),
+        None,
+    ));
+    assert!(text.contains("covered"), "{text}");
+
+    let covers = |folder: &str| {
+        std::fs::read_dir(folder)
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with("cover-"))
+            .collect::<Vec<_>>()
+    };
+    let first = covers(&folder);
+    assert_eq!(first.len(), 1, "one cover: {first:?}");
+    assert!(first[0].ends_with(".png"), "{first:?}");
+
+    // A second one takes the first's place rather than standing beside it.
+    let other = scratch.path().join("other.jpg");
+    std::fs::write(&other, b"nor this").unwrap();
+    said(server.call(
+        "article_set_cover",
+        json!({ "project": scratch.path(), "article": "Notes", "image": other.to_str() }),
+        None,
+    ));
+    let second = covers(&folder);
+    assert_eq!(second.len(), 1, "still one cover: {second:?}");
+    assert!(second[0].ends_with(".jpg"), "{second:?}");
+
+    // And with no picture named, it comes off.
+    said(server.call(
+        "article_set_cover",
+        json!({ "project": scratch.path(), "article": "Notes" }),
+        None,
+    ));
+    assert!(covers(&folder).is_empty(), "the cover is gone");
+}
+
+/// A picture the host does not have is refused rather than filed empty.
+#[test]
+fn a_cover_that_is_not_there_is_refused() {
+    let scratch = Scratch::new("cover-missing");
+    let server = scratch.server();
+    said(server.call(
+        "article_add",
+        json!({ "project": scratch.path(), "title": "Notes", "text": "# Notes" }),
+        None,
+    ));
+    let why = refused(server.call(
+        "article_set_cover",
+        json!({
+            "project": scratch.path(), "article": "Notes",
+            "image": scratch.path().join("nothing.png").to_str()
+        }),
+        None,
+    ));
+    assert!(why.contains("no picture at"), "{why}");
+}
+
+/// Archiving is reversible and deleting is not, which is the whole reason they
+/// are two tools behind two switches.
+#[test]
+fn an_article_is_put_away_and_then_deleted() {
+    let scratch = Scratch::new("archive-article");
+    let server = scratch.server();
+    let made = server.call(
+        "article_add",
+        json!({ "project": scratch.path(), "title": "Notes", "text": "# Notes" }),
+        None,
+    );
+    let folder = structured(made)["article_path"]
+        .as_str()
+        .expect("the article's own folder")
+        .to_owned();
+
+    let text = said(server.call(
+        "article_archive",
+        json!({ "project": scratch.path(), "article": "Notes" }),
+        None,
+    ));
+    assert!(text.contains("put away"), "{text}");
+    assert!(
+        std::path::Path::new(&folder).is_dir(),
+        "archived is not gone"
+    );
+    let listed = said(server.call("article_list", json!({ "project": scratch.path() }), None));
+    assert!(listed.contains("archived"), "{listed}");
+
+    said(server.call(
+        "article_archive",
+        json!({ "project": scratch.path(), "article": "Notes", "archived": false }),
+        None,
+    ));
+    let listed = said(server.call("article_list", json!({ "project": scratch.path() }), None));
+    assert!(!listed.contains("archived"), "and back again: {listed}");
+
+    let text = said(server.call(
+        "article_remove",
+        json!({ "project": scratch.path(), "article": "Notes" }),
+        None,
+    ));
+    assert!(text.contains("deleted"), "{text}");
+    assert!(
+        !std::path::Path::new(&folder).exists(),
+        "the whole directory goes"
+    );
+}
+
+/// A name that answers nothing refuses the run whole, rather than deleting the
+/// ones it did find.
+#[test]
+fn a_run_that_names_a_stranger_deletes_none_of_it() {
+    let scratch = Scratch::new("delete-run");
+    let server = scratch.server();
+    for title in ["First", "Second"] {
+        said(server.call(
+            "article_add",
+            json!({ "project": scratch.path(), "title": title, "text": "body" }),
+            None,
+        ));
+    }
+    let why = refused(server.call(
+        "article_remove",
+        json!({ "project": scratch.path(), "article": ["First", "Nothing"] }),
+        None,
+    ));
+    assert!(!why.is_empty(), "{why}");
+    let listed = said(server.call("article_list", json!({ "project": scratch.path() }), None));
+    assert!(listed.contains("First"), "still there: {listed}");
+    assert!(listed.contains("Second"), "still there: {listed}");
 }

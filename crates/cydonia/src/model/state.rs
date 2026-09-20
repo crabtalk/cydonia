@@ -16,8 +16,8 @@ use std::{collections::BTreeMap, path::PathBuf};
 /// The four things a project holds. Which one a launch lands on is the last
 /// one that was open, so the window comes back where it was left.
 ///
-/// A layout is not among them: it spans projects and is kept beside this file
-/// rather than in any of them — see [`crate::model::layouts`].
+/// A space is not among them: it spans projects and is kept beside this file
+/// rather than in any of them — see [`crate::model::spaces`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Kind {
@@ -66,11 +66,16 @@ pub struct State {
     /// themselves, and `last` has no use for one.
     #[serde(default)]
     pub pinned: BTreeMap<PathBuf, Vec<Entry>>,
-    /// The layout the window was showing when it last closed, by its id — see
-    /// [`crate::model::layouts`]. Nothing where it was on a single entry, and
+    /// The space the window was showing when it last closed, by its id — see
+    /// [`crate::model::spaces`]. Nothing where it was on a single entry, and
     /// an id whose file has since gone lands on one too.
     #[serde(default)]
-    pub layout: Option<String>,
+    pub space: Option<String>,
+    /// The order the sidebar lists the spaces in, by id. A space this does
+    /// not name is one made since it was last written, and is listed above
+    /// everything here — the same rule `order` above follows for entries.
+    #[serde(default)]
+    pub spaces: Vec<String>,
 }
 
 /// `~/.config/cydonia/state.toml`, beside the settings it is not.
@@ -102,7 +107,8 @@ pub fn restore() -> State {
         last: stored.last,
         order: stored.order,
         pinned: stored.pinned,
-        layout: stored.layout,
+        space: stored.space,
+        spaces: stored.spaces,
     }
 }
 

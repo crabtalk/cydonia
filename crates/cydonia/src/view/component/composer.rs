@@ -211,8 +211,8 @@ pub struct Composer {
     scroll: ScrollHandle,
     /// Whether a turn is in flight — what the button does when pressed.
     streaming: bool,
-    /// Whether the session tools are on offer. Off beside a layout: all three
-    /// of them open the window's own panels, which a layout divides the room
+    /// Whether the session tools are on offer. Off beside a space: all three
+    /// of them open the window's own panels, which a space divides the room
     /// for — see [`crate::view::arrangement`].
     tools: bool,
     activity: Option<Activity>,

@@ -19,11 +19,11 @@ use bezel::{
     ui::{
         icons,
         menu::{self, Cursor, Hit, Item},
-        popover,
+        popover, tabs,
         tooltip::Tooltip,
     },
 };
-use std::path::PathBuf;
+use std::{collections::HashMap, path::PathBuf};
 
 gpui::actions!(
     session_panel,
@@ -45,7 +45,6 @@ enum Content {
     File(Entity<FileView>),
 }
 struct Tab {
-    id: usize,
     content: Content,
     _subscriptions: Vec<Subscription>,
 }
@@ -58,8 +57,11 @@ pub struct Panel {
     files_width: f32,
     files_subscription: Option<Subscription>,
     focus: gpui::FocusHandle,
-    tabs: Vec<Tab>,
-    active: Option<usize>,
+    /// The row: which tabs are open, in what order, and which is in front.
+    strip: tabs::Strip<usize>,
+    /// What each of the strip's ids holds. Keyed rather than held in the strip
+    /// so the order is arithmetic the strip can do without a window.
+    contents: HashMap<usize, Tab>,
     next_id: usize,
     menu: bool,
     cursor: Cursor,
@@ -78,8 +80,8 @@ impl Panel {
             files_subscription: None,
             cwd,
             focus: cx.focus_handle(),
-            tabs: Vec::new(),
-            active: None,
+            strip: tabs::Strip::new(),
+            contents: HashMap::new(),
             next_id: 0,
             menu: false,
             cursor: Cursor::default(),
@@ -97,23 +99,38 @@ impl Panel {
     ) -> usize {
         let id = self.next_id;
         self.next_id += 1;
-        self.tabs.push(Tab {
+        self.contents.insert(
             id,
-            content,
-            _subscriptions: subscriptions,
-        });
-        self.active = Some(id);
+            Tab {
+                content,
+                _subscriptions: subscriptions,
+            },
+        );
+        self.strip.open(id);
         cx.notify();
         id
     }
 
-    pub fn review(&mut self, cx: &mut Context<Self>) {
-        if let Some(tab) = self
-            .tabs
+    /// The tabs in the order the strip holds them.
+    fn ordered(&self) -> impl Iterator<Item = (usize, &Tab)> {
+        self.strip
+            .tabs()
             .iter()
-            .find(|tab| matches!(tab.content, Content::Review(_)))
-        {
-            self.active = Some(tab.id);
+            .filter_map(|id| self.contents.get(id).map(|tab| (*id, tab)))
+    }
+
+    /// What the tab in front holds.
+    fn front(&self) -> Option<&Tab> {
+        self.strip.active().and_then(|id| self.contents.get(id))
+    }
+
+    pub fn review(&mut self, cx: &mut Context<Self>) {
+        let open = self
+            .ordered()
+            .find(|(_, tab)| matches!(tab.content, Content::Review(_)))
+            .map(|(id, _)| id);
+        if let Some(id) = open {
+            self.strip.activate(&id);
             cx.notify();
             return;
         }
@@ -129,7 +146,7 @@ impl Panel {
         let terminal = cx.new(|cx| Terminal::new(&self.cwd, cx));
         let id = self.next_id;
         let exit = cx.subscribe_in(&terminal, window, move |this, _, _: &Exited, window, cx| {
-            let focused = this.tabs.iter().find(|tab| tab.id == id).is_some_and(|tab| {
+            let focused = this.contents.get(&id).is_some_and(|tab| {
                 matches!(&tab.content, Content::Terminal(terminal) if terminal.focus_handle(cx).is_focused(window))
             });
             this.remove(id, cx);
@@ -141,7 +158,7 @@ impl Panel {
     }
 
     fn focus(&self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(tab) = self.tabs.iter().find(|tab| Some(tab.id) == self.active) {
+        if let Some(tab) = self.front() {
             match &tab.content {
                 Content::Terminal(terminal) => window.focus(&terminal.focus_handle(cx), cx),
                 Content::File(file) => window.focus(&file.focus_handle(cx), cx),
@@ -183,12 +200,12 @@ impl Panel {
     fn open_file(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         self.focus_pending = true;
         let path = path.canonicalize().unwrap_or(path);
-        if let Some(tab) = self
-            .tabs
-            .iter()
-            .find(|tab| matches!(&tab.content, Content::File(file) if file.read(cx).path == path))
-        {
-            self.active = Some(tab.id);
+        let open = self
+            .ordered()
+            .find(|(_, tab)| matches!(&tab.content, Content::File(file) if file.read(cx).path == path))
+            .map(|(id, _)| id);
+        if let Some(id) = open {
+            self.strip.activate(&id);
             cx.notify();
             return;
         }
@@ -208,32 +225,19 @@ impl Panel {
     /// and a tab shown without the focus following leaves the next keystroke in
     /// the one that was left.
     fn cycle(&mut self, step: isize, window: &mut Window, cx: &mut Context<Self>) {
-        if self.tabs.len() < 2 {
+        if self.strip.len() < 2 {
             return;
         }
-        let at = self
-            .tabs
-            .iter()
-            .position(|tab| Some(tab.id) == self.active)
-            .unwrap_or(0);
-        let count = self.tabs.len() as isize;
-        let next = (at as isize + step).rem_euclid(count) as usize;
-        self.active = self.tabs.get(next).map(|tab| tab.id);
+        self.strip.cycle(step);
         self.focus(window, cx);
         cx.notify();
     }
 
     fn remove(&mut self, id: usize, cx: &mut Context<Self>) {
-        let Some(index) = self.tabs.iter().position(|tab| tab.id == id) else {
+        if !self.strip.close(&id) {
             return;
-        };
-        self.tabs.remove(index);
-        if self.active == Some(id) {
-            self.active = self
-                .tabs
-                .get(index.min(self.tabs.len().saturating_sub(1)))
-                .map(|tab| tab.id);
         }
+        self.contents.remove(&id);
         if self.closing == Some(id) {
             self.closing = None;
         }
@@ -241,11 +245,13 @@ impl Panel {
     }
 
     fn close(&mut self, id: usize, window: &mut Window, cx: &mut Context<Self>) {
-        if self.tabs.iter().any(|tab| {
-            tab.id == id && matches!(&tab.content, Content::File(file) if file.read(cx).dirty(cx))
-        }) {
+        let dirty = matches!(
+            self.contents.get(&id).map(|tab| &tab.content),
+            Some(Content::File(file)) if file.read(cx).dirty(cx)
+        );
+        if dirty {
             self.closing = Some(id);
-            self.active = Some(id);
+            self.strip.activate(&id);
             cx.notify();
         } else {
             self.remove(id, cx);
@@ -312,17 +318,13 @@ impl Render for Panel {
                 },
             )
         });
-        let active_file = self
-            .tabs
-            .iter()
-            .find(|tab| Some(tab.id) == self.active)
-            .and_then(|tab| {
-                if let Content::File(file) = &tab.content {
-                    Some(file.clone())
-                } else {
-                    None
-                }
-            });
+        let active_file = self.front().and_then(|tab| {
+            if let Content::File(file) = &tab.content {
+                Some(file.clone())
+            } else {
+                None
+            }
+        });
         if self.files_open
             && let Some(files) = &self.files
         {
@@ -330,9 +332,7 @@ impl Render for Panel {
             files.update(cx, |files, cx| files.reveal(selected, cx));
         }
         let status = self
-            .tabs
-            .iter()
-            .find(|tab| Some(tab.id) == self.active)
+            .front()
             .map(|tab| match &tab.content {
                 Content::File(file) => {
                     file.update(cx, |file, cx| file.status_bar(self.files_open, window, cx))
@@ -361,9 +361,7 @@ impl Render for Panel {
                     .into_any_element()
             });
         let body: AnyElement = self
-            .tabs
-            .iter()
-            .find(|tab| Some(tab.id) == self.active)
+            .front()
             .map(|tab| match &tab.content {
                 Content::Review(review) => review.clone().into_any_element(),
                 Content::Terminal(terminal) => terminal.clone().into_any_element(),
@@ -437,13 +435,13 @@ impl Render for Panel {
             .on_action(cx.listener(|this, _: &NewTerminal, window, cx| this.terminal(window, cx)))
             .on_action(
                 cx.listener(|this, _: &crate::view::menubar::CloseWindow, window, cx| {
-                    if let Some(id) = this.active {
+                    if let Some(id) = this.strip.active().copied() {
                         this.close(id, window, cx);
                     }
                 }),
             )
             .on_action(cx.listener(|this, _: &CloseTab, window, cx| {
-                if let Some(id) = this.active {
+                if let Some(id) = this.strip.active().copied() {
                     this.close(id, window, cx);
                 }
             }))
@@ -458,98 +456,69 @@ impl Render for Panel {
                     .gap(px(6.))
                     .px(px(8.))
                     .child(
-                        div()
-                            .id("panel-tabs")
-                            .min_w_0()
-                            .flex()
-                            .gap(px(4.))
-                            .overflow_x_scroll()
-                            .children(self.tabs.iter().map(|tab| {
-                                let id = tab.id;
-                                let icon = match &tab.content {
-                                    Content::Review(_) => icons::development::GitCompare,
-                                    Content::Terminal(_) => icons::development::Terminal,
-                                    Content::File(_) => icons::files::File,
-                                };
-                                let (label, path) = match &tab.content {
-                                    Content::Review(_) => {
-                                        ("Review".to_string(), "Review".to_string())
-                                    }
-                                    Content::Terminal(terminal) => {
-                                        let path = &terminal.read(cx).directory;
-                                        (
-                                            path.file_name()
-                                                .unwrap_or(path.as_os_str())
-                                                .to_string_lossy()
-                                                .into_owned(),
-                                            path.display().to_string(),
-                                        )
-                                    }
-                                    Content::File(file) => {
-                                        let file = file.read(cx);
-                                        (
-                                            format!(
-                                                "{}{}",
-                                                file.path
-                                                    .file_name()
-                                                    .unwrap_or_default()
-                                                    .to_string_lossy(),
-                                                if file.dirty(cx) { " •" } else { "" }
-                                            ),
-                                            file.path.display().to_string(),
-                                        )
-                                    }
-                                };
-                                div()
-                                    .id(("panel-tab", id))
-                                    .flex_none()
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(8.))
-                                    .h(px(28.))
-                                    .max_w(px(180.))
-                                    .px(px(10.))
-                                    .rounded(px(8.))
-                                    .cursor_pointer()
-                                    .text_style(TextStyle::Caption)
-                                    .when(self.active == Some(id), |tab| {
-                                        tab.bg(theme.element_hover)
-                                    })
-                                    .tooltip(move |window, cx| {
-                                        Tooltip::text(path.clone(), window, cx)
-                                    })
-                                    .on_click(cx.listener(move |this, _, window, cx| {
-                                        this.active = Some(id);
-                                        this.focus(window, cx);
-                                        cx.notify();
-                                    }))
-                                    .child(
-                                        icons::icon(icon)
-                                            .size(px(14.))
-                                            .flex_none()
-                                            .text_color(theme.text_muted),
+                        tabs::bar("panel-tabs").children(self.ordered().map(|(id, tab)| {
+                            let icon = match &tab.content {
+                                Content::Review(_) => icons::development::GitCompare,
+                                Content::Terminal(_) => icons::development::Terminal,
+                                Content::File(_) => icons::files::File,
+                            };
+                            // The path is the tooltip and the last component is
+                            // the name: several tabs can be named the same.
+                            let (name, path, dirty) = match &tab.content {
+                                Content::Review(_) => {
+                                    ("Review".to_string(), "Review".to_string(), false)
+                                }
+                                Content::Terminal(terminal) => {
+                                    let path = &terminal.read(cx).directory;
+                                    (
+                                        path.file_name()
+                                            .unwrap_or(path.as_os_str())
+                                            .to_string_lossy()
+                                            .into_owned(),
+                                        path.display().to_string(),
+                                        false,
                                     )
-                                    .child(div().min_w_0().truncate().child(label))
-                                    .child(
-                                        div()
-                                            .id(("panel-tab-close", id))
-                                            .flex_none()
-                                            .size(px(16.))
-                                            .flex()
-                                            .items_center()
-                                            .justify_center()
-                                            .cursor_pointer()
-                                            .on_click(cx.listener(move |this, _, window, cx| {
-                                                cx.stop_propagation();
-                                                this.close(id, window, cx);
-                                            }))
-                                            .child(
-                                                icons::icon(icons::notifications::X)
-                                                    .size(px(12.))
-                                                    .text_color(theme.text_muted),
-                                            ),
+                                }
+                                Content::File(file) => {
+                                    let file = file.read(cx);
+                                    (
+                                        file.path
+                                            .file_name()
+                                            .unwrap_or_default()
+                                            .to_string_lossy()
+                                            .into_owned(),
+                                        file.path.display().to_string(),
+                                        file.dirty(cx),
                                     )
-                            })),
+                                }
+                            };
+                            let mut label = tabs::Label::new(name).with_icon(icon);
+                            // Unsaved work is the mark rather than a bullet in
+                            // the name: the name truncates and the mark does
+                            // not.
+                            if dirty {
+                                label = label
+                                    .mark(icons::Icon::glyph(icons::glyph::CircleSmall).solid());
+                            }
+                            let state = match self.strip.active() == Some(&id) {
+                                true => tabs::State::Focused,
+                                false => tabs::State::Resting,
+                            };
+                            let key = gpui::SharedString::from(format!("panel-{id}"));
+                            tabs::tab(&theme, key.clone(), label, state)
+                                .tooltip(move |window, cx| Tooltip::text(path.clone(), window, cx))
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.strip.activate(&id);
+                                    this.focus(window, cx);
+                                    cx.notify();
+                                }))
+                                .child(tabs::close(&theme, key, tabs::Close::OnHover).on_click(
+                                    cx.listener(move |this, _, window, cx| {
+                                        cx.stop_propagation();
+                                        this.close(id, window, cx);
+                                    }),
+                                ))
+                        })),
                     )
                     .child(
                         div()
@@ -620,13 +589,12 @@ impl Render for Panel {
                                         .cursor_pointer()
                                         .child("Save and close")
                                         .on_click(cx.listener(move |this, _, window, cx| {
-                                            let file =
-                                                this.tabs.iter().find(|tab| tab.id == id).and_then(
-                                                    |tab| match &tab.content {
-                                                        Content::File(file) => Some(file.clone()),
-                                                        _ => None,
-                                                    },
-                                                );
+                                            let file = this.contents.get(&id).and_then(|tab| {
+                                                match &tab.content {
+                                                    Content::File(file) => Some(file.clone()),
+                                                    _ => None,
+                                                }
+                                            });
                                             if file.is_some_and(|file| {
                                                 file.update(cx, |file, cx| file.save(false, cx))
                                             }) {
@@ -673,21 +641,21 @@ impl Render for Panel {
                             cx.notify();
                         }),
                     )
-                    .when(!(self.files_open && self.tabs.is_empty()), |row| {
+                    .when(!(self.files_open && self.strip.is_empty()), |row| {
                         row.child(div().flex_1().min_w_0().child(body))
                     })
                     .when(self.files_open, |row| {
                         row.children(self.files.clone().map(|files| {
                             div()
-                                .when(self.tabs.is_empty(), |tree| tree.flex_1().w_full())
-                                .when(!self.tabs.is_empty(), |tree| {
+                                .when(self.strip.is_empty(), |tree| tree.flex_1().w_full())
+                                .when(!self.strip.is_empty(), |tree| {
                                     tree.w(px(self.files_width))
                                         .max_w(gpui::relative(0.8))
                                         .flex_none()
                                 })
                                 .relative()
                                 .child(files)
-                                .when(!self.tabs.is_empty(), |tree| {
+                                .when(!self.strip.is_empty(), |tree| {
                                     tree.child(
                                         crate::view::component::divider::divider(
                                             &theme,
@@ -719,14 +687,14 @@ impl Cydonia {
         {
             return;
         }
-        self.changes_open = true;
+        self.set_changes_open(true, cx);
         self.sync_changes(cx);
         if let Some(panel) = self.changes.clone() {
             panel.update(cx, |panel, cx| {
                 panel.restore_tabs(window, cx);
                 panel.open_file(link.path.clone(), cx);
                 if let Some(line) = link.line
-                    && let Some(tab) = panel.tabs.iter().find(|tab| Some(tab.id) == panel.active)
+                    && let Some(tab) = panel.front()
                     && let Content::File(file) = &tab.content
                 {
                     file.update(cx, |file, cx| file.go_to_line(line, cx));
@@ -738,9 +706,6 @@ impl Cydonia {
     }
 
     pub(crate) fn toggle_files(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.showing(cx) != Some(Pane::Chat) {
-            return;
-        }
         if self.changes_open
             && let Some(panel) = self.changes.clone()
         {
@@ -751,29 +716,25 @@ impl Cydonia {
     }
 
     pub(crate) fn show_files(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.showing(cx) == Some(Pane::Chat) {
-            self.changes_open = true;
-            self.sync_changes(cx);
-            if let Some(panel) = self.changes.clone() {
-                panel.update(cx, |panel, cx| panel.files(window, cx));
-            }
-            cx.notify();
+        self.set_changes_open(true, cx);
+        self.sync_changes(cx);
+        if let Some(panel) = self.changes.clone() {
+            panel.update(cx, |panel, cx| panel.files(window, cx));
         }
+        cx.notify();
     }
 
     pub(crate) fn show_changes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.showing(cx) == Some(Pane::Chat) {
-            self.changes_open = true;
-            self.sync_changes(cx);
-            if let Some(panel) = self.changes.clone() {
-                panel.update(cx, |panel, cx| {
-                    panel.restore_tabs(window, cx);
-                    panel.review(cx);
-                    panel.focus(window, cx);
-                });
-            }
-            cx.notify();
+        self.set_changes_open(true, cx);
+        self.sync_changes(cx);
+        if let Some(panel) = self.changes.clone() {
+            panel.update(cx, |panel, cx| {
+                panel.restore_tabs(window, cx);
+                panel.review(cx);
+                panel.focus(window, cx);
+            });
         }
+        cx.notify();
     }
 
     pub(crate) fn toggle_changes(
@@ -782,64 +743,116 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.showing(cx) == Some(Pane::Chat) {
-            self.changes_open = !self.changes_open;
-            if !self.changes_open {
-                window.focus(&self.composer_focus_handle(cx), cx);
-            } else {
-                self.sync_changes(cx);
-                if let Some(panel) = self.changes.clone() {
-                    panel.update(cx, |panel, cx| panel.focus(window, cx));
-                }
+        self.set_changes_open(!self.changes_open, cx);
+        if !self.changes_open {
+            window.focus(&self.composer_focus_handle(cx), cx);
+        } else {
+            self.sync_changes(cx);
+            if let Some(panel) = self.changes.clone() {
+                panel.update(cx, |panel, cx| panel.focus(window, cx));
             }
-            cx.notify();
         }
+        cx.notify();
+    }
+
+    /// Put the panel up or down for the directory in front, and write that
+    /// down.
+    ///
+    /// Written on the change and not at the quit: ⌘Q, a crash and a killed
+    /// `cargo run` all end the process without running a release hook, which is
+    /// the same reason the panel's width is written on a settle — see
+    /// [`Cydonia::save_panel_layout_settled`].
+    fn set_changes_open(&mut self, open: bool, cx: &mut Context<Self>) {
+        self.changes_open = open;
+        // Which directory this is about, in case the first sync of the frame
+        // has not run yet: leaving it unanswered would let `follow_changes`
+        // read the saved bit back over what was just pressed.
+        self.changes_for = self.changes_for.take().or_else(|| self.shell_cwd(cx));
+        if let Some(cwd) = self.changes_for.clone() {
+            self.changes_shown.insert(cwd, open);
+        }
+        self.save_panel_layout_settled(cx);
+    }
+
+    /// Carry [`Cydonia::changes_open`] from one directory to the next.
+    ///
+    /// The panel is a property of the directory in front, not of the window:
+    /// what it was left at there is what it comes back as, and a directory
+    /// nobody has opened it in gets no panel. A directory first seen this run
+    /// is read off disk once and kept, which is what survives a quit.
+    fn follow_changes(&mut self, cx: &mut Context<Self>) {
+        let active = self.shell_cwd(cx);
+        if self.changes_for == active {
+            return;
+        }
+        if let Some(previous) = self.changes_for.take() {
+            self.changes_shown.insert(previous, self.changes_open);
+        }
+        self.changes_open = match &active {
+            Some(cwd) => match self.changes_shown.get(cwd) {
+                Some(open) => *open,
+                None => {
+                    let open = persistence::saved_panel(cwd).is_some_and(|saved| saved.open);
+                    self.changes_shown.insert(cwd.clone(), open);
+                    open
+                }
+            },
+            None => false,
+        };
+        self.changes_for = active;
     }
 
     pub(crate) fn sync_changes(&mut self, cx: &mut Context<Self>) {
-        let workspace = self.workspace.read(cx);
-        let visible = (self.showing(cx) == Some(Pane::Chat))
-            .then(|| workspace.active_id())
-            .flatten();
-        self.right_panels.retain(|id, panel| {
-            workspace
-                .session(*id)
-                .is_some_and(|chat| !chat.closed || visible == Some(*id))
-                || panel.read(cx).tabs.iter().any(
-                    |tab| matches!(&tab.content, Content::File(file) if file.read(cx).dirty(cx)),
+        self.follow_changes(cx);
+        let here = self.shell_cwd(cx);
+        // A panel outlives the directory going out of front, and is dropped
+        // once nothing open leads back to it — except while it holds work
+        // nobody has saved, which no amount of closing may throw away.
+        let reachable = self.panel_directories(cx);
+        self.right_panels.retain(|cwd, panel| {
+            reachable.contains(cwd)
+                || panel.read(cx).ordered().any(
+                    |(_, tab)| matches!(&tab.content, Content::File(file) if file.read(cx).dirty(cx)),
                 )
         });
-        let session = (self.changes_open && self.showing(cx) == Some(Pane::Chat))
-            .then(|| {
-                workspace
-                    .active_session()
-                    .map(|chat| (chat.id, chat.cwd.clone(), chat.record.clone()))
-            })
-            .flatten();
-        let project_root = workspace
-            .active_project()
-            .map(|project| project.path.clone());
-        self.changes = session.map(|(id, cwd, record)| {
+        self.changes = here.filter(|_| self.changes_open).map(|cwd| {
             self.right_panels
-                .entry(id)
+                .entry(cwd.clone())
                 .or_insert_with(|| {
                     cx.new(|cx| {
-                        let saved = record
-                            .as_deref()
-                            .and_then(|record| persistence::saved_panel(&cwd, record));
-                        let mut panel = Panel::new(cwd, cx);
-                        panel.restore_pending = saved;
-                        if let Some(root) = project_root {
-                            panel.project_root = root.canonicalize().unwrap_or(root);
-                        }
+                        let mut panel = Panel::new(cwd.clone(), cx);
+                        panel.restore_pending = persistence::saved_panel(&cwd);
+                        panel.project_root = cwd.canonicalize().unwrap_or(cwd);
                         panel
                     })
                 })
                 .clone()
         });
     }
+
+    /// Every directory the window can still reach a panel through: the open
+    /// projects, and the working directory of each of their sessions.
+    ///
+    /// A session's own directory is in here because it is not always its
+    /// project's — a session on a worktree has its diff, its tree and its
+    /// shells in the worktree.
+    fn panel_directories(&self, cx: &gpui::App) -> std::collections::HashSet<std::path::PathBuf> {
+        let workspace = self.workspace.read(cx);
+        workspace
+            .projects
+            .iter()
+            .flat_map(|project| {
+                std::iter::once(project.path.clone())
+                    .chain(project.sessions.iter().map(|chat| chat.cwd.clone()))
+            })
+            .collect()
+    }
 }
 
 #[cfg(test)]
 #[path = "../../../tests/unit/panel.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../../../tests/unit/right_panel.rs"]
+mod right_panel_tests;

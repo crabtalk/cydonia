@@ -14,18 +14,42 @@
 
 use crate::{
     tool::{Answer, Arg, Args, Outcome, Tool, Trouble},
-    tools::{PROJECT, fields, on_the_rail, root},
+    tools::{PROJECT, fields, many, on_the_rail, root},
 };
 use artifact::{
     article::{self, properties},
     stamp,
 };
-use serde_json::json;
+use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
 const ARTICLE: Arg = Arg {
     name: "article",
     about: "The article: its project reference (#12), title, or storage id.",
+};
+/// The same argument where several are taken at once. A second const rather
+/// than a flag on [`ARTICLE`], the way `board::CARDS` stands beside
+/// `board::CARD`: the line a client reads is the whole of how it learns a list
+/// is allowed here.
+const ARTICLES: Arg = Arg {
+    name: "article",
+    about: "The article, or several: each its project reference (#12), title, or storage id.",
+};
+
+/// The picture to stand over the article. A path on the Cydonia host, so a
+/// client without filesystem access there has nothing to name — see
+/// [`artifact::article::cover`] for where it lands.
+const COVER: Arg = Arg {
+    name: "image",
+    about: "The picture, as an absolute path on the Cydonia host. Draw or crop it 5:2 — 1500x600 is the size the app cuts its own at, and a picture of another shape is not cropped to fit. Left out, the cover is taken off.",
+};
+
+/// Which way the switch goes. Defaulted to putting away, because that is what
+/// a caller reaching for this almost always means — and the other way is
+/// spelled out rather than left to a bare call.
+const ARCHIVED: Arg = Arg {
+    name: "archived",
+    about: "true to put it away, false to bring it back. Left out, it is put away.",
 };
 
 /// `title` and `text` each carry one line when the article is written and
@@ -68,12 +92,13 @@ const REPLACE_ALL: Arg = Arg {
     about: "Replace every non-overlapping occurrence. Defaults to false, requiring exactly one match.",
 };
 
-pub static TOOLS: [Tool; 7] = [
+pub static TOOLS: [Tool; 10] = [
     Tool {
         name: "article_list",
         description: "List the project's articles, most recently written first.",
         schema: |bound| fields(bound, &[PROJECT]),
         writes: false,
+        deletes: false,
         call: list,
     },
     Tool {
@@ -81,6 +106,7 @@ pub static TOOLS: [Tool; 7] = [
         description: "Read one article's markdown. The result includes assets_path, the shared media directory on the Cydonia host; filesystem access is needed to place images there.",
         schema: |bound| fields(bound, &[PROJECT, ARTICLE]),
         writes: false,
+        deletes: false,
         call: read,
     },
     Tool {
@@ -88,6 +114,7 @@ pub static TOOLS: [Tool; 7] = [
         description: "Write a new article, and answer its id and assets_path, the shared media directory on the Cydonia host. This tool writes Markdown, not image bytes.",
         schema: |bound| fields(bound, &[PROJECT, TITLE, MARKDOWN]),
         writes: true,
+        deletes: false,
         call: add,
     },
     Tool {
@@ -95,6 +122,7 @@ pub static TOOLS: [Tool; 7] = [
         description: "Replace an article's markdown. The title is left alone.",
         schema: |bound| fields(bound, &[PROJECT, ARTICLE, MARKDOWN_NOW]),
         writes: true,
+        deletes: false,
         call: rewrite,
     },
     Tool {
@@ -111,20 +139,71 @@ pub static TOOLS: [Tool; 7] = [
             schema
         },
         writes: true,
+        deletes: false,
         call: edit,
     },
     Tool {
-        name: "article_move",
-        description: "Move an article to another project, with its cover and the pictures in its body. Its project reference (#12) changes, since numbers are per project.",
-        schema: |bound| fields(bound, &[PROJECT, ARTICLE, TO_PROJECT]),
+        name: "article_set_cover",
+        description: "Put a picture over an article, or take the one it has off. The file is filed under the article's own folder, which is not where body images go. Draw it 5:2 (1500x600): it is shown at that shape and not cropped to it.",
+        schema: |bound| {
+            let mut schema = fields(bound, &[PROJECT, ARTICLE]);
+            schema["properties"][COVER.name] = json!({
+                "type": "string",
+                "description": COVER.about,
+            });
+            schema
+        },
         writes: true,
+        deletes: false,
+        call: set_cover,
+    },
+    Tool {
+        name: "article_move",
+        description: "Move an article to another project, or several in one write, each with its cover and the pictures in its body. Their project references (#12) change, since numbers are per project.",
+        schema: |bound| {
+            let mut schema = fields(bound, &[PROJECT, ARTICLES, TO_PROJECT]);
+            many(&mut schema, ARTICLES);
+            schema
+        },
+        writes: true,
+        deletes: false,
         call: move_article,
+    },
+    Tool {
+        name: "article_archive",
+        description: "Put an article away, or bring one back. An archived article is listed under the divider rather than gone, and is still read and written by every other tool.",
+        schema: |bound| {
+            let mut schema = fields(bound, &[PROJECT, ARTICLES]);
+            many(&mut schema, ARTICLES);
+            schema["properties"][ARCHIVED.name] = json!({
+                "type": "boolean",
+                "description": ARCHIVED.about,
+                "default": true,
+            });
+            schema
+        },
+        writes: true,
+        deletes: false,
+        call: archive,
+    },
+    Tool {
+        name: "article_remove",
+        description: "Delete an article and everything filed with it — its cover, its pictures and its number. This cannot be undone; archive it instead to put it away.",
+        schema: |bound| {
+            let mut schema = fields(bound, &[PROJECT, ARTICLES]);
+            many(&mut schema, ARTICLES);
+            schema
+        },
+        writes: true,
+        deletes: true,
+        call: remove,
     },
     Tool {
         name: "article_rename",
         description: "Rename an article. What it is filed under does not change.",
         schema: |bound| fields(bound, &[PROJECT, ARTICLE, TITLE_NOW]),
         writes: true,
+        deletes: false,
         call: rename,
     },
 ];
@@ -157,8 +236,14 @@ fn read(args: Args<'_>) -> Outcome {
     let found = locate(project, args.text(ARTICLE)?)?;
     let text = std::fs::read_to_string(&found.content)
         .map_err(|e| Trouble::Refused(format!("{} cannot be read — {e}", found.label())))?;
-    Ok(Answer::said(text)
-        .with(json!({ "id": found.id, "number": found.number, "title": found.title, "assets_path": assets })))
+    Ok(Answer::said(text).with(json!({
+        "id": found.id,
+        "number": found.number,
+        "title": found.title,
+        "assets_path": assets,
+        "article_path": folder(&found.content),
+        "cover_path": article::cover::of(&found.content),
+    })))
 }
 
 fn add(args: Args<'_>) -> Outcome {
@@ -180,8 +265,70 @@ fn add(args: Args<'_>) -> Outcome {
     let id = article::id_of(&content);
     let number = artifact::entry::number(project, "article", &id)
         .map_err(|e| Trouble::Refused(e.to_string()))?;
-    Ok(Answer::said(format!("#{number} {title} written"))
-        .with(json!({ "id": id, "number": number, "title": title, "assets_path": assets })))
+    Ok(
+        Answer::said(format!("#{number} {title} written")).with(json!({
+            "id": id,
+            "number": number,
+            "title": title,
+            "assets_path": assets,
+            "article_path": folder(&content),
+        })),
+    )
+}
+
+/// The article's own directory: where its cover goes, and nothing else an
+/// agent writes.
+fn folder(content: &Path) -> Option<PathBuf> {
+    content.parent().map(Path::to_path_buf)
+}
+
+/// File a picture as the article's cover, or take the one it has off.
+///
+/// The bytes are copied rather than moved: the source is the caller's, and a
+/// picture generated into `assets_path` is one it may well link to as well.
+/// What was there before goes, which is what keeps one article to one cover —
+/// `cover::of` reads the directory and a second file would shadow the first.
+fn set_cover(args: Args<'_>) -> Outcome {
+    let found = locate(root(&args)?, args.text(ARTICLE)?)?;
+    let previous = article::cover::of(&found.content);
+    let Some(source) = args.maybe(COVER) else {
+        if let Some(old) = previous {
+            std::fs::remove_file(&old).map_err(|e| {
+                Trouble::Refused(format!("{} cannot be uncovered — {e}", found.label()))
+            })?;
+        }
+        return Ok(Answer::said(format!("{} has no cover now", found.label())));
+    };
+    let source = Path::new(source);
+    if !source.is_file() {
+        return Err(Trouble::Refused(format!(
+            "no picture at {} on this host",
+            source.display()
+        )));
+    }
+    let ext = source
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(str::to_ascii_lowercase)
+        .ok_or_else(|| {
+            Trouble::Refused(format!(
+                "{} has no extension to name its format by",
+                source.display()
+            ))
+        })?;
+    // Named for when it was filed, so a second cover never lands on the name
+    // the first is cached under.
+    let to = article::cover::path(&found.content, stamp::now(), &ext);
+    if article::cover::is_cover(source) && source == to {
+        return Ok(Answer::said(format!("{} keeps its cover", found.label())));
+    }
+    std::fs::copy(source, &to)
+        .map_err(|e| Trouble::Refused(format!("the cover cannot be written — {e}")))?;
+    if let Some(old) = previous.filter(|old| *old != to) {
+        let _ = std::fs::remove_file(old);
+    }
+    Ok(Answer::said(format!("{} is covered", found.label()))
+        .with(json!({ "cover_path": to, "article_path": folder(&found.content) })))
 }
 
 fn assets_path(project: &Path) -> Result<PathBuf, Trouble> {
@@ -236,6 +383,44 @@ fn rename(args: Args<'_>) -> Outcome {
     Ok(Answer::said(format!("{} is now {title}", found.label())))
 }
 
+/// One article or a run of them, put away or brought back in one write.
+fn archive(args: Args<'_>) -> Outcome {
+    let root = root(&args)?;
+    let archived = args.boolean(ARCHIVED, true)?;
+    let mut said: Vec<String> = Vec::new();
+    for needle in args.list(ARTICLES)? {
+        let found = locate(root, needle)?;
+        properties::set_archived(&found.content, archived);
+        said.push(found.label().to_owned());
+    }
+    let what = match archived {
+        true => "put away",
+        false => "brought back",
+    };
+    Ok(Answer::said(format!("{} {what}", said.join(", "))))
+}
+
+/// One article or a run of them, off the disk for good.
+///
+/// Every one is found before any is removed: a run half deleted is not what a
+/// refused call should leave behind, and a name that does not answer is the
+/// usual reason one is refused.
+fn remove(args: Args<'_>) -> Outcome {
+    let root = root(&args)?;
+    let mut found = Vec::new();
+    for needle in args.list(ARTICLES)? {
+        found.push(locate(root, needle)?);
+    }
+    let mut gone: Vec<String> = Vec::new();
+    for article in &found {
+        artifact::article::remove(&article.content).map_err(|e| {
+            Trouble::Refused(format!("{} cannot be deleted — {e}", article.label()))
+        })?;
+        gone.push(article.label().to_owned());
+    }
+    Ok(Answer::said(format!("{} deleted", gone.join(", "))))
+}
+
 // ── addressing ───────────────────────────────────────────────────
 
 /// One article as this surface reads it. Not `artifact::article::Article`,
@@ -267,28 +452,53 @@ impl Held {
 /// migrated here: a read reaching in from a port has no business rearranging
 /// somebody's files, and the app will have done it by the time an agent is
 /// running in there.
+/// One article or a run of them, into one project.
+///
+/// Every article is found before any is moved, so a title that names nothing
+/// refuses the whole call rather than the half that was left. The move itself
+/// is a file at a time and cannot be undone partway: a failure there says
+/// which ones had already landed.
 fn move_article(args: Args<'_>) -> Outcome {
     let from = root(&args)?;
-    let found = locate(from, args.text(ARTICLE)?)?;
+    let found: Vec<Held> = args
+        .list(ARTICLES)?
+        .into_iter()
+        .map(|needle| locate(from, needle))
+        .collect::<Result<_, _>>()?;
     let to = on_the_rail(Path::new(args.text(TO_PROJECT)?))?;
     if to == from {
         return Err(Trouble::Refused(format!(
             "{} is already in {}",
-            found.label(),
+            found.iter().map(Held::label).collect::<Vec<_>>().join(", "),
             from.display()
         )));
     }
-    let label = found.label().to_owned();
-    let arrived = article::move_to(&found.content, to)
-        .map_err(|e| Trouble::Refused(format!("{label} cannot be moved — {e}")))?;
-    let id = article::id_of(&arrived);
-    let number =
-        artifact::entry::number(to, "article", &id).map_err(|e| Trouble::Refused(e.to_string()))?;
-    Ok(
-        Answer::said(format!("{label} moved to {} as #{number}", to.display())).with(json!({
+    let mut landed: Vec<Value> = Vec::new();
+    let mut spoken: Vec<String> = Vec::new();
+    for held in &found {
+        let label = held.label().to_owned();
+        let arrived = article::move_to(&held.content, to).map_err(|e| {
+            Trouble::Refused(match spoken.is_empty() {
+                true => format!("{label} cannot be moved — {e}"),
+                false => format!(
+                    "{label} cannot be moved — {e}. {} had already landed",
+                    spoken.join(", ")
+                ),
+            })
+        })?;
+        let id = article::id_of(&arrived);
+        let number = artifact::entry::number(to, "article", &id)
+            .map_err(|e| Trouble::Refused(e.to_string()))?;
+        spoken.push(format!("{label} as #{number}"));
+        landed.push(json!({
             "id": id,
             "number": number,
-            "title": found.title,
+            "title": held.title,
+        }));
+    }
+    Ok(
+        Answer::said(format!("{} moved to {}", spoken.join(", "), to.display())).with(json!({
+            "articles": landed,
             "project": to,
             "assets_path": assets_path(to)?,
         })),

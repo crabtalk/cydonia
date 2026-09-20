@@ -27,15 +27,16 @@ impl Workspace {
         let project = &mut self.projects[ix];
         project.sessions.push(chat);
         project.active = Some(id);
+        self.reveal_project(ix, cx);
         self.prune_archived_for(Some(state::Kind::Session), cx);
         cx.notify();
         Some(id)
     }
 
     /// The member that names a session wherever it is open — what finds the
-    /// pane holding it. Nothing for one with no file yet: a layout names its
+    /// pane holding it. Nothing for one with no file yet: a space names its
     /// members by file, and a session has none until its first turn.
-    pub fn member_of_session(&self, id: u64) -> Option<artifact::layout::Member> {
+    pub fn member_of_session(&self, id: u64) -> Option<artifact::space::Member> {
         self.member_of(self.project_of(id)?, super::Showing::Session(id))
     }
 
@@ -49,20 +50,18 @@ impl Workspace {
         Some(record)
     }
 
-    pub fn retain_panel_session(
-        &mut self,
-        id: u64,
-        remember: bool,
-        cx: &mut Context<Self>,
-    ) -> Option<(PathBuf, String)> {
+    /// Keep the session in front on disk, and remember it as its project's
+    /// last entry.
+    ///
+    /// Called from [`Cydonia::save_panel_layout`], which is the only thing
+    /// that runs often enough to catch a quit: nothing else writes a session's
+    /// record between the one that opened it and the one that closes it.
+    pub fn retain_active_session(&mut self, id: u64, cx: &mut Context<Self>) -> Option<String> {
         let ix = self.project_of(id)?;
         let record = self.retain_session(id, cx)?;
-        let cwd = self.projects[ix].path.clone();
-        if remember {
-            self.remember(ix, state::Kind::Session, record.clone(), cx);
-        }
+        self.remember(ix, state::Kind::Session, record.clone(), cx);
         cx.notify();
-        Some((cwd, record))
+        Some(record)
     }
 
     pub fn fork_session(
@@ -81,6 +80,7 @@ impl Workspace {
         self.next_id += 1;
         fork.flush();
         self.projects[ix].sessions.push(fork);
+        self.reveal_project(ix, cx);
         self.select_session(id, cx);
         Some(id)
     }

@@ -14,6 +14,7 @@ use crate::{
     memory,
     model::{
         article::{self, Article},
+        fonts,
         project::Project,
         session::ChatSession,
         settings::{self, Feature, Settings},
@@ -45,8 +46,8 @@ use std::{
 // scope — see the note at the head of each.
 mod articles;
 mod boards;
-mod layouts;
-pub use layouts::Showing;
+mod spaces;
+pub use spaces::Showing;
 mod order;
 mod projects;
 mod sessions;
@@ -95,13 +96,19 @@ pub struct Workspace {
     /// The body size the type ladder is scaled against, in points.
     pub text_size: f32,
     pub article_font_size: Option<f32>,
-    pub terminal_font_size: f32,
-    pub file_font_size: f32,
+    /// What terminals and file views are set at before either is zoomed.
+    pub mono_font_size: f32,
+    /// The families the interface and the fixed-pitch surfaces are set in —
+    /// see [`crate::model::fonts`].
+    pub fonts: fonts::Families,
     /// The hue the greys carry, and how much of it.
     pub tint: Tint,
     /// How wide a page that has not been set either way is drawn — see
     /// [`crate::model::state::State::wide_pages`].
     pub wide_pages: bool,
+    /// Whether an article shows its cover band when it has not said otherwise
+    /// — see [`crate::model::settings::Appearance::covers`].
+    pub covers: bool,
     /// How a new board is laid out — see
     /// [`crate::model::settings::Appearance::board_view`].
     pub board_view: artifact::board::View,
@@ -126,10 +133,10 @@ pub struct Workspace {
     /// — see [`order`].
     pub(super) pinned: BTreeMap<PathBuf, Vec<state::Entry>>,
     /// The arrangements this machine holds, and which one the window is
-    /// showing. The window's rather than a project's: a layout can hold panes
-    /// from several — see [`layouts`].
-    pub layouts: Vec<artifact::layout::Layout>,
-    pub layout: Option<usize>,
+    /// showing. The window's rather than a project's: a space can hold panes
+    /// from several — see [`spaces`].
+    pub spaces: Vec<artifact::space::Space>,
+    pub space: Option<usize>,
 }
 
 impl Workspace {
@@ -146,7 +153,7 @@ impl Workspace {
             .collect();
         let active = (!projects.is_empty()).then_some(state.active);
         let restore: Vec<usize> = (0..projects.len()).collect();
-        let look = settings.appearance;
+        let look = settings.appearance.clone();
         bezel::ui::scroll::set_visibility(look.scrollbars.into(), cx);
         editor::set_text_size(
             cx,
@@ -156,8 +163,8 @@ impl Workspace {
                 max: settings::CONTENT_TEXT_SIZE.1,
             },
         );
-        crate::model::typography::set_terminal_size(look.terminal_font_size, cx);
-        crate::model::typography::set_file_size(look.file_font_size, cx);
+        crate::model::typography::set_terminal_size(look.mono_font_size, cx);
+        crate::model::typography::set_file_size(look.mono_font_size, cx);
         let mut this = Self {
             settings,
             projects,
@@ -167,10 +174,11 @@ impl Workspace {
             cursor_blink: look.cursor_blink,
             text_size: look.text_size,
             article_font_size: look.article_font_size,
-            terminal_font_size: look.terminal_font_size,
-            file_font_size: look.file_font_size,
+            mono_font_size: look.mono_font_size,
+            fonts: fonts::families(),
             tint: Tint::new(look.hue, look.chroma),
             wide_pages: look.wide_pages,
+            covers: look.covers,
             board_view: look.board_view,
             indent_project_rows: look.indent_project_rows,
             wrap_code: look.wrap_code,
@@ -180,16 +188,14 @@ impl Workspace {
             last: state.last,
             order: state.order,
             pinned: state.pinned,
-            layouts: crate::model::layouts::all(),
-            layout: None,
+            spaces: Self::in_order(crate::model::spaces::all(), &state.spaces),
+            space: None,
         };
         // The arrangement the window closed on, before any entry is opened:
-        // `open_last_entry` is a project's answer and a layout spans them.
-        this.layout = state.layout.and_then(|id| {
-            this.layouts
-                .iter()
-                .position(|layout| layout.id == id && !layout.archived)
-        });
+        // `open_last_entry` is a project's answer and a space spans them.
+        this.space = state
+            .space
+            .and_then(|id| this.spaces.iter().position(|space| space.id == id));
         for ix in restore {
             this.restore_sessions(ix);
             this.watch_project(ix, cx);
@@ -231,7 +237,8 @@ impl Workspace {
             last: self.last.clone(),
             order: self.order.clone(),
             pinned: self.pinned.clone(),
-            layout: self.active_layout().map(|layout| layout.id.clone()),
+            space: self.active_space().map(|space| space.id.clone()),
+            spaces: self.spaces.iter().map(|space| space.id.clone()).collect(),
         });
     }
 
@@ -246,11 +253,14 @@ impl Workspace {
             cursor_blink: self.cursor_blink,
             text_size: self.text_size,
             article_font_size: self.article_font_size,
-            terminal_font_size: self.terminal_font_size,
-            file_font_size: self.file_font_size,
+            mono_font_size: self.mono_font_size,
+            ui_font: self.fonts.sans.as_ref().map(ToString::to_string),
+            article_font: self.fonts.body.as_ref().map(ToString::to_string),
+            mono_font: self.fonts.mono.as_ref().map(ToString::to_string),
             hue: self.tint.hue,
             chroma: self.tint.chroma,
             wide_pages: self.wide_pages,
+            covers: self.covers,
             board_view: self.board_view,
             indent_project_rows: self.indent_project_rows,
             scrollbars: self.settings.appearance.scrollbars,
@@ -394,6 +404,7 @@ impl Workspace {
     fn refresh_door(&self) {
         agent::serve::serve(self.settings.mcp.serve && self.settings.features.sessions);
         agent::serve::set_write(self.settings.mcp.write);
+        agent::serve::set_delete(self.settings.mcp.delete);
     }
 
     pub fn set_mcp_serve(&mut self, on: bool, cx: &mut Context<Self>) {
@@ -412,6 +423,16 @@ impl Workspace {
             return;
         }
         self.settings.mcp.write = on;
+        self.refresh_door();
+        cx.notify();
+    }
+
+    /// Offer the tools that delete an entry, or withhold them.
+    pub fn set_mcp_delete(&mut self, on: bool, cx: &mut Context<Self>) {
+        if settings::set_mcp("delete", on).is_err() {
+            return;
+        }
+        self.settings.mcp.delete = on;
         self.refresh_door();
         cx.notify();
     }
@@ -520,16 +541,21 @@ impl Workspace {
         cx.notify();
     }
 
-    pub fn set_file_font_size(&mut self, points: f32, cx: &mut Context<Self>) {
-        self.file_font_size = settings::clamp_content_text_size(points);
-        crate::model::typography::set_file_size(self.file_font_size, cx);
+    /// The size every fixed-pitch surface starts at. Both are rebased: one
+    /// saved size, and the zoom each of them carries is unwound against it.
+    pub fn set_mono_font_size(&mut self, points: f32, cx: &mut Context<Self>) {
+        self.mono_font_size = settings::clamp_content_text_size(points);
+        crate::model::typography::set_terminal_size(self.mono_font_size, cx);
+        crate::model::typography::set_file_size(self.mono_font_size, cx);
         self.save_appearance();
         cx.notify();
     }
 
-    pub fn set_terminal_font_size(&mut self, points: f32, cx: &mut Context<Self>) {
-        self.terminal_font_size = settings::clamp_content_text_size(points);
-        crate::model::typography::set_terminal_size(self.terminal_font_size, cx);
+    /// Set the interface family, the fixed-pitch one, or both. `None` in a
+    /// slot is the palette's own face for it.
+    pub fn set_fonts(&mut self, fonts: fonts::Families, cx: &mut Context<Self>) {
+        self.fonts = fonts.clone();
+        fonts::set(fonts, cx);
         self.save_appearance();
         cx.notify();
     }
@@ -539,6 +565,15 @@ impl Workspace {
     /// the rest follow this.
     pub fn set_wide_pages(&mut self, wide: bool, cx: &mut Context<Self>) {
         self.wide_pages = wide;
+        self.save_appearance();
+        cx.notify();
+    }
+
+    /// Whether a page that has not been decided about shows its cover band.
+    /// A page carrying its own answer keeps it — see
+    /// [`crate::model::article::Article::shows_cover`].
+    pub fn set_covers(&mut self, shown: bool, cx: &mut Context<Self>) {
+        self.covers = shown;
         self.save_appearance();
         cx.notify();
     }

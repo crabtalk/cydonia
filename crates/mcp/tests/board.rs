@@ -539,3 +539,288 @@ fn an_unknown_status_is_refused_with_the_list() {
         "working is not a status — say busy, blocked, done, none"
     );
 }
+
+/// A lane and the cards in it are laid out in two calls rather than five: the
+/// list argument is what the board tools take wherever one thing pluralises
+/// and the rest of the call stays one thing.
+#[test]
+fn a_board_is_laid_out_in_one_call_per_kind() {
+    let scratch = Scratch::new("batch-layout");
+    scratch
+        .store()
+        .create_board("Roadmap", "ROAD")
+        .expect("a board");
+    let server = scratch.server();
+
+    let lanes = said(server.call(
+        "board_add_column",
+        json!({ "project": scratch.path(), "board": "ROAD", "name": ["Todo", "Doing", "Done"] }),
+        None,
+    ));
+    assert_eq!(lanes, "TODO, DOING, DONE added to Roadmap");
+
+    let cards = said(server.call(
+        "board_add_card",
+        json!({
+            "project": scratch.path(),
+            "board": "ROAD",
+            "column": "Todo",
+            "text": ["Retire Spot", "Feed Spot", "Walk Spot"],
+        }),
+        None,
+    ));
+    assert_eq!(cards, "ROAD-1, ROAD-2, ROAD-3 added to TODO");
+
+    // In the order they were given, at the end of the lane they were put in.
+    let read = said(server.call(
+        "board_read",
+        json!({ "project": scratch.path(), "board": "ROAD" }),
+        None,
+    ));
+    let at = |needle: &str| read.find(needle).expect(needle);
+    assert!(at("Retire Spot") < at("Feed Spot"), "{read}");
+    assert!(at("Feed Spot") < at("Walk Spot"), "{read}");
+}
+
+/// Cards and columns go the same way they came. A column still holding one of
+/// them refuses the whole call, so a board is never left half emptied of its
+/// lanes.
+#[test]
+fn several_cards_and_columns_are_dropped_in_one_call() {
+    let scratch = Scratch::new("batch-drop");
+    scratch
+        .store()
+        .create_board("Roadmap", "ROAD")
+        .expect("a board");
+    let server = scratch.server();
+    said(server.call(
+        "board_add_column",
+        json!({ "project": scratch.path(), "board": "ROAD", "name": ["Todo", "Doing", "Done"] }),
+        None,
+    ));
+    said(server.call(
+        "board_add_card",
+        json!({
+            "project": scratch.path(),
+            "board": "ROAD",
+            "column": "Todo",
+            "text": ["Retire Spot", "Feed Spot"],
+        }),
+        None,
+    ));
+
+    // TODO still holds cards, so DOING and DONE stay too.
+    let why = refused(server.call(
+        "board_remove_column",
+        json!({ "project": scratch.path(), "board": "ROAD", "column": ["Doing", "Todo", "Done"] }),
+        None,
+    ));
+    assert!(why.contains("still holds cards"), "{why}");
+    let read = said(server.call(
+        "board_read",
+        json!({ "project": scratch.path(), "board": "ROAD" }),
+        None,
+    ));
+    assert!(read.contains("DOING"), "{read}");
+    assert!(read.contains("DONE"), "{read}");
+
+    let gone = said(server.call(
+        "board_remove_card",
+        json!({ "project": scratch.path(), "card": ["ROAD-1", "ROAD-2"] }),
+        None,
+    ));
+    assert!(gone.contains("ROAD-1"), "{gone}");
+    assert!(gone.contains("ROAD-2"), "{gone}");
+
+    let dropped = said(server.call(
+        "board_remove_column",
+        json!({ "project": scratch.path(), "board": "ROAD", "column": ["Todo", "Doing", "Done"] }),
+        None,
+    ));
+    assert_eq!(dropped, "TODO, DOING, DONE removed from Roadmap");
+    let read = said(server.call(
+        "board_read",
+        json!({ "project": scratch.path(), "board": "ROAD" }),
+        None,
+    ));
+    assert!(!read.contains("TODO"), "{read}");
+}
+
+/// A rename changes the name, and the key with it only when one is given.
+#[test]
+fn a_board_is_renamed_and_optionally_re_keyed() {
+    let scratch = Scratch::new("rename-board");
+    let board = scratch
+        .store()
+        .create_board("Roadmap", "ROAD")
+        .expect("a board");
+    let server = scratch.server();
+    said(server.call(
+        "board_add_column",
+        json!({ "project": scratch.path(), "board": "ROAD", "name": "Todo" }),
+        None,
+    ));
+    let handle = said(server.call(
+        "board_add_card",
+        json!({ "project": scratch.path(), "board": "ROAD", "column": "Todo", "text": "ship" }),
+        None,
+    ));
+    assert!(handle.contains("ROAD-1"), "{handle}");
+
+    // The name alone: the key, and so every handle, is left where it was.
+    let text = said(server.call(
+        "board_rename",
+        json!({ "project": scratch.path(), "board": "ROAD", "name": " Plan " }),
+        None,
+    ));
+    assert!(text.starts_with("Roadmap is now Plan"), "{text}");
+    let boards = scratch.store().boards();
+    assert_eq!(boards[0].name, "Plan");
+    assert_eq!(boards[0].key, "ROAD", "the key is not touched by a rename");
+
+    // And with a key, which is what every handle is read off.
+    let text = said(server.call(
+        "board_rename",
+        json!({ "project": scratch.path(), "board": board.id.as_str(), "name": "Plan", "key": "back" }),
+        None,
+    ));
+    assert!(text.contains("ROAD-1 is now BACK-1"), "{text}");
+    assert_eq!(scratch.store().boards()[0].key, "BACK");
+    let read = said(server.call(
+        "board_read",
+        json!({ "project": scratch.path(), "board": "BACK" }),
+        None,
+    ));
+    assert!(read.contains("BACK-1"), "{read}");
+}
+
+/// A rename is refused whole: neither half lands when the key is one another
+/// board here already has.
+#[test]
+fn a_rename_onto_a_taken_key_changes_nothing() {
+    let scratch = Scratch::new("rename-clash");
+    let store = scratch.store();
+    store.create_board("Roadmap", "ROAD").expect("a board");
+    store.create_board("Backlog", "BACK").expect("a board");
+    let server = scratch.server();
+
+    let why = refused(server.call(
+        "board_rename",
+        json!({ "project": scratch.path(), "board": "ROAD", "name": "Plan", "key": "back" }),
+        None,
+    ));
+    assert!(why.contains("another board"), "{why}");
+    let boards = scratch.store().boards();
+    assert!(
+        boards.iter().any(|board| board.name == "Roadmap"),
+        "the name did not land either: {:?}",
+        boards.iter().map(|board| &board.name).collect::<Vec<_>>()
+    );
+
+    // Its own key is not a clash with itself.
+    said(server.call(
+        "board_rename",
+        json!({ "project": scratch.path(), "board": "ROAD", "name": "Plan", "key": "ROAD" }),
+        None,
+    ));
+}
+
+/// Deleting is its own door: a server that may write is not thereby a server
+/// that may empty a project.
+#[test]
+fn deleting_is_withheld_until_its_own_switch_is_on() {
+    use std::sync::{Arc, atomic::AtomicBool};
+
+    let scratch = Scratch::new("delete-switch");
+    Rail::also(scratch.path());
+    scratch.store_create("Roadmap", "ROAD").expect("a board");
+    let writable = Arc::new(AtomicBool::new(true));
+    let deletes = Arc::new(AtomicBool::new(false));
+    let server = cydonia_mcp::Server::new()
+        .mount(&cydonia_mcp::tools::board::TOOLS)
+        .writable(writable.clone())
+        .deletes(deletes.clone());
+
+    let listed = |server: &cydonia_mcp::Server| {
+        let call: Request =
+            serde_json::from_value(json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" }))
+                .expect("a frame");
+        server
+            .handle(&call, None)
+            .expect("an answer")
+            .result
+            .expect("a result")["tools"]
+            .as_array()
+            .expect("a list")
+            .iter()
+            .filter_map(|tool| tool["name"].as_str().map(str::to_owned))
+            .collect::<Vec<_>>()
+    };
+
+    let names = listed(&server);
+    assert!(
+        names.iter().any(|name| name == "board_archive"),
+        "putting away is ordinary editing: {names:?}"
+    );
+    assert!(
+        !names.iter().any(|name| name == "board_remove"),
+        "and deleting is not: {names:?}"
+    );
+
+    deletes.store(true, std::sync::atomic::Ordering::Relaxed);
+    assert!(listed(&server).iter().any(|name| name == "board_remove"));
+
+    // Writing off takes deleting with it, whatever the narrower switch says.
+    writable.store(false, std::sync::atomic::Ordering::Relaxed);
+    let names = listed(&server);
+    assert!(
+        !names.iter().any(|name| name == "board_remove"),
+        "a server that may not change a project may not empty one: {names:?}"
+    );
+}
+
+/// Archiving puts a board under the divider; deleting takes it off the disk.
+#[test]
+fn a_board_is_put_away_and_then_deleted() {
+    let scratch = Scratch::new("archive-board");
+    scratch.store_create("Roadmap", "ROAD").expect("a board");
+    scratch.store_create("Backlog", "BACK").expect("a board");
+    let server = scratch.server();
+
+    let text = said(server.call(
+        "board_archive",
+        json!({ "project": scratch.path(), "board": "ROAD" }),
+        None,
+    ));
+    assert!(text.contains("put away"), "{text}");
+    let boards = scratch.store().boards();
+    assert_eq!(boards.len(), 2, "archived is not gone");
+    assert!(
+        boards
+            .iter()
+            .any(|board| board.key == "ROAD" && board.archived),
+        "and the board says so"
+    );
+
+    // Back again, which is the half a delete does not have.
+    said(server.call(
+        "board_archive",
+        json!({ "project": scratch.path(), "board": "ROAD", "archived": false }),
+        None,
+    ));
+    assert!(
+        scratch
+            .store()
+            .boards()
+            .iter()
+            .any(|board| board.key == "ROAD" && !board.archived)
+    );
+
+    let text = said(server.call(
+        "board_remove",
+        json!({ "project": scratch.path(), "board": ["ROAD", "BACK"] }),
+        None,
+    ));
+    assert!(text.contains("deleted"), "{text}");
+    assert!(scratch.store().boards().is_empty(), "both are off the disk");
+}

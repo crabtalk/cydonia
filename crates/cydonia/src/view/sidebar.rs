@@ -18,7 +18,7 @@ use crate::{
         settings::Section,
     },
 };
-use artifact::layout::Member;
+use artifact::space::Member;
 use bezel::ui::scroll as scrollbars;
 use bezel::{
     agent::orbs::{OrbState, engine::Frame},
@@ -70,6 +70,8 @@ pub(crate) enum Row {
     Project(usize),
     /// The line the archived entries are folded under.
     Archive(usize),
+    /// The line the spaces are listed under. Drawn only while there is one.
+    Spaces,
     Session {
         project: usize,
         id: u64,
@@ -78,7 +80,7 @@ pub(crate) enum Row {
         project: usize,
         ix: usize,
     },
-    Layout(usize),
+    Space(usize),
     Article {
         project: usize,
         ix: usize,
@@ -93,8 +95,8 @@ pub(crate) enum Row {
 /// rows that are not entries.
 fn showing_of(row: Row) -> Option<Showing> {
     Some(match row {
-        // A layout arranges entries; it is not one a pane can be put on.
-        Row::Project(_) | Row::Archive(_) | Row::Layout(_) => return None,
+        // A space arranges entries; it is not one a pane can be put on.
+        Row::Project(_) | Row::Archive(_) | Row::Space(_) | Row::Spaces => return None,
         Row::Session { id, .. } => Showing::Session(id),
         Row::Board { ix, .. } => Showing::Board(ix),
         Row::Article { ix, .. } => Showing::Article(ix),
@@ -110,7 +112,7 @@ fn project_of(row: Row) -> Option<usize> {
         | Row::Board { project, .. }
         | Row::Article { project, .. }
         | Row::Table { project, .. } => Some(project),
-        Row::Layout(_) => None,
+        Row::Space(_) | Row::Spaces => None,
     }
 }
 
@@ -122,7 +124,9 @@ fn shown(row: Row, features: &Features) -> bool {
         Row::Session { .. } => features.sessions,
         Row::Board { .. } => features.boards,
         Row::Table { .. } => features.tables,
-        Row::Project(_) | Row::Archive(_) | Row::Article { .. } | Row::Layout(_) => true,
+        Row::Project(_) | Row::Archive(_) | Row::Article { .. } | Row::Space(_) | Row::Spaces => {
+            true
+        }
     }
 }
 
@@ -138,9 +142,9 @@ fn shown(row: Row, features: &Features) -> bool {
 pub(crate) enum Renaming {
     Session(u64),
     Table(String),
-    /// A layout, by its id — auto-named `layout-1` until someone gives it a
+    /// A space, by its id — auto-named `space-1` until someone gives it a
     /// name of their own.
-    Layout(String),
+    Space(String),
     /// A lane on the open board. The one entry here that no row in the sidebar
     /// stands for — the field is drawn in the column's own header instead,
     /// which works because only one thing is ever being named.
@@ -162,17 +166,23 @@ pub(crate) fn tint(selected: bool, archived: bool, theme: &Theme) -> Hsla {
 #[derive(Clone)]
 pub(crate) struct ProjectDrag(usize);
 
+/// A space on its way to another place in the list, carried the way a project
+/// is. Its own drag rather than [`EntryDrag`]: a space is not something a
+/// pane can be put on, and the two lists never mix.
+#[derive(Clone)]
+pub(crate) struct SpaceDrag(usize);
+
 /// What rides under the cursor while an entry is being carried. Shared with
 /// the panes, so a tab dragged out of a strip looks like the same gesture the
 /// sidebar makes — see [`crate::view::arrangement`].
 pub(crate) struct Carried(pub SharedString);
 
-/// An entry carried out of the sidebar, named the way a layout names its
+/// An entry carried out of the sidebar, named the way a space names its
 /// members — or, for a session with no file yet, named by the session it is.
 #[derive(Clone, Debug)]
 pub enum EntryDrag {
-    Member(artifact::layout::Member),
-    /// A session that has had no turn. A layout names its members by file and
+    Member(artifact::space::Member),
+    /// A session that has had no turn. A space names its members by file and
     /// this one has none, so it is carried by the id it holds in this process
     /// and the file is minted where it lands.
     Session {
@@ -197,7 +207,8 @@ impl Render for Carried {
 fn key_of(entry: Row) -> String {
     match entry {
         Row::Project(ix) => format!("project-{ix}"),
-        Row::Layout(ix) => format!("layout-{ix}"),
+        Row::Space(ix) => format!("space-{ix}"),
+        Row::Spaces => "spaces".to_owned(),
         Row::Archive(ix) => format!("archive-{ix}"),
         Row::Session { project, id } => format!("session-{project}-{id}"),
         Row::Board { project, ix } => format!("board-{project}-{ix}"),
@@ -242,7 +253,7 @@ pub(crate) fn row(
         .ml(px(root::SIDEBAR_GUTTER))
         .mr(px(root::SIDEBAR_GUTTER))
         .px(px(root::SIDEBAR_GUTTER))
-        // Levels rather than a flag: a row a layout holds is one step under
+        // Levels rather than a flag: a row a space holds is one step under
         // whatever its neighbours are at, and with the project's own indent on
         // they would otherwise land at the same offset and stop being under
         // anything.
@@ -269,7 +280,7 @@ fn row_label(name: String, tint: Hsla) -> AnyElement {
 }
 
 /// The same, in the type a heading is written in — see
-/// [`Cydonia::layout_row`].
+/// [`Cydonia::space_row`].
 ///
 /// One shape behind both: `flex_1` is what fills the row and so what holds a
 /// trailing button out at the edge, and `truncate` is what ellipsizes rather
@@ -760,7 +771,7 @@ impl Cydonia {
     /// before anything is hidden or folded away.
     ///
     /// What a drag rewrites, which is why it is this list and not the one on
-    /// screen: a kind switched off and an entry held by a layout are both
+    /// screen: a kind switched off and an entry held by a space are both
     /// still in the project, and both keep the place they were put.
     fn ranked(&self, project: usize, cx: &App) -> Vec<(bool, u128, Row)> {
         let workspace = self.workspace.read(cx);
@@ -821,80 +832,90 @@ impl Cydonia {
         entries
     }
 
-    /// Drop the rows an open layout holds: they are listed under it instead,
-    /// and an entry is in one layout at a time — see [`Workspace::arrange`] —
+    /// Drop the rows an open space holds: they are listed under it instead,
+    /// and an entry is in one space at a time — see [`Workspace::arrange`] —
     /// so this is a tree and not a second copy of the list.
     fn ungrouped(&self, rows: Vec<Row>, cx: &App) -> Vec<Row> {
         let workspace = self.workspace.read(cx);
-        if workspace.layouts.is_empty() {
+        if workspace.spaces.is_empty() {
             return rows;
         }
         rows.into_iter()
             .filter(|row| {
                 self.member_of_row(*row, cx)
-                    .and_then(|member| workspace.layout_holding(&member))
+                    .and_then(|member| workspace.space_holding(&member))
                     .is_none()
             })
             .collect()
     }
 
-    /// Every layout, and under each the rows it holds.
+    /// Every space, and under each the rows it holds.
     ///
-    /// At the end of the list rather than inside a project: a layout can hold
+    /// At the end of the list rather than inside a project: a space can hold
     /// panes from several, so it belongs to none of them — see
-    /// [`crate::model::layouts`].
-    fn layout_rows(&self, cx: &App) -> Vec<Row> {
+    /// [`crate::model::spaces`].
+    fn space_rows(&self, cx: &App) -> Vec<Row> {
         let workspace = self.workspace.read(cx);
         let mut rows = Vec::new();
-        for (ix, layout) in workspace.layouts.iter().enumerate() {
-            rows.push(Row::Layout(ix));
-            if self.collapsed_layouts.contains(&layout.id) {
+        if !workspace.spaces.is_empty() {
+            rows.push(Row::Spaces);
+        }
+        for (ix, space) in workspace.spaces.iter().enumerate() {
+            rows.push(Row::Space(ix));
+            if self.collapsed_spaces.contains(&space.id) {
                 continue;
             }
             // In the order the arrangement lays the panes out, so the list
             // reads across the window.
+            //
+            // Only what this space is the holder of. One entry is in one
+            // space at a time — see [`Workspace::arrange`] — and the same
+            // answer decides both lists, so a file written before that held
+            // lists its entry once here rather than twice, and never beside the
+            // copy [`Self::ungrouped`] took out of the project.
             rows.extend(
-                layout
+                space
                     .entries()
                     .iter()
+                    .filter(|member| workspace.space_holding(member) == Some(ix))
                     .filter_map(|member| self.row_of_member(member, cx)),
             );
         }
         rows
     }
 
-    /// Fold a layout's members away, or bring them back.
-    pub(crate) fn fold_layout(&mut self, id: &str, cx: &mut Context<Self>) {
-        if !self.collapsed_layouts.remove(id) {
-            self.collapsed_layouts.insert(id.to_owned());
+    /// Fold a space's members away, or bring them back.
+    pub(crate) fn fold_space(&mut self, id: &str, cx: &mut Context<Self>) {
+        if !self.collapsed_spaces.remove(id) {
+            self.collapsed_spaces.insert(id.to_owned());
         }
         cx.notify();
     }
 
     /// How far in a row is drawn: one step for a project's entries when that
-    /// is switched on, and one more for a row an open layout holds.
+    /// is switched on, and one more for a row an open space holds.
     ///
-    /// The indent is the whole of what says a row belongs to the layout above
+    /// The indent is the whole of what says a row belongs to the space above
     /// it. Nothing else is drawn on it — a rule beside it or a wash behind it
     /// is a second way of saying what the offset already says.
     pub(crate) fn indent_of(&self, row: Row, cx: &App) -> u8 {
         let workspace = self.workspace.read(cx);
         let base = u8::from(workspace.indent_project_rows);
         match row {
-            // A layout is not inside a project — it can hold panes from
+            // A space is not inside a project — it can hold panes from
             // several — so its row starts at the column's edge, where the
             // project headings are.
-            Row::Layout(_) => return 0,
+            Row::Space(_) | Row::Spaces => return 0,
             Row::Project(_) | Row::Archive(_) => return base,
             _ => {}
         }
         let held = || -> Option<()> {
             let member = self.member_of_row(row, cx)?;
-            let at = workspace.layout_holding(&member)?;
-            let layout = workspace.layouts.get(at)?;
-            (!self.collapsed_layouts.contains(&layout.id)).then_some(())
+            let at = workspace.space_holding(&member)?;
+            let space = workspace.spaces.get(at)?;
+            (!self.collapsed_spaces.contains(&space.id)).then_some(())
         };
-        // One step under the layout holding it, and one only: a row listed
+        // One step under the space holding it, and one only: a row listed
         // there is not also under its project's heading, so the project's own
         // indent is not another step to add to this one.
         match held().is_some() {
@@ -903,7 +924,7 @@ impl Cydonia {
         }
     }
 
-    /// The row for a member a layout holds — the way back from what it names
+    /// The row for a member a space holds — the way back from what it names
     /// to the line that stands for it. Nothing where its project is not open.
     fn row_of_member(&self, member: &Member, cx: &App) -> Option<Row> {
         let (project, showing) = self.workspace.read(cx).showing_of(member)?;
@@ -926,8 +947,8 @@ impl Cydonia {
                 rows.extend(self.entries(p, cx));
             }
         }
-        // After the projects, because a layout is not inside one.
-        rows.extend(self.layout_rows(cx));
+        // After the projects, because a space is not inside one.
+        rows.extend(self.space_rows(cx));
         rows
     }
 
@@ -939,10 +960,12 @@ impl Cydonia {
             Row::Project(ix) => self.select_project(ix, cx),
             Row::Archive(ix) => self.toggle_archive(ix, cx),
             Row::Session { id, .. } => self.select_session(id, window, cx),
-            Row::Board { project, ix } => self.open_board(project, ix, cx),
+            Row::Board { project, ix } => self.open_board(project, ix, window, cx),
             Row::Article { project, ix } => self.open_article(project, ix, window, cx),
-            Row::Table { project, ix } => self.open_table(project, ix, cx),
-            Row::Layout(ix) => self.open_layout(ix, window, cx),
+            Row::Table { project, ix } => self.open_table(project, ix, window, cx),
+            Row::Space(ix) => self.open_space(ix, window, cx),
+            // A heading over the spaces, and nothing to open.
+            Row::Spaces => {}
         }
     }
 
@@ -1010,17 +1033,21 @@ impl Cydonia {
                     None => Empty.into_any_element(),
                 }
             }
-            Row::Layout(ix) => self.layout_row(ix, cx),
+            Row::Space(ix) => self.space_row(ix, cx),
+            Row::Spaces => self.spaces_label(cx),
         };
         let carried = self.drag_of_row(row, cx);
         let label = SharedString::from(self.label_of_row(row, cx));
         div()
             .id(SharedString::from(format!("sidebar-hover-{}", key_of(row))))
-            .when(!matches!(row, Row::Project(_) | Row::Archive(_)), |el| {
-                el.on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
-                    this.sidebar_hover(Menu::Entry(row), *hovered, cx);
-                }))
-            })
+            .when(
+                !matches!(row, Row::Project(_) | Row::Archive(_) | Row::Spaces),
+                |el| {
+                    el.on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
+                        this.sidebar_hover(Menu::Entry(row), *hovered, cx);
+                    }))
+                },
+            )
             // Carried onto a pane's edge to put it beside what is there — see
             // [`crate::view::arrangement`].
             .when_some(carried, |el, carried| {
@@ -1052,8 +1079,8 @@ impl Cydonia {
         let workspace = self.workspace.read(cx);
         let named = || -> Option<String> {
             Some(match row {
-                Row::Project(_) | Row::Archive(_) => return None,
-                Row::Layout(ix) => workspace.layouts.get(ix)?.label().to_owned(),
+                Row::Project(_) | Row::Archive(_) | Row::Spaces => return None,
+                Row::Space(ix) => workspace.spaces.get(ix)?.label().to_owned(),
                 Row::Session { project, id } => {
                     workspace.projects.get(project)?.session(id)?.label()
                 }
@@ -1083,13 +1110,13 @@ impl Cydonia {
         named().unwrap_or_default()
     }
 
-    /// Whether a layout is what the window is showing.
+    /// Whether a space is what the window is showing.
     ///
     /// While one is, the sidebar lights its row and no other: the entries it
     /// arranges are listed as themselves, and lighting them too would leave
     /// the column with no one row that says what is open.
     pub(crate) fn arranged(&self, cx: &App) -> bool {
-        self.workspace.read(cx).active_layout().is_some()
+        self.workspace.read(cx).active_space().is_some()
     }
 
     /// Put the carried entry where `onto` is, and write the project's order
@@ -1148,14 +1175,14 @@ impl Cydonia {
         });
     }
 
-    /// What a layout would name this row, so it can be dragged into one.
+    /// What a space would name this row, so it can be dragged into one.
     fn member_of_row(&self, row: Row, cx: &App) -> Option<Member> {
         let showing = showing_of(row)?;
         self.workspace.read(cx).member_of(project_of(row)?, showing)
     }
 
     /// What a drag off this row carries. A session with no file yet has no
-    /// name a layout can hold, and is carried as itself — see [`EntryDrag`].
+    /// name a space can hold, and is carried as itself — see [`EntryDrag`].
     fn drag_of_row(&self, row: Row, cx: &App) -> Option<EntryDrag> {
         match self.member_of_row(row, cx) {
             Some(member) => Some(EntryDrag::Member(member)),
@@ -1214,6 +1241,29 @@ impl Cydonia {
         .into_any_element()
     }
 
+    /// The line the spaces are listed under.
+    ///
+    /// It says what the rows below it are, which the rows cannot: a space is
+    /// not inside a project, so what follows the last project would otherwise
+    /// read as more of it. Nothing folds here — each space carries its own
+    /// fold, and a second one over the group would be two ways to hide a row.
+    fn spaces_label(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        // Not [`row`]: that carries the pointer and the hover wash, which say
+        // a press does something. Nothing answers one here.
+        div()
+            .h(px(ROW_PILL))
+            .mx(px(root::SIDEBAR_GUTTER))
+            .px(px(root::SIDEBAR_GUTTER))
+            .flex()
+            .flex_row()
+            .items_center()
+            .text_style(TextStyle::Callout)
+            .text_color(theme.text_faint)
+            .child("Spaces")
+            .into_any_element()
+    }
+
     fn toggle_archive(&mut self, project: usize, cx: &mut Context<Self>) {
         self.commit(cx);
         self.workspace.update(cx, |workspace, cx| {
@@ -1230,6 +1280,14 @@ impl Cydonia {
         self.menu = None;
         self.workspace
             .update(cx, |workspace, cx| workspace.move_project(from, to, cx));
+    }
+
+    /// Menus address a space by its place in the list, the way they do a
+    /// project — see [`Self::move_project`].
+    fn move_space(&mut self, from: usize, to: usize, cx: &mut Context<Self>) {
+        self.menu = None;
+        self.workspace
+            .update(cx, |workspace, cx| workspace.move_space(from, to, cx));
     }
 
     fn toggle_project(&mut self, ix: usize, cx: &mut Context<Self>) {
@@ -1263,10 +1321,13 @@ impl Cydonia {
                 .enumerate()
                 .map(|(at, (name, icon))| {
                     let icon = icon.unwrap_or_else(|| icons::social::MessageCircle.into());
-                    menu::row(Item::action(name).with_icon(icon), move |this, _, cx| {
-                        this.select_project(ix, cx);
-                        this.pick_agent(at, cx);
-                    })
+                    menu::row(
+                        Item::action(name).with_icon(icon),
+                        move |this, window, cx| {
+                            this.select_project(ix, cx);
+                            this.pick_agent(at, window, cx);
+                        },
+                    )
                 })
                 .collect();
             rows.push(menu::submenu(
@@ -1296,7 +1357,7 @@ impl Cydonia {
         if tables {
             rows.push(menu::row(
                 Item::action("New table").with_icon(icons::files::Table2),
-                move |this, _, cx| this.new_table(ix, cx),
+                move |this, window, cx| this.new_table(ix, window, cx),
             ));
         }
         let id = SharedString::from(format!("add-menu-{ix}"));
@@ -1385,29 +1446,33 @@ impl Cydonia {
                 .child(mark),
         )
         .child(label)
-        .child(self.archive_button(("session-archive", id), entry, session.archived, cx))
+        .child(self.archive_button(
+            ("session-archive", id),
+            "session-row",
+            entry,
+            session.archived,
+            cx,
+        ))
         .on_click(cx.listener(move |this, _, window, cx| {
             this.select_session(id, window, cx);
         }))
         .into_any_element()
     }
 
-    /// One layout: the arrangement, and how many panes it holds.
+    /// One space: the arrangement, and how many panes it holds.
     ///
-    /// Its members keep their own rows — a layout references entries and holds
-    /// none of them, so nothing disappears into it.
-    fn layout_row(&self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
+    /// While it is open its members are listed under it rather than under their
+    /// projects — see [`Self::ungrouped`].
+    fn space_row(&self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let workspace = self.workspace.read(cx);
-        let selected = workspace.layout == Some(ix);
-        let entry = Row::Layout(ix);
-        let Some((name, archived, id)) = workspace.layouts.get(ix).map(|layout| {
-            (
-                layout.label().to_owned(),
-                layout.archived,
-                layout.id.clone(),
-            )
-        }) else {
+        let selected = workspace.space == Some(ix);
+        let entry = Row::Space(ix);
+        let Some((name, id)) = workspace
+            .spaces
+            .get(ix)
+            .map(|space| (space.label().to_owned(), space.id.clone()))
+        else {
             return Empty.into_any_element();
         };
         let indent = self.indent_of(entry, cx);
@@ -1418,22 +1483,24 @@ impl Cydonia {
         // are directly under it, which is what `Archived` above them does and
         // what the sidebar already reads as.
         let tint = match selected {
-            true => tint(selected, archived, &theme),
+            true => tint(selected, false, &theme),
             false => theme.text_faint,
         };
-        let label = match matches!(&self.renaming, Some(Renaming::Layout(at)) if *at == id) {
+        let name_of_row = name.clone();
+        let label = match matches!(&self.renaming, Some(Renaming::Space(at)) if *at == id) {
             true => self.name_field(cx),
             false => row_heading(name, tint),
         };
-        let folded = self.collapsed_layouts.contains(&id);
+        let folded = self.collapsed_spaces.contains(&id);
         let held = id.clone();
-        row(("layout", ix), "layout-row", selected, indent, &theme)
+        let carried = SharedString::from(name_of_row.clone());
+        row(("space", ix), "space-row", selected, indent, &theme)
             // The mark carries the fold, the way a project's folder does
             // rather than standing a chevron beside it: open, the panes it
             // holds are listed under it; closed, it is the arrangement alone.
             .child(
                 div()
-                    .id(("layout-fold", ix))
+                    .id(("space-fold", ix))
                     .flex_none()
                     .size(px(14.))
                     .flex()
@@ -1450,19 +1517,19 @@ impl Cydonia {
                     )
                     .on_click(cx.listener(move |this, _, _, cx| {
                         // Only the mark: a press on the row itself opens the
-                        // layout, which is the other thing the row is for.
+                        // space, which is the other thing the row is for.
                         cx.stop_propagation();
-                        this.fold_layout(&held, cx);
+                        this.fold_space(&held, cx);
                     })),
             )
             .child(label)
-            // A layout has no archive button of its own: putting one away
+            // A space has no archive button of its own: putting one away
             // takes its members with it, which is a `···` decision rather than
-            // a press in passing. Rename lives here too — a layout has no band
+            // a press in passing. Rename lives here too — a space has no band
             // to be renamed in, since the window draws none while one is open.
             .child(
                 self.menu_button(
-                    SharedString::from(format!("layout-menu-{ix}")),
+                    SharedString::from(format!("space-menu-{ix}")),
                     None,
                     icons::icon(icons::layout::Ellipsis)
                         .size(px(14.))
@@ -1476,9 +1543,22 @@ impl Cydonia {
                         && self.menu.as_ref() != Some(&Menu::Entry(entry)),
                     |el| el.hidden(),
                 )
-                .children(self.entry_menu(Menu::Entry(entry), entry, archived, cx)),
+                // Never archived: archiving a space puts its members away and
+                // drops the arrangement — see [`Self::archive_entry`] — so the
+                // row it was pressed on is gone rather than put away.
+                .children(self.entry_menu(Menu::Entry(entry), entry, false, cx)),
             )
-            .on_click(cx.listener(move |this, _, window, cx| this.open_layout(ix, window, cx)))
+            .on_click(cx.listener(move |this, _, window, cx| this.open_space(ix, window, cx)))
+            // Carried by its row and dropped on the row it is to sit in front
+            // of, the way a project heading is — see [`Self::project_head`].
+            .on_drag(SpaceDrag(ix), move |_, _, _, cx| {
+                let carried = carried.clone();
+                cx.new(|_| Carried(carried))
+            })
+            .drag_over::<SpaceDrag>(move |style, _, _, cx| style.bg(Theme::of(cx).element_active))
+            .on_drop(cx.listener(move |this, drag: &SpaceDrag, _, cx| {
+                this.move_space(drag.0, ix, cx);
+            }))
             .into_any_element()
     }
 
@@ -1526,11 +1606,12 @@ impl Cydonia {
         .child(label)
         .child(self.archive_button(
             SharedString::from(format!("board-archive-{project}-{ix}")),
+            "board-row",
             entry,
             archived,
             cx,
         ))
-        .on_click(cx.listener(move |this, _, _, cx| this.open_board(project, ix, cx)))
+        .on_click(cx.listener(move |this, _, window, cx| this.open_board(project, ix, window, cx)))
         .into_any_element()
     }
 
@@ -1551,6 +1632,7 @@ impl Cydonia {
     pub(crate) fn archive_button(
         &self,
         id: impl Into<gpui::ElementId>,
+        group: &'static str,
         entry: Row,
         archived: bool,
         cx: &Context<Self>,
@@ -1565,10 +1647,18 @@ impl Cydonia {
         theme
             .ghost(id)
             .flex_none()
-            .when(
-                self.sidebar_hovered.as_ref() != Some(&Menu::Entry(entry)),
-                |el| el.hidden(),
-            )
+            // Out of sight but laid out, and revealed off the row's own hover
+            // group rather than [`Cydonia::sidebar_hovered`].
+            //
+            // A group resolves inside the frame the pointer arrives on; a
+            // field read at render is a frame behind, because the hover has to
+            // go through the model and come back as a repaint. An element out
+            // of sight registers no mouse handler either way, so that frame is
+            // one in which the button cannot be pressed — and a press landing
+            // in it goes to the row instead and reads as a click that did
+            // nothing.
+            .invisible()
+            .group_hover(group, |el| el.visible())
             .p(px(3.))
             .child(icons::icon(mark).size(px(14.)).text_color(theme.text_faint))
             .tooltip(move |window, cx| {
@@ -1736,8 +1826,8 @@ impl Cydonia {
             Row::Board { project, ix } => workspace.delete_board(project, ix, cx),
             Row::Article { project, ix } => workspace.delete_article(project, ix, cx),
             Row::Table { project, ix } => workspace.delete_table(project, ix, cx),
-            Row::Layout(ix) => workspace.delete_layout(ix, cx),
-            Row::Project(_) | Row::Archive(_) => {}
+            Row::Space(ix) => workspace.delete_space(ix, cx),
+            Row::Project(_) | Row::Archive(_) | Row::Spaces => {}
         });
         if let Some(project) = landing_project
             && let Some(landing) = self
@@ -1768,7 +1858,7 @@ impl Cydonia {
                 .and_then(|open| open.boards.get(ix))
                 .map(|board| board.id.clone());
             if let Some(id) = id {
-                self.open_board(project, ix, cx);
+                self.open_board(project, ix, window, cx);
                 self.open_info(&id, window, cx);
             }
             return;
@@ -1783,11 +1873,15 @@ impl Cydonia {
                 .map(|table| Renaming::Table(table.key.clone())),
             // An article is named in its own page, and the two that are not
             // entries have no name to take.
-            Row::Layout(ix) => workspace
-                .layouts
+            Row::Space(ix) => workspace
+                .spaces
                 .get(ix)
-                .map(|layout| Renaming::Layout(layout.id.clone())),
-            Row::Article { .. } | Row::Board { .. } | Row::Project(_) | Row::Archive(_) => None,
+                .map(|space| Renaming::Space(space.id.clone())),
+            Row::Article { .. }
+            | Row::Board { .. }
+            | Row::Project(_)
+            | Row::Archive(_)
+            | Row::Spaces => None,
         };
         if let Some(what) = what {
             self.start_rename(what, window, cx);
@@ -1809,31 +1903,37 @@ impl Cydonia {
         let landing = (archived && self.in_front(entry, cx))
             .then(|| project_of(entry))
             .flatten();
-        // A layout takes its members with it. Membership is exclusive — an
-        // entry is in one layout at a time — so the arrangement owns what it
+        // A space takes its members with it. Membership is exclusive — an
+        // entry is in one space at a time — so the arrangement owns what it
         // holds, and putting it away that holds nothing would be putting away
         // an empty row.
-        if let Row::Layout(ix) = entry {
-            let members: Vec<Row> = self
-                .workspace
-                .read(cx)
-                .layouts
-                .get(ix)
-                .map(|layout| layout.entries())
-                .unwrap_or_default()
+        //
+        // The arrangement itself is dropped rather than put away: a space
+        // names entries and holds none, so there is nothing in one to come
+        // back to, and it is remade by dragging one entry onto another. By id,
+        // because archiving a member takes it out of the space as it goes —
+        // see [`Workspace::drop_from_spaces`] — and that shifts every index
+        // past it.
+        if let Row::Space(ix) = entry {
+            let workspace = self.workspace.read(cx);
+            let Some(space) = workspace.spaces.get(ix) else {
+                return;
+            };
+            let id = space.id.clone();
+            let members: Vec<Row> = space
+                .entries()
                 .iter()
                 .filter_map(|member| self.row_of_member(member, cx))
                 .collect();
             for member in members {
                 self.archive_entry(member, archived, window, cx);
             }
-            self.workspace.update(cx, |workspace, cx| {
-                workspace.archive_layout(ix, archived, cx)
-            });
+            self.workspace
+                .update(cx, |workspace, cx| workspace.delete_space_id(&id, cx));
             return;
         }
         // Putting an entry away takes it out of the two places that hold it
-        // up: the pins at the top of the list, and whatever layout arranges
+        // up: the pins at the top of the list, and whatever space arranges
         // it. Both are about an entry in hand, and this one no longer is.
         if archived && let Some(showing) = showing_of(entry) {
             let member = self.member_of_row(entry, cx);
@@ -1842,12 +1942,12 @@ impl Cydonia {
                     workspace.unpin_entry(project, showing);
                 }
                 if let Some(member) = member {
-                    workspace.drop_from_layouts(&member, cx);
+                    workspace.drop_from_spaces(&member, cx);
                 }
             });
         }
         self.workspace.update(cx, |workspace, cx| match entry {
-            Row::Layout(_) => {}
+            Row::Space(_) => {}
             Row::Session { id, .. } => workspace.archive_session(id, archived, cx),
             Row::Board { project, ix } => {
                 if let Some(id) = workspace
@@ -1879,7 +1979,7 @@ impl Cydonia {
                     workspace.archive_table(&key, archived, cx);
                 }
             }
-            Row::Project(_) | Row::Archive(_) => {}
+            Row::Project(_) | Row::Archive(_) | Row::Spaces => {}
         });
         if let Some(project) = landing {
             self.open_top_entry(project, window, cx);
@@ -1969,11 +2069,11 @@ impl Cydonia {
                 .and_then(|board| board.column(id))
                 .map(|column| column.name.clone())
                 .unwrap_or_default(),
-            Renaming::Layout(id) => workspace
-                .layouts
+            Renaming::Space(id) => workspace
+                .spaces
                 .iter()
-                .find(|layout| layout.id == *id)
-                .map(|layout| layout.name.clone())
+                .find(|space| space.id == *id)
+                .map(|space| space.name.clone())
                 .unwrap_or_default(),
         };
         // A lane is named in one case — see [`artifact::board::column::heading`]
@@ -2003,7 +2103,7 @@ impl Cydonia {
             Renaming::Session(id) => workspace.rename_session(id, name, cx),
             Renaming::Table(key) => workspace.rename_table(&key, name, cx),
             Renaming::Column(id) => workspace.rename_column(&id, name, cx),
-            Renaming::Layout(id) => workspace.rename_layout(&id, name, cx),
+            Renaming::Space(id) => workspace.rename_space(&id, name, cx),
         });
         cx.notify();
     }

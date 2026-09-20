@@ -72,6 +72,15 @@ pub enum Section {
 }
 
 impl Section {
+    /// Whether this section carries its own scroller, leaving the page still.
+    ///
+    /// Only where a section holds a list long enough to be worth building by
+    /// the viewport — see [`SettingsWindow::agents_list`]. Everything else is
+    /// a page of boxes, and the page scrolls it.
+    pub(super) fn owns_scroll(&self) -> bool {
+        matches!(self, Self::Agents)
+    }
+
     const ALL: [Self; 8] = [
         Self::General,
         Self::Appearance,
@@ -87,11 +96,14 @@ impl Section {
     /// looking at what has not happened yet, which is not something to hand
     /// somebody who installed the app — so it is absent from a release build
     /// rather than empty in one, and every build anyone installs is a release
-    /// one. `make bundle PROFILE=debug` is the bundle that still has it, which
-    /// is what the updater switches want: the updater runs in a bundle and
-    /// nowhere else.
+    /// one.
+    ///
+    /// The `developer` feature is the other way in, for what the updater
+    /// switches need: the updater runs in a bundle and nowhere else, and
+    /// `make bundle FEATURES=developer` is that bundle built at the profile
+    /// that ships rather than at `debug`.
     fn listed(self) -> bool {
-        !matches!(self, Self::Developer) || cfg!(debug_assertions)
+        !matches!(self, Self::Developer) || cfg!(debug_assertions) || cfg!(feature = "developer")
     }
 
     fn title(self) -> &'static str {
@@ -147,6 +159,17 @@ pub struct SettingsWindow {
     listings: Option<Vec<Listing>>,
     /// Agents with an install or a removal running.
     busy: HashSet<String>,
+    /// The row whose install is waiting to be agreed to — see
+    /// [`SettingsWindow::trust_dialog`].
+    trusting: Option<usize>,
+    /// The catalogue's rows, built only where they are on screen.
+    ///
+    /// The registry publishes dozens, each a row of a dozen elements, and a
+    /// page that hands all of them to the layout engine lays every one of them
+    /// out on every frame a scroll draws — which is where this section's time
+    /// went, measured. Keyed by agent id, so narrowing the search reconciles
+    /// against what is on screen rather than scrolling it.
+    agents_list: bezel::ui::list::VariableList<String>,
     /// What the installer has printed for each of them, newest last: the tail
     /// is the row's status while it runs, and the whole of it is all a failure
     /// has to explain itself with — see [`crate::agent::record`].
@@ -155,6 +178,11 @@ pub struct SettingsWindow {
     /// rather than made where it is drawn: what has been typed has to outlive
     /// the frame, and a section is drawn afresh on every one.
     search: Entity<TextField>,
+    /// The family pickers, held for the same reason the search field is: the
+    /// menu one of them has open has to outlive the frame it was opened in.
+    interface_font: typography::FamilyPicker,
+    article_font: typography::FamilyPicker,
+    mono_font: typography::FamilyPicker,
     /// The cover ceiling's field, while its dialog is up.
     editing: Option<Entity<TextField>>,
     /// The shortcut row taking keys, while one is — see
@@ -223,13 +251,31 @@ pub fn open(
                 if let Some(updater) = update::of(cx) {
                     cx.observe(&updater, |_, _, cx| cx.notify()).detach();
                 }
+                let fonts = workspace.read(cx).fonts.clone();
+                let interface_font =
+                    typography::FamilyPicker::new(typography::Face::Interface, fonts.sans, cx);
+                let article_font =
+                    typography::FamilyPicker::new(typography::Face::Article, fonts.body, cx);
+                let mono_font =
+                    typography::FamilyPicker::new(typography::Face::Mono, fonts.mono, cx);
                 let mut this = SettingsWindow {
                     workspace,
                     section,
                     listings: None,
                     busy: HashSet::new(),
+                    trusting: None,
+                    agents_list: {
+                        let list = bezel::ui::list::VariableList::default();
+                        // A catalogue is read from the top. Following the tail
+                        // is the transcript's rule, and what this comes set to.
+                        list.state.set_follow_mode(bezel::gpui::FollowMode::Normal);
+                        list
+                    },
                     output: HashMap::new(),
                     search,
+                    interface_font,
+                    article_font,
+                    mono_font,
                     editing: None,
                     recording: None,
                     error: None,
@@ -441,6 +487,7 @@ impl SettingsWindow {
 impl Render for SettingsWindow {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::of(cx).clone();
+        let owns_scroll = self.section.owns_scroll();
         div()
             .size_full()
             .relative()
@@ -457,7 +504,11 @@ impl Render for SettingsWindow {
                     .flex_1()
                     .min_w_0()
                     .h_full()
-                    .overflow_y_scroll()
+                    // A section that scrolls itself keeps the page still: its
+                    // list is the scroller, and a page scrolling behind one
+                    // would be two bars down one column.
+                    .when(owns_scroll, |el| el.overflow_hidden())
+                    .when(!owns_scroll, |el| el.overflow_y_scroll())
                     .px(px(32.))
                     .py(px(32.))
                     .flex()
@@ -467,6 +518,7 @@ impl Render for SettingsWindow {
                         div()
                             .w_full()
                             .max_w(px(CONTENT_MAX_WIDTH))
+                            .when(owns_scroll, |el| el.flex_1().min_h_0())
                             .flex()
                             .flex_col()
                             // The header block, held off its body by the gap
@@ -478,6 +530,10 @@ impl Render for SettingsWindow {
                             .child(
                                 div()
                                     .mb(px(GROUP_GAP))
+                                    // Chrome above a section that scrolls
+                                    // itself: it keeps its height and the list
+                                    // below takes what is left.
+                                    .when(owns_scroll, |el| el.flex_none())
                                     .child(theme.page_header(self.section.title(), None))
                                     .children(
                                         self.section
@@ -496,15 +552,19 @@ impl Render for SettingsWindow {
                                 Section::Developer => self.developer_body(cx),
                             }),
                     )
-                    .map(|pane| {
-                        scrollbars::Viewport::new(
+                    .map(|pane| match owns_scroll {
+                        // The list brings its own bar.
+                        true => pane.into_any_element(),
+                        false => scrollbars::Viewport::new(
                             "settings-scroll",
                             pane,
                             bezel::gpui::Axis::Vertical,
                         )
                         .fill()
+                        .into_any_element(),
                     }),
             )
             .children(self.cover_dialog(cx))
+            .children(self.trust_dialog(cx))
     }
 }

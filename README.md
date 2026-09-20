@@ -1,5 +1,7 @@
 # Cydonia
 
+[![Crates.io](https://img.shields.io/crates/v/cydonia?logo=rust&logoColor=white)](https://crates.io/crates/cydonia) [![License](https://img.shields.io/crates/l/cydonia)](LICENSE) [![Discord](https://img.shields.io/discord/1481168707391852659?logo=discord&logoColor=white&label=discord&color=5865F2)](https://discord.gg/yGZDYnwbx6)
+
 https://github.com/user-attachments/assets/dfe51807-a24a-49f0-b702-918c317ee21d
 
 A desktop workspace for the coding agents you run. Open a directory as a

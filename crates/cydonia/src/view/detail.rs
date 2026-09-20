@@ -6,23 +6,28 @@ use crate::{
         workspace::Showing,
     },
     view::{
-        component::{composer, ribbon, transcript},
+        component::{
+            composer,
+            menu::{self, Menu},
+            ribbon, transcript,
+        },
         leaf::Pane,
         root::{self, Cydonia, NewSession},
         settings::Section,
     },
 };
-use artifact::{layout::Member, session::chat::PlanStatus};
+use artifact::{session::chat::PlanStatus, space::Member};
 use bezel::{
     gpui::{
-        AnyElement, App, Axis, Context, DragMoveEvent, Empty, FocusHandle, Focusable as _,
-        SharedString, Window, div, prelude::*, px,
+        AnyElement, App, Axis, Context, Div, DragMoveEvent, Empty, FocusHandle, Focusable as _,
+        SharedString, Stateful, Window, div, prelude::*, px,
     },
     motion::{Fade, Painter},
     theme::{TextStyle, Theme, Typeset},
     ui::{
         floating,
         icons::{self, Icon},
+        menu::Item,
         popover, surface,
         tooltip::Tooltip,
         widgets::{ButtonStyle, Buttons, Content, Controls, Status},
@@ -289,11 +294,17 @@ pub fn adrift_line(agent: &str, others: bool) -> String {
 }
 
 impl Cydonia {
-    /// Where the window's shell opens: the session's working directory when a
-    /// chat is in front — its worktree, where it has one — and the project's
-    /// otherwise. Read once, when the panel is made.
-    fn shell_cwd(&self, cx: &App) -> Option<PathBuf> {
+    /// Where the window's shell opens: under a space, the project the first
+    /// pane is in; the session's working directory when a chat is in front —
+    /// its worktree, where it has one — and the project's otherwise.
+    ///
+    /// Asked again for each tab, not once for the panel: the panel outlives
+    /// whatever was in front when it was opened.
+    pub(crate) fn shell_cwd(&self, cx: &App) -> Option<PathBuf> {
         let workspace = self.workspace.read(cx);
+        if let Some(space) = workspace.active_space() {
+            return space.panes().into_iter().next().map(|pane| pane.project);
+        }
         if self.showing(cx) == Some(Pane::Chat)
             && let Some(chat) = workspace.active_session()
         {
@@ -307,8 +318,15 @@ impl Cydonia {
             let Some(cwd) = self.shell_cwd(cx) else {
                 return;
             };
-            let panel =
-                cx.new(|cx| super::component::terminal::TerminalPanel::new(&cwd, window, cx));
+            let this = cx.weak_entity();
+            let panel = cx.new(|cx| {
+                super::component::terminal::TerminalPanel::new(
+                    &cwd,
+                    move |cx| this.upgrade()?.read(cx).shell_cwd(cx),
+                    window,
+                    cx,
+                )
+            });
             // The last tab closing takes the panel with it: an empty bottom
             // panel is a band of nothing with a `+` in it.
             cx.subscribe_in(
@@ -496,9 +514,14 @@ impl Cydonia {
     /// The composer's agent chip. An ACP session is bound to the process that
     /// serves it, so picking another agent opens a session rather than
     /// swapping one out from under a transcript.
-    pub(crate) fn pick_agent(&mut self, ix: usize, cx: &mut Context<Self>) {
+    pub(crate) fn pick_agent(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
         let entry = self.workspace.read(cx).settings.agents.get(ix).cloned();
         if let Some(entry) = entry {
+            // A session that does not exist yet is in no arrangement — it has
+            // no file, so a space has nothing to name it by. `None` is that
+            // said plainly, and leaving the space is what puts the window
+            // where the new session is about to be.
+            self.enter_member(None, window, cx);
             self.show_pane(Pane::Chat, cx);
             self.workspace
                 .update(cx, |workspace, cx| workspace.new_session(entry, None, cx));
@@ -510,7 +533,7 @@ impl Cydonia {
     /// be swapped for.
     pub(crate) fn sync_composer(&mut self, cx: &mut Context<Self>) {
         let workspace = self.workspace.read(cx);
-        let arranged = workspace.active_layout().is_some();
+        let arranged = workspace.active_space().is_some();
         let agents: Vec<composer::Agent> = workspace
             .settings
             .agents
@@ -520,7 +543,7 @@ impl Cydonia {
                 icon: workspace.agent_icon(&entry.name),
             })
             .collect();
-        // The session each pane is on: its own where a layout put it there,
+        // The session each pane is on: its own where a space put it there,
         // and whatever the project is on for the single pane.
         let on: Vec<Option<u64>> = self
             .leaves
@@ -590,8 +613,8 @@ impl Cydonia {
         // from settings.toml, leaving nothing to reconnect it to.
         let live = self.workspace.read(cx).reachable();
         let showing = self.showing(cx);
-        let arranged = self.workspace.read(cx).active_layout().is_some();
-        // A layout arranges several entries, so it draws its own panes. One
+        let arranged = self.workspace.read(cx).active_space().is_some();
+        // A space arranges several entries, so it draws its own panes. One
         // entry open on its own is the single pane below.
         let body = match self.panes(window, cx) {
             Some(panes) => panes,
@@ -642,7 +665,7 @@ impl Cydonia {
         let body = match arranged {
             true => body,
             // One pane takes a drop on its edge too: that is where the first
-            // layout comes from.
+            // space comes from.
             false => self.lone_pane(body, cx),
         };
         let content = div()
@@ -657,7 +680,7 @@ impl Cydonia {
             // inside the scroll so content slides under the glass, and doing
             // that means every pane's own scroll box, not this one div.
             //
-            // A layout takes none of it: its panes carry a bar each, and the
+            // A space takes none of it: its panes carry a bar each, and the
             // one at the top left keeps clear of the lights itself.
             .when(!arranged, |el| el.pt(px(root::HEADER_HEIGHT)))
             .child(body);
@@ -676,7 +699,7 @@ impl Cydonia {
             .flex()
             .flex_col()
             .child(content)
-            // After the content, so it draws over it. A layout has no band of
+            // After the content, so it draws over it. A space has no band of
             // its own: one title over several panes would name whichever is in
             // front and say nothing about the rest.
             .children((!arranged).then(|| self.pane_header(window, cx)))
@@ -717,20 +740,14 @@ impl Cydonia {
                     ),
                 },
             );
-        // The one panel the window has, under whatever is showing: a layout's
+        // The one panel the window has, under whatever is showing: a space's
         // panes included, which is what the right panel cannot do.
         let terminal = self
             .terminal
             .as_ref()
             .filter(|(visible, _)| *visible)
             .map(|(_, terminal)| terminal.clone());
-        // The window's own panels stand beside one entry, not beside an
-        // arrangement of several. Held rather than shut, so leaving the layout
-        // puts them back as they were.
-        let changes = match arranged {
-            true => None,
-            false => self.changes.clone(),
-        };
+        let changes = self.changes.clone();
         let available = f32::from(window.viewport_size().width)
             - if self.sidebar_open {
                 self.sidebar_width
@@ -919,53 +936,85 @@ impl Cydonia {
             .map(|entry| (entry.name.clone(), workspace.agent_icon(&entry.name)))
             .collect();
         let mut rows: Vec<AnyElement> = Vec::new();
-        // One row per agent once there is a choice to make: a single "New
-        // session" opens on whichever agent is first, and nothing on this
-        // screen would say which.
+        // One row, and a panel of agents under it once there is a choice to
+        // make: a bare "New session" opens on whichever agent is first, and
+        // nothing on this screen would say which.
         if sessions && agents.len() > 1 {
-            for (at, (name, icon)) in agents.into_iter().enumerate() {
-                let icon = icon.unwrap_or_else(|| icons::social::MessageCircle.into());
-                rows.push(self.make_row(
-                    format!("session-{at}"),
-                    format!("New {name} session"),
-                    icon,
-                    cx,
-                    move |this, _, cx| this.pick_agent(at, cx),
-                ));
-            }
-        } else if sessions {
-            rows.push(self.make_row(
+            let picks: Vec<_> = agents
+                .into_iter()
+                .enumerate()
+                .map(|(at, (name, icon))| {
+                    let icon = icon.unwrap_or_else(|| icons::social::MessageCircle.into());
+                    menu::row(
+                        Item::action(name).with_icon(icon),
+                        move |this, window, cx| this.pick_agent(at, window, cx),
+                    )
+                })
+                .collect();
+            let trigger = self.make_row(
                 "session",
                 "New session",
                 icons::social::MessageCirclePlus,
                 cx,
-                move |this, window, cx| this.new_session_action(&NewSession, window, cx),
-            ));
+                move |this, _, cx| this.toggle_menu(Menu::Launch, cx),
+            );
+            rows.push(
+                self.menu_press(trigger, Menu::Launch, cx)
+                    .relative()
+                    .children((self.menu == Some(Menu::Launch)).then(|| {
+                        popover::anchored_menu_below(
+                            "launch-menu",
+                            self.menu_card("launch-menu", picks, cx),
+                            None,
+                        )
+                    }))
+                    .into_any_element(),
+            );
+        } else if sessions {
+            rows.push(
+                self.make_row(
+                    "session",
+                    "New session",
+                    icons::social::MessageCirclePlus,
+                    cx,
+                    move |this, window, cx| this.new_session_action(&NewSession, window, cx),
+                )
+                .into_any_element(),
+            );
         }
         if boards {
-            rows.push(self.make_row(
-                "board",
-                "New board",
-                icons::development::SquareKanban,
-                cx,
-                move |this, window, cx| this.ask_new_board(ix, window, cx),
-            ));
+            rows.push(
+                self.make_row(
+                    "board",
+                    "New board",
+                    icons::development::SquareKanban,
+                    cx,
+                    move |this, window, cx| this.ask_new_board(ix, window, cx),
+                )
+                .into_any_element(),
+            );
         }
-        rows.push(self.make_row(
-            "article",
-            "New article",
-            icons::files::FilePlus,
-            cx,
-            move |this, window, cx| this.new_article(ix, window, cx),
-        ));
-        if tables {
-            rows.push(self.make_row(
-                "table",
-                "New table",
-                icons::files::Table2,
+        rows.push(
+            self.make_row(
+                "article",
+                "New article",
+                icons::files::FilePlus,
                 cx,
-                move |this, _, cx| this.new_table(ix, cx),
-            ));
+                move |this, window, cx| this.new_article(ix, window, cx),
+            )
+            .into_any_element(),
+        );
+        if tables {
+            rows.push(
+                self.make_row(
+                    "table",
+                    "New table",
+                    icons::files::Table2,
+                    cx,
+                    move |this, window, cx| this.new_table(ix, window, cx),
+                )
+                .into_any_element(),
+            );
         }
         theme
             .empty_state(icons::files::Folder, "Nothing open", format!("in {name}"))
@@ -982,7 +1031,7 @@ impl Cydonia {
         glyph: impl Into<Icon>,
         cx: &mut Context<Self>,
         make: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
-    ) -> AnyElement {
+    ) -> Stateful<Div> {
         let theme = Theme::of(cx).clone();
         let (id, label) = (id.into(), label.into());
         // An svg paints in its own `text_color` and inherits none, so the glyph
@@ -1011,7 +1060,6 @@ impl Cydonia {
                     .child(label),
             )
             .on_click(cx.listener(move |this, _, window, cx| make(this, window, cx)))
-            .into_any_element()
     }
 
     /// The session a chat pane is on. Nothing where one was asked for with no
@@ -1061,29 +1109,30 @@ impl Cydonia {
                 0.
             })
         .max(0.);
-        // The right-hand panel is not drawn beside a layout — see
-        // [`Cydonia::detail`] — so its width is only taken off the column
-        // where it is actually standing there.
         // A panel covering the column takes none of it away — the chat is
         // still laid out at full width underneath.
-        let beside = self.changes.is_some()
-            && self.workspace.read(cx).active_layout().is_none()
-            && panel_beside(available);
+        let beside = self.changes.is_some() && panel_beside(available);
         let column = available
             - match beside {
                 true => panel_width(self.changes_width, available),
                 false => 0.,
             };
-        // The column, less what a layout gives the panes beside this one. The
+        // The column, less what a space gives the panes beside this one. The
         // transcript sizes its margins off this and drops the rail when they
         // are too narrow to hold it — measured against the window, a pane in a
         // split would keep a rail there is no room for and draw it over the
         // prose.
         let pane_width = column * self.width_share(entry, cx);
         let root = cx.entity().downgrade();
+        // The pane's own session and the pane's own leaf, not the window's:
+        // every pane of a space draws this, and the focused one's queue drawn
+        // under all of them reads as the message having gone to each.
+        let on = entry.cloned();
         let queued = move |window: &mut Window, cx: &mut bezel::gpui::App| {
+            let on = on.clone();
             root.update(cx, |root, cx| {
-                root.queue(window, cx).map(IntoElement::into_any_element)
+                root.queue(id, on.as_ref(), window, cx)
+                    .map(IntoElement::into_any_element)
             })
             .ok()
             .flatten()
@@ -1198,7 +1247,7 @@ impl Cydonia {
         let prompt = chat.permission.as_ref()?;
         let id = chat.id;
         let painter = Painter::of(cx);
-        // One button, whichever layout it lands in. `key` is the element's and
+        // One button, whichever space it lands in. `key` is the element's and
         // the hover wash's both — the wash store is one map for the whole app,
         // so the session is in it too.
         let answer = |key: &str, option_id: String, label: &str, style| {
@@ -1370,15 +1419,17 @@ impl Cydonia {
     /// Prompts waiting for the current turn, with edit and cancel actions.
     fn queue(
         &mut self,
+        id: u64,
+        on: Option<&Member>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<impl IntoElement + use<>> {
         let theme = Theme::of(cx).clone();
-        let chat = self.workspace.read(cx).active_session()?;
-        let id = chat.id;
+        let chat = self.workspace.read(cx).session(id)?;
         let cwd = chat.cwd.clone();
         let queue = chat.queue.clone();
-        self.leaf_mut()
+        let pane = on.cloned();
+        self.leaf_of_mut(pane.as_ref())
             .queued_galleries
             .retain(|(session, ix, text), _| *session == id && queue.get(*ix) == Some(text));
         if queue.is_empty() {
@@ -1396,7 +1447,7 @@ impl Cydonia {
                     let cancel_text = text.clone();
                     let (doc, images) = transcript::gallery::document(text);
                     let gallery = (!images.is_empty()).then(|| {
-                        self.leaf_mut()
+                        self.leaf_of_mut(pane.as_ref())
                             .queued_galleries
                             .entry((id, ix, text.clone()))
                             .or_insert_with(|| {
@@ -1456,15 +1507,25 @@ impl Cydonia {
                                         .tooltip(|window, cx| {
                                             Tooltip::text("Edit queued message", window, cx)
                                         })
-                                        .on_click(cx.listener(move |this, _, window, cx| {
-                                            if let Some(text) =
-                                                this.take_queued(id, ix, &edit_text, cx)
-                                            {
-                                                this.leaf().composer.update(cx, |composer, cx| {
-                                                    composer.restore_queued(text, window, cx);
-                                                });
-                                            }
-                                        })),
+                                        .on_click({
+                                            let pane = pane.clone();
+                                            cx.listener(move |this, _, window, cx| {
+                                                let Some(text) =
+                                                    this.take_queued(id, ix, &edit_text, cx)
+                                                else {
+                                                    return;
+                                                };
+                                                // Back into the composer it was
+                                                // typed in, which is the one
+                                                // under this pane.
+                                                this.leaf_of(pane.as_ref())
+                                                    .composer
+                                                    .clone()
+                                                    .update(cx, |composer, cx| {
+                                                        composer.restore_queued(text, window, cx);
+                                                    });
+                                            })
+                                        }),
                                 )
                                 .child(
                                     theme

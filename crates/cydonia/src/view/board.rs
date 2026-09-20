@@ -2,7 +2,7 @@
 //! writes them.
 
 use crate::{
-    model::session::ChatSession,
+    model::{session::ChatSession, workspace::Showing},
     view::{
         component::{
             menu::{self, Menu},
@@ -15,7 +15,7 @@ use crate::{
 };
 use artifact::{
     board::{Card, Status, View},
-    layout::Member,
+    space::Member,
 };
 use bezel::agent::orbs::engine::Frame;
 use bezel::ui::scroll as scrollbars;
@@ -188,9 +188,9 @@ struct Tally {
 /// whatever was typed on it, and a list, a fence or a link is no less a card for
 /// being one. What does not fit is cut off by [`CARD_MAX_HEIGHT`], the same as a
 /// long paragraph.
-fn card_body(text: &str, window: &mut Window, cx: &mut App) -> AnyElement {
+fn card_body(doc: &markdown::Doc, window: &mut Window, cx: &mut App) -> AnyElement {
     markdown::render_with(
-        &markdown::parse(text),
+        doc,
         markdown::Editing {
             // A picture in a lane this narrow is a picture. Its alt text spelled
             // out underneath would be most of the card.
@@ -256,7 +256,7 @@ enum Mark {
 /// wherever the drop lands, and a copy of the card travelling with the pointer
 /// would be a second one to keep in step with it.
 ///
-/// It says which board it left as well as which card it is: a layout can have
+/// It says which board it left as well as which card it is: a space can have
 /// two boards on screen, and the lane a card lands on cannot tell where it came
 /// from.
 #[derive(Clone)]
@@ -281,7 +281,7 @@ pub struct Landing {
 /// Where one board sits, wherever it is drawn.
 ///
 /// Keyed by board id on the window rather than held by the pane: the same board
-/// arranged in a layout and opened on its own is one board, and a handle per
+/// arranged in a space and opened on its own is one board, and a handle per
 /// pane leaves the two disagreeing about where it is scrolled to.
 #[derive(Default)]
 pub struct Scrolls(RefCell<HashMap<String, Scroll>>);
@@ -325,6 +325,34 @@ impl Scrolls {
 /// one buffer would both draw whatever the second put there.
 #[derive(Default)]
 pub struct Marks(RefCell<HashMap<String, Rc<RefCell<Frame>>>>);
+
+/// What a card's text parses to, by the text itself.
+///
+/// A board is rebuilt whole on every frame and a scroll is a frame per wheel
+/// event, so without this a lane costs one markdown parse per card per frame —
+/// [`card_body`] renders a document, not a string.
+///
+/// Keyed by the source rather than by the card, which is what lets the lane and
+/// the list hold one board at once: a row shows [`first_line`] and a lane the
+/// whole card, and keyed by card those two would take turns evicting each
+/// other. Edited text is a key nothing asks for again, so nothing has to be
+/// invalidated.
+///
+/// Never pruned, the way [`Marks`] is not: an entry is a parsed document, and
+/// a board's worth of them is smaller than the board.
+#[derive(Default)]
+pub struct Docs(RefCell<HashMap<String, Rc<markdown::Doc>>>);
+
+impl Docs {
+    fn of(&self, text: &str) -> Rc<markdown::Doc> {
+        if let Some(doc) = self.0.borrow().get(text) {
+            return doc.clone();
+        }
+        let doc = Rc::new(markdown::parse(text));
+        self.0.borrow_mut().insert(text.to_owned(), doc.clone());
+        doc
+    }
+}
 
 impl Marks {
     fn of(&self, card: &str) -> Rc<RefCell<Frame>> {
@@ -398,7 +426,7 @@ impl Render for HeldCard {
             .border_1()
             .border_color(theme.accent)
             .bg(theme.surface_raised)
-            .child(card_body(&self.text, window, cx))
+            .child(card_body(&markdown::parse(&self.text), window, cx))
     }
 }
 
@@ -451,24 +479,37 @@ impl Cydonia {
         self.ask_new_board(project, window, cx);
     }
 
-    pub(crate) fn open_board(&mut self, project: usize, ix: usize, cx: &mut Context<Self>) {
+    pub(crate) fn open_board(
+        &mut self,
+        project: usize,
+        ix: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.commit(cx);
+        let member = self
+            .workspace
+            .read(cx)
+            .member_of(project, Showing::Board(ix));
+        if self.enter_member(member, window, cx) {
+            return;
+        }
         self.workspace
             .update(cx, |workspace, cx| workspace.open_board(project, ix, cx));
         self.leaf_mut().pane = Pane::Board;
         cx.notify();
     }
 
-    /// Point the field at `at`, filing whatever was already open first — so
-    /// clicking straight from one card to another never drops an edit.
     /// Lay a board out the other way — the pill at its foot. The board the pane
-    /// is showing rather than the one in front: a layout can have two on screen.
+    /// is showing rather than the one in front: a space can have two on screen.
     fn set_board_view(&mut self, id: &str, view: View, cx: &mut Context<Self>) {
         self.workspace
             .update(cx, |workspace, cx| workspace.set_board_view(id, view, cx));
         cx.notify();
     }
 
+    /// Point the field at `at`, filing whatever was already open first — so
+    /// clicking straight from one card to another never drops an edit.
     fn edit(&mut self, at: Editing, window: &mut Window, cx: &mut Context<Self>) {
         self.commit(cx);
         let text = match &at {
@@ -681,8 +722,9 @@ impl Cydonia {
     }
 
     /// Drop a lane. Offered only while it is empty — see
-    /// [`artifact::board::Board::remove_column`].
-    fn drop_column(&mut self, id: &str, cx: &mut Context<Self>) {
+    /// [`artifact::board::Board::remove_column`] — and asked about first, in
+    /// [`crate::view::confirm`].
+    pub(crate) fn drop_column(&mut self, id: &str, cx: &mut Context<Self>) {
         self.commit(cx);
         let id = id.to_owned();
         self.workspace
@@ -969,7 +1011,7 @@ impl Cydonia {
             // over no lane at all leaves nothing aimed, which is what makes
             // dragging a card off the board mean nothing.
             //
-            // The drift aimed is this pane's, the one drawn below — a layout
+            // The drift aimed is this pane's, the one drawn below — a space
             // can have two boards up, and the focused one is not always the
             // one being dragged over.
             .on_drag_move(cx.listener({
@@ -990,7 +1032,7 @@ impl Cydonia {
     /// The pill at the foot of a board: which way it is laid out, and the press
     /// that lays it out the other way.
     ///
-    /// In the pane rather than in the band, because a pane of a layout has no
+    /// In the pane rather than in the band, because a pane of a space has no
     /// band — see [`crate::view::arrangement`]. `../desktop` floats its controls
     /// at the same edge.
     ///
@@ -1208,9 +1250,26 @@ impl Cydonia {
         let Some((name, held, cards)) = self.lane_cards(project, board_at, &id, &query, cx) else {
             return div().into_any_element();
         };
+        let Some((board_id, folded)) = self
+            .workspace
+            .read(cx)
+            .board_in(project, board_at)
+            .and_then(|board| {
+                let column = board.column(&id)?;
+                Some((board.id.clone(), column.collapsed))
+            })
+        else {
+            return div().into_any_element();
+        };
+        // A lane folded shut still opens for the two things that would
+        // otherwise happen out of sight: a query narrowing the board, and the
+        // field writing a card into this lane.
+        let writing = matches!(&self.leaf_of(on).editing, Some(Editing::New(_, at)) if *at == id);
+        let folded = folded && query.trim().is_empty() && !writing;
         let mut rows: Vec<AnyElement> = cards
             .iter()
             .enumerate()
+            .filter(|_| !folded)
             .map(|(row, card)| {
                 let next = cards.get(row + 1).map(String::as_str);
                 self.list_row(
@@ -1230,7 +1289,7 @@ impl Cydonia {
             .collect();
         // An empty group has no row to hang the mark off, and nothing under it
         // to be pushed down by one drawn in the flow.
-        if cards.is_empty() && self.aimed_at(&id, on, cx) {
+        if !folded && cards.is_empty() && self.aimed_at(&id, on, cx) {
             rows.push(self.landing_mark(Mark::Flow, cx));
         }
         // At the end the field is written into is drawn at: what is being
@@ -1287,12 +1346,14 @@ impl Cydonia {
                 },
                 at,
                 lanes,
+                folded,
+                &board_id,
                 cx,
             ))
             .children(rows)
             // Nothing to write into a narrowed lane: a card that does not
             // answer the query would be filed and vanish in one gesture.
-            .children((query.trim().is_empty()).then(|| {
+            .children((!folded && query.trim().is_empty()).then(|| {
                 theme
                     .ghost(SharedString::from(format!("list-add-card-{id}")))
                     .flex_none()
@@ -1317,12 +1378,14 @@ impl Cydonia {
             .into_any_element()
     }
 
-    /// A group's heading: the lane's name and count, and the `···` that moves
-    /// or drops it — the lane's own header, on a row the width of the pane.
+    /// A group's heading: the chevron that folds the lane, its name and count,
+    /// and the `···` that moves or drops it — the lane's own header, on a row
+    /// the width of the pane.
     ///
     /// `held` is the whole lane and `shown` what the query left of it. The
     /// `···` is built from `held`: Delete is refused on a lane holding cards,
     /// not on one showing them.
+    #[allow(clippy::too_many_arguments)]
     fn list_group_header(
         &self,
         id: &str,
@@ -1330,6 +1393,8 @@ impl Cydonia {
         tally: Tally,
         at: usize,
         lanes: usize,
+        folded: bool,
+        board: &str,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let Tally { held, shown } = tally;
@@ -1350,7 +1415,29 @@ impl Cydonia {
             return row.child(self.name_field(cx)).into_any_element();
         }
         let named = id.to_owned();
+        let folding = (board.to_owned(), id.to_owned());
         row.group("list-group")
+            .child(
+                theme
+                    .ghost(SharedString::from(format!("list-group-fold-{id}")))
+                    .flex_none()
+                    .p(px(2.))
+                    .child(
+                        icons::icon(match folded {
+                            true => icons::arrows::ChevronRight,
+                            false => icons::arrows::ChevronDown,
+                        })
+                        .size(px(12.))
+                        .text_color(theme.text_faint),
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        let (board, id) = folding.clone();
+                        this.workspace.update(cx, |workspace, cx| {
+                            workspace.toggle_column_collapsed(&board, &id, cx)
+                        });
+                        cx.notify();
+                    })),
+            )
             .child(
                 div()
                     .id(SharedString::from(format!("list-group-name-{id}")))
@@ -1472,7 +1559,7 @@ impl Cydonia {
                     .min_w_0()
                     .h(px(LIST_LINE))
                     .overflow_hidden()
-                    .child(card_body(first_line(&text), window, cx)),
+                    .child(card_body(&self.card_docs.of(first_line(&text)), window, cx)),
             )
             .children(resting(status).map(|status| status_chip(status, &theme)))
             // On show, not behind a hover — a card's run is what you look at
@@ -1859,20 +1946,19 @@ impl Cydonia {
         if self.menu != Some(Menu::Lane(id.to_owned())) {
             return None;
         }
-        // What each direction is called. The step and the new lane are the
-        // same two directions, said the way the layout reads.
-        let before = match view {
-            View::Lanes => ("Add column left", "Add column right"),
-            View::List => ("Add column above", "Add column below"),
-        };
-        let (back, on) = match view {
+        // What each direction is called, and the arrow that stands for it. The
+        // step and the new lane are the same two directions, said the way the
+        // space reads.
+        let (back, on, both) = match view {
             View::Lanes => (
-                ("Move left", icons::arrows::ArrowLeft),
-                ("Move right", icons::arrows::ArrowRight),
+                ("Left", icons::arrows::ArrowLeft),
+                ("Right", icons::arrows::ArrowRight),
+                icons::arrows::ArrowLeftRight,
             ),
             View::List => (
-                ("Move up", icons::arrows::ArrowUp),
-                ("Move down", icons::arrows::ArrowDown),
+                ("Above", icons::arrows::ArrowUp),
+                ("Below", icons::arrows::ArrowDown),
+                icons::arrows::ArrowUpDown,
             ),
         };
         // First, and the only row here that makes something: the `Add a card`
@@ -1887,26 +1973,31 @@ impl Cydonia {
         )];
         // Then the two that write a lane either side of this one, so a board
         // is not only ever grown at its right-hand end.
-        for (after, label) in [(false, before.0), (true, before.1)] {
-            let beside = id.to_owned();
-            rows.push(menu::row(
-                Item::action(label).with_icon(icons::math::Plus),
-                move |this, window, cx| this.new_column_beside(&beside, after, window, cx),
-            ));
-        }
-        if at > 0 {
-            let moved = id.to_owned();
-            rows.push(menu::row(
-                Item::action(back.0).with_icon(back.1),
-                move |this, _, cx| this.shift_column(&moved, -1, cx),
-            ));
-        }
-        if at + 1 < lanes {
-            let moved = id.to_owned();
-            rows.push(menu::row(
-                Item::action(on.0).with_icon(on.1),
-                move |this, _, cx| this.shift_column(&moved, 1, cx),
-            ));
+        let beside = [(false, back), (true, on)]
+            .map(|(after, (label, icon))| {
+                let beside = id.to_owned();
+                menu::row(
+                    Item::action(label).with_icon(icon),
+                    move |this, window, cx| this.new_column_beside(&beside, after, window, cx),
+                )
+            })
+            .into_iter()
+            .collect();
+        rows.push(menu::submenu("Add column", icons::math::Plus, beside));
+        // The step is offered only the way the lane can take it, so a lane at
+        // an end carries the one direction and a board of one carries neither.
+        let steps: Vec<_> = [(at > 0, -1, back), (at + 1 < lanes, 1, on)]
+            .into_iter()
+            .filter(|(can, ..)| *can)
+            .map(|(_, step, (label, icon))| {
+                let moved = id.to_owned();
+                menu::row(Item::action(label).with_icon(icon), move |this, _, cx| {
+                    this.shift_column(&moved, step, cx)
+                })
+            })
+            .collect();
+        if !steps.is_empty() {
+            rows.push(menu::submenu("Move column", both, steps));
         }
         let drop = Item::action("Delete column").with_icon(icons::files::Trash);
         let drop = match count {
@@ -1917,7 +2008,7 @@ impl Cydonia {
         };
         let dropped = id.to_owned();
         rows.push(menu::row(drop, move |this, _, cx| {
-            this.drop_column(&dropped, cx)
+            this.ask_delete_column(&dropped, cx)
         }));
         let card = SharedString::from(format!("lane-menu-{id}"));
         Some(popover::anchored_menu_below(
@@ -2044,7 +2135,7 @@ impl Cydonia {
                             .min_w_0()
                             .max_h(px(CARD_MAX_HEIGHT))
                             .overflow_hidden()
-                            .child(card_body(&text, window, cx)),
+                            .child(card_body(&self.card_docs.of(&text), window, cx)),
                     )
                     // What is done *to* the card. The row underneath carries
                     // the run; where the card sits is the drag.
@@ -2182,7 +2273,7 @@ impl Cydonia {
     }
 
     /// Where the card would land, drawn in the gap between two cards rather
-    /// than in the flow: a mark taking layout would push every card under it
+    /// than in the flow: a mark taking space would push every card under it
     /// down, and the aim is read off the bounds it just moved — the mark would
     /// chase the pointer it is answering.
     fn landing_mark(&self, at: Mark, cx: &Context<Self>) -> AnyElement {
@@ -2248,3 +2339,7 @@ impl Cydonia {
 #[cfg(test)]
 #[path = "../../tests/unit/board_find.rs"]
 mod find_tests;
+
+#[cfg(test)]
+#[path = "../../tests/unit/board_docs.rs"]
+mod doc_tests;

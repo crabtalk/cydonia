@@ -87,6 +87,26 @@ pub(crate) fn held() -> Option<String> {
     })
 }
 
+/// Say that one argument takes either a string or a list of them.
+///
+/// The `anyOf` rather than an array alone: naming one thing is what most calls
+/// do, and a client that had to wrap every one of them in brackets would be
+/// paying for the list on every call that is not one. [`Args::list`] reads
+/// both shapes back.
+///
+/// The description is the argument's own. A tool that takes several says so in
+/// the [`Arg`] it was built with — see `board::CARDS`, which is [`board::CARD`]
+/// with a line about lists on it.
+pub(crate) fn many(schema: &mut Value, arg: Arg) {
+    schema["properties"][arg.name] = json!({
+        "description": arg.about,
+        "anyOf": [
+            { "type": "string" },
+            { "type": "array", "items": { "type": "string" } },
+        ],
+    });
+}
+
 /// An object schema over required strings. Tools can add optional fields.
 ///
 /// `bound` is whether the caller already has a project, in which case the

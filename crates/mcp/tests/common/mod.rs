@@ -50,12 +50,19 @@ impl Scratch {
     /// test that skipped this would be testing a directory the app never
     /// opened. Left on beside whatever else is held, so a test with two
     /// scratches can have a call name the one it is not bound to.
+    /// Every door open. What each switch withholds is its own test — see
+    /// `a_read_only_server_offers_no_way_to_write` and
+    /// `deleting_is_withheld_until_its_own_switch_is_on` — and a helper that
+    /// held one shut would make every other test about the switch.
     pub fn server(&self) -> Server {
         Rail::also(self.path());
         Server::new()
             .mount(&tools::article::TOOLS)
             .mount(&tools::board::TOOLS)
             .mount(&tools::project::TOOLS)
+            .deletes(std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
+                true,
+            )))
     }
 }
 
@@ -119,6 +126,16 @@ pub fn refused(outcome: Outcome) -> String {
         Err(Trouble::Refused(why)) => why,
         Err(Trouble::Invalid(why)) => panic!("invalid, not refused: {why}"),
         Ok(answer) => panic!("it worked: {}", answer.text),
+    }
+}
+
+/// What a call answered beside its words — the `data` a tool puts structured
+/// results in.
+pub fn structured(outcome: Outcome) -> serde_json::Value {
+    match outcome {
+        Ok(answer) => answer.data.expect("the call answered with data"),
+        Err(Trouble::Refused(why)) => panic!("refused: {why}"),
+        Err(Trouble::Invalid(why)) => panic!("invalid: {why}"),
     }
 }
 

@@ -166,6 +166,15 @@ impl State {
             .map(|(_, selection)| selection)
     }
 
+    /// Whether the pointer is dragging the head of item `ix`'s selection.
+    ///
+    /// Narrower than [`Self::dragging`], which says only that the button is
+    /// down: the selection names the item the press came down in, and
+    /// [`Self::point`] discards a move reported by any other.
+    fn dragging_in(&self, ix: usize) -> bool {
+        self.dragging && self.selection(ix).is_some()
+    }
+
     /// Answer the pointer over item `ix`. A press starts a selection there and
     /// drops whatever another item held; a move drags its head.
     pub fn point(&mut self, ix: usize, pointer: Pointer) {
@@ -279,7 +288,7 @@ fn prose(
         &doc,
         &layouts,
         chat.transcript.selection(ix),
-        chat.transcript.dragging,
+        chat.transcript.dragging_in(ix),
         window,
         cx,
         move |workspace, pointer, cx| {

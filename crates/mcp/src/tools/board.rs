@@ -19,7 +19,7 @@
 
 use crate::{
     tool::{Answer, Arg, Args, Outcome, Tool, Trouble},
-    tools::{PROJECT, fields, on_the_rail, root},
+    tools::{PROJECT, fields, many, on_the_rail, root},
 };
 use artifact::{
     board::Board,
@@ -31,6 +31,18 @@ use std::path::Path;
 const BOARD: Arg = Arg {
     name: "board",
     about: "The board: its project reference (#12), key (ROAD), name, or storage id.",
+};
+/// The same argument where several are taken at once, the way [`CARDS`] stands
+/// beside [`CARD`].
+const BOARDS: Arg = Arg {
+    name: "board",
+    about: "The board, or several: each its project reference (#12), key, name or id.",
+};
+/// Which way the switch goes — the same wording `article::ARCHIVED` carries,
+/// because it is the same act on the other surface.
+const ARCHIVED: Arg = Arg {
+    name: "archived",
+    about: "true to put it away, false to bring it back. Left out, it is put away.",
 };
 const CARD: Arg = Arg {
     name: "card",
@@ -46,6 +58,12 @@ const CARDS: Arg = Arg {
 const COLUMN: Arg = Arg {
     name: "column",
     about: "The column: its name, or its id.",
+};
+/// The same argument where several are taken at once. A second const rather
+/// than a flag on [`COLUMN`], the way [`CARDS`] stands beside [`CARD`].
+const COLUMNS: Arg = Arg {
+    name: "column",
+    about: "The column, or several: each its name or its id.",
 };
 /// Where a move takes the card. Their own arguments rather than [`BOARD`] and
 /// [`PROJECT`], which are where it is now.
@@ -76,7 +94,7 @@ const BEFORE_COLUMN: Arg = Arg {
 /// now. A const each, so the tool that takes one names the one it takes.
 const TEXT: Arg = Arg {
     name: "text",
-    about: "What the card says.",
+    about: "What the card says, or what each of several cards says — they land in the order they are given.",
 };
 const TEXT_NOW: Arg = Arg {
     name: "text",
@@ -84,7 +102,7 @@ const TEXT_NOW: Arg = Arg {
 };
 const NAME: Arg = Arg {
     name: "name",
-    about: "What the column is called.",
+    about: "What the column is called, or what each of several is called — they are added in the order they are given.",
 };
 const NAME_NOW: Arg = Arg {
     name: "name",
@@ -95,17 +113,29 @@ const BOARD_NAME: Arg = Arg {
     name: "name",
     about: "What the new board is called.",
 };
+const BOARD_NAME_NOW: Arg = Arg {
+    name: "name",
+    about: "What the board should be called now.",
+};
 const KEY: Arg = Arg {
     name: "key",
     about: "A unique board key for card handles, such as ROAD. Normalized to uppercase letters and digits.",
 };
+/// The key where changing it is the optional half of a rename. Its own const
+/// because the consequence is the whole of what a caller needs told, and
+/// [`KEY`] is read by a caller who has no handles yet.
+const KEY_NOW: Arg = Arg {
+    name: "key",
+    about: "A new key for card handles, such as ROAD. Every handle on the board is read off it, so ROAD-12 becomes BACK-12. Left out, the key does not change.",
+};
 
-pub static TOOLS: [Tool; 12] = [
+pub static TOOLS: [Tool; 15] = [
     Tool {
         name: "board_add",
         description: "Create a board with a name and unique key. Returns its id, project number, key, and columns. Use board_add_column to add columns.",
         schema: |bound| fields(bound, &[PROJECT, BOARD_NAME, KEY]),
         writes: true,
+        deletes: false,
         call: add,
     },
     Tool {
@@ -113,20 +143,71 @@ pub static TOOLS: [Tool; 12] = [
         description: "List the project's boards, with how much is on each.",
         schema: |bound| fields(bound, &[PROJECT]),
         writes: false,
+        deletes: false,
         call: list,
+    },
+    Tool {
+        name: "board_rename",
+        description: "Rename a board, and optionally re-key it. A key another board here already has is refused.",
+        schema: |bound| {
+            let mut schema = fields(bound, &[PROJECT, BOARD, BOARD_NAME_NOW]);
+            schema["properties"][KEY_NOW.name] = json!({
+                "type": "string",
+                "description": KEY_NOW.about,
+            });
+            schema
+        },
+        writes: true,
+        deletes: false,
+        call: rename,
     },
     Tool {
         name: "board_read",
         description: "Read one board: its columns, and the cards under them by handle.",
         schema: |bound| fields(bound, &[PROJECT, BOARD]),
         writes: false,
+        deletes: false,
         call: read,
     },
     Tool {
-        name: "board_add_card",
-        description: "Put a new card at the end of a column, and answer its handle.",
-        schema: |bound| fields(bound, &[PROJECT, BOARD, COLUMN, TEXT]),
+        name: "board_archive",
+        description: "Put a board away, or bring one back. An archived board is listed under the divider rather than gone, and its cards keep their handles.",
+        schema: |bound| {
+            let mut schema = fields(bound, &[PROJECT, BOARDS]);
+            many(&mut schema, BOARDS);
+            schema["properties"][ARCHIVED.name] = json!({
+                "type": "boolean",
+                "description": ARCHIVED.about,
+                "default": true,
+            });
+            schema
+        },
         writes: true,
+        deletes: false,
+        call: archive,
+    },
+    Tool {
+        name: "board_remove",
+        description: "Delete a board and every card on it. This cannot be undone; archive it instead to put it away.",
+        schema: |bound| {
+            let mut schema = fields(bound, &[PROJECT, BOARDS]);
+            many(&mut schema, BOARDS);
+            schema
+        },
+        writes: true,
+        deletes: true,
+        call: remove,
+    },
+    Tool {
+        name: "board_add_card",
+        description: "Put a new card at the end of a column, or several in one write, and answer their handles.",
+        schema: |bound| {
+            let mut schema = fields(bound, &[PROJECT, BOARD, COLUMN, TEXT]);
+            many(&mut schema, TEXT);
+            schema
+        },
+        writes: true,
+        deletes: false,
         call: add_card,
     },
     Tool {
@@ -134,6 +215,7 @@ pub static TOOLS: [Tool; 12] = [
         description: "Replace what a card says.",
         schema: |bound| fields(bound, &[PROJECT, CARD, TEXT_NOW]),
         writes: true,
+        deletes: false,
         call: rewrite_card,
     },
     Tool {
@@ -142,48 +224,53 @@ pub static TOOLS: [Tool; 12] = [
         schema: |bound| {
             let mut schema = fields(bound, &[PROJECT, CARDS, STATUS]);
             schema["properties"][STATUS.name]["enum"] = json!(statuses());
-            // One or a list of them, which is the one argument in these tools
-            // that takes either — see [`CARDS`].
-            schema["properties"][CARDS.name] = json!({
-                "description": CARDS.about,
-                "anyOf": [
-                    { "type": "string" },
-                    { "type": "array", "items": { "type": "string" } },
-                ],
-            });
+            many(&mut schema, CARDS);
             schema
         },
         writes: true,
+        deletes: false,
         call: set_card_status,
     },
     Tool {
         name: "board_move_card",
-        description: "Carry a card to the end of another column, another board, or a board in another project. Moving to another board gives it a new handle and clears the session it was dispatched to.",
+        description: "Carry a card or several to the end of another column, another board, or a board in another project. Moving to another board gives each a new handle and clears the session it was dispatched to.",
         schema: |bound| {
-            let mut schema = fields(bound, &[PROJECT, CARD, COLUMN, TO_BOARD, TO_PROJECT]);
+            let mut schema = fields(bound, &[PROJECT, CARDS, COLUMN, TO_BOARD, TO_PROJECT]);
             schema["required"] = json!(
-                [PROJECT.name, CARD.name]
+                [PROJECT.name, CARDS.name]
                     .iter()
                     .filter(|name| !bound || **name != PROJECT.name)
                     .collect::<Vec<_>>()
             );
+            many(&mut schema, CARDS);
             schema
         },
         writes: true,
+        deletes: false,
         call: move_card,
     },
     Tool {
         name: "board_remove_card",
-        description: "Take a card off its board for good.",
-        schema: |bound| fields(bound, &[PROJECT, CARD]),
+        description: "Take a card off its board for good, or several in one write. They may be on different boards.",
+        schema: |bound| {
+            let mut schema = fields(bound, &[PROJECT, CARDS]);
+            many(&mut schema, CARDS);
+            schema
+        },
         writes: true,
+        deletes: false,
         call: remove_card,
     },
     Tool {
         name: "board_add_column",
-        description: "Add a column at the right-hand end of a board.",
-        schema: |bound| fields(bound, &[PROJECT, BOARD, NAME]),
+        description: "Add a column at the right-hand end of a board, or several in one write.",
+        schema: |bound| {
+            let mut schema = fields(bound, &[PROJECT, BOARD, NAME]);
+            many(&mut schema, NAME);
+            schema
+        },
         writes: true,
+        deletes: false,
         call: add_column,
     },
     Tool {
@@ -191,6 +278,7 @@ pub static TOOLS: [Tool; 12] = [
         description: "Rename a column. Cards keep the handles they already have.",
         schema: |bound| fields(bound, &[PROJECT, BOARD, COLUMN, NAME_NOW]),
         writes: true,
+        deletes: false,
         call: rename_column,
     },
     Tool {
@@ -205,13 +293,19 @@ pub static TOOLS: [Tool; 12] = [
             schema
         },
         writes: true,
+        deletes: false,
         call: move_column,
     },
     Tool {
         name: "board_remove_column",
-        description: "Drop an empty column. A column holding cards is refused — empty it first.",
-        schema: |bound| fields(bound, &[PROJECT, BOARD, COLUMN]),
+        description: "Drop an empty column, or several in one write. A column holding cards is refused — empty it first.",
+        schema: |bound| {
+            let mut schema = fields(bound, &[PROJECT, BOARD, COLUMNS]);
+            many(&mut schema, COLUMNS);
+            schema
+        },
         writes: true,
+        deletes: false,
         call: remove_column,
     },
 ];
@@ -235,6 +329,101 @@ fn add(args: Args<'_>) -> Outcome {
         .create_board(name, &key)
         .ok_or_else(|| Trouble::Refused("The board could not be written.".into()))?;
     Ok(Answer::said(outline(&board)).with(shape(&board)))
+}
+
+/// The name, and the key with it where one was given.
+///
+/// Both are written in one save: a rename that took two would leave the board
+/// named anew under the old key if the second never ran.
+fn rename(args: Args<'_>) -> Outcome {
+    let project = &store(&args)?;
+    let mut board = board(project, args.text(BOARD)?)?;
+    let name = args.text(BOARD_NAME_NOW)?.trim();
+    if name.is_empty() {
+        return Err(Trouble::Refused("A board needs a name.".into()));
+    }
+    let key = match args.maybe(KEY_NOW) {
+        Some(given) => {
+            let key = artifact::board::key::normalize(given).ok_or_else(|| {
+                Trouble::Refused("A key needs at least one letter or digit.".into())
+            })?;
+            // Among this project's boards and no further, which is as far as a
+            // handle carries — and never against this board's own.
+            if project
+                .boards()
+                .iter()
+                .any(|other| other.id != board.id && other.key == key)
+            {
+                return Err(Trouble::Refused(format!(
+                    "{key} is another board's key here."
+                )));
+            }
+            Some(key)
+        }
+        None => None,
+    };
+    let was = match board.name.is_empty() {
+        true => board.id.clone(),
+        false => board.name.clone(),
+    };
+    let rekeyed = key.as_ref().filter(|key| **key != board.key).map(|key| {
+        let from = board.key.clone();
+        (from, key.clone())
+    });
+    board.name = name.to_owned();
+    if let Some(key) = key {
+        board.key = key;
+    }
+    project.save_board(&mut board);
+    let said = match rekeyed {
+        Some((from, to)) => format!("{was} is now {name}, and {from}-1 is now {to}-1"),
+        None => format!("{was} is now {name}"),
+    };
+    Ok(Answer::said(said).with(shape(&board)))
+}
+
+/// One board or a run of them, put away or brought back in one write.
+fn archive(args: Args<'_>) -> Outcome {
+    let project = &store(&args)?;
+    let archived = args.boolean(ARCHIVED, true)?;
+    let mut said: Vec<String> = Vec::new();
+    for needle in args.list(BOARDS)? {
+        let mut board = board(project, needle)?;
+        board.archived = archived;
+        said.push(spoken(&board));
+        project.save_board(&mut board);
+    }
+    let what = match archived {
+        true => "put away",
+        false => "brought back",
+    };
+    Ok(Answer::said(format!("{} {what}", said.join(", "))))
+}
+
+/// One board or a run of them, off the disk for good.
+///
+/// Every one is found before any is removed, the way a run of columns is —
+/// a half-emptied project is not what a refused call should leave behind.
+fn remove(args: Args<'_>) -> Outcome {
+    let project = &store(&args)?;
+    let mut found = Vec::new();
+    for needle in args.list(BOARDS)? {
+        found.push(board(project, needle)?);
+    }
+    let gone: Vec<String> = found.iter().map(spoken).collect();
+    for board in &found {
+        project.remove_board(&board.id);
+    }
+    Ok(Answer::said(format!("{} deleted", gone.join(", "))))
+}
+
+/// What to call a board out loud: its key and name, which is how the listing
+/// says it.
+fn spoken(board: &Board) -> String {
+    match board.name.is_empty() {
+        true => board.key.clone(),
+        false => format!("{} ({})", board.key, board.name),
+    }
 }
 
 fn list(args: Args<'_>) -> Outcome {
@@ -266,21 +455,34 @@ fn read(args: Args<'_>) -> Outcome {
     Ok(Answer::said(outline(&board)).with(shape(&board)))
 }
 
+/// One card or a run of them, into one lane, in the order they were given.
+///
+/// The board is written once however many were added: it is read into memory
+/// here, and a copy saved per card would each be a save of the same starting
+/// point — the last would land holding only its own card.
 fn add_card(args: Args<'_>) -> Outcome {
     let project = &store(&args)?;
     let mut board = board(project, args.text(BOARD)?)?;
     let column = column(&board, args.text(COLUMN)?)?;
-    let text = args.text(TEXT)?.to_owned();
-    let name = board.column(&column).map(|column| column.name.clone());
-    let card = board
-        .add_card(&column, text)
-        .cloned()
-        .expect("the column was resolved a line ago");
-    let handle = board.handle_of(&card).unwrap_or_else(|| card.id.clone());
+    let name = board
+        .column(&column)
+        .map(|column| column.name.clone())
+        .unwrap_or_default();
+    let mut added: Vec<Value> = Vec::new();
+    let mut handles: Vec<String> = Vec::new();
+    for text in args.list(TEXT)? {
+        let card = board
+            .add_card(&column, text.to_owned())
+            .cloned()
+            .expect("the column was resolved above");
+        let handle = board.handle_of(&card).unwrap_or_else(|| card.id.clone());
+        added.push(json!({ "id": card.id, "handle": handle }));
+        handles.push(handle);
+    }
     project.save_board(&mut board);
     Ok(
-        Answer::said(format!("{handle} added to {}", name.unwrap_or_default()))
-            .with(json!({ "id": card.id, "handle": handle })),
+        Answer::said(format!("{} added to {name}", handles.join(", ")))
+            .with(json!({ "cards": added })),
     )
 }
 
@@ -363,11 +565,27 @@ fn set_card_status(args: Args<'_>) -> Outcome {
     .with(json!({ "cards": tagged })))
 }
 
+/// One card or a run of them, which may sit on different boards, moved to one
+/// landing.
+///
+/// Every card is located and every lane resolved before any of them moves, and
+/// nothing is written until all of it has taken: a refusal is the whole call
+/// refused, so a caller is never left guessing which half of a list took. The
+/// same rule as [`set_card_status`], and for the same reason a board is read
+/// once and written once however many of its cards were named.
 fn move_card(args: Args<'_>) -> Outcome {
     let here = root(&args)?;
     let project = &fs::Project::new(here);
-    let (mut board, id) = locate(project, args.text(CARD)?)?;
-    let handle = named(&board, &id);
+    let found: Vec<(Board, String)> = args
+        .list(CARDS)?
+        .into_iter()
+        .map(|needle| locate(project, needle))
+        .collect::<Result<_, _>>()?;
+    let spoken = found
+        .iter()
+        .map(|(board, id)| named(board, id))
+        .collect::<Vec<_>>()
+        .join(", ");
     let landing = match args.maybe(TO_PROJECT) {
         Some(named) => on_the_rail(Path::new(named))?,
         None => here,
@@ -378,81 +596,175 @@ fn move_card(args: Args<'_>) -> Outcome {
         (None, true) => None,
         (None, false) => {
             return Err(Trouble::Refused(format!(
-                "name the board in {} to move {handle} to — it has {}",
+                "name the board in {} to move {spoken} to — it has {}",
                 landing.display(),
                 keys(&fs::Project::new(landing).boards())
             )));
         }
         (Some(needle), _) => Some(needle),
     };
+    // Two cards on one board arrive as two reads of it, and saving each copy in
+    // turn would put back one that predates the other's edit — the last write
+    // would undo every move before it. A board is gathered once and written
+    // once, however many of its cards were named.
+    let mut sources: Vec<(Board, Vec<String>)> = Vec::new();
+    for (board, id) in found {
+        match sources.iter_mut().find(|(held, _)| held.id == board.id) {
+            Some((_, ids)) => ids.push(id),
+            None => sources.push((board, vec![id])),
+        }
+    }
     let Some(needle) = elsewhere else {
-        return within(project, board, &id, &handle, args.text(COLUMN)?);
+        return within(project, sources, args.text(COLUMN)?, &spoken);
     };
     let destination = &fs::Project::new(landing);
     let mut to = self::board(destination, needle)?;
-    if to.id == board.id && landing == here {
-        return within(project, board, &id, &handle, args.text(COLUMN)?);
+    // The board they are already on, where it is the one being moved to: those
+    // cards are changing lanes rather than being carried, and they change them
+    // on the one copy that is about to be written.
+    let home = (landing == here).then(|| to.id.clone());
+    if sources
+        .iter()
+        .all(|(board, _)| home.as_deref() == Some(&board.id))
+    {
+        return within(project, sources, args.text(COLUMN)?, &spoken);
+    }
+    if to.columns.is_empty() {
+        return Err(Trouble::Refused(format!(
+            "{spoken} has nowhere to land on {} — it has no columns",
+            to.label()
+        )));
     }
     let lane = match args.maybe(COLUMN) {
         Some(named) => Some(column(&to, named)?),
         None => None,
     };
-    let landed = artifact::board::carry_card(&mut board, &mut to, &id, lane.as_deref())
-        .ok_or_else(|| {
-            Trouble::Refused(format!(
-                "{handle} has nowhere to land on {} — it has no columns",
-                to.label()
-            ))
-        })?;
-    let label = to.label().to_owned();
-    destination.save_board(&mut to);
-    project.save_board(&mut board);
-    Ok(
-        Answer::said(format!("{handle} moved to {label} as {landed}")).with(json!({
-            "card": landed,
-            "board": to.id,
-            "project": landing,
-        })),
-    )
-}
-
-/// The same move, between two lanes of one board — where the column is what
-/// the move is, so it is asked for rather than guessed at.
-fn within(project: &fs::Project, mut board: Board, id: &str, handle: &str, named: &str) -> Outcome {
-    let to = column(&board, named)?;
-    let name = board.column(&to).map(|column| column.name.clone());
-    if !board.move_card(id, &to) {
-        return Err(Trouble::Refused(format!("{handle} would not move")));
+    let mut carried: Vec<String> = Vec::new();
+    let mut moved: Vec<Board> = Vec::new();
+    for (mut board, ids) in sources {
+        if home.as_deref() == Some(&board.id) {
+            // Cards already on the destination, named alongside cards that are
+            // not. The lane is the one asked for; without one there is no move
+            // to make on this board, so they stay where they sit.
+            if let Some(lane) = &lane {
+                for id in &ids {
+                    to.move_card(id, lane);
+                    carried.push(named(&to, id));
+                }
+            }
+            continue;
+        }
+        for id in &ids {
+            // `carry_card` answers `None` only for a card its board does not
+            // hold or a destination with no lanes, and both were ruled out
+            // above — see [`locate`] and the refusal over `to.columns`.
+            if let Some(landed) =
+                artifact::board::carry_card(&mut board, &mut to, id, lane.as_deref())
+            {
+                carried.push(landed);
+            }
+        }
+        moved.push(board);
     }
-    project.save_board(&mut board);
+    let label = to.label().to_owned();
+    for board in &mut moved {
+        project.save_board(board);
+    }
+    destination.save_board(&mut to);
     Ok(Answer::said(format!(
-        "{handle} moved to {}",
-        name.unwrap_or_default()
-    )))
+        "{spoken} moved to {label} as {}",
+        carried.join(", ")
+    ))
+    .with(json!({
+        "cards": carried,
+        "board": to.id,
+        "project": landing,
+    })))
 }
 
+/// The same move, between the lanes of the boards the cards are already on —
+/// where the column is what the move is, so it is asked for rather than
+/// guessed at. A lane of each board, since a run of cards may span several.
+fn within(
+    project: &fs::Project,
+    sources: Vec<(Board, Vec<String>)>,
+    lane: &str,
+    spoken: &str,
+) -> Outcome {
+    // Every lane found before any card moves: a name that is not on one of
+    // these boards refuses the whole call rather than the half that was left.
+    let mut ready: Vec<(Board, Vec<String>, String)> = Vec::new();
+    for (board, ids) in sources {
+        let to = column(&board, lane)?;
+        ready.push((board, ids, to));
+    }
+    let mut name = String::new();
+    let mut moved: Vec<Board> = Vec::new();
+    for (mut board, ids, to) in ready {
+        if let Some(column) = board.column(&to) {
+            name = column.name.clone();
+        }
+        for id in &ids {
+            board.move_card(id, &to);
+        }
+        moved.push(board);
+    }
+    for board in &mut moved {
+        project.save_board(board);
+    }
+    Ok(Answer::said(format!("{spoken} moved to {name}")))
+}
+
+/// One card or a run of them, which may sit on different boards.
+///
+/// Every card is located before any is removed: a refusal on one of them is
+/// the whole call refused, so a caller is never left guessing which half of a
+/// list took. The same rule as [`set_card_status`], and a board is gathered
+/// once and written once however many of its cards were named.
 fn remove_card(args: Args<'_>) -> Outcome {
     let project = &store(&args)?;
-    let (mut board, id) = locate(project, args.text(CARD)?)?;
-    let handle = named(&board, &id);
-    let card = board
-        .remove_card(&id)
-        .expect("the card was located a line ago");
-    project.save_board(&mut board);
-    Ok(Answer::said(format!(
-        "{handle} removed — {}",
-        line(&card.text)
-    )))
+    let found: Vec<(Board, String)> = args
+        .list(CARDS)?
+        .into_iter()
+        .map(|needle| locate(project, needle))
+        .collect::<Result<_, _>>()?;
+    let mut boards: Vec<(Board, Vec<String>)> = Vec::new();
+    for (board, id) in found {
+        match boards.iter_mut().find(|(held, _)| held.id == board.id) {
+            Some((_, ids)) => ids.push(id),
+            None => boards.push((board, vec![id])),
+        }
+    }
+    let mut gone: Vec<String> = Vec::new();
+    for (mut board, ids) in boards {
+        for id in &ids {
+            let handle = named(&board, id);
+            let card = board.remove_card(id).expect("the card was located above");
+            gone.push(format!("{handle} — {}", line(&card.text)));
+        }
+        project.save_board(&mut board);
+    }
+    Ok(Answer::said(format!("removed {}", gone.join("; "))))
 }
 
+/// One column or a run of them, at the right-hand end in the order given —
+/// which is how a board is laid out in a single call rather than one per lane.
 fn add_column(args: Args<'_>) -> Outcome {
     let project = &store(&args)?;
     let mut board = board(project, args.text(BOARD)?)?;
-    let name = args.text(NAME)?;
-    let id = board.add_column(name).id.clone();
+    let mut added: Vec<Value> = Vec::new();
+    let mut names: Vec<String> = Vec::new();
+    for name in args.list(NAME)? {
+        let column = board.add_column(name);
+        added.push(json!({ "id": column.id, "name": column.name }));
+        names.push(column.name.clone());
+    }
     let label = board.label().to_owned();
     project.save_board(&mut board);
-    Ok(Answer::said(format!("{name} added to {label}")).with(json!({ "id": id })))
+    Ok(
+        Answer::said(format!("{} added to {label}", names.join(", ")))
+            .with(json!({ "columns": added })),
+    )
 }
 
 fn rename_column(args: Args<'_>) -> Outcome {
@@ -497,24 +809,42 @@ fn move_column(args: Args<'_>) -> Outcome {
     }))
 }
 
+/// One column or a run of them.
+///
+/// Every lane is found and every one of them checked empty before any is
+/// dropped: a board half emptied of its lanes is not what a refused call
+/// should leave behind.
 fn remove_column(args: Args<'_>) -> Outcome {
     let project = &store(&args)?;
     let mut board = board(project, args.text(BOARD)?)?;
-    let id = column(&board, args.text(COLUMN)?)?;
-    let name = board
-        .column(&id)
-        .map(|column| column.name.clone())
-        .unwrap_or_default();
     let label = board.label().to_owned();
-    // The refusal is the board's, not this tool's: a column is only where work
-    // sits, so dropping one has no reading that means "and the cards in it".
-    if !board.remove_column(&id) {
-        return Err(Trouble::Refused(format!(
-            "{name} still holds cards — a column is only where work sits, so move them out first"
-        )));
+    let mut lanes: Vec<(String, String)> = Vec::new();
+    for needle in args.list(COLUMNS)? {
+        let id = column(&board, needle)?;
+        let Some(column) = board.column(&id) else {
+            continue;
+        };
+        // The refusal is the board's rule, not this tool's: a column is only
+        // where work sits, so dropping one has no reading that means "and the
+        // cards in it".
+        if !column.cards.is_empty() {
+            return Err(Trouble::Refused(format!(
+                "{} still holds cards — a column is only where work sits, so move them out first",
+                column.name
+            )));
+        }
+        lanes.push((id, column.name.clone()));
+    }
+    let mut names: Vec<String> = Vec::new();
+    for (id, name) in &lanes {
+        board.remove_column(id);
+        names.push(name.clone());
     }
     project.save_board(&mut board);
-    Ok(Answer::said(format!("{name} removed from {label}")))
+    Ok(Answer::said(format!(
+        "{} removed from {label}",
+        names.join(", ")
+    )))
 }
 
 // ── addressing ───────────────────────────────────────────────────

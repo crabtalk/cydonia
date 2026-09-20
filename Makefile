@@ -15,10 +15,12 @@ ARCH     := $(shell uname -m)
 # Which cargo profile the app is built with, and the directory that names.
 # `release` everywhere, including `make release`: it is the size-wound profile
 # and the one `cargo install` lands on too, so what ships is what a bundle is.
-# `make bundle PROFILE=debug` is the way to a bundle that still lists the
-# Developer section, which is compiled out of a release build — see
-# crates/cydonia/src/view/settings/mod.rs.
 PROFILE  ?= release
+# Cargo features the app is built with. Empty for everything that ships;
+# `make bundle FEATURES=developer` lists the Developer section in a bundle
+# built at the shipping profile — see crates/cydonia/src/view/settings/mod.rs.
+FEATURES ?=
+CARGOOPT := $(if $(FEATURES),--features $(FEATURES),)
 ICON     := assets/icon.png
 ICON_URL := https://cdn.crabtalk.ai/logos/cydonia.png
 APP      := target/bundle/cydonia.app
@@ -42,7 +44,7 @@ CUSTOMICON := 0000000000000000040000000000000000000000000000000000000000000000
 .PHONY: bundle dmg release icon open clean
 
 bundle:
-	cargo build --profile $(PROFILE)
+	cargo build --profile $(PROFILE) $(CARGOOPT)
 	rm -rf $(APP) $(ICONSET)
 	mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources
 	cp target/$(PROFILE)/cydonia $(APP)/Contents/MacOS/cydonia

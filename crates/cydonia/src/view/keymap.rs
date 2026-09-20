@@ -33,7 +33,7 @@ use crate::{
 };
 use bezel::{
     gpui::{App, DummyKeyboardMapper, KeyBinding, KeybindingKeystroke, Keystroke, SharedString},
-    ui::{focus, input, keys},
+    ui::{combobox, focus, input, keys},
 };
 
 /// One command whose chord is the reader's to choose.
@@ -345,6 +345,7 @@ pub fn bind_all(shortcuts: &Shortcuts, cx: &mut App) {
     // is this same list bound, and going through the data is what lets a
     // command below win a chord one of them holds.
     cx.bind_keys(input::bindings());
+    cx.bind_keys(combobox::bindings());
     cx.bind_keys(focus::bindings());
     cx.bind_keys(editor::keys::bindings());
     if shortcuts.emacs {
