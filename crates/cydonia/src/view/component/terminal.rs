@@ -432,8 +432,15 @@ struct Tab {
     _directory: Subscription,
 }
 
+/// Where a shell should start, asked of the window as the tab is made.
+type Cwd = Box<dyn Fn(&App) -> Option<std::path::PathBuf>>;
+
 pub struct TerminalPanel {
     cwd: std::path::PathBuf,
+    /// Where the next tab opens, asked as the tab is made. The panel stays
+    /// open across everything the window moves to, so the directory it was
+    /// first opened at is not where a shell started now belongs.
+    next_cwd: Cwd,
     tabs: Vec<Tab>,
     active: usize,
     next_id: usize,
@@ -442,9 +449,18 @@ pub struct TerminalPanel {
 impl EventEmitter<Empty> for TerminalPanel {}
 
 impl TerminalPanel {
-    pub fn new(cwd: &Path, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    /// `cwd` is where the first tab opens; `next_cwd` is asked for every one
+    /// after it. Two arguments because the first is made while the caller is
+    /// still mid-update, and cannot read itself back.
+    pub fn new(
+        cwd: &Path,
+        next_cwd: impl Fn(&App) -> Option<std::path::PathBuf> + 'static,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let mut panel = Self {
             cwd: cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf()),
+            next_cwd: Box::new(next_cwd),
             tabs: Vec::new(),
             active: 0,
             next_id: 1,
@@ -456,7 +472,13 @@ impl TerminalPanel {
     fn add(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let id = self.next_id;
         self.next_id += 1;
-        let terminal = cx.new(|cx| Terminal::new(&self.cwd, cx));
+        let cwd = match self.tabs.is_empty() {
+            true => self.cwd.clone(),
+            false => (self.next_cwd)(cx)
+                .map(|cwd| cwd.canonicalize().unwrap_or(cwd))
+                .unwrap_or_else(|| self.cwd.clone()),
+        };
+        let terminal = cx.new(|cx| Terminal::new(&cwd, cx));
         let exit = cx.subscribe_in(&terminal, window, move |this, _, _: &Exited, window, cx| {
             this.close(id, window, cx);
         });

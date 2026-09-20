@@ -71,6 +71,11 @@ pub struct State {
     /// an id whose file has since gone lands on one too.
     #[serde(default)]
     pub layout: Option<String>,
+    /// The order the sidebar lists the layouts in, by id. A layout this does
+    /// not name is one made since it was last written, and is listed above
+    /// everything here — the same rule `order` above follows for entries.
+    #[serde(default)]
+    pub layouts: Vec<String>,
 }
 
 /// `~/.config/cydonia/state.toml`, beside the settings it is not.
@@ -103,6 +108,7 @@ pub fn restore() -> State {
         order: stored.order,
         pinned: stored.pinned,
         layout: stored.layout,
+        layouts: stored.layouts,
     }
 }
 

@@ -830,3 +830,53 @@ fn making_an_entry_unfolds_the_project_it_lands_in(cx: &mut gpui::TestAppContext
         assert!(!workspace.projects[0].expanded);
     });
 }
+
+/// Layouts are listed in hand order once one has been dragged, and a re-read
+/// off disk keeps it — the files carry the time they were written and nothing
+/// else.
+#[gpui::test]
+fn a_layout_keeps_the_place_it_was_dragged_to(cx: &mut gpui::TestAppContext) {
+    let scratch = Scratch::new("reorder");
+    let (workspace, a, b) = two_boards(&scratch, cx);
+
+    workspace.update(cx, |workspace, cx| {
+        workspace.arrange(&a, &b, Side::Right, cx);
+        // A second layout, over two boards the first one does not hold: an
+        // entry is in one layout at a time.
+        workspace.new_board(0, "Third".into(), "THR", cx).ok();
+        workspace.new_board(0, "Fourth".into(), "FOU", cx).ok();
+        let c = workspace.member_of(0, Showing::Board(0)).expect("a member");
+        let d = workspace.member_of(0, Showing::Board(1)).expect("a member");
+        workspace.leave_layout();
+        workspace.arrange(&c, &d, Side::Right, cx);
+
+        let ids: Vec<String> = workspace
+            .layouts
+            .iter()
+            .map(|layout| layout.id.clone())
+            .collect();
+        assert_eq!(workspace.layout, Some(0), "the newest is the open one");
+
+        workspace.move_layout(0, 1, cx);
+        assert_eq!(
+            workspace
+                .layouts
+                .iter()
+                .map(|layout| layout.id.clone())
+                .collect::<Vec<_>>(),
+            vec![ids[1].clone(), ids[0].clone()]
+        );
+        assert_eq!(workspace.layout, Some(1), "and it is still the open one");
+
+        workspace.reload_layouts(cx);
+        assert_eq!(
+            workspace
+                .layouts
+                .iter()
+                .map(|layout| layout.id.clone())
+                .collect::<Vec<_>>(),
+            vec![ids[1].clone(), ids[0].clone()],
+            "a re-read is not a re-sort"
+        );
+    });
+}

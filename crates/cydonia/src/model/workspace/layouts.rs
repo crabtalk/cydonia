@@ -42,11 +42,48 @@ impl Workspace {
         self.layouts.get_mut(self.layout?)
     }
 
+    /// Put `layouts` in the order `ids` names them, with anything that list
+    /// does not name in front, newest first.
+    ///
+    /// A layout's file carries no place in the list: [`store::all`] reads them
+    /// back by the time they were written, and the hand order is kept beside
+    /// the rest of the window's bookkeeping — see
+    /// [`crate::model::state::State::layouts`].
+    pub(super) fn in_order(layouts: Vec<Layout>, ids: &[String]) -> Vec<Layout> {
+        let mut layouts = layouts;
+        layouts.sort_by_key(|layout| {
+            ids.iter()
+                .position(|id| *id == layout.id)
+                .map_or(0, |at| at + 1)
+        });
+        layouts
+    }
+
+    /// Carry a layout to another place in the list. `layout` follows the one
+    /// it points at rather than the index it sits on, the way `active` does
+    /// for projects — see [`Workspace::move_project`].
+    pub fn move_layout(&mut self, from: usize, to: usize, cx: &mut Context<Self>) {
+        if from == to || from >= self.layouts.len() || to >= self.layouts.len() {
+            return;
+        }
+        let layout = self.layouts.remove(from);
+        self.layouts.insert(to, layout);
+        self.layout = self.layout.map(|at| match at {
+            at if at == from => to,
+            at if from < to && (from..=to).contains(&at) => at - 1,
+            at if to < from && (to..=from).contains(&at) => at + 1,
+            at => at,
+        });
+        self.save();
+        cx.notify();
+    }
+
     /// Read every layout back off disk. Called at launch, since nothing else
     /// writes them.
     pub fn reload_layouts(&mut self, cx: &mut Context<Self>) {
         let open = self.active_layout().map(|layout| layout.id.clone());
-        self.layouts = store::all();
+        let order: Vec<String> = self.layouts.iter().map(|at| at.id.clone()).collect();
+        self.layouts = Self::in_order(store::all(), &order);
         self.layout = open.and_then(|id| self.layouts.iter().position(|at| at.id == id));
         cx.notify();
     }

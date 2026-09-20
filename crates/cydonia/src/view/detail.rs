@@ -294,11 +294,17 @@ pub fn adrift_line(agent: &str, others: bool) -> String {
 }
 
 impl Cydonia {
-    /// Where the window's shell opens: the session's working directory when a
-    /// chat is in front — its worktree, where it has one — and the project's
-    /// otherwise. Read once, when the panel is made.
-    fn shell_cwd(&self, cx: &App) -> Option<PathBuf> {
+    /// Where the window's shell opens: under a layout, the project the first
+    /// pane is in; the session's working directory when a chat is in front —
+    /// its worktree, where it has one — and the project's otherwise.
+    ///
+    /// Asked again for each tab, not once for the panel: the panel outlives
+    /// whatever was in front when it was opened.
+    pub(crate) fn shell_cwd(&self, cx: &App) -> Option<PathBuf> {
         let workspace = self.workspace.read(cx);
+        if let Some(layout) = workspace.active_layout() {
+            return layout.panes().into_iter().next().map(|pane| pane.project);
+        }
         if self.showing(cx) == Some(Pane::Chat)
             && let Some(chat) = workspace.active_session()
         {
@@ -312,8 +318,15 @@ impl Cydonia {
             let Some(cwd) = self.shell_cwd(cx) else {
                 return;
             };
-            let panel =
-                cx.new(|cx| super::component::terminal::TerminalPanel::new(&cwd, window, cx));
+            let this = cx.weak_entity();
+            let panel = cx.new(|cx| {
+                super::component::terminal::TerminalPanel::new(
+                    &cwd,
+                    move |cx| this.upgrade()?.read(cx).shell_cwd(cx),
+                    window,
+                    cx,
+                )
+            });
             // The last tab closing takes the panel with it: an empty bottom
             // panel is a band of nothing with a `+` in it.
             cx.subscribe_in(

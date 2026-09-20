@@ -180,7 +180,7 @@ impl Workspace {
             last: state.last,
             order: state.order,
             pinned: state.pinned,
-            layouts: crate::model::layouts::all(),
+            layouts: Self::in_order(crate::model::layouts::all(), &state.layouts),
             layout: None,
         };
         // The arrangement the window closed on, before any entry is opened:
@@ -232,6 +232,11 @@ impl Workspace {
             order: self.order.clone(),
             pinned: self.pinned.clone(),
             layout: self.active_layout().map(|layout| layout.id.clone()),
+            layouts: self
+                .layouts
+                .iter()
+                .map(|layout| layout.id.clone())
+                .collect(),
         });
     }
 

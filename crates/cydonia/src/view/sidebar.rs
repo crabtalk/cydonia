@@ -162,6 +162,12 @@ pub(crate) fn tint(selected: bool, archived: bool, theme: &Theme) -> Hsla {
 #[derive(Clone)]
 pub(crate) struct ProjectDrag(usize);
 
+/// A layout on its way to another place in the list, carried the way a project
+/// is. Its own drag rather than [`EntryDrag`]: a layout is not something a
+/// pane can be put on, and the two lists never mix.
+#[derive(Clone)]
+pub(crate) struct LayoutDrag(usize);
+
 /// What rides under the cursor while an entry is being carried. Shared with
 /// the panes, so a tab dragged out of a strip looks like the same gesture the
 /// sidebar makes — see [`crate::view::arrangement`].
@@ -1239,6 +1245,14 @@ impl Cydonia {
             .update(cx, |workspace, cx| workspace.move_project(from, to, cx));
     }
 
+    /// Menus address a layout by its place in the list, the way they do a
+    /// project — see [`Self::move_project`].
+    fn move_layout(&mut self, from: usize, to: usize, cx: &mut Context<Self>) {
+        self.menu = None;
+        self.workspace
+            .update(cx, |workspace, cx| workspace.move_layout(from, to, cx));
+    }
+
     fn toggle_project(&mut self, ix: usize, cx: &mut Context<Self>) {
         self.commit(cx);
         self.workspace
@@ -1432,12 +1446,14 @@ impl Cydonia {
             true => tint(selected, false, &theme),
             false => theme.text_faint,
         };
+        let name_of_row = name.clone();
         let label = match matches!(&self.renaming, Some(Renaming::Layout(at)) if *at == id) {
             true => self.name_field(cx),
             false => row_heading(name, tint),
         };
         let folded = self.collapsed_layouts.contains(&id);
         let held = id.clone();
+        let carried = SharedString::from(name_of_row.clone());
         row(("layout", ix), "layout-row", selected, indent, &theme)
             // The mark carries the fold, the way a project's folder does
             // rather than standing a chevron beside it: open, the panes it
@@ -1493,6 +1509,16 @@ impl Cydonia {
                 .children(self.entry_menu(Menu::Entry(entry), entry, false, cx)),
             )
             .on_click(cx.listener(move |this, _, window, cx| this.open_layout(ix, window, cx)))
+            // Carried by its row and dropped on the row it is to sit in front
+            // of, the way a project heading is — see [`Self::project_head`].
+            .on_drag(LayoutDrag(ix), move |_, _, _, cx| {
+                let carried = carried.clone();
+                cx.new(|_| Carried(carried))
+            })
+            .drag_over::<LayoutDrag>(move |style, _, _, cx| style.bg(Theme::of(cx).element_active))
+            .on_drop(cx.listener(move |this, drag: &LayoutDrag, _, cx| {
+                this.move_layout(drag.0, ix, cx);
+            }))
             .into_any_element()
     }
 
