@@ -10,6 +10,20 @@ license = "MIT"
 repository = "https://github.com/crabtalk/cydonia"
 homepage = "https://cydonia.sh"
 
+# Until bezel publishes `Theme::font_body` — the face a document is set in,
+# which the article family is picked against. Drop this and bump the versions
+# above once it is released.
+[patch.crates-io]
+bezel = { path = "../bezel/crates/bezel" }
+bezel-agent = { path = "../bezel/crates/agent" }
+bezel-editor = { path = "../bezel/crates/editor" }
+bezel-icons = { path = "../bezel/crates/icons" }
+bezel-markdown = { path = "../bezel/crates/markdown" }
+bezel-motion = { path = "../bezel/crates/motion" }
+bezel-terminal = { path = "../bezel/crates/terminal" }
+bezel-theme = { path = "../bezel/crates/theme" }
+bezel-ui = { path = "../bezel/crates/ui" }
+
 [profile.release]
 opt-level = "z"
 lto = "fat"

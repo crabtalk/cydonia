@@ -89,7 +89,7 @@ pub fn clamp_content_text_size(points: f32) -> f32 {
 /// nothing to do with which projects happened to be open. `state.toml` keeps
 /// what only this machine can answer — see [`crate::model::state`], and
 /// [`crate::model::migrate`] for the move.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Appearance {
     /// Light, dark, or whatever the OS is doing.
@@ -108,8 +108,25 @@ pub struct Appearance {
     /// Unset keeps existing articles following the UI's base size.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub article_font_size: Option<f32>,
-    pub terminal_font_size: f32,
-    pub file_font_size: f32,
+    /// The size fixed-pitch surfaces are set at: terminals, file source and
+    /// previews. One size for both, the way [`Self::mono_font`] is one family
+    /// for both. Each surface still zooms on its own — see
+    /// [`crate::model::typography`].
+    #[serde(alias = "terminal_font_size")]
+    pub mono_font_size: f32,
+    /// The family the interface is set in, as the system names it. Unset is
+    /// the system UI font — see [`crate::model::fonts`], which resolves these
+    /// and holds what a missing family falls back to.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ui_font: Option<String>,
+    /// The family prose is set in — articles, transcripts, anything rendered
+    /// as a document. Unset follows [`Self::ui_font`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub article_font: Option<String>,
+    /// The family for terminals, code and anything else set in a fixed pitch.
+    /// Unset is the system's monospace face.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mono_font: Option<String>,
     /// The greys' oklch hue in degrees, and how much of it they carry. Zero
     /// chroma is the shipped neutral, whatever the hue says.
     pub hue: f32,
@@ -179,8 +196,10 @@ impl Default for Appearance {
             cursor_blink: true,
             text_size: TextStyle::Body.size(),
             article_font_size: None,
-            terminal_font_size: terminal::view::TERM_FONT_SIZE,
-            file_font_size: TextStyle::Body.size(),
+            mono_font_size: terminal::view::TERM_FONT_SIZE,
+            ui_font: None,
+            article_font: None,
+            mono_font: None,
             hue: 0.,
             chroma: 0.,
             wide_pages: false,
@@ -207,8 +226,15 @@ impl Appearance {
             Self::default().text_size
         };
         self.article_font_size = self.article_font_size.map(clamp_content_text_size);
-        self.terminal_font_size = clamp_content_text_size(self.terminal_font_size);
-        self.file_font_size = clamp_content_text_size(self.file_font_size);
+        self.mono_font_size = clamp_content_text_size(self.mono_font_size);
+        // A family hand-edited to the empty string names nothing; it is the
+        // same answer as the key being absent.
+        self.ui_font = self.ui_font.take().filter(|name| !name.trim().is_empty());
+        self.article_font = self
+            .article_font
+            .take()
+            .filter(|name| !name.trim().is_empty());
+        self.mono_font = self.mono_font.take().filter(|name| !name.trim().is_empty());
     }
 }
 
@@ -566,8 +592,23 @@ fn write_appearance(doc: &mut toml_edit::DocumentMut, appearance: &Appearance) -
             held.remove("article_font_size");
         }
     }
-    held["terminal_font_size"] = toml_edit::value(f64::from(appearance.terminal_font_size));
-    held["file_font_size"] = toml_edit::value(f64::from(appearance.file_font_size));
+    held["mono_font_size"] = toml_edit::value(f64::from(appearance.mono_font_size));
+    // The two keys this one replaced. Left behind they would read as switches
+    // that still do something.
+    held.remove("terminal_font_size");
+    held.remove("file_font_size");
+    for (key, family) in [
+        ("ui_font", &appearance.ui_font),
+        ("article_font", &appearance.article_font),
+        ("mono_font", &appearance.mono_font),
+    ] {
+        match family {
+            Some(family) => held[key] = toml_edit::value(family.as_str()),
+            None => {
+                held.remove(key);
+            }
+        }
+    }
     held["hue"] = toml_edit::value(f64::from(appearance.hue));
     held["chroma"] = toml_edit::value(f64::from(appearance.chroma));
     held["wide_pages"] = toml_edit::value(appearance.wide_pages);

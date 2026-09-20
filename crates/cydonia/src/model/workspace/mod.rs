@@ -14,6 +14,7 @@ use crate::{
     memory,
     model::{
         article::{self, Article},
+        fonts,
         project::Project,
         session::ChatSession,
         settings::{self, Feature, Settings},
@@ -95,8 +96,11 @@ pub struct Workspace {
     /// The body size the type ladder is scaled against, in points.
     pub text_size: f32,
     pub article_font_size: Option<f32>,
-    pub terminal_font_size: f32,
-    pub file_font_size: f32,
+    /// What terminals and file views are set at before either is zoomed.
+    pub mono_font_size: f32,
+    /// The families the interface and the fixed-pitch surfaces are set in —
+    /// see [`crate::model::fonts`].
+    pub fonts: fonts::Families,
     /// The hue the greys carry, and how much of it.
     pub tint: Tint,
     /// How wide a page that has not been set either way is drawn — see
@@ -146,7 +150,7 @@ impl Workspace {
             .collect();
         let active = (!projects.is_empty()).then_some(state.active);
         let restore: Vec<usize> = (0..projects.len()).collect();
-        let look = settings.appearance;
+        let look = settings.appearance.clone();
         bezel::ui::scroll::set_visibility(look.scrollbars.into(), cx);
         editor::set_text_size(
             cx,
@@ -156,8 +160,8 @@ impl Workspace {
                 max: settings::CONTENT_TEXT_SIZE.1,
             },
         );
-        crate::model::typography::set_terminal_size(look.terminal_font_size, cx);
-        crate::model::typography::set_file_size(look.file_font_size, cx);
+        crate::model::typography::set_terminal_size(look.mono_font_size, cx);
+        crate::model::typography::set_file_size(look.mono_font_size, cx);
         let mut this = Self {
             settings,
             projects,
@@ -167,8 +171,8 @@ impl Workspace {
             cursor_blink: look.cursor_blink,
             text_size: look.text_size,
             article_font_size: look.article_font_size,
-            terminal_font_size: look.terminal_font_size,
-            file_font_size: look.file_font_size,
+            mono_font_size: look.mono_font_size,
+            fonts: fonts::families(),
             tint: Tint::new(look.hue, look.chroma),
             wide_pages: look.wide_pages,
             board_view: look.board_view,
@@ -251,8 +255,10 @@ impl Workspace {
             cursor_blink: self.cursor_blink,
             text_size: self.text_size,
             article_font_size: self.article_font_size,
-            terminal_font_size: self.terminal_font_size,
-            file_font_size: self.file_font_size,
+            mono_font_size: self.mono_font_size,
+            ui_font: self.fonts.sans.as_ref().map(ToString::to_string),
+            article_font: self.fonts.body.as_ref().map(ToString::to_string),
+            mono_font: self.fonts.mono.as_ref().map(ToString::to_string),
             hue: self.tint.hue,
             chroma: self.tint.chroma,
             wide_pages: self.wide_pages,
@@ -525,16 +531,21 @@ impl Workspace {
         cx.notify();
     }
 
-    pub fn set_file_font_size(&mut self, points: f32, cx: &mut Context<Self>) {
-        self.file_font_size = settings::clamp_content_text_size(points);
-        crate::model::typography::set_file_size(self.file_font_size, cx);
+    /// The size every fixed-pitch surface starts at. Both are rebased: one
+    /// saved size, and the zoom each of them carries is unwound against it.
+    pub fn set_mono_font_size(&mut self, points: f32, cx: &mut Context<Self>) {
+        self.mono_font_size = settings::clamp_content_text_size(points);
+        crate::model::typography::set_terminal_size(self.mono_font_size, cx);
+        crate::model::typography::set_file_size(self.mono_font_size, cx);
         self.save_appearance();
         cx.notify();
     }
 
-    pub fn set_terminal_font_size(&mut self, points: f32, cx: &mut Context<Self>) {
-        self.terminal_font_size = settings::clamp_content_text_size(points);
-        crate::model::typography::set_terminal_size(self.terminal_font_size, cx);
+    /// Set the interface family, the fixed-pitch one, or both. `None` in a
+    /// slot is the palette's own face for it.
+    pub fn set_fonts(&mut self, fonts: fonts::Families, cx: &mut Context<Self>) {
+        self.fonts = fonts.clone();
+        fonts::set(fonts, cx);
         self.save_appearance();
         cx.notify();
     }

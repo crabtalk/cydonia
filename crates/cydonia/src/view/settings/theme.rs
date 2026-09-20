@@ -44,6 +44,7 @@ impl SettingsWindow {
             .child(theme.group_box().child(self.theme_row(cx)))
             .child(self.colors_group(cx))
             .child(self.typography_group(cx))
+            .child(self.families_group(cx))
             .child(self.sidebar_group(cx))
             .child(self.scrollbars_group(cx))
             .child(self.editor_group(cx))
@@ -147,7 +148,7 @@ impl SettingsWindow {
     fn scrollbars_row(&self, sidebar: bool, cx: &mut Context<Self>) -> AnyElement {
         use crate::model::settings::Scrollbars;
         let theme = Theme::of(cx).clone();
-        let look = self.workspace.read(cx).settings.appearance;
+        let look = self.workspace.read(cx).settings.appearance.clone();
         let current = if sidebar {
             look.sidebar_scrollbars
         } else {

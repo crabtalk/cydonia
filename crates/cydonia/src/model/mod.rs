@@ -19,4 +19,5 @@ pub mod update;
 pub mod watch;
 pub mod workspace;
 
+pub mod fonts;
 pub mod typography;

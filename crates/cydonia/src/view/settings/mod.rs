@@ -158,6 +158,11 @@ pub struct SettingsWindow {
     /// rather than made where it is drawn: what has been typed has to outlive
     /// the frame, and a section is drawn afresh on every one.
     search: Entity<TextField>,
+    /// The family pickers, held for the same reason the search field is: the
+    /// menu one of them has open has to outlive the frame it was opened in.
+    interface_font: typography::FamilyPicker,
+    article_font: typography::FamilyPicker,
+    mono_font: typography::FamilyPicker,
     /// The cover ceiling's field, while its dialog is up.
     editing: Option<Entity<TextField>>,
     /// The shortcut row taking keys, while one is — see
@@ -226,6 +231,16 @@ pub fn open(
                 if let Some(updater) = update::of(cx) {
                     cx.observe(&updater, |_, _, cx| cx.notify()).detach();
                 }
+                let fonts = workspace.read(cx).fonts.clone();
+                let interface_font = typography::FamilyPicker::new(
+                    typography::Face::Interface,
+                    fonts.sans,
+                    cx,
+                );
+                let article_font =
+                    typography::FamilyPicker::new(typography::Face::Article, fonts.body, cx);
+                let mono_font =
+                    typography::FamilyPicker::new(typography::Face::Mono, fonts.mono, cx);
                 let mut this = SettingsWindow {
                     workspace,
                     section,
@@ -233,6 +248,9 @@ pub fn open(
                     busy: HashSet::new(),
                     output: HashMap::new(),
                     search,
+                    interface_font,
+                    article_font,
+                    mono_font,
                     editing: None,
                     recording: None,
                     error: None,

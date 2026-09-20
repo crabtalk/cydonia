@@ -1,22 +1,132 @@
-//! Saved base sizes. Keyboard zoom stays separate, so
-//! resetting zoom always has a configured size to return to.
+//! Saved base sizes and the families they are set in. Keyboard zoom stays
+//! separate, so resetting zoom always has a configured size to return to.
 
 use crate::{
-    model::settings as config,
+    model::{fonts, settings as config},
     view::settings::{self, SettingsWindow},
 };
 use bezel::{
-    gpui::{AnyElement, Context, div, prelude::*, px},
+    gpui::{AnyElement, Context, Entity, SharedString, div, prelude::*, px},
     theme::{TextStyle, Theme, Typeset},
-    ui::widgets::{Buttons, Scaffolding},
+    ui::{
+        combobox::{Combobox, ComboboxEvent},
+        widgets::{Buttons, Scaffolding},
+    },
 };
 
+/// What a family picker is set against — the two faces a palette carries.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Face {
+    Interface,
+    Article,
+    Mono,
+}
+
+impl Face {
+    fn title(self) -> &'static str {
+        match self {
+            Self::Interface => "Interface font",
+            Self::Article => "Article font",
+            Self::Mono => "Monospace font",
+        }
+    }
+
+    fn description(self) -> &'static str {
+        match self {
+            Self::Interface => "Menus, controls, and the rest of the interface.",
+            Self::Article => "Articles and transcripts — anything set as a document.",
+            Self::Mono => "Terminals, code blocks, diffs, and file source.",
+        }
+    }
+
+    /// What the first row is called: the answer for somebody who has not
+    /// picked one.
+    fn unset(self) -> &'static str {
+        match self {
+            Self::Interface | Self::Mono => "System",
+            Self::Article => "Same as interface",
+        }
+    }
+}
+
+/// A searchable list of installed families, and what each row stands for.
+/// `None` is [`SYSTEM`]; the rest are families the text system reported.
+pub(super) struct FamilyPicker {
+    face: Face,
+    choices: Vec<Option<SharedString>>,
+    combobox: Entity<Combobox>,
+}
+
+impl FamilyPicker {
+    /// Build the picker for `face`, selected on `current`.
+    ///
+    /// A family the machine does not have still gets a row: it may have been
+    /// typed into `settings.toml`, or come from a machine that had it, and
+    /// dropping it would silently rewrite the setting on the next pick.
+    pub(super) fn new(
+        face: Face,
+        current: Option<SharedString>,
+        cx: &mut Context<SettingsWindow>,
+    ) -> Self {
+        let mut names: Vec<SharedString> = fonts::installed(cx)
+            .into_iter()
+            .filter(|family| face != Face::Mono || family.mono)
+            .map(|family| family.name)
+            .collect();
+        if let Some(current) = current.clone()
+            && !names.contains(&current)
+        {
+            names.push(current);
+        }
+        names.sort();
+        let mut choices = vec![None];
+        choices.extend(names.into_iter().map(Some));
+        let selected = choices
+            .iter()
+            .position(|choice| *choice == current)
+            .unwrap_or(0);
+        let items = choices
+            .iter()
+            .map(|choice| choice.clone().unwrap_or_else(|| face.unset().into()))
+            .collect();
+        let combobox =
+            cx.new(|cx| Combobox::new(items, face.unset(), cx).with_selection(selected));
+        cx.subscribe(&combobox, move |this: &mut SettingsWindow, _, event, cx| {
+            let ComboboxEvent::Selected(item) = event;
+            let picker = match face {
+                Face::Interface => &this.interface_font,
+                Face::Article => &this.article_font,
+                Face::Mono => &this.mono_font,
+            };
+            let Some(chosen) = picker.choices.get(*item).cloned() else {
+                return;
+            };
+            this.workspace.update(cx, |workspace, cx| {
+                let mut families = workspace.fonts.clone();
+                match face {
+                    Face::Interface => families.sans = chosen,
+                    Face::Article => families.body = chosen,
+                    Face::Mono => families.mono = chosen,
+                }
+                workspace.set_fonts(families, cx);
+            });
+            cx.notify();
+        })
+        .detach();
+        Self {
+            face,
+            choices,
+            combobox,
+        }
+    }
+}
+
+/// The three sizes, against the three faces they are set in — see [`Face`].
 #[derive(Clone, Copy)]
 enum Font {
     Ui,
     Article,
-    Terminal,
-    File,
+    Mono,
 }
 
 impl Font {
@@ -24,17 +134,15 @@ impl Font {
         match self {
             Self::Ui => "ui-font",
             Self::Article => "article-font",
-            Self::Terminal => "terminal-font",
-            Self::File => "file-font",
+            Self::Mono => "mono-font",
         }
     }
 
     fn title(self) -> &'static str {
         match self {
-            Self::Ui => "UI font size",
+            Self::Ui => "Interface font size",
             Self::Article => "Article font size",
-            Self::Terminal => "Terminal font size",
-            Self::File => "File font size",
+            Self::Mono => "Monospace font size",
         }
     }
 
@@ -42,8 +150,9 @@ impl Font {
         match self {
             Self::Ui => "Sizes for menus, controls, and the rest of the interface.",
             Self::Article => "Default for articles. ⌘+/− zooms; ⌘0 resets.",
-            Self::Terminal => "Default for terminals. ⌘+/− zooms; ⌘0 resets.",
-            Self::File => "Default for file source and previews. ⌘+/− zooms; ⌘0 resets.",
+            Self::Mono => {
+                "Default for terminals, file source and previews. ⌘+/− zooms; ⌘0 resets."
+            }
         }
     }
 
@@ -62,8 +171,7 @@ impl SettingsWindow {
         let sizes = [
             workspace.text_size,
             workspace.article_font_size(),
-            workspace.terminal_font_size,
-            workspace.file_font_size,
+            workspace.mono_font_size,
         ];
         div()
             .flex()
@@ -72,7 +180,7 @@ impl SettingsWindow {
             .child(theme.field_label("Typography"))
             .child(
                 theme.group_box().children(
-                    [Font::Ui, Font::Article, Font::Terminal, Font::File]
+                    [Font::Ui, Font::Article, Font::Mono]
                         .into_iter()
                         .zip(sizes)
                         .enumerate()
@@ -122,6 +230,51 @@ impl SettingsWindow {
             .into_any_element()
     }
 
+    /// The families the two faces are set in. A picker rather than a field:
+    /// what the text system will resolve is a list, and a typo in a field is
+    /// a family silently falling back to the one it replaced.
+    pub(super) fn families_group(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(settings::LABEL_GAP))
+            .child(theme.field_label("Font families"))
+            .child(
+                theme.group_box().children(
+                    [&self.interface_font, &self.article_font, &self.mono_font]
+                        .into_iter()
+                        .enumerate()
+                        .map(|(ix, picker)| {
+                            theme
+                                .card_row(ix == 0)
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .flex()
+                                        .flex_col()
+                                        .child(theme.row_title(picker.face.title()))
+                                        .child(
+                                            div()
+                                                .mt(px(4.))
+                                                .text_style(TextStyle::Subheadline)
+                                                .text_color(theme.text_muted)
+                                                .child(picker.face.description()),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .flex_none()
+                                        .w(px(220.))
+                                        .child(picker.combobox.clone()),
+                                )
+                        }),
+                ),
+            )
+            .into_any_element()
+    }
+
     fn font_step(&self, font: Font, size: f32, by: f32, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let (min, max) = font.range();
@@ -144,8 +297,7 @@ impl SettingsWindow {
                 this.workspace.update(cx, |workspace, cx| match font {
                     Font::Ui => workspace.set_text_size(next, cx),
                     Font::Article => workspace.set_article_font_size(next, cx),
-                    Font::Terminal => workspace.set_terminal_font_size(next, cx),
-                    Font::File => workspace.set_file_font_size(next, cx),
+                    Font::Mono => workspace.set_mono_font_size(next, cx),
                 });
                 cx.notify();
             }))

@@ -9,7 +9,7 @@ use bezel::{
 };
 use cydonia::{
     agent, memory,
-    model::{language, media, migrate, notify, settings, state, update, workspace},
+    model::{fonts, language, media, migrate, notify, settings, state, update, workspace},
     view::{article, hotkey, keymap, menubar, root},
 };
 
@@ -53,7 +53,15 @@ fn main() -> Result<()> {
         if let Err(err) = ui::register_fonts(cx) {
             eprintln!("font registration failed: {err:?}");
         }
-        let look = settings.appearance;
+        let look = settings.appearance.clone();
+        // Both before the first palette is installed: the builder reads the
+        // families, and `init` is what calls it.
+        fonts::init(fonts::Families {
+            sans: look.ui_font.clone().map(Into::into),
+            body: look.article_font.clone().map(Into::into),
+            mono: look.mono_font.clone().map(Into::into),
+        });
+        theme::set_palette(fonts::palette, cx);
         appearance::init(look.mode, cx);
         // Before the window is opened: it reads its background appearance
         // on the way up, and vibrancy is what decides that.

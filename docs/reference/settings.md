@@ -39,8 +39,10 @@ cannot reach past.
 | `cursor_blink` | `true` | Off holds the caret lit |
 | `text_size` | 13 | The body size the type ladder is scaled against, in points, clamped to 11–17 |
 | `article_font_size` | unset | Unset keeps articles following the interface size |
-| `terminal_font_size` | — | Points, clamped to 8–40 |
-| `file_font_size` | — | Points, clamped to 8–40 |
+| `mono_font_size` | 13 | Terminals, file source and previews, in points, clamped to 8–40; reads a pre-merge `terminal_font_size` |
+| `ui_font` | unset | The family the interface is set in; unset is the system UI font |
+| `article_font` | unset | The family articles and transcripts are set in; unset follows `ui_font` |
+| `mono_font` | unset | The family terminals, code and file source are set in; unset is the system monospace face |
 | `hue` | `0.0` | The greys' oklch hue, in degrees |
 | `chroma` | `0.0` | How much of that hue they carry; zero is the shipped neutral |
 | `wide_pages` | `false` | How wide a page with nothing of its own to say is set |
