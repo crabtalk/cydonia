@@ -101,12 +101,23 @@ const BOARD_NAME: Arg = Arg {
     name: "name",
     about: "What the new board is called.",
 };
+const BOARD_NAME_NOW: Arg = Arg {
+    name: "name",
+    about: "What the board should be called now.",
+};
 const KEY: Arg = Arg {
     name: "key",
     about: "A unique board key for card handles, such as ROAD. Normalized to uppercase letters and digits.",
 };
+/// The key where changing it is the optional half of a rename. Its own const
+/// because the consequence is the whole of what a caller needs told, and
+/// [`KEY`] is read by a caller who has no handles yet.
+const KEY_NOW: Arg = Arg {
+    name: "key",
+    about: "A new key for card handles, such as ROAD. Every handle on the board is read off it, so ROAD-12 becomes BACK-12. Left out, the key does not change.",
+};
 
-pub static TOOLS: [Tool; 12] = [
+pub static TOOLS: [Tool; 13] = [
     Tool {
         name: "board_add",
         description: "Create a board with a name and unique key. Returns its id, project number, key, and columns. Use board_add_column to add columns.",
@@ -120,6 +131,20 @@ pub static TOOLS: [Tool; 12] = [
         schema: |bound| fields(bound, &[PROJECT]),
         writes: false,
         call: list,
+    },
+    Tool {
+        name: "board_rename",
+        description: "Rename a board, and optionally re-key it. A key another board here already has is refused.",
+        schema: |bound| {
+            let mut schema = fields(bound, &[PROJECT, BOARD, BOARD_NAME_NOW]);
+            schema["properties"][KEY_NOW.name] = json!({
+                "type": "string",
+                "description": KEY_NOW.about,
+            });
+            schema
+        },
+        writes: true,
+        call: rename,
     },
     Tool {
         name: "board_read",
@@ -250,6 +275,57 @@ fn add(args: Args<'_>) -> Outcome {
         .create_board(name, &key)
         .ok_or_else(|| Trouble::Refused("The board could not be written.".into()))?;
     Ok(Answer::said(outline(&board)).with(shape(&board)))
+}
+
+/// The name, and the key with it where one was given.
+///
+/// Both are written in one save: a rename that took two would leave the board
+/// named anew under the old key if the second never ran.
+fn rename(args: Args<'_>) -> Outcome {
+    let project = &store(&args)?;
+    let mut board = board(project, args.text(BOARD)?)?;
+    let name = args.text(BOARD_NAME_NOW)?.trim();
+    if name.is_empty() {
+        return Err(Trouble::Refused("A board needs a name.".into()));
+    }
+    let key = match args.maybe(KEY_NOW) {
+        Some(given) => {
+            let key = artifact::board::key::normalize(given).ok_or_else(|| {
+                Trouble::Refused("A key needs at least one letter or digit.".into())
+            })?;
+            // Among this project's boards and no further, which is as far as a
+            // handle carries — and never against this board's own.
+            if project
+                .boards()
+                .iter()
+                .any(|other| other.id != board.id && other.key == key)
+            {
+                return Err(Trouble::Refused(format!(
+                    "{key} is another board's key here."
+                )));
+            }
+            Some(key)
+        }
+        None => None,
+    };
+    let was = match board.name.is_empty() {
+        true => board.id.clone(),
+        false => board.name.clone(),
+    };
+    let rekeyed = key.as_ref().filter(|key| **key != board.key).map(|key| {
+        let from = board.key.clone();
+        (from, key.clone())
+    });
+    board.name = name.to_owned();
+    if let Some(key) = key {
+        board.key = key;
+    }
+    project.save_board(&mut board);
+    let said = match rekeyed {
+        Some((from, to)) => format!("{was} is now {name}, and {from}-1 is now {to}-1"),
+        None => format!("{was} is now {name}"),
+    };
+    Ok(Answer::said(said).with(shape(&board)))
 }
 
 fn list(args: Args<'_>) -> Outcome {

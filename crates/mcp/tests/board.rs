@@ -645,3 +645,82 @@ fn several_cards_and_columns_are_dropped_in_one_call() {
     ));
     assert!(!read.contains("TODO"), "{read}");
 }
+
+/// A rename changes the name, and the key with it only when one is given.
+#[test]
+fn a_board_is_renamed_and_optionally_re_keyed() {
+    let scratch = Scratch::new("rename-board");
+    let board = scratch
+        .store()
+        .create_board("Roadmap", "ROAD")
+        .expect("a board");
+    let server = scratch.server();
+    said(server.call(
+        "board_add_column",
+        json!({ "project": scratch.path(), "board": "ROAD", "name": "Todo" }),
+        None,
+    ));
+    let handle = said(server.call(
+        "board_add_card",
+        json!({ "project": scratch.path(), "board": "ROAD", "column": "Todo", "text": "ship" }),
+        None,
+    ));
+    assert!(handle.contains("ROAD-1"), "{handle}");
+
+    // The name alone: the key, and so every handle, is left where it was.
+    let text = said(server.call(
+        "board_rename",
+        json!({ "project": scratch.path(), "board": "ROAD", "name": " Plan " }),
+        None,
+    ));
+    assert!(text.starts_with("Roadmap is now Plan"), "{text}");
+    let boards = scratch.store().boards();
+    assert_eq!(boards[0].name, "Plan");
+    assert_eq!(boards[0].key, "ROAD", "the key is not touched by a rename");
+
+    // And with a key, which is what every handle is read off.
+    let text = said(server.call(
+        "board_rename",
+        json!({ "project": scratch.path(), "board": board.id.as_str(), "name": "Plan", "key": "back" }),
+        None,
+    ));
+    assert!(text.contains("ROAD-1 is now BACK-1"), "{text}");
+    assert_eq!(scratch.store().boards()[0].key, "BACK");
+    let read = said(server.call(
+        "board_read",
+        json!({ "project": scratch.path(), "board": "BACK" }),
+        None,
+    ));
+    assert!(read.contains("BACK-1"), "{read}");
+}
+
+/// A rename is refused whole: neither half lands when the key is one another
+/// board here already has.
+#[test]
+fn a_rename_onto_a_taken_key_changes_nothing() {
+    let scratch = Scratch::new("rename-clash");
+    let store = scratch.store();
+    store.create_board("Roadmap", "ROAD").expect("a board");
+    store.create_board("Backlog", "BACK").expect("a board");
+    let server = scratch.server();
+
+    let why = refused(server.call(
+        "board_rename",
+        json!({ "project": scratch.path(), "board": "ROAD", "name": "Plan", "key": "back" }),
+        None,
+    ));
+    assert!(why.contains("another board"), "{why}");
+    let boards = scratch.store().boards();
+    assert!(
+        boards.iter().any(|board| board.name == "Roadmap"),
+        "the name did not land either: {:?}",
+        boards.iter().map(|board| &board.name).collect::<Vec<_>>()
+    );
+
+    // Its own key is not a clash with itself.
+    said(server.call(
+        "board_rename",
+        json!({ "project": scratch.path(), "board": "ROAD", "name": "Plan", "key": "ROAD" }),
+        None,
+    ));
+}

@@ -1230,7 +1230,6 @@ impl Render for Cydonia {
         self.sync_leaves(window, cx);
         self.sync_changes(cx);
         let theme = Theme::of(cx).clone();
-        let arranged = self.workspace.read(cx).active_space().is_some();
         div()
             .key_context("Cydonia")
             .size_full()
@@ -1261,23 +1260,14 @@ impl Render for Cydonia {
                 }
             }))
             .on_action(cx.listener(|this, _: &ZoomPane, _, cx| this.zoom_focused_pane(cx)))
-            // The right-hand panel and what opens into it are not offered
-            // beside a space: it divides the room they would stand in, and
-            // macOS greys an item nothing is left to handle.
-            .when(!arranged, |root| {
-                root.on_action(cx.listener(Self::toggle_changes))
-                    .on_action(cx.listener(Self::open_session_file))
-                    .on_action(
-                        cx.listener(|this, _: &OpenReview, window, cx| {
-                            this.show_changes(window, cx)
-                        }),
-                    )
-                    .on_action(
-                        cx.listener(|this, _: &OpenFiles, window, cx| {
-                            this.toggle_files(window, cx)
-                        }),
-                    )
-            })
+            .on_action(cx.listener(Self::toggle_changes))
+            .on_action(cx.listener(Self::open_session_file))
+            .on_action(cx.listener(|this, _: &OpenReview, window, cx| {
+                this.show_changes(window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &OpenFiles, window, cx| {
+                this.toggle_files(window, cx)
+            }))
             .on_action(cx.listener(Self::copy_selection))
             .on_action(cx.listener(Self::commit_cell_action))
             .on_action(cx.listener(Self::dismiss_cell))
