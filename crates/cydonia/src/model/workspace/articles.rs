@@ -14,6 +14,7 @@ impl Workspace {
         // Where a re-read would put it: the list is newest first, and a new one
         // appended would sit at the bottom until the next load moved it.
         self.projects[project].articles.insert(0, article);
+        self.reveal_project(project, cx);
         self.open_article(project, 0, cx);
         Some(0)
     }

@@ -54,8 +54,7 @@ A card carries the status the work on it is under:
 | `blocked` | Cannot go on |
 | `done` | The work is finished |
 
-An agent sets these itself through `board_set_card_status`, and can tag several
-cards in one write. The convention the tools ask for: tag a card `busy` before
+An agent sets these itself through `board_set_card_status`, and can tag several cards in one write — as it can move several in one write through `board_move_card`. The convention the tools ask for: tag a card `busy` before
 starting on it and clear the tag when the turn is over, so a tag left behind
 never says an agent is on a card that nobody is.
 

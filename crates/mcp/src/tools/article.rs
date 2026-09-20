@@ -14,18 +14,26 @@
 
 use crate::{
     tool::{Answer, Arg, Args, Outcome, Tool, Trouble},
-    tools::{PROJECT, fields, on_the_rail, root},
+    tools::{PROJECT, fields, many, on_the_rail, root},
 };
 use artifact::{
     article::{self, properties},
     stamp,
 };
-use serde_json::json;
+use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
 const ARTICLE: Arg = Arg {
     name: "article",
     about: "The article: its project reference (#12), title, or storage id.",
+};
+/// The same argument where several are taken at once. A second const rather
+/// than a flag on [`ARTICLE`], the way `board::CARDS` stands beside
+/// `board::CARD`: the line a client reads is the whole of how it learns a list
+/// is allowed here.
+const ARTICLES: Arg = Arg {
+    name: "article",
+    about: "The article, or several: each its project reference (#12), title, or storage id.",
 };
 
 /// `title` and `text` each carry one line when the article is written and
@@ -115,8 +123,12 @@ pub static TOOLS: [Tool; 7] = [
     },
     Tool {
         name: "article_move",
-        description: "Move an article to another project, with its cover and the pictures in its body. Its project reference (#12) changes, since numbers are per project.",
-        schema: |bound| fields(bound, &[PROJECT, ARTICLE, TO_PROJECT]),
+        description: "Move an article to another project, or several in one write, each with its cover and the pictures in its body. Their project references (#12) change, since numbers are per project.",
+        schema: |bound| {
+            let mut schema = fields(bound, &[PROJECT, ARTICLES, TO_PROJECT]);
+            many(&mut schema, ARTICLES);
+            schema
+        },
         writes: true,
         call: move_article,
     },
@@ -267,28 +279,57 @@ impl Held {
 /// migrated here: a read reaching in from a port has no business rearranging
 /// somebody's files, and the app will have done it by the time an agent is
 /// running in there.
+/// One article or a run of them, into one project.
+///
+/// Every article is found before any is moved, so a title that names nothing
+/// refuses the whole call rather than the half that was left. The move itself
+/// is a file at a time and cannot be undone partway: a failure there says
+/// which ones had already landed.
 fn move_article(args: Args<'_>) -> Outcome {
     let from = root(&args)?;
-    let found = locate(from, args.text(ARTICLE)?)?;
+    let found: Vec<Held> = args
+        .list(ARTICLES)?
+        .into_iter()
+        .map(|needle| locate(from, needle))
+        .collect::<Result<_, _>>()?;
     let to = on_the_rail(Path::new(args.text(TO_PROJECT)?))?;
     if to == from {
         return Err(Trouble::Refused(format!(
             "{} is already in {}",
-            found.label(),
+            found
+                .iter()
+                .map(Held::label)
+                .collect::<Vec<_>>()
+                .join(", "),
             from.display()
         )));
     }
-    let label = found.label().to_owned();
-    let arrived = article::move_to(&found.content, to)
-        .map_err(|e| Trouble::Refused(format!("{label} cannot be moved — {e}")))?;
-    let id = article::id_of(&arrived);
-    let number =
-        artifact::entry::number(to, "article", &id).map_err(|e| Trouble::Refused(e.to_string()))?;
-    Ok(
-        Answer::said(format!("{label} moved to {} as #{number}", to.display())).with(json!({
+    let mut landed: Vec<Value> = Vec::new();
+    let mut spoken: Vec<String> = Vec::new();
+    for held in &found {
+        let label = held.label().to_owned();
+        let arrived = article::move_to(&held.content, to).map_err(|e| {
+            Trouble::Refused(match spoken.is_empty() {
+                true => format!("{label} cannot be moved — {e}"),
+                false => format!(
+                    "{label} cannot be moved — {e}. {} had already landed",
+                    spoken.join(", ")
+                ),
+            })
+        })?;
+        let id = article::id_of(&arrived);
+        let number = artifact::entry::number(to, "article", &id)
+            .map_err(|e| Trouble::Refused(e.to_string()))?;
+        spoken.push(format!("{label} as #{number}"));
+        landed.push(json!({
             "id": id,
             "number": number,
-            "title": found.title,
+            "title": held.title,
+        }));
+    }
+    Ok(
+        Answer::said(format!("{} moved to {}", spoken.join(", "), to.display())).with(json!({
+            "articles": landed,
             "project": to,
             "assets_path": assets_path(to)?,
         })),

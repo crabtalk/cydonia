@@ -37,6 +37,8 @@ A board is named by its key (`ROAD`), its name or its id; a card by its handle
 or its id. The entry references from [Projects and entries](../working/projects.md) work
 wherever one of these is taken.
 
+Eight tools take a list where they take one thing, so a turn that touches several is one call: `project_close` takes several paths, `article_move` several articles, and `board_add_card`, `board_add_column`, `board_remove_card`, `board_remove_column`, `board_move_card` and `board_set_card_status` several cards or columns. Everything else about the call stays singular — one destination, one column, one board. They are all or nothing: every name is resolved before anything is written, so a list with a typo in it changes nothing.
+
 Agents are also offered a `markdown` resource describing the article syntax, so
 a well-behaved one writes what the editor renders.
 

@@ -732,8 +732,19 @@ impl Cydonia {
         {
             self.fronts.insert(key_of(&pane), kept.clone());
         }
+        // The pane left alone is the one to keep, not the one just closed:
+        // [`Cydonia::sync_leaves`] keeps whichever leaf is focused when it
+        // finds no layout, and the focus is still on the pane going away.
+        if let Some((member, _)) = &alone
+            && let Some(at) = self
+                .leaves
+                .iter()
+                .position(|leaf| leaf.entry.as_ref() == Some(member))
+        {
+            self.focused = at;
+        }
         self.sync_leaves(window, cx);
-        if let Some(showing) = alone {
+        if let Some((_, showing)) = alone {
             self.show_pane(pane_of(showing), cx);
         }
         if let Some(entry) = kept.or_else(|| self.leaf().entry.clone()) {
@@ -999,3 +1010,7 @@ fn pane_of(showing: Showing) -> Pane {
         Showing::Table(_) => Pane::Table,
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/open_entries.rs"]
+mod open_entry_tests;

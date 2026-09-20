@@ -27,6 +27,7 @@ impl Workspace {
         let project = &mut self.projects[ix];
         project.sessions.push(chat);
         project.active = Some(id);
+        self.reveal_project(ix, cx);
         self.prune_archived_for(Some(state::Kind::Session), cx);
         cx.notify();
         Some(id)
@@ -81,6 +82,7 @@ impl Workspace {
         self.next_id += 1;
         fork.flush();
         self.projects[ix].sessions.push(fork);
+        self.reveal_project(ix, cx);
         self.select_session(id, cx);
         Some(id)
     }

@@ -448,10 +448,20 @@ impl Cydonia {
     pub(crate) fn sync_leaves(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let members = self.arrangement(cx).map(|layout| layout.entries());
         let Some(members) = members else {
-            // No layout: one pane, on whatever the project was left on.
+            // No layout: one pane, and the leaf kept is the focused one
+            // rather than the first — leaving an arrangement leaves you in
+            // the pane you were standing in, composer and draft included.
+            //
+            // [`Self::leaf_mut`] indexes by `self.focused`, so anything
+            // written through it between a layout closing and this running
+            // lands on a leaf that is about to be dropped.
+            let front = self.focused.min(self.leaves.len().saturating_sub(1));
+            if front > 0 {
+                self.leaves.swap(0, front);
+            }
             self.leaves.truncate(1);
-            self.leaf_mut().entry = None;
             self.focused = 0;
+            self.leaf_mut().entry = None;
             return;
         };
         let focused = self.leaf().entry.clone();
@@ -764,10 +774,13 @@ impl Cydonia {
     pub(crate) fn new_session_action(
         &mut self,
         _: &NewSession,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let asked = self.workspace.read(cx).preferred_agent();
+        // Same as [`Self::pick_agent`]: a session with no file yet is in no
+        // arrangement, so making one leaves whatever layout is up.
+        self.enter_member(None, window, cx);
         // Nothing to open one on: the pane says so and offers the install,
         // which is the same notice a session whose agent has gone stands
         // under. The window jumping to Settings on its own answered a question
@@ -784,7 +797,7 @@ impl Cydonia {
     pub(crate) fn new_session_with_action(
         &mut self,
         action: &NewSessionWith,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let at = self
@@ -795,7 +808,7 @@ impl Cydonia {
             .iter()
             .position(|agent| agent.name == action.agent);
         if let Some(at) = at {
-            self.pick_agent(at, cx);
+            self.pick_agent(at, window, cx);
         }
     }
 
@@ -818,7 +831,7 @@ impl Cydonia {
             .preferred_agent()
             .and_then(|preferred| agents.iter().position(|agent| agent.name == preferred.name))
             .map_or(0, |ix| (ix + 1) % agents.len());
-        self.pick_agent(at, cx);
+        self.pick_agent(at, window, cx);
     }
 
     /// Copy what the transcript has selected. Bound app-wide and reached only

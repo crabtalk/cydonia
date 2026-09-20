@@ -539,3 +539,109 @@ fn an_unknown_status_is_refused_with_the_list() {
         "working is not a status — say busy, blocked, done, none"
     );
 }
+
+/// A lane and the cards in it are laid out in two calls rather than five: the
+/// list argument is what the board tools take wherever one thing pluralises
+/// and the rest of the call stays one thing.
+#[test]
+fn a_board_is_laid_out_in_one_call_per_kind() {
+    let scratch = Scratch::new("batch-layout");
+    scratch
+        .store()
+        .create_board("Roadmap", "ROAD")
+        .expect("a board");
+    let server = scratch.server();
+
+    let lanes = said(server.call(
+        "board_add_column",
+        json!({ "project": scratch.path(), "board": "ROAD", "name": ["Todo", "Doing", "Done"] }),
+        None,
+    ));
+    assert_eq!(lanes, "TODO, DOING, DONE added to Roadmap");
+
+    let cards = said(server.call(
+        "board_add_card",
+        json!({
+            "project": scratch.path(),
+            "board": "ROAD",
+            "column": "Todo",
+            "text": ["Retire Spot", "Feed Spot", "Walk Spot"],
+        }),
+        None,
+    ));
+    assert_eq!(cards, "ROAD-1, ROAD-2, ROAD-3 added to TODO");
+
+    // In the order they were given, at the end of the lane they were put in.
+    let read = said(server.call(
+        "board_read",
+        json!({ "project": scratch.path(), "board": "ROAD" }),
+        None,
+    ));
+    let at = |needle: &str| read.find(needle).expect(needle);
+    assert!(at("Retire Spot") < at("Feed Spot"), "{read}");
+    assert!(at("Feed Spot") < at("Walk Spot"), "{read}");
+}
+
+/// Cards and columns go the same way they came. A column still holding one of
+/// them refuses the whole call, so a board is never left half emptied of its
+/// lanes.
+#[test]
+fn several_cards_and_columns_are_dropped_in_one_call() {
+    let scratch = Scratch::new("batch-drop");
+    scratch
+        .store()
+        .create_board("Roadmap", "ROAD")
+        .expect("a board");
+    let server = scratch.server();
+    said(server.call(
+        "board_add_column",
+        json!({ "project": scratch.path(), "board": "ROAD", "name": ["Todo", "Doing", "Done"] }),
+        None,
+    ));
+    said(server.call(
+        "board_add_card",
+        json!({
+            "project": scratch.path(),
+            "board": "ROAD",
+            "column": "Todo",
+            "text": ["Retire Spot", "Feed Spot"],
+        }),
+        None,
+    ));
+
+    // TODO still holds cards, so DOING and DONE stay too.
+    let why = refused(server.call(
+        "board_remove_column",
+        json!({ "project": scratch.path(), "board": "ROAD", "column": ["Doing", "Todo", "Done"] }),
+        None,
+    ));
+    assert!(why.contains("still holds cards"), "{why}");
+    let read = said(server.call(
+        "board_read",
+        json!({ "project": scratch.path(), "board": "ROAD" }),
+        None,
+    ));
+    assert!(read.contains("DOING"), "{read}");
+    assert!(read.contains("DONE"), "{read}");
+
+    let gone = said(server.call(
+        "board_remove_card",
+        json!({ "project": scratch.path(), "card": ["ROAD-1", "ROAD-2"] }),
+        None,
+    ));
+    assert!(gone.contains("ROAD-1"), "{gone}");
+    assert!(gone.contains("ROAD-2"), "{gone}");
+
+    let dropped = said(server.call(
+        "board_remove_column",
+        json!({ "project": scratch.path(), "board": "ROAD", "column": ["Todo", "Doing", "Done"] }),
+        None,
+    ));
+    assert_eq!(dropped, "TODO, DOING, DONE removed from Roadmap");
+    let read = said(server.call(
+        "board_read",
+        json!({ "project": scratch.path(), "board": "ROAD" }),
+        None,
+    ));
+    assert!(!read.contains("TODO"), "{read}");
+}

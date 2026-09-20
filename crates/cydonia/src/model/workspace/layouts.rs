@@ -183,9 +183,13 @@ impl Workspace {
     /// the sidebar for something the window is no longer doing. The pane that
     /// would have been left alone is what the window is put on, so the entry
     /// you were keeping stays in front — and is returned, so the caller can
-    /// put the single pane on its kind. Nothing while the arrangement
-    /// survives, which leaves the panes to say what they show.
-    pub fn close_pane(&mut self, entry: &Member, cx: &mut Context<Self>) -> Option<Showing> {
+    /// put the single pane on it. Nothing while the arrangement survives,
+    /// which leaves the panes to say what they show.
+    pub fn close_pane(
+        &mut self,
+        entry: &Member,
+        cx: &mut Context<Self>,
+    ) -> Option<(Member, Showing)> {
         let layout = self.active_layout()?;
         // A pane holding tabs loses a tab, not the pane — so none of the rules
         // below about what is left of the arrangement come into it.
@@ -197,14 +201,14 @@ impl Workspace {
             .entries()
             .into_iter()
             .find(|member| member != entry)
-            .and_then(|member| self.showing_of(&member));
+            .and_then(|member| Some((member.clone(), self.showing_of(&member)?)));
 
         if let Some(at) = self.layout {
             self.delete_layout(at, cx);
         }
-        let (project, showing) = survivor?;
+        let (member, (project, showing)) = survivor?;
         self.select_showing(project, showing, cx);
-        Some(showing)
+        Some((member, showing))
     }
 
     /// Take an entry out of whatever layout holds it, open or not.

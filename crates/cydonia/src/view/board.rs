@@ -171,6 +171,14 @@ fn status_chip(status: Status, theme: &Theme) -> AnyElement {
         .into_any_element()
 }
 
+/// What a lane holds, and what the find query leaves of it. The two are the
+/// same number on a board nobody is searching.
+#[derive(Clone, Copy)]
+struct Tally {
+    held: usize,
+    shown: usize,
+}
+
 /// A card's text, read as the document it is. Somebody writing `- [ ] ship it`
 /// on a card meant a box to tick, not three characters of punctuation — and the
 /// field that writes the card is one click away, which is where the source
@@ -1297,7 +1305,19 @@ impl Cydonia {
             .on_drop(cx.listener(move |this, drag: &CardDrag, _, cx| {
                 this.drop_card(drag, (project, board_at), &taken, cx);
             }))
-            .child(self.list_group_header(&id, name, held, at, lanes, folded, &board_id, cx))
+            .child(self.list_group_header(
+                &id,
+                name,
+                Tally {
+                    held,
+                    shown: cards.len(),
+                },
+                at,
+                lanes,
+                folded,
+                &board_id,
+                cx,
+            ))
             .children(rows)
             // Nothing to write into a narrowed lane: a card that does not
             // answer the query would be filed and vanish in one gesture.
@@ -1326,24 +1346,26 @@ impl Cydonia {
             .into_any_element()
     }
 
-    /// A group's heading: the chevron that folds the lane, its name, and the
-    /// `···` that moves or drops it — the lane's own header, on a row the
-    /// width of the pane.
+    /// A group's heading: the chevron that folds the lane, its name and count,
+    /// and the `···` that moves or drops it — the lane's own header, on a row
+    /// the width of the pane.
     ///
-    /// `held` is the whole lane, narrowing or not: Delete is refused on a lane
-    /// holding cards, not on one showing them.
+    /// `held` is the whole lane and `shown` what the query left of it. The
+    /// `···` is built from `held`: Delete is refused on a lane holding cards,
+    /// not on one showing them.
     #[allow(clippy::too_many_arguments)]
     fn list_group_header(
         &self,
         id: &str,
         name: String,
-        held: usize,
+        tally: Tally,
         at: usize,
         lanes: usize,
         folded: bool,
         board: &str,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let Tally { held, shown } = tally;
         let theme = Theme::of(cx).clone();
         let row = div()
             .flex_none()
@@ -1394,6 +1416,14 @@ impl Cydonia {
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.start_rename(Renaming::Column(named.clone()), window, cx);
                     })),
+            )
+            .child(
+                div()
+                    .text_color(theme.text_faint)
+                    .child(match shown == held {
+                        true => held.to_string(),
+                        false => format!("{shown}/{held}"),
+                    }),
             )
             .child(div().flex_1())
             .child(
@@ -1710,7 +1740,17 @@ impl Cydonia {
             .on_drop(cx.listener(move |this, drag: &CardDrag, _, cx| {
                 this.drop_card(drag, (project, board_at), &taken, cx);
             }))
-            .child(self.column_header(&id, name, held, at, lanes, cx))
+            .child(self.column_header(
+                &id,
+                name,
+                Tally {
+                    held,
+                    shown: cards.len(),
+                },
+                at,
+                lanes,
+                cx,
+            ))
             .child(
                 div()
                     .relative()
@@ -1779,23 +1819,25 @@ impl Cydonia {
             .into_any_element()
     }
 
-    /// The lane's name, and the `···` that moves or drops it.
+    /// The lane's name and count, and the `···` that moves or drops it.
     ///
     /// `at` is where the lane sits among `lanes`, which is what decides whether
     /// it can step either way — read here rather than in the menu, which is
     /// built from what the header was drawn with.
     ///
-    /// `held` is the whole lane, narrowing or not: Delete is refused on a lane
-    /// holding cards, not on one showing them.
+    /// `held` is the whole lane and `shown` what the query left of it. The
+    /// `···` is built from `held`: Delete is refused on a lane holding cards,
+    /// not on one showing them.
     fn column_header(
         &self,
         id: &str,
         name: String,
-        held: usize,
+        tally: Tally,
         at: usize,
         lanes: usize,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let Tally { held, shown } = tally;
         let theme = Theme::of(cx).clone();
         let row = div()
             .flex_none()
@@ -1825,6 +1867,14 @@ impl Cydonia {
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.start_rename(Renaming::Column(named.clone()), window, cx);
                     })),
+            )
+            .child(
+                div()
+                    .text_color(theme.text_faint)
+                    .child(match shown == held {
+                        true => held.to_string(),
+                        false => format!("{shown}/{held}"),
+                    }),
             )
             .child(div().flex_1())
             .child(

@@ -501,9 +501,14 @@ impl Cydonia {
     /// The composer's agent chip. An ACP session is bound to the process that
     /// serves it, so picking another agent opens a session rather than
     /// swapping one out from under a transcript.
-    pub(crate) fn pick_agent(&mut self, ix: usize, cx: &mut Context<Self>) {
+    pub(crate) fn pick_agent(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
         let entry = self.workspace.read(cx).settings.agents.get(ix).cloned();
         if let Some(entry) = entry {
+            // A session that does not exist yet is in no arrangement — it has
+            // no file, so a layout has nothing to name it by. `None` is that
+            // said plainly, and leaving the layout is what puts the window
+            // where the new session is about to be.
+            self.enter_member(None, window, cx);
             self.show_pane(Pane::Chat, cx);
             self.workspace
                 .update(cx, |workspace, cx| workspace.new_session(entry, None, cx));
@@ -933,9 +938,10 @@ impl Cydonia {
                 .enumerate()
                 .map(|(at, (name, icon))| {
                     let icon = icon.unwrap_or_else(|| icons::social::MessageCircle.into());
-                    menu::row(Item::action(name).with_icon(icon), move |this, _, cx| {
-                        this.pick_agent(at, cx)
-                    })
+                    menu::row(
+                        Item::action(name).with_icon(icon),
+                        move |this, window, cx| this.pick_agent(at, window, cx),
+                    )
                 })
                 .collect();
             let trigger = self.make_row(

@@ -72,6 +72,26 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Unfold a project, where it is folded. What every `new_*` calls once it
+    /// has made something: an entry minted under a heading that is closed is
+    /// an entry the sidebar does not list, so the window lands on a row
+    /// nobody can see.
+    ///
+    /// One way only. Folding is a reader's decision about a project they are
+    /// not reading, and making something in it says they are; nothing here
+    /// has cause to fold one back up.
+    pub fn reveal_project(&mut self, ix: usize, cx: &mut Context<Self>) {
+        let Some(project) = self.projects.get_mut(ix) else {
+            return;
+        };
+        if project.expanded {
+            return;
+        }
+        project.expanded = true;
+        self.save();
+        cx.notify();
+    }
+
     pub fn toggle_project(&mut self, ix: usize, cx: &mut Context<Self>) {
         let Some(project) = self.projects.get_mut(ix) else {
             return;

@@ -187,3 +187,137 @@ fn a_project_without_a_board_is_not_somewhere_to_move_a_card() {
     assert!(why.contains("name the board"), "{why}");
     assert!(why.contains("PLAN"), "{why}");
 }
+
+/// A run of cards moves in one call, and the board they came off is written
+/// once — a second copy saved over the first would put back every card but the
+/// last.
+#[test]
+fn several_cards_move_between_lanes_in_one_call() {
+    let here = Scratch::new("move-cards-batch");
+    let server = here.server();
+    board(&here, &server, "Roadmap", "ROAD");
+    for text in ["ship it", "then this", "and this"] {
+        said(server.call(
+            "board_add_card",
+            json!({"board": "ROAD", "column": "TODO", "text": text}),
+            Some(here.path()),
+        ));
+    }
+
+    let moved = said(server.call(
+        "board_move_card",
+        json!({"card": ["ROAD-1", "ROAD-3"], "column": "DOING"}),
+        Some(here.path()),
+    ));
+
+    assert_eq!(moved, "ROAD-1, ROAD-3 moved to DOING");
+    let read = said(server.call("board_read", json!({"board": "ROAD"}), Some(here.path())));
+    let doing = read.split("DOING").nth(1).unwrap_or_default();
+    assert!(doing.contains("ship it"), "{read}");
+    assert!(doing.contains("and this"), "{read}");
+    // And the one that was not named stayed where it was.
+    let todo = read.split("DOING").next().unwrap_or_default();
+    assert!(todo.contains("then this"), "{read}");
+}
+
+/// A run of cards carried to another project takes that board's handles, and
+/// the whole run is refused where one of them cannot be found.
+#[test]
+fn several_cards_move_to_another_board_or_none_do() {
+    let here = Scratch::new("move-cards-batch-here");
+    let there = Scratch::new("move-cards-batch-there");
+    let server = here.server();
+    Rail::also(there.path());
+    board(&here, &server, "Roadmap", "ROAD");
+    board(&there, &server, "Plans", "PLAN");
+    for text in ["ship it", "then this"] {
+        said(server.call(
+            "board_add_card",
+            json!({"board": "ROAD", "column": "TODO", "text": text}),
+            Some(here.path()),
+        ));
+    }
+
+    // One of the two is not a card, so neither moves.
+    let why = refused(server.call(
+        "board_move_card",
+        json!({"card": ["ROAD-1", "ROAD-9"], "to_board": "PLAN", "to_project": there.path()}),
+        Some(here.path()),
+    ));
+    assert!(why.contains("ROAD-9"), "{why}");
+    let left = said(server.call("board_read", json!({"board": "ROAD"}), Some(here.path())));
+    assert!(left.contains("ship it"), "{left}");
+
+    let moved = said(server.call(
+        "board_move_card",
+        json!({"card": ["ROAD-1", "ROAD-2"], "to_board": "PLAN", "to_project": there.path()}),
+        Some(here.path()),
+    ));
+
+    assert!(moved.contains("PLAN-1"), "{moved}");
+    assert!(moved.contains("PLAN-2"), "{moved}");
+    let landed = said(server.call(
+        "board_read",
+        json!({"project": there.path(), "board": "PLAN"}),
+        None,
+    ));
+    assert!(landed.contains("ship it"), "{landed}");
+    assert!(landed.contains("then this"), "{landed}");
+    let left = said(server.call("board_read", json!({"board": "ROAD"}), Some(here.path())));
+    assert!(!left.contains("ship it"), "{left}");
+    assert!(!left.contains("then this"), "{left}");
+}
+
+/// Several articles move in one call, each with its own number in the project
+/// they land in. A title that names nothing refuses the whole call, so none of
+/// them travels on a list with a typo in it.
+#[test]
+fn several_articles_move_to_another_project() {
+    let here = Scratch::new("move-articles-here");
+    let there = Scratch::new("move-articles-there");
+    let server = here.server();
+    Rail::also(there.path());
+    for (title, text) in [("Findings", "what A knows"), ("Notes", "what B knows")] {
+        said(server.call(
+            "article_add",
+            json!({"title": title, "text": text}),
+            Some(here.path()),
+        ));
+    }
+
+    // One of the two is not an article, so neither moves.
+    let why = refused(server.call(
+        "article_move",
+        json!({"article": ["Findings", "Nothing"], "to_project": there.path()}),
+        Some(here.path()),
+    ));
+    assert!(why.contains("Nothing"), "{why}");
+    assert_eq!(
+        said(server.call(
+            "article_read",
+            json!({"article": "Findings"}),
+            Some(here.path())
+        )),
+        "what A knows"
+    );
+
+    let moved = said(server.call(
+        "article_move",
+        json!({"article": ["Findings", "Notes"], "to_project": there.path()}),
+        Some(here.path()),
+    ));
+
+    assert!(moved.contains("Findings"), "{moved}");
+    assert!(moved.contains("Notes"), "{moved}");
+    assert_eq!(
+        said(server.call(
+            "article_read",
+            json!({"article": "Notes"}),
+            Some(there.path())
+        )),
+        "what B knows"
+    );
+    assert!(
+        said(server.call("article_list", json!({}), Some(here.path()))).contains("no articles")
+    );
+}

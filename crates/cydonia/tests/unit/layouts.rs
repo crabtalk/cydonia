@@ -761,3 +761,28 @@ fn a_pane_holding_one_tab_closes(cx: &mut gpui::TestAppContext) {
         );
     });
 }
+
+/// Making something in a folded project unfolds it. An entry minted under a
+/// closed heading is one the sidebar does not list, so the window would land
+/// on a row nobody can see.
+#[gpui::test]
+fn making_an_entry_unfolds_the_project_it_lands_in(cx: &mut gpui::TestAppContext) {
+    let scratch = Scratch::new("reveal");
+    cx.update(|cx| bezel::theme::Theme::install(bezel::theme::Appearance::Light, cx));
+    let workspace = cx.new(|cx| Workspace::new(Settings::default(), state::State::default(), cx));
+
+    workspace.update(cx, |workspace, cx| {
+        workspace.open_project(scratch.project("one"), cx);
+        workspace.toggle_project(0, cx);
+        assert!(!workspace.projects[0].expanded, "folded to start");
+
+        workspace.new_board(0, "First".into(), "ONE", cx).ok();
+        assert!(workspace.projects[0].expanded);
+
+        // And folding it again is left alone by anything that only opens an
+        // entry already there — the fold is a reader's decision.
+        workspace.toggle_project(0, cx);
+        workspace.open_board(0, 0, cx);
+        assert!(!workspace.projects[0].expanded);
+    });
+}

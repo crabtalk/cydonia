@@ -1263,9 +1263,9 @@ impl Cydonia {
                 .enumerate()
                 .map(|(at, (name, icon))| {
                     let icon = icon.unwrap_or_else(|| icons::social::MessageCircle.into());
-                    menu::row(Item::action(name).with_icon(icon), move |this, _, cx| {
+                    menu::row(Item::action(name).with_icon(icon), move |this, window, cx| {
                         this.select_project(ix, cx);
-                        this.pick_agent(at, cx);
+                        this.pick_agent(at, window, cx);
                     })
                 })
                 .collect();

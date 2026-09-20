@@ -44,6 +44,7 @@ impl Workspace {
         // Found by key rather than taken as a known row: the list is ordered by
         // age, and where the newest lands is the list's business, not this one's.
         let ix = project.tables.iter().position(|table| table.key == key)?;
+        self.reveal_project(at, cx);
         self.open_table(at, ix, cx);
         Some(ix)
     }
