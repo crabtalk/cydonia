@@ -22,13 +22,14 @@ use bezel::{
         AnyElement, App, Axis, Context, DragMoveEvent, Empty, MouseButton, SharedString, Window,
         div, prelude::*, px, relative,
     },
-    theme::{TextStyle, Theme, Typeset},
+    theme::Theme,
     ui::{
         icons,
         menu::Item,
         popover,
+        tabs,
         tooltip::Tooltip,
-        widgets::{Buttons, Content},
+        widgets::Content,
     },
 };
 
@@ -488,10 +489,15 @@ impl Cydonia {
             // The fold belongs to whichever column runs along the window's left
             // edge, so with the sidebar gone it is this pane's.
             .children(fold.then(|| self.fold_toggle(theme.text, cx).into_any_element()))
-            .children(
-                stack
-                    .iter()
-                    .map(|tab| self.pane_tab(pane, tab, tab == front, theme, cx)),
+            // The tabs in a strip of their own, which scrolls sideways once
+            // they no longer fit: the bar's other children are the pane's
+            // chrome and keep their places while it does.
+            .child(
+                tabs::bar(SharedString::from(format!("pane-strip-{key}"))).children(
+                    stack
+                        .iter()
+                        .map(|tab| self.pane_tab(pane, tab, tab == front, theme, cx)),
+                ),
             )
             .child(div().flex_1().min_w_0())
             .child(
@@ -543,53 +549,27 @@ impl Cydonia {
         // pane's own front tab is not where the window's attention is.
         let focused = front && self.leaf().entry.as_ref() == Some(tab);
         let key = key_of(tab);
-        let group = SharedString::from(format!("tab-{key}"));
         let title = SharedString::from(
             toolbar
                 .as_ref()
                 .map(|toolbar| toolbar.title.clone())
                 .unwrap_or_default(),
         );
-        div()
-            .id(SharedString::from(format!("pane-tab-{key}")))
-            .group(group.clone())
-            // Sized to the name it carries, not to the bar: a tab stretched
-            // the width of the pane reads as a field to type into rather than
-            // a label.
-            .flex_none()
-            .min_w_0()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(6.))
-            .h(px(24.))
-            .px(px(TAB_INSET))
-            .rounded(px(Theme::control_radius()))
-            .cursor_pointer()
-            .text_style(TextStyle::Callout)
-            .text_color(match focused {
-                true => theme.text,
-                false => theme.text_muted,
-            })
-            .when(focused, |el| el.bg(theme.element_active))
-            .when(!focused, |el| el.hover(|el| el.bg(theme.element_hover)))
-            // A tab that is showing but not focused still has to read as the
-            // one its pane is on, or a background pane's strip says nothing
-            // about what is under it.
-            .when(front && !focused, |el| el.text_color(theme.text))
-            .child(div().flex_none().truncate().child(title.clone()))
-            .children(
-                toolbar
-                    .as_ref()
-                    .and_then(|toolbar| toolbar.number)
-                    .map(|number| {
-                        div()
-                            .flex_none()
-                            .text_style(TextStyle::Caption)
-                            .text_color(theme.text_faint)
-                            .child(format!("{project}#{number}"))
-                    }),
-            )
+        let mut label = tabs::Label::new(title.clone());
+        // A number is the badge rather than part of the name: the name
+        // truncates and the reference has to survive that.
+        if let Some(number) = toolbar.as_ref().and_then(|toolbar| toolbar.number) {
+            label = label.with_badge(format!("{project}#{number}"));
+        }
+        // A tab that is showing but not focused still has to read as the one
+        // its pane is on, or a background pane's strip says nothing about what
+        // is under it — which is [`tabs::State::Front`].
+        let state = match (focused, front) {
+            (true, _) => tabs::State::Focused,
+            (false, true) => tabs::State::Front,
+            (false, false) => tabs::State::Resting,
+        };
+        tabs::tab(theme, key.clone(), label, state)
             .on_click(cx.listener({
                 let (on, shown) = (pane.clone(), tab.clone());
                 move |this, _, window, cx| this.show_tab(&on, &shown, window, cx)
@@ -603,17 +583,7 @@ impl Cydonia {
                 cx.new(|_| Carried(label))
             })
             .child(
-                theme
-                    .ghost(SharedString::from(format!("close-tab-{key}")))
-                    .flex_none()
-                    .p(px(2.))
-                    .invisible()
-                    .group_hover(group, |el| el.visible())
-                    .child(
-                        icons::icon(icons::notifications::X)
-                            .size(px(11.))
-                            .text_color(theme.text_muted),
-                    )
+                tabs::close(theme, key, tabs::Close::OnHover)
                     .tooltip(move |window, cx| Tooltip::text("Close tab", window, cx))
                     .on_click(cx.listener({
                         let shut = tab.clone();

@@ -62,9 +62,8 @@ impl Panel {
         SavedPanel {
             open,
             tabs: self
-                .tabs
-                .iter()
-                .map(|tab| match &tab.content {
+                .ordered()
+                .map(|(_, tab)| match &tab.content {
                     Content::Review(_) => SavedTab::Review,
                     Content::Terminal(terminal) => {
                         SavedTab::Terminal(terminal.read(cx).directory.clone())
@@ -78,7 +77,7 @@ impl Panel {
                     }
                 })
                 .collect(),
-            active: self.tabs.iter().position(|tab| Some(tab.id) == self.active),
+            active: self.strip.active().and_then(|id| self.strip.index_of(id)),
             files_open: self.files_open,
             files_width: self.files_width,
         }
@@ -105,18 +104,20 @@ impl Panel {
                 SavedTab::File { path, draft } => {
                     self.open_file(path, cx);
                     if let Some(draft) = draft
-                        && let Some(Content::File(file)) = self.tabs.last().map(|tab| &tab.content)
+                        && let Some(Content::File(file)) = self.front().map(|tab| &tab.content)
                     {
                         file.update(cx, |file, cx| file.restore_draft(draft, cx));
                     }
                 }
             }
             if saved.active == Some(index) {
-                active = self.active;
+                active = self.strip.active().copied();
             }
         }
         self.cwd = cwd;
-        self.active = active.or(self.active);
+        if let Some(id) = active {
+            self.strip.activate(&id);
+        }
         self.files_width = if saved.files_width.is_finite() {
             saved.files_width.clamp(140., 600.)
         } else {

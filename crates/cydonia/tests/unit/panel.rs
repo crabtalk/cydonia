@@ -5,15 +5,15 @@ use bezel::theme::Appearance;
 fn review_is_reused_and_last_close_returns_to_launcher(cx: &mut gpui::TestAppContext) {
     let panel = cx.new(|cx| Panel::new(std::env::temp_dir(), cx));
     panel.update(cx, |panel, cx| {
-        assert!(panel.tabs.is_empty());
+        assert!(panel.strip.is_empty());
         panel.review(cx);
-        let first = panel.active;
+        let first = panel.strip.active().copied();
         panel.review(cx);
-        assert_eq!(panel.tabs.len(), 1);
-        assert_eq!(panel.active, first);
+        assert_eq!(panel.strip.len(), 1);
+        assert_eq!(panel.strip.active().copied(), first);
         panel.remove(first.unwrap(), cx);
-        assert!(panel.tabs.is_empty());
-        assert_eq!(panel.active, None);
+        assert!(panel.strip.is_empty());
+        assert_eq!(panel.strip.active().copied(), None);
     });
 }
 
@@ -23,16 +23,18 @@ fn file_tabs_deduplicate_paths_and_keep_buffers(cx: &mut gpui::TestAppContext) {
     panel.update(cx, |panel, cx| {
         let path = std::env::temp_dir().join("cydonia-tab-example.txt");
         panel.open_file(path.clone(), cx);
-        let first = panel.active;
-        let Content::File(file) = &panel.tabs[0].content else {
+        let first = panel.strip.active().copied();
+        let Content::File(file) = &panel.ordered().next().unwrap().1.content else {
             panic!()
         };
         let original = file.clone();
         panel.review(cx);
         panel.open_file(path, cx);
-        assert_eq!(panel.tabs.len(), 2);
-        assert_eq!(panel.active, first);
-        assert!(matches!(&panel.tabs[0].content, Content::File(file) if *file == original));
+        assert_eq!(panel.strip.len(), 2);
+        assert_eq!(panel.strip.active().copied(), first);
+        assert!(
+            matches!(&panel.ordered().next().unwrap().1.content, Content::File(file) if *file == original)
+        );
     });
 }
 
@@ -44,7 +46,7 @@ fn right_terminal_exit_closes_only_its_tab(cx: &mut gpui::TestAppContext) {
         .update(cx, |panel, window, cx| {
             panel.terminal(window, cx);
             panel.terminal(window, cx);
-            let Content::Terminal(first) = &panel.tabs[0].content else {
+            let Content::Terminal(first) = &panel.ordered().next().unwrap().1.content else {
                 panic!()
             };
             first.clone().update(cx, |_, cx| cx.emit(Exited));
@@ -53,11 +55,11 @@ fn right_terminal_exit_closes_only_its_tab(cx: &mut gpui::TestAppContext) {
     cx.run_until_parked();
     window
         .update(cx, |panel, window, cx| {
-            assert_eq!(panel.tabs.len(), 1);
-            assert_eq!(panel.active, Some(1));
+            assert_eq!(panel.strip.len(), 1);
+            assert_eq!(panel.strip.active().copied(), Some(1));
             panel.close(1, window, cx);
-            assert!(panel.tabs.is_empty());
-            assert_eq!(panel.active, None);
+            assert!(panel.strip.is_empty());
+            assert_eq!(panel.strip.active().copied(), None);
         })
         .unwrap();
 }
@@ -87,8 +89,8 @@ fn dirty_tab_close_requires_a_decision_and_keeps_failed_saves(cx: &mut gpui::Tes
     window
         .update(cx, |panel, window, cx| {
             panel.open_file(path.clone(), cx);
-            let id = panel.active.unwrap();
-            let Content::File(file) = &panel.tabs[0].content else {
+            let id = panel.strip.active().copied().unwrap();
+            let Content::File(file) = &panel.ordered().next().unwrap().1.content else {
                 panic!()
             };
             let file = file.clone();
@@ -99,16 +101,16 @@ fn dirty_tab_close_requires_a_decision_and_keeps_failed_saves(cx: &mut gpui::Tes
             });
             panel.close(id, window, cx);
             assert_eq!(panel.closing, Some(id));
-            assert_eq!(panel.tabs.len(), 1);
+            assert_eq!(panel.strip.len(), 1);
             std::fs::write(&path, "agent edit").unwrap();
             assert!(!file.update(cx, |file, cx| file.save(false, cx)));
             assert_eq!(std::fs::read_to_string(&path).unwrap(), "agent edit");
-            assert_eq!(panel.tabs.len(), 1);
+            assert_eq!(panel.strip.len(), 1);
             panel.closing = None;
             assert!(file.read(cx).dirty(cx));
             panel.close(id, window, cx);
             panel.remove(id, cx);
-            assert!(panel.tabs.is_empty());
+            assert!(panel.strip.is_empty());
         })
         .unwrap();
     let _ = std::fs::remove_file(path);
@@ -126,7 +128,7 @@ fn file_save_shortcut_works_in_the_panel(cx: &mut gpui::TestAppContext) {
     window
         .update(cx, |panel, _, cx| {
             panel.open_file(path.clone(), cx);
-            let Content::File(file) = &panel.tabs[0].content else {
+            let Content::File(file) = &panel.ordered().next().unwrap().1.content else {
                 panic!()
             };
             file.update(cx, |file, cx| {
@@ -143,7 +145,7 @@ fn file_save_shortcut_works_in_the_panel(cx: &mut gpui::TestAppContext) {
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "edited");
     visual.simulate_keystrokes("cmd-w");
     window
-        .update(&mut visual, |panel, _, _| assert!(panel.tabs.is_empty()))
+        .update(&mut visual, |panel, _, _| assert!(panel.strip.is_empty()))
         .unwrap();
     let _ = std::fs::remove_file(path);
 }
@@ -157,7 +159,7 @@ fn files_opens_project_tree_instead_of_native_picker(cx: &mut gpui::TestAppConte
             panel.choose(2, window, cx);
             assert!(panel.files_open);
             assert!(panel.files.is_some());
-            assert!(panel.tabs.is_empty());
+            assert!(panel.strip.is_empty());
             let tree = panel.files.clone().unwrap();
             let path = std::env::temp_dir().join("cydonia-tree-selection.md");
             tree.update(cx, |_, cx| cx.emit(super::super::files::Open(path.clone())));
@@ -166,9 +168,9 @@ fn files_opens_project_tree_instead_of_native_picker(cx: &mut gpui::TestAppConte
     cx.run_until_parked();
     window
         .update(cx, |panel, _, cx| {
-            assert_eq!(panel.tabs.len(), 1);
+            assert_eq!(panel.strip.len(), 1);
             assert!(panel.files_open);
-            let Content::File(file) = &panel.tabs[0].content else {
+            let Content::File(file) = &panel.ordered().next().unwrap().1.content else {
                 panic!()
             };
             assert_eq!(file.read(cx).root, panel.project_root);
@@ -202,14 +204,14 @@ fn command_w_closes_right_terminal_tabs_and_returns_to_launcher(cx: &mut gpui::T
     visual.simulate_keystrokes("cmd-w");
     window
         .update(&mut visual, |panel, _, _| {
-            assert_eq!(panel.tabs.len(), 1);
-            assert_eq!(panel.active, Some(0));
+            assert_eq!(panel.strip.len(), 1);
+            assert_eq!(panel.strip.active().copied(), Some(0));
         })
         .unwrap();
     visual.simulate_keystrokes("cmd-w");
     window
         .update(&mut visual, |panel, window, _| {
-            assert!(panel.tabs.is_empty());
+            assert!(panel.strip.is_empty());
             assert!(panel.focus.is_focused(window));
         })
         .unwrap();
@@ -323,16 +325,40 @@ fn terminal_menu_and_new_tab_use_cmd_t(cx: &mut gpui::TestAppContext) {
     visual.run_until_parked();
     window
         .update(&mut visual, |panel, window, cx| {
-            assert_eq!(panel.tabs.len(), 2);
-            let tab = panel
-                .tabs
-                .iter()
-                .find(|tab| Some(tab.id) == panel.active)
-                .unwrap();
+            assert_eq!(panel.strip.len(), 2);
+            let tab = panel.front().unwrap();
             let Content::Terminal(terminal) = &tab.content else {
                 panic!("terminal tab")
             };
             assert!(terminal.focus_handle(cx).is_focused(window));
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn closing_the_front_tab_hands_the_front_to_its_right(cx: &mut gpui::TestAppContext) {
+    cx.update(|cx| Theme::install(Appearance::Dark, cx));
+    let window = cx.add_window(|_, cx| Panel::new(std::env::temp_dir(), cx));
+    window
+        .update(cx, |panel, window, cx| {
+            for _ in 0..3 {
+                panel.terminal(window, cx);
+            }
+            panel.strip.activate(&1);
+            panel.remove(1, cx);
+            assert_eq!(
+                panel.strip.active().copied(),
+                Some(2),
+                "the front goes to the closed tab's right-hand neighbour"
+            );
+            panel.remove(0, cx);
+            assert_eq!(
+                panel.strip.active().copied(),
+                Some(2),
+                "closing a background tab leaves the front where it is"
+            );
+            panel.remove(2, cx);
+            assert_eq!(panel.strip.active().copied(), None);
         })
         .unwrap();
 }
