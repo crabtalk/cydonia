@@ -107,30 +107,6 @@ fn cached(dir: &Path, id: &str) -> Option<String> {
 
 // ── the catalog, for the settings window ─────────────────────────
 
-/// The clients cydonia supports, by their id in the catalog. Named one by one
-/// rather than taken by a rule: the registry takes any publisher who submits
-/// one, and installing an agent runs their code on this machine — so what is
-/// offered here is a list somebody chose, not a filter somebody wrote.
-const ALLOWED: [&str; 8] = [
-    "claude-acp",      // Claude Agent
-    "codex-acp",       // Codex
-    "cursor",          // Cursor
-    "gemini",          // Gemini CLI
-    "antigravity-acp", // Google Antigravity
-    "kimi",            // Kimi CLI
-    "opencode",        // OpenCode
-    "pi-acp",          // pi ACP
-];
-
-/// Whether the catalog entry is one of them.
-///
-/// One predicate, because both [`listings`] and [`prefetch_icons`] have to
-/// answer it the same way: a row this admits and the prefetch skips is a row
-/// that never finds its mark.
-fn listed(agent: &registry::Agent) -> bool {
-    ALLOWED.contains(&agent.id.as_str())
-}
-
 /// One row of the agents section: what the registry publishes, and whether it
 /// is on this machine.
 pub struct Listing {
@@ -155,7 +131,6 @@ pub fn listings() -> Vec<Listing> {
     catalog
         .agents
         .into_iter()
-        .filter(listed)
         .map(|agent| {
             let installed = Installed::find(&data, &agent.id).map(|found| found.version);
             let icon = cached(&dir, &agent.id).map(Icon::file);
@@ -180,9 +155,6 @@ pub fn prefetch_icons() {
     };
     let dir = cache.join("icons");
     for agent in &catalog.agents {
-        if !listed(agent) {
-            continue;
-        }
         if let Some(url) = agent.icon.as_deref() {
             fetch(&dir, &agent.id, url);
         }
