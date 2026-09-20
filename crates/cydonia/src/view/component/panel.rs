@@ -512,14 +512,12 @@ impl Render for Panel {
                                     this.focus(window, cx);
                                     cx.notify();
                                 }))
-                                .child(
-                                    tabs::close(&theme, key, tabs::Close::OnHover).on_click(
-                                        cx.listener(move |this, _, window, cx| {
-                                            cx.stop_propagation();
-                                            this.close(id, window, cx);
-                                        }),
-                                    ),
-                                )
+                                .child(tabs::close(&theme, key, tabs::Close::OnHover).on_click(
+                                    cx.listener(move |this, _, window, cx| {
+                                        cx.stop_propagation();
+                                        this.close(id, window, cx);
+                                    }),
+                                ))
                         })),
                     )
                     .child(

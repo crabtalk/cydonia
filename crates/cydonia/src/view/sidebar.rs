@@ -124,11 +124,9 @@ fn shown(row: Row, features: &Features) -> bool {
         Row::Session { .. } => features.sessions,
         Row::Board { .. } => features.boards,
         Row::Table { .. } => features.tables,
-        Row::Project(_)
-        | Row::Archive(_)
-        | Row::Article { .. }
-        | Row::Space(_)
-        | Row::Spaces => true,
+        Row::Project(_) | Row::Archive(_) | Row::Article { .. } | Row::Space(_) | Row::Spaces => {
+            true
+        }
     }
 }
 
@@ -1323,10 +1321,13 @@ impl Cydonia {
                 .enumerate()
                 .map(|(at, (name, icon))| {
                     let icon = icon.unwrap_or_else(|| icons::social::MessageCircle.into());
-                    menu::row(Item::action(name).with_icon(icon), move |this, window, cx| {
-                        this.select_project(ix, cx);
-                        this.pick_agent(at, window, cx);
-                    })
+                    menu::row(
+                        Item::action(name).with_icon(icon),
+                        move |this, window, cx| {
+                            this.select_project(ix, cx);
+                            this.pick_agent(at, window, cx);
+                        },
+                    )
                 })
                 .collect();
             rows.push(menu::submenu(

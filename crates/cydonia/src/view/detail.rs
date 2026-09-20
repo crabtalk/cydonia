@@ -16,7 +16,7 @@ use crate::{
         settings::Section,
     },
 };
-use artifact::{space::Member, session::chat::PlanStatus};
+use artifact::{session::chat::PlanStatus, space::Member};
 use bezel::{
     gpui::{
         AnyElement, App, Axis, Context, Div, DragMoveEvent, Empty, FocusHandle, Focusable as _,
@@ -1522,8 +1522,7 @@ impl Cydonia {
                                                     .composer
                                                     .clone()
                                                     .update(cx, |composer, cx| {
-                                                        composer
-                                                            .restore_queued(text, window, cx);
+                                                        composer.restore_queued(text, window, cx);
                                                     });
                                             })
                                         }),

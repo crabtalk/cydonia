@@ -127,11 +127,7 @@ fn several_projects_close_in_one_call() {
     let stranger = one.path().join("elsewhere");
     std::fs::create_dir_all(&stranger).unwrap();
 
-    let why = refused(server.call(
-        "project_close",
-        json!({ "path": [&held, &stranger] }),
-        None,
-    ));
+    let why = refused(server.call("project_close", json!({ "path": [&held, &stranger] }), None));
     assert!(why.contains("is not open"), "{why}");
     assert!(!rail.was_asked(Change::Close(held.clone())));
 

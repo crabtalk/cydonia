@@ -85,7 +85,9 @@ pub fn rename_keys(state: &mut DocumentMut) -> bool {
 /// The file the right panel is written to, which up to 0.1.10 was keyed by
 /// session.
 fn panels_path() -> Option<std::path::PathBuf> {
-    settings::dir().ok().map(|dir| dir.join("right-panels.json"))
+    settings::dir()
+        .ok()
+        .map(|dir| dir.join("right-panels.json"))
 }
 
 /// Drop `projects` and keep `width`.

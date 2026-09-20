@@ -252,11 +252,8 @@ pub fn open(
                     cx.observe(&updater, |_, _, cx| cx.notify()).detach();
                 }
                 let fonts = workspace.read(cx).fonts.clone();
-                let interface_font = typography::FamilyPicker::new(
-                    typography::Face::Interface,
-                    fonts.sans,
-                    cx,
-                );
+                let interface_font =
+                    typography::FamilyPicker::new(typography::Face::Interface, fonts.sans, cx);
                 let article_font =
                     typography::FamilyPicker::new(typography::Face::Article, fonts.body, cx);
                 let mono_font =

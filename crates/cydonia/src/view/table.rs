@@ -93,7 +93,12 @@ impl Cydonia {
         self.new_table(project, window, cx);
     }
 
-    pub(crate) fn new_table(&mut self, project: usize, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn new_table(
+        &mut self,
+        project: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.select_project(project, cx);
         let ix = self
             .workspace
@@ -111,7 +116,10 @@ impl Cydonia {
         cx: &mut Context<Self>,
     ) {
         self.commit(cx);
-        let member = self.workspace.read(cx).member_of(project, Showing::Table(ix));
+        let member = self
+            .workspace
+            .read(cx)
+            .member_of(project, Showing::Table(ix));
         if self.enter_member(member, window, cx) {
             return;
         }

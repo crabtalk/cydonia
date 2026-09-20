@@ -347,9 +347,7 @@ impl Workspace {
     /// lists it under. One put away holds nothing: its members are listed
     /// where they would be without it.
     pub fn space_holding(&self, member: &Member) -> Option<usize> {
-        self.spaces
-            .iter()
-            .position(|space| space.contains(member))
+        self.spaces.iter().position(|space| space.contains(member))
     }
 
     /// Drop members whose entries have gone. A space names entries and holds

@@ -89,8 +89,7 @@ impl FamilyPicker {
             .iter()
             .map(|choice| choice.clone().unwrap_or_else(|| face.unset().into()))
             .collect();
-        let combobox =
-            cx.new(|cx| Combobox::new(items, face.unset(), cx).with_selection(selected));
+        let combobox = cx.new(|cx| Combobox::new(items, face.unset(), cx).with_selection(selected));
         cx.subscribe(&combobox, move |this: &mut SettingsWindow, _, event, cx| {
             let ComboboxEvent::Selected(item) = event;
             let picker = match face {
@@ -150,9 +149,7 @@ impl Font {
         match self {
             Self::Ui => "Sizes for menus, controls, and the rest of the interface.",
             Self::Article => "Default for articles. ⌘+/− zooms; ⌘0 resets.",
-            Self::Mono => {
-                "Default for terminals, file source and previews. ⌘+/− zooms; ⌘0 resets."
-            }
+            Self::Mono => "Default for terminals, file source and previews. ⌘+/− zooms; ⌘0 resets.",
         }
     }
 
@@ -263,12 +260,7 @@ impl SettingsWindow {
                                                 .child(picker.face.description()),
                                         ),
                                 )
-                                .child(
-                                    div()
-                                        .flex_none()
-                                        .w(px(220.))
-                                        .child(picker.combobox.clone()),
-                                )
+                                .child(div().flex_none().w(px(220.)).child(picker.combobox.clone()))
                         }),
                 ),
             )

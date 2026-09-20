@@ -131,7 +131,10 @@ fn only_the_item_the_press_landed_in_is_told_it_is_dragging() {
     assert!(!state.dragging_in(0));
     state.point(1, Pointer::Down(Cursor::new(0, Part::Body, 0)));
     assert!(state.dragging_in(1));
-    assert!(!state.dragging_in(0), "an item holding no selection is idle");
+    assert!(
+        !state.dragging_in(0),
+        "an item holding no selection is idle"
+    );
     state.point(1, Pointer::Up);
     assert!(!state.dragging_in(1));
 }

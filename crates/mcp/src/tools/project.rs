@@ -122,8 +122,7 @@ fn close(args: Args<'_>) -> Outcome {
         rail::ask(Change::Close(path.clone()))?;
         shut.push(path.display().to_string());
     }
-    Ok(Answer::said(format!("closed {}", shut.join(", ")))
-        .with(json!({ "paths": shutting })))
+    Ok(Answer::said(format!("closed {}", shut.join(", "))).with(json!({ "paths": shutting })))
 }
 
 // ── the path ─────────────────────────────────────────────────────

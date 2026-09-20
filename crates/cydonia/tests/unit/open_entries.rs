@@ -43,8 +43,9 @@ impl Drop for Scratch {
 fn opening_an_entry_outside_the_space_lands_on_it(cx: &mut gpui::TestAppContext) {
     let scratch = Scratch::new("outside");
     cx.update(|cx| Theme::install(bezel::theme::Appearance::Light, cx));
-    let window = cx
-        .add_window(|window, cx| Cydonia::new(Settings::default(), state::State::default(), window, cx));
+    let window = cx.add_window(|window, cx| {
+        Cydonia::new(Settings::default(), state::State::default(), window, cx)
+    });
 
     window
         .update(cx, |root, window, cx| {
@@ -60,8 +61,9 @@ fn opening_an_entry_outside_the_space_lands_on_it(cx: &mut gpui::TestAppContext)
                     workspace.member_of(0, Showing::Board(1)).expect("a member"),
                 )
             });
-            root.workspace
-                .update(cx, |workspace, cx| workspace.arrange(&a, &b, Side::Right, cx));
+            root.workspace.update(cx, |workspace, cx| {
+                workspace.arrange(&a, &b, Side::Right, cx)
+            });
             // The frame the arrangement would have been drawn in.
             root.sync_leaves(window, cx);
             assert_eq!(root.leaves.len(), 2, "a pane each");
@@ -82,7 +84,10 @@ fn opening_an_entry_outside_the_space_lands_on_it(cx: &mut gpui::TestAppContext)
             assert_eq!(root.leaves.len(), 1, "one pane");
             assert_eq!(root.leaf().pane, Pane::Board);
             assert_eq!(
-                root.workspace.read(cx).active_project().and_then(|open| open.board),
+                root.workspace
+                    .read(cx)
+                    .active_project()
+                    .and_then(|open| open.board),
                 Some(2),
                 "on the board that was picked"
             );
@@ -101,8 +106,9 @@ fn making_an_entry_inside_a_space_lands_on_it(cx: &mut gpui::TestAppContext) {
         // A new article is given a cover, which goes through the image cache.
         crate::memory::init(0, cx);
     });
-    let window = cx
-        .add_window(|window, cx| Cydonia::new(Settings::default(), state::State::default(), window, cx));
+    let window = cx.add_window(|window, cx| {
+        Cydonia::new(Settings::default(), state::State::default(), window, cx)
+    });
 
     window
         .update(cx, |root, window, cx| {
@@ -115,8 +121,9 @@ fn making_an_entry_inside_a_space_lands_on_it(cx: &mut gpui::TestAppContext) {
                     workspace.member_of(0, Showing::Board(1)).expect("a member"),
                 )
             });
-            root.workspace
-                .update(cx, |workspace, cx| workspace.arrange(&a, &b, Side::Right, cx));
+            root.workspace.update(cx, |workspace, cx| {
+                workspace.arrange(&a, &b, Side::Right, cx)
+            });
             root.sync_leaves(window, cx);
             root.focus_pane(&b, window, cx);
 
@@ -140,8 +147,9 @@ fn making_an_entry_inside_a_space_lands_on_it(cx: &mut gpui::TestAppContext) {
 fn starting_a_session_inside_a_space_lands_on_it(cx: &mut gpui::TestAppContext) {
     let scratch = Scratch::new("session");
     cx.update(|cx| Theme::install(bezel::theme::Appearance::Light, cx));
-    let window = cx
-        .add_window(|window, cx| Cydonia::new(Settings::default(), state::State::default(), window, cx));
+    let window = cx.add_window(|window, cx| {
+        Cydonia::new(Settings::default(), state::State::default(), window, cx)
+    });
 
     window
         .update(cx, |root, window, cx| {
@@ -162,8 +170,9 @@ fn starting_a_session_inside_a_space_lands_on_it(cx: &mut gpui::TestAppContext) 
                     workspace.member_of(0, Showing::Board(1)).expect("a member"),
                 )
             });
-            root.workspace
-                .update(cx, |workspace, cx| workspace.arrange(&a, &b, Side::Right, cx));
+            root.workspace.update(cx, |workspace, cx| {
+                workspace.arrange(&a, &b, Side::Right, cx)
+            });
             root.sync_leaves(window, cx);
             root.focus_pane(&b, window, cx);
 
@@ -175,7 +184,10 @@ fn starting_a_session_inside_a_space_lands_on_it(cx: &mut gpui::TestAppContext) 
             );
             root.sync_leaves(window, cx);
             assert_eq!(root.leaf().pane, Pane::Chat);
-            assert!(root.workspace.read(cx).active_id().is_some(), "on a session");
+            assert!(
+                root.workspace.read(cx).active_id().is_some(),
+                "on a session"
+            );
         })
         .unwrap();
 }
@@ -207,8 +219,9 @@ fn opening_an_entry_a_space_holds_enters_the_space(cx: &mut gpui::TestAppContext
                     workspace.member_of(0, Showing::Board(1)).expect("a member"),
                 )
             });
-            root.workspace
-                .update(cx, |workspace, cx| workspace.arrange(&a, &b, Side::Right, cx));
+            root.workspace.update(cx, |workspace, cx| {
+                workspace.arrange(&a, &b, Side::Right, cx)
+            });
             root.sync_leaves(window, cx);
 
             // Out of the space, onto a board no space holds.

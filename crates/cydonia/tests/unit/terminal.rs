@@ -62,8 +62,9 @@ fn dropping_shell_closes_its_output() {
 #[gpui::test]
 fn tabs_keep_shells_and_close_on_exit(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| Theme::install(bezel::theme::Appearance::Dark, cx));
-    let window =
-        cx.add_window(|window, cx| TerminalPanel::new(Path::new("/private/tmp"), |_| None, window, cx));
+    let window = cx.add_window(|window, cx| {
+        TerminalPanel::new(Path::new("/private/tmp"), |_| None, window, cx)
+    });
     let panel = window.root(cx).unwrap();
     let empty = std::rc::Rc::new(std::cell::Cell::new(false));
     let observed = empty.clone();
@@ -93,8 +94,9 @@ fn tabs_keep_shells_and_close_on_exit(cx: &mut gpui::TestAppContext) {
 #[gpui::test]
 fn background_exit_preserves_active_tab_and_focus(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| Theme::install(bezel::theme::Appearance::Dark, cx));
-    let window =
-        cx.add_window(|window, cx| TerminalPanel::new(Path::new("/private/tmp"), |_| None, window, cx));
+    let window = cx.add_window(|window, cx| {
+        TerminalPanel::new(Path::new("/private/tmp"), |_| None, window, cx)
+    });
     window
         .update(cx, |panel, window, cx| {
             panel.add(window, cx);
@@ -163,8 +165,9 @@ fn command_w_closes_bottom_tabs_and_emits_empty_for_the_last(cx: &mut gpui::Test
         Theme::install(bezel::theme::Appearance::Dark, cx);
         crate::view::keymap::bind_all(&crate::model::settings::Shortcuts::default(), cx);
     });
-    let window =
-        cx.add_window(|window, cx| TerminalPanel::new(Path::new("/private/tmp"), |_| None, window, cx));
+    let window = cx.add_window(|window, cx| {
+        TerminalPanel::new(Path::new("/private/tmp"), |_| None, window, cx)
+    });
     window
         .update(cx, |panel, window, cx| panel.add(window, cx))
         .unwrap();
@@ -250,7 +253,8 @@ fn cmd_t_adds_a_focused_tab_in_the_bottom_panel(cx: &mut gpui::TestAppContext) {
         Theme::install(bezel::theme::Appearance::Dark, cx);
         crate::view::keymap::bind_all(&crate::model::settings::Shortcuts::default(), cx);
     });
-    let window = cx.add_window(|window, cx| TerminalPanel::new(&std::env::temp_dir(), |_| None, window, cx));
+    let window =
+        cx.add_window(|window, cx| TerminalPanel::new(&std::env::temp_dir(), |_| None, window, cx));
     let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
     visual.run_until_parked();
     for count in [2, 3] {

@@ -23,14 +23,7 @@ use bezel::{
         div, prelude::*, px, relative,
     },
     theme::Theme,
-    ui::{
-        icons,
-        menu::Item,
-        popover,
-        tabs,
-        tooltip::Tooltip,
-        widgets::Content,
-    },
+    ui::{icons, menu::Item, popover, tabs, tooltip::Tooltip, widgets::Content},
 };
 
 /// What a seam carries while it is dragged: the split it divides, by its path

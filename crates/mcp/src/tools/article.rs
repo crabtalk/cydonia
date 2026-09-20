@@ -386,11 +386,7 @@ fn move_article(args: Args<'_>) -> Outcome {
     if to == from {
         return Err(Trouble::Refused(format!(
             "{} is already in {}",
-            found
-                .iter()
-                .map(Held::label)
-                .collect::<Vec<_>>()
-                .join(", "),
+            found.iter().map(Held::label).collect::<Vec<_>>().join(", "),
             from.display()
         )));
     }

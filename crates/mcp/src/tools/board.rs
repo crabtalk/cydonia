@@ -525,7 +525,10 @@ fn move_card(args: Args<'_>) -> Outcome {
     // cards are changing lanes rather than being carried, and they change them
     // on the one copy that is about to be written.
     let home = (landing == here).then(|| to.id.clone());
-    if sources.iter().all(|(board, _)| home.as_deref() == Some(&board.id)) {
+    if sources
+        .iter()
+        .all(|(board, _)| home.as_deref() == Some(&board.id))
+    {
         return within(project, sources, args.text(COLUMN)?, &spoken);
     }
     if to.columns.is_empty() {
@@ -557,7 +560,8 @@ fn move_card(args: Args<'_>) -> Outcome {
             // `carry_card` answers `None` only for a card its board does not
             // hold or a destination with no lanes, and both were ruled out
             // above — see [`locate`] and the refusal over `to.columns`.
-            if let Some(landed) = artifact::board::carry_card(&mut board, &mut to, id, lane.as_deref())
+            if let Some(landed) =
+                artifact::board::carry_card(&mut board, &mut to, id, lane.as_deref())
             {
                 carried.push(landed);
             }
@@ -569,13 +573,15 @@ fn move_card(args: Args<'_>) -> Outcome {
         project.save_board(board);
     }
     destination.save_board(&mut to);
-    Ok(
-        Answer::said(format!("{spoken} moved to {label} as {}", carried.join(", "))).with(json!({
-            "cards": carried,
-            "board": to.id,
-            "project": landing,
-        })),
-    )
+    Ok(Answer::said(format!(
+        "{spoken} moved to {label} as {}",
+        carried.join(", ")
+    ))
+    .with(json!({
+        "cards": carried,
+        "board": to.id,
+        "project": landing,
+    })))
 }
 
 /// The same move, between the lanes of the boards the cards are already on —
@@ -657,8 +663,10 @@ fn add_column(args: Args<'_>) -> Outcome {
     }
     let label = board.label().to_owned();
     project.save_board(&mut board);
-    Ok(Answer::said(format!("{} added to {label}", names.join(", ")))
-        .with(json!({ "columns": added })))
+    Ok(
+        Answer::said(format!("{} added to {label}", names.join(", ")))
+            .with(json!({ "columns": added })),
+    )
 }
 
 fn rename_column(args: Args<'_>) -> Outcome {

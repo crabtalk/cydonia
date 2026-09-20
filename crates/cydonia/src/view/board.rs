@@ -487,7 +487,10 @@ impl Cydonia {
         cx: &mut Context<Self>,
     ) {
         self.commit(cx);
-        let member = self.workspace.read(cx).member_of(project, Showing::Board(ix));
+        let member = self
+            .workspace
+            .read(cx)
+            .member_of(project, Showing::Board(ix));
         if self.enter_member(member, window, cx) {
             return;
         }

@@ -46,12 +46,10 @@ fn a_file_already_carried_is_left_as_it_is() {
 /// back up — keeps what the new name holds.
 #[test]
 fn the_new_name_wins_over_a_stale_old_one() {
-    let mut state = doc(
-        r#"
+    let mut state = doc(r#"
 layout = "old"
 space = "new"
-"#,
-    );
+"#);
     assert!(rename_keys(&mut state));
     assert_eq!(state["space"].as_str(), Some("new"));
     assert!(state.get("layout").is_none());

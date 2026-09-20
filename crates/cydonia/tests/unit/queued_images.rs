@@ -12,7 +12,9 @@ struct QueueView(Entity<Cydonia>, u64);
 impl Render for QueueView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let on = self.1;
-        let queue = self.0.update(cx, |root, cx| root.queue(on, None, window, cx));
+        let queue = self
+            .0
+            .update(cx, |root, cx| root.queue(on, None, window, cx));
         div().w(px(600.)).children(queue)
     }
 }

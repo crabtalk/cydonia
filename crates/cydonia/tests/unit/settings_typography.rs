@@ -10,8 +10,8 @@ fn old_settings_keep_article_inheritance_and_the_mono_default() {
 
 #[test]
 fn a_file_written_before_the_merge_keeps_its_terminal_size() {
-    let look: Appearance = toml::from_str("terminal_font_size = 15.0\nfile_font_size = 20.0")
-        .unwrap();
+    let look: Appearance =
+        toml::from_str("terminal_font_size = 15.0\nfile_font_size = 20.0").unwrap();
     assert_eq!(look.mono_font_size, 15.);
 
     // And the keys it replaced go out of the file rather than sitting there
@@ -47,8 +47,7 @@ fn sizes_round_trip_without_losing_comments_or_unrelated_settings() {
 #[test]
 fn invalid_font_sizes_are_normalized_before_layout() {
     let mut look: Appearance =
-        toml::from_str("text_size = nan\narticle_font_size = -2.0\nmono_font_size = inf")
-            .unwrap();
+        toml::from_str("text_size = nan\narticle_font_size = -2.0\nmono_font_size = inf").unwrap();
     look.normalize();
     assert!(look.text_size.is_finite());
     assert_eq!(look.article_font_size, Some(CONTENT_TEXT_SIZE.0));
@@ -60,9 +59,8 @@ fn invalid_font_sizes_are_normalized_before_layout() {
 
 #[test]
 fn families_round_trip_and_an_empty_one_is_no_family_at_all() {
-    let mut doc: toml_edit::DocumentMut = "[appearance]\nui_font = \"Helvetica\"\n"
-        .parse()
-        .unwrap();
+    let mut doc: toml_edit::DocumentMut =
+        "[appearance]\nui_font = \"Helvetica\"\n".parse().unwrap();
     let look = Appearance {
         ui_font: Some("Inter".into()),
         article_font: Some("Charter".into()),

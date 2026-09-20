@@ -193,11 +193,9 @@ impl Workspace {
         };
         // The arrangement the window closed on, before any entry is opened:
         // `open_last_entry` is a project's answer and a space spans them.
-        this.space = state.space.and_then(|id| {
-            this.spaces
-                .iter()
-                .position(|space| space.id == id)
-        });
+        this.space = state
+            .space
+            .and_then(|id| this.spaces.iter().position(|space| space.id == id));
         for ix in restore {
             this.restore_sessions(ix);
             this.watch_project(ix, cx);
@@ -240,11 +238,7 @@ impl Workspace {
             order: self.order.clone(),
             pinned: self.pinned.clone(),
             space: self.active_space().map(|space| space.id.clone()),
-            spaces: self
-                .spaces
-                .iter()
-                .map(|space| space.id.clone())
-                .collect(),
+            spaces: self.spaces.iter().map(|space| space.id.clone()).collect(),
         });
     }
 
