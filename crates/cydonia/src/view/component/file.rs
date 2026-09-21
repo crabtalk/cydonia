@@ -360,11 +360,6 @@ impl FileView {
             self.language = language;
             self.grammar_status = None;
             self.recolour(cx);
-            markdown::set_highlighter(
-                cx,
-                crate::model::language::highlight,
-                crate::model::language::paintable(),
-            );
             cx.notify();
         } else if self.grammar_status.as_ref() != Some(&status) {
             self.grammar_status = Some(status);

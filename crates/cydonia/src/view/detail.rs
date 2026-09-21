@@ -12,7 +12,7 @@ use crate::{
             ribbon, transcript,
         },
         leaf::Pane,
-        root::{self, Cydonia, NewSession},
+        root::{self, Cydonia, NewArticle, NewBoard, NewSession, NewTable},
         settings::Section,
     },
 };
@@ -27,6 +27,7 @@ use bezel::{
     ui::{
         floating,
         icons::{self, Icon},
+        keys,
         menu::Item,
         popover, surface,
         tooltip::Tooltip,
@@ -619,7 +620,7 @@ impl Cydonia {
         let body = match self.panes(window, cx) {
             Some(panes) => panes,
             None => match showing {
-                None => self.launch(cx),
+                None => self.launch(window, cx),
                 Some(Pane::Chat) => {
                     self.conversation(self.workspace.read(cx).active_id(), None, window, cx)
                 }
@@ -630,7 +631,7 @@ impl Cydonia {
                         .and_then(|open| open.board),
                 ) {
                     Some((project, at)) => self.board(project, at, None, window, cx),
-                    None => self.launch(cx),
+                    None => self.launch(window, cx),
                 },
                 // An entry can be named and not yet loaded — an article holds
                 // no editor until it is opened. The front door stands in for
@@ -646,7 +647,7 @@ impl Cydonia {
                             .and_then(|open| open.article),
                     )
                     .and_then(|(project, at)| self.article(project, at, None, window, cx))
-                    .unwrap_or_else(|| self.launch(cx)),
+                    .unwrap_or_else(|| self.launch(window, cx)),
                 Some(Pane::Table) => self
                     .workspace
                     .read(cx)
@@ -658,7 +659,7 @@ impl Cydonia {
                             .and_then(|open| open.table),
                     )
                     .and_then(|(project, at)| self.table(project, at, None, cx))
-                    .unwrap_or_else(|| self.launch(cx)),
+                    .unwrap_or_else(|| self.launch(window, cx)),
             },
         };
 
@@ -888,16 +889,19 @@ pub(crate) fn footer(
         )
 }
 
-/// The invitation's rows as one block: left-aligned so every glyph lands on the
-/// same edge, and held off the line above it — `empty_state` centres its
-/// children, which would otherwise centre each row on its own width.
+/// The invitation's rows as one block: stretched to the widest so every row's
+/// hover rect is the same width and every glyph lands on the same edge, and
+/// held off the line above it — `empty_state` centres its children, which
+/// would otherwise centre each row on its own width. The rows sit a menu's
+/// 2px apart rather than further: they are padded press targets, and spacing
+/// them like paragraphs would read as three separate invitations.
 fn make_list(rows: impl IntoIterator<Item = AnyElement>) -> impl IntoElement {
     div()
-        .mt(px(14.))
+        .mt(px(22.))
         .flex()
         .flex_col()
-        .items_start()
-        .gap(px(8.))
+        .items_stretch()
+        .gap(px(2.))
         .children(rows)
 }
 
@@ -905,9 +909,9 @@ impl Cydonia {
     /// The front door, and what stands where a pane would be if one were
     /// showing: a project to open, or the first entry to make in the one that
     /// already is.
-    pub(crate) fn launch(&self, cx: &mut Context<Self>) -> AnyElement {
+    pub(crate) fn launch(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         match self.workspace.read(cx).active_project().is_some() {
-            true => self.nothing_open(cx),
+            true => self.nothing_open(window, cx),
             false => self.no_project(cx),
         }
     }
@@ -916,7 +920,7 @@ impl Cydonia {
     /// project that is open. The kinds are listed rather than named in a hint,
     /// because a list can be clicked — and only the kinds that are switched on
     /// are listed, so under the shipped defaults this is one line.
-    fn nothing_open(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn nothing_open(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let workspace = self.workspace.read(cx);
         let Some(ix) = workspace.active else {
@@ -955,6 +959,7 @@ impl Cydonia {
                 "session",
                 "New session",
                 icons::social::MessageCirclePlus,
+                keys::shortcut(&NewSession, window),
                 cx,
                 move |this, _, cx| this.toggle_menu(Menu::Launch, cx),
             );
@@ -976,6 +981,7 @@ impl Cydonia {
                     "session",
                     "New session",
                     icons::social::MessageCirclePlus,
+                    keys::shortcut(&NewSession, window),
                     cx,
                     move |this, window, cx| this.new_session_action(&NewSession, window, cx),
                 )
@@ -988,6 +994,7 @@ impl Cydonia {
                     "board",
                     "New board",
                     icons::development::SquareKanban,
+                    keys::shortcut(&NewBoard, window),
                     cx,
                     move |this, window, cx| this.ask_new_board(ix, window, cx),
                 )
@@ -999,6 +1006,7 @@ impl Cydonia {
                 "article",
                 "New article",
                 icons::files::FilePlus,
+                keys::shortcut(&NewArticle, window),
                 cx,
                 move |this, window, cx| this.new_article(ix, window, cx),
             )
@@ -1010,6 +1018,7 @@ impl Cydonia {
                     "table",
                     "New table",
                     icons::files::Table2,
+                    keys::shortcut(&NewTable, window),
                     cx,
                     move |this, window, cx| this.new_table(ix, window, cx),
                 )
@@ -1023,42 +1032,38 @@ impl Cydonia {
             .into_any_element()
     }
 
-    /// One line of the invitation: a glyph, a label, and what it makes.
+    /// One line of the invitation: a glyph, a label, the chord that does the
+    /// same thing where there is one, and what it makes. A menu row's metrics
+    /// and hover rect, because that is what it is — the empty state is the
+    /// only place these four live together, and bare text at this size reads
+    /// as a sentence rather than a thing to press.
     fn make_row(
         &self,
         id: impl Into<SharedString>,
         label: impl Into<SharedString>,
         glyph: impl Into<Icon>,
+        chord: Option<SharedString>,
         cx: &mut Context<Self>,
         make: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
     ) -> Stateful<Div> {
         let theme = Theme::of(cx).clone();
         let (id, label) = (id.into(), label.into());
+        let fade = Fade::new(Painter::of(cx), format!("launch-{id}"));
         // An svg paints in its own `text_color` and inherits none, so the glyph
-        // cannot ride the row's hover. Both halves take the row's group instead,
-        // which lights them together — the group is named per row so hovering
-        // one does not light the rest.
-        div()
+        // cannot ride the row's fade. It takes the row's group instead — the
+        // group is named per row so hovering one does not light the rest.
+        popover::menu_row(&theme, false, Some(fade))
             .id(id.clone())
             .group(id.clone())
-            .flex()
-            .items_center()
-            .gap(px(8.))
-            .cursor_pointer()
-            .text_style(TextStyle::Callout)
             .child(
                 icons::icon(glyph)
-                    .size(px(14.))
+                    .size(px(15.))
                     .flex_none()
                     .text_color(theme.text_muted)
-                    .group_hover(id.clone(), |el| el.text_color(theme.text)),
+                    .group_hover(id, |el| el.text_color(theme.text)),
             )
-            .child(
-                div()
-                    .text_color(theme.text_muted)
-                    .group_hover(id, |el| el.text_color(theme.text))
-                    .child(label),
-            )
+            .child(div().flex_1().child(label))
+            .children(chord.map(|chord| popover::kbd_hint(&theme, chord)))
             .on_click(cx.listener(move |this, _, window, cx| make(this, window, cx)))
     }
 

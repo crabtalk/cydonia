@@ -745,10 +745,10 @@ impl Cydonia {
             // moment in between.
             Showing::Article(at) => self
                 .article(project, at, on, window, cx)
-                .unwrap_or_else(|| self.launch(cx)),
+                .unwrap_or_else(|| self.launch(window, cx)),
             Showing::Table(at) => self
                 .table(project, at, on, cx)
-                .unwrap_or_else(|| self.launch(cx)),
+                .unwrap_or_else(|| self.launch(window, cx)),
         }
     }
 

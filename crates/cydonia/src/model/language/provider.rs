@@ -69,6 +69,43 @@ fn spec(name: &str) -> Option<&'static Spec> {
     catalog().iter().find(|spec| spec.name == name)
 }
 
+/// Every language the catalogue can install, cached or not — what the fence
+/// picker offers. [`super::paintable`] is the cached subset.
+pub fn names() -> Vec<&'static str> {
+    catalog().iter().map(|spec| spec.name.as_str()).collect()
+}
+
+/// The catalogue name a fence's label means, following aliases: a fence tagged
+/// `rs` or `sh` names a grammar under another name.
+pub fn resolve(label: &str) -> Option<&'static str> {
+    let label = label.trim().to_ascii_lowercase();
+    catalog()
+        .iter()
+        .find(|spec| spec.name == label || spec.aliases.contains(&label))
+        .map(|spec| spec.name.as_str())
+}
+
+/// Whether any download is still running. The poll that repaints a fence when
+/// its grammar lands stops on this.
+pub fn working() -> bool {
+    states()
+        .lock()
+        .unwrap()
+        .values()
+        .any(|status| status.active())
+}
+
+/// One poll loop at a time, however many fences ask for one.
+static WATCHING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub(super) fn begin_watch() -> bool {
+    !WATCHING.swap(true, std::sync::atomic::Ordering::SeqCst)
+}
+
+pub(super) fn end_watch() {
+    WATCHING.store(false, std::sync::atomic::Ordering::SeqCst);
+}
+
 fn states() -> &'static Mutex<HashMap<String, Status>> {
     static STATES: OnceLock<Mutex<HashMap<String, Status>>> = OnceLock::new();
     STATES.get_or_init(Mutex::default)

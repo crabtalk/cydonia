@@ -1,5 +1,6 @@
 //! Language detection and on-demand WASM syntax highlighting.
 
+use bezel::gpui::App;
 use std::{ops::Range, path::Path, sync::OnceLock};
 
 use bezel::theme::HighlightKind;
@@ -43,10 +44,71 @@ pub fn of(path: &Path) -> Option<Language> {
     })
 }
 
-/// Installed languages for the Markdown fence picker.
+/// Installed languages. The subset [`highlight`] can answer for right now.
 pub fn paintable() -> Vec<&'static str> {
     installed();
     syntax::registry::ready()
+}
+
+/// Every language the catalogue can install, which is what the Markdown fence
+/// picker lists. Naming one that is not cached is how a fence asks for it —
+/// see [`ensure`].
+pub fn offerable() -> Vec<&'static str> {
+    installed();
+    provider::names()
+}
+
+/// Fetch the grammars `labels` name, and keep the window repainting until they
+/// land. A fence tagged with a language is the whole of the request: writing
+/// one is not an occasion to ask a person to go and install something.
+///
+/// Only [`Status::Missing`] is acted on. A download that failed is left where
+/// it stopped rather than retried on the next keystroke; retrying is still the
+/// file view's Retry action.
+pub fn ensure(labels: impl IntoIterator<Item = String>, cx: &mut App) {
+    installed();
+    let mut started = false;
+    for label in labels {
+        let Some(name) = provider::resolve(&label) else {
+            continue;
+        };
+        if provider::status(name) == Status::Missing {
+            provider::start_install(name);
+            started = true;
+        }
+    }
+    if started {
+        watch(cx);
+    }
+}
+
+/// Repaint while a download runs, so a fence colours itself the moment its
+/// grammar arrives.
+///
+/// Nothing is re-registered here. [`offerable`] is the whole catalogue and
+/// does not grow, and [`highlight`] resolves through the registry on every
+/// call — so what a finished download changes is what the next frame paints,
+/// and a frame is the only thing that has to be asked for.
+fn watch(cx: &mut App) {
+    if !provider::begin_watch() {
+        return;
+    }
+    cx.spawn(async move |cx| {
+        loop {
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(150))
+                .await;
+            let busy = cx.update(|cx| {
+                cx.refresh_windows();
+                provider::working()
+            });
+            if !busy {
+                break;
+            }
+        }
+        provider::end_watch();
+    })
+    .detach();
 }
 
 /// The spans `text` is painted with as the contents of `path`, or `None` where

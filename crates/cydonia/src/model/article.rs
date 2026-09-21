@@ -11,7 +11,7 @@
 //! disagreeing — and a path already handed to an agent is not one we can
 //! rewrite the way a vault rewrites its own links.
 
-use crate::model::{cover, media, workspace::Workspace};
+use crate::model::{cover, language, media, workspace::Workspace};
 use artifact::{article as layout, article::properties};
 use bezel::{
     gpui::{App, AppContext as _, Context, Entity, ScrollHandle},
@@ -197,9 +197,14 @@ impl Article {
                 .with_scroll(scroll)
                 .with_mode(self.mode)
         });
+        language::ensure(fences(editor.read(cx)), cx);
         let mut source_digits = self.saved.split('\n').count().to_string().len();
         cx.observe(&editor, move |workspace, editor, cx| {
             workspace.write_article(editor.entity_id(), cx);
+            // On every change rather than on open alone: a fence is usually
+            // tagged after it is made, and the grammar is wanted the moment it
+            // is named.
+            language::ensure(fences(editor.read(cx)), cx);
             if editor.read(cx).mode() == Mode::Source {
                 let digits = editor
                     .read(cx)
@@ -479,4 +484,17 @@ fn migrate(project: &Path) {
             properties::set_title(&content, stem);
         }
     }
+}
+
+/// The languages the document's fences are tagged with.
+fn fences(editor: &Editor) -> Vec<String> {
+    editor
+        .doc()
+        .blocks
+        .iter()
+        .filter_map(|block| match &block.kind {
+            markdown::BlockKind::Code { language, .. } => language.clone(),
+            _ => None,
+        })
+        .collect()
 }
