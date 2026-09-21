@@ -1998,7 +1998,10 @@ impl Cydonia {
             move |this, _, cx| this.ask_delete(entry, cx),
         ));
         let id = SharedString::from("header-menu-card");
-        Some(popover::anchored_menu_below(
+        // Right-aligned: every route into this menu — the dots button, the
+        // pin, a right press — has its affordance at the row's end, and the
+        // card drops from there.
+        Some(popover::anchored_menu_below_end(
             id.clone(),
             self.menu_card(id, rows, cx),
             None,
