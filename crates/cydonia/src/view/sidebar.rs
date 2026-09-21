@@ -832,12 +832,16 @@ impl Cydonia {
             name: folded(board.label()),
             row: Row::Board { project, ix },
         });
-        let articles = open.articles.iter().enumerate().map(|(ix, article)| Ranked {
-            archived: article.archived,
-            touched: article.touched,
-            name: folded(article.label()),
-            row: Row::Article { project, ix },
-        });
+        let articles = open
+            .articles
+            .iter()
+            .enumerate()
+            .map(|(ix, article)| Ranked {
+                archived: article.archived,
+                touched: article.touched,
+                name: folded(article.label()),
+                row: Row::Article { project, ix },
+            });
         let tables = open.tables.iter().enumerate().map(|(ix, table)| Ranked {
             archived: table.archived,
             // The store keeps seconds; every other stamp here is milliseconds.
@@ -855,8 +859,8 @@ impl Cydonia {
         // ordered by: what is put away is out of the way, and a pin is a place
         // somebody asked for. The sort is what happens between them.
         let head = |entry: &Ranked| {
-            let pin = showing_of(entry.row)
-                .and_then(|showing| workspace.pin_rank(project, showing));
+            let pin =
+                showing_of(entry.row).and_then(|showing| workspace.pin_rank(project, showing));
             (entry.archived, pin.is_none(), pin.unwrap_or_default())
         };
         entries.sort_by(|a, b| {
@@ -1447,10 +1451,13 @@ impl Cydonia {
         }
         let sort = self.workspace.read(cx).sort_of(ix);
         let by = |label: &'static str, mode: state::Sort| {
-            menu::row(Item::action(label).checked(sort == mode), move |this, _, cx| {
-                this.workspace
-                    .update(cx, |workspace, cx| workspace.set_sort(ix, mode, cx));
-            })
+            menu::row(
+                Item::action(label).checked(sort == mode),
+                move |this, _, cx| {
+                    this.workspace
+                        .update(cx, |workspace, cx| workspace.set_sort(ix, mode, cx));
+                },
+            )
         };
         let rows = vec![
             menu::submenu(
@@ -1657,7 +1664,7 @@ impl Cydonia {
                     self.sidebar_hovered.as_ref() != Some(&Menu::Entry(entry))
                         && self.menu.as_ref() != Some(&Menu::Entry(entry)),
                     |el| el.hidden(),
-                )
+                ),
             )
             .on_click(cx.listener(move |this, _, window, cx| this.open_space(ix, window, cx)))
             // Carried by its row and dropped on the row it is to sit in front

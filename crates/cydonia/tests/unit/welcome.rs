@@ -14,10 +14,7 @@ fn source() -> PathBuf {
 
 /// A directory of this test's own, emptied first so a rerun starts clean.
 fn scratch(name: &str) -> PathBuf {
-    let path = std::env::temp_dir().join(format!(
-        "cydonia-welcome-{name}-{}",
-        std::process::id()
-    ));
+    let path = std::env::temp_dir().join(format!("cydonia-welcome-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&path);
     path
 }

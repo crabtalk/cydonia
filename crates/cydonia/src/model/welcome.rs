@@ -6,8 +6,8 @@
 //! embedded rather than fetched: a launch that cannot reach the network is
 //! still a first launch, and the welcome describes the build it ships in.
 
-use crate::model::{settings, state};
 use crate::model::state::State;
+use crate::model::{settings, state};
 use artifact::project::fs;
 use std::{
     io::{self, Write as _},
