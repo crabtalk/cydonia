@@ -1046,16 +1046,27 @@ impl Cydonia {
         };
         let carried = self.drag_of_row(row, cx);
         let label = SharedString::from(self.label_of_row(row, cx));
+        let entry = !matches!(row, Row::Project(_) | Row::Archive(_) | Row::Spaces);
+        let archived = self.archived_of(row, cx);
         div()
             .id(SharedString::from(format!("sidebar-hover-{}", key_of(row))))
-            .when(
-                !matches!(row, Row::Project(_) | Row::Archive(_) | Row::Spaces),
-                |el| {
-                    el.on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
-                        this.sidebar_hover(Menu::Entry(row), *hovered, cx);
-                    }))
-                },
-            )
+            .when(entry, |el| {
+                el.on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
+                    this.sidebar_hover(Menu::Entry(row), *hovered, cx);
+                }))
+                // Every kind of row from one place, and the menu drawn here
+                // rather than under whatever the row ends in: a right press
+                // lands wherever the pointer is, and the trigger it opens from
+                // is the row.
+                .relative()
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(move |this, _, _, cx| {
+                        this.toggle_menu(Menu::Entry(row), cx);
+                    }),
+                )
+                .children(self.entry_menu(Menu::Entry(row), row, archived, cx))
+            })
             // Carried onto a pane's edge to put it beside what is there — see
             // [`crate::view::arrangement`].
             .when_some(carried, |el, carried| {
@@ -1551,10 +1562,6 @@ impl Cydonia {
                         && self.menu.as_ref() != Some(&Menu::Entry(entry)),
                     |el| el.hidden(),
                 )
-                // Never archived: archiving a space puts its members away and
-                // drops the arrangement — see [`Self::archive_entry`] — so the
-                // row it was pressed on is gone rather than put away.
-                .children(self.entry_menu(Menu::Entry(entry), entry, false, cx)),
             )
             .on_click(cx.listener(move |this, _, window, cx| this.open_space(ix, window, cx)))
             // Carried by its row and dropped on the row it is to sit in front
@@ -1662,10 +1669,9 @@ impl Cydonia {
                     id,
                     None,
                     icons::icon(mark).size(px(14.)).text_color(theme.text_faint),
-                    at.clone(),
+                    at,
                     cx,
-                )
-                .children(self.entry_menu(at, entry, archived, cx));
+                );
         }
         let mark = match archived {
             true => icons::files::ArchiveRestore,
@@ -1720,6 +1726,36 @@ impl Cydonia {
             }))
     }
 
+    /// Whether a row's entry is put away. `false` for the rows that are not
+    /// entries, and for a space — archiving one drops the arrangement rather
+    /// than filing it.
+    fn archived_of(&self, row: Row, cx: &App) -> bool {
+        let workspace = self.workspace.read(cx);
+        match row {
+            Row::Session { project, id } => workspace
+                .projects
+                .get(project)
+                .and_then(|open| open.session(id))
+                .is_some_and(|chat| chat.closed),
+            Row::Board { project, ix } => workspace
+                .projects
+                .get(project)
+                .and_then(|open| open.boards.get(ix))
+                .is_some_and(|board| board.archived),
+            Row::Article { project, ix } => workspace
+                .projects
+                .get(project)
+                .and_then(|open| open.articles.get(ix))
+                .is_some_and(|article| article.archived),
+            Row::Table { project, ix } => workspace
+                .projects
+                .get(project)
+                .and_then(|open| open.tables.get(ix))
+                .is_some_and(|table| table.archived),
+            Row::Space(_) | Row::Project(_) | Row::Archive(_) | Row::Spaces => false,
+        }
+    }
+
     /// Whether an entry is held at the top of its project's list.
     pub(crate) fn pinned(&self, entry: Row, cx: &App) -> bool {
         let (Some(project), Some(showing)) = (project_of(entry), showing_of(entry)) else {
@@ -1737,13 +1773,13 @@ impl Cydonia {
             .update(cx, |workspace, cx| workspace.pin(project, showing, on, cx));
     }
 
-    /// The `···` in the band: everything for the entry filling the window.
+    /// Everything an entry can have done to it: the `···` in the band, and the
+    /// menu a sidebar row opens on a right press.
     ///
-    /// Delete is offered here and not from a sidebar row. In the sidebar you
-    /// are running a pointer down a list and the row under it is whichever one
-    /// you stopped on; in the header there is one thing it could mean, and it
-    /// is the thing filling the window. An unpinned row carries archive alone;
-    /// a pinned one opens this from its pin — see [`Self::archive_button`].
+    /// One builder for both, so a command reachable in the band is reachable
+    /// on the row. What a row still carries of its own is the press in
+    /// passing — archive for an unpinned row, the pin for a pinned one, which
+    /// opens this rather than acting. See [`Self::archive_button`].
     pub(crate) fn entry_menu(
         &self,
         at: Menu,
@@ -1789,9 +1825,12 @@ impl Cydonia {
                 ),
             );
         }
-        // A page's measure. An article is never `named`, so nothing it could
-        // sit above is here.
-        if matches!(entry, Row::Article { .. }) {
+        // A page's measure and how it is being read: the open page's, since
+        // [`Self::set_full_width`] and [`Self::plain_text`] are about the one
+        // the window is showing. A row's menu names an entry that may not be
+        // it, so these are the band's alone — on the wrong row they would act
+        // on whatever else was open.
+        if matches!(entry, Row::Article { .. }) && !matches!(at, Menu::Entry(_)) {
             let workspace = self.workspace.read(cx);
             let plain_chord = keymap::label(Command::PlainText, &workspace.settings.shortcuts)
                 .unwrap_or_default();
