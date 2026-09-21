@@ -1459,27 +1459,27 @@ impl Cydonia {
                 },
             )
         };
-        let rows = vec![
-            menu::submenu(
-                "Sort by",
-                icons::text::ArrowDownAZ,
-                vec![
-                    by("Name", state::Sort::Name),
-                    by("Last modified", state::Sort::Touched),
-                    // Last, and named for what it is: the other two are
-                    // orders nobody arranged, and this is the one that is.
-                    by("Manual", state::Sort::Manual),
-                ],
-            ),
-            menu::row(
-                Item::action("Reveal in Finder").with_icon(icons::files::FolderOpen),
-                move |this, _, cx| this.reveal_project(ix, cx),
-            ),
-            menu::row(
-                Item::action("Remove project").with_icon(icons::files::FolderMinus),
-                move |this, _, cx| this.close_project(ix, cx),
-            ),
-        ];
+        let mut rows = vec![menu::submenu(
+            "Sort by",
+            icons::text::ArrowDownAZ,
+            vec![
+                by("Name", state::Sort::Name),
+                by("Last modified", state::Sort::Touched),
+                // Last, and named for what it is: the other two are
+                // orders nobody arranged, and this is the one that is.
+                by("Manual", state::Sort::Manual),
+            ],
+        )];
+        // Finder is the one file manager this knows how to ask.
+        #[cfg(target_os = "macos")]
+        rows.push(menu::row(
+            Item::action("Reveal in Finder").with_icon(icons::files::FolderOpen),
+            move |this, _, cx| this.reveal_project(ix, cx),
+        ));
+        rows.push(menu::row(
+            Item::action("Remove project").with_icon(icons::files::FolderMinus),
+            move |this, _, cx| this.close_project(ix, cx),
+        ));
         let id = SharedString::from(format!("project-menu-{ix}"));
         Some(popover::anchored_menu_below(
             id.clone(),
@@ -1491,6 +1491,7 @@ impl Cydonia {
     /// Show the project's directory in Finder. Best effort and off the main
     /// thread: `open` is a process, and a Finder that will not come to the
     /// front is not worth blocking a frame over.
+    #[cfg(target_os = "macos")]
     fn reveal_project(&mut self, ix: usize, cx: &mut Context<Self>) {
         let Some(path) = self
             .workspace
