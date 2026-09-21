@@ -115,6 +115,27 @@ impl Workspace {
         cx.notify();
     }
 
+    /// What a project's list is ordered by under its pins.
+    pub fn sort_of(&self, project: usize) -> state::Sort {
+        self.projects
+            .get(project)
+            .and_then(|open| self.sort.get(&open.path))
+            .copied()
+            .unwrap_or_default()
+    }
+
+    /// Order a project's list by something else. The hand-arranged order is
+    /// left where it is, so coming back to [`state::Sort::Manual`] comes back
+    /// to the rows as they were dragged.
+    pub fn set_sort(&mut self, project: usize, sort: state::Sort, cx: &mut Context<Self>) {
+        let Some(open) = self.projects.get(project) else {
+            return;
+        };
+        self.sort.insert(open.path.clone(), sort);
+        self.save();
+        cx.notify();
+    }
+
     /// Write down which of a project's entries are pinned, and in what order.
     pub fn set_pinned(
         &mut self,

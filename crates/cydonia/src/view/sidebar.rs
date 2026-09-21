@@ -38,7 +38,7 @@ use bezel::{
         widgets::{Buttons, Content, Layout},
     },
 };
-use std::{cell::RefCell, cmp::Reverse, ops::Range, rc::Rc, time::Duration};
+use std::{cell::RefCell, ops::Range, rc::Rc, time::Duration};
 
 /// What the sidebar needs of a session to draw its row, read out of the model
 /// before the row is built: a turn in flight puts a thinking orb in the mark's
@@ -278,6 +278,15 @@ pub(crate) fn row(
         // Only off the open row: the hover wash is the weaker rung, and
         // painting it over the selection would dim what the pointer is on.
         .when(!selected, |el| el.hover(|el| el.bg(theme.element_hover)))
+}
+
+/// One entry of a project, with what the list can be ordered by.
+struct Ranked {
+    archived: bool,
+    touched: u128,
+    /// Case-folded, for the comparison alone — the row draws its own name.
+    name: String,
+    row: Row,
 }
 
 /// A row's name. The line height is what the field pins itself to: left to
@@ -627,6 +636,12 @@ impl Cydonia {
             None => return Empty.into_any_element(),
         };
         let carried = SharedString::from(name.clone());
+        // Both buttons stay on show while either one's menu is open. They are
+        // revealed by the row's hover, and the pointer leaves the row the
+        // moment it reaches the card — which took the `+` away from under a
+        // menu standing open beside it.
+        let held = matches!(self.menu, Some(Menu::Add(at) | Menu::Project(at)) if at == ix);
+        let reveal = (!held).then_some("project-head");
         let head = div()
             .id(("project", ix))
             .group("project-head")
@@ -689,10 +704,28 @@ impl Cydonia {
                     .font_weight(FontWeight::MEDIUM)
                     .child(name),
             )
+            // Ahead of the `+`, which is the one that gets pressed: sorting
+            // and the rest are settled once and left alone.
+            .child(
+                self.menu_button(
+                    ("project-menu", ix),
+                    reveal,
+                    icons::icon(icons::layout::Ellipsis)
+                        .size(px(12.))
+                        .text_color(theme.text_faint)
+                        .group_hover("project-head", |el| el.text_color(theme.text)),
+                    Menu::Project(ix),
+                    cx,
+                )
+                // On the trigger, not the row: the card pins to the bottom
+                // left of whatever it is mounted on, and from the row it hangs
+                // off the far side of the sidebar rather than under the `···`.
+                .children(self.project_menu(ix, cx)),
+            )
             .child(
                 self.menu_button(
                     ("project-add", ix),
-                    Some("project-head"),
+                    reveal,
                     icons::icon(icons::math::Plus)
                         .size(px(12.))
                         .text_color(theme.text_faint)
@@ -701,11 +734,6 @@ impl Cydonia {
                     cx,
                 )
                 .children(self.add_menu(ix, cx)),
-            )
-            .children(self.project_menu(ix, cx))
-            .on_mouse_down(
-                MouseButton::Right,
-                cx.listener(move |this, _, _, cx| this.toggle_menu(Menu::Project(ix), cx)),
             )
             // A press on the copy is a press on where it came from: the list
             // goes back to the heading it is standing in for, rather than
@@ -753,12 +781,12 @@ impl Cydonia {
         // switch hides it hides here — the entries stay in the project and in
         // memory, and turning it back on lists them again with nothing to
         // rescan.
-        entries.retain(|(_, _, row)| shown(*row, features));
-        let split = entries.iter().position(|(archived, ..)| *archived);
+        entries.retain(|entry| shown(entry.row, features));
+        let split = entries.iter().position(|entry| entry.archived);
         let mut rows: Vec<Row> = entries
             .iter()
             .take(split.unwrap_or(entries.len()))
-            .map(|(_, _, row)| *row)
+            .map(|entry| entry.row)
             .collect();
         if let Some(split) = split {
             rows.push(Row::Archive(project));
@@ -769,7 +797,7 @@ impl Cydonia {
                 .get(project)
                 .is_some_and(|open| open.archive_open)
             {
-                rows.extend(entries[split..].iter().map(|(_, _, row)| *row));
+                rows.extend(entries[split..].iter().map(|entry| entry.row));
             }
         }
         self.ungrouped(rows, cx)
@@ -781,61 +809,76 @@ impl Cydonia {
     /// What a drag rewrites, which is why it is this list and not the one on
     /// screen: a kind switched off and an entry held by a space are both
     /// still in the project, and both keep the place they were put.
-    fn ranked(&self, project: usize, cx: &App) -> Vec<(bool, u128, Row)> {
+    fn ranked(&self, project: usize, cx: &App) -> Vec<Ranked> {
         let workspace = self.workspace.read(cx);
         let Some(open) = workspace.projects.get(project) else {
             return Vec::new();
         };
-        let sessions = open.sessions.iter().map(|chat| {
-            (
-                chat.closed,
-                chat.touched(),
-                Row::Session {
-                    project,
-                    id: chat.id,
-                },
-            )
+        // Folded for the comparison and kept that way: a sort reads it many
+        // times and the case is never shown from here.
+        let folded = |name: &str| name.to_lowercase();
+        let sessions = open.sessions.iter().map(|chat| Ranked {
+            archived: chat.closed,
+            touched: chat.touched(),
+            name: folded(&chat.label()),
+            row: Row::Session {
+                project,
+                id: chat.id,
+            },
         });
-        let boards = open
-            .boards
-            .iter()
-            .enumerate()
-            .map(|(ix, board)| (board.archived, board.touched, Row::Board { project, ix }));
-        let articles = open.articles.iter().enumerate().map(|(ix, article)| {
-            (
-                article.archived,
-                article.touched,
-                Row::Article { project, ix },
-            )
+        let boards = open.boards.iter().enumerate().map(|(ix, board)| Ranked {
+            archived: board.archived,
+            touched: board.touched,
+            name: folded(board.label()),
+            row: Row::Board { project, ix },
         });
-        // The store keeps seconds; every other stamp here is milliseconds.
-        let tables = open.tables.iter().enumerate().map(|(ix, table)| {
-            let at = table.updated_at.unwrap_or(table.created_at).max(0) as u128;
-            (table.archived, at * 1000, Row::Table { project, ix })
+        let articles = open.articles.iter().enumerate().map(|(ix, article)| Ranked {
+            archived: article.archived,
+            touched: article.touched,
+            name: folded(article.label()),
+            row: Row::Article { project, ix },
         });
-        let mut entries: Vec<(bool, u128, Row)> = sessions
+        let tables = open.tables.iter().enumerate().map(|(ix, table)| Ranked {
+            archived: table.archived,
+            // The store keeps seconds; every other stamp here is milliseconds.
+            touched: table.updated_at.unwrap_or(table.created_at).max(0) as u128 * 1000,
+            name: folded(&table.name),
+            row: Row::Table { project, ix },
+        });
+        let mut entries: Vec<Ranked> = sessions
             .chain(boards)
             .chain(articles)
             .chain(tables)
             .collect();
-        // Archived entries sink, and pinned ones rise within what is left.
-        // Below the pins the list follows the arrangement, or the entry's
-        // stamp where there is none to follow — an entry made since the order
-        // was written has no rank yet, and is listed above the rows that do
-        // rather than under them. So a new session arrives at the top of the
-        // unpinned rows without displacing a pin.
-        entries.sort_by_key(|(archived, touched, row)| {
-            let showing = showing_of(*row);
-            let pin = showing.and_then(|showing| workspace.pin_rank(project, showing));
-            let rank = showing.and_then(|showing| workspace.rank_of(project, showing));
-            (
-                *archived,
-                pin.is_none(),
-                pin.unwrap_or_default(),
-                rank.is_some(),
-                rank.unwrap_or_default(),
-                Reverse(*touched),
-            )
+        let sort = workspace.sort_of(project);
+        // Archived entries sink and pinned ones rise, whatever the list is
+        // ordered by: what is put away is out of the way, and a pin is a place
+        // somebody asked for. The sort is what happens between them.
+        let head = |entry: &Ranked| {
+            let pin = showing_of(entry.row)
+                .and_then(|showing| workspace.pin_rank(project, showing));
+            (entry.archived, pin.is_none(), pin.unwrap_or_default())
+        };
+        entries.sort_by(|a, b| {
+            head(a).cmp(&head(b)).then_with(|| match sort {
+                state::Sort::Name => a.name.cmp(&b.name),
+                state::Sort::Touched => b.touched.cmp(&a.touched),
+                // The arrangement, or the entry's stamp where there is none to
+                // follow — an entry made since the order was written has no
+                // rank yet, and is listed above the rows that do rather than
+                // under them. So a new session arrives at the top of the
+                // unpinned rows without displacing a pin.
+                state::Sort::Manual => {
+                    let rank = |entry: &Ranked| {
+                        let at = showing_of(entry.row)
+                            .and_then(|showing| workspace.rank_of(project, showing));
+                        (at.is_some(), at.unwrap_or_default())
+                    };
+                    rank(a)
+                        .cmp(&rank(b))
+                        .then_with(|| b.touched.cmp(&a.touched))
+                }
+            })
         });
         entries
     }
@@ -1065,7 +1108,11 @@ impl Cydonia {
                         this.toggle_menu(Menu::Entry(row), cx);
                     }),
                 )
-                .children(self.entry_menu(Menu::Entry(row), row, archived, cx))
+                .children(
+                    (!self.pinned(row, cx))
+                        .then(|| self.entry_menu(Menu::Entry(row), row, archived, cx))
+                        .flatten(),
+                )
             })
             // Carried onto a pane's edge to put it beside what is there — see
             // [`crate::view::arrangement`].
@@ -1156,7 +1203,7 @@ impl Cydonia {
         let rows: Vec<Row> = self
             .ranked(project, cx)
             .into_iter()
-            .map(|(.., row)| row)
+            .map(|entry| entry.row)
             .collect();
         let from = rows
             .iter()
@@ -1187,6 +1234,11 @@ impl Cydonia {
                 .collect()
         });
         self.workspace.update(cx, |workspace, cx| {
+            // A drag says where a row goes, so the list goes back to being the
+            // one that is arranged by hand. Under a name or a stamp the order
+            // written here would be overruled on the next paint, and the row
+            // would spring back to where it was let go of.
+            workspace.set_sort(project, state::Sort::Manual, cx);
             workspace.set_order(project, order, cx);
             if let Some(pins) = pins {
                 workspace.set_pinned(project, pins, cx);
@@ -1393,16 +1445,60 @@ impl Cydonia {
         if self.menu != Some(Menu::Project(ix)) {
             return None;
         }
-        let rows = vec![menu::row(
-            Item::action("Remove project").with_icon(icons::files::FolderMinus),
-            move |this, _, cx| this.close_project(ix, cx),
-        )];
+        let sort = self.workspace.read(cx).sort_of(ix);
+        let by = |label: &'static str, mode: state::Sort| {
+            menu::row(Item::action(label).checked(sort == mode), move |this, _, cx| {
+                this.workspace
+                    .update(cx, |workspace, cx| workspace.set_sort(ix, mode, cx));
+            })
+        };
+        let rows = vec![
+            menu::submenu(
+                "Sort by",
+                icons::text::ArrowDownAZ,
+                vec![
+                    by("Name", state::Sort::Name),
+                    by("Last modified", state::Sort::Touched),
+                    // Last, and named for what it is: the other two are
+                    // orders nobody arranged, and this is the one that is.
+                    by("Manual", state::Sort::Manual),
+                ],
+            ),
+            menu::row(
+                Item::action("Reveal in Finder").with_icon(icons::files::FolderOpen),
+                move |this, _, cx| this.reveal_project(ix, cx),
+            ),
+            menu::row(
+                Item::action("Remove project").with_icon(icons::files::FolderMinus),
+                move |this, _, cx| this.close_project(ix, cx),
+            ),
+        ];
         let id = SharedString::from(format!("project-menu-{ix}"));
         Some(popover::anchored_menu_below(
             id.clone(),
             self.menu_card(id, rows, cx),
             None,
         ))
+    }
+
+    /// Show the project's directory in Finder. Best effort and off the main
+    /// thread: `open` is a process, and a Finder that will not come to the
+    /// front is not worth blocking a frame over.
+    fn reveal_project(&mut self, ix: usize, cx: &mut Context<Self>) {
+        let Some(path) = self
+            .workspace
+            .read(cx)
+            .projects
+            .get(ix)
+            .map(|open| open.path.clone())
+        else {
+            return;
+        };
+        cx.background_executor()
+            .spawn(async move {
+                let _ = crate::view::component::file::external::show(&path);
+            })
+            .detach();
     }
 
     /// One session: its mark and its name.
@@ -1669,10 +1765,16 @@ impl Cydonia {
                     id,
                     None,
                     icons::icon(mark).size(px(14.)).text_color(theme.text_faint),
-                    at,
+                    at.clone(),
                     cx,
-                );
+                )
+                // On the trigger, so the card hangs under the `···` rather
+                // than off the left edge of the row it is mounted on. A row
+                // with no button of its own draws it from the wrapper, where
+                // a right press is all there is to anchor to.
+                .children(self.entry_menu(at, entry, archived, cx));
         }
+        let held = self.menu.as_ref() == Some(&Menu::Entry(entry));
         let mark = match archived {
             true => icons::files::ArchiveRestore,
             false => icons::files::Archive,
@@ -1690,19 +1792,22 @@ impl Cydonia {
             // one in which the button cannot be pressed — and a press landing
             // in it goes to the row instead and reads as a click that did
             // nothing.
-            .invisible()
+            // Held open while its row's menu is: the pointer leaves the row
+            // the moment it reaches the card, and a button that collapsed
+            // then would take the row's shape with it.
+            .when(!held, |el| {
+                el.invisible()
+                    .w(px(0.))
+                    .ml(px(-ROW_GAP))
+                    .group_hover(group, |el| el.visible().w(px(BUTTON_SIZE)).ml(px(0.)))
+            })
             // And taking no width until then. Laid out at its full size the
             // button is a column down the whole list, holding space nothing is
             // in and truncating every name by what an archive glyph would take
             // — which is only ever wanted under the pointer. The row's `gap`
             // still falls either side of a child with no width, so the margin
             // that cancels it comes back with the width.
-            .w(px(0.))
-            .ml(px(-ROW_GAP))
             .overflow_hidden()
-            .group_hover(group, |el| {
-                el.visible().w(px(BUTTON_SIZE)).ml(px(0.))
-            })
             .p(px(3.))
             .child(
                 icons::icon(mark)

@@ -19,7 +19,7 @@ use std::{
 
 const LIMIT: u64 = 256 * 1024;
 #[cfg(target_os = "macos")]
-mod external;
+pub(crate) mod external;
 /// How long a keystroke waits before the file is parsed again. Every edit
 /// re-parses the whole file — the field holds text, not a syntax tree — so a
 /// run of typing coalesces into one parse instead of one per character.

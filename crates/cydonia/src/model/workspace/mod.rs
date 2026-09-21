@@ -132,6 +132,10 @@ pub struct Workspace {
     /// The entries pinned to the top of each project's list, by project path
     /// — see [`order`].
     pub(super) pinned: BTreeMap<PathBuf, Vec<state::Entry>>,
+    /// What each project's list is ordered by under its pins, by project path
+    /// — see [`order`], which [`state::Sort::Manual`] reads and the other two
+    /// leave alone.
+    pub(super) sort: BTreeMap<PathBuf, state::Sort>,
     /// The arrangements this machine holds, and which one the window is
     /// showing. The window's rather than a project's: a space can hold panes
     /// from several — see [`spaces`].
@@ -188,6 +192,7 @@ impl Workspace {
             last: state.last,
             order: state.order,
             pinned: state.pinned,
+            sort: state.sort,
             spaces: Self::in_order(crate::model::spaces::all(), &state.spaces),
             space: None,
         };
@@ -237,6 +242,7 @@ impl Workspace {
             last: self.last.clone(),
             order: self.order.clone(),
             pinned: self.pinned.clone(),
+            sort: self.sort.clone(),
             space: self.active_space().map(|space| space.id.clone()),
             spaces: self.spaces.iter().map(|space| space.id.clone()).collect(),
         });

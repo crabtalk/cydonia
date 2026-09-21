@@ -216,3 +216,52 @@ fn pins_survive_a_relaunch(cx: &mut gpui::TestAppContext) {
         assert!(workspace.is_pinned(0, Showing::Board(1)));
     });
 }
+
+/// The three modes are a *view* of the list, so the hand-arranged order has to
+/// survive one being chosen: a name sort that overwrote `order` would leave
+/// nothing to come back to.
+#[gpui::test]
+fn sorting_by_name_leaves_the_arrangement_alone(cx: &mut gpui::TestAppContext) {
+    let scratch = Scratch::new("sortmode");
+    let workspace = three_boards(&scratch, cx);
+
+    workspace.update(cx, |workspace, cx| {
+        let entries: Vec<state::Entry> = (0..3)
+            .map(|ix| workspace.entry_of(0, Showing::Board(ix)).expect("an entry"))
+            .collect();
+        let reversed: Vec<state::Entry> = entries.iter().rev().cloned().collect();
+        workspace.set_order(0, reversed, cx);
+        assert_eq!(workspace.sort_of(0), state::Sort::Manual, "the default");
+
+        workspace.set_sort(0, state::Sort::Name, cx);
+        assert_eq!(workspace.sort_of(0), state::Sort::Name);
+        assert_eq!(
+            workspace.rank_of(0, Showing::Board(0)),
+            Some(2),
+            "the drags are still written down"
+        );
+
+        workspace.set_sort(0, state::Sort::Manual, cx);
+        assert_eq!(workspace.rank_of(0, Showing::Board(2)), Some(0));
+    });
+}
+
+/// And it is per project, kept in `state.toml` with the rest of the
+/// bookkeeping — a relaunch lists each project the way it was left.
+#[gpui::test]
+fn the_sort_is_per_project_and_survives_a_relaunch(cx: &mut gpui::TestAppContext) {
+    let scratch = Scratch::new("sortrelaunch");
+    let workspace = three_boards(&scratch, cx);
+    let one = scratch.project("one");
+    let two = scratch.project("two");
+
+    workspace.update(cx, |workspace, cx| {
+        workspace.open_project(two.clone(), cx);
+        workspace.set_sort(0, state::Sort::Touched, cx);
+        assert_eq!(workspace.sort_of(1), state::Sort::Manual, "its own project");
+    });
+
+    let restored = state::restore();
+    assert_eq!(restored.sort.get(&one), Some(&state::Sort::Touched));
+    assert_eq!(restored.sort.get(&two), None, "never set, never written");
+}
