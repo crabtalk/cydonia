@@ -335,15 +335,14 @@ impl Default for Mcp {
 /// The surfaces a project can hold, minus articles — the one thing the app is
 /// for, and so not something to be able to switch off.
 ///
-/// Boards are on to begin with: a board is files in the project and nothing
-/// runs to hold one, so a fresh install is a place to write and a place to
-/// plan. The other two are off until they are asked for.
+/// Sessions and boards are on to begin with. Tables are off until they are
+/// asked for.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Features {
-    /// Whether sessions may be opened. A session is the only thing that starts
-    /// an agent, and an agent is a package this machine downloads and runs, so
-    /// this is a gate over that as much as over the pane.
+    /// Whether sessions may be opened. Nothing is downloaded or run by turning
+    /// this on: a session with no agent installed stands over the install,
+    /// which is where a package is named and consented to.
     pub sessions: bool,
     pub boards: bool,
     pub tables: bool,
@@ -352,7 +351,7 @@ pub struct Features {
 impl Default for Features {
     fn default() -> Self {
         Self {
-            sessions: false,
+            sessions: true,
             boards: true,
             tables: false,
         }

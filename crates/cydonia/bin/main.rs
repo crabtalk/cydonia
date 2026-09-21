@@ -9,7 +9,7 @@ use bezel::{
 };
 use cydonia::{
     agent, memory,
-    model::{fonts, language, media, migrate, notify, settings, state, update, workspace},
+    model::{fonts, language, media, migrate, notify, settings, state, update, welcome, workspace},
     view::{article, hotkey, keymap, menubar, root},
 };
 
@@ -27,7 +27,10 @@ fn main() -> Result<()> {
     // one read first would be read from before the move.
     migrate::run();
     let settings = settings::load()?;
-    let state = state::restore();
+    let mut state = state::restore();
+    // After the restore and before the window: it reads whether `state.toml`
+    // is there, which is what tells a first run from every other one.
+    welcome::seed(&mut state);
     let app = gpui_platform::application();
     // The Dock icon and a second launch both land here. ⌘W leaves the app
     // running with no window, as it does in every other mac app, so this is

@@ -17,6 +17,7 @@ pub mod spaces;
 pub mod state;
 pub mod update;
 pub mod watch;
+pub mod welcome;
 pub mod workspace;
 
 pub mod fonts;

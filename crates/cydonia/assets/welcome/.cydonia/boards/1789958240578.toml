@@ -1,0 +1,53 @@
+id = "1789958240578"
+archived = false
+name = "Getting started"
+key = "START"
+next_handle = 7
+view = "lanes"
+
+[[columns]]
+id = "1789958248796"
+name = "TO TRY"
+collapsed = false
+
+[[columns.cards]]
+id = "1789958255848"
+handle = 1
+text = "Drag this card to DOING — that is the whole of a board"
+
+[[columns.cards]]
+id = "1789958255848-2"
+handle = 2
+text = 'Read "Start here" in the sidebar'
+
+[[columns.cards]]
+id = "1789958255848-3"
+handle = 3
+text = "Install an agent: press ⌘N, or ⌘, → Agents"
+
+[[columns.cards]]
+id = "1789958255848-4"
+handle = 4
+text = "Start a session with ⌘N and ask it to add a card to this board"
+
+[[columns.cards]]
+id = "1789958255848-5"
+handle = 5
+text = 'Read "Writing in Cydonia", then make an article of your own'
+
+[[columns.cards]]
+id = "1789958255848-6"
+handle = 6
+text = "Open a project of your own with ⌘O — this one is a demonstration"
+
+[[columns]]
+id = "1789958248796-2"
+name = "DOING"
+collapsed = false
+cards = []
+
+[[columns]]
+id = "1789958248796-3"
+name = "DONE"
+collapsed = false
+cards = []
