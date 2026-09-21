@@ -437,9 +437,7 @@ pub fn create(project: &Path) -> Option<Article> {
     std::fs::create_dir_all(&article).ok()?;
     let path = layout::content(&article);
     std::fs::write(&path, "").ok()?;
-    let mut article = Article::new(path);
-    article.shuffle_cover();
-    Some(article)
+    Some(Article::new(path))
 }
 
 /// Articles used to sit loose in `.cydonia/` as `foo.md` beside `foo.cover-N.svg`,

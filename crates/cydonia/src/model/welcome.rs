@@ -48,7 +48,6 @@ const SEED: &[&[File]] = &[
     &[
         file!("articles/1789958219063/content.md"),
         file!("articles/1789958219063/properties.toml"),
-        file!("articles/1789958219063/cover-542837.svg"),
     ],
 ];
 

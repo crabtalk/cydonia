@@ -1943,6 +1943,21 @@ impl Cydonia {
                 .active_article()
                 .and_then(|article| article.full_width);
             let wide = held.unwrap_or(workspace.wide_pages);
+            // Only where there is none. A page that has one is changed from
+            // the picture itself, which is on screen and has nowhere else it
+            // could mean — see `article::cover_controls`.
+            if workspace
+                .active_article()
+                .is_some_and(|article| article.cover.is_none())
+            {
+                rows.insert(
+                    0,
+                    menu::row(
+                        Item::action("Add cover").with_icon(icons::files::ImagePlus),
+                        move |this, _, cx| this.shuffle_cover(cx),
+                    ),
+                );
+            }
             // Only for a page carrying a measure of its own. On every other
             // page it is already what is happening, and a row that undoes
             // nothing is a row nobody can read the point of.
