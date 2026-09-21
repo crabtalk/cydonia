@@ -1150,6 +1150,7 @@ impl Cydonia {
                 &scroll.across,
                 &scroll.drift,
                 Axes::Horizontal,
+                scroll::Beyond::Nothing,
             ))
             .into_any_element()
     }
@@ -1224,7 +1225,12 @@ impl Cydonia {
             ))
             // A group off the foot of the window is one a drag cannot reach:
             // reaching for it would mean letting go.
-            .child(scroll::drift(&scroll.down, &scroll.drift, Axes::Vertical))
+            .child(scroll::drift(
+                &scroll.down,
+                &scroll.drift,
+                Axes::Vertical,
+                scroll::Beyond::Nothing,
+            ))
             .into_any_element()
     }
 
@@ -1836,7 +1842,12 @@ impl Cydonia {
                     )
                     // The lane's own half of the gesture: a card held at the
                     // foot of a full lane brings the rest of it up.
-                    .child(scroll::drift(&scroll, &drift, Axes::Vertical))
+                    .child(scroll::drift(
+                        &scroll,
+                        &drift,
+                        Axes::Vertical,
+                        scroll::Beyond::Neighbour,
+                    ))
                     // A new card is written at the lane's end, and grows as it
                     // is typed into: the lane stays at that end for as long as
                     // it is left there, and lets go the moment it is scrolled

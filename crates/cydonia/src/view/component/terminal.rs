@@ -18,7 +18,7 @@ use std::{
 };
 use terminal::{
     emulator::{Emulator, SelectionType},
-    view::{self, GridGeometry, GridSnapshot, TerminalElement},
+    view::{self, GridGeometry, GridSnapshot, Images, TerminalElement},
 };
 
 const CONTEXT: &str = "CydoniaTerminal";
@@ -200,6 +200,9 @@ fn directory_label(directory: &Path) -> String {
 pub struct Terminal {
     pub(crate) directory: std::path::PathBuf,
     emulator: Emulator,
+    /// Decoded kitty images, cached across frames beside the emulator holding
+    /// the bytes they came from.
+    images: Images,
     shell: Option<Shell>,
     focus: FocusHandle,
     geometry: Option<GridGeometry>,
@@ -214,6 +217,7 @@ impl Terminal {
         let mut this = Self {
             directory: cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf()),
             emulator: Emulator::new(80, 24),
+            images: Images::new(),
             shell: None,
             focus: cx.focus_handle(),
             geometry: None,
@@ -344,9 +348,14 @@ impl Render for Terminal {
                         }
                     }
                     this.geometry = Some(geometry);
+                    // Only this callback has the measured cell, which is what
+                    // sizes a kitty image in rows and columns.
+                    this.emulator
+                        .set_cell_size(geometry.cell_w, geometry.line_h);
                     GridSnapshot {
                         lines: this.emulator.lines(),
                         cursor: this.emulator.cursor(),
+                        images: this.images.placed(&this.emulator),
                     }
                 })
                 .ok()
