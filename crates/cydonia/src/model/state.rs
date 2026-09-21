@@ -27,6 +27,20 @@ pub enum Kind {
     Table,
 }
 
+/// What a project's list is ordered by, under the pins.
+///
+/// [`Sort::Manual`] is the arrangement the rows were dragged into, kept in
+/// `order` — the other two leave it where it is, so switching back to Manual
+/// restores every drag rather than the order a name sort last left behind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Sort {
+    #[default]
+    Manual,
+    Name,
+    Touched,
+}
+
 /// One remembered entry: which kind, and which of them.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Entry {
@@ -66,6 +80,10 @@ pub struct State {
     /// themselves, and `last` has no use for one.
     #[serde(default)]
     pub pinned: BTreeMap<PathBuf, Vec<Entry>>,
+    /// What each project's list is ordered by, by project path. A project this
+    /// does not name is sorted [`Sort::Manual`].
+    #[serde(default)]
+    pub sort: BTreeMap<PathBuf, Sort>,
     /// The space the window was showing when it last closed, by its id — see
     /// [`crate::model::spaces`]. Nothing where it was on a single entry, and
     /// an id whose file has since gone lands on one too.
@@ -107,6 +125,7 @@ pub fn restore() -> State {
         last: stored.last,
         order: stored.order,
         pinned: stored.pinned,
+        sort: stored.sort,
         space: stored.space,
         spaces: stored.spaces,
     }

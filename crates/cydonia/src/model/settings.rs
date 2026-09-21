@@ -148,12 +148,6 @@ pub struct Appearance {
     /// *has* been decided about carries the decision in its own
     /// `properties.toml` and ignores this.
     pub wide_pages: bool,
-    /// Whether an article shows the band over its first line. A page that
-    /// *has* been decided about carries the decision in its own
-    /// `properties.toml` and ignores this, the way [`Self::wide_pages`] works.
-    ///
-    /// On, which is how covers shipped.
-    pub covers: bool,
     /// How a new board is laid out. Every board carries its own answer from the
     /// moment it is made — see [`artifact::board::Board::view`] — so this seeds
     /// one and never steers it afterwards.
@@ -222,7 +216,6 @@ impl Default for Appearance {
             hue: 0.,
             chroma: 0.,
             wide_pages: false,
-            covers: true,
             board_view: artifact::board::View::Lanes,
             indent_project_rows: true,
             scrollbars: Scrollbars::default(),
@@ -335,15 +328,14 @@ impl Default for Mcp {
 /// The surfaces a project can hold, minus articles — the one thing the app is
 /// for, and so not something to be able to switch off.
 ///
-/// Boards are on to begin with: a board is files in the project and nothing
-/// runs to hold one, so a fresh install is a place to write and a place to
-/// plan. The other two are off until they are asked for.
+/// Sessions and boards are on to begin with. Tables are off until they are
+/// asked for.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Features {
-    /// Whether sessions may be opened. A session is the only thing that starts
-    /// an agent, and an agent is a package this machine downloads and runs, so
-    /// this is a gate over that as much as over the pane.
+    /// Whether sessions may be opened. Nothing is downloaded or run by turning
+    /// this on: a session with no agent installed stands over the install,
+    /// which is where a package is named and consented to.
     pub sessions: bool,
     pub boards: bool,
     pub tables: bool,
@@ -352,7 +344,7 @@ pub struct Features {
 impl Default for Features {
     fn default() -> Self {
         Self {
-            sessions: false,
+            sessions: true,
             boards: true,
             tables: false,
         }
@@ -643,7 +635,6 @@ fn write_appearance(doc: &mut toml_edit::DocumentMut, appearance: &Appearance) -
     held["hue"] = toml_edit::value(f64::from(appearance.hue));
     held["chroma"] = toml_edit::value(f64::from(appearance.chroma));
     held["wide_pages"] = toml_edit::value(appearance.wide_pages);
-    held["covers"] = toml_edit::value(appearance.covers);
     held["board_view"] = toml_edit::value(appearance.board_view.key());
     held["indent_project_rows"] = toml_edit::value(appearance.indent_project_rows);
     held["scrollbars"] = toml_edit::value(appearance.scrollbars.key());

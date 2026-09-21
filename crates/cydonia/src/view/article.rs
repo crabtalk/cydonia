@@ -65,18 +65,15 @@ const COVER_HEIGHT: f32 = CONTENT_MAX_WIDTH / 5.;
 /// scrolls clear of the bottom edge of the pane.
 const TAIL: f32 = 120.;
 
-/// The column's own inset. What the title adds to it is the editor's
-/// [`editor::Layout::text_inset`], read at paint like the theme — the editor
-/// holds its text that far inside its box so a block's drag handle has
-/// somewhere to sit, and the title takes the same measure to line up with the
-/// first paragraph.
+/// How far the page holds its text off its own edge, in both measures: a page
+/// set across the pane changes where the text stops, not how far in it starts.
+///
+/// What the title adds to it is the editor's [`editor::Layout::text_inset`],
+/// read at paint like the theme — the editor holds its text that far inside
+/// its box so a block's drag handle has somewhere to sit, and the title takes
+/// the same measure to line up with the first paragraph. That allowance is the
+/// handle's whole room, in either measure.
 const COLUMN_INSET: f32 = 24.;
-
-/// What a wide page is held off the edge of the pane by. Twice the column's,
-/// because the column has white space either side of it standing in for a
-/// margin and a page filling the pane has none — at the column's own inset the
-/// text runs into the border, and the drag handle has nowhere left to sit.
-const WIDE_INSET: f32 = COLUMN_INSET * 2.;
 
 /// Plain-text styling, resolved against the active theme on every paint.
 pub fn source_style(theme: &Theme) -> markdown::SourceStyle {
@@ -124,14 +121,6 @@ fn column(wide: bool) -> Div {
     match wide {
         true => band,
         false => band.max_w(px(CONTENT_MAX_WIDTH)),
-    }
-}
-
-/// How far that box holds its text off its own edge.
-fn inset(wide: bool) -> f32 {
-    match wide {
-        true => WIDE_INSET,
-        false => COLUMN_INSET,
     }
 }
 
@@ -268,7 +257,7 @@ impl Cydonia {
 
     /// Cut the open article a new cover. Adding the first one comes through
     /// here too — there is nothing to choose between, only a picture to get.
-    fn shuffle_cover(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn shuffle_cover(&mut self, cx: &mut Context<Self>) {
         self.workspace
             .update(cx, |workspace, cx| workspace.shuffle_cover(cx));
         cx.notify();
@@ -357,7 +346,6 @@ impl Cydonia {
         let editor = article.editor.clone()?;
         let cover = article.cover.clone();
         let wide = article.wide(self.workspace.read(cx).wide_pages);
-        let covered = self.workspace.read(cx).covers;
         let source_offset = source_offset(editor.read(cx), cx);
         let stale = article.stale.then(|| article.path.clone());
         let document = div()
@@ -380,7 +368,7 @@ impl Cydonia {
             .track_scroll(&article.scroll)
             .flex()
             .flex_col()
-            .child(self.header(cover, field, wide, covered, cx))
+            .child(self.header(cover, field, wide, cx))
             // Its own height, not the box's share of one: a long document
             // overflows and scrolls instead of being squashed and clipped,
             // and `min_h_full` is what leaves the band something to scroll
@@ -400,7 +388,7 @@ impl Cydonia {
                         // down there land a caret, and the I-beam is what
                         // says so before the click.
                         column(wide)
-                            .px(px(inset(wide)))
+                            .px(px(COLUMN_INSET))
                             .pt(px(20.))
                             .pb(px(TAIL))
                             .flex()
@@ -488,35 +476,31 @@ impl Cydonia {
         cover: Option<PathBuf>,
         field: Entity<TextField>,
         wide: bool,
-        covered: bool,
         cx: &Context<Self>,
     ) -> impl IntoElement + use<> {
+        // The band only where there is a picture in it. A page with no cover
+        // starts at its title; `Add cover` is in the band's `···`, which is on
+        // screen either way and costs the page no room — see
+        // `sidebar::entry_menu`.
         div()
             .w_full()
             .flex_none()
             .flex()
             .flex_col()
-            .children(covered.then(|| self.cover_band(cover, cx)))
+            .children(cover.map(|cover| self.cover_band(cover, cx)))
             .child(
                 div().w_full().flex().justify_center().child(
                     column(wide)
-                        .pl(px(inset(wide) + editor::Layout::of(cx).text_inset))
-                        .pr(px(inset(wide)))
+                        .pl(px(COLUMN_INSET + editor::Layout::of(cx).text_inset))
+                        .pr(px(COLUMN_INSET))
                         .pt(px(20.))
                         .child(field),
                 ),
             )
     }
 
-    /// What sits above the first line — the cover, or the room one would take.
-    ///
-    /// A page with no cover keeps the band: it is the same height either way,
-    /// so the document starts in the same place, and an empty one is where a
-    /// picture is added from. With covers switched off there is no band at all
-    /// — see [`crate::model::settings::Appearance::covers`].
-    fn cover_band(&self, cover: Option<PathBuf>, cx: &Context<Self>) -> impl IntoElement + use<> {
-        let theme = Theme::of(cx).clone();
-        let has_cover = cover.is_some();
+    /// The picture across the top of a page that has one.
+    fn cover_band(&self, cover: PathBuf, cx: &Context<Self>) -> impl IntoElement + use<> {
         div()
             .group("cover")
             .relative()
@@ -524,24 +508,15 @@ impl Cydonia {
             .flex_none()
             .h(px(COVER_HEIGHT))
             .overflow_hidden()
-            // Empty, it has to read as somewhere a picture goes. On the card's
-            // own surface it is the same tone as the page under it, so there is
-            // nothing to say the band is there at all — and nothing to invite
-            // the hover that would tell you.
-            .when(!has_cover, |band| {
-                band.bg(theme.element_hover)
-                    .border_b_1()
-                    .border_color(theme.border)
-            })
-            .children(cover.map(|path| {
-                img(path)
+            .child(
+                img(cover)
                     .size_full()
                     .object_fit(ObjectFit::Cover)
                     // Off gpui's own asset cache, which never lets a decoded
                     // cover go. See [`crate::memory`].
-                    .image_cache(&memory::covers(cx))
-            }))
-            .child(self.cover_controls(has_cover, cx))
+                    .image_cache(&memory::covers(cx)),
+            )
+            .child(self.cover_controls(cx))
     }
 
     /// The cover's own controls, kept off the page until the pointer is on it.
@@ -549,7 +524,7 @@ impl Cydonia {
     /// Absolute, so neither showing them nor taking the cover away moves a line
     /// of the document — a row that sat in flow would shunt the first paragraph
     /// down the moment the mouse crossed the pane.
-    fn cover_controls(&self, has_cover: bool, cx: &Context<Self>) -> impl IntoElement + use<> {
+    fn cover_controls(&self, cx: &Context<Self>) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
         let painter = Painter::of(cx);
         let chip = |id: &'static str, label: &'static str| {
@@ -567,22 +542,17 @@ impl Cydonia {
             .invisible()
             .group_hover("cover", |row| row.visible())
             .child(
-                chip(
-                    "cover-shuffle",
-                    if has_cover { "Shuffle" } else { "Add cover" },
-                )
-                .on_click(cx.listener(|this, _, _, cx| this.shuffle_cover(cx))),
+                chip("cover-shuffle", "Shuffle")
+                    .on_click(cx.listener(|this, _, _, cx| this.shuffle_cover(cx))),
             )
-            .when(has_cover, |row| {
-                row.child(
-                    chip("cover-change", "Change")
-                        .on_click(cx.listener(|this, _, _, cx| this.pick_cover(cx))),
-                )
-                .child(
-                    chip("cover-remove", "Remove")
-                        .on_click(cx.listener(|this, _, _, cx| this.remove_cover(cx))),
-                )
-            })
+            .child(
+                chip("cover-change", "Change")
+                    .on_click(cx.listener(|this, _, _, cx| this.pick_cover(cx))),
+            )
+            .child(
+                chip("cover-remove", "Remove")
+                    .on_click(cx.listener(|this, _, _, cx| this.remove_cover(cx))),
+            )
     }
 
     /// One article in the sidebar, under the project that holds it.

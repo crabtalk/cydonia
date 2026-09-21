@@ -1,8 +1,45 @@
 [
   {
+    "version": "0.1.12",
+    "date": "2026-09-22",
+    "summary": "Images in the terminal, a sidebar that sorts and reveals, and an entry's menu wherever you press it.",
+    "media": {
+      "poster": "pics/cydonia/v0.1.12.jpg",
+      "src": "videos/cydonia/v0.1.12.mp4",
+      "alt": "…",
+      "w": 1280,
+      "h": 900
+    },
+    "new": [
+      "See a picture a program draws in the terminal, placed where it put it on the grid",
+      "Sort a project's entries by hand, by name or by when they were written to",
+      "Open an entry's menu with a right press anywhere on its row",
+      "Find the entry a pane is showing in the sidebar, with the projects above it opened to it",
+      "Start a first run with a project already open and sessions turned on"
+    ],
+    "changed": [
+      "An entry's menu drops from the end of its row rather than its left edge",
+      "A pinned row carries a pin that opens its menu, in place of the ···",
+      "Fetch a fence's grammar when a document first asks for it, rather than ahead of one",
+      "Name a page article_path in the agent tools, the way the app spells it",
+      "Move to bezel 0.1.23"
+    ],
+    "fixed": [
+      "Put a cover on an article only where one was asked for",
+      "Measure a page by one inset whichever width it is read at"
+    ]
+  },
+  {
     "version": "0.1.11",
     "date": "2026-09-20",
     "summary": "A layout is a space, the docs are on the site, and a selection follows the pointer off the text.",
+    "media": {
+      "poster": "pics/cydonia/v0.1.11.jpg",
+      "src": "videos/cydonia/v0.1.11.mp4",
+      "alt": "…",
+      "w": 1280,
+      "h": 900
+    },
     "new": [
       "Pick the families the app is set in, and one size for everything fixed pitch",
       "Open the right panel beside an article or a board, not only beside a session — one panel per project, with its terminals and files kept there",

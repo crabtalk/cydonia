@@ -107,8 +107,6 @@ pub struct Workspace {
     /// [`crate::model::state::State::wide_pages`].
     pub wide_pages: bool,
     /// Whether an article shows its cover band when it has not said otherwise
-    /// — see [`crate::model::settings::Appearance::covers`].
-    pub covers: bool,
     /// How a new board is laid out — see
     /// [`crate::model::settings::Appearance::board_view`].
     pub board_view: artifact::board::View,
@@ -132,6 +130,10 @@ pub struct Workspace {
     /// The entries pinned to the top of each project's list, by project path
     /// — see [`order`].
     pub(super) pinned: BTreeMap<PathBuf, Vec<state::Entry>>,
+    /// What each project's list is ordered by under its pins, by project path
+    /// — see [`order`], which [`state::Sort::Manual`] reads and the other two
+    /// leave alone.
+    pub(super) sort: BTreeMap<PathBuf, state::Sort>,
     /// The arrangements this machine holds, and which one the window is
     /// showing. The window's rather than a project's: a space can hold panes
     /// from several — see [`spaces`].
@@ -178,7 +180,6 @@ impl Workspace {
             fonts: fonts::families(),
             tint: Tint::new(look.hue, look.chroma),
             wide_pages: look.wide_pages,
-            covers: look.covers,
             board_view: look.board_view,
             indent_project_rows: look.indent_project_rows,
             wrap_code: look.wrap_code,
@@ -188,6 +189,7 @@ impl Workspace {
             last: state.last,
             order: state.order,
             pinned: state.pinned,
+            sort: state.sort,
             spaces: Self::in_order(crate::model::spaces::all(), &state.spaces),
             space: None,
         };
@@ -237,6 +239,7 @@ impl Workspace {
             last: self.last.clone(),
             order: self.order.clone(),
             pinned: self.pinned.clone(),
+            sort: self.sort.clone(),
             space: self.active_space().map(|space| space.id.clone()),
             spaces: self.spaces.iter().map(|space| space.id.clone()).collect(),
         });
@@ -260,7 +263,6 @@ impl Workspace {
             hue: self.tint.hue,
             chroma: self.tint.chroma,
             wide_pages: self.wide_pages,
-            covers: self.covers,
             board_view: self.board_view,
             indent_project_rows: self.indent_project_rows,
             scrollbars: self.settings.appearance.scrollbars,
@@ -565,15 +567,6 @@ impl Workspace {
     /// the rest follow this.
     pub fn set_wide_pages(&mut self, wide: bool, cx: &mut Context<Self>) {
         self.wide_pages = wide;
-        self.save_appearance();
-        cx.notify();
-    }
-
-    /// Whether a page that has not been decided about shows its cover band.
-    /// A page carrying its own answer keeps it — see
-    /// [`crate::model::article::Article::shows_cover`].
-    pub fn set_covers(&mut self, shown: bool, cx: &mut Context<Self>) {
-        self.covers = shown;
         self.save_appearance();
         cx.notify();
     }

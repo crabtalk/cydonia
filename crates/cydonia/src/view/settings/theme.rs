@@ -286,7 +286,6 @@ impl SettingsWindow {
                     .group_box()
                     .child(self.cursor_row(cx))
                     .child(self.pages_row(cx))
-                    .child(self.covers_row(cx))
                     .child(self.wrap_row(cx)),
             )
             .into_any_element()
@@ -335,29 +334,6 @@ impl SettingsWindow {
             move |this, cx| {
                 this.workspace
                     .update(cx, |workspace, cx| workspace.set_wide_pages(!on, cx));
-            },
-        )
-    }
-
-    /// Whether a page shows the band over its first line when it has not been
-    /// told otherwise.
-    ///
-    /// The default alone, the way [`Self::pages_row`] is: a page's own `···`
-    /// menu writes the answer into its `properties.toml`, and one written there
-    /// stays whatever this switch says.
-    pub(super) fn covers_row(&self, cx: &mut Context<Self>) -> AnyElement {
-        let on = self.workspace.read(cx).covers;
-        self.switch_row(
-            Switch::new(
-                "covers",
-                "Article covers",
-                "Show the picture band over an article's first line.",
-                on,
-            ),
-            cx,
-            move |this, cx| {
-                this.workspace
-                    .update(cx, |workspace, cx| workspace.set_covers(!on, cx));
             },
         )
     }

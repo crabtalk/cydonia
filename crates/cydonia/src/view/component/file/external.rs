@@ -150,6 +150,16 @@ fn applications(file: &Path) -> Result<Vec<Application>> {
     Ok(apps)
 }
 
+/// Show a path in Finder: a directory opened, anything else selected in the
+/// folder it is in.
+pub(crate) fn show(path: &Path) -> Result<()> {
+    let target = match path.is_dir() {
+        true => Target::Default,
+        false => Target::Folder,
+    };
+    open(path, &target)
+}
+
 pub(super) fn open(file: &Path, target: &Target) -> Result<()> {
     output(
         open_command(file, target)

@@ -38,7 +38,7 @@ use bezel::{
         widgets::{Buttons, Content, Layout},
     },
 };
-use std::{cell::RefCell, cmp::Reverse, ops::Range, rc::Rc, time::Duration};
+use std::{cell::RefCell, ops::Range, rc::Rc, time::Duration};
 
 /// What the sidebar needs of a session to draw its row, read out of the model
 /// before the row is built: a turn in flight puts a thinking orb in the mark's
@@ -223,6 +223,14 @@ fn key_of(entry: Row) -> String {
 /// gives every other one the same.
 const ROW_PILL: f32 = 30.;
 
+/// What a row puts between its mark, its name and the button at the end.
+const ROW_GAP: f32 = 8.;
+
+/// The button at the end of a row, at its full size: a 14px glyph in the
+/// ghost's own padding. Named because the button is laid out at no width until
+/// the pointer arrives — see [`Cydonia::archive_button`].
+const BUTTON_SIZE: f32 = 14. + 3. * 2.;
+
 pub(crate) const ROW_HEIGHT: f32 = ROW_PILL + 2.;
 
 /// How far the pinned heading's glass runs past the band it is seen in, and is
@@ -263,13 +271,22 @@ pub(crate) fn row(
         .flex()
         .flex_row()
         .items_center()
-        .gap(px(8.))
+        .gap(px(ROW_GAP))
         .rounded(px(Theme::control_radius()))
         .cursor_pointer()
         .when(selected, |el| el.bg(theme.element_active))
         // Only off the open row: the hover wash is the weaker rung, and
         // painting it over the selection would dim what the pointer is on.
         .when(!selected, |el| el.hover(|el| el.bg(theme.element_hover)))
+}
+
+/// One entry of a project, with what the list can be ordered by.
+struct Ranked {
+    archived: bool,
+    touched: u128,
+    /// Case-folded, for the comparison alone — the row draws its own name.
+    name: String,
+    row: Row,
 }
 
 /// A row's name. The line height is what the field pins itself to: left to
@@ -619,6 +636,12 @@ impl Cydonia {
             None => return Empty.into_any_element(),
         };
         let carried = SharedString::from(name.clone());
+        // Both buttons stay on show while either one's menu is open. They are
+        // revealed by the row's hover, and the pointer leaves the row the
+        // moment it reaches the card — which took the `+` away from under a
+        // menu standing open beside it.
+        let held = matches!(self.menu, Some(Menu::Add(at) | Menu::Project(at)) if at == ix);
+        let reveal = (!held).then_some("project-head");
         let head = div()
             .id(("project", ix))
             .group("project-head")
@@ -681,10 +704,28 @@ impl Cydonia {
                     .font_weight(FontWeight::MEDIUM)
                     .child(name),
             )
+            // Ahead of the `+`, which is the one that gets pressed: sorting
+            // and the rest are settled once and left alone.
+            .child(
+                self.menu_button(
+                    ("project-menu", ix),
+                    reveal,
+                    icons::icon(icons::layout::Ellipsis)
+                        .size(px(12.))
+                        .text_color(theme.text_faint)
+                        .group_hover("project-head", |el| el.text_color(theme.text)),
+                    Menu::Project(ix),
+                    cx,
+                )
+                // On the trigger, not the row: the card pins to the bottom
+                // left of whatever it is mounted on, and from the row it hangs
+                // off the far side of the sidebar rather than under the `···`.
+                .children(self.project_menu(ix, cx)),
+            )
             .child(
                 self.menu_button(
                     ("project-add", ix),
-                    Some("project-head"),
+                    reveal,
                     icons::icon(icons::math::Plus)
                         .size(px(12.))
                         .text_color(theme.text_faint)
@@ -693,11 +734,6 @@ impl Cydonia {
                     cx,
                 )
                 .children(self.add_menu(ix, cx)),
-            )
-            .children(self.project_menu(ix, cx))
-            .on_mouse_down(
-                MouseButton::Right,
-                cx.listener(move |this, _, _, cx| this.toggle_menu(Menu::Project(ix), cx)),
             )
             // A press on the copy is a press on where it came from: the list
             // goes back to the heading it is standing in for, rather than
@@ -745,12 +781,12 @@ impl Cydonia {
         // switch hides it hides here — the entries stay in the project and in
         // memory, and turning it back on lists them again with nothing to
         // rescan.
-        entries.retain(|(_, _, row)| shown(*row, features));
-        let split = entries.iter().position(|(archived, ..)| *archived);
+        entries.retain(|entry| shown(entry.row, features));
+        let split = entries.iter().position(|entry| entry.archived);
         let mut rows: Vec<Row> = entries
             .iter()
             .take(split.unwrap_or(entries.len()))
-            .map(|(_, _, row)| *row)
+            .map(|entry| entry.row)
             .collect();
         if let Some(split) = split {
             rows.push(Row::Archive(project));
@@ -761,7 +797,7 @@ impl Cydonia {
                 .get(project)
                 .is_some_and(|open| open.archive_open)
             {
-                rows.extend(entries[split..].iter().map(|(_, _, row)| *row));
+                rows.extend(entries[split..].iter().map(|entry| entry.row));
             }
         }
         self.ungrouped(rows, cx)
@@ -773,61 +809,80 @@ impl Cydonia {
     /// What a drag rewrites, which is why it is this list and not the one on
     /// screen: a kind switched off and an entry held by a space are both
     /// still in the project, and both keep the place they were put.
-    fn ranked(&self, project: usize, cx: &App) -> Vec<(bool, u128, Row)> {
+    fn ranked(&self, project: usize, cx: &App) -> Vec<Ranked> {
         let workspace = self.workspace.read(cx);
         let Some(open) = workspace.projects.get(project) else {
             return Vec::new();
         };
-        let sessions = open.sessions.iter().map(|chat| {
-            (
-                chat.closed,
-                chat.touched(),
-                Row::Session {
-                    project,
-                    id: chat.id,
-                },
-            )
+        // Folded for the comparison and kept that way: a sort reads it many
+        // times and the case is never shown from here.
+        let folded = |name: &str| name.to_lowercase();
+        let sessions = open.sessions.iter().map(|chat| Ranked {
+            archived: chat.closed,
+            touched: chat.touched(),
+            name: folded(&chat.label()),
+            row: Row::Session {
+                project,
+                id: chat.id,
+            },
         });
-        let boards = open
-            .boards
+        let boards = open.boards.iter().enumerate().map(|(ix, board)| Ranked {
+            archived: board.archived,
+            touched: board.touched,
+            name: folded(board.label()),
+            row: Row::Board { project, ix },
+        });
+        let articles = open
+            .articles
             .iter()
             .enumerate()
-            .map(|(ix, board)| (board.archived, board.touched, Row::Board { project, ix }));
-        let articles = open.articles.iter().enumerate().map(|(ix, article)| {
-            (
-                article.archived,
-                article.touched,
-                Row::Article { project, ix },
-            )
+            .map(|(ix, article)| Ranked {
+                archived: article.archived,
+                touched: article.touched,
+                name: folded(article.label()),
+                row: Row::Article { project, ix },
+            });
+        let tables = open.tables.iter().enumerate().map(|(ix, table)| Ranked {
+            archived: table.archived,
+            // The store keeps seconds; every other stamp here is milliseconds.
+            touched: table.updated_at.unwrap_or(table.created_at).max(0) as u128 * 1000,
+            name: folded(&table.name),
+            row: Row::Table { project, ix },
         });
-        // The store keeps seconds; every other stamp here is milliseconds.
-        let tables = open.tables.iter().enumerate().map(|(ix, table)| {
-            let at = table.updated_at.unwrap_or(table.created_at).max(0) as u128;
-            (table.archived, at * 1000, Row::Table { project, ix })
-        });
-        let mut entries: Vec<(bool, u128, Row)> = sessions
+        let mut entries: Vec<Ranked> = sessions
             .chain(boards)
             .chain(articles)
             .chain(tables)
             .collect();
-        // Archived entries sink, and pinned ones rise within what is left.
-        // Below the pins the list follows the arrangement, or the entry's
-        // stamp where there is none to follow — an entry made since the order
-        // was written has no rank yet, and is listed above the rows that do
-        // rather than under them. So a new session arrives at the top of the
-        // unpinned rows without displacing a pin.
-        entries.sort_by_key(|(archived, touched, row)| {
-            let showing = showing_of(*row);
-            let pin = showing.and_then(|showing| workspace.pin_rank(project, showing));
-            let rank = showing.and_then(|showing| workspace.rank_of(project, showing));
-            (
-                *archived,
-                pin.is_none(),
-                pin.unwrap_or_default(),
-                rank.is_some(),
-                rank.unwrap_or_default(),
-                Reverse(*touched),
-            )
+        let sort = workspace.sort_of(project);
+        // Archived entries sink and pinned ones rise, whatever the list is
+        // ordered by: what is put away is out of the way, and a pin is a place
+        // somebody asked for. The sort is what happens between them.
+        let head = |entry: &Ranked| {
+            let pin =
+                showing_of(entry.row).and_then(|showing| workspace.pin_rank(project, showing));
+            (entry.archived, pin.is_none(), pin.unwrap_or_default())
+        };
+        entries.sort_by(|a, b| {
+            head(a).cmp(&head(b)).then_with(|| match sort {
+                state::Sort::Name => a.name.cmp(&b.name),
+                state::Sort::Touched => b.touched.cmp(&a.touched),
+                // The arrangement, or the entry's stamp where there is none to
+                // follow — an entry made since the order was written has no
+                // rank yet, and is listed above the rows that do rather than
+                // under them. So a new session arrives at the top of the
+                // unpinned rows without displacing a pin.
+                state::Sort::Manual => {
+                    let rank = |entry: &Ranked| {
+                        let at = showing_of(entry.row)
+                            .and_then(|showing| workspace.rank_of(project, showing));
+                        (at.is_some(), at.unwrap_or_default())
+                    };
+                    rank(a)
+                        .cmp(&rank(b))
+                        .then_with(|| b.touched.cmp(&a.touched))
+                }
+            })
         });
         entries
     }
@@ -1038,16 +1093,31 @@ impl Cydonia {
         };
         let carried = self.drag_of_row(row, cx);
         let label = SharedString::from(self.label_of_row(row, cx));
+        let entry = !matches!(row, Row::Project(_) | Row::Archive(_) | Row::Spaces);
+        let archived = self.archived_of(row, cx);
         div()
             .id(SharedString::from(format!("sidebar-hover-{}", key_of(row))))
-            .when(
-                !matches!(row, Row::Project(_) | Row::Archive(_) | Row::Spaces),
-                |el| {
-                    el.on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
-                        this.sidebar_hover(Menu::Entry(row), *hovered, cx);
-                    }))
-                },
-            )
+            .when(entry, |el| {
+                el.on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
+                    this.sidebar_hover(Menu::Entry(row), *hovered, cx);
+                }))
+                // Every kind of row from one place, and the menu drawn here
+                // rather than under whatever the row ends in: a right press
+                // lands wherever the pointer is, and the trigger it opens from
+                // is the row.
+                .relative()
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(move |this, _, _, cx| {
+                        this.toggle_menu(Menu::Entry(row), cx);
+                    }),
+                )
+                .children(
+                    (!self.pinned(row, cx))
+                        .then(|| self.entry_menu(Menu::Entry(row), row, archived, cx))
+                        .flatten(),
+                )
+            })
             // Carried onto a pane's edge to put it beside what is there — see
             // [`crate::view::arrangement`].
             .when_some(carried, |el, carried| {
@@ -1137,7 +1207,7 @@ impl Cydonia {
         let rows: Vec<Row> = self
             .ranked(project, cx)
             .into_iter()
-            .map(|(.., row)| row)
+            .map(|entry| entry.row)
             .collect();
         let from = rows
             .iter()
@@ -1168,6 +1238,11 @@ impl Cydonia {
                 .collect()
         });
         self.workspace.update(cx, |workspace, cx| {
+            // A drag says where a row goes, so the list goes back to being the
+            // one that is arranged by hand. Under a name or a stamp the order
+            // written here would be overruled on the next paint, and the row
+            // would spring back to where it was let go of.
+            workspace.set_sort(project, state::Sort::Manual, cx);
             workspace.set_order(project, order, cx);
             if let Some(pins) = pins {
                 workspace.set_pinned(project, pins, cx);
@@ -1374,16 +1449,64 @@ impl Cydonia {
         if self.menu != Some(Menu::Project(ix)) {
             return None;
         }
-        let rows = vec![menu::row(
+        let sort = self.workspace.read(cx).sort_of(ix);
+        let by = |label: &'static str, mode: state::Sort| {
+            menu::row(
+                Item::action(label).checked(sort == mode),
+                move |this, _, cx| {
+                    this.workspace
+                        .update(cx, |workspace, cx| workspace.set_sort(ix, mode, cx));
+                },
+            )
+        };
+        let mut rows = vec![menu::submenu(
+            "Sort by",
+            icons::text::ArrowDownAZ,
+            vec![
+                by("Name", state::Sort::Name),
+                by("Last modified", state::Sort::Touched),
+                // Last, and named for what it is: the other two are
+                // orders nobody arranged, and this is the one that is.
+                by("Manual", state::Sort::Manual),
+            ],
+        )];
+        // Finder is the one file manager this knows how to ask.
+        #[cfg(target_os = "macos")]
+        rows.push(menu::row(
+            Item::action("Reveal in Finder").with_icon(icons::files::FolderOpen),
+            move |this, _, cx| this.reveal_project(ix, cx),
+        ));
+        rows.push(menu::row(
             Item::action("Remove project").with_icon(icons::files::FolderMinus),
             move |this, _, cx| this.close_project(ix, cx),
-        )];
+        ));
         let id = SharedString::from(format!("project-menu-{ix}"));
         Some(popover::anchored_menu_below(
             id.clone(),
             self.menu_card(id, rows, cx),
             None,
         ))
+    }
+
+    /// Show the project's directory in Finder. Best effort and off the main
+    /// thread: `open` is a process, and a Finder that will not come to the
+    /// front is not worth blocking a frame over.
+    #[cfg(target_os = "macos")]
+    fn reveal_project(&mut self, ix: usize, cx: &mut Context<Self>) {
+        let Some(path) = self
+            .workspace
+            .read(cx)
+            .projects
+            .get(ix)
+            .map(|open| open.path.clone())
+        else {
+            return;
+        };
+        cx.background_executor()
+            .spawn(async move {
+                let _ = crate::view::component::file::external::show(&path);
+            })
+            .detach();
     }
 
     /// One session: its mark and its name.
@@ -1542,11 +1665,7 @@ impl Cydonia {
                     self.sidebar_hovered.as_ref() != Some(&Menu::Entry(entry))
                         && self.menu.as_ref() != Some(&Menu::Entry(entry)),
                     |el| el.hidden(),
-                )
-                // Never archived: archiving a space puts its members away and
-                // drops the arrangement — see [`Self::archive_entry`] — so the
-                // row it was pressed on is gone rather than put away.
-                .children(self.entry_menu(Menu::Entry(entry), entry, false, cx)),
+                ),
             )
             .on_click(cx.listener(move |this, _, window, cx| this.open_space(ix, window, cx)))
             // Carried by its row and dropped on the row it is to sit in front
@@ -1622,27 +1741,51 @@ impl Cydonia {
     /// Shown only while the pointer is on the row, resolved from
     /// `sidebar_hovered` during render: GPUI can resolve a hover style
     /// differently in prepaint and paint.
-    /// The button at the end of a row: archive, or unpin for a row that is
-    /// pinned.
+    /// The button at the end of a row: archive, or — for a pinned row — the
+    /// pin it is marked with, which opens the row's menu.
     ///
-    /// A pinned entry is one somebody asked to keep in reach, and the same
-    /// press meaning "put it away" would undo that in one step from a list the
-    /// pointer is only passing down. Unpinning first is the way to archive
-    /// one, and the band's `···` is the way to do it in a single press.
+    /// A pin is the one state a row carries that nothing else on it shows, so
+    /// it is drawn at rest rather than on hover. Under the pointer the same
+    /// button becomes the `···`, and what a pinned row can have done to it is
+    /// in the menu rather than behind a press that has to mean one of them.
     pub(crate) fn archive_button(
         &self,
         id: impl Into<gpui::ElementId>,
         group: &'static str,
         entry: Row,
         archived: bool,
-        cx: &Context<Self>,
+        cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let theme = Theme::of(cx).clone();
         let pinned = self.pinned(entry, cx);
-        let mark = match (pinned, archived) {
-            (true, _) => icons::navigation::PinOff,
-            (false, true) => icons::files::ArchiveRestore,
-            (false, false) => icons::files::Archive,
+        if pinned {
+            let at = Menu::Entry(entry);
+            // The glyph alone turns over; the button is the same button either
+            // way, so a press during the frame the hover is still travelling
+            // opens the menu rather than falling through to the row.
+            let open = self.menu.as_ref() == Some(&at);
+            let mark = match open || self.sidebar_hovered.as_ref() == Some(&at) {
+                true => icons::layout::Ellipsis,
+                false => icons::navigation::Pin,
+            };
+            return self
+                .menu_button(
+                    id,
+                    None,
+                    icons::icon(mark).size(px(14.)).text_color(theme.text_faint),
+                    at.clone(),
+                    cx,
+                )
+                // On the trigger, so the card hangs under the `···` rather
+                // than off the left edge of the row it is mounted on. A row
+                // with no button of its own draws it from the wrapper, where
+                // a right press is all there is to anchor to.
+                .children(self.entry_menu(at, entry, archived, cx));
+        }
+        let held = self.menu.as_ref() == Some(&Menu::Entry(entry));
+        let mark = match archived {
+            true => icons::files::ArchiveRestore,
+            false => icons::files::Archive,
         };
         theme
             .ghost(id)
@@ -1657,16 +1800,34 @@ impl Cydonia {
             // one in which the button cannot be pressed — and a press landing
             // in it goes to the row instead and reads as a click that did
             // nothing.
-            .invisible()
-            .group_hover(group, |el| el.visible())
+            // Held open while its row's menu is: the pointer leaves the row
+            // the moment it reaches the card, and a button that collapsed
+            // then would take the row's shape with it.
+            .when(!held, |el| {
+                el.invisible()
+                    .w(px(0.))
+                    .ml(px(-ROW_GAP))
+                    .group_hover(group, |el| el.visible().w(px(BUTTON_SIZE)).ml(px(0.)))
+            })
+            // And taking no width until then. Laid out at its full size the
+            // button is a column down the whole list, holding space nothing is
+            // in and truncating every name by what an archive glyph would take
+            // — which is only ever wanted under the pointer. The row's `gap`
+            // still falls either side of a child with no width, so the margin
+            // that cancels it comes back with the width.
+            .overflow_hidden()
             .p(px(3.))
-            .child(icons::icon(mark).size(px(14.)).text_color(theme.text_faint))
+            .child(
+                icons::icon(mark)
+                    .size(px(14.))
+                    .flex_none()
+                    .text_color(theme.text_faint),
+            )
             .tooltip(move |window, cx| {
                 Tooltip::text(
-                    match (pinned, archived) {
-                        (true, _) => "Unpin",
-                        (false, true) => "Unarchive",
-                        (false, false) => "Archive",
+                    match archived {
+                        true => "Unarchive",
+                        false => "Archive",
                     },
                     window,
                     cx,
@@ -1674,11 +1835,38 @@ impl Cydonia {
             })
             .on_click(cx.listener(move |this, _, window, cx| {
                 cx.stop_propagation();
-                match pinned {
-                    true => this.pin_entry(entry, false, cx),
-                    false => this.archive_entry(entry, !archived, window, cx),
-                }
+                this.archive_entry(entry, !archived, window, cx);
             }))
+    }
+
+    /// Whether a row's entry is put away. `false` for the rows that are not
+    /// entries, and for a space — archiving one drops the arrangement rather
+    /// than filing it.
+    fn archived_of(&self, row: Row, cx: &App) -> bool {
+        let workspace = self.workspace.read(cx);
+        match row {
+            Row::Session { project, id } => workspace
+                .projects
+                .get(project)
+                .and_then(|open| open.session(id))
+                .is_some_and(|chat| chat.closed),
+            Row::Board { project, ix } => workspace
+                .projects
+                .get(project)
+                .and_then(|open| open.boards.get(ix))
+                .is_some_and(|board| board.archived),
+            Row::Article { project, ix } => workspace
+                .projects
+                .get(project)
+                .and_then(|open| open.articles.get(ix))
+                .is_some_and(|article| article.archived),
+            Row::Table { project, ix } => workspace
+                .projects
+                .get(project)
+                .and_then(|open| open.tables.get(ix))
+                .is_some_and(|table| table.archived),
+            Row::Space(_) | Row::Project(_) | Row::Archive(_) | Row::Spaces => false,
+        }
     }
 
     /// Whether an entry is held at the top of its project's list.
@@ -1698,13 +1886,13 @@ impl Cydonia {
             .update(cx, |workspace, cx| workspace.pin(project, showing, on, cx));
     }
 
-    /// The `···` in the band: everything for the entry filling the window.
+    /// Everything an entry can have done to it: the `···` in the band, and the
+    /// menu a sidebar row opens on a right press.
     ///
-    /// Delete is offered here and not from a sidebar row. In the sidebar you
-    /// are running a pointer down a list and the row under it is whichever one
-    /// you stopped on; in the header there is one thing it could mean, and it
-    /// is the thing filling the window. A row carries archive alone — see
-    /// [`Self::archive_button`].
+    /// One builder for both, so a command reachable in the band is reachable
+    /// on the row. What a row still carries of its own is the press in
+    /// passing — archive for an unpinned row, the pin for a pinned one, which
+    /// opens this rather than acting. See [`Self::archive_button`].
     pub(crate) fn entry_menu(
         &self,
         at: Menu,
@@ -1750,9 +1938,12 @@ impl Cydonia {
                 ),
             );
         }
-        // A page's measure. An article is never `named`, so nothing it could
-        // sit above is here.
-        if matches!(entry, Row::Article { .. }) {
+        // A page's measure and how it is being read: the open page's, since
+        // [`Self::set_full_width`] and [`Self::plain_text`] are about the one
+        // the window is showing. A row's menu names an entry that may not be
+        // it, so these are the band's alone — on the wrong row they would act
+        // on whatever else was open.
+        if matches!(entry, Row::Article { .. }) && !matches!(at, Menu::Entry(_)) {
             let workspace = self.workspace.read(cx);
             let plain_chord = keymap::label(Command::PlainText, &workspace.settings.shortcuts)
                 .unwrap_or_default();
@@ -1760,6 +1951,21 @@ impl Cydonia {
                 .active_article()
                 .and_then(|article| article.full_width);
             let wide = held.unwrap_or(workspace.wide_pages);
+            // Only where there is none. A page that has one is changed from
+            // the picture itself, which is on screen and has nowhere else it
+            // could mean — see `article::cover_controls`.
+            if workspace
+                .active_article()
+                .is_some_and(|article| article.cover.is_none())
+            {
+                rows.insert(
+                    0,
+                    menu::row(
+                        Item::action("Add cover").with_icon(icons::files::ImagePlus),
+                        move |this, _, cx| this.shuffle_cover(cx),
+                    ),
+                );
+            }
             // Only for a page carrying a measure of its own. On every other
             // page it is already what is happening, and a row that undoes
             // nothing is a row nobody can read the point of.
@@ -1800,7 +2006,10 @@ impl Cydonia {
             move |this, _, cx| this.ask_delete(entry, cx),
         ));
         let id = SharedString::from("header-menu-card");
-        Some(popover::anchored_menu_below(
+        // Right-aligned: every route into this menu — the dots button, the
+        // pin, a right press — has its affordance at the row's end, and the
+        // card drops from there.
+        Some(popover::anchored_menu_below_end(
             id.clone(),
             self.menu_card(id, rows, cx),
             None,

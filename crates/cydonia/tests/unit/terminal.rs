@@ -203,6 +203,7 @@ fn copy_terminal_selection_takes_priority_over_transcript(cx: &mut gpui::TestApp
     let view = cx.new(|cx| Terminal {
         directory: Path::new("/private/tmp").into(),
         emulator: Emulator::new(80, 24),
+        images: terminal::view::Images::new(),
         shell: None,
         focus: cx.focus_handle(),
         geometry: None,

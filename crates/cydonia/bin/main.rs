@@ -9,7 +9,7 @@ use bezel::{
 };
 use cydonia::{
     agent, memory,
-    model::{fonts, language, media, migrate, notify, settings, state, update, workspace},
+    model::{fonts, language, media, migrate, notify, settings, state, update, welcome, workspace},
     view::{article, hotkey, keymap, menubar, root},
 };
 
@@ -27,7 +27,10 @@ fn main() -> Result<()> {
     // one read first would be read from before the move.
     migrate::run();
     let settings = settings::load()?;
-    let state = state::restore();
+    let mut state = state::restore();
+    // After the restore and before the window: it reads whether `state.toml`
+    // is there, which is what tells a first run from every other one.
+    welcome::seed(&mut state);
     let app = gpui_platform::application();
     // The Dock icon and a second launch both land here. ⌘W leaves the app
     // running with no window, as it does in every other mac app, so this is
@@ -71,7 +74,12 @@ fn main() -> Result<()> {
         theme::set_base_text_size(look.text_size, cx);
         workspace::apply_wrap_code(look.wrap_code, cx);
         markdown::set_source_style(cx, article::source_style);
-        markdown::set_highlighter(cx, language::highlight, language::paintable());
+        // The whole catalogue, not the cached subset: the fence picker lists
+        // what this list holds, and a picker that offered only what had already
+        // been downloaded could not be used to ask for anything else. Naming a
+        // language that is not cached is what fetches it — see
+        // [`cydonia::model::language::ensure`].
+        markdown::set_highlighter(cx, language::highlight, language::offerable());
         memory::init(settings.cover_memory * 1_000_000, cx);
         // Every chord in the app, bezel's included — see
         // [`cydonia::view::keymap`]. One call rather than an `init` per
