@@ -223,6 +223,14 @@ fn key_of(entry: Row) -> String {
 /// gives every other one the same.
 const ROW_PILL: f32 = 30.;
 
+/// What a row puts between its mark, its name and the button at the end.
+const ROW_GAP: f32 = 8.;
+
+/// The button at the end of a row, at its full size: a 14px glyph in the
+/// ghost's own padding. Named because the button is laid out at no width until
+/// the pointer arrives — see [`Cydonia::archive_button`].
+const BUTTON_SIZE: f32 = 14. + 3. * 2.;
+
 pub(crate) const ROW_HEIGHT: f32 = ROW_PILL + 2.;
 
 /// How far the pinned heading's glass runs past the band it is seen in, and is
@@ -263,7 +271,7 @@ pub(crate) fn row(
         .flex()
         .flex_row()
         .items_center()
-        .gap(px(8.))
+        .gap(px(ROW_GAP))
         .rounded(px(Theme::control_radius()))
         .cursor_pointer()
         .when(selected, |el| el.bg(theme.element_active))
@@ -1622,27 +1630,46 @@ impl Cydonia {
     /// Shown only while the pointer is on the row, resolved from
     /// `sidebar_hovered` during render: GPUI can resolve a hover style
     /// differently in prepaint and paint.
-    /// The button at the end of a row: archive, or unpin for a row that is
-    /// pinned.
+    /// The button at the end of a row: archive, or — for a pinned row — the
+    /// pin it is marked with, which opens the row's menu.
     ///
-    /// A pinned entry is one somebody asked to keep in reach, and the same
-    /// press meaning "put it away" would undo that in one step from a list the
-    /// pointer is only passing down. Unpinning first is the way to archive
-    /// one, and the band's `···` is the way to do it in a single press.
+    /// A pin is the one state a row carries that nothing else on it shows, so
+    /// it is drawn at rest rather than on hover. Under the pointer the same
+    /// button becomes the `···`, and what a pinned row can have done to it is
+    /// in the menu rather than behind a press that has to mean one of them.
     pub(crate) fn archive_button(
         &self,
         id: impl Into<gpui::ElementId>,
         group: &'static str,
         entry: Row,
         archived: bool,
-        cx: &Context<Self>,
+        cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let theme = Theme::of(cx).clone();
         let pinned = self.pinned(entry, cx);
-        let mark = match (pinned, archived) {
-            (true, _) => icons::navigation::PinOff,
-            (false, true) => icons::files::ArchiveRestore,
-            (false, false) => icons::files::Archive,
+        if pinned {
+            let at = Menu::Entry(entry);
+            // The glyph alone turns over; the button is the same button either
+            // way, so a press during the frame the hover is still travelling
+            // opens the menu rather than falling through to the row.
+            let open = self.menu.as_ref() == Some(&at);
+            let mark = match open || self.sidebar_hovered.as_ref() == Some(&at) {
+                true => icons::layout::Ellipsis,
+                false => icons::navigation::Pin,
+            };
+            return self
+                .menu_button(
+                    id,
+                    None,
+                    icons::icon(mark).size(px(14.)).text_color(theme.text_faint),
+                    at.clone(),
+                    cx,
+                )
+                .children(self.entry_menu(at, entry, archived, cx));
+        }
+        let mark = match archived {
+            true => icons::files::ArchiveRestore,
+            false => icons::files::Archive,
         };
         theme
             .ghost(id)
@@ -1658,15 +1685,30 @@ impl Cydonia {
             // in it goes to the row instead and reads as a click that did
             // nothing.
             .invisible()
-            .group_hover(group, |el| el.visible())
+            // And taking no width until then. Laid out at its full size the
+            // button is a column down the whole list, holding space nothing is
+            // in and truncating every name by what an archive glyph would take
+            // — which is only ever wanted under the pointer. The row's `gap`
+            // still falls either side of a child with no width, so the margin
+            // that cancels it comes back with the width.
+            .w(px(0.))
+            .ml(px(-ROW_GAP))
+            .overflow_hidden()
+            .group_hover(group, |el| {
+                el.visible().w(px(BUTTON_SIZE)).ml(px(0.))
+            })
             .p(px(3.))
-            .child(icons::icon(mark).size(px(14.)).text_color(theme.text_faint))
+            .child(
+                icons::icon(mark)
+                    .size(px(14.))
+                    .flex_none()
+                    .text_color(theme.text_faint),
+            )
             .tooltip(move |window, cx| {
                 Tooltip::text(
-                    match (pinned, archived) {
-                        (true, _) => "Unpin",
-                        (false, true) => "Unarchive",
-                        (false, false) => "Archive",
+                    match archived {
+                        true => "Unarchive",
+                        false => "Archive",
                     },
                     window,
                     cx,
@@ -1674,10 +1716,7 @@ impl Cydonia {
             })
             .on_click(cx.listener(move |this, _, window, cx| {
                 cx.stop_propagation();
-                match pinned {
-                    true => this.pin_entry(entry, false, cx),
-                    false => this.archive_entry(entry, !archived, window, cx),
-                }
+                this.archive_entry(entry, !archived, window, cx);
             }))
     }
 
@@ -1703,8 +1742,8 @@ impl Cydonia {
     /// Delete is offered here and not from a sidebar row. In the sidebar you
     /// are running a pointer down a list and the row under it is whichever one
     /// you stopped on; in the header there is one thing it could mean, and it
-    /// is the thing filling the window. A row carries archive alone — see
-    /// [`Self::archive_button`].
+    /// is the thing filling the window. An unpinned row carries archive alone;
+    /// a pinned one opens this from its pin — see [`Self::archive_button`].
     pub(crate) fn entry_menu(
         &self,
         at: Menu,
