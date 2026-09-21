@@ -103,7 +103,7 @@ pub static TOOLS: [Tool; 10] = [
     },
     Tool {
         name: "article_read",
-        description: "Read one article's markdown. The result includes assets_path, the shared media directory on the Cydonia host; filesystem access is needed to place images there.",
+        description: "Read one article's markdown. The result includes two directories on the Cydonia host: assets_path, the project's shared media directory, where body images go; and article_path, this article's own folder, which holds its cover and nothing a body image needs. Filesystem access is needed to place a file in either.",
         schema: |bound| fields(bound, &[PROJECT, ARTICLE]),
         writes: false,
         deletes: false,
@@ -111,7 +111,7 @@ pub static TOOLS: [Tool; 10] = [
     },
     Tool {
         name: "article_add",
-        description: "Write a new article, and answer its id and assets_path, the shared media directory on the Cydonia host. This tool writes Markdown, not image bytes.",
+        description: "Write a new article, and answer its id, assets_path, the project's shared media directory where body images go, and article_path, the article's own folder. This tool writes Markdown, not image bytes; a cover is set with article_set_cover rather than written into article_path.",
         schema: |bound| fields(bound, &[PROJECT, TITLE, MARKDOWN]),
         writes: true,
         deletes: false,

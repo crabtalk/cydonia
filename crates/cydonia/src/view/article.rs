@@ -65,18 +65,15 @@ const COVER_HEIGHT: f32 = CONTENT_MAX_WIDTH / 5.;
 /// scrolls clear of the bottom edge of the pane.
 const TAIL: f32 = 120.;
 
-/// The column's own inset. What the title adds to it is the editor's
-/// [`editor::Layout::text_inset`], read at paint like the theme — the editor
-/// holds its text that far inside its box so a block's drag handle has
-/// somewhere to sit, and the title takes the same measure to line up with the
-/// first paragraph.
+/// How far the page holds its text off its own edge, in both measures: a page
+/// set across the pane changes where the text stops, not how far in it starts.
+///
+/// What the title adds to it is the editor's [`editor::Layout::text_inset`],
+/// read at paint like the theme — the editor holds its text that far inside
+/// its box so a block's drag handle has somewhere to sit, and the title takes
+/// the same measure to line up with the first paragraph. That allowance is the
+/// handle's whole room, in either measure.
 const COLUMN_INSET: f32 = 24.;
-
-/// What a wide page is held off the edge of the pane by. Twice the column's,
-/// because the column has white space either side of it standing in for a
-/// margin and a page filling the pane has none — at the column's own inset the
-/// text runs into the border, and the drag handle has nowhere left to sit.
-const WIDE_INSET: f32 = COLUMN_INSET * 2.;
 
 /// Plain-text styling, resolved against the active theme on every paint.
 pub fn source_style(theme: &Theme) -> markdown::SourceStyle {
@@ -124,14 +121,6 @@ fn column(wide: bool) -> Div {
     match wide {
         true => band,
         false => band.max_w(px(CONTENT_MAX_WIDTH)),
-    }
-}
-
-/// How far that box holds its text off its own edge.
-fn inset(wide: bool) -> f32 {
-    match wide {
-        true => WIDE_INSET,
-        false => COLUMN_INSET,
     }
 }
 
@@ -400,7 +389,7 @@ impl Cydonia {
                         // down there land a caret, and the I-beam is what
                         // says so before the click.
                         column(wide)
-                            .px(px(inset(wide)))
+                            .px(px(COLUMN_INSET))
                             .pt(px(20.))
                             .pb(px(TAIL))
                             .flex()
@@ -500,8 +489,8 @@ impl Cydonia {
             .child(
                 div().w_full().flex().justify_center().child(
                     column(wide)
-                        .pl(px(inset(wide) + editor::Layout::of(cx).text_inset))
-                        .pr(px(inset(wide)))
+                        .pl(px(COLUMN_INSET + editor::Layout::of(cx).text_inset))
+                        .pr(px(COLUMN_INSET))
                         .pt(px(20.))
                         .child(field),
                 ),
