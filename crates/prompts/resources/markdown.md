@@ -14,6 +14,10 @@ An article's title is separate from its Markdown body. Use `article_rename`
 to change the title; a heading inside the body does not rename the article.
 Keep YAML frontmatter out of the body: it is not article metadata.
 
+Cydonia writes the title at the head of the page. Do not open the body with a
+heading that repeats it: begin at the first line of prose, and start the
+body's own sections at `##`.
+
 Read the current body before editing. Use `article_edit` for targeted changes
 and `article_rewrite` for an intentional full replacement. After an editor
 save, reread before constructing an exact match: whitespace, escaping and

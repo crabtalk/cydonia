@@ -586,10 +586,17 @@ struct RailSelection {
     offset: Option<bezel::gpui::ListOffset>,
 }
 
-fn active_list_turn(
+/// The turn the reading mark stands on: the first of the run the pane is
+/// showing, or the one a press on the rail asked for while the list has not
+/// moved off it since.
+///
+/// Taken from the run, so the reading mark is always one of the lit ones. The
+/// last turn reads only once the pane has scrolled far enough for it to head
+/// the run; following the tail does not put it there.
+fn reading_turn(
     list: &bezel::ui::list::VariableList<usize>,
     count: usize,
-    inset: Pixels,
+    showing: &Range<usize>,
     selection: &Cell<Option<RailSelection>>,
 ) -> usize {
     if let Some(selected) = selection.get() {
@@ -603,37 +610,17 @@ fn active_list_turn(
         }
         selection.set(None);
     }
-    let last = count.saturating_sub(1);
-    if list.state.is_following_tail() {
-        return last;
-    }
-    let top = list.state.logical_scroll_top().item_ix.min(last);
-    let max = list.state.max_offset_for_scrollbar().y;
-    if max <= px(0.) {
-        return top;
-    }
-    let progress = (-list.state.scroll_px_offset_for_scrollbar().y / max).clamp(0., 1.);
-    let viewport = list.state.viewport_bounds();
-    // Move the reading anchor down the viewport so short trailing turns are reachable.
-    let anchor = viewport.top() + (viewport.size.height - inset).max(px(0.)) * progress;
-    let mut active = top;
-    for ix in top..count {
-        let Some(bounds) = list.state.bounds_for_item(ix) else {
-            break;
-        };
-        if bounds.top() > anchor {
-            break;
-        }
-        active = ix;
-    }
-    active
+    showing.start.min(count.saturating_sub(1))
 }
 
 /// The run of turns on screen, from where their rows were last painted.
 ///
+/// A row counts for as little as a sliver of itself.
+///
 /// `inset` is the composer band, taken off the foot: a turn behind it is
 /// painted and covered, and a mark lit for it says the pane is showing
-/// something it is not.
+/// something it is not. It is the band's own height and nothing more, so a row
+/// reaching a pixel above the glass is on screen.
 fn painted_turns(
     painted: &HashMap<usize, Bounds<Pixels>>,
     viewport: Bounds<Pixels>,
@@ -691,13 +678,13 @@ fn rail(chat: &ChatSession, turns: &[Turn], room: Pixels) -> AnyElement {
         .footer_height
         .get()
         .max(px(root::composer_height()))
-        + px(root::COMPOSER_BOTTOM + PAD);
-    let at = active_list_turn(&handle, count, inset, &selection);
+        + px(root::COMPOSER_BOTTOM);
     // The rows paint before the canvas below, which is what turns their bounds
     // into the run — a frame behind the marks reading it.
     let painted = chat.transcript.painted.clone();
     let shown = chat.transcript.showing.clone();
     let showing = shown.borrow().clone();
+    let at = reading_turn(&handle, count, &showing, &selection);
     // The pane's height, which the marks are placed against: it is unknown
     // until the list has laid out once, so the canvas below watches it too.
     let height = handle.state.viewport_bounds().size.height;
@@ -735,10 +722,7 @@ fn rail(chat: &ChatSession, turns: &[Turn], room: Pixels) -> AnyElement {
                     if moved {
                         *shown.borrow_mut() = run;
                     }
-                    if moved
-                        || handle.state.viewport_bounds().size.height != height
-                        || active_list_turn(&handle, count, inset, &selection) != at
-                    {
+                    if moved || handle.state.viewport_bounds().size.height != height {
                         window.refresh();
                     }
                 },
