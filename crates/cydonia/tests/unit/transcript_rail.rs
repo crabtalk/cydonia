@@ -25,6 +25,15 @@ struct RailView(ChatSession, f32);
 
 impl Render for RailView {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        // What `transcript::render` does before it builds the rail: every row on
+        // screen goes back to unmeasured, so a rail that reads the list's
+        // measurements during render reads nothing.
+        let keys: Vec<usize> = (0..8).collect();
+        for ix in self.0.transcript.list.visible_range() {
+            if let Some(key) = keys.get(ix) {
+                self.0.transcript.list.invalidate(key);
+            }
+        }
         div()
             .relative()
             .w(px(100.))

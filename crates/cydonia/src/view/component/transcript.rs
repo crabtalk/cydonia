@@ -99,6 +99,14 @@ pub struct State {
     list: bezel::ui::list::VariableList<usize>,
     focused_turn: Cell<Option<(usize, usize)>>,
     rail_selection: Rc<Cell<Option<RailSelection>>>,
+    /// The run of turns the rail lights, read a frame behind.
+    ///
+    /// [`render`] puts every row on screen back to unmeasured before it builds
+    /// the rail, so the list answers no bounds for them until it has laid out
+    /// again. The rail's canvas is where it has: that is the one place in the
+    /// frame the run can be taken, and the marks are coloured from it on the
+    /// frame after.
+    showing: Rc<RefCell<Range<usize>>>,
     pub(crate) footer_height: Rc<Cell<Pixels>>,
     /// Keyed by the turn's first item index.
     work: HashMap<usize, Takeover>,
@@ -660,12 +668,10 @@ fn rail(chat: &ChatSession, turns: &[Turn], room: Pixels) -> AnyElement {
         .get()
         .max(px(root::composer_height()))
         + px(root::COMPOSER_BOTTOM);
-    // Laid out last frame, since the marks are built before this one lays out:
-    // the canvas below asks again once it has and takes another frame if the
-    // two disagree.
-    let showing = visible_turns(&handle, count, inset);
+    // Taken by the canvas below on the frame before — see [`State::showing`].
+    let shown = chat.transcript.showing.clone();
+    let showing = shown.borrow().clone();
     let at = reading_turn(&handle, count, &showing, &selection);
-    let laid_out = showing.clone();
     // The pane's height, which the marks are placed against: it is unknown
     // until the list has laid out once, so the canvas below watches it too.
     let height = handle.state.viewport_bounds().size.height;
@@ -696,9 +702,14 @@ fn rail(chat: &ChatSession, turns: &[Turn], room: Pixels) -> AnyElement {
                         selected.offset = Some(handle.state.logical_scroll_top());
                         selection.set(Some(selected));
                     }
-                    if visible_turns(&handle, count, inset) != laid_out
-                        || handle.state.viewport_bounds().size.height != height
-                    {
+                    // The list has laid out by now, so its rows answer for
+                    // their bounds again.
+                    let run = visible_turns(&handle, count, inset);
+                    let moved = *shown.borrow() != run;
+                    if moved {
+                        *shown.borrow_mut() = run;
+                    }
+                    if moved || handle.state.viewport_bounds().size.height != height {
                         window.refresh();
                     }
                 },
