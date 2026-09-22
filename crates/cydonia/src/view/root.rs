@@ -357,6 +357,11 @@ pub struct Cydonia {
     /// [`Cydonia::front_of`]. Runtime only: where the panes are is the
     /// space's, and which tab you happen to be looking at is not.
     pub(crate) fronts: std::collections::HashMap<SharedString, Member>,
+    /// The tabs that have been brought to the front, most recent last, across
+    /// every pane. Read when a tab closes, to land on the one that was in
+    /// front before it rather than on a neighbour in the strip — see
+    /// [`Cydonia::close_pane`]. Runtime only, for the same reason `fronts` is.
+    pub(crate) tab_history: Vec<Member>,
     /// The board identity panel, while it is open — see [`header::BoardInfo`].
     pub(crate) info: Option<info::BoardInfo>,
     /// The board that has been asked for and not yet made — see
@@ -788,6 +793,7 @@ impl Cydonia {
             collapsed_spaces: Default::default(),
             pane_landing: None,
             fronts: Default::default(),
+            tab_history: Vec::new(),
             confirming: None,
             info: None,
             making: None,

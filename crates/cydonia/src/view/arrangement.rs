@@ -316,6 +316,13 @@ impl Cydonia {
             .clone()
     }
 
+    /// Note a tab as the one most recently brought to the front, which is
+    /// where a close falls back to — see [`Cydonia::tab_history`].
+    fn remember_front(&mut self, tab: &Member) {
+        self.tab_history.retain(|seen| seen != tab);
+        self.tab_history.push(tab.clone());
+    }
+
     /// Show one of a pane's tabs, and put the focus on it — a tab pressed is a
     /// pane entered, the same as a press anywhere else in one.
     pub(crate) fn show_tab(
@@ -326,6 +333,7 @@ impl Cydonia {
         cx: &mut Context<Self>,
     ) {
         self.fronts.insert(key_of(pane), tab.clone());
+        self.remember_front(tab);
         // Before the focus moves: a tab the space has gained since the last
         // frame has no leaf yet, and [`Cydonia::focus_pane`] moves nothing it
         // cannot find.
@@ -684,16 +692,31 @@ impl Cydonia {
         // lands on next is that pane's new front, not whatever leaf happens to
         // sit where the closed one did.
         let stack = self.workspace.read(cx).stack_of(entry);
-        let kept = stack
-            .iter()
-            .position(|tab| tab == entry)
-            .filter(|_| stack.len() > 1)
-            // The tab to its left, or the one to its right for the first —
-            // whichever way, a neighbour in the strip rather than a jump.
-            .map(|at| match at {
-                0 => stack[1].clone(),
-                at => stack[at - 1].clone(),
-            });
+        let kept = (stack.len() > 1)
+            .then(|| {
+                // The tab that was in front before this one, so closing walks
+                // back the way the reader came. Nothing remembered — a pane
+                // never left its first tab — falls back to a neighbour in the
+                // strip: the one to its left, or the one to its right for the
+                // first.
+                let recent = self
+                    .tab_history
+                    .iter()
+                    .rev()
+                    .find(|tab| *tab != entry && stack.contains(tab))
+                    .cloned();
+                recent.or_else(|| {
+                    stack
+                        .iter()
+                        .position(|tab| tab == entry)
+                        .map(|at| match at {
+                            0 => stack[1].clone(),
+                            at => stack[at - 1].clone(),
+                        })
+                })
+            })
+            .flatten();
+        self.tab_history.retain(|tab| tab != entry);
         // The entry left when this close took the space with it. Without
         // putting the pane on its kind the window drops back to whatever the
         // single pane was last showing, which is not what was on screen.
@@ -912,6 +935,7 @@ impl Cydonia {
             let stack = self.workspace.read(cx).stack_of(arriving);
             if let Some(pane) = stack.first().cloned() {
                 self.fronts.insert(key_of(&pane), arriving.clone());
+                self.remember_front(arriving);
             }
         }
         self.sync_leaves(window, cx);

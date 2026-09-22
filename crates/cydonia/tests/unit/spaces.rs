@@ -880,3 +880,32 @@ fn a_space_keeps_the_place_it_was_dragged_to(cx: &mut gpui::TestAppContext) {
         );
     });
 }
+
+/// Two entries in one pane beside a third: closing the lone pane leaves the
+/// space holding the pane of two tabs. What is left is counted in entries,
+/// not panes.
+#[gpui::test]
+fn closing_a_pane_beside_a_stack_keeps_the_space(cx: &mut gpui::TestAppContext) {
+    let scratch = Scratch::new("close-beside-stack");
+    cx.update(|cx| bezel::theme::Theme::install(bezel::theme::Appearance::Light, cx));
+    let workspace = cx.new(|cx| Workspace::new(Settings::default(), state::State::default(), cx));
+
+    workspace.update(cx, |workspace, cx| {
+        workspace.open_project(scratch.project("one"), cx);
+        for (name, key) in [("First", "ONE"), ("Second", "TWO"), ("Third", "THR")] {
+            workspace.new_board(0, name.into(), key, cx).ok();
+        }
+        let a = workspace.member_of(0, Showing::Board(0)).expect("a member");
+        let b = workspace.member_of(0, Showing::Board(1)).expect("a member");
+        let c = workspace.member_of(0, Showing::Board(2)).expect("a member");
+        workspace.arrange(&a, &b, Side::Right, cx);
+        workspace.stack_pane(&a, &c, cx);
+
+        workspace.close_pane(&b, cx);
+
+        let space = workspace.active_space().expect("still open");
+        assert_eq!(space.leaves(), 1, "one pane left");
+        assert_eq!(space.entries(), vec![a.clone(), c.clone()], "both tabs");
+        assert_eq!(workspace.stack_of(&a), vec![a, c], "in one strip");
+    });
+}
