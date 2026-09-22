@@ -145,10 +145,11 @@ pub(crate) enum Renaming {
     /// A space, by its id — auto-named `space-1` until someone gives it a
     /// name of their own.
     Space(String),
-    /// A lane on the open board. The one entry here that no row in the sidebar
-    /// stands for — the field is drawn in the column's own header instead,
-    /// which works because only one thing is ever being named.
-    Column(String),
+    /// A lane, by the board it is on and its own id. The one entry here that
+    /// no row in the sidebar stands for — the field is drawn in the column's
+    /// own header instead, which works because only one thing is ever being
+    /// named.
+    Column(String, String),
 }
 
 /// What an entry's row is written in: the one on screen at full strength, one
@@ -1944,18 +1945,20 @@ impl Cydonia {
         // it, so these are the band's alone — on the wrong row they would act
         // on whatever else was open.
         if matches!(entry, Row::Article { .. }) && !matches!(at, Menu::Entry(_)) {
-            let workspace = self.workspace.read(cx);
-            let plain_chord = keymap::label(Command::PlainText, &workspace.settings.shortcuts)
-                .unwrap_or_default();
-            let held = workspace
-                .active_article()
-                .and_then(|article| article.full_width);
-            let wide = held.unwrap_or(workspace.wide_pages);
+            let plain_chord = keymap::label(
+                Command::PlainText,
+                &self.workspace.read(cx).settings.shortcuts,
+            )
+            .unwrap_or_default();
+            // The page the focused pane is on, which is what these rows act on
+            // — see [`Cydonia::pane_doc`].
+            let held = self.pane_doc(cx).and_then(|article| article.full_width);
+            let wide = held.unwrap_or(self.workspace.read(cx).wide_pages);
             // Only where there is none. A page that has one is changed from
             // the picture itself, which is on screen and has nowhere else it
             // could mean — see `article::cover_controls`.
-            if workspace
-                .active_article()
+            if self
+                .pane_doc(cx)
                 .is_some_and(|article| article.cover.is_none())
             {
                 rows.insert(
@@ -2273,8 +2276,8 @@ impl Cydonia {
                 .find(|table| table.key == *key)
                 .map(|table| table.name.clone())
                 .unwrap_or_default(),
-            Renaming::Column(id) => workspace
-                .active_board()
+            Renaming::Column(board, id) => workspace
+                .board_at(board)
                 .and_then(|board| board.column(id))
                 .map(|column| column.name.clone())
                 .unwrap_or_default(),
@@ -2289,7 +2292,7 @@ impl Cydonia {
         // — and the field is put in it before the name lands, so what is typed
         // and what is stored are the same string.
         let case = match &what {
-            Renaming::Column(_) => Case::Upper,
+            Renaming::Column(..) => Case::Upper,
             _ => Case::Mixed,
         };
         self.name_field.update(cx, |field, cx| {
@@ -2311,7 +2314,7 @@ impl Cydonia {
         self.workspace.update(cx, |workspace, cx| match what {
             Renaming::Session(id) => workspace.rename_session(id, name, cx),
             Renaming::Table(key) => workspace.rename_table(&key, name, cx),
-            Renaming::Column(id) => workspace.rename_column(&id, name, cx),
+            Renaming::Column(board, id) => workspace.rename_column(&board, &id, name, cx),
             Renaming::Space(id) => workspace.rename_space(&id, name, cx),
         });
         cx.notify();

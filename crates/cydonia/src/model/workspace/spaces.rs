@@ -473,6 +473,46 @@ impl Workspace {
         self.projects.get(project)?.boards.get(ix)
     }
 
+    /// The board one pane is showing.
+    ///
+    /// The pane's own member rather than the project's selection, which
+    /// answers for at most one of the boards a space can have on screen. No
+    /// member is a window showing one entry, where the selection is the whole
+    /// truth.
+    pub fn board_of(&self, member: Option<&Member>) -> Option<&Board> {
+        let Some(member) = member else {
+            return self.active_board();
+        };
+        match self.showing_of(member)? {
+            (project, Showing::Board(ix)) => self.board_in(project, ix),
+            _ => None,
+        }
+    }
+
+    /// The article one pane is showing, the way [`Self::board_of`] answers for
+    /// a board.
+    pub fn article_of(&self, member: Option<&Member>) -> Option<&Article> {
+        let Some(member) = member else {
+            return self.active_article();
+        };
+        match self.showing_of(member)? {
+            (project, Showing::Article(ix)) => self.article_in(project, ix),
+            _ => None,
+        }
+    }
+
+    /// The table one pane is showing, the way [`Self::board_of`] answers for a
+    /// board.
+    pub fn table_of(&self, member: Option<&Member>) -> Option<&Table> {
+        let Some(member) = member else {
+            return self.active_table();
+        };
+        match self.showing_of(member)? {
+            (project, Showing::Table(ix)) => self.table_in(project, ix),
+            _ => None,
+        }
+    }
+
     pub fn article_in(&self, project: usize, ix: usize) -> Option<&Article> {
         self.projects.get(project)?.articles.get(ix)
     }

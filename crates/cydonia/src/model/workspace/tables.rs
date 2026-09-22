@@ -85,50 +85,32 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Run `f` against the open table's store, then re-read what it did.
-    ///
-    /// Every table mutation goes through here, so none of them can forget the
-    /// reload — a grid still showing the row you just deleted is the bug this
-    /// shape makes unwritable.
-    fn with_table<T>(
-        &mut self,
-        cx: &mut Context<Self>,
-        f: impl FnOnce(&mut Data, &str) -> T,
-    ) -> Option<T> {
-        let at = self.active?;
-        let project = self.projects.get_mut(at)?;
-        let key = project
-            .table
-            .and_then(|ix| project.tables.get(ix))
-            .map(|table| table.key.clone())?;
-        let data = project.data.as_mut()?;
-        let done = f(data, &key);
-        // Working in a table is what makes it the table you were last in, and
-        // the list is ordered by that.
-        let _ = data.touch(&key);
-        project.reload_tables();
-        cx.notify();
-        Some(done)
-    }
-
-    /// The name of column `at`, which is what the store addresses one by.
-    fn column_name(&self, at: usize) -> Option<String> {
-        let page = self.active_page()?;
+    /// The name of column `at` of one table, which is what the store addresses
+    /// one by.
+    fn column_name(&self, key: &str, at: usize) -> Option<String> {
+        let page = self.page_at(key)?;
         page.columns.get(at).map(|column| column.name.clone())
     }
 
     /// Write one cell. The text goes in as text whatever the column holds —
     /// SQLite's affinity converts it on the way, so a number typed into a
     /// number column lands as one and the same text in a text column stays put.
-    pub fn write_cell(&mut self, rowid: i64, at: usize, text: String, cx: &mut Context<Self>) {
-        let Some(column) = self.column_name(at) else {
+    pub fn write_cell(
+        &mut self,
+        key: &str,
+        rowid: i64,
+        at: usize,
+        text: String,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(column) = self.column_name(key, at) else {
             return;
         };
         let value = match text.is_empty() {
             true => serde_json::Value::Null,
             false => serde_json::Value::String(text),
         };
-        self.with_table(cx, |data, key| {
+        self.with_store(key, cx, |data, key| {
             let _ = data.write_cells(
                 key,
                 &[Edit {
@@ -140,8 +122,8 @@ impl Workspace {
         });
     }
 
-    pub fn add_row(&mut self, cx: &mut Context<Self>) -> Option<i64> {
-        self.with_table(cx, |data, key| {
+    pub fn add_row(&mut self, key: &str, cx: &mut Context<Self>) -> Option<i64> {
+        self.with_store(key, cx, |data, key| {
             data.add_rows(key, 1)
                 .ok()
                 .and_then(|ids| ids.first().copied())
@@ -149,17 +131,17 @@ impl Workspace {
         .flatten()
     }
 
-    pub fn delete_row(&mut self, rowid: i64, cx: &mut Context<Self>) {
-        self.with_table(cx, |data, key| {
+    pub fn delete_row(&mut self, key: &str, rowid: i64, cx: &mut Context<Self>) {
+        self.with_store(key, cx, |data, key| {
             let _ = data.delete_rows(key, &[rowid]);
         });
     }
 
     /// A fresh text column, named so it does not collide with one already
     /// there — the header is where it gets its real name.
-    pub fn add_column(&mut self, cx: &mut Context<Self>) {
+    pub fn add_column(&mut self, key: &str, cx: &mut Context<Self>) {
         let taken: Vec<String> = self
-            .active_page()
+            .page_at(key)
             .map(|page| page.columns.iter().map(|col| col.name.clone()).collect())
             .unwrap_or_default();
         let mut name = COLUMN.to_owned();
@@ -169,7 +151,7 @@ impl Workspace {
             }
             name = format!("{COLUMN} {n}");
         }
-        self.with_table(cx, |data, key| {
+        self.with_store(key, cx, |data, key| {
             let _ = data.write_column(key, &name, Some(ColType::Text), None);
         });
     }
@@ -177,24 +159,25 @@ impl Workspace {
     /// Rename column `at`, retype it, or both — one call, as the store has it.
     pub fn write_column(
         &mut self,
+        key: &str,
         at: usize,
         kind: Option<ColType>,
         rename: Option<String>,
         cx: &mut Context<Self>,
     ) {
-        let Some(column) = self.column_name(at) else {
+        let Some(column) = self.column_name(key, at) else {
             return;
         };
-        self.with_table(cx, |data, key| {
+        self.with_store(key, cx, |data, key| {
             let _ = data.write_column(key, &column, kind, rename.as_deref());
         });
     }
 
-    pub fn delete_column(&mut self, at: usize, cx: &mut Context<Self>) {
-        let Some(column) = self.column_name(at) else {
+    pub fn delete_column(&mut self, key: &str, at: usize, cx: &mut Context<Self>) {
+        let Some(column) = self.column_name(key, at) else {
             return;
         };
-        self.with_table(cx, |data, key| {
+        self.with_store(key, cx, |data, key| {
             let _ = data.drop_column(key, &column);
         });
     }
@@ -215,30 +198,37 @@ impl Workspace {
     }
 
     /// Run `f` against whichever store holds `key`, then re-read what it did.
-    /// Named rather than open: the sidebar acts on rows the pane is not showing.
-    fn with_store(
+    ///
+    /// Every table mutation goes through here, named by the table: none of
+    /// them can forget the reload — a grid still showing the row you just
+    /// deleted is the bug this shape makes unwritable — and none of them can
+    /// land in a table other than the one asked for, which the window can have
+    /// two of on screen.
+    fn with_store<T>(
         &mut self,
         key: &str,
         cx: &mut Context<Self>,
-        f: impl FnOnce(&mut Data, &str),
-    ) -> Option<()> {
+        f: impl FnOnce(&mut Data, &str) -> T,
+    ) -> Option<T> {
         let project = self
             .projects
             .iter_mut()
             .find(|open| open.tables.iter().any(|table| table.key == key))?;
-        f(project.data.as_mut()?, key);
+        let done = f(project.data.as_mut()?, key);
+        // Working in a table is what makes it the table you were last in, and
+        // the list is ordered by that.
+        let _ = project.data.as_mut()?.touch(key);
         project.reload_tables();
         cx.notify();
-        Some(())
+        Some(done)
     }
 
-    /// The rows on screen. Gated beside [`Self::active_table`]: the table pane
-    /// reads the page, not the table, so both have to be shut for it to close.
-    pub fn active_page(&self) -> Option<&Page> {
+    /// The rows of one table, wherever it is open.
+    pub fn page_at(&self, key: &str) -> Option<&Page> {
         if !self.settings.features.tables {
             return None;
         }
-        self.active_project()?.open_page()
+        self.projects.iter().find_map(|open| open.pages.get(key))
     }
 
     pub fn active_table(&self) -> Option<&Table> {

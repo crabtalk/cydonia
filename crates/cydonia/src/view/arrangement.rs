@@ -287,10 +287,15 @@ impl Cydonia {
             }))
             // Pressing anywhere in a pane is how the focus moves to it, the
             // same way a click into the sidebar selects a row.
+            //
+            // The tab in front, not the pane's name: a leaf is held by what it
+            // shows — see [`Cydonia::leaf_of`] — so a pane showing its second
+            // tab would be named by a member no leaf answers to, and the press
+            // would leave the focus where it was.
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener({
-                    let on = held.clone();
+                    let on = front.clone();
                     move |this, _, window, cx| this.focus_pane(&on, window, cx)
                 }),
             )

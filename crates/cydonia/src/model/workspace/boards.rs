@@ -173,14 +173,6 @@ impl Workspace {
         project.boards.get(project.board?)
     }
 
-    pub fn active_board_mut(&mut self) -> Option<&mut Board> {
-        if !self.settings.features.boards {
-            return None;
-        }
-        let project = self.projects.get_mut(self.active?)?;
-        project.boards.get_mut(project.board?)
-    }
-
     /// The board a file names, wherever it is open. What a rename holds onto:
     /// an index moves the moment a neighbour is made or dropped, and the file
     /// is the board — it is where [`artifact::project::Project::save_board`] writes.
@@ -193,15 +185,14 @@ impl Workspace {
 
     /// Reach a board wherever it is open, with the store that holds it — the
     /// project it is in, and the only thing that can write it back.
-    /// A lane on the open board, answered by its id so the pane can open it
-    /// straight into its name.
-    pub fn new_column(&mut self, cx: &mut Context<Self>) -> Option<String> {
-        let id = self
-            .active_board_mut()?
-            .add_column(artifact::board::column::NAMED)
-            .id
-            .clone();
-        self.save_board();
+    /// A lane at the end of one board, answered by its id so the pane can open
+    /// it straight into its name.
+    pub fn new_column(&mut self, board: &str, cx: &mut Context<Self>) -> Option<String> {
+        let id = self.with_board(board, |store, board| {
+            let id = board.add_column(artifact::board::column::NAMED).id.clone();
+            store.save_board(board);
+            id
+        })?;
         cx.notify();
         Some(id)
     }
@@ -211,54 +202,56 @@ impl Workspace {
     /// across the lanes and down the list.
     pub fn new_column_beside(
         &mut self,
+        board: &str,
         id: &str,
         after: bool,
         cx: &mut Context<Self>,
     ) -> Option<String> {
-        let minted = self
-            .active_board_mut()?
-            .add_column_beside(artifact::board::column::NAMED, id, after)?
-            .id
-            .clone();
-        self.save_board();
+        let minted = self.with_board(board, |store, board| {
+            let minted = board
+                .add_column_beside(artifact::board::column::NAMED, id, after)?
+                .id
+                .clone();
+            store.save_board(board);
+            Some(minted)
+        })??;
         cx.notify();
         Some(minted)
     }
 
-    pub fn rename_column(&mut self, id: &str, name: String, cx: &mut Context<Self>) {
-        let renamed = self
-            .active_board_mut()
-            .is_some_and(|board| board.rename_column(id, name.trim()));
-        if renamed {
-            self.save_board();
-        }
+    pub fn rename_column(&mut self, board: &str, id: &str, name: String, cx: &mut Context<Self>) {
+        self.with_board(board, |store, board| {
+            if board.rename_column(id, name.trim()) {
+                store.save_board(board);
+            }
+        });
         cx.notify();
     }
 
     /// Step a lane one place along, by the lane it lands in front of — see
     /// [`Board::move_column_before`]. `None` at either end is a lane already
     /// where it is being asked to go.
-    pub fn move_column(&mut self, id: &str, step: isize, cx: &mut Context<Self>) {
-        let Some(board) = self.active_board_mut() else {
-            return;
-        };
-        let Some(at) = board.columns.iter().position(|column| column.id == id) else {
-            return;
-        };
-        let to = match at.checked_add_signed(step) {
-            Some(to) if to < board.columns.len() => to,
-            _ => return,
-        };
-        // The lane it lands in front of, read after the step rather than before
-        // it: moving right means going in front of the one *after* the
-        // neighbour it swaps with, and off the end means no anchor at all.
-        let before = match step > 0 {
-            true => board.columns.get(to + 1).map(|column| column.id.clone()),
-            false => board.columns.get(to).map(|column| column.id.clone()),
-        };
-        if board.move_column_before(id, before.as_deref()) {
-            self.save_board();
-        }
+    pub fn move_column(&mut self, board: &str, id: &str, step: isize, cx: &mut Context<Self>) {
+        self.with_board(board, |store, board| {
+            let Some(at) = board.columns.iter().position(|column| column.id == id) else {
+                return;
+            };
+            let to = match at.checked_add_signed(step) {
+                Some(to) if to < board.columns.len() => to,
+                _ => return,
+            };
+            // The lane it lands in front of, read after the step rather than
+            // before it: moving right means going in front of the one *after*
+            // the neighbour it swaps with, and off the end means no anchor at
+            // all.
+            let before = match step > 0 {
+                true => board.columns.get(to + 1).map(|column| column.id.clone()),
+                false => board.columns.get(to).map(|column| column.id.clone()),
+            };
+            if board.move_column_before(id, before.as_deref()) {
+                store.save_board(board);
+            }
+        });
         cx.notify();
     }
 
@@ -279,27 +272,33 @@ impl Workspace {
 
     /// Drop a lane, which a board refuses while it still holds cards — see
     /// [`Board::remove_column`].
-    pub fn remove_column(&mut self, id: &str, cx: &mut Context<Self>) {
-        let gone = self
-            .active_board_mut()
-            .is_some_and(|board| board.remove_column(id));
-        if gone {
-            self.save_board();
-        }
+    pub fn remove_column(&mut self, board: &str, id: &str, cx: &mut Context<Self>) {
+        self.with_board(board, |store, board| {
+            if board.remove_column(id) {
+                store.save_board(board);
+            }
+        });
         cx.notify();
     }
 
-    fn with_board(&mut self, id: &str, edit: impl FnOnce(&fs::Project, &mut Board)) {
+    /// Reach the board a file names, wherever it is open, with the store that
+    /// holds it — and answer whatever the edit did. Nothing where no open
+    /// project holds that board.
+    ///
+    /// Every write to a board goes through here, named by the board: the
+    /// window can have two on screen, and the project's own selection answers
+    /// for at most one of them.
+    fn with_board<T>(&mut self, id: &str, edit: impl FnOnce(&fs::Project, &mut Board) -> T) -> Option<T> {
         for open in &mut self.projects {
             if !open.load_board(id) {
-                return;
+                return None;
             }
             let store = open.store();
             if let Some(board) = open.boards.iter_mut().find(|board| board.id == id) {
-                edit(&store, board);
-                return;
+                return Some(edit(&store, board));
             }
         }
+        None
     }
 
     /// Write the open board back, for an edit the pane made in place.
@@ -386,21 +385,17 @@ impl Workspace {
         open.boards.get(ix).cloned()
     }
 
-    pub fn save_board(&mut self) {
-        let Some(open) = self.active.and_then(|ix| self.projects.get_mut(ix)) else {
-            return;
-        };
-        if let Some(id) = open
-            .board
-            .and_then(|ix| open.boards.get(ix))
-            .map(|board| board.id.clone())
-            && !open.load_board(&id)
-        {
-            return;
-        }
-        let store = open.store();
-        if let Some(board) = open.board.and_then(|ix| open.boards.get_mut(ix)) {
+    /// Change one board, named by the board, and write it back.
+    ///
+    /// What a pane's own edits go through — see
+    /// [`crate::model::workspace::Workspace::board_of`] for how a pane names
+    /// the board it is showing. Answers what the edit did, or nothing where no
+    /// open project holds that board.
+    pub fn write_board<T>(&mut self, id: &str, edit: impl FnOnce(&mut Board) -> T) -> Option<T> {
+        self.with_board(id, |store, board| {
+            let done = edit(board);
             store.save_board(board);
-        }
+            done
+        })
     }
 }

@@ -874,7 +874,7 @@ impl Composer {
             &items,
             &self.cursor,
             cx,
-            move |composer, hit, _, cx| composer.hit(&rows, hit, cx),
+            move |composer, hit, window, cx| composer.hit(&rows, hit, window, cx),
         )
         .child(popover::divider())
         .child(self.usage_row(theme));
@@ -918,7 +918,7 @@ impl Composer {
     /// What the pointer did to that menu. A path is one row per level — the
     /// top-level row, then which of its alternatives — so reading one is
     /// [`Self::menu_items`] taken backwards.
-    fn hit(&mut self, items: &[Item], hit: Hit, cx: &mut Context<Self>) {
+    fn hit(&mut self, items: &[Item], hit: Hit, window: &mut Window, cx: &mut Context<Self>) {
         match hit {
             Hit::Point(path) => {
                 if self.cursor.point_at(items, &path) {
@@ -930,6 +930,10 @@ impl Composer {
                 // Picking anything shuts the menu: every choice here is the
                 // session's, and none of them is made twice in a row.
                 self.close_menu();
+                // Opening a menu takes the caret off what its rows act on —
+                // see bezel's `menu`. Nothing else puts it back, and a
+                // composer without the caret takes neither typing nor Enter.
+                window.focus(&self.focus_handle(cx), cx);
                 if let Some(switch) = self.switches.get(row)
                     && let Some(option) = switch.options.get(at)
                 {
@@ -939,6 +943,7 @@ impl Composer {
             }
             Hit::Dismiss => {
                 self.close_menu();
+                window.focus(&self.focus_handle(cx), cx);
                 cx.notify();
             }
         }
@@ -1115,7 +1120,7 @@ impl Composer {
                 &items,
                 &self.tools_cursor,
                 cx,
-                move |this, hit, _, cx| {
+                move |this, hit, window, cx| {
                     match hit {
                         Hit::Point(path) => {
                             this.tools_cursor.point_at(&rows, &path);
@@ -1129,7 +1134,12 @@ impl Composer {
                                 _ => {}
                             }
                         }
-                        Hit::Dismiss => this.tools_menu = false,
+                        // A menu backed out of leaves the caret where it took
+                        // it from, which is the field.
+                        Hit::Dismiss => {
+                            this.tools_menu = false;
+                            window.focus(&this.focus_handle(cx), cx);
+                        }
                     }
                     cx.notify();
                 },

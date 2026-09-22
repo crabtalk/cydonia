@@ -178,7 +178,7 @@ impl Cydonia {
         self.leaf_mut().pane = Pane::Article;
 
         let (field, editor, unnamed) = {
-            let article = self.workspace.read(cx).active_article();
+            let article = self.pane_doc(cx);
             (
                 article.and_then(|article| article.field.clone()),
                 article.and_then(|article| article.editor.clone()),
@@ -195,13 +195,21 @@ impl Cydonia {
         cx.notify();
     }
 
+    /// The article the focused pane is on. A window with no space open has no
+    /// member to name, and falls back to what its project is pointed at.
+    pub(crate) fn pane_doc<'a>(&self, cx: &'a App) -> Option<&'a crate::model::article::Article> {
+        self.workspace.read(cx).article_of(self.leaf().entry.as_ref())
+    }
+
+    /// The same by its file — the one address every write to an article is
+    /// made through.
+    pub(crate) fn pane_article(&self, cx: &App) -> Option<std::path::PathBuf> {
+        self.pane_doc(cx).map(|article| article.path.clone())
+    }
+
     /// Out of the title and into the document under it.
     fn leave_title(&mut self, _: &LeaveTitle, window: &mut Window, cx: &mut Context<Self>) {
-        let editor = self
-            .workspace
-            .read(cx)
-            .active_article()
-            .and_then(|article| article.editor.clone());
+        let editor = self.pane_doc(cx).and_then(|article| article.editor.clone());
         if let Some(editor) = editor {
             window.focus(&editor.focus_handle(cx), cx);
         }
@@ -226,13 +234,12 @@ impl Cydonia {
             true => Mode::Blocks,
             false => Mode::Source,
         };
+        let Some(on) = self.pane_article(cx) else {
+            return;
+        };
         self.workspace
-            .update(cx, |workspace, cx| workspace.set_article_mode(mode, cx));
-        let editor = self
-            .workspace
-            .read(cx)
-            .active_article()
-            .and_then(|article| article.editor.clone());
+            .update(cx, |workspace, cx| workspace.set_article_mode(&on, mode, cx));
+        let editor = self.pane_doc(cx).and_then(|article| article.editor.clone());
         if let Some(editor) = editor {
             window.focus(&editor.focus_handle(cx), cx);
         }
@@ -242,7 +249,7 @@ impl Cydonia {
     /// Whether the open document is being edited as markdown, or `None` where
     /// there is no document to be in either form.
     pub(crate) fn plain_text(&self, cx: &App) -> Option<bool> {
-        let article = self.workspace.read(cx).active_article()?;
+        let article = self.pane_doc(cx)?;
         Some(article.mode(cx) == Mode::Source)
     }
 
@@ -250,21 +257,33 @@ impl Cydonia {
     /// header menu's Full width, and `None` for its Use default width. The
     /// open one, since that is the page the menu was asked from.
     pub(crate) fn set_full_width(&mut self, wide: Option<bool>, cx: &mut Context<Self>) {
+        let Some(on) = self.pane_article(cx) else {
+            return;
+        };
         self.workspace
-            .update(cx, |workspace, cx| workspace.set_full_width(wide, cx));
+            .update(cx, |workspace, cx| workspace.set_full_width(&on, wide, cx));
         cx.notify();
     }
 
     /// Cut the open article a new cover. Adding the first one comes through
     /// here too — there is nothing to choose between, only a picture to get.
     pub(crate) fn shuffle_cover(&mut self, cx: &mut Context<Self>) {
+        let Some(on) = self.pane_article(cx) else {
+            return;
+        };
         self.workspace
-            .update(cx, |workspace, cx| workspace.shuffle_cover(cx));
+            .update(cx, |workspace, cx| workspace.shuffle_cover(&on, cx));
         cx.notify();
     }
 
     /// Swap the generated picture for one of the person's own.
     fn pick_cover(&mut self, cx: &mut Context<Self>) {
+        // Taken before the dialog goes up: the page the cover was asked for is
+        // the page it lands on, whatever the window is showing by the time a
+        // file comes back.
+        let Some(on) = self.pane_article(cx) else {
+            return;
+        };
         let picked = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: false,
@@ -280,7 +299,7 @@ impl Cydonia {
             };
             let _ = this.update(cx, |this, cx| {
                 this.workspace
-                    .update(cx, |workspace, cx| workspace.set_cover(Some(&path), cx));
+                    .update(cx, |workspace, cx| workspace.set_cover(&on, Some(&path), cx));
                 cx.notify();
             });
         })
@@ -288,8 +307,11 @@ impl Cydonia {
     }
 
     fn remove_cover(&mut self, cx: &mut Context<Self>) {
+        let Some(on) = self.pane_article(cx) else {
+            return;
+        };
         self.workspace
-            .update(cx, |workspace, cx| workspace.set_cover(None, cx));
+            .update(cx, |workspace, cx| workspace.set_cover(&on, None, cx));
         cx.notify();
     }
 
@@ -312,7 +334,7 @@ impl Cydonia {
         if self.showing(cx) != Some(Pane::Article) {
             return;
         }
-        let article = self.workspace.read(cx).active_article();
+        let article = self.pane_doc(cx);
         let titling = article
             .and_then(|article| article.field.clone())
             .is_some_and(|field| field.focus_handle(cx).contains_focused(window, cx));
