@@ -25,33 +25,18 @@ struct RailView(ChatSession, f32);
 
 impl Render for RailView {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        let painted = self.0.transcript.painted.clone();
         div()
             .relative()
             .w(px(100.))
             .h(px(self.1))
             .child(self.0.transcript.list.render(
-                move |ix, _, _| {
-                    if ix == 7 {
-                        return div()
-                            .h(px(root::composer_height() + root::COMPOSER_BOTTOM + PAD))
-                            .into_any_element();
-                    }
-                    // The row canvas the rail reads, as `transcript::render` writes it.
-                    let painted = painted.clone();
+                |ix, _, _| {
                     div()
-                        .relative()
-                        .h(px(80.))
-                        .child(
-                            canvas(
-                                move |bounds, _, _| {
-                                    painted.borrow_mut().insert(ix, bounds);
-                                },
-                                |_, _, _, _| {},
-                            )
-                            .absolute()
-                            .size_full(),
-                        )
+                        .h(if ix == 7 {
+                            px(root::composer_height() + root::COMPOSER_BOTTOM + PAD)
+                        } else {
+                            px(80.)
+                        })
                         .into_any_element()
                 },
                 |_, _, _| {},
@@ -243,27 +228,6 @@ fn only_the_reading_tick_is_brightest_during_hover_and_navigation(cx: &mut gpui:
     }
 }
 
-#[test]
-fn the_run_spans_every_row_painted_over_the_viewport() {
-    let row = |top: f32, height: f32| {
-        gpui::Bounds::new(
-            gpui::point(px(0.), px(top)),
-            gpui::size(px(100.), px(height)),
-        )
-    };
-    let viewport = row(0., 300.);
-    let inset = px(60.);
-    // Three rows on screen, one scrolled off the top, one under the composer.
-    let painted = HashMap::from([
-        (0, row(-90., 80.)),
-        (1, row(-10., 80.)),
-        (2, row(70., 80.)),
-        (3, row(150., 80.)),
-        (4, row(240., 80.)),
-    ]);
-    assert_eq!(painted_turns(&painted, viewport, inset), 1..4);
-    assert_eq!(painted_turns(&HashMap::new(), viewport, inset), 0..0);
-}
 
 #[test]
 fn a_column_taller_than_the_rail_slides_the_read_mark_into_it() {
