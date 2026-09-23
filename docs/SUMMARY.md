@@ -11,6 +11,7 @@
 # Working
 
 - [Projects and entries](./working/projects.md)
+- [References](./working/references.md)
 - [Articles](./working/articles.md)
 - [Boards and tables](./working/boards.md)
 - [Panes, tabs and spaces](./working/spaces.md)
