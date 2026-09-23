@@ -94,6 +94,7 @@ fn server() -> Server {
         .mount(&tools::article::TOOLS)
         .mount(&tools::board::TOOLS)
         .mount(&tools::project::TOOLS)
+        .mount(&tools::session::TOOLS)
         .writable(write().clone())
         .deletes(delete().clone())
 }

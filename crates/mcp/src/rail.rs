@@ -28,6 +28,16 @@ use std::{
 pub enum Change {
     Open(PathBuf),
     Close(PathBuf),
+    /// A prompt for the session filed under `session` — its record id, which
+    /// is unique across projects.
+    Send { session: String, message: String },
+    /// A new session in `project` on the agent `settings.toml` names `agent`,
+    /// with `message` as its first prompt.
+    Start {
+        project: PathBuf,
+        agent: String,
+        message: String,
+    },
 }
 
 type Hand = Box<dyn Fn(Change) + Send + Sync>;

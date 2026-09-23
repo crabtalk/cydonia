@@ -16,6 +16,7 @@
 pub mod article;
 pub mod board;
 pub mod project;
+pub mod session;
 
 use crate::{
     rail,

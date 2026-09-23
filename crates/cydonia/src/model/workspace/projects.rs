@@ -31,6 +31,14 @@ impl Workspace {
                     .update(cx, |workspace, cx| match change {
                         Change::Open(path) => workspace.open_project_at(path, cx),
                         Change::Close(path) => workspace.close_project_at(&path, cx),
+                        Change::Send { session, message } => {
+                            workspace.send_to_record(&session, message, cx)
+                        }
+                        Change::Start {
+                            project,
+                            agent,
+                            message,
+                        } => workspace.start_in(&project, &agent, message, cx),
                     })
                     .is_ok();
                 // The workspace has gone, and there is no rail to move.
@@ -127,7 +135,7 @@ impl Workspace {
     /// does not — see `mcp::tools::project` — so `/tmp/x` on the rail and
     /// `/private/tmp/x` from a tool are one project, and opening the second
     /// would otherwise list the same directory twice.
-    fn project_at(&self, path: &Path) -> Option<usize> {
+    pub(super) fn project_at(&self, path: &Path) -> Option<usize> {
         self.projects.iter().position(|open| {
             open.path == path
                 || open
