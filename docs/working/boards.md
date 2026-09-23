@@ -17,6 +17,9 @@ session of its own with the card's text as the first prompt. See
   its own answer; **Settings › Appearance** seeds new ones and does not steer
   boards that exist.
 - ⌘F finds a card by typing, and jumps to the one you meant.
+- In lanes, click a card to read its full rendered content in the bottom drawer.
+  Long previews end with **…**; **Edit** opens the inline editor.
+  Select another card to replace the preview; close with **×** or Escape.
 - An agent lays a board out in one call per kind: the tools that add or drop cards and columns take a list where they take one.
 - A card can be moved to another column, another board, or a board in another project. Moving it to another board gives it a new handle and clears the session it was dispatched to. An agent can move several cards in one write, and they may come off different boards.
 

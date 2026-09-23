@@ -79,6 +79,7 @@ pub struct Leaf {
     /// pane on offer.
     pub(crate) asked_session: bool,
     pub(crate) editing: Option<Editing>,
+    pub(crate) open_card: Option<board::OpenCard>,
     pub(crate) card_field: Entity<TextField>,
     /// The board's find field, and whether its bar is up.
     ///
@@ -117,6 +118,7 @@ impl Leaf {
             queued_galleries: Default::default(),
             asked_session: false,
             editing: None,
+            open_card: None,
             card_field,
             find_field,
             finding: false,
