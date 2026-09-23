@@ -22,8 +22,9 @@ use crate::{
     rail,
     tool::{Arg, Args, Trouble},
 };
+use artifact::reference::Reference;
 use serde_json::{Value, json};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// What every tool takes first. One server answers for the whole app, so which
 /// directory a call is about is the call's to say.
@@ -74,6 +75,37 @@ pub(crate) fn on_the_rail(path: &Path) -> Result<&Path, Trouble> {
             path.display()
         ),
     }))
+}
+
+/// The project a reference names: the one written before its `#`, else the
+/// one the call is about — see [`artifact::reference`].
+///
+/// A written name is the last component of a project's directory, matched
+/// against the projects cydonia has open. None open under it, or more than one,
+/// is refused.
+pub fn project_of(args: &Args<'_>, reference: &Reference<'_>) -> Result<PathBuf, Trouble> {
+    let Some(name) = reference.project else {
+        return root(args).map(Path::to_path_buf);
+    };
+    let open = rail::open();
+    let mut named = open
+        .iter()
+        .filter(|path| path.file_name().is_some_and(|last| last == name));
+    match (named.next(), named.next()) {
+        (Some(one), None) => Ok(one.clone()),
+        (Some(_), Some(_)) => Err(Trouble::Refused(format!(
+            "more than one open project is named {name} — {}; name it by its whole path",
+            open.iter()
+                .filter(|path| path.file_name().is_some_and(|last| last == name))
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))),
+        (None, _) => Err(Trouble::Refused(match held() {
+            None => format!("no open project is named {name}, and cydonia has none open"),
+            Some(open) => format!("no open project is named {name} — cydonia has {open}"),
+        })),
+    }
 }
 
 /// The rail, for a refusal to name — a model that named the wrong directory

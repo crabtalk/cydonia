@@ -22,6 +22,7 @@ pub mod board;
 pub mod entry;
 pub mod id;
 pub mod project;
+pub mod reference;
 pub mod session;
 pub mod space;
 pub mod stamp;
