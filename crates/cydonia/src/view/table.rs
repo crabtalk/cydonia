@@ -468,11 +468,9 @@ impl Cydonia {
             .group("grid-head")
             .child(
                 self.menu_button(
-                    ("column-menu", ix),
+                    SharedString::from(format!("column-menu-{ix}")),
                     Some("grid-head"),
-                    icons::icon(icons::layout::Ellipsis)
-                        .size(px(14.))
-                        .text_color(theme.text_faint),
+                    icons::layout::Ellipsis,
                     Menu::Column(ix),
                     cx,
                 )
@@ -615,7 +613,7 @@ impl Cydonia {
                 .child(name)
                 .into_any_element(),
         })
-        .child(self.archive_button(("table-archive", ix), "table-row", entry, archived, cx))
+        .child(self.archive_button(format!("table-archive-{ix}"), "table-row", entry, archived, cx))
         .on_click(cx.listener(move |this, _, window, cx| {
             this.open_table(project, ix, window, cx);
         }))

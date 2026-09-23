@@ -481,20 +481,14 @@ impl Cydonia {
         // The bar is a drop target of its own — see [`Landing::Bar`] — so it
         // is lit while a drag is aimed at it rather than at an edge.
         let aimed = self.pane_landing.as_ref() == Some(&(pane.clone(), Landing::Bar));
-        div()
-            .flex_none()
-            .h(px(crate::view::root::HEADER_HEIGHT))
+        crate::view::root::band()
             .w_full()
-            .flex()
-            .flex_row()
-            .items_center()
             .gap(px(2.))
             .pl(px(lead))
-            .pr(px(6.))
             .when(aimed, |el| el.bg(theme.element_hover))
             // The fold belongs to whichever column runs along the window's left
             // edge, so with the sidebar gone it is this pane's.
-            .children(fold.then(|| self.fold_toggle(theme.text, cx).into_any_element()))
+            .children(fold.then(|| self.fold_toggle(cx).into_any_element()))
             // The tabs in a strip of their own, which scrolls sideways once
             // they no longer fit: the bar's other children are the pane's
             // chrome and keep their places while it does.
@@ -510,9 +504,7 @@ impl Cydonia {
                 self.menu_button(
                     SharedString::from(format!("pane-menu-{key}")),
                     Some("pane"),
-                    icons::icon(icons::layout::Ellipsis)
-                        .size(px(14.))
-                        .text_color(theme.text_faint),
+                    icons::layout::Ellipsis,
                     Menu::Pane(key.clone()),
                     cx,
                 )

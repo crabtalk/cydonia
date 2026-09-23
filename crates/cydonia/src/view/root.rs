@@ -31,8 +31,8 @@ use bezel::{
     gpui::{
         self, AnyElement, App, Axis, Bounds, Context, DragMoveEvent, Empty, Entity, FocusHandle,
         Focusable, Hsla, KeyBinding, PathPromptOptions, Render, SharedString, TitlebarOptions,
-        UniformListScrollHandle, Window, WindowBounds, WindowHandle, WindowOptions, actions, div,
-        point, prelude::*, px, size,
+        Div, UniformListScrollHandle, Window, WindowBounds, WindowHandle, WindowOptions, actions,
+        div, point, prelude::*, px, size,
     },
     motion::{Fade, Painter},
     theme::{Material, TextStyle, Theme, Typeset, appearance},
@@ -180,6 +180,23 @@ const TRAFFIC_LIGHT_SPACING: f32 = 23.;
 /// The gap the header keeps at the window's edges, and between the lights and
 /// the first control it puts past them.
 pub(crate) const HEADER_INSET: f32 = 16.;
+
+/// The band across the top of a column, and the only place its height and its
+/// inset are written: the header, the sidebar's, a pane's in a space, and the
+/// right panel's are all this row. A control in one stands where the same
+/// control stands in the next.
+///
+/// The leading inset is the caller's only where the traffic lights take it —
+/// see [`TOOLBAR_INSET`].
+pub(crate) fn band() -> Div {
+    div()
+        .flex_none()
+        .h(px(HEADER_HEIGHT))
+        .flex()
+        .flex_row()
+        .items_center()
+        .px(px(HEADER_INSET))
+}
 
 /// Where the toolbar's own controls start: clear of the three lights AppKit
 /// puts down from [`TRAFFIC_LIGHT_X`], plus the gutter that clears them and the

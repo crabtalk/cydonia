@@ -3,12 +3,13 @@
 
 use crate::view::{root::Cydonia, sidebar::Row};
 use bezel::{
-    gpui::{self, AnyElement, Context, Div, SharedString, Stateful, Window, prelude::*, px},
+    gpui::{self, AnyElement, Context, Div, SharedString, Stateful, Window, prelude::*},
+    motion::{Fade, Painter},
     theme::Theme,
     ui::{
         icons::Icon,
         menu::{self, Hit, Item},
-        widgets::Buttons,
+        widgets::{ButtonStyle, Buttons},
     },
 };
 
@@ -127,14 +128,23 @@ impl Cydonia {
     /// pane header's is.
     pub(crate) fn menu_button(
         &self,
-        id: impl Into<gpui::ElementId>,
+        id: impl Into<SharedString>,
         group: Option<&'static str>,
-        mark: impl IntoElement,
+        mark: impl Into<Icon>,
         menu: Menu,
         cx: &Context<Self>,
     ) -> Stateful<Div> {
+        let id = id.into();
+        // The glyph is built here rather than taken, the way
+        // `Buttons::icon_button` builds its own: a trigger's mark is the
+        // trigger's metric, not the caller's.
         let button = Theme::of(cx)
-            .ghost(id)
+            .icon_button(
+                mark,
+                ButtonStyle::Ghost,
+                Some(Fade::new(Painter::of(cx), id.clone())),
+            )
+            .id(id)
             .flex_none()
             .relative()
             // An open menu keeps its trigger on show — by then the pointer is
@@ -153,8 +163,6 @@ impl Cydonia {
                     }
                 },
             )
-            .p(px(3.))
-            .child(mark)
             .on_click({
                 let menu = menu.clone();
                 cx.listener(move |this, _, _, cx| {

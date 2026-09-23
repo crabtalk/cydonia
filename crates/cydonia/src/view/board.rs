@@ -1509,9 +1509,7 @@ impl Cydonia {
                 self.menu_button(
                     SharedString::from(format!("list-group-menu-{id}")),
                     Some("list-group"),
-                    icons::icon(icons::layout::Ellipsis)
-                        .size(px(14.))
-                        .text_color(theme.text_faint),
+                    icons::layout::Ellipsis,
                     Menu::Lane(id.to_owned()),
                     cx,
                 )
@@ -1653,9 +1651,7 @@ impl Cydonia {
                 self.menu_button(
                     SharedString::from(format!("list-card-menu-{id}")),
                     Some("list-row"),
-                    icons::icon(icons::layout::Ellipsis)
-                        .size(px(14.))
-                        .text_color(theme.text_faint),
+                    icons::layout::Ellipsis,
                     Menu::Card(id.to_owned()),
                     cx,
                 )
@@ -1996,9 +1992,7 @@ impl Cydonia {
                 self.menu_button(
                     SharedString::from(format!("column-menu-{id}")),
                     Some("column"),
-                    icons::icon(icons::layout::Ellipsis)
-                        .size(px(14.))
-                        .text_color(theme.text_faint),
+                    icons::layout::Ellipsis,
                     Menu::Lane(id.to_owned()),
                     cx,
                 )
@@ -2247,9 +2241,7 @@ impl Cydonia {
                         self.menu_button(
                             SharedString::from(format!("card-menu-{id}")),
                             Some("card"),
-                            icons::icon(icons::layout::Ellipsis)
-                                .size(px(14.))
-                                .text_color(theme.text_faint),
+                            icons::layout::Ellipsis,
                             Menu::Card(id.to_owned()),
                             cx,
                         )
