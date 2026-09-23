@@ -1,5 +1,33 @@
 [
   {
+    "version": "0.1.13",
+    "date": "2026-09-23",
+    "summary": "A page carries its own pictures, a program sees the keys you hold, and the transcript rail follows the turns on screen.",
+    "media": {
+      "poster": "pics/cydonia/v0.1.13.jpg",
+      "src": "videos/cydonia/v0.1.13.mp4",
+      "alt": "…",
+      "w": 1280,
+      "h": 900
+    },
+    "new": [
+      "Report keys under the kitty keyboard protocol, so a program sees one held and let go"
+    ],
+    "changed": [
+      "Keep a page's pictures in its own folder, so they move and are deleted with it",
+      "Read a key by the layout it was typed in before sending it to the terminal",
+      "Move to bezel 0.1.24"
+    ],
+    "fixed": [
+      "Read the transcript rail off the turns on screen, and take its run from the list's measurements",
+      "Stand an entry's menu where the right press landed",
+      "Release a key left held when the terminal stopped hearing it",
+      "Carry reduced transparency across the app rather than the window alone",
+      "Keep a space when a pane of tabs is left, and close tabs back to the last one",
+      "One icon button and one band across every column"
+    ]
+  },
+  {
     "version": "0.1.12",
     "date": "2026-09-22",
     "summary": "Images in the terminal, a sidebar that sorts and reveals, and an entry's menu wherever you press it.",
@@ -22,7 +50,6 @@
       "A pinned row carries a pin that opens its menu, in place of the ···",
       "Fetch a fence's grammar when a document first asks for it, rather than ahead of one",
       "Name a page article_path in the agent tools, the way the app spells it",
-      "Keep a page's pictures in its own folder, so they move and are deleted with it",
       "Move to bezel 0.1.23"
     ],
     "fixed": [
@@ -123,13 +150,6 @@
       "Arrange a project’s entries by hand, dragging a row where it belongs",
       "Pin an entry to the top of its project from the band’s menu"
     ],
-    "media": {
-      "poster": "pics/cydonia/v0.1.9.jpg",
-      "src": "videos/cydonia/v0.1.9.mp4",
-      "alt": "…",
-      "w": 1280,
-      "h": 900
-    },
     "changed": [
       "List entries where they were left rather than by what was written to last, so an agent’s writes no longer reshuffle the sidebar",
       "Raise a new entry to the top of the list until it is arranged, and keep pinned rows above it",
