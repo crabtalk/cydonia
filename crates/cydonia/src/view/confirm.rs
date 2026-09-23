@@ -120,7 +120,7 @@ impl Cydonia {
                 .projects
                 .get(project)
                 .and_then(|open| open.session(id))
-                .and_then(|chat| chat.record.as_deref())
+                .and_then(|chat| chat.filed())
                 .map(|record| at(Some(format!(".cydonia/sessions/{record}.json"))))
                 // A session is filed from its first turn — `flush` leaves
                 // early while there are no items. So this one has had none, not

@@ -7,10 +7,7 @@
 //! that ends on a tool call still shows the prose before it as prose.
 
 use crate::{
-    model::{
-        session::{ChatSession, nothing_said},
-        workspace::Workspace,
-    },
+    model::{session::ChatSession, workspace::Workspace},
     view::root,
 };
 use artifact::session::chat::{ChatItem, ToolStatus};
@@ -110,7 +107,8 @@ pub struct State {
     pub(crate) footer_height: Rc<Cell<Pixels>>,
     /// Keyed by the turn's first item index.
     work: HashMap<usize, Takeover>,
-    /// Tool items whose output is showing, by item index.
+    /// Tool items whose output is showing, and thoughts that are open, by item
+    /// index.
     output: HashSet<usize>,
     /// Pending copy feedback resets, one per message.
     copy_feedback: HashMap<usize, Task<()>>,
@@ -242,24 +240,11 @@ struct Turn {
     range: Range<usize>,
 }
 
-/// Start a turn at every question. The leading chunk of a session has none —
-/// a connection that failed before the first prompt is still something to show.
 fn turns(items: &[ChatItem]) -> Vec<Turn> {
-    let mut turns = Vec::new();
-    let mut start = 0;
-    for ix in 1..=items.len() {
-        if ix < items.len() && !matches!(items[ix], ChatItem::User(_)) {
-            continue;
-        }
-        // Startup stderr is not a conversation turn and has no rail mark.
-        if nothing_said(&items[start..ix]) {
-            start = ix;
-            continue;
-        }
-        turns.push(Turn { range: start..ix });
-        start = ix;
-    }
-    turns
+    artifact::session::chat::turns(items)
+        .into_iter()
+        .map(|range| Turn { range })
+        .collect()
 }
 
 /// User messages, agent responses, and session notices share selectable prose.
@@ -1070,29 +1055,75 @@ fn work(chat: &ChatSession, body: Range<usize>, cx: &mut Context<Workspace>) -> 
                     .into_any_element(),
             );
         } else {
-            out.extend(run.iter().map(|item| {
-                match item {
-                    ChatItem::Thinking { text, .. } => div()
-                        .flex()
-                        .flex_row()
-                        .items_start()
-                        .gap(px(6.))
-                        .text_style(TextStyle::Callout)
-                        .text_color(theme.text_muted.opacity(0.7))
-                        .child(
-                            icons::icon(icons::devices::Cpu)
-                                .size(px(12.))
-                                .text_color(theme.text_faint),
-                        )
-                        .child(text.clone())
-                        .into_any_element(),
-                    _ => div().into_any_element(),
-                }
+            out.extend(run.iter().enumerate().map(|(at, item)| match item {
+                ChatItem::Thinking { text, .. } => thought(chat, ix + at, text, cx),
+                _ => div().into_any_element(),
             }));
         }
         ix += run.len();
     }
     out
+}
+
+/// One thought: a single clipped line, or the whole text once opened.
+fn thought(chat: &ChatSession, ix: usize, text: &str, cx: &mut Context<Workspace>) -> AnyElement {
+    let theme = Theme::of(cx).clone();
+    let id = chat.id;
+    let open = chat.transcript.output.contains(&ix);
+    let muted = theme.text_muted.opacity(0.7);
+    div()
+        .flex()
+        .flex_col()
+        .child(
+            div()
+                .id(("thought", ix))
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(6.))
+                .px(px(4.))
+                .py(px(2.))
+                .rounded(px(Theme::control_radius()))
+                .cursor_pointer()
+                .hover(|el| el.bg(theme.element_hover))
+                .text_style(TextStyle::Callout)
+                .text_color(muted)
+                .child(
+                    icons::icon(icons::devices::Cpu)
+                        .size(px(12.))
+                        .flex_none()
+                        .text_color(theme.text_faint),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .child(SharedString::from(one_line(text))),
+                )
+                .child(div().flex_none().child(theme.disclosure(open)))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.with_session(id, cx, |chat| {
+                        if !chat.transcript.output.insert(ix) {
+                            chat.transcript.output.remove(&ix);
+                        }
+                    });
+                })),
+        )
+        .when(open, |el| {
+            el.child(
+                div()
+                    .ml(px(9.))
+                    .pl(px(12.))
+                    .py(px(2.))
+                    .border_l_1()
+                    .border_color(theme.border)
+                    .text_style(TextStyle::Callout)
+                    .text_color(muted)
+                    .child(SharedString::from(text.to_owned())),
+            )
+        })
+        .into_any_element()
 }
 
 /// How far a title's head — the word that names the call — may run before the

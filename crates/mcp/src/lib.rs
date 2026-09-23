@@ -109,6 +109,16 @@ impl Server {
     /// `notifications/initialized` is the one that arrives — and answering one
     /// is a protocol error rather than a courtesy.
     pub fn handle(&self, request: &Request, at: Option<&Path>) -> Option<Response> {
+        self.handle_from(request, at, None)
+    }
+
+    /// [`Self::handle`] for a call made by the session filed under `session`.
+    pub fn handle_from(
+        &self,
+        request: &Request,
+        at: Option<&Path>,
+        session: Option<&str>,
+    ) -> Option<Response> {
         let id = request.id.clone()?;
         Some(match request.method.as_str() {
             "initialize" => Response::ok(id, self.initialize(at)),
@@ -123,7 +133,7 @@ impl Server {
                 Err(error) => Response::fail(id, error),
             },
             "resources/templates/list" => Response::ok(id, json!({ "resourceTemplates": [] })),
-            "tools/call" => match self.invoke(request.params.as_ref(), at) {
+            "tools/call" => match self.invoke(request.params.as_ref(), at, session) {
                 Ok(result) => Response::ok(id, result),
                 Err(error) => Response::fail(id, error),
             },
@@ -134,8 +144,19 @@ impl Server {
     /// Run one tool by name. The surface the tests drive, and what
     /// `tools/call` is a wire around.
     pub fn call(&self, name: &str, arguments: Value, at: Option<&Path>) -> Result<Answer, Trouble> {
+        self.call_from(name, arguments, at, None)
+    }
+
+    /// [`Self::call`] for a call made by the session filed under `session`.
+    pub fn call_from(
+        &self,
+        name: &str,
+        arguments: Value,
+        at: Option<&Path>,
+        session: Option<&str>,
+    ) -> Result<Answer, Trouble> {
         if let Some(tool) = self.offered().find(|tool| tool.name == name) {
-            return (tool.call)(Args::new(&arguments, at));
+            return (tool.call)(Args::new(&arguments, at).from_session(session));
         }
         // Withheld rather than absent, which is worth saying: the model asked
         // for something that exists and is switched off, and a flat "no such
@@ -185,7 +206,12 @@ impl Server {
     /// call is a JSON-RPC error, and a call that was fine but got no for an
     /// answer is a result carrying `isError` — which the model sees and can do
     /// something about.
-    fn invoke(&self, params: Option<&Value>, at: Option<&Path>) -> Result<Value, Error> {
+    fn invoke(
+        &self,
+        params: Option<&Value>,
+        at: Option<&Path>,
+        session: Option<&str>,
+    ) -> Result<Value, Error> {
         let params = params.ok_or_else(|| Error::invalid_params("no params"))?;
         let name = params
             .get("name")
@@ -195,7 +221,7 @@ impl Server {
             .get("arguments")
             .cloned()
             .unwrap_or_else(|| json!({}));
-        match self.call(name, arguments, at) {
+        match self.call_from(name, arguments, at, session) {
             Ok(answer) => Ok(result(&answer.text, answer.data, false)),
             Err(Trouble::Refused(why)) => Ok(result(&why, None, true)),
             Err(Trouble::Invalid(why)) => Err(Error::invalid_params(why)),

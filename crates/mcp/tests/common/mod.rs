@@ -60,6 +60,7 @@ impl Scratch {
             .mount(&tools::article::TOOLS)
             .mount(&tools::board::TOOLS)
             .mount(&tools::project::TOOLS)
+            .mount(&tools::session::TOOLS)
             .deletes(std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
                 true,
             )))

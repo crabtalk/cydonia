@@ -311,6 +311,18 @@ impl Workspace {
             .cloned()
     }
 
+    /// The configured agents as the tools offer them.
+    pub(super) fn rail_agents(&self) -> Vec<rail::Agent> {
+        self.settings
+            .agents
+            .iter()
+            .map(|agent| rail::Agent {
+                name: agent.name.clone(),
+                id: agent.id.clone(),
+            })
+            .collect()
+    }
+
     /// The entry `settings.toml` files for the agent this one is a copy of —
     /// see [`named`], and [`Self::restore_sessions`] for where the copy comes
     /// from.
@@ -324,6 +336,7 @@ impl Workspace {
     pub fn reload_settings(&mut self, cx: &mut Context<Self>) {
         if let Ok(settings) = settings::load() {
             self.settings = settings;
+            rail::set_agents(self.rail_agents());
             self.readopt_agents();
         }
         cx.notify();

@@ -57,6 +57,7 @@ fn a_file_is_not_a_project() {
     assert!(file.is_file());
     assert!(!rail.asked().iter().any(|change| match change {
         Change::Open(path) | Change::Close(path) => path == &file,
+        Change::Send { .. } | Change::Start { .. } => false,
     }));
 }
 

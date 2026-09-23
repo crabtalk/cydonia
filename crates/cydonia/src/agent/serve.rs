@@ -86,6 +86,12 @@ pub fn project(cwd: &Path) -> (&'static str, String) {
     (mcp::http::PROJECT, mcp::http::encoded(cwd))
 }
 
+/// The header that tells the door which session is calling, by the id it is
+/// filed under.
+pub fn session(record: &str) -> (&'static str, String) {
+    (mcp::http::SESSION, record.to_owned())
+}
+
 /// What is on it. Articles and boards; a tool set per surface as they arrive,
 /// and the rail the app holds them on — see [`mcp::rail`], which the workspace
 /// is what answers.
@@ -94,6 +100,7 @@ fn server() -> Server {
         .mount(&tools::article::TOOLS)
         .mount(&tools::board::TOOLS)
         .mount(&tools::project::TOOLS)
+        .mount(&tools::session::TOOLS)
         .writable(write().clone())
         .deletes(delete().clone())
 }

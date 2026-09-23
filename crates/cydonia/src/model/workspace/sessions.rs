@@ -17,10 +17,21 @@ impl Workspace {
         seed: Option<String>,
         cx: &mut Context<Self>,
     ) -> Option<u64> {
-        if !self.settings.features.sessions {
+        let ix = self.active?;
+        self.new_session_in(ix, entry, seed, cx)
+    }
+
+    /// [`Self::new_session`] in the project at `ix` rather than the active one.
+    fn new_session_in(
+        &mut self,
+        ix: usize,
+        entry: settings::Agent,
+        seed: Option<String>,
+        cx: &mut Context<Self>,
+    ) -> Option<u64> {
+        if !self.settings.features.sessions || ix >= self.projects.len() {
             return None;
         }
-        let ix = self.active?;
         let id = self.next_id;
         self.next_id += 1;
         let chat = ChatSession::connect(id, entry, self.projects[ix].path.clone(), seed, cx);
@@ -134,7 +145,7 @@ impl Workspace {
         // has said nothing is not yet somewhere to come back to.
         if let Some(record) = self.projects[ix]
             .session(id)
-            .and_then(|chat| chat.record.clone())
+            .and_then(|chat| chat.filed().map(str::to_owned))
         {
             self.note_landing(ix, state::Kind::Session, record, cx);
         }
@@ -243,11 +254,27 @@ impl Workspace {
             chat.resume(cx);
         }
         chat.send(content);
-        let record = chat.record.clone();
+        let record = chat.filed().map(str::to_owned);
         if let (Some(record), Some(ix)) = (record, self.project_of(id)) {
             self.note_landing(ix, state::Kind::Session, record, cx);
         }
         cx.notify();
+    }
+
+    /// Send to the session filed under `record`, where one is held.
+    pub fn send_to_record(&mut self, record: &str, content: String, cx: &mut Context<Self>) {
+        if let Some(id) = self.session_by_record(record).map(|chat| chat.id) {
+            self.send(id, content, cx);
+        }
+    }
+
+    /// Open a session on the agent named `agent` in the project at `path`,
+    /// seeded with `content`. Nothing happens where either is not held.
+    pub fn start_in(&mut self, path: &Path, agent: &str, content: String, cx: &mut Context<Self>) {
+        let entry = named(&self.settings.agents, Some(agent), agent).cloned();
+        if let (Some(ix), Some(entry)) = (self.project_at(path), entry) {
+            self.new_session_in(ix, entry, Some(content), cx);
+        }
     }
 
     /// Send a message with pictures. Each is kept in the project's assets and

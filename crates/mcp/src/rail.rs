@@ -28,6 +28,34 @@ use std::{
 pub enum Change {
     Open(PathBuf),
     Close(PathBuf),
+    /// A prompt for the session filed under `session` — its record id, which
+    /// is unique across projects.
+    Send {
+        session: String,
+        message: String,
+    },
+    /// A new session in `project` on the agent `settings.toml` names `agent`,
+    /// with `message` as its first prompt.
+    Start {
+        project: PathBuf,
+        agent: String,
+        message: String,
+    },
+}
+
+/// An agent a session can be started on, as `settings.toml` files it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Agent {
+    pub name: String,
+    /// The registry id, absent for an agent added by hand.
+    pub id: Option<String>,
+}
+
+impl Agent {
+    /// What a tool names it by: the id where there is one, else the name.
+    pub fn key(&self) -> &str {
+        self.id.as_deref().unwrap_or(&self.name)
+    }
 }
 
 type Hand = Box<dyn Fn(Change) + Send + Sync>;
@@ -37,6 +65,9 @@ static HAND: RwLock<Option<Hand>> = RwLock::new(None);
 
 /// What the app is holding, as it last left it.
 static OPEN: RwLock<Vec<PathBuf>> = RwLock::new(Vec::new());
+
+/// The agents configured, as the app last pushed them.
+static AGENTS: RwLock<Vec<Agent>> = RwLock::new(Vec::new());
 
 /// Hand the rail over. The app calls this once, at launch.
 pub fn install(hand: impl Fn(Change) + Send + Sync + 'static) {
@@ -57,6 +88,19 @@ pub fn set_open(projects: Vec<PathBuf>) {
 /// The projects on the rail, in the order the app lists them.
 pub fn open() -> Vec<PathBuf> {
     OPEN.read().map(|held| held.clone()).unwrap_or_default()
+}
+
+/// Say which agents are configured. Pushed by the app whenever it reads
+/// `settings.toml`.
+pub fn set_agents(agents: Vec<Agent>) {
+    if let Ok(mut held) = AGENTS.write() {
+        *held = agents;
+    }
+}
+
+/// The agents configured, in the order `settings.toml` lists them.
+pub fn agents() -> Vec<Agent> {
+    AGENTS.read().map(|held| held.clone()).unwrap_or_default()
 }
 
 /// Whether the rail is holding a project at `path`.

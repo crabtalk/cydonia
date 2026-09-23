@@ -159,11 +159,12 @@ pub struct ChatSession {
     pub updated: SystemTime,
     /// The agent's own id for this session — what `session/load` resumes.
     pub agent_session: Option<String>,
-    /// Where the session is written, once it has anything to write.
-    /// What this session is filed under, once it has been written. Minted on
-    /// the first flush and not before — a session that has said nothing is not
-    /// yet anything to come back to.
+    /// The id this session is filed under. Minted when the session connects,
+    /// before anything is written — see [`Self::filed`] for one that is on
+    /// disk.
     pub record: Option<String>,
+    /// Whether [`Self::record`] has a file behind it.
+    written: bool,
     /// Whether the user archived it. Typing into it clears this.
     pub closed: bool,
     pub streaming: bool,
@@ -188,11 +189,13 @@ impl ChatSession {
         cx: &mut Context<Workspace>,
     ) -> Self {
         let preferences = session_preferences::load(&cwd, &entry, None);
+        let record = fs::Project::new(&cwd).create_session();
         let pump = pump(
             id,
             &entry,
             Launch {
                 choices: preferences.clone(),
+                record: record.clone(),
                 ..Launch::new(cwd.clone())
             },
             cx,
@@ -220,7 +223,8 @@ impl ChatSession {
             name: None,
             updated: SystemTime::now(),
             agent_session: None,
-            record: None,
+            record,
+            written: false,
             number: None,
             closed: false,
             streaming: false,
@@ -263,6 +267,7 @@ impl ChatSession {
             updated,
             agent_session: record.session,
             record: Some(record.id),
+            written: true,
             number: record.number,
             closed: record.closed,
             streaming: false,
@@ -365,6 +370,7 @@ impl ChatSession {
         let record = source.fork_at(before)?;
         let mut chat = Self::restore(id, self.cwd.clone(), self.entry.clone(), record);
         chat.record = None;
+        chat.written = false;
         chat.preferences = self.preferences.clone();
         Some(chat)
     }
@@ -388,6 +394,11 @@ impl ChatSession {
         self.record.as_deref()
     }
 
+    /// The id this session is filed under, once there is a file under it.
+    pub fn filed(&self) -> Option<&str> {
+        self.record.as_deref().filter(|_| self.written)
+    }
+
     /// Whether nothing has been said in it yet — see [`nothing_said`].
     pub fn unsaid(&self) -> bool {
         !self.history_unloaded && nothing_said(&self.items)
@@ -400,6 +411,7 @@ impl ChatSession {
         }
         self.mint_record()?;
         fs::Project::new(&self.cwd).save_session(&self.to_record());
+        self.written = true;
         self.save_preferences();
         self.record.clone()
     }
@@ -416,6 +428,7 @@ impl ChatSession {
         self.mint_record();
         if self.record.is_some() {
             store.save_session(&self.to_record());
+            self.written = true;
             self.save_preferences();
         }
     }
@@ -425,6 +438,9 @@ impl ChatSession {
     pub fn resume(&mut self, cx: &mut Context<Workspace>) {
         if self.closed || !self.load_history() {
             return;
+        }
+        if self.record.is_none() {
+            self.record = fs::Project::new(&self.cwd).create_session();
         }
         self._pump = pump(
             self.id,
@@ -441,6 +457,7 @@ impl ChatSession {
                 }),
                 history_pending: self.fork.as_ref().is_some_and(|fork| fork.pending),
                 choices: self.preferences.clone(),
+                record: self.record.clone(),
                 ..Launch::new(self.cwd.clone())
             },
             cx,
@@ -941,22 +958,7 @@ impl ChatSession {
     }
 }
 
-/// Whether nothing has been said in a transcript yet.
-///
-/// Not the same as holding no items. An agent writes to stderr as it starts —
-/// a deprecation warning, a runtime's banner — and every line of that is an
-/// item before anybody has typed a word. It is the process talking about
-/// itself rather than a conversation, so a session carrying only that is still
-/// one nothing has been said in: it keeps its empty state, and it mints no
-/// file.
-///
-/// A [`ChatItem::Notice`] does count. A connection that failed is the app
-/// saying so, and that is worth the transcript and the file both.
-pub fn nothing_said(items: &[ChatItem]) -> bool {
-    items
-        .iter()
-        .all(|item| matches!(item, ChatItem::Process { .. }))
-}
+pub use artifact::session::chat::nothing_said;
 
 /// What was run, as a command line — the head of the block its output fills.
 pub fn command_line(entry: &settings::Agent) -> String {

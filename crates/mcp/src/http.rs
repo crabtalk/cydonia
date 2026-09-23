@@ -42,6 +42,9 @@ pub const PORT: u16 = 7457;
 /// directory it means per call instead.
 pub const PROJECT: &str = "x-cydonia-project";
 
+/// The record id of the session making the call, when a session is.
+pub const SESSION: &str = "x-cydonia-session";
+
 /// How far past it the door will walk when something already holds one. A
 /// second cydonia is the usual reason, and it takes the next number rather
 /// than failing — but a walk that went on forever would land somewhere nobody
@@ -126,6 +129,10 @@ async fn call(State(server): State<Arc<Server>>, headers: HeaderMap, body: Strin
         .get(PROJECT)
         .and_then(|value| value.to_str().ok())
         .and_then(decoded);
+    let session = headers
+        .get(SESSION)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
     // A client that is not a browser sends no `Origin` at all. One that does is
     // a page, and a page reaching a loopback port is the rebinding attack this
     // check exists for — the name it resolved is not one we can vouch for, so
@@ -136,7 +143,7 @@ async fn call(State(server): State<Arc<Server>>, headers: HeaderMap, body: Strin
     let Ok(request) = serde_json::from_str::<Request>(&body) else {
         return (StatusCode::BAD_REQUEST, "not a JSON-RPC request").into_response();
     };
-    match server.handle(&request, at.as_deref()) {
+    match server.handle_from(&request, at.as_deref(), session.as_deref()) {
         Some(response) => axum::Json(response).into_response(),
         // A notification is answered by not answering, which over HTTP is the
         // status that says so.

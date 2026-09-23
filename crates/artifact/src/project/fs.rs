@@ -141,6 +141,20 @@ impl Project {
         Some(board)
     }
 
+    /// Every session file in this project by the id it is filed under,
+    /// unread.
+    pub fn session_files(&self) -> Vec<(String, PathBuf)> {
+        let Ok(entries) = std::fs::read_dir(self.sessions_dir()) else {
+            return Vec::new();
+        };
+        entries
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
+            .map(|path| (stem(&path), path))
+            .collect()
+    }
+
     fn sessions_dir(&self) -> PathBuf {
         self.cydonia().join(SESSIONS)
     }
@@ -250,17 +264,15 @@ impl super::Project for Project {
         found.sort_by_key(|record| Reverse(record.updated));
         found
     }
-    /// Mint the id a session is filed under from here on. Called on the first
-    /// write and not before: opening a project must not put a `.cydonia/` in
-    /// it.
+    /// Mint the id a session is filed under. Nothing is written: a session
+    /// that never says anything leaves no file.
     ///
-    /// Two sessions started inside one millisecond is the only collision, and
-    /// `-2` is what settles it — the stamp is the same, so the pair still sort
-    /// together.
+    /// Unique within this process — see [`stamp::fresh`] — and clear of any
+    /// file already in the directory, which `-2` settles.
     fn create_session(&self) -> Option<String> {
         let dir = self.init().ok()?.join(SESSIONS);
         std::fs::create_dir_all(&dir).ok()?;
-        let stamp = stamp::now();
+        let stamp = stamp::fresh();
         let mut id = stamp.to_string();
         for n in 2.. {
             if !dir.join(format!("{id}.json")).exists() {

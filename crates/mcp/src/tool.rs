@@ -97,11 +97,27 @@ pub enum Trouble {
 pub struct Args<'a> {
     arguments: &'a Value,
     at: Option<&'a Path>,
+    session: Option<&'a str>,
 }
 
 impl<'a> Args<'a> {
     pub fn new(arguments: &'a Value, at: Option<&'a Path>) -> Self {
-        Self { arguments, at }
+        Self {
+            arguments,
+            at,
+            session: None,
+        }
+    }
+
+    /// The same, from the session filed under `session` — its record id.
+    pub fn from_session(mut self, session: Option<&'a str>) -> Self {
+        self.session = session;
+        self
+    }
+
+    /// The record id of the session making the call, when the caller is one.
+    pub fn session(&self) -> Option<&'a str> {
+        self.session
     }
 
     /// The project the caller is bound to, if it is bound to one.

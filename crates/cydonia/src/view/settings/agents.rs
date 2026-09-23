@@ -802,7 +802,7 @@ impl SettingsWindow {
                     .flex_1()
                     .min_h_0()
                     .child(self.search_row(cx))
-                    .children(empty.then(|| self.note("No matches.", false, cx)))
+                    .children(empty.then(|| self.note("No matches.", true, cx)))
                     // Only the rows the viewport reaches are built, so the
                     // layout engine is handed a screenful rather than the
                     // registry.
@@ -817,9 +817,10 @@ impl SettingsWindow {
                                     let Some(listing) = held.get(ix) else {
                                         return div().into_any_element();
                                     };
-                                    // Never the first: the query line heads the
-                                    // box, so every row keeps its hairline.
-                                    this.agent_row(ix, listing, false, cx)
+                                    // The hairline under the query line is the
+                                    // search row's own, so it stays put while
+                                    // the list scrolls under it.
+                                    this.agent_row(ix, listing, at == 0, cx)
                                 })
                             },
                             |_, _, _| {},
@@ -839,6 +840,8 @@ impl SettingsWindow {
         theme
             .card_row(true)
             .flex_none()
+            .border_b_1()
+            .border_color(theme.border)
             .on_mouse_down_out(cx.listener(|this, _, window, cx| {
                 if this.search.read(cx).focus_handle(cx).is_focused(window) {
                     window.blur(cx);

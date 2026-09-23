@@ -53,3 +53,40 @@ pub enum ChatItem {
         output: String,
     },
 }
+
+/// Whether nothing has been said in a transcript yet.
+///
+/// Not the same as holding no items. An agent writes to stderr as it starts —
+/// a deprecation warning, a runtime's banner — and every line of that is an
+/// item before anybody has typed a word. It is the process talking about
+/// itself rather than a conversation, so a session carrying only that is still
+/// one nothing has been said in: it keeps its empty state, and it mints no
+/// file.
+///
+/// A [`ChatItem::Notice`] does count. A connection that failed is the app
+/// saying so, and that is worth the transcript and the file both.
+pub fn nothing_said(items: &[ChatItem]) -> bool {
+    items
+        .iter()
+        .all(|item| matches!(item, ChatItem::Process { .. }))
+}
+
+/// A transcript split into turns, each the item range from one question to
+/// the next. The leading chunk before the first question is a turn of its
+/// own. Runs of nothing but process output are not turns.
+///
+/// Turn `n` here is turn `n` on the transcript's rail and in the tools.
+pub fn turns(items: &[ChatItem]) -> Vec<std::ops::Range<usize>> {
+    let mut turns = Vec::new();
+    let mut start = 0;
+    for ix in 1..=items.len() {
+        if ix < items.len() && !matches!(items[ix], ChatItem::User(_)) {
+            continue;
+        }
+        if !nothing_said(&items[start..ix]) {
+            turns.push(start..ix);
+        }
+        start = ix;
+    }
+    turns
+}

@@ -139,6 +139,9 @@ pub struct Launch {
     pub history: Option<Vec<HistoryEntry>>,
     pub history_pending: bool,
     pub choices: Choices,
+    /// The id the session is filed under, which our MCP server is told so its
+    /// tools know which session is calling.
+    pub record: Option<String>,
 }
 
 impl Launch {
@@ -219,7 +222,8 @@ impl Session {
 
         // Only now are the agent's MCP capabilities known, so remote
         // servers can be dropped for agents that can't reach them.
-        let (mcp_servers, built_in_mcp) = acp_mcp_servers(&configured, &init, &cwd);
+        let (mcp_servers, built_in_mcp) =
+            acp_mcp_servers(&configured, &init, &cwd, launch.record.as_deref());
 
         let mut loaded = false;
         let mut response = None;
@@ -652,6 +656,7 @@ fn acp_mcp_servers(
     configured: &[mcp::McpServer],
     init: &InitializeResponse,
     cwd: &std::path::Path,
+    record: Option<&str>,
 ) -> (Vec<McpServer>, bool) {
     let http = init.agent_capabilities.mcp_capabilities.http;
     let ours = http.then(serve::url).flatten().map(|url| {
@@ -661,14 +666,14 @@ fn acp_mcp_servers(
             // Which project this session is. The tools then take no directory
             // at all — one a session's model had to supply is one it could
             // supply wrongly, about something already known here.
-            headers: vec![{
-                let (name, value) = serve::project(cwd);
-                HttpHeader {
+            headers: std::iter::once(serve::project(cwd))
+                .chain(record.map(serve::session))
+                .map(|(name, value)| HttpHeader {
                     name: name.to_owned(),
                     value,
                     meta: None,
-                }
-            }],
+                })
+                .collect(),
             meta: None,
         })
     });
