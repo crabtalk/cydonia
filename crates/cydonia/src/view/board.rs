@@ -133,6 +133,7 @@ fn card_matches(card: &Card, handle: Option<&str>, query: &str) -> bool {
 pub fn field(cx: &mut App) -> Entity<TextField> {
     cx.new(|cx| {
         TextField::new(cx)
+            .with_frame(false)
             .with_shape(Shape::Grow {
                 min: 2,
                 max: CARD_EDITOR_MAX_ROWS,
