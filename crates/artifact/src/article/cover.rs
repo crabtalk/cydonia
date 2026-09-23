@@ -1,8 +1,8 @@
 //! Where an article's cover sits, and what it is called.
 //!
-//! In the article's own directory, beside `content.md` — not in the project's
-//! shared `assets/`, which is where the pictures in a body go. One article has
-//! at most one, and moving the article carries it without rewriting anything.
+//! In the article's own directory, beside `content.md` — not in the `assets/`
+//! inside it, which is where the pictures in a body go. One article has at
+//! most one, and moving the article carries it without rewriting anything.
 //!
 //! The name is `cover-<stem>.<ext>`. Only the [`MARK`] is read: whatever
 //! follows it is the writer's, and the app puts a number there so shuffling a

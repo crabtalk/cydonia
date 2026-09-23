@@ -15,12 +15,14 @@ use bezel::{
         self, AnyElement, Axis, Context, DragMoveEvent, Empty, Entity, Focusable, Render,
         Subscription, Window, div, prelude::*, px,
     },
+    motion::{Fade, Painter},
     theme::{TextStyle, Theme, Typeset},
     ui::{
         icons,
         menu::{self, Cursor, Hit, Item},
         popover, tabs,
         tooltip::Tooltip,
+        widgets::{ButtonStyle, Buttons as _},
     },
 };
 use std::{collections::HashMap, path::PathBuf};
@@ -448,13 +450,8 @@ impl Render for Panel {
             .on_action(cx.listener(|this, _: &NextTab, window, cx| this.cycle(1, window, cx)))
             .on_action(cx.listener(|this, _: &PrevTab, window, cx| this.cycle(-1, window, cx)))
             .child(
-                div()
-                    .h(px(40.))
-                    .flex_none()
-                    .flex()
-                    .items_center()
+                crate::view::root::band()
                     .gap(px(6.))
-                    .px(px(8.))
                     .child(
                         tabs::bar("panel-tabs").children(self.ordered().map(|(id, tab)| {
                             let icon = match &tab.content {
@@ -525,24 +522,20 @@ impl Render for Panel {
                             .relative()
                             .flex_none()
                             .child(
-                                div()
+                                theme
+                                    .icon_button(
+                                        icons::math::Plus,
+                                        ButtonStyle::Ghost,
+                                        Some(Fade::new(Painter::of(cx), "panel-add")),
+                                    )
                                     .id("panel-add")
-                                    .size(px(24.))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .cursor_pointer()
+                                    .flex_none()
                                     .tooltip(|window, cx| Tooltip::text("New tab", window, cx))
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.menu = !this.menu;
                                         this.cursor.clear();
                                         cx.notify();
-                                    }))
-                                    .child(
-                                        icons::icon(icons::math::Plus)
-                                            .size(px(16.))
-                                            .text_color(theme.text_muted),
-                                    ),
+                                    })),
                             )
                             .children(popup.map(|popup| {
                                 popover::anchored_menu_below(
@@ -554,23 +547,21 @@ impl Render for Panel {
                     )
                     .child(div().flex_1())
                     .child(
-                        div()
+                        // The column it acts on, which is this one: a
+                        // left-panel glyph on the right panel's own hide
+                        // button pointed at the wrong side of the window.
+                        theme
+                            .icon_button(
+                                icons::layout::PanelRight,
+                                ButtonStyle::Ghost,
+                                Some(Fade::new(Painter::of(cx), "panel-hide")),
+                            )
                             .id("panel-hide")
                             .flex_none()
-                            .size(px(24.))
-                            .cursor_pointer()
                             .tooltip(|window, cx| Tooltip::text("Hide right panel", window, cx))
                             .on_click(|_, window, cx| {
                                 window.dispatch_action(Box::new(ToggleChanges), cx)
-                            })
-                            // The column it acts on, which is this one: a
-                            // left-panel glyph on the right panel's own hide
-                            // button pointed at the wrong side of the window.
-                            .child(
-                                icons::icon(icons::layout::PanelRight)
-                                    .size(px(16.))
-                                    .text_color(theme.text_muted),
-                            ),
+                            }),
                     ),
             )
             .when_some(self.closing, |panel, id| {

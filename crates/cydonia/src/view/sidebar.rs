@@ -27,6 +27,7 @@ use bezel::{
         Hsla, MouseButton, Pixels, Point, ScrollStrategy, SharedString, Stateful,
         UniformListDecoration, Window, div, prelude::*, px, uniform_list,
     },
+    motion::{Fade, Painter},
     theme::{TextStyle, Theme, Typeset},
     ui::{
         icons::{self, Icon},
@@ -35,7 +36,7 @@ use bezel::{
         popover,
         surface::Surfaced as _,
         tooltip::Tooltip,
-        widgets::{Buttons, Content, Layout},
+        widgets::{ButtonStyle, Buttons, Content, Layout},
     },
 };
 use std::{cell::RefCell, ops::Range, rc::Rc, time::Duration};
@@ -145,10 +146,11 @@ pub(crate) enum Renaming {
     /// A space, by its id — auto-named `space-1` until someone gives it a
     /// name of their own.
     Space(String),
-    /// A lane on the open board. The one entry here that no row in the sidebar
-    /// stands for — the field is drawn in the column's own header instead,
-    /// which works because only one thing is ever being named.
-    Column(String),
+    /// A lane, by the board it is on and its own id. The one entry here that
+    /// no row in the sidebar stands for — the field is drawn in the column's
+    /// own header instead, which works because only one thing is ever being
+    /// named.
+    Column(String, String),
 }
 
 /// What an entry's row is written in: the one on screen at full strength, one
@@ -226,10 +228,11 @@ const ROW_PILL: f32 = 30.;
 /// What a row puts between its mark, its name and the button at the end.
 const ROW_GAP: f32 = 8.;
 
-/// The button at the end of a row, at its full size: a 14px glyph in the
-/// ghost's own padding. Named because the button is laid out at no width until
-/// the pointer arrives — see [`Cydonia::archive_button`].
-const BUTTON_SIZE: f32 = 14. + 3. * 2.;
+/// The button at the end of a row, at its full size. Named because the button
+/// is laid out at no width until the pointer arrives — see
+/// [`Cydonia::archive_button`]. It swaps with the row's `···`, which is a
+/// [`bezel::ui::widgets::Buttons::icon_button`], so it stands at that height.
+const BUTTON_SIZE: f32 = Theme::BUTTON_HEIGHT;
 
 pub(crate) const ROW_HEIGHT: f32 = ROW_PILL + 2.;
 
@@ -379,17 +382,7 @@ impl Cydonia {
             // The fold out at the trailing edge: the lights float in the
             // leading half of the strip, which is what leaves nothing there to
             // pad them clear of.
-            .child(
-                div()
-                    .flex_none()
-                    .h(px(root::HEADER_HEIGHT))
-                    .pr(px(8.))
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .justify_end()
-                    .child(self.fold_toggle(theme.text_faint, cx)),
-            )
+            .child(root::band().justify_end().child(self.fold_toggle(cx)))
             .child(
                 div()
                     .relative()
@@ -538,30 +531,26 @@ impl Cydonia {
 
     /// The control that folds the sidebar away and brings it back. It belongs
     /// to whichever column runs along the window's left edge, so it changes
-    /// strip across the collapse — and takes that strip's tone with it.
-    pub(crate) fn fold_toggle(
-        &self,
-        tint: Hsla,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement + use<> {
+    /// strip across the collapse.
+    pub(crate) fn fold_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
         let label = if self.sidebar_open {
             "Hide sidebar"
         } else {
             "Show sidebar"
         };
+        // The same glyph either way: it names the column the button acts on,
+        // and the tooltip says which way it will go. A glyph that flips is a
+        // second thing to read for what the label already says.
         theme
-            .ghost("toggle-sidebar")
-            .p(px(4.))
-            .tooltip(move |window, cx| Tooltip::text(label, window, cx))
-            // The same glyph either way: it names the column the button acts
-            // on, and the tooltip says which way it will go. A glyph that
-            // flips is a second thing to read for what the label already says.
-            .child(
-                icons::icon(icons::layout::PanelLeft)
-                    .size(px(14.))
-                    .text_color(tint),
+            .icon_button(
+                icons::layout::PanelLeft,
+                ButtonStyle::Ghost,
+                Some(Fade::new(Painter::of(cx), "toggle-sidebar")),
             )
+            .id("toggle-sidebar")
+            .flex_none()
+            .tooltip(move |window, cx| Tooltip::text(label, window, cx))
             .on_click(cx.listener(|this, _, _, cx| this.toggle_sidebar(cx)))
     }
 
@@ -708,12 +697,9 @@ impl Cydonia {
             // and the rest are settled once and left alone.
             .child(
                 self.menu_button(
-                    ("project-menu", ix),
+                    SharedString::from(format!("project-menu-{ix}")),
                     reveal,
-                    icons::icon(icons::layout::Ellipsis)
-                        .size(px(12.))
-                        .text_color(theme.text_faint)
-                        .group_hover("project-head", |el| el.text_color(theme.text)),
+                    icons::layout::Ellipsis,
                     Menu::Project(ix),
                     cx,
                 )
@@ -724,12 +710,9 @@ impl Cydonia {
             )
             .child(
                 self.menu_button(
-                    ("project-add", ix),
+                    SharedString::from(format!("project-add-{ix}")),
                     reveal,
-                    icons::icon(icons::math::Plus)
-                        .size(px(12.))
-                        .text_color(theme.text_faint)
-                        .group_hover("project-head", |el| el.text_color(theme.text)),
+                    icons::math::Plus,
                     Menu::Add(ix),
                     cx,
                 )
@@ -1108,8 +1091,8 @@ impl Cydonia {
                 .relative()
                 .on_mouse_down(
                     MouseButton::Right,
-                    cx.listener(move |this, _, _, cx| {
-                        this.toggle_menu(Menu::Entry(row), cx);
+                    cx.listener(move |this, press: &gpui::MouseDownEvent, _, cx| {
+                        this.toggle_menu_at(Menu::Entry(row), Some(press.position), cx);
                     }),
                 )
                 .children(
@@ -1570,7 +1553,7 @@ impl Cydonia {
         )
         .child(label)
         .child(self.archive_button(
-            ("session-archive", id),
+            format!("session-archive-{id}"),
             "session-row",
             entry,
             session.archived,
@@ -1654,9 +1637,7 @@ impl Cydonia {
                 self.menu_button(
                     SharedString::from(format!("space-menu-{ix}")),
                     None,
-                    icons::icon(icons::layout::Ellipsis)
-                        .size(px(14.))
-                        .text_color(theme.text_faint),
+                    icons::layout::Ellipsis,
                     Menu::Entry(entry),
                     cx,
                 )
@@ -1750,13 +1731,14 @@ impl Cydonia {
     /// in the menu rather than behind a press that has to mean one of them.
     pub(crate) fn archive_button(
         &self,
-        id: impl Into<gpui::ElementId>,
+        id: impl Into<SharedString>,
         group: &'static str,
         entry: Row,
         archived: bool,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let theme = Theme::of(cx).clone();
+        let id = id.into();
         let pinned = self.pinned(entry, cx);
         if pinned {
             let at = Menu::Entry(entry);
@@ -1769,13 +1751,7 @@ impl Cydonia {
                 false => icons::navigation::Pin,
             };
             return self
-                .menu_button(
-                    id,
-                    None,
-                    icons::icon(mark).size(px(14.)).text_color(theme.text_faint),
-                    at.clone(),
-                    cx,
-                )
+                .menu_button(id, None, mark, at.clone(), cx)
                 // On the trigger, so the card hangs under the `···` rather
                 // than off the left edge of the row it is mounted on. A row
                 // with no button of its own draws it from the wrapper, where
@@ -1788,7 +1764,12 @@ impl Cydonia {
             false => icons::files::Archive,
         };
         theme
-            .ghost(id)
+            .icon_button(
+                mark,
+                ButtonStyle::Ghost,
+                Some(Fade::new(Painter::of(cx), id.clone())),
+            )
+            .id(id)
             .flex_none()
             // Out of sight but laid out, and revealed off the row's own hover
             // group rather than [`Cydonia::sidebar_hovered`].
@@ -1816,13 +1797,6 @@ impl Cydonia {
             // still falls either side of a child with no width, so the margin
             // that cancels it comes back with the width.
             .overflow_hidden()
-            .p(px(3.))
-            .child(
-                icons::icon(mark)
-                    .size(px(14.))
-                    .flex_none()
-                    .text_color(theme.text_faint),
-            )
             .tooltip(move |window, cx| {
                 Tooltip::text(
                     match archived {
@@ -1944,18 +1918,20 @@ impl Cydonia {
         // it, so these are the band's alone — on the wrong row they would act
         // on whatever else was open.
         if matches!(entry, Row::Article { .. }) && !matches!(at, Menu::Entry(_)) {
-            let workspace = self.workspace.read(cx);
-            let plain_chord = keymap::label(Command::PlainText, &workspace.settings.shortcuts)
-                .unwrap_or_default();
-            let held = workspace
-                .active_article()
-                .and_then(|article| article.full_width);
-            let wide = held.unwrap_or(workspace.wide_pages);
+            let plain_chord = keymap::label(
+                Command::PlainText,
+                &self.workspace.read(cx).settings.shortcuts,
+            )
+            .unwrap_or_default();
+            // The page the focused pane is on, which is what these rows act on
+            // — see [`Cydonia::pane_doc`].
+            let held = self.pane_doc(cx).and_then(|article| article.full_width);
+            let wide = held.unwrap_or(self.workspace.read(cx).wide_pages);
             // Only where there is none. A page that has one is changed from
             // the picture itself, which is on screen and has nowhere else it
             // could mean — see `article::cover_controls`.
-            if workspace
-                .active_article()
+            if self
+                .pane_doc(cx)
                 .is_some_and(|article| article.cover.is_none())
             {
                 rows.insert(
@@ -2006,14 +1982,15 @@ impl Cydonia {
             move |this, _, cx| this.ask_delete(entry, cx),
         ));
         let id = SharedString::from("header-menu-card");
-        // Right-aligned: every route into this menu — the dots button, the
-        // pin, a right press — has its affordance at the row's end, and the
-        // card drops from there.
-        Some(popover::anchored_menu_below_end(
-            id.clone(),
-            self.menu_card(id, rows, cx),
-            None,
-        ))
+        // A right press carries a point, and the card stands at it. From a
+        // button — the `···`, the pin — there is none, and the card drops
+        // right-aligned to the trigger, whose affordance is at the row's end.
+        Some(match self.menu_point(&at) {
+            Some(point) => popover::menu_at(id.clone(), point, self.menu_card(id, rows, cx), None),
+            None => {
+                popover::anchored_menu_below_end(id.clone(), self.menu_card(id, rows, cx), None)
+            }
+        })
     }
 
     /// Drop an entry, file and all. Deleting the session on screen lands on
@@ -2273,8 +2250,8 @@ impl Cydonia {
                 .find(|table| table.key == *key)
                 .map(|table| table.name.clone())
                 .unwrap_or_default(),
-            Renaming::Column(id) => workspace
-                .active_board()
+            Renaming::Column(board, id) => workspace
+                .board_at(board)
                 .and_then(|board| board.column(id))
                 .map(|column| column.name.clone())
                 .unwrap_or_default(),
@@ -2289,7 +2266,7 @@ impl Cydonia {
         // — and the field is put in it before the name lands, so what is typed
         // and what is stored are the same string.
         let case = match &what {
-            Renaming::Column(_) => Case::Upper,
+            Renaming::Column(..) => Case::Upper,
             _ => Case::Mixed,
         };
         self.name_field.update(cx, |field, cx| {
@@ -2311,7 +2288,7 @@ impl Cydonia {
         self.workspace.update(cx, |workspace, cx| match what {
             Renaming::Session(id) => workspace.rename_session(id, name, cx),
             Renaming::Table(key) => workspace.rename_table(&key, name, cx),
-            Renaming::Column(id) => workspace.rename_column(&id, name, cx),
+            Renaming::Column(board, id) => workspace.rename_column(&board, &id, name, cx),
             Renaming::Space(id) => workspace.rename_space(&id, name, cx),
         });
         cx.notify();

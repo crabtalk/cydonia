@@ -13,10 +13,9 @@
 
 use crate::model::cover;
 use bezel::gpui::{
-    App, AppContext as _, Asset as _, AssetLogger, Entity, Global, ImageAssetLoader, ImageCache,
-    ImageCacheError, ImageCacheItem, RenderImage, Resource, Window, hash,
+    App, AppContext as _, Entity, Global, ImageCache, ImageCacheError, ImageCacheItem, RenderImage,
+    Resource, Window, hash,
 };
-use futures::FutureExt as _;
 use lru::LruCache;
 use std::{num::NonZeroUsize, sync::Arc};
 
@@ -93,23 +92,17 @@ impl ImageCache for Covers {
         // `get_mut` is the touch: it is what moves a cover back to the head of
         // the recency list, so the one on screen is never the one evicted.
         if let Some(item) = self.0.get_mut(&key) {
-            return item.get();
+            return item.use_image(window);
         }
 
-        let load = AssetLogger::<ImageAssetLoader>::load(resource.clone(), cx);
-        let task = cx.background_executor().spawn(load).shared();
-        if let Some((_, mut evicted)) = self.0.push(key, ImageCacheItem::Loading(task.clone())) {
+        // `use_image` is also what subscribes the drawing view to the load, so
+        // the frame that finds a cover missing is redrawn once it arrives.
+        let item = ImageCacheItem::new(resource, cx);
+        let loaded = item.use_image(window);
+        if let Some((_, mut evicted)) = self.0.push(key, item) {
             drop_frame(&mut evicted, window, cx);
         }
-
-        let view = window.current_view();
-        window
-            .spawn(cx, async move |cx| {
-                let _ = task.await;
-                cx.on_next_frame(move |_, cx| cx.notify(view));
-            })
-            .detach();
-        None
+        loaded
     }
 }
 

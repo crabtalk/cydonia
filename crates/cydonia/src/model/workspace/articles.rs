@@ -100,44 +100,37 @@ impl Workspace {
         project.articles.get(project.article?)
     }
 
-    /// Put a cover on the open article, or take it off — see
-    /// [`Article::set_cover`].
-    pub fn set_cover(&mut self, source: Option<&Path>, cx: &mut Context<Self>) {
-        if let Some(article) = self.article_mut() {
+    /// Put a cover on one article, or take it off — see [`Article::set_cover`].
+    pub fn set_cover(&mut self, on: &Path, source: Option<&Path>, cx: &mut Context<Self>) {
+        if let Some(article) = self.article_at_mut(on) {
             article.set_cover(source);
             cx.notify();
         }
     }
 
-    /// Set the open page across the pane, or back in the column — see
-    /// [`Article::set_full_width`]. The open one and not one the sidebar names:
-    /// the width is asked for from the page you are looking at.
-    pub fn set_full_width(&mut self, wide: Option<bool>, cx: &mut Context<Self>) {
-        if let Some(article) = self.article_mut() {
+    /// Set one page across the pane, or back in the column — see
+    /// [`Article::set_full_width`].
+    pub fn set_full_width(&mut self, on: &Path, wide: Option<bool>, cx: &mut Context<Self>) {
+        if let Some(article) = self.article_at_mut(on) {
             article.set_full_width(wide);
             cx.notify();
         }
     }
 
-    /// Put the open document into the other form — see [`Article::set_mode`].
-    pub fn set_article_mode(&mut self, mode: Mode, cx: &mut Context<Self>) {
-        if let Some(article) = self.article_mut() {
+    /// Put one document into the other form — see [`Article::set_mode`].
+    pub fn set_article_mode(&mut self, on: &Path, mode: Mode, cx: &mut Context<Self>) {
+        if let Some(article) = self.article_at_mut(on) {
             article.set_mode(mode, cx);
             cx.notify();
         }
     }
 
-    /// Cut the open article a new cover — see [`Article::shuffle_cover`].
-    pub fn shuffle_cover(&mut self, cx: &mut Context<Self>) {
-        if let Some(article) = self.article_mut() {
+    /// Cut one article a new cover — see [`Article::shuffle_cover`].
+    pub fn shuffle_cover(&mut self, on: &Path, cx: &mut Context<Self>) {
+        if let Some(article) = self.article_at_mut(on) {
             article.shuffle_cover();
             cx.notify();
         }
-    }
-
-    fn article_mut(&mut self) -> Option<&mut Article> {
-        let project = self.projects.get_mut(self.active?)?;
-        project.articles.get_mut(project.article?)
     }
 
     /// The title or the content changed. Found by the entity because an article

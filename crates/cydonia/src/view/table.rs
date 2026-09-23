@@ -129,25 +129,42 @@ impl Cydonia {
         cx.notify();
     }
 
+    /// The table the focused pane is on, by its key — the one address every
+    /// write to a table is made through. A window with no space open has no
+    /// member to name, and falls back to what its project is pointed at.
+    pub(crate) fn pane_table(&self, cx: &App) -> Option<String> {
+        self.workspace
+            .read(cx)
+            .table_of(self.leaf().entry.as_ref())
+            .map(|table| table.key.clone())
+    }
+
+    /// The rows that pane is showing.
+    fn pane_page<'a>(&self, cx: &'a App) -> Option<&'a crate::data::Page> {
+        let key = self.pane_table(cx)?;
+        self.workspace.read(cx).page_at(&key)
+    }
+
     /// Point the field at `at`, filing whatever was already open first — so
     /// clicking straight from one cell to another never drops an edit.
     fn edit_cell(&mut self, at: Cell, window: &mut Window, cx: &mut Context<Self>) {
         self.commit(cx);
-        let workspace = self.workspace.read(cx);
         let text = match at {
-            Cell::Value { rowid, column } => workspace
-                .active_page()
+            Cell::Value { rowid, column } => self
+                .pane_page(cx)
                 .and_then(|page| page.rows.iter().find(|record| record.rowid == rowid))
                 .and_then(|record| record.cells.get(column))
                 .map(text)
                 .unwrap_or_default(),
-            Cell::Head(ix) => workspace
-                .active_page()
+            Cell::Head(ix) => self
+                .pane_page(cx)
                 .and_then(|page| page.columns.get(ix))
                 .map(|column| column.name.clone())
                 .unwrap_or_default(),
-            Cell::Name => workspace
-                .active_table()
+            Cell::Name => self
+                .workspace
+                .read(cx)
+                .table_of(self.leaf().entry.as_ref())
                 .map(|table| table.name.clone())
                 .unwrap_or_default(),
         };
@@ -174,16 +191,15 @@ impl Cydonia {
         self.leaf()
             .cell_field
             .update(cx, |field, cx| field.clear(cx));
+        let Some(key) = self.pane_table(cx) else {
+            return;
+        };
         self.workspace.update(cx, |workspace, cx| match at {
-            Cell::Value { rowid, column } => workspace.write_cell(rowid, column, text, cx),
+            Cell::Value { rowid, column } => workspace.write_cell(&key, rowid, column, text, cx),
             Cell::Head(ix) if !text.is_empty() => {
-                workspace.write_column(ix, None, Some(text), cx);
+                workspace.write_column(&key, ix, None, Some(text), cx);
             }
-            Cell::Name if !text.is_empty() => {
-                if let Some(key) = workspace.active_table().map(|table| table.key.clone()) {
-                    workspace.rename_table(&key, text, cx);
-                }
-            }
+            Cell::Name if !text.is_empty() => workspace.rename_table(&key, text, cx),
             _ => {}
         });
         cx.notify();
@@ -211,9 +227,12 @@ impl Cydonia {
     /// go and click is two actions for one intent.
     fn add_row(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.commit(cx);
+        let Some(key) = self.pane_table(cx) else {
+            return;
+        };
         let rowid = self
             .workspace
-            .update(cx, |workspace, cx| workspace.add_row(cx));
+            .update(cx, |workspace, cx| workspace.add_row(&key, cx));
         if let Some(rowid) = rowid {
             self.edit_cell(Cell::Value { rowid, column: 0 }, window, cx);
         }
@@ -221,25 +240,37 @@ impl Cydonia {
 
     fn delete_row(&mut self, rowid: i64, cx: &mut Context<Self>) {
         self.commit(cx);
+        let Some(key) = self.pane_table(cx) else {
+            return;
+        };
         self.workspace
-            .update(cx, |workspace, cx| workspace.delete_row(rowid, cx));
+            .update(cx, |workspace, cx| workspace.delete_row(&key, rowid, cx));
     }
 
     fn add_column(&mut self, cx: &mut Context<Self>) {
         self.commit(cx);
+        let Some(key) = self.pane_table(cx) else {
+            return;
+        };
         self.workspace
-            .update(cx, |workspace, cx| workspace.add_column(cx));
+            .update(cx, |workspace, cx| workspace.add_column(&key, cx));
     }
 
     fn retype_column(&mut self, at: usize, kind: ColType, cx: &mut Context<Self>) {
+        let Some(key) = self.pane_table(cx) else {
+            return;
+        };
         self.workspace.update(cx, |workspace, cx| {
-            workspace.write_column(at, Some(kind), None, cx)
+            workspace.write_column(&key, at, Some(kind), None, cx)
         });
     }
 
     fn delete_column(&mut self, at: usize, cx: &mut Context<Self>) {
+        let Some(key) = self.pane_table(cx) else {
+            return;
+        };
         self.workspace
-            .update(cx, |workspace, cx| workspace.delete_column(at, cx));
+            .update(cx, |workspace, cx| workspace.delete_column(&key, at, cx));
     }
 
     // ── chrome ───────────────────────────────────────────────────
@@ -437,11 +468,9 @@ impl Cydonia {
             .group("grid-head")
             .child(
                 self.menu_button(
-                    ("column-menu", ix),
+                    SharedString::from(format!("column-menu-{ix}")),
                     Some("grid-head"),
-                    icons::icon(icons::layout::Ellipsis)
-                        .size(px(14.))
-                        .text_color(theme.text_faint),
+                    icons::layout::Ellipsis,
                     Menu::Column(ix),
                     cx,
                 )
@@ -584,7 +613,13 @@ impl Cydonia {
                 .child(name)
                 .into_any_element(),
         })
-        .child(self.archive_button(("table-archive", ix), "table-row", entry, archived, cx))
+        .child(self.archive_button(
+            format!("table-archive-{ix}"),
+            "table-row",
+            entry,
+            archived,
+            cx,
+        ))
         .on_click(cx.listener(move |this, _, window, cx| {
             this.open_table(project, ix, window, cx);
         }))

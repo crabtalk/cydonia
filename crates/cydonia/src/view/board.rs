@@ -508,36 +508,54 @@ impl Cydonia {
         cx.notify();
     }
 
-    /// Point the field at `at`, filing whatever was already open first — so
-    /// clicking straight from one card to another never drops an edit.
-    fn edit(&mut self, at: Editing, window: &mut Window, cx: &mut Context<Self>) {
+    /// The board a pane is showing, by its file — the one address every write
+    /// to a board is made through. Nothing for a pane on anything else.
+    pub(crate) fn pane_board(&self, on: Option<&Member>, cx: &App) -> Option<String> {
+        self.workspace
+            .read(cx)
+            .board_of(on)
+            .map(|board| board.id.clone())
+    }
+
+    /// Point the field of the pane on `on` at `at`, filing whatever was already
+    /// open first — so clicking straight from one card to another never drops
+    /// an edit.
+    ///
+    /// The pane is entered on the way, the same as a press anywhere else in
+    /// one: the field, what it commits into and the caret all answer for the
+    /// focused pane, and a card opened in a pane the window is not on would be
+    /// drawn in one board and filed into another.
+    fn edit(
+        &mut self,
+        on: Option<&Member>,
+        at: Editing,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.commit(cx);
+        if let Some(on) = on {
+            self.focus_pane(&on.clone(), window, cx);
+        }
+        let board = self.workspace.read(cx).board_of(on);
         let text = match &at {
             Editing::New(..) => String::new(),
-            Editing::Card(id) => self
-                .workspace
-                .read(cx)
-                .active_board()
+            Editing::Card(id) => board
                 .and_then(|board| board.card(id))
                 .map(|card| card.text.clone())
                 .unwrap_or_default(),
         };
-        self.leaf()
-            .card_field
+        let id = board.map(|board| board.id.clone());
+        let leaf = self.leaf_of(on);
+        leaf.card_field
             .update(cx, |field, cx| field.set_content(text, cx));
         // A lane scrolled away from earlier stays where it was left; opening a
         // card at its foot is asking to be taken back there.
-        if let Editing::New(Place::End, column) = &at
-            && let Some(id) = self
-                .workspace
-                .read(cx)
-                .active_board()
-                .map(|board| board.id.clone())
-        {
-            self.boards.of(&id).lanes.follow(column);
+        if let (Editing::New(Place::End, column), Some(id)) = (&at, &id) {
+            self.boards.of(id).lanes.follow(column);
         }
-        self.leaf_mut().editing = Some(at);
-        window.focus(&self.leaf().card_field.read(cx).focus_handle(cx), cx);
+        let field = self.leaf_of(on).card_field.clone();
+        self.leaf_of_mut(on).editing = Some(at);
+        window.focus(&field.read(cx).focus_handle(cx), cx);
         cx.notify();
     }
 
@@ -549,18 +567,36 @@ impl Cydonia {
     pub(crate) fn commit(&mut self, cx: &mut Context<Self>) {
         self.commit_cell(cx);
         self.rest_ribbon(cx);
-        let Some(at) = self.leaf_mut().editing.take() else {
+        // Every pane with a field open, not only the focused one: the press
+        // that leaves a card behind is often a press into another pane, and by
+        // the time this runs the focus has already moved there.
+        for at in 0..self.leaves.len() {
+            self.commit_leaf(at, cx);
+        }
+    }
+
+    /// File the card one pane has open, into that pane's own board.
+    fn commit_leaf(&mut self, leaf: usize, cx: &mut Context<Self>) {
+        let Some(at) = self
+            .leaves
+            .get_mut(leaf)
+            .and_then(|leaf| leaf.editing.take())
+        else {
             return;
         };
-        let text = self.leaf().card_field.read(cx).content().trim().to_owned();
-        self.leaf()
-            .card_field
-            .update(cx, |field, cx| field.clear(cx));
+        let (field, on) = {
+            let leaf = &self.leaves[leaf];
+            (leaf.card_field.clone(), leaf.entry.clone())
+        };
+        let text = field.read(cx).content().trim().to_owned();
+        field.update(cx, |field, cx| field.clear(cx));
+        // The board of the pane the field was open in, which is the one it was
+        // drawn over — see [`Self::pane_board`].
+        let Some(id) = self.pane_board(on.as_ref(), cx) else {
+            return;
+        };
         self.workspace.update(cx, |workspace, cx| {
-            let Some(board) = workspace.active_board_mut() else {
-                return;
-            };
-            match at {
+            workspace.write_board(&id, |board| match at {
                 Editing::New(place, column) => {
                     if !text.is_empty() {
                         match place {
@@ -576,8 +612,7 @@ impl Cydonia {
                         board.rewrite_card(&id, &text);
                     }
                 }
-            }
-            workspace.save_board();
+            });
             cx.notify();
         });
     }
@@ -586,19 +621,24 @@ impl Cydonia {
     /// Held by id, so a card that merely moved keeps its open field; only one
     /// that has gone leaves the field pointing at nothing.
     pub(crate) fn drop_stale_edit(&mut self, cx: &mut Context<Self>) {
-        let Some(at) = self.leaf().editing.clone() else {
-            return;
-        };
-        let board = self.workspace.read(cx).active_board();
-        let alive = match &at {
-            Editing::New(_, column) => board.is_some_and(|board| board.column(column).is_some()),
-            Editing::Card(card) => board.is_some_and(|board| board.card(card).is_some()),
-        };
-        if !alive {
-            self.leaf_mut().editing = None;
-            self.leaf()
-                .card_field
-                .update(cx, |field, cx| field.clear(cx));
+        for leaf in 0..self.leaves.len() {
+            let Some(at) = self.leaves[leaf].editing.clone() else {
+                continue;
+            };
+            let on = self.leaves[leaf].entry.clone();
+            let board = self.workspace.read(cx).board_of(on.as_ref());
+            let alive = match &at {
+                Editing::New(_, column) => {
+                    board.is_some_and(|board| board.column(column).is_some())
+                }
+                Editing::Card(card) => board.is_some_and(|board| board.card(card).is_some()),
+            };
+            if !alive {
+                self.leaves[leaf].editing = None;
+                self.leaves[leaf]
+                    .card_field
+                    .update(cx, |field, cx| field.clear(cx));
+            }
         }
     }
 
@@ -675,30 +715,26 @@ impl Cydonia {
         cx.notify();
     }
 
-    pub(crate) fn delete_card(&mut self, card: &str, cx: &mut Context<Self>) {
+    pub(crate) fn delete_card(&mut self, board: &str, card: &str, cx: &mut Context<Self>) {
         self.commit(cx);
-        let card = card.to_owned();
+        let (board, card) = (board.to_owned(), card.to_owned());
         self.workspace.update(cx, |workspace, cx| {
-            let gone = workspace
-                .active_board_mut()
-                .and_then(|board| board.remove_card(&card))
-                .is_some();
-            if gone {
-                workspace.save_board();
-            }
+            workspace.write_board(&board, |board| board.remove_card(&card));
             cx.notify();
         });
         cx.notify();
     }
 
-    /// A lane at the right-hand end, opened straight into its name.
-    fn new_column(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// A lane at the right-hand end of one board, opened straight into its
+    /// name.
+    fn new_column(&mut self, board: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.commit(cx);
+        let board = board.to_owned();
         let id = self
             .workspace
-            .update(cx, |workspace, cx| workspace.new_column(cx));
+            .update(cx, |workspace, cx| workspace.new_column(&board, cx));
         if let Some(id) = id {
-            self.start_rename(Renaming::Column(id), window, cx);
+            self.start_rename(Renaming::Column(board, id), window, cx);
         }
     }
 
@@ -706,40 +742,41 @@ impl Cydonia {
     /// the same as [`Self::new_column`], which only ever writes at the end.
     fn new_column_beside(
         &mut self,
+        board: &str,
         id: &str,
         after: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.commit(cx);
-        let id = id.to_owned();
+        let (board, id) = (board.to_owned(), id.to_owned());
         let minted = self.workspace.update(cx, |workspace, cx| {
-            workspace.new_column_beside(&id, after, cx)
+            workspace.new_column_beside(&board, &id, after, cx)
         });
         if let Some(minted) = minted {
-            self.start_rename(Renaming::Column(minted), window, cx);
+            self.start_rename(Renaming::Column(board, minted), window, cx);
         }
     }
 
     /// Drop a lane. Offered only while it is empty — see
     /// [`artifact::board::Board::remove_column`] — and asked about first, in
     /// [`crate::view::confirm`].
-    pub(crate) fn drop_column(&mut self, id: &str, cx: &mut Context<Self>) {
+    pub(crate) fn drop_column(&mut self, board: &str, id: &str, cx: &mut Context<Self>) {
         self.commit(cx);
-        let id = id.to_owned();
+        let (board, id) = (board.to_owned(), id.to_owned());
         self.workspace
-            .update(cx, |workspace, cx| workspace.remove_column(&id, cx));
+            .update(cx, |workspace, cx| workspace.remove_column(&board, &id, cx));
         cx.notify();
     }
 
     /// The card's markdown, as it was written. The source and not what the lane
     /// paints: a card is a document, and the text is what somebody would paste
     /// into the next one.
-    fn copy_card(&mut self, card: &str, cx: &mut Context<Self>) {
+    fn copy_card(&mut self, board: &str, card: &str, cx: &mut Context<Self>) {
         let Some(text) = self
             .workspace
             .read(cx)
-            .active_board()
+            .board_at(board)
             .and_then(|board| board.card(card))
             .map(|card| card.text.clone())
         else {
@@ -755,12 +792,12 @@ impl Cydonia {
     /// reports its own run — and so dispatching a second card doesn't queue
     /// behind the first. The board stays up: the card goes live where you are
     /// looking, and clicking it is what follows the work into the transcript.
-    fn dispatch_card(&mut self, card: &str, cx: &mut Context<Self>) {
+    fn dispatch_card(&mut self, board: &str, card: &str, cx: &mut Context<Self>) {
         self.commit(cx);
-        let card = card.to_owned();
+        let (board, card) = (board.to_owned(), card.to_owned());
         self.workspace.update(cx, |workspace, cx| {
             let text = workspace
-                .active_board()
+                .board_at(&board)
                 .and_then(|board| board.card(&card))
                 .map(|card| card.text.clone());
             let (Some(text), Some(entry)) = (text, workspace.preferred_agent()) else {
@@ -774,36 +811,32 @@ impl Cydonia {
             else {
                 return;
             };
-            if workspace
-                .active_board_mut()
-                .is_some_and(|board| board.dispatch_card(&card, record))
-            {
-                // The link is on the board now, so the board has to be written
-                // — it is what the ▶ reads after a quit.
-                workspace.save_board();
-            }
+            // The link lands on the board, so the board is written — it is what
+            // the ▶ reads after a quit.
+            workspace.write_board(&board, |held| held.dispatch_card(&card, record));
         });
         cx.notify();
     }
 
     /// The `···` on a card: what the row of glyphs underneath should not carry,
     /// because it cannot be undone.
-    fn card_menu(&self, card: &str, cx: &mut Context<Self>) -> Option<AnyElement> {
+    fn card_menu(&self, on: &str, card: &str, cx: &mut Context<Self>) -> Option<AnyElement> {
         if self.menu.as_ref() != Some(&Menu::Card(card.to_owned())) {
             return None;
         }
         let (copied, doomed) = (card.to_owned(), card.to_owned());
+        let (from, held) = (on.to_owned(), on.to_owned());
         // The card at rest is a rendered document, not a run of text somebody
         // can drag over — so without this there is no way to get a card's words
         // back out of it short of opening the editor and selecting them.
         let rows = vec![
             menu::row(
                 Item::action("Copy text").with_icon(icons::text::Copy),
-                move |this, _, cx| this.copy_card(&copied, cx),
+                move |this, _, cx| this.copy_card(&from, &copied, cx),
             ),
             menu::row(
                 Item::action("Delete").with_icon(icons::files::Trash),
-                move |this, _, cx| this.ask_delete_card(&doomed, cx),
+                move |this, _, cx| this.ask_delete_card(&held, &doomed, cx),
             ),
         ];
         let id = SharedString::from(format!("card-menu-card-{card}"));
@@ -1101,6 +1134,7 @@ impl Cydonia {
             return div().flex_1().into_any_element();
         };
         // Read out before drawing: each column borrows the board again.
+        let held = board.id.clone();
         let ids: Vec<String> = board
             .columns
             .iter()
@@ -1137,7 +1171,7 @@ impl Cydonia {
                     .pt(px(BOARD_INSET))
                     .track_scroll(&scroll.across)
                     .children(columns)
-                    .child(self.new_column_lane(cx)),
+                    .child(self.new_column_lane(&held, cx)),
             )
             .child(scrollbars::Overlay::new(
                 "board-bar",
@@ -1177,6 +1211,7 @@ impl Cydonia {
             return div().flex_1().into_any_element();
         };
         // Read out before drawing: each group borrows the board again.
+        let held = board.id.clone();
         let ids: Vec<String> = board
             .columns
             .iter()
@@ -1216,7 +1251,7 @@ impl Cydonia {
                     .pb(px(BOARD_INSET + PILL_CLEARANCE))
                     .track_scroll(&scroll.down)
                     .children(groups)
-                    .child(self.new_column_row(cx)),
+                    .child(self.new_column_row(&held, cx)),
             )
             .child(scrollbars::Overlay::new(
                 "board-list-bar",
@@ -1252,6 +1287,10 @@ impl Cydonia {
         } = lane;
         let theme = Theme::of(cx).clone();
         let id = id.to_owned();
+        // The pane's own member, carried into every listener below: what a
+        // press opens belongs to the pane it was drawn in, not to whichever
+        // one the window is on.
+        let pane = on.cloned();
         let query = self.board_query(on, cx);
         let Some((name, held, cards)) = self.lane_cards(project, board_at, &id, &query, cx) else {
             return div().into_any_element();
@@ -1354,6 +1393,7 @@ impl Cydonia {
                 lanes,
                 folded,
                 &board_id,
+                on,
                 cx,
             ))
             .children(rows)
@@ -1378,7 +1418,12 @@ impl Cydonia {
                             .child("Add a card"),
                     )
                     .on_click(cx.listener(move |this, _, window, cx| {
-                        this.edit(Editing::New(Place::End, written.clone()), window, cx);
+                        this.edit(
+                            pane.as_ref(),
+                            Editing::New(Place::End, written.clone()),
+                            window,
+                            cx,
+                        );
                     }))
             }))
             .into_any_element()
@@ -1401,6 +1446,7 @@ impl Cydonia {
         lanes: usize,
         folded: bool,
         board: &str,
+        on: Option<&Member>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let Tally { held, shown } = tally;
@@ -1417,10 +1463,11 @@ impl Cydonia {
             .border_b_1()
             .border_color(theme.border)
             .text_style(TextStyle::Subheadline);
-        if matches!(&self.renaming, Some(Renaming::Column(at)) if at == id) {
+        if matches!(&self.renaming, Some(Renaming::Column(_, at)) if at == id) {
             return row.child(self.name_field(cx)).into_any_element();
         }
         let named = id.to_owned();
+        let on_board = board.to_owned();
         let folding = (board.to_owned(), id.to_owned());
         row.group("list-group")
             .child(
@@ -1452,7 +1499,11 @@ impl Cydonia {
                     .cursor_pointer()
                     .child(name)
                     .on_click(cx.listener(move |this, _, window, cx| {
-                        this.start_rename(Renaming::Column(named.clone()), window, cx);
+                        this.start_rename(
+                            Renaming::Column(on_board.clone(), named.clone()),
+                            window,
+                            cx,
+                        );
                     })),
             )
             .child(
@@ -1468,13 +1519,20 @@ impl Cydonia {
                 self.menu_button(
                     SharedString::from(format!("list-group-menu-{id}")),
                     Some("list-group"),
-                    icons::icon(icons::layout::Ellipsis)
-                        .size(px(14.))
-                        .text_color(theme.text_faint),
+                    icons::layout::Ellipsis,
                     Menu::Lane(id.to_owned()),
                     cx,
                 )
-                .children(self.lane_menu(id, held, at, lanes, View::List, cx)),
+                .children(self.lane_menu(
+                    id,
+                    held,
+                    at,
+                    lanes,
+                    View::List,
+                    board,
+                    on,
+                    cx,
+                )),
             )
             .into_any_element()
     }
@@ -1516,11 +1574,19 @@ impl Cydonia {
         };
         let text = card.text.clone();
         let status = card.status;
+        let on_board = self
+            .workspace
+            .read(cx)
+            .board_in(project, board_at)
+            .map(|board| board.id.clone())
+            .unwrap_or_default();
         let chat = self.card_session(card, cx);
         let live = chat.map(|chat| chat.id);
         let sessions = self.workspace.read(cx).settings.features.sessions;
         let working = self.card_working(card, chat);
         let (opened, run) = (id.to_owned(), id.to_owned());
+        let sent = on_board.clone();
+        let pane = on.cloned();
         let ahead = cx.has_active_drag()
             && self
                 .leaf_of(on)
@@ -1596,7 +1662,7 @@ impl Cydonia {
                         self.card_action("list-run", id, icons::multimedia::Play, cx)
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 cx.stop_propagation();
-                                this.dispatch_card(&run, cx);
+                                this.dispatch_card(&sent, &run, cx);
                             }))
                     })),
             )
@@ -1604,13 +1670,11 @@ impl Cydonia {
                 self.menu_button(
                     SharedString::from(format!("list-card-menu-{id}")),
                     Some("list-row"),
-                    icons::icon(icons::layout::Ellipsis)
-                        .size(px(14.))
-                        .text_color(theme.text_faint),
+                    icons::layout::Ellipsis,
                     Menu::Card(id.to_owned()),
                     cx,
                 )
-                .children(self.card_menu(id, cx)),
+                .children(self.card_menu(&on_board, id, cx)),
             )
             .on_drag(
                 CardDrag {
@@ -1649,7 +1713,7 @@ impl Cydonia {
                 }
             }))
             .on_click(cx.listener(move |this, _, window, cx| {
-                this.edit(Editing::Card(opened.clone()), window, cx);
+                this.edit(pane.as_ref(), Editing::Card(opened.clone()), window, cx);
             }))
             .children(ahead.then(|| self.landing_mark(Mark::Top, cx)))
             .children(behind.then(|| self.landing_mark(Mark::Foot, cx)))
@@ -1658,7 +1722,8 @@ impl Cydonia {
 
     /// The row that makes a lane, at the foot of the list — the list's answer
     /// to [`Self::new_column_lane`].
-    fn new_column_row(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn new_column_row(&self, on: &str, cx: &mut Context<Self>) -> AnyElement {
+        let on = on.to_owned();
         let theme = Theme::of(cx).clone();
         theme
             .ghost("list-add-column")
@@ -1678,7 +1743,7 @@ impl Cydonia {
                     .child("Add a column"),
             )
             .on_click(cx.listener(move |this, _, window, cx| {
-                this.new_column(window, cx);
+                this.new_column(&on, window, cx);
             }))
             .into_any_element()
     }
@@ -1696,6 +1761,13 @@ impl Cydonia {
         } = lane;
         let theme = Theme::of(cx).clone();
         let id = id.to_owned();
+        let pane = on.cloned();
+        let on_board = self
+            .workspace
+            .read(cx)
+            .board_in(project, board_at)
+            .map(|board| board.id.clone())
+            .unwrap_or_default();
         let query = self.board_query(on, cx);
         let Some((name, held, cards)) = self.lane_cards(project, board_at, &id, &query, cx) else {
             return div().into_any_element();
@@ -1787,6 +1859,8 @@ impl Cydonia {
                 },
                 at,
                 lanes,
+                &on_board,
+                on,
                 cx,
             ))
             .child(
@@ -1836,7 +1910,12 @@ impl Cydonia {
                                             .child("Add a card"),
                                     )
                                     .on_click(cx.listener(move |this, _, window, cx| {
-                                        this.edit(Editing::New(Place::End, id.clone()), window, cx);
+                                        this.edit(
+                                            pane.as_ref(),
+                                            Editing::New(Place::End, id.clone()),
+                                            window,
+                                            cx,
+                                        );
                                     }))
                             })),
                     )
@@ -1871,6 +1950,7 @@ impl Cydonia {
     /// `held` is the whole lane and `shown` what the query left of it. The
     /// `···` is built from `held`: Delete is refused on a lane holding cards,
     /// not on one showing them.
+    #[allow(clippy::too_many_arguments)]
     fn column_header(
         &self,
         id: &str,
@@ -1878,6 +1958,8 @@ impl Cydonia {
         tally: Tally,
         at: usize,
         lanes: usize,
+        board: &str,
+        on: Option<&Member>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let Tally { held, shown } = tally;
@@ -1895,10 +1977,11 @@ impl Cydonia {
             .items_center()
             .gap(px(6.))
             .text_style(TextStyle::Subheadline);
-        if matches!(&self.renaming, Some(Renaming::Column(at)) if at == id) {
+        if matches!(&self.renaming, Some(Renaming::Column(_, at)) if at == id) {
             return row.child(self.name_field(cx)).into_any_element();
         }
         let named = id.to_owned();
+        let on_board = board.to_owned();
         row.group("column")
             .child(
                 div()
@@ -1908,7 +1991,11 @@ impl Cydonia {
                     .cursor_pointer()
                     .child(name)
                     .on_click(cx.listener(move |this, _, window, cx| {
-                        this.start_rename(Renaming::Column(named.clone()), window, cx);
+                        this.start_rename(
+                            Renaming::Column(on_board.clone(), named.clone()),
+                            window,
+                            cx,
+                        );
                     })),
             )
             .child(
@@ -1924,13 +2011,20 @@ impl Cydonia {
                 self.menu_button(
                     SharedString::from(format!("column-menu-{id}")),
                     Some("column"),
-                    icons::icon(icons::layout::Ellipsis)
-                        .size(px(14.))
-                        .text_color(theme.text_faint),
+                    icons::layout::Ellipsis,
                     Menu::Lane(id.to_owned()),
                     cx,
                 )
-                .children(self.lane_menu(id, held, at, lanes, View::Lanes, cx)),
+                .children(self.lane_menu(
+                    id,
+                    held,
+                    at,
+                    lanes,
+                    View::Lanes,
+                    board,
+                    on,
+                    cx,
+                )),
             )
             .into_any_element()
     }
@@ -1945,6 +2039,7 @@ impl Cydonia {
     /// is the order the tools speak in — see `mcp::tools::board`. What `view`
     /// decides is only what to call it: that order runs across the lanes and
     /// down the list, so the same step is left in one and up in the other.
+    #[allow(clippy::too_many_arguments)]
     fn lane_menu(
         &self,
         id: &str,
@@ -1952,6 +2047,8 @@ impl Cydonia {
         at: usize,
         lanes: usize,
         view: View,
+        board: &str,
+        pane: Option<&Member>,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         if self.menu != Some(Menu::Lane(id.to_owned())) {
@@ -1976,20 +2073,29 @@ impl Cydonia {
         // at the lane's foot is a long way down a full lane, and what is
         // written from the head of one belongs at the head of it.
         let written = id.to_owned();
+        let pane = pane.cloned();
+        let on_board = board.to_owned();
         let mut rows = vec![menu::row(
             Item::action("Add card").with_icon(icons::math::Plus),
             move |this, window, cx| {
-                this.edit(Editing::New(Place::Top, written.clone()), window, cx)
+                this.edit(
+                    pane.as_ref(),
+                    Editing::New(Place::Top, written.clone()),
+                    window,
+                    cx,
+                )
             },
         )];
         // Then the two that write a lane either side of this one, so a board
         // is not only ever grown at its right-hand end.
         let beside = [(false, back), (true, on)]
             .map(|(after, (label, icon))| {
-                let beside = id.to_owned();
+                let (beside, made_on) = (id.to_owned(), on_board.clone());
                 menu::row(
                     Item::action(label).with_icon(icon),
-                    move |this, window, cx| this.new_column_beside(&beside, after, window, cx),
+                    move |this, window, cx| {
+                        this.new_column_beside(&made_on, &beside, after, window, cx)
+                    },
                 )
             })
             .into_iter()
@@ -2001,9 +2107,9 @@ impl Cydonia {
             .into_iter()
             .filter(|(can, ..)| *can)
             .map(|(_, step, (label, icon))| {
-                let moved = id.to_owned();
+                let (moved, moved_on) = (id.to_owned(), on_board.clone());
                 menu::row(Item::action(label).with_icon(icon), move |this, _, cx| {
-                    this.shift_column(&moved, step, cx)
+                    this.shift_column(&moved_on, &moved, step, cx)
                 })
             })
             .collect();
@@ -2019,7 +2125,7 @@ impl Cydonia {
         };
         let dropped = id.to_owned();
         rows.push(menu::row(drop, move |this, _, cx| {
-            this.ask_delete_column(&dropped, cx)
+            this.ask_delete_column(&on_board, &dropped, cx)
         }));
         let card = SharedString::from(format!("lane-menu-{id}"));
         Some(popover::anchored_menu_below(
@@ -2031,14 +2137,16 @@ impl Cydonia {
 
     /// Step a lane one place, and keep the menu on it: moving twice is two
     /// presses on the same row, not a menu reopened between them.
-    fn shift_column(&mut self, id: &str, step: isize, cx: &mut Context<Self>) {
-        self.workspace
-            .update(cx, |workspace, cx| workspace.move_column(id, step, cx));
+    fn shift_column(&mut self, board: &str, id: &str, step: isize, cx: &mut Context<Self>) {
+        self.workspace.update(cx, |workspace, cx| {
+            workspace.move_column(board, id, step, cx)
+        });
         cx.notify();
     }
 
     /// The lane that makes a lane, always at the right-hand end.
-    fn new_column_lane(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn new_column_lane(&self, on: &str, cx: &mut Context<Self>) -> AnyElement {
+        let on = on.to_owned();
         let theme = Theme::of(cx).clone();
         div()
             .flex_none()
@@ -2063,7 +2171,7 @@ impl Cydonia {
                             .child("Add a column"),
                     )
                     .on_click(cx.listener(move |this, _, window, cx| {
-                        this.new_column(window, cx);
+                        this.new_column(&on, window, cx);
                     })),
             )
             .into_any_element()
@@ -2098,11 +2206,19 @@ impl Cydonia {
         };
         let text = card.text.clone();
         let status = card.status;
+        let on_board = self
+            .workspace
+            .read(cx)
+            .board_in(project, board_at)
+            .map(|board| board.id.clone())
+            .unwrap_or_default();
         let chat = self.card_session(card, cx);
         let live = chat.map(|chat| chat.id);
         let sessions = self.workspace.read(cx).settings.features.sessions;
         let working = self.card_working(card, chat);
         let (opened, run) = (id.to_owned(), id.to_owned());
+        let sent = on_board.clone();
+        let pane = on.cloned();
         // The mark is drawn by the card it names, and by the last card in a
         // lane aimed at its end. Only while something is in the air: what the
         // last drop left is still sitting in `landing`.
@@ -2154,13 +2270,11 @@ impl Cydonia {
                         self.menu_button(
                             SharedString::from(format!("card-menu-{id}")),
                             Some("card"),
-                            icons::icon(icons::layout::Ellipsis)
-                                .size(px(14.))
-                                .text_color(theme.text_faint),
+                            icons::layout::Ellipsis,
                             Menu::Card(id.to_owned()),
                             cx,
                         )
-                        .children(self.card_menu(id, cx)),
+                        .children(self.card_menu(&on_board, id, cx)),
                     ),
             )
             .child(
@@ -2217,7 +2331,7 @@ impl Cydonia {
                                     self.card_action("run", id, icons::multimedia::Play, cx)
                                         .on_click(cx.listener(move |this, _, _, cx| {
                                             cx.stop_propagation();
-                                            this.dispatch_card(&run, cx);
+                                            this.dispatch_card(&sent, &run, cx);
                                         }))
                                 },
                             )),
@@ -2264,7 +2378,7 @@ impl Cydonia {
                 }
             }))
             .on_click(cx.listener(move |this, _, window, cx| {
-                this.edit(Editing::Card(opened.clone()), window, cx);
+                this.edit(pane.as_ref(), Editing::Card(opened.clone()), window, cx);
             }))
             .children(
                 ahead.then(|| self.landing_mark(if first { Mark::Top } else { Mark::Above }, cx)),

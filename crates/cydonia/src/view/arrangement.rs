@@ -287,10 +287,15 @@ impl Cydonia {
             }))
             // Pressing anywhere in a pane is how the focus moves to it, the
             // same way a click into the sidebar selects a row.
+            //
+            // The tab in front, not the pane's name: a leaf is held by what it
+            // shows — see [`Cydonia::leaf_of`] — so a pane showing its second
+            // tab would be named by a member no leaf answers to, and the press
+            // would leave the focus where it was.
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener({
-                    let on = held.clone();
+                    let on = front.clone();
                     move |this, _, window, cx| this.focus_pane(&on, window, cx)
                 }),
             )
@@ -316,6 +321,13 @@ impl Cydonia {
             .clone()
     }
 
+    /// Note a tab as the one most recently brought to the front, which is
+    /// where a close falls back to — see [`Cydonia::tab_history`].
+    fn remember_front(&mut self, tab: &Member) {
+        self.tab_history.retain(|seen| seen != tab);
+        self.tab_history.push(tab.clone());
+    }
+
     /// Show one of a pane's tabs, and put the focus on it — a tab pressed is a
     /// pane entered, the same as a press anywhere else in one.
     pub(crate) fn show_tab(
@@ -326,6 +338,7 @@ impl Cydonia {
         cx: &mut Context<Self>,
     ) {
         self.fronts.insert(key_of(pane), tab.clone());
+        self.remember_front(tab);
         // Before the focus moves: a tab the space has gained since the last
         // frame has no leaf yet, and [`Cydonia::focus_pane`] moves nothing it
         // cannot find.
@@ -468,20 +481,14 @@ impl Cydonia {
         // The bar is a drop target of its own — see [`Landing::Bar`] — so it
         // is lit while a drag is aimed at it rather than at an edge.
         let aimed = self.pane_landing.as_ref() == Some(&(pane.clone(), Landing::Bar));
-        div()
-            .flex_none()
-            .h(px(crate::view::root::HEADER_HEIGHT))
+        crate::view::root::band()
             .w_full()
-            .flex()
-            .flex_row()
-            .items_center()
             .gap(px(2.))
             .pl(px(lead))
-            .pr(px(6.))
             .when(aimed, |el| el.bg(theme.element_hover))
             // The fold belongs to whichever column runs along the window's left
             // edge, so with the sidebar gone it is this pane's.
-            .children(fold.then(|| self.fold_toggle(theme.text, cx).into_any_element()))
+            .children(fold.then(|| self.fold_toggle(cx).into_any_element()))
             // The tabs in a strip of their own, which scrolls sideways once
             // they no longer fit: the bar's other children are the pane's
             // chrome and keep their places while it does.
@@ -497,9 +504,7 @@ impl Cydonia {
                 self.menu_button(
                     SharedString::from(format!("pane-menu-{key}")),
                     Some("pane"),
-                    icons::icon(icons::layout::Ellipsis)
-                        .size(px(14.))
-                        .text_color(theme.text_faint),
+                    icons::layout::Ellipsis,
                     Menu::Pane(key.clone()),
                     cx,
                 )
@@ -684,16 +689,31 @@ impl Cydonia {
         // lands on next is that pane's new front, not whatever leaf happens to
         // sit where the closed one did.
         let stack = self.workspace.read(cx).stack_of(entry);
-        let kept = stack
-            .iter()
-            .position(|tab| tab == entry)
-            .filter(|_| stack.len() > 1)
-            // The tab to its left, or the one to its right for the first —
-            // whichever way, a neighbour in the strip rather than a jump.
-            .map(|at| match at {
-                0 => stack[1].clone(),
-                at => stack[at - 1].clone(),
-            });
+        let kept = (stack.len() > 1)
+            .then(|| {
+                // The tab that was in front before this one, so closing walks
+                // back the way the reader came. Nothing remembered — a pane
+                // never left its first tab — falls back to a neighbour in the
+                // strip: the one to its left, or the one to its right for the
+                // first.
+                let recent = self
+                    .tab_history
+                    .iter()
+                    .rev()
+                    .find(|tab| *tab != entry && stack.contains(tab))
+                    .cloned();
+                recent.or_else(|| {
+                    stack
+                        .iter()
+                        .position(|tab| tab == entry)
+                        .map(|at| match at {
+                            0 => stack[1].clone(),
+                            at => stack[at - 1].clone(),
+                        })
+                })
+            })
+            .flatten();
+        self.tab_history.retain(|tab| tab != entry);
         // The entry left when this close took the space with it. Without
         // putting the pane on its kind the window drops back to whatever the
         // single pane was last showing, which is not what was on screen.
@@ -912,6 +932,7 @@ impl Cydonia {
             let stack = self.workspace.read(cx).stack_of(arriving);
             if let Some(pane) = stack.first().cloned() {
                 self.fronts.insert(key_of(&pane), arriving.clone());
+                self.remember_front(arriving);
             }
         }
         self.sync_leaves(window, cx);

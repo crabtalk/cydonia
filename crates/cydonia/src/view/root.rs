@@ -29,10 +29,10 @@ use anyhow::Result;
 use artifact::space::Member;
 use bezel::{
     gpui::{
-        self, AnyElement, App, Axis, Bounds, Context, DragMoveEvent, Empty, Entity, FocusHandle,
-        Focusable, Hsla, KeyBinding, PathPromptOptions, Render, SharedString, TitlebarOptions,
-        UniformListScrollHandle, Window, WindowBounds, WindowHandle, WindowOptions, actions, div,
-        point, prelude::*, px, size,
+        self, AnyElement, App, Axis, Bounds, Context, Div, DragMoveEvent, Empty, Entity,
+        FocusHandle, Focusable, Hsla, KeyBinding, PathPromptOptions, Render, SharedString,
+        TitlebarOptions, UniformListScrollHandle, Window, WindowBounds, WindowHandle,
+        WindowOptions, actions, div, point, prelude::*, px, size,
     },
     motion::{Fade, Painter},
     theme::{Material, TextStyle, Theme, Typeset, appearance},
@@ -180,6 +180,23 @@ const TRAFFIC_LIGHT_SPACING: f32 = 23.;
 /// The gap the header keeps at the window's edges, and between the lights and
 /// the first control it puts past them.
 pub(crate) const HEADER_INSET: f32 = 16.;
+
+/// The band across the top of a column, and the only place its height and its
+/// inset are written: the header, the sidebar's, a pane's in a space, and the
+/// right panel's are all this row. A control in one stands where the same
+/// control stands in the next.
+///
+/// The leading inset is the caller's only where the traffic lights take it —
+/// see [`TOOLBAR_INSET`].
+pub(crate) fn band() -> Div {
+    div()
+        .flex_none()
+        .h(px(HEADER_HEIGHT))
+        .flex()
+        .flex_row()
+        .items_center()
+        .px(px(HEADER_INSET))
+}
 
 /// Where the toolbar's own controls start: clear of the three lights AppKit
 /// puts down from [`TRAFFIC_LIGHT_X`], plus the gutter that clears them and the
@@ -357,6 +374,11 @@ pub struct Cydonia {
     /// [`Cydonia::front_of`]. Runtime only: where the panes are is the
     /// space's, and which tab you happen to be looking at is not.
     pub(crate) fronts: std::collections::HashMap<SharedString, Member>,
+    /// The tabs that have been brought to the front, most recent last, across
+    /// every pane. Read when a tab closes, to land on the one that was in
+    /// front before it rather than on a neighbour in the strip — see
+    /// [`Cydonia::close_pane`]. Runtime only, for the same reason `fronts` is.
+    pub(crate) tab_history: Vec<Member>,
     /// The board identity panel, while it is open — see [`header::BoardInfo`].
     pub(crate) info: Option<info::BoardInfo>,
     /// The board that has been asked for and not yet made — see
@@ -367,6 +389,10 @@ pub struct Cydonia {
     /// the way [`Cydonia::menu_pressed`] is read by `toggle_menu`.
     pub(crate) info_pressed: bool,
     pub(crate) menu: Option<Menu>,
+    /// Where the open menu's card stands, when it was opened by a press with a
+    /// point to it rather than from a trigger — see
+    /// [`Cydonia::toggle_menu_at`].
+    pub(crate) menu_point: Option<gpui::Point<gpui::Pixels>>,
     pub(crate) sidebar_hovered: Option<Menu>,
     /// Which of the open menu's rows is live. Held here rather than in the
     /// card, which is rebuilt every frame: the pointer moves the cursor, and
@@ -788,11 +814,13 @@ impl Cydonia {
             collapsed_spaces: Default::default(),
             pane_landing: None,
             fronts: Default::default(),
+            tab_history: Vec::new(),
             confirming: None,
             info: None,
             making: None,
             info_pressed: false,
             menu: None,
+            menu_point: None,
             sidebar_hovered: None,
             menu_cursor: Cursor::default(),
             menu_pressed: false,

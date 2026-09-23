@@ -99,15 +99,13 @@ pub struct State {
     list: bezel::ui::list::VariableList<usize>,
     focused_turn: Cell<Option<(usize, usize)>>,
     rail_selection: Rc<Cell<Option<RailSelection>>>,
-    /// Where each turn's row was painted last frame, keyed by turn, and the
-    /// run of turns the rail lights from it.
+    /// The run of turns the rail lights, read a frame behind.
     ///
-    /// The rows report their own bounds because the list reports none of its
-    /// own while it follows the tail: its scroll top is then the item past the
-    /// end, and `bounds_for_item` answers `None` for everything before that.
-    /// The rail's canvas drains the first into the second and the marks are
-    /// coloured from it on the frame after.
-    painted: Rc<RefCell<HashMap<usize, Bounds<Pixels>>>>,
+    /// [`render`] puts every row on screen back to unmeasured before it builds
+    /// the rail, so the list answers no bounds for them until it has laid out
+    /// again. The rail's canvas is where it has: that is the one place in the
+    /// frame the run can be taken, and the marks are coloured from it on the
+    /// frame after.
     showing: Rc<RefCell<Range<usize>>>,
     pub(crate) footer_height: Rc<Cell<Pixels>>,
     /// Keyed by the turn's first item index.
@@ -434,7 +432,6 @@ pub fn render(
     list.set_end_inset(footer_height);
     let workspace = cx.entity().downgrade();
     let visible_workspace = workspace.clone();
-    let painted = chat.transcript.painted.clone();
     let count = turns.len();
     let virtual_content = list.render(
         move |index, window, cx| {
@@ -457,7 +454,6 @@ pub fn render(
                         return Empty.into_any_element();
                     };
                     let running = chat.streaming && index + 1 == count;
-                    let painted = painted.clone();
                     content_row(
                         div()
                             .relative()
@@ -466,19 +462,7 @@ pub fn render(
                             .child(zone(chat, turn, running, window, cx))
                             .when(running && turn.range.len() <= 1, |row| {
                                 row.child(working(chat, turn.range.start, cx))
-                            })
-                            // What the rail reads to know which turns are on
-                            // screen — see [`State::painted`].
-                            .child(
-                                canvas(
-                                    move |bounds, _, _| {
-                                        painted.borrow_mut().insert(index, bounds);
-                                    },
-                                    |_, _, _, _| {},
-                                )
-                                .absolute()
-                                .size_full(),
-                            ),
+                            }),
                     )
                     .into_any_element()
                 })
@@ -586,10 +570,17 @@ struct RailSelection {
     offset: Option<bezel::gpui::ListOffset>,
 }
 
-fn active_list_turn(
+/// The turn the reading mark stands on: the first of the run the pane is
+/// showing, or the one a press on the rail asked for while the list has not
+/// moved off it since.
+///
+/// Taken from the run, so the reading mark is always one of the lit ones. The
+/// last turn reads only once the pane has scrolled far enough for it to head
+/// the run; following the tail does not put it there.
+fn reading_turn(
     list: &bezel::ui::list::VariableList<usize>,
     count: usize,
-    inset: Pixels,
+    showing: &Range<usize>,
     selection: &Cell<Option<RailSelection>>,
 ) -> usize {
     if let Some(selected) = selection.get() {
@@ -603,54 +594,39 @@ fn active_list_turn(
         }
         selection.set(None);
     }
-    let last = count.saturating_sub(1);
-    if list.state.is_following_tail() {
-        return last;
-    }
-    let top = list.state.logical_scroll_top().item_ix.min(last);
-    let max = list.state.max_offset_for_scrollbar().y;
-    if max <= px(0.) {
-        return top;
-    }
-    let progress = (-list.state.scroll_px_offset_for_scrollbar().y / max).clamp(0., 1.);
-    let viewport = list.state.viewport_bounds();
-    // Move the reading anchor down the viewport so short trailing turns are reachable.
-    let anchor = viewport.top() + (viewport.size.height - inset).max(px(0.)) * progress;
-    let mut active = top;
-    for ix in top..count {
-        let Some(bounds) = list.state.bounds_for_item(ix) else {
-            break;
-        };
-        if bounds.top() > anchor {
-            break;
-        }
-        active = ix;
-    }
-    active
+    showing.start.min(count.saturating_sub(1))
 }
 
-/// The run of turns on screen, from where their rows were last painted.
+/// The run of turns on screen, walked from the list's own measurements: the
+/// row it is scrolled to, and every row after it that starts above the
+/// composer.
+///
+/// A row counts for as little as a sliver of itself.
 ///
 /// `inset` is the composer band, taken off the foot: a turn behind it is
 /// painted and covered, and a mark lit for it says the pane is showing
-/// something it is not.
-fn painted_turns(
-    painted: &HashMap<usize, Bounds<Pixels>>,
-    viewport: Bounds<Pixels>,
+/// something it is not. It is the band's own height and nothing more, so a row
+/// reaching a pixel above the glass is on screen.
+///
+/// The scroll top is the first row on screen in both scroll modes. A list
+/// following its tail enters layout anchored past its own end, and the
+/// backward fill that puts rows on screen writes the row it reached back —
+/// see `ListAlignment::Top` in gpui's list.
+fn visible_turns(
+    list: &bezel::ui::list::VariableList<usize>,
+    count: usize,
     inset: Pixels,
 ) -> Range<usize> {
-    let floor = viewport.bottom() - inset;
-    let mut run: Option<Range<usize>> = None;
-    for (ix, bounds) in painted {
-        if bounds.bottom() <= viewport.top() || bounds.top() >= floor {
-            continue;
+    let floor = list.state.viewport_bounds().bottom() - inset;
+    let start = list.state.logical_scroll_top().item_ix.min(count);
+    let mut end = start;
+    while end < count {
+        match list.state.bounds_for_item(end) {
+            Some(bounds) if bounds.top() < floor => end += 1,
+            _ => break,
         }
-        run = Some(match run {
-            Some(run) => run.start.min(*ix)..run.end.max(ix + 1),
-            None => *ix..ix + 1,
-        });
     }
-    run.unwrap_or(0..0)
+    start..end
 }
 
 /// How far the column of marks is moved off centre, so that the turn being
@@ -691,13 +667,11 @@ fn rail(chat: &ChatSession, turns: &[Turn], room: Pixels) -> AnyElement {
         .footer_height
         .get()
         .max(px(root::composer_height()))
-        + px(root::COMPOSER_BOTTOM + PAD);
-    let at = active_list_turn(&handle, count, inset, &selection);
-    // The rows paint before the canvas below, which is what turns their bounds
-    // into the run — a frame behind the marks reading it.
-    let painted = chat.transcript.painted.clone();
+        + px(root::COMPOSER_BOTTOM);
+    // Taken by the canvas below on the frame before — see [`State::showing`].
     let shown = chat.transcript.showing.clone();
     let showing = shown.borrow().clone();
+    let at = reading_turn(&handle, count, &showing, &selection);
     // The pane's height, which the marks are placed against: it is unknown
     // until the list has laid out once, so the canvas below watches it too.
     let height = handle.state.viewport_bounds().size.height;
@@ -728,17 +702,14 @@ fn rail(chat: &ChatSession, turns: &[Turn], room: Pixels) -> AnyElement {
                         selected.offset = Some(handle.state.logical_scroll_top());
                         selection.set(Some(selected));
                     }
-                    let run =
-                        painted_turns(&painted.borrow(), handle.state.viewport_bounds(), inset);
-                    painted.borrow_mut().clear();
+                    // The list has laid out by now, so its rows answer for
+                    // their bounds again.
+                    let run = visible_turns(&handle, count, inset);
                     let moved = *shown.borrow() != run;
                     if moved {
                         *shown.borrow_mut() = run;
                     }
-                    if moved
-                        || handle.state.viewport_bounds().size.height != height
-                        || active_list_turn(&handle, count, inset, &selection) != at
-                    {
+                    if moved || handle.state.viewport_bounds().size.height != height {
                         window.refresh();
                     }
                 },

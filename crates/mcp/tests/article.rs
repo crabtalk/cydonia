@@ -7,12 +7,9 @@ use common::{Scratch, invalid, refused, said, structured};
 use serde_json::json;
 
 #[test]
-fn article_results_expose_a_shared_absolute_media_path_without_creating_it() {
+fn article_results_expose_an_article_local_media_path_without_creating_it() {
     let scratch = Scratch::new("article-assets");
     let server = scratch.server();
-    let expected = std::fs::canonicalize(scratch.path())
-        .unwrap()
-        .join(".cydonia/assets");
     let made = server
         .call(
             "article_add",
@@ -21,6 +18,11 @@ fn article_results_expose_a_shared_absolute_media_path_without_creating_it() {
         )
         .unwrap_or_else(|_| panic!("article creation failed"));
     let data = made.data.unwrap();
+    let expected = scratch
+        .path()
+        .join(".cydonia/articles")
+        .join(data["id"].as_str().unwrap())
+        .join("assets");
     assert_eq!(data["assets_path"], json!(expected));
     assert!(!expected.exists());
     let read = server

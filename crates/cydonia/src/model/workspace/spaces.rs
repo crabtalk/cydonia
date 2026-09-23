@@ -173,8 +173,8 @@ impl Workspace {
     /// Take an entry out of every space but the one named.
     ///
     /// An entry is in one space at a time, the way a pane is in one tmux
-    /// window: dragging it into another moves it. What is left with one pane is
-    /// deleted rather than kept — an arrangement of one is not an arrangement,
+    /// window: dragging it into another moves it. What is left with one entry
+    /// is deleted rather than kept — an arrangement of one is not an arrangement,
     /// which is the rule [`Self::close_pane`] and [`Self::drop_from_spaces`]
     /// already follow.
     ///
@@ -186,7 +186,7 @@ impl Workspace {
             .iter()
             .position(|space| space.id != keep && space.contains(member))
         {
-            if self.spaces[ix].leaves() <= 2 && self.spaces[ix].stack_of(member).len() <= 1 {
+            if self.spaces[ix].entries().len() <= 2 {
                 self.delete_space(ix, cx);
                 continue;
             }
@@ -239,24 +239,27 @@ impl Workspace {
         self.edit_space(cx, |space| space.relocate(entry, target, side));
     }
 
-    /// Close one pane.
+    /// Close one pane, or one of its tabs.
     ///
-    /// Closing down to one pane closes the space: an arrangement of one pane
+    /// Closing down to one entry closes the space: an arrangement of one thing
     /// is not an arrangement, and leaving the file behind would put a row in
-    /// the sidebar for something the window is no longer doing. The pane that
-    /// would have been left alone is what the window is put on, so the entry
-    /// you were keeping stays in front — and is returned, so the caller can
-    /// put the single pane on it. Nothing while the arrangement survives,
-    /// which leaves the panes to say what they show.
+    /// the sidebar for something the window is no longer doing. Entries, not
+    /// panes: a pane of two tabs beside a pane of one is still an arrangement
+    /// once the lone pane goes, and stays a space holding both tabs.
+    ///
+    /// The entry that would have been left alone is what the window is put on,
+    /// so the entry you were keeping stays in front — and is returned, so the
+    /// caller can put the single pane on it. Nothing while the arrangement
+    /// survives, which leaves the panes to say what they show.
     pub fn close_pane(
         &mut self,
         entry: &Member,
         cx: &mut Context<Self>,
     ) -> Option<(Member, Showing)> {
         let space = self.active_space()?;
-        // A pane holding tabs loses a tab, not the pane — so none of the rules
-        // below about what is left of the arrangement come into it.
-        if space.stack_of(entry).len() > 1 || space.leaves() > 2 {
+        // Exactly one entry goes, whether it was a pane's last or one tab of
+        // several, so what is left is what the space held less that one.
+        if space.entries().len() > 2 {
             self.edit_space(cx, |space| space.remove(entry));
             return None;
         }
@@ -288,9 +291,9 @@ impl Workspace {
         let Some(space) = self.spaces.get_mut(ix) else {
             return;
         };
-        // A pane holding tabs loses a tab and stays a pane, so what is left of
-        // the arrangement does not change.
-        if space.leaves() <= 2 && space.stack_of(member).len() <= 1 {
+        // Entries, not panes: what is left can be one pane holding tabs, which
+        // is still an arrangement.
+        if space.entries().len() <= 2 {
             self.delete_space(ix, cx);
             return;
         }
@@ -468,6 +471,46 @@ impl Workspace {
             return None;
         }
         self.projects.get(project)?.boards.get(ix)
+    }
+
+    /// The board one pane is showing.
+    ///
+    /// The pane's own member rather than the project's selection, which
+    /// answers for at most one of the boards a space can have on screen. No
+    /// member is a window showing one entry, where the selection is the whole
+    /// truth.
+    pub fn board_of(&self, member: Option<&Member>) -> Option<&Board> {
+        let Some(member) = member else {
+            return self.active_board();
+        };
+        match self.showing_of(member)? {
+            (project, Showing::Board(ix)) => self.board_in(project, ix),
+            _ => None,
+        }
+    }
+
+    /// The article one pane is showing, the way [`Self::board_of`] answers for
+    /// a board.
+    pub fn article_of(&self, member: Option<&Member>) -> Option<&Article> {
+        let Some(member) = member else {
+            return self.active_article();
+        };
+        match self.showing_of(member)? {
+            (project, Showing::Article(ix)) => self.article_in(project, ix),
+            _ => None,
+        }
+    }
+
+    /// The table one pane is showing, the way [`Self::board_of`] answers for a
+    /// board.
+    pub fn table_of(&self, member: Option<&Member>) -> Option<&Table> {
+        let Some(member) = member else {
+            return self.active_table();
+        };
+        match self.showing_of(member)? {
+            (project, Showing::Table(ix)) => self.table_in(project, ix),
+            _ => None,
+        }
     }
 
     pub fn article_in(&self, project: usize, ix: usize) -> Option<&Article> {

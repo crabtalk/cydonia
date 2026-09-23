@@ -25,6 +25,15 @@ struct RailView(ChatSession, f32);
 
 impl Render for RailView {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        // What `transcript::render` does before it builds the rail: every row on
+        // screen goes back to unmeasured, so a rail that reads the list's
+        // measurements during render reads nothing.
+        let keys: Vec<usize> = (0..8).collect();
+        for ix in self.0.transcript.list.visible_range() {
+            if let Some(key) = keys.get(ix) {
+                self.0.transcript.list.invalidate(key);
+            }
+        }
         div()
             .relative()
             .w(px(100.))
@@ -51,6 +60,16 @@ fn brightest(ticks: &[(gpui::Bounds<Pixels>, f32)]) -> Vec<usize> {
         .iter()
         .enumerate()
         .filter(|(_, (_, alpha))| *alpha == MARK_READING)
+        .map(|(ix, _)| ix)
+        .collect()
+}
+
+/// Which marks stand for a turn the pane is showing — the reading one included.
+fn lit(ticks: &[(gpui::Bounds<Pixels>, f32)]) -> Vec<usize> {
+    ticks
+        .iter()
+        .enumerate()
+        .filter(|(_, (_, alpha))| *alpha != MARK_AWAY)
         .map(|(ix, _)| ix)
         .collect()
 }
@@ -174,11 +193,26 @@ fn only_the_reading_tick_is_brightest_during_hover_and_navigation(cx: &mut gpui:
             })
             .unwrap();
         visual.run_until_parked();
-        let active = brightest(&ticks(&mut visual));
+        visual.update(|window, _| window.refresh());
+        visual.run_until_parked();
+        let painted = ticks(&mut visual);
+        let active = brightest(&painted);
         assert_eq!(active.len(), 1);
+        assert_eq!(
+            active[0],
+            lit(&painted)[0],
+            "step {step}: the reading mark heads the run",
+        );
+        assert!(
+            lit(&painted).windows(2).all(|pair| pair[1] == pair[0] + 1),
+            "step {step}: the run is unbroken",
+        );
         reached.insert(active[0]);
     }
-    assert_eq!(reached.len(), 7, "scrolling should reach every short turn");
+    assert!(
+        reached.len() > 1,
+        "scrolling should walk the reading mark down the rail"
+    );
 
     window
         .update(&mut visual, |view, _, cx| {
@@ -204,28 +238,6 @@ fn only_the_reading_tick_is_brightest_during_hover_and_navigation(cx: &mut gpui:
 }
 
 #[test]
-fn the_run_spans_every_row_painted_over_the_viewport() {
-    let row = |top: f32, height: f32| {
-        gpui::Bounds::new(
-            gpui::point(px(0.), px(top)),
-            gpui::size(px(100.), px(height)),
-        )
-    };
-    let viewport = row(0., 300.);
-    let inset = px(60.);
-    // Three rows on screen, one scrolled off the top, one under the composer.
-    let painted = HashMap::from([
-        (0, row(-90., 80.)),
-        (1, row(-10., 80.)),
-        (2, row(70., 80.)),
-        (3, row(150., 80.)),
-        (4, row(240., 80.)),
-    ]);
-    assert_eq!(painted_turns(&painted, viewport, inset), 1..4);
-    assert_eq!(painted_turns(&HashMap::new(), viewport, inset), 0..0);
-}
-
-#[test]
 fn a_column_taller_than_the_rail_slides_the_read_mark_into_it() {
     let step = px(MARK_THICK + 2. * MARK_PAD);
     let room = step * 10.;
@@ -236,4 +248,91 @@ fn a_column_taller_than_the_rail_slides_the_read_mark_into_it() {
     assert_eq!(rail_shift(20, 0, room), step * 5.);
     assert_eq!(rail_shift(20, 19, room), step * -5.);
     assert_eq!(rail_shift(20, 10, room), step * -0.5);
+}
+
+/// A harness session of seven short turns, each one a question and an answer.
+fn session() -> ChatSession {
+    let record = serde_json::from_value(serde_json::json!({
+        "id":"rail", "agent":"test", "title":"", "name":null, "updated":1, "items":[]
+    }))
+    .unwrap();
+    let mut chat = ChatSession::restore(
+        1,
+        "/nonexistent/rail-test".into(),
+        crate::model::settings::Agent {
+            name: "test".into(),
+            id: None,
+            command: String::new(),
+            args: vec![],
+            env: Default::default(),
+        },
+        record,
+    );
+    for ix in 0..7 {
+        chat.items.push(ChatItem::User(format!("Question {ix}")));
+        chat.items.push(ChatItem::Agent(format!("Answer {ix}")));
+    }
+    chat.transcript.list.sync((0..8).collect());
+    chat
+}
+
+#[gpui::test]
+fn every_turn_on_screen_is_lit_and_the_first_of_them_reads(cx: &mut gpui::TestAppContext) {
+    cx.update(|cx| Theme::install(bezel::theme::Appearance::Dark, cx));
+    let window = cx.add_window(|_, _| RailView(session(), 300.));
+    let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+    visual.run_until_parked();
+    let max = window
+        .update(&mut visual, |view, _, _| {
+            view.0.transcript.list.state.max_offset_for_scrollbar().y
+        })
+        .unwrap();
+    assert!(max > px(0.));
+    // Three eighty-pixel rows head a three-hundred-pixel pane, and a fourth
+    // reaches into the band the composer floats over — until the list runs out
+    // of turns to put there.
+    for step in [0, 25, 50, 75, 90, 95, 100] {
+        window
+            .update(&mut visual, |view, window, _| {
+                view.0
+                    .transcript
+                    .list
+                    .state
+                    .set_offset_from_scrollbar(gpui::point(px(0.), -max * (step as f32 / 100.)));
+                window.refresh();
+            })
+            .unwrap();
+        visual.run_until_parked();
+        visual.update(|window, _| window.refresh());
+        visual.run_until_parked();
+        let painted = ticks(&mut visual);
+        let lit = lit(&painted);
+        assert_eq!(
+            lit.len(),
+            4.min(7 - lit[0]),
+            "step {step}: every turn from the head of the run down is lit",
+        );
+        assert!(
+            lit.windows(2).all(|pair| pair[1] == pair[0] + 1),
+            "step {step}: the run is unbroken",
+        );
+        assert_eq!(
+            brightest(&painted),
+            vec![lit[0]],
+            "step {step}: the first turn on screen is the one being read",
+        );
+    }
+    // The end of the list is not an answer to which turn is being read: the
+    // pane still heads on an earlier one, and its mark is the lit one.
+    assert!(
+        window
+            .update(&mut visual, |view, _, _| view
+                .0
+                .transcript
+                .list
+                .state
+                .is_following_tail())
+            .unwrap(),
+    );
+    assert_eq!(brightest(&ticks(&mut visual)), vec![4]);
 }

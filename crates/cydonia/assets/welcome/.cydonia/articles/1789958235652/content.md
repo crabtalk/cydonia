@@ -33,7 +33,7 @@ An image in a paragraph of its own is displayed. Its alt text is the caption, an
 ![A caption|480](/absolute/path/to/picture.png)
 ```
 
-Leave the alt text empty for no caption. Local paths must be absolute — a relative path is resolved against the app, not the article. Put pictures in the project's `.cydonia/assets/`, and wrap a path containing spaces in angle brackets: `](<…/my picture.png>)`.
+Leave the alt text empty for no caption. Local paths must be absolute — a relative path is resolved against the app, not the article. Put pictures in the `assets/` folder inside the page's own directory, and wrap a path containing spaces in angle brackets: `](<…/my picture.png>)`.
 
 There is no height, crop, or alignment syntax. `=480x`, `{width=480}` and HTML attributes do nothing.
 

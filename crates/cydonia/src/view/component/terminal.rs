@@ -17,8 +17,11 @@ use std::{
     sync::mpsc as channel,
 };
 use terminal::{
-    emulator::{Emulator, SelectionType},
-    view::{self, GridGeometry, GridSnapshot, Images, TerminalElement},
+    emulator::{Emulator, HOLD_TIMEOUT, KeyboardMode, SelectionType},
+    view::{
+        self, GridGeometry, GridSnapshot, Images, KeyEvent, MouseAction, MouseButton,
+        SELECTION_DRAG_THRESHOLD, TerminalElement,
+    },
 };
 
 const CONTEXT: &str = "CydoniaTerminal";
@@ -41,7 +44,12 @@ pub fn bindings() -> Vec<KeyBinding> {
 }
 
 /// Option sends Meta using the base key, not its macOS alternate character.
-pub fn keystroke_bytes(key: &gpui::Keystroke, app_cursor: bool) -> Option<Vec<u8>> {
+pub fn keystroke_bytes(
+    key: &gpui::Keystroke,
+    layout: Option<&gpui::KeyLayout>,
+    mode: KeyboardMode,
+    event: KeyEvent,
+) -> Option<Vec<u8>> {
     let meta_char = if key.modifiers.alt && !key.modifiers.control && key.key.chars().count() == 1 {
         Some(if key.modifiers.shift {
             key.key.to_uppercase()
@@ -54,8 +62,10 @@ pub fn keystroke_bytes(key: &gpui::Keystroke, app_cursor: bool) -> Option<Vec<u8
     view::keystroke_bytes(
         &key.key,
         meta_char.as_deref().or(key.key_char.as_deref()),
+        layout,
         &key.modifiers,
-        app_cursor,
+        mode,
+        event,
     )
 }
 
@@ -98,6 +108,15 @@ impl Shell {
         command.cwd(cwd);
         command.env("TERM", "xterm-256color");
         command.env("COLORTERM", "truecolor");
+        // What a program reads to know which terminal it is talking to.
+        command.env("TERM_PROGRAM", "cydonia");
+        command.env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
+        // The grid draws kitty graphics, and this is the variable programs
+        // sniff for them — the emulator also answers the protocol's own `a=q`
+        // query, which the ones that ask get a truthful answer from. TERM stays
+        // `xterm-256color`: `xterm-kitty` is a terminfo entry that only exists
+        // on a machine with kitty installed.
+        command.env("KITTY_WINDOW_ID", "1");
         let mut child = pair.slave.spawn_command(command)?;
         let pid = child.process_id();
         let killer = child.clone_killer();
@@ -206,9 +225,14 @@ pub struct Terminal {
     shell: Option<Shell>,
     focus: FocusHandle,
     geometry: Option<GridGeometry>,
+    /// Where the left button went down, until the pointer has travelled
+    /// [`SELECTION_DRAG_THRESHOLD`] and the press becomes a selection.
+    pressed: Option<gpui::Point<gpui::Pixels>>,
     selecting: bool,
     scroll_remainder: f32,
     status: Option<String>,
+    /// Pending release of a render hold, armed while one is on.
+    hold: Option<Task<()>>,
     _pump: Option<Task<()>>,
 }
 
@@ -221,9 +245,11 @@ impl Terminal {
             shell: None,
             focus: cx.focus_handle(),
             geometry: None,
+            pressed: None,
             selecting: false,
             scroll_remainder: 0.,
             status: None,
+            hold: None,
             _pump: None,
         };
         match Shell::open(cwd) {
@@ -235,6 +261,7 @@ impl Terminal {
                             .update(cx, |this, cx| {
                                 let reply = this.emulator.feed(&bytes);
                                 this.write(reply);
+                                this.arm_hold_release(cx);
                                 if let Some(directory) = this
                                     .shell
                                     .as_ref()
@@ -272,14 +299,64 @@ impl Terminal {
     }
 
     fn key(&mut self, event: &gpui::KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
-        let key = &event.keystroke;
-        if let Some(bytes) = keystroke_bytes(key, self.emulator.app_cursor_mode()) {
+        let kind = if event.is_held {
+            KeyEvent::Repeat
+        } else {
+            KeyEvent::Press
+        };
+        self.send_key(&event.keystroke, event.layout.as_ref(), kind, cx);
+    }
+
+    fn key_up(&mut self, event: &gpui::KeyUpEvent, _: &mut Window, cx: &mut Context<Self>) {
+        self.send_key(
+            &event.keystroke,
+            event.layout.as_ref(),
+            KeyEvent::Release,
+            cx,
+        );
+    }
+
+    /// Hand one key to the program. A release only encodes under the kitty
+    /// keyboard protocol, so off it this is a no-op.
+    fn send_key(
+        &mut self,
+        key: &gpui::Keystroke,
+        layout: Option<&gpui::KeyLayout>,
+        event: KeyEvent,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(bytes) = keystroke_bytes(key, layout, self.emulator.keyboard_mode(), event) else {
+            return;
+        };
+        // Letting a key go is not the user typing: it must not drop the
+        // selection or pull the view back to the live bottom.
+        if !matches!(event, KeyEvent::Release) {
             self.emulator.clear_selection();
             self.emulator.scroll_to_bottom();
-            self.write(bytes);
-            cx.stop_propagation();
-            cx.notify();
         }
+        self.write(bytes);
+        cx.stop_propagation();
+        cx.notify();
+    }
+
+    /// Release a render hold the program never ended. The emulator has no
+    /// clock, so a program that sets mode 2026 and dies would otherwise leave
+    /// the grid on its half-drawn frame for good.
+    ///
+    /// Re-armed on every read: a program still writing inside its frame is
+    /// alive, and this is here for one that is not.
+    fn arm_hold_release(&mut self, cx: &mut Context<Self>) {
+        if !self.emulator.render_hold() {
+            self.hold = None;
+            return;
+        }
+        self.hold = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(HOLD_TIMEOUT).await;
+            let _ = this.update(cx, |this, cx| {
+                this.emulator.release_hold();
+                cx.notify();
+            });
+        }));
     }
 
     fn copy(&mut self, _: &input::Copy, _: &mut Window, cx: &mut Context<Self>) {
@@ -299,18 +376,50 @@ impl Terminal {
         }
     }
 
-    fn select(&mut self, position: gpui::Point<gpui::Pixels>, start: bool) {
-        let Some(grid) = self.geometry else {
-            return;
-        };
-        let hit = view::cell_at(
+    /// Which cell a window position landed on, or `None` before the grid has
+    /// been measured.
+    fn cell(&self, position: gpui::Point<gpui::Pixels>) -> Option<view::CellHit> {
+        let grid = self.geometry?;
+        Some(view::cell_at(
             f32::from(position.x - grid.origin.x),
             f32::from(position.y - grid.origin.y),
             grid.cell_w,
             grid.line_h,
             grid.cols as usize,
             grid.rows as usize,
-        );
+        ))
+    }
+
+    /// Offer a pointer event to the running program. `true` means it took it,
+    /// and the host should leave its own selection and scrollback alone.
+    fn report(
+        &mut self,
+        action: MouseAction,
+        position: gpui::Point<gpui::Pixels>,
+        modifiers: &gpui::Modifiers,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(hit) = self.cell(position) else {
+            return false;
+        };
+        let Some(bytes) = view::mouse_bytes(
+            action,
+            hit.row,
+            hit.col,
+            modifiers,
+            self.emulator.mouse_mode(),
+        ) else {
+            return false;
+        };
+        self.write(bytes);
+        cx.notify();
+        true
+    }
+
+    fn select(&mut self, position: gpui::Point<gpui::Pixels>, start: bool) {
+        let Some(hit) = self.cell(position) else {
+            return;
+        };
         let point = self.emulator.grid_point(hit.row, hit.col);
         if start {
             self.emulator
@@ -379,6 +488,7 @@ impl Render for Terminal {
                     .key_context(CONTEXT)
                     .track_focus(&self.focus)
                     .on_key_down(cx.listener(Self::key))
+                    .on_key_up(cx.listener(Self::key_up))
                     .on_action(|_: &IncreaseTextSize, _, cx| typography::zoom_terminal(1., cx))
                     .on_action(|_: &DecreaseTextSize, _, cx| typography::zoom_terminal(-1., cx))
                     .on_action(|_: &ResetTextSize, _, cx| typography::reset_terminal_zoom(cx))
@@ -388,12 +498,72 @@ impl Render for Terminal {
                         gpui::MouseButton::Left,
                         cx.listener(|this, event: &gpui::MouseDownEvent, window, cx| {
                             window.focus(&this.focus, cx);
-                            this.selecting = true;
-                            this.select(event.position, true);
+                            if this.report(
+                                MouseAction::Press(MouseButton::Left),
+                                event.position,
+                                &event.modifiers,
+                                cx,
+                            ) {
+                                return;
+                            }
+                            // The press itself is not yet a selection: the one
+                            // that focuses the panel would otherwise take a
+                            // cell with it.
+                            this.pressed = Some(event.position);
+                            this.emulator.clear_selection();
                             cx.notify();
                         }),
                     )
+                    .on_mouse_down(
+                        gpui::MouseButton::Right,
+                        cx.listener(|this, event: &gpui::MouseDownEvent, _, cx| {
+                            this.report(
+                                MouseAction::Press(MouseButton::Right),
+                                event.position,
+                                &event.modifiers,
+                                cx,
+                            );
+                        }),
+                    )
+                    .on_mouse_down(
+                        gpui::MouseButton::Middle,
+                        cx.listener(|this, event: &gpui::MouseDownEvent, _, cx| {
+                            this.report(
+                                MouseAction::Press(MouseButton::Middle),
+                                event.position,
+                                &event.modifiers,
+                                cx,
+                            );
+                        }),
+                    )
                     .on_mouse_move(cx.listener(|this, event: &gpui::MouseMoveEvent, _, cx| {
+                        if !this.selecting {
+                            let held = match event.pressed_button {
+                                Some(gpui::MouseButton::Left) => Some(MouseButton::Left),
+                                Some(gpui::MouseButton::Right) => Some(MouseButton::Right),
+                                Some(gpui::MouseButton::Middle) => Some(MouseButton::Middle),
+                                _ => None,
+                            };
+                            if this.report(
+                                MouseAction::Motion(held),
+                                event.position,
+                                &event.modifiers,
+                                cx,
+                            ) {
+                                return;
+                            }
+                        }
+                        if let Some(origin) = this.pressed {
+                            let travel = event.position - origin;
+                            if f32::from(travel.x).abs().max(f32::from(travel.y).abs())
+                                < SELECTION_DRAG_THRESHOLD
+                            {
+                                return;
+                            }
+                            this.pressed = None;
+                            this.selecting = true;
+                            this.select(origin, true);
+                        }
                         if this.selecting {
                             this.select(event.position, false);
                             cx.notify();
@@ -401,11 +571,47 @@ impl Render for Terminal {
                     }))
                     .on_mouse_up(
                         gpui::MouseButton::Left,
-                        cx.listener(|this, _, _, _| this.selecting = false),
+                        cx.listener(|this, event: &gpui::MouseUpEvent, _, cx| {
+                            this.pressed = None;
+                            if !this.selecting {
+                                this.report(
+                                    MouseAction::Release(MouseButton::Left),
+                                    event.position,
+                                    &event.modifiers,
+                                    cx,
+                                );
+                            }
+                            this.selecting = false;
+                        }),
+                    )
+                    .on_mouse_up(
+                        gpui::MouseButton::Right,
+                        cx.listener(|this, event: &gpui::MouseUpEvent, _, cx| {
+                            this.report(
+                                MouseAction::Release(MouseButton::Right),
+                                event.position,
+                                &event.modifiers,
+                                cx,
+                            );
+                        }),
+                    )
+                    .on_mouse_up(
+                        gpui::MouseButton::Middle,
+                        cx.listener(|this, event: &gpui::MouseUpEvent, _, cx| {
+                            this.report(
+                                MouseAction::Release(MouseButton::Middle),
+                                event.position,
+                                &event.modifiers,
+                                cx,
+                            );
+                        }),
                     )
                     .on_mouse_up_out(
                         gpui::MouseButton::Left,
-                        cx.listener(|this, _, _, _| this.selecting = false),
+                        cx.listener(|this, _, _, _| {
+                            this.pressed = None;
+                            this.selecting = false;
+                        }),
                     )
                     .on_scroll_wheel(cx.listener(|this, event: &gpui::ScrollWheelEvent, _, cx| {
                         let line_h = this.geometry.map_or(20., |grid| grid.line_h);
@@ -413,6 +619,20 @@ impl Render for Terminal {
                         this.scroll_remainder += delta;
                         let lines = this.scroll_remainder.trunc() as i32;
                         this.scroll_remainder -= lines as f32;
+                        if lines != 0
+                            && this.report(
+                                MouseAction::Scroll {
+                                    up: lines > 0,
+                                    lines: lines.unsigned_abs() as usize,
+                                },
+                                event.position,
+                                &event.modifiers,
+                                cx,
+                            )
+                        {
+                            cx.stop_propagation();
+                            return;
+                        }
                         this.emulator.scroll(lines);
                         cx.stop_propagation();
                         cx.notify();

@@ -880,3 +880,86 @@ fn a_space_keeps_the_place_it_was_dragged_to(cx: &mut gpui::TestAppContext) {
         );
     });
 }
+
+/// Two entries in one pane beside a third: closing the lone pane leaves the
+/// space holding the pane of two tabs. What is left is counted in entries,
+/// not panes.
+#[gpui::test]
+fn closing_a_pane_beside_a_stack_keeps_the_space(cx: &mut gpui::TestAppContext) {
+    let scratch = Scratch::new("close-beside-stack");
+    cx.update(|cx| bezel::theme::Theme::install(bezel::theme::Appearance::Light, cx));
+    let workspace = cx.new(|cx| Workspace::new(Settings::default(), state::State::default(), cx));
+
+    workspace.update(cx, |workspace, cx| {
+        workspace.open_project(scratch.project("one"), cx);
+        for (name, key) in [("First", "ONE"), ("Second", "TWO"), ("Third", "THR")] {
+            workspace.new_board(0, name.into(), key, cx).ok();
+        }
+        let a = workspace.member_of(0, Showing::Board(0)).expect("a member");
+        let b = workspace.member_of(0, Showing::Board(1)).expect("a member");
+        let c = workspace.member_of(0, Showing::Board(2)).expect("a member");
+        workspace.arrange(&a, &b, Side::Right, cx);
+        workspace.stack_pane(&a, &c, cx);
+
+        workspace.close_pane(&b, cx);
+
+        let space = workspace.active_space().expect("still open");
+        assert_eq!(space.leaves(), 1, "one pane left");
+        assert_eq!(space.entries(), vec![a.clone(), c.clone()], "both tabs");
+        assert_eq!(workspace.stack_of(&a), vec![a, c], "in one strip");
+    });
+}
+
+/// A card written in a pane is filed into that pane's board, not into
+/// whichever board its project is pointed at.
+#[gpui::test]
+fn a_pane_answers_for_its_own_board(cx: &mut gpui::TestAppContext) {
+    let scratch = Scratch::new("pane-board");
+    cx.update(|cx| bezel::theme::Theme::install(bezel::theme::Appearance::Light, cx));
+    let workspace = cx.new(|cx| Workspace::new(Settings::default(), state::State::default(), cx));
+
+    workspace.update(cx, |workspace, cx| {
+        workspace.open_project(scratch.project("one"), cx);
+        for (name, key) in [("First", "ONE"), ("Second", "TWO")] {
+            workspace.new_board(0, name.into(), key, cx).ok();
+        }
+        let a = workspace.member_of(0, Showing::Board(0)).expect("a member");
+        let b = workspace.member_of(0, Showing::Board(1)).expect("a member");
+        workspace.arrange(&a, &b, Side::Right, cx);
+
+        // Whatever the project is pointed at, each pane answers for itself.
+        let on_a = workspace.board_of(Some(&a)).expect("a board").id.clone();
+        let on_b = workspace.board_of(Some(&b)).expect("a board").id.clone();
+        assert_ne!(on_a, on_b, "two panes, two boards");
+        assert_eq!(
+            workspace.board_of(None).map(|board| board.id.clone()),
+            workspace.active_board().map(|board| board.id.clone()),
+            "and no pane falls back to the project's own",
+        );
+
+        let column = workspace
+            .write_board(&on_a, |board| board.add_column("Todo").id.clone())
+            .expect("the pane's board");
+        workspace
+            .write_board(&on_a, |board| {
+                board.add_card(&column, "written in the left pane".into());
+            })
+            .expect("the pane's board");
+
+        assert_eq!(
+            workspace
+                .board_at(&on_a)
+                .and_then(|board| board.column(&column))
+                .map(|column| column.cards.len()),
+            Some(1),
+        );
+        assert!(
+            workspace
+                .board_at(&on_b)
+                .expect("still there")
+                .columns
+                .is_empty(),
+            "and nothing landed in the other pane's board",
+        );
+    });
+}

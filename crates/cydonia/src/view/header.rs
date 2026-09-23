@@ -15,8 +15,13 @@ use crate::view::{
 };
 use bezel::{
     gpui::{AnyElement, App, Context, FontWeight, SharedString, Window, div, prelude::*, px},
+    motion::{Fade, Painter},
     theme::{TextStyle, Theme, Typeset},
-    ui::{icons, tooltip::Tooltip, widgets::Buttons as _},
+    ui::{
+        icons,
+        tooltip::Tooltip,
+        widgets::{ButtonStyle, Buttons as _},
+    },
 };
 /// What a pane puts in the band.
 pub(crate) struct Toolbar {
@@ -163,24 +168,19 @@ impl Cydonia {
             }) => Some(id.clone()),
             _ => None,
         });
-        div()
+        root::band()
             .absolute()
             .top_0()
             .left_0()
             .right_0()
-            .h(px(root::HEADER_HEIGHT))
-            .flex()
-            .flex_row()
-            .items_center()
             .gap(px(8.))
+            // Past the lights, which are the window's and are drawn over
+            // whatever is at its top left.
             .pl(px(inset))
-            .pr(px(root::HEADER_INSET))
             // Above the pane, which runs under it.
             // The fold belongs to whichever column runs along the window's
             // left edge, so with the sidebar gone it is this one's.
-            .children(
-                (!self.sidebar_open).then(|| self.fold_toggle(theme.text, cx).into_any_element()),
-            )
+            .children((!self.sidebar_open).then(|| self.fold_toggle(cx).into_any_element()))
             .children(toolbar.map(|toolbar| {
                 match renaming {
                     true => div().flex_1().min_w_0().child(self.name_field(cx)),
@@ -255,9 +255,7 @@ impl Cydonia {
                                 // finds it is what a list of rows needs, not a
                                 // band with one control.
                                 None,
-                                icons::icon(icons::layout::Ellipsis)
-                                    .size(px(14.))
-                                    .text_color(theme.text_faint),
+                                icons::layout::Ellipsis,
                                 Menu::Header,
                                 cx,
                             )
@@ -285,15 +283,14 @@ impl Cydonia {
     fn changes_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
         theme
-            .ghost("toggle-changes")
-            .flex_none()
-            .p(px(4.))
-            .tooltip(|window, cx| Tooltip::text("Show right panel", window, cx))
-            .child(
-                icons::icon(icons::layout::PanelRight)
-                    .size(px(14.))
-                    .text_color(theme.text_faint),
+            .icon_button(
+                icons::layout::PanelRight,
+                ButtonStyle::Ghost,
+                Some(Fade::new(Painter::of(cx), "toggle-changes")),
             )
+            .id("toggle-changes")
+            .flex_none()
+            .tooltip(|window, cx| Tooltip::text("Show right panel", window, cx))
             .on_click(|_, window, cx| window.dispatch_action(Box::new(ToggleChanges), cx))
     }
 }

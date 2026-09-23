@@ -14,10 +14,10 @@ pub(crate) enum Doomed {
     /// A board, session, article or table, by the row the header's `···` acts
     /// on.
     Entry(Row),
-    /// One card on the open board, by id.
-    Card(String),
-    /// One column on the open board, by id.
-    Column(String),
+    /// One card, by the board it is on and its own id.
+    Card(String, String),
+    /// One column, by the board it is on and its own id.
+    Column(String, String),
 }
 
 /// A delete that has been asked for and not yet agreed to.
@@ -56,17 +56,17 @@ impl Cydonia {
 
     /// The same for one card, which has no file of its own to quote — it lives
     /// inside the board's.
-    pub(crate) fn ask_delete_card(&mut self, card: &str, cx: &mut Context<Self>) {
+    pub(crate) fn ask_delete_card(&mut self, on: &str, card: &str, cx: &mut Context<Self>) {
         let label = self
             .workspace
             .read(cx)
-            .active_board()
+            .board_at(on)
             .and_then(|board| Some((board, board.card(card)?)))
             .map(|(board, found)| board.handle_of(found).unwrap_or_else(|| found.text.clone()))
             .unwrap_or_default();
         self.menu = None;
         self.confirming = Some(Confirming {
-            doomed: Doomed::Card(card.to_owned()),
+            doomed: Doomed::Card(on.to_owned(), card.to_owned()),
             label,
             goes: None,
             note: "This cannot be undone.".to_owned(),
@@ -74,20 +74,20 @@ impl Cydonia {
         cx.notify();
     }
 
-    /// The same for one lane of the open board. A lane is only droppable while
+    /// The same for one lane. A lane is only droppable while
     /// it is empty — see [`artifact::board::Board::remove_column`] — so nothing
     /// in here speaks for the cards.
-    pub(crate) fn ask_delete_column(&mut self, column: &str, cx: &mut Context<Self>) {
+    pub(crate) fn ask_delete_column(&mut self, on: &str, column: &str, cx: &mut Context<Self>) {
         let label = self
             .workspace
             .read(cx)
-            .active_board()
+            .board_at(on)
             .and_then(|board| board.column(column))
             .map(|column| column.name.clone())
             .unwrap_or_default();
         self.menu = None;
         self.confirming = Some(Confirming {
-            doomed: Doomed::Column(column.to_owned()),
+            doomed: Doomed::Column(on.to_owned(), column.to_owned()),
             label,
             goes: None,
             note: "This cannot be undone.".to_owned(),
@@ -237,9 +237,11 @@ impl Cydonia {
                                                 Doomed::Entry(entry) => {
                                                     this.delete_entry(*entry, window, cx)
                                                 }
-                                                Doomed::Card(card) => this.delete_card(card, cx),
-                                                Doomed::Column(column) => {
-                                                    this.drop_column(column, cx)
+                                                Doomed::Card(board, card) => {
+                                                    this.delete_card(board, card, cx)
+                                                }
+                                                Doomed::Column(board, column) => {
+                                                    this.drop_column(board, column, cx)
                                                 }
                                             }
                                         })),

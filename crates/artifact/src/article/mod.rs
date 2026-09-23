@@ -52,6 +52,10 @@ pub struct Article {
 const DIR: &str = "articles";
 const CONTENT: &str = "content.md";
 
+/// Where the pictures in one article's body go, inside the directory that is
+/// that article.
+const ASSETS: &str = "assets";
+
 /// Where this project's articles are, whether or not any have been written.
 pub fn dir(project: &Path) -> PathBuf {
     fs::Project::new(project).cydonia().join(DIR)
@@ -65,6 +69,15 @@ pub fn init(project: &Path) -> std::io::Result<PathBuf> {
 /// The document inside one article's directory — the path an agent is given.
 pub fn content(article: &Path) -> PathBuf {
     article.join(CONTENT)
+}
+
+/// Where this article's body pictures go, whether or not any have been
+/// written. Takes the path of its `content.md`.
+///
+/// Inside the article's directory, so removing or moving the article takes
+/// them with it.
+pub fn assets(content: &Path) -> PathBuf {
+    content.with_file_name(ASSETS)
 }
 
 /// When the article was last written, whichever of its files took the write.
@@ -111,9 +124,10 @@ pub fn free(dir: &Path, stamp: u128) -> PathBuf {
 /// The article keeps its id where the destination has that name free, and takes
 /// the next free one where it does not.
 ///
-/// The pictures in the body are copied into the destination's `assets/` and the
-/// document rewritten to point at them — see [`carry_assets`]. The cover sits in
-/// the article's own directory and needs none of that.
+/// The article's own `assets/` travels with the directory, and the whole paths
+/// the body holds into it are rewritten — see [`repoint`]. A body written
+/// before those existed points into the source project's shared `assets/`, and
+/// those pictures are copied and the document rewritten — see [`carry_assets`].
 ///
 /// The `#number` does not come along: the source tombstones its own, and the
 /// destination issues one on the next read.
@@ -133,6 +147,7 @@ pub fn move_to(content: &Path, to: &Path) -> std::io::Result<PathBuf> {
     };
     carry(from_dir, &landing)?;
     let arrived = self::content(&landing);
+    repoint(&arrived, from_dir, &landing);
     carry_assets(&arrived, from, to);
     let _ = entry::Registry::open(from).and_then(|registry| registry.remove("article", &id));
     Ok(arrived)
@@ -189,12 +204,30 @@ fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Point the body at where its own directory is now.
+///
+/// A picture in the article's `assets/` is written into the markdown as a whole
+/// path, and the article's directory is named for its id in the project it is
+/// in — so a move changes both halves of the prefix.
+///
+/// Best effort: the move stands whether or not the document could be rewritten.
+fn repoint(content: &Path, from: &Path, to: &Path) {
+    let (from, to) = (from.to_string_lossy(), to.to_string_lossy());
+    let Ok(text) = std::fs::read_to_string(content) else {
+        return;
+    };
+    if !text.contains(from.as_ref()) {
+        return;
+    }
+    let _ = std::fs::write(content, text.replace(from.as_ref(), to.as_ref()));
+}
+
 /// Bring the pictures the document points at along with it.
 ///
-/// A body holds whole paths into the project's `assets/`, which is why a move
-/// has to touch the document at all. The file names are hashes of the bytes, so
-/// a picture already in the destination is the same file and is not copied
-/// again.
+/// A body can hold whole paths into the project's shared `assets/`, which is why
+/// a move has to touch the document at all. The file names are hashes of the
+/// bytes, so a picture already in the destination is the same file and is not
+/// copied again.
 ///
 /// Best effort: the move stands whether or not the pictures followed.
 fn carry_assets(content: &Path, from: &Path, to: &Path) {

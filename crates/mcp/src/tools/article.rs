@@ -103,7 +103,7 @@ pub static TOOLS: [Tool; 10] = [
     },
     Tool {
         name: "article_read",
-        description: "Read one article's markdown. The result includes two directories on the Cydonia host: assets_path, the project's shared media directory, where body images go; and article_path, this article's own folder, which holds its cover and nothing a body image needs. Filesystem access is needed to place a file in either.",
+        description: "Read one article's markdown. The result includes two directories on the Cydonia host: assets_path, this article's own media directory, where body images go; and article_path, the article's folder, which holds its cover and that media directory. Filesystem access is needed to place a file in either.",
         schema: |bound| fields(bound, &[PROJECT, ARTICLE]),
         writes: false,
         deletes: false,
@@ -111,7 +111,7 @@ pub static TOOLS: [Tool; 10] = [
     },
     Tool {
         name: "article_add",
-        description: "Write a new article, and answer its id, assets_path, the project's shared media directory where body images go, and article_path, the article's own folder. This tool writes Markdown, not image bytes; a cover is set with article_set_cover rather than written into article_path.",
+        description: "Write a new article, and answer its id, assets_path, the article's own media directory where body images go, and article_path, the article's folder. This tool writes Markdown, not image bytes; a cover is set with article_set_cover rather than written into article_path.",
         schema: |bound| fields(bound, &[PROJECT, TITLE, MARKDOWN]),
         writes: true,
         deletes: false,
@@ -232,7 +232,6 @@ fn list(args: Args<'_>) -> Outcome {
 
 fn read(args: Args<'_>) -> Outcome {
     let project = root(&args)?;
-    let assets = assets_path(project)?;
     let found = locate(project, args.text(ARTICLE)?)?;
     let text = std::fs::read_to_string(&found.content)
         .map_err(|e| Trouble::Refused(format!("{} cannot be read — {e}", found.label())))?;
@@ -240,7 +239,7 @@ fn read(args: Args<'_>) -> Outcome {
         "id": found.id,
         "number": found.number,
         "title": found.title,
-        "assets_path": assets,
+        "assets_path": assets_path(&found.content),
         "article_path": folder(&found.content),
         "cover_path": article::cover::of(&found.content),
     })))
@@ -250,7 +249,6 @@ fn add(args: Args<'_>) -> Outcome {
     let project = root(&args)?;
     let title = args.text(TITLE)?;
     let text = args.text(MARKDOWN)?;
-    let assets = assets_path(project)?;
     let dir = article::init(project).map_err(|e| {
         Trouble::Refused(format!("{} cannot be written to — {e}", project.display()))
     })?;
@@ -270,14 +268,13 @@ fn add(args: Args<'_>) -> Outcome {
             "id": id,
             "number": number,
             "title": title,
-            "assets_path": assets,
+            "assets_path": assets_path(&content),
             "article_path": folder(&content),
         })),
     )
 }
 
-/// The article's own directory: where its cover goes, and nothing else an
-/// agent writes.
+/// The article's own directory: where its cover and its `assets/` go.
 fn folder(content: &Path) -> Option<PathBuf> {
     content.parent().map(Path::to_path_buf)
 }
@@ -285,7 +282,7 @@ fn folder(content: &Path) -> Option<PathBuf> {
 /// File a picture as the article's cover, or take the one it has off.
 ///
 /// The bytes are copied rather than moved: the source is the caller's, and a
-/// picture generated into `assets_path` is one it may well link to as well.
+/// picture in the article's `assets/` is one it may well link to as well.
 /// What was there before goes, which is what keeps one article to one cover —
 /// `cover::of` reads the directory and a second file would shadow the first.
 fn set_cover(args: Args<'_>) -> Outcome {
@@ -331,10 +328,11 @@ fn set_cover(args: Args<'_>) -> Outcome {
         .with(json!({ "cover_path": to, "article_path": folder(&found.content) })))
 }
 
-fn assets_path(project: &Path) -> Result<PathBuf, Trouble> {
-    let root = std::fs::canonicalize(project)
-        .map_err(|e| Trouble::Refused(format!("the project path cannot be resolved — {e}")))?;
-    Ok(artifact::project::fs::Project::new(root).assets())
+/// The article's own media directory, where an agent puts the pictures a body
+/// points at. Not made here: the tools write Markdown, and whatever files the
+/// picture makes it.
+fn assets_path(content: &Path) -> PathBuf {
+    article::assets(content)
 }
 
 fn rewrite(args: Args<'_>) -> Outcome {
@@ -494,13 +492,14 @@ fn move_article(args: Args<'_>) -> Outcome {
             "id": id,
             "number": number,
             "title": held.title,
+            "assets_path": assets_path(&arrived),
+            "article_path": folder(&arrived),
         }));
     }
     Ok(
         Answer::said(format!("{} moved to {}", spoken.join(", "), to.display())).with(json!({
             "articles": landed,
             "project": to,
-            "assets_path": assets_path(to)?,
         })),
     )
 }

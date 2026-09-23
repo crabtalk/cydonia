@@ -311,7 +311,6 @@ pub(super) struct Switch {
     glyph: Option<&'static [u8]>,
     truncate: bool,
     badge: Option<SharedString>,
-    locked: bool,
 }
 
 impl Switch {
@@ -330,7 +329,6 @@ impl Switch {
             glyph: None,
             truncate: false,
             badge: None,
-            locked: false,
         }
     }
 
@@ -357,13 +355,6 @@ impl Switch {
 
     pub(super) fn badge(mut self, badge: Option<impl Into<SharedString>>) -> Self {
         self.badge = badge.map(Into::into);
-        self
-    }
-
-    /// Show the state without offering to change it —
-    /// [`SettingsWindow::switch_row`] then attaches no click handler.
-    pub(super) fn locked(mut self, locked: bool) -> Self {
-        self.locked = locked;
         self
     }
 }
@@ -413,14 +404,11 @@ impl SettingsWindow {
             .child(
                 div()
                     .id(switch.id)
-                    .when(switch.locked, |el| el.opacity(0.5))
-                    .when(!switch.locked, |el| {
-                        el.cursor_pointer()
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                flip(this, cx);
-                                cx.notify();
-                            }))
-                    })
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        flip(this, cx);
+                        cx.notify();
+                    }))
                     .child(theme.toggle(switch.on)),
             )
             .into_any_element()

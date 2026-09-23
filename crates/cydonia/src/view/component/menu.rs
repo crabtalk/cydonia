@@ -3,12 +3,15 @@
 
 use crate::view::{root::Cydonia, sidebar::Row};
 use bezel::{
-    gpui::{self, AnyElement, Context, Div, SharedString, Stateful, Window, prelude::*, px},
+    gpui::{
+        self, AnyElement, Context, Div, Pixels, Point, SharedString, Stateful, Window, prelude::*,
+    },
+    motion::{Fade, Painter},
     theme::Theme,
     ui::{
         icons::Icon,
         menu::{self, Hit, Item},
-        widgets::Buttons,
+        widgets::{ButtonStyle, Buttons},
     },
 };
 
@@ -93,16 +96,39 @@ impl Cydonia {
     /// by [`Cydonia::menu_press`] instead, in the capture phase — ahead of
     /// that handler, whichever element owns it.
     pub(crate) fn toggle_menu(&mut self, menu: Menu, cx: &mut Context<Self>) {
+        self.toggle_menu_at(menu, None, cx);
+    }
+
+    /// [`Cydonia::toggle_menu`] for a press with a point to it: `at` is where
+    /// the card is to stand, in window space, and the trigger's own edge is
+    /// what it falls back to. Read by [`Cydonia::menu_point`].
+    pub(crate) fn toggle_menu_at(
+        &mut self,
+        menu: Menu,
+        at: Option<Point<Pixels>>,
+        cx: &mut Context<Self>,
+    ) {
         let closed_by_this_press = std::mem::take(&mut self.menu_pressed);
         let shut = closed_by_this_press || self.menu.as_ref() == Some(&menu);
         self.menu = (!shut).then_some(menu);
+        self.menu_point = (!shut).then_some(at).flatten();
         self.menu_cursor.clear();
         cx.notify();
+    }
+
+    /// Where the open menu was pressed, for a card that is to stand there
+    /// rather than on its trigger. `None` once `menu` is not the open one, so
+    /// a card built for another row never reads this.
+    pub(crate) fn menu_point(&self, menu: &Menu) -> Option<Point<Pixels>> {
+        (self.menu.as_ref() == Some(menu))
+            .then_some(self.menu_point)
+            .flatten()
     }
 
     /// Shut whichever menu is open, and forget the row it was on.
     fn shut_menu(&mut self) {
         self.menu = None;
+        self.menu_point = None;
         self.menu_cursor.clear();
     }
 
@@ -127,14 +153,23 @@ impl Cydonia {
     /// pane header's is.
     pub(crate) fn menu_button(
         &self,
-        id: impl Into<gpui::ElementId>,
+        id: impl Into<SharedString>,
         group: Option<&'static str>,
-        mark: impl IntoElement,
+        mark: impl Into<Icon>,
         menu: Menu,
         cx: &Context<Self>,
     ) -> Stateful<Div> {
+        let id = id.into();
+        // The glyph is built here rather than taken, the way
+        // `Buttons::icon_button` builds its own: a trigger's mark is the
+        // trigger's metric, not the caller's.
         let button = Theme::of(cx)
-            .ghost(id)
+            .icon_button(
+                mark,
+                ButtonStyle::Ghost,
+                Some(Fade::new(Painter::of(cx), id.clone())),
+            )
+            .id(id)
             .flex_none()
             .relative()
             // An open menu keeps its trigger on show — by then the pointer is
@@ -153,8 +188,6 @@ impl Cydonia {
                     }
                 },
             )
-            .p(px(3.))
-            .child(mark)
             .on_click({
                 let menu = menu.clone();
                 cx.listener(move |this, _, _, cx| {

@@ -349,8 +349,8 @@ impl Workspace {
         cx.notify();
     }
 
-    /// The same window's other choice — see [`vibrancy`] for what each state
-    /// asks of the theme.
+    /// The same window's other choice — see [`vibrancy`] and [`glass`] for
+    /// what each state asks of the theme.
     pub fn set_opaque(&mut self, opaque: bool, cx: &mut Context<Self>) {
         self.opaque = Some(opaque);
         apply_transparency(self.opaque, cx);
@@ -688,7 +688,7 @@ pub fn apply_tint(tint: Tint, cx: &mut App) {
     );
 }
 
-/// What the switch asks of the brand.
+/// What the switch asks of the window.
 ///
 /// Never [`Vibrancy::On`]: bezel's light palette carries no frosted tokens.
 /// [`Vibrancy::Auto`] is frost in dark and opaque in light; [`Vibrancy::Off`]
@@ -698,6 +698,14 @@ pub fn vibrancy(opaque: Option<bool>) -> Vibrancy {
         Some(true) => Vibrancy::Off,
         None | Some(false) => Vibrancy::Auto,
     }
+}
+
+/// What the same switch asks of the components, which is a separate answer:
+/// glass blends within the window, so an opaque window still carries it. A
+/// build with no blur primitive carries none either way — see
+/// [`bezel::theme::LENSED`].
+pub fn glass(opaque: Option<bool>) -> bool {
+    theme::LENSED && !opaque.unwrap_or(false)
 }
 
 /// How a fence breaks its lines, handed to the renderer that paints one.
@@ -717,6 +725,7 @@ pub fn apply_transparency(opaque: Option<bool>, cx: &mut App) {
     theme::set_brand(
         Brand {
             vibrancy: vibrancy(opaque),
+            glass: glass(opaque),
             ..theme::brand(cx)
         },
         cx,

@@ -8,7 +8,7 @@ use artifact::board::View;
 use bezel::{
     gpui::{AnyElement, Context, DragMoveEvent, Empty, div, prelude::*, px},
     theme::{
-        Appearance, TextStyle, Theme, Tint, Typeset,
+        TextStyle, Theme, Tint, Typeset,
         appearance::{self, AppearanceMode},
     },
     ui::widgets::{self, Controls, Scaffolding, SliderDrag},
@@ -340,20 +340,20 @@ impl SettingsWindow {
 
     /// The app's own reduce-transparency switch, separate from the system one.
     ///
-    /// Locked in light: [`crate::model::workspace::vibrancy`] never returns
-    /// `Vibrancy::On`, so the stored preference cannot reach a light window.
+    /// Live in both appearances. The window's frost is dark's alone —
+    /// [`crate::model::workspace::vibrancy`] never returns `Vibrancy::On` —
+    /// but glass is [`crate::model::workspace::glass`]'s separate answer and
+    /// a light window carries it, so there is something here to turn off.
     pub(super) fn transparency_row(&self, cx: &mut Context<Self>) -> AnyElement {
-        let light = matches!(Theme::of(cx).appearance, Appearance::Light);
-        let on = light || self.workspace.read(cx).opaque.unwrap_or(false);
-        let blurb = if light {
-            "Light is always opaque. Switch to dark for translucent surfaces."
-        } else {
-            "Replace translucent surfaces with opaque backgrounds."
-        };
+        let on = self.workspace.read(cx).opaque.unwrap_or(false);
         self.switch_row(
-            Switch::new("reduce-transparency", "Reduce transparency", blurb, on)
-                .first(true)
-                .locked(light),
+            Switch::new(
+                "reduce-transparency",
+                "Reduce transparency",
+                "Replace translucent surfaces with opaque backgrounds.",
+                on,
+            )
+            .first(true),
             cx,
             move |this, cx| {
                 this.workspace

@@ -300,10 +300,7 @@ impl Cydonia {
     /// The open document's editing surface, or nothing where no article is
     /// open — every one of the bar's acts asks for it.
     fn open_editor(&self, cx: &Context<Self>) -> Option<Entity<Editor>> {
-        self.workspace
-            .read(cx)
-            .active_article()
-            .and_then(|article| article.editor.clone())
+        self.pane_doc(cx).and_then(|article| article.editor.clone())
     }
 
     // ── chrome ───────────────────────────────────────────────────
@@ -326,7 +323,7 @@ impl Cydonia {
         if self.leaf().ribbon.selecting {
             return None;
         }
-        let article = self.workspace.read(cx).active_article()?;
+        let article = self.pane_doc(cx)?;
         let editor = article.editor.clone()?;
         let port = article.scroll.bounds();
         let (formatting, head) = {
