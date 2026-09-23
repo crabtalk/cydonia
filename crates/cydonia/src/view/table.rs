@@ -613,7 +613,13 @@ impl Cydonia {
                 .child(name)
                 .into_any_element(),
         })
-        .child(self.archive_button(format!("table-archive-{ix}"), "table-row", entry, archived, cx))
+        .child(self.archive_button(
+            format!("table-archive-{ix}"),
+            "table-row",
+            entry,
+            archived,
+            cx,
+        ))
         .on_click(cx.listener(move |this, _, window, cx| {
             this.open_table(project, ix, window, cx);
         }))

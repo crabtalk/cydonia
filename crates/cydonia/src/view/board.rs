@@ -525,7 +525,13 @@ impl Cydonia {
     /// one: the field, what it commits into and the caret all answer for the
     /// focused pane, and a card opened in a pane the window is not on would be
     /// drawn in one board and filed into another.
-    fn edit(&mut self, on: Option<&Member>, at: Editing, window: &mut Window, cx: &mut Context<Self>) {
+    fn edit(
+        &mut self,
+        on: Option<&Member>,
+        at: Editing,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.commit(cx);
         if let Some(on) = on {
             self.focus_pane(&on.clone(), window, cx);
@@ -571,7 +577,11 @@ impl Cydonia {
 
     /// File the card one pane has open, into that pane's own board.
     fn commit_leaf(&mut self, leaf: usize, cx: &mut Context<Self>) {
-        let Some(at) = self.leaves.get_mut(leaf).and_then(|leaf| leaf.editing.take()) else {
+        let Some(at) = self
+            .leaves
+            .get_mut(leaf)
+            .and_then(|leaf| leaf.editing.take())
+        else {
             return;
         };
         let (field, on) = {
@@ -1513,7 +1523,16 @@ impl Cydonia {
                     Menu::Lane(id.to_owned()),
                     cx,
                 )
-                .children(self.lane_menu(id, held, at, lanes, View::List, board, on, cx)),
+                .children(self.lane_menu(
+                    id,
+                    held,
+                    at,
+                    lanes,
+                    View::List,
+                    board,
+                    on,
+                    cx,
+                )),
             )
             .into_any_element()
     }
@@ -1996,7 +2015,16 @@ impl Cydonia {
                     Menu::Lane(id.to_owned()),
                     cx,
                 )
-                .children(self.lane_menu(id, held, at, lanes, View::Lanes, board, on, cx)),
+                .children(self.lane_menu(
+                    id,
+                    held,
+                    at,
+                    lanes,
+                    View::Lanes,
+                    board,
+                    on,
+                    cx,
+                )),
             )
             .into_any_element()
     }
@@ -2110,8 +2138,9 @@ impl Cydonia {
     /// Step a lane one place, and keep the menu on it: moving twice is two
     /// presses on the same row, not a menu reopened between them.
     fn shift_column(&mut self, board: &str, id: &str, step: isize, cx: &mut Context<Self>) {
-        self.workspace
-            .update(cx, |workspace, cx| workspace.move_column(board, id, step, cx));
+        self.workspace.update(cx, |workspace, cx| {
+            workspace.move_column(board, id, step, cx)
+        });
         cx.notify();
     }
 

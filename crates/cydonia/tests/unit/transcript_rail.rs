@@ -237,7 +237,6 @@ fn only_the_reading_tick_is_brightest_during_hover_and_navigation(cx: &mut gpui:
     }
 }
 
-
 #[test]
 fn a_column_taller_than_the_rail_slides_the_read_mark_into_it() {
     let step = px(MARK_THICK + 2. * MARK_PAD);

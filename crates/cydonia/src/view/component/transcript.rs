@@ -462,7 +462,7 @@ pub fn render(
                             .child(zone(chat, turn, running, window, cx))
                             .when(running && turn.range.len() <= 1, |row| {
                                 row.child(working(chat, turn.range.start, cx))
-                            })
+                            }),
                     )
                     .into_any_element()
                 })

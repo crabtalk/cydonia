@@ -382,11 +382,7 @@ impl Cydonia {
             // The fold out at the trailing edge: the lights float in the
             // leading half of the strip, which is what leaves nothing there to
             // pad them clear of.
-            .child(
-                root::band()
-                    .justify_end()
-                    .child(self.fold_toggle(cx)),
-            )
+            .child(root::band().justify_end().child(self.fold_toggle(cx)))
             .child(
                 div()
                     .relative()
@@ -1755,13 +1751,7 @@ impl Cydonia {
                 false => icons::navigation::Pin,
             };
             return self
-                .menu_button(
-                    id,
-                    None,
-                    mark,
-                    at.clone(),
-                    cx,
-                )
+                .menu_button(id, None, mark, at.clone(), cx)
                 // On the trigger, so the card hangs under the `···` rather
                 // than off the left edge of the row it is mounted on. A row
                 // with no button of its own draws it from the wrapper, where
@@ -1997,11 +1987,9 @@ impl Cydonia {
         // right-aligned to the trigger, whose affordance is at the row's end.
         Some(match self.menu_point(&at) {
             Some(point) => popover::menu_at(id.clone(), point, self.menu_card(id, rows, cx), None),
-            None => popover::anchored_menu_below_end(
-                id.clone(),
-                self.menu_card(id, rows, cx),
-                None,
-            ),
+            None => {
+                popover::anchored_menu_below_end(id.clone(), self.menu_card(id, rows, cx), None)
+            }
         })
     }
 

@@ -198,7 +198,9 @@ impl Cydonia {
     /// The article the focused pane is on. A window with no space open has no
     /// member to name, and falls back to what its project is pointed at.
     pub(crate) fn pane_doc<'a>(&self, cx: &'a App) -> Option<&'a crate::model::article::Article> {
-        self.workspace.read(cx).article_of(self.leaf().entry.as_ref())
+        self.workspace
+            .read(cx)
+            .article_of(self.leaf().entry.as_ref())
     }
 
     /// The same by its file — the one address every write to an article is
@@ -237,8 +239,9 @@ impl Cydonia {
         let Some(on) = self.pane_article(cx) else {
             return;
         };
-        self.workspace
-            .update(cx, |workspace, cx| workspace.set_article_mode(&on, mode, cx));
+        self.workspace.update(cx, |workspace, cx| {
+            workspace.set_article_mode(&on, mode, cx)
+        });
         let editor = self.pane_doc(cx).and_then(|article| article.editor.clone());
         if let Some(editor) = editor {
             window.focus(&editor.focus_handle(cx), cx);
@@ -298,8 +301,9 @@ impl Cydonia {
                 return;
             };
             let _ = this.update(cx, |this, cx| {
-                this.workspace
-                    .update(cx, |workspace, cx| workspace.set_cover(&on, Some(&path), cx));
+                this.workspace.update(cx, |workspace, cx| {
+                    workspace.set_cover(&on, Some(&path), cx)
+                });
                 cx.notify();
             });
         })
@@ -627,7 +631,13 @@ impl Cydonia {
                 .text_color(tint)
                 .child(title),
         )
-        .child(self.archive_button(format!("article-archive-{ix}"), "article-row", entry, archived, cx))
+        .child(self.archive_button(
+            format!("article-archive-{ix}"),
+            "article-row",
+            entry,
+            archived,
+            cx,
+        ))
         .on_click(cx.listener(move |this, _, window, cx| {
             this.open_article(project, ix, window, cx);
         }))

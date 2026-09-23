@@ -29,10 +29,10 @@ use anyhow::Result;
 use artifact::space::Member;
 use bezel::{
     gpui::{
-        self, AnyElement, App, Axis, Bounds, Context, DragMoveEvent, Empty, Entity, FocusHandle,
-        Focusable, Hsla, KeyBinding, PathPromptOptions, Render, SharedString, TitlebarOptions,
-        Div, UniformListScrollHandle, Window, WindowBounds, WindowHandle, WindowOptions, actions,
-        div, point, prelude::*, px, size,
+        self, AnyElement, App, Axis, Bounds, Context, Div, DragMoveEvent, Empty, Entity,
+        FocusHandle, Focusable, Hsla, KeyBinding, PathPromptOptions, Render, SharedString,
+        TitlebarOptions, UniformListScrollHandle, Window, WindowBounds, WindowHandle,
+        WindowOptions, actions, div, point, prelude::*, px, size,
     },
     motion::{Fade, Painter},
     theme::{Material, TextStyle, Theme, Typeset, appearance},

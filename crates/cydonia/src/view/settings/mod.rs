@@ -357,7 +357,6 @@ impl Switch {
         self.badge = badge.map(Into::into);
         self
     }
-
 }
 
 impl SettingsWindow {
