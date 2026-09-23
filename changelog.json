@@ -1,5 +1,33 @@
 [
   {
+    "version": "0.1.14",
+    "date": "2026-09-23",
+    "summary": "Sessions talk to each other, read and search one another by turn, and thoughts fold to a line.",
+    "media": {
+      "poster": "pics/cydonia/v0.1.14.jpg",
+      "src": "videos/cydonia/v0.1.14.mp4",
+      "alt": "…",
+      "w": 1280,
+      "h": 900
+    },
+    "new": [
+      "Send a message to another session, or start one on a named agent with it, through session_send",
+      "Read a session's turns by reference, #43:5-7, through session_read",
+      "Search every session in a project, or one, for text through session_search, answered as turn references",
+      "Name a session in another open project by its folder, cydonia#43:5-7",
+      "Sign a message one session sends another with the turn it was sent from, so the other can read back"
+    ],
+    "changed": [
+      "Collapse a thought to one clipped line that opens on click",
+      "Tell the tools which session is calling, from the moment it connects",
+      "Move to bezel 0.1.25"
+    ],
+    "fixed": [
+      "Keep the agent search's hairline fixed while the list scrolls",
+      "Give two sessions started in one millisecond ids of their own"
+    ]
+  },
+  {
     "version": "0.1.13",
     "date": "2026-09-23",
     "summary": "A page carries its own pictures, a program sees the keys you hold, and the transcript rail follows the turns on screen.",

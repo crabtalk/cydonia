@@ -80,6 +80,14 @@ pub static TOOLS: [Tool; 3] = [
         prompt. Fire and forget: nothing is waited for or answered back.",
         schema: |bound| {
             let mut schema = fields(bound, &[PROJECT, SESSION, AGENT, MESSAGE]);
+            let agents = rail::agents();
+            if !agents.is_empty() {
+                schema["properties"][AGENT.name] = json!({
+                    "type": "string",
+                    "enum": agents.iter().map(rail::Agent::key).collect::<Vec<_>>(),
+                    "description": format!("{} Configured: {}.", AGENT.about, listed(&agents)),
+                });
+            }
             schema["required"] = json!(match bound {
                 true => vec![MESSAGE.name],
                 false => vec![PROJECT.name, MESSAGE.name],
@@ -186,17 +194,47 @@ fn same_dir(a: &Path, b: &Path) -> bool {
 
 /// A new session on `agent`, seeded with `message`.
 fn start(project: &Path, agent: Option<&str>, message: &str) -> Outcome {
-    let agent = agent
+    let named = agent
         .ok_or_else(|| Trouble::Invalid("session or agent is required, as a string".to_owned()))?;
+    let agents = rail::agents();
+    let agent = agents
+        .iter()
+        .find(|agent| agent.id.as_deref() == Some(named))
+        .or_else(|| {
+            agents
+                .iter()
+                .find(|agent| agent.name.eq_ignore_ascii_case(named))
+        })
+        .ok_or_else(|| {
+            Trouble::Refused(match agents.is_empty() {
+                true => format!("no agent named {named}, and cydonia has none configured"),
+                false => format!("no agent named {named} — cydonia has {}", listed(&agents)),
+            })
+        })?;
     let project = project
         .canonicalize()
         .unwrap_or_else(|_| project.to_path_buf());
     rail::ask(Change::Start {
         project,
-        agent: agent.to_owned(),
+        agent: agent.key().to_owned(),
         message: message.to_owned(),
     })?;
-    Ok(Answer::said(format!("sent to a new session on {agent}")))
+    Ok(Answer::said(format!(
+        "sent to a new session on {}",
+        agent.name
+    )))
+}
+
+/// `Claude Agent (claude-acp), Codex (codex-acp)`.
+fn listed(agents: &[rail::Agent]) -> String {
+    agents
+        .iter()
+        .map(|agent| match &agent.id {
+            Some(id) => format!("{} ({id})", agent.name),
+            None => agent.name.clone(),
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 // ── reading ──────────────────────────────────────────────────────

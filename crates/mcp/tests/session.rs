@@ -51,18 +51,56 @@ fn no_session_starts_one_on_the_named_agent() {
     let scratch = Scratch::new("session-start");
     let server = scratch.server();
     let rail = Rail;
+    cydonia_mcp::rail::set_agents(vec![
+        cydonia_mcp::rail::Agent {
+            name: "Claude Agent".to_owned(),
+            id: Some("claude-acp".to_owned()),
+        },
+        cydonia_mcp::rail::Agent {
+            name: "Codex".to_owned(),
+            id: None,
+        },
+    ]);
 
     said(server.call(
         "session_send",
-        json!({"agent": "Claude", "message": "foo"}),
+        json!({"agent": "claude agent", "message": "foo"}),
         Some(scratch.path()),
     ));
 
     assert!(rail.was_asked(Change::Start {
         project: scratch.path().canonicalize().unwrap(),
-        agent: "Claude".to_owned(),
+        agent: "claude-acp".to_owned(),
         message: "foo".to_owned(),
     }));
+    let why = refused(server.call(
+        "session_send",
+        json!({"agent": "Claude", "message": "foo"}),
+        Some(scratch.path()),
+    ));
+    assert!(
+        why.contains("cydonia has Claude Agent (claude-acp), Codex"),
+        "{why}"
+    );
+    let listing = server
+        .handle(
+            &serde_json::from_value(json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}))
+                .unwrap(),
+            Some(scratch.path()),
+        )
+        .unwrap();
+    let listing = serde_json::to_value(listing).unwrap();
+    let send = listing["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tool| tool["name"] == "session_send")
+        .unwrap()
+        .clone();
+    assert_eq!(
+        send["inputSchema"]["properties"]["agent"]["enum"],
+        json!(["claude-acp", "Codex"])
+    );
 }
 
 /// A session filed in `scratch` holding `said`, a question and its answer

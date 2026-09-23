@@ -25,6 +25,7 @@ impl Workspace {
             let _ = asked.unbounded_send(change);
         });
         rail::set_open(self.paths());
+        rail::set_agents(self.rail_agents());
         cx.spawn(async move |workspace, cx| {
             while let Some(change) = asks.next().await {
                 let held = workspace
