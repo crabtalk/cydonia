@@ -7,10 +7,7 @@
 //! that ends on a tool call still shows the prose before it as prose.
 
 use crate::{
-    model::{
-        session::ChatSession,
-        workspace::Workspace,
-    },
+    model::{session::ChatSession, workspace::Workspace},
     view::root,
 };
 use artifact::session::chat::{ChatItem, ToolStatus};
@@ -1058,11 +1055,9 @@ fn work(chat: &ChatSession, body: Range<usize>, cx: &mut Context<Workspace>) -> 
                     .into_any_element(),
             );
         } else {
-            out.extend(run.iter().enumerate().map(|(at, item)| {
-                match item {
-                    ChatItem::Thinking { text, .. } => thought(chat, ix + at, text, cx),
-                    _ => div().into_any_element(),
-                }
+            out.extend(run.iter().enumerate().map(|(at, item)| match item {
+                ChatItem::Thinking { text, .. } => thought(chat, ix + at, text, cx),
+                _ => div().into_any_element(),
             }));
         }
         ix += run.len();
@@ -1071,12 +1066,7 @@ fn work(chat: &ChatSession, body: Range<usize>, cx: &mut Context<Workspace>) -> 
 }
 
 /// One thought: a single clipped line, or the whole text once opened.
-fn thought(
-    chat: &ChatSession,
-    ix: usize,
-    text: &str,
-    cx: &mut Context<Workspace>,
-) -> AnyElement {
+fn thought(chat: &ChatSession, ix: usize, text: &str, cx: &mut Context<Workspace>) -> AnyElement {
     let theme = Theme::of(cx).clone();
     let id = chat.id;
     let open = chat.transcript.output.contains(&ix);
