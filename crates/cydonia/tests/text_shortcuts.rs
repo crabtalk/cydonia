@@ -10,6 +10,15 @@ use cydonia::{
     model::settings::Shortcuts,
     view::{board, component::terminal::keystroke_bytes, keymap},
 };
+use terminal::{emulator::KeyboardMode, view::KeyEvent};
+
+/// A keyboard with no protocol enhancements, only DECCKM.
+fn legacy(app_cursor: bool) -> KeyboardMode {
+    KeyboardMode {
+        app_cursor,
+        ..KeyboardMode::default()
+    }
+}
 
 #[test]
 fn emacs_preference_preserves_existing_shortcuts() {
@@ -37,7 +46,7 @@ fn terminal_meta_uses_letters_instead_of_option_characters() {
         key.key_char = Some(character.into());
         for app_cursor in [false, true] {
             assert_eq!(
-                keystroke_bytes(&key, app_cursor),
+                keystroke_bytes(&key, legacy(app_cursor), KeyEvent::Press),
                 Some(expected.as_bytes().to_vec())
             );
         }
@@ -48,7 +57,10 @@ fn terminal_meta_uses_letters_instead_of_option_characters() {
 fn terminal_preserves_text_control_and_app_shortcuts() {
     let mut key = gpui::Keystroke::parse("a").unwrap();
     key.key_char = Some("文".into());
-    assert_eq!(keystroke_bytes(&key, false), Some("文".as_bytes().to_vec()));
+    assert_eq!(
+        keystroke_bytes(&key, legacy(false), KeyEvent::Press),
+        Some("文".as_bytes().to_vec())
+    );
     for (chord, expected) in [
         ("ctrl-b", Some(b"\x02".to_vec())),
         ("alt-ctrl-b", Some(b"\x1b\x02".to_vec())),
@@ -58,7 +70,11 @@ fn terminal_preserves_text_control_and_app_shortcuts() {
         ("alt-f13", None),
     ] {
         assert_eq!(
-            keystroke_bytes(&gpui::Keystroke::parse(chord).unwrap(), false),
+            keystroke_bytes(
+                &gpui::Keystroke::parse(chord).unwrap(),
+                legacy(false),
+                KeyEvent::Press
+            ),
             expected
         );
     }

@@ -215,6 +215,7 @@ fn copy_terminal_selection_takes_priority_over_transcript(cx: &mut gpui::TestApp
         selecting: false,
         scroll_remainder: 0.,
         status: None,
+        hold: None,
         _pump: None,
     });
     let window = cx.add_window(|window, cx| {
@@ -289,6 +290,7 @@ fn measured(cx: &mut gpui::TestAppContext) -> (Entity<Terminal>, gpui::VisualTes
         selecting: false,
         scroll_remainder: 0.,
         status: None,
+        hold: None,
         _pump: None,
     });
     let window = cx.add_window({

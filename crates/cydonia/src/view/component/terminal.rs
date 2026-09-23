@@ -17,10 +17,10 @@ use std::{
     sync::mpsc as channel,
 };
 use terminal::{
-    emulator::{Emulator, SelectionType},
+    emulator::{Emulator, HOLD_TIMEOUT, KeyboardMode, SelectionType},
     view::{
-        self, GridGeometry, GridSnapshot, Images, MouseAction, MouseButton, TerminalElement,
-        SELECTION_DRAG_THRESHOLD,
+        self, GridGeometry, GridSnapshot, Images, KeyEvent, MouseAction, MouseButton,
+        SELECTION_DRAG_THRESHOLD, TerminalElement,
     },
 };
 
@@ -44,7 +44,11 @@ pub fn bindings() -> Vec<KeyBinding> {
 }
 
 /// Option sends Meta using the base key, not its macOS alternate character.
-pub fn keystroke_bytes(key: &gpui::Keystroke, app_cursor: bool) -> Option<Vec<u8>> {
+pub fn keystroke_bytes(
+    key: &gpui::Keystroke,
+    mode: KeyboardMode,
+    event: KeyEvent,
+) -> Option<Vec<u8>> {
     let meta_char = if key.modifiers.alt && !key.modifiers.control && key.key.chars().count() == 1 {
         Some(if key.modifiers.shift {
             key.key.to_uppercase()
@@ -58,7 +62,8 @@ pub fn keystroke_bytes(key: &gpui::Keystroke, app_cursor: bool) -> Option<Vec<u8
         &key.key,
         meta_char.as_deref().or(key.key_char.as_deref()),
         &key.modifiers,
-        app_cursor,
+        mode,
+        event,
     )
 }
 
@@ -224,6 +229,8 @@ pub struct Terminal {
     selecting: bool,
     scroll_remainder: f32,
     status: Option<String>,
+    /// Pending release of a render hold, armed while one is on.
+    hold: Option<Task<()>>,
     _pump: Option<Task<()>>,
 }
 
@@ -240,6 +247,7 @@ impl Terminal {
             selecting: false,
             scroll_remainder: 0.,
             status: None,
+            hold: None,
             _pump: None,
         };
         match Shell::open(cwd) {
@@ -251,6 +259,7 @@ impl Terminal {
                             .update(cx, |this, cx| {
                                 let reply = this.emulator.feed(&bytes);
                                 this.write(reply);
+                                this.arm_hold_release(cx);
                                 if let Some(directory) = this
                                     .shell
                                     .as_ref()
@@ -288,14 +297,53 @@ impl Terminal {
     }
 
     fn key(&mut self, event: &gpui::KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
-        let key = &event.keystroke;
-        if let Some(bytes) = keystroke_bytes(key, self.emulator.app_cursor_mode()) {
+        let kind = if event.is_held {
+            KeyEvent::Repeat
+        } else {
+            KeyEvent::Press
+        };
+        self.send_key(&event.keystroke, kind, cx);
+    }
+
+    fn key_up(&mut self, event: &gpui::KeyUpEvent, _: &mut Window, cx: &mut Context<Self>) {
+        self.send_key(&event.keystroke, KeyEvent::Release, cx);
+    }
+
+    /// Hand one key to the program. A release only encodes under the kitty
+    /// keyboard protocol, so off it this is a no-op.
+    fn send_key(&mut self, key: &gpui::Keystroke, event: KeyEvent, cx: &mut Context<Self>) {
+        let Some(bytes) = keystroke_bytes(key, self.emulator.keyboard_mode(), event) else {
+            return;
+        };
+        // Letting a key go is not the user typing: it must not drop the
+        // selection or pull the view back to the live bottom.
+        if !matches!(event, KeyEvent::Release) {
             self.emulator.clear_selection();
             self.emulator.scroll_to_bottom();
-            self.write(bytes);
-            cx.stop_propagation();
-            cx.notify();
         }
+        self.write(bytes);
+        cx.stop_propagation();
+        cx.notify();
+    }
+
+    /// Release a render hold the program never ended. The emulator has no
+    /// clock, so a program that sets mode 2026 and dies would otherwise leave
+    /// the grid on its half-drawn frame for good.
+    ///
+    /// Re-armed on every read: a program still writing inside its frame is
+    /// alive, and this is here for one that is not.
+    fn arm_hold_release(&mut self, cx: &mut Context<Self>) {
+        if !self.emulator.render_hold() {
+            self.hold = None;
+            return;
+        }
+        self.hold = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(HOLD_TIMEOUT).await;
+            let _ = this.update(cx, |this, cx| {
+                this.emulator.release_hold();
+                cx.notify();
+            });
+        }));
     }
 
     fn copy(&mut self, _: &input::Copy, _: &mut Window, cx: &mut Context<Self>) {
@@ -427,6 +475,7 @@ impl Render for Terminal {
                     .key_context(CONTEXT)
                     .track_focus(&self.focus)
                     .on_key_down(cx.listener(Self::key))
+                    .on_key_up(cx.listener(Self::key_up))
                     .on_action(|_: &IncreaseTextSize, _, cx| typography::zoom_terminal(1., cx))
                     .on_action(|_: &DecreaseTextSize, _, cx| typography::zoom_terminal(-1., cx))
                     .on_action(|_: &ResetTextSize, _, cx| typography::reset_terminal_zoom(cx))
