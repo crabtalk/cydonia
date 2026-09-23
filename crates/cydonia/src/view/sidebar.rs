@@ -1095,8 +1095,8 @@ impl Cydonia {
                 .relative()
                 .on_mouse_down(
                     MouseButton::Right,
-                    cx.listener(move |this, _, _, cx| {
-                        this.toggle_menu(Menu::Entry(row), cx);
+                    cx.listener(move |this, press: &gpui::MouseDownEvent, _, cx| {
+                        this.toggle_menu_at(Menu::Entry(row), Some(press.position), cx);
                     }),
                 )
                 .children(
@@ -1992,14 +1992,17 @@ impl Cydonia {
             move |this, _, cx| this.ask_delete(entry, cx),
         ));
         let id = SharedString::from("header-menu-card");
-        // Right-aligned: every route into this menu — the dots button, the
-        // pin, a right press — has its affordance at the row's end, and the
-        // card drops from there.
-        Some(popover::anchored_menu_below_end(
-            id.clone(),
-            self.menu_card(id, rows, cx),
-            None,
-        ))
+        // A right press carries a point, and the card stands at it. From a
+        // button — the `···`, the pin — there is none, and the card drops
+        // right-aligned to the trigger, whose affordance is at the row's end.
+        Some(match self.menu_point(&at) {
+            Some(point) => popover::menu_at(id.clone(), point, self.menu_card(id, rows, cx), None),
+            None => popover::anchored_menu_below_end(
+                id.clone(),
+                self.menu_card(id, rows, cx),
+                None,
+            ),
+        })
     }
 
     /// Drop an entry, file and all. Deleting the session on screen lands on

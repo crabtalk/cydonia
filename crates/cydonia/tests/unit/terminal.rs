@@ -38,7 +38,10 @@ fn shell_has_session_directory_terminal_environment_and_resizes() {
         .unwrap();
     shell
         .input
-        .send(b"printf '\\nCWD:%s\\nTERM:%s\\n' \"$PWD\" \"$TERM\"; stty size; exit\n".to_vec())
+        .send(
+            b"printf '\\nCWD:%s\\nTERM:%s\\nKITTY:%s\\n' \"$PWD\" \"$TERM\" \"$KITTY_WINDOW_ID\"; stty size; exit\n"
+                .to_vec(),
+        )
         .unwrap();
     let bytes = output
         .recv_timeout(Duration::from_secs(10))
@@ -46,6 +49,7 @@ fn shell_has_session_directory_terminal_environment_and_resizes() {
     let text = String::from_utf8_lossy(&bytes);
     assert!(text.contains("CWD:/private/tmp\r\n"), "{text}");
     assert!(text.contains("TERM:xterm-256color\r\n"), "{text}");
+    assert!(text.contains("KITTY:1\r\n"), "{text}");
     assert!(text.contains("37 101\r\n"), "{text}");
 }
 
@@ -207,6 +211,7 @@ fn copy_terminal_selection_takes_priority_over_transcript(cx: &mut gpui::TestApp
         shell: None,
         focus: cx.focus_handle(),
         geometry: None,
+        pressed: None,
         selecting: false,
         scroll_remainder: 0.,
         status: None,
@@ -268,4 +273,96 @@ fn cmd_t_adds_a_focused_tab_in_the_bottom_panel(cx: &mut gpui::TestAppContext) {
             })
             .unwrap();
     }
+}
+
+/// A terminal with a measured grid, and no shell behind it.
+fn measured(cx: &mut gpui::TestAppContext) -> (Entity<Terminal>, gpui::VisualTestContext) {
+    cx.update(|cx| Theme::install(bezel::theme::Appearance::Dark, cx));
+    let view = cx.new(|cx| Terminal {
+        directory: Path::new("/private/tmp").into(),
+        emulator: Emulator::new(80, 24),
+        images: terminal::view::Images::new(),
+        shell: None,
+        focus: cx.focus_handle(),
+        geometry: None,
+        pressed: None,
+        selecting: false,
+        scroll_remainder: 0.,
+        status: None,
+        _pump: None,
+    });
+    let window = cx.add_window({
+        let view = view.clone();
+        |window, cx| {
+            window.focus(&view.focus_handle(cx), cx);
+            crate::view::clipboard_tests::CopyRoot(view.into())
+        }
+    });
+    let visual = gpui::VisualTestContext::from_window(window.into(), cx);
+    (view, visual)
+}
+
+#[gpui::test]
+fn a_tracking_program_takes_the_pointer_unless_shift_is_held(cx: &mut gpui::TestAppContext) {
+    let (view, mut visual) = measured(cx);
+    view.update(&mut visual, |view, cx| {
+        view.emulator.feed(b"\x1b[?1000h\x1b[?1006h");
+        let grid = view.geometry.unwrap();
+        let at = grid.origin + gpui::point(px(grid.cell_w * 2.), px(grid.line_h / 2.));
+        assert!(view.report(
+            MouseAction::Press(MouseButton::Left),
+            at,
+            &gpui::Modifiers::none(),
+            cx
+        ));
+        assert!(!view.report(
+            MouseAction::Press(MouseButton::Left),
+            at,
+            &gpui::Modifiers::shift(),
+            cx
+        ));
+        // A program that asked for clicks alone is not told about a bare move.
+        assert!(!view.report(MouseAction::Motion(None), at, &gpui::Modifiers::none(), cx));
+    });
+}
+
+#[gpui::test]
+fn a_press_becomes_a_selection_only_past_the_drag_threshold(cx: &mut gpui::TestAppContext) {
+    let (view, mut visual) = measured(cx);
+    let grid = view.update(&mut visual, |view, cx| {
+        view.emulator.feed(b"terminal text");
+        cx.notify();
+        view.geometry.unwrap()
+    });
+    visual.run_until_parked();
+    let row = px(grid.line_h / 2.);
+    let start = grid.origin + gpui::point(px(0.), row);
+    visual.simulate_mouse_move(start, None, gpui::Modifiers::none());
+    visual.simulate_event(gpui::MouseDownEvent {
+        button: gpui::MouseButton::Left,
+        position: start,
+        modifiers: gpui::Modifiers::none(),
+        click_count: 1,
+        first_mouse: false,
+    });
+    visual.simulate_mouse_move(
+        start + gpui::point(px(1.), px(0.)),
+        Some(gpui::MouseButton::Left),
+        gpui::Modifiers::none(),
+    );
+    view.read_with(&visual, |view, _| {
+        assert!(!view.selecting);
+        assert_eq!(view.emulator.selection_text(), None);
+    });
+    visual.simulate_mouse_move(
+        grid.origin + gpui::point(px(grid.cell_w * 13.), row),
+        Some(gpui::MouseButton::Left),
+        gpui::Modifiers::none(),
+    );
+    view.read_with(&visual, |view, _| {
+        assert_eq!(
+            view.emulator.selection_text().as_deref(),
+            Some("terminal text")
+        );
+    });
 }

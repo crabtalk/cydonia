@@ -389,6 +389,10 @@ pub struct Cydonia {
     /// the way [`Cydonia::menu_pressed`] is read by `toggle_menu`.
     pub(crate) info_pressed: bool,
     pub(crate) menu: Option<Menu>,
+    /// Where the open menu's card stands, when it was opened by a press with a
+    /// point to it rather than from a trigger — see
+    /// [`Cydonia::toggle_menu_at`].
+    pub(crate) menu_point: Option<gpui::Point<gpui::Pixels>>,
     pub(crate) sidebar_hovered: Option<Menu>,
     /// Which of the open menu's rows is live. Held here rather than in the
     /// card, which is rebuilt every frame: the pointer moves the cursor, and
@@ -816,6 +820,7 @@ impl Cydonia {
             making: None,
             info_pressed: false,
             menu: None,
+            menu_point: None,
             sidebar_hovered: None,
             menu_cursor: Cursor::default(),
             menu_pressed: false,
