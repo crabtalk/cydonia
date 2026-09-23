@@ -97,3 +97,12 @@ fn record(id: &str) -> Record {
         sent_at: Default::default(),
     }
 }
+
+/// Stamps handed out in one process never repeat, however fast they are asked for.
+#[test]
+fn fresh_stamps_never_repeat() {
+    let stamps: Vec<u128> = (0..1000)
+        .map(|_| cydonia_artifact::stamp::fresh())
+        .collect();
+    assert!(stamps.windows(2).all(|pair| pair[0] < pair[1]));
+}

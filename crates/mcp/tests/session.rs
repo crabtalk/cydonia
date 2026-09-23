@@ -196,3 +196,35 @@ fn a_query_with_quotes_is_found() {
 
     assert!(hits.contains(&format!("{at}:1")), "{hits}");
 }
+
+/// A message from a session says which turn of it sent it.
+#[test]
+fn a_message_from_a_session_is_signed_with_its_turn() {
+    let scratch = Scratch::new("session-send-signed");
+    let server = scratch.server();
+    let rail = Rail;
+    let from = filed(&scratch, &[("one", "a"), ("two", "b")]);
+    let to = filed(&scratch, &[("hello", "hi")]);
+    let caller = artifact::entry::Registry::open(scratch.path())
+        .unwrap()
+        .resolve("session", from[1..].parse().unwrap())
+        .unwrap()
+        .unwrap();
+    let target = artifact::entry::Registry::open(scratch.path())
+        .unwrap()
+        .resolve("session", to[1..].parse().unwrap())
+        .unwrap()
+        .unwrap();
+
+    said(server.call_from(
+        "session_send",
+        json!({ "session": to, "message": "foo" }),
+        Some(scratch.path()),
+        Some(&caller),
+    ));
+
+    assert!(rail.was_asked(Change::Send {
+        session: target,
+        message: format!("from {from}:2\n\nfoo"),
+    }));
+}

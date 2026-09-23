@@ -137,6 +137,11 @@ fn send(args: Args<'_>) -> Outcome {
             project.display()
         )));
     }
+    let signed = match sender(&args, project) {
+        Some(from) => format!("from {from}\n\n{message}"),
+        None => message.to_owned(),
+    };
+    let message = signed.as_str();
     let Some(named) = args.maybe(SESSION) else {
         return start(project, args.maybe(AGENT), message);
     };
@@ -158,6 +163,25 @@ fn send(args: Args<'_>) -> Outcome {
         message: message.to_owned(),
     })?;
     Ok(Answer::said(format!("sent to #{number} {}", entry.title)))
+}
+
+/// The calling session as a reference to the turn it is on — `#42:7`, or
+/// `foo#42:7` when the message leaves its project. Nothing for a caller that is
+/// not a session, or one with no turn on disk yet.
+fn sender(args: &Args<'_>, to: &Path) -> Option<String> {
+    let (at, record) = (args.at()?, args.session()?);
+    let turn = chat::turns(&fs::Project::new(at).session(record)?.items).len();
+    let number = artifact::entry::number(at, "session", record).ok()?;
+    let project = match same_dir(at, to) {
+        true => String::new(),
+        false => at.file_name()?.to_string_lossy().into_owned(),
+    };
+    (turn > 0).then(|| format!("{project}#{number}:{turn}"))
+}
+
+fn same_dir(a: &Path, b: &Path) -> bool {
+    let settled = |path: &Path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    settled(a) == settled(b)
 }
 
 /// A new session on `agent`, seeded with `message`.

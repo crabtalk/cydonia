@@ -447,9 +447,11 @@ impl Workspace {
         let open = self.projects.get(project)?;
         let path = open.path.clone();
         Some(match showing {
-            Showing::Session(id) => {
-                Member::new(path, MemberKind::Session, open.session(id)?.record.clone()?)
-            }
+            Showing::Session(id) => Member::new(
+                path,
+                MemberKind::Session,
+                open.session(id)?.filed()?.to_owned(),
+            ),
             Showing::Board(ix) => {
                 Member::new(path, MemberKind::Board, open.boards.get(ix)?.id.clone())
             }

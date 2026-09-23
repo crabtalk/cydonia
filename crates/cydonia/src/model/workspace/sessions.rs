@@ -145,7 +145,7 @@ impl Workspace {
         // has said nothing is not yet somewhere to come back to.
         if let Some(record) = self.projects[ix]
             .session(id)
-            .and_then(|chat| chat.record.clone())
+            .and_then(|chat| chat.filed().map(str::to_owned))
         {
             self.note_landing(ix, state::Kind::Session, record, cx);
         }
@@ -254,7 +254,7 @@ impl Workspace {
             chat.resume(cx);
         }
         chat.send(content);
-        let record = chat.record.clone();
+        let record = chat.filed().map(str::to_owned);
         if let (Some(record), Some(ix)) = (record, self.project_of(id)) {
             self.note_landing(ix, state::Kind::Session, record, cx);
         }
