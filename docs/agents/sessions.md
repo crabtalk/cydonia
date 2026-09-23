@@ -26,6 +26,27 @@ gets a turn. For more than one at a time, see
 - A session can work in any project Cydonia has open, not only the one it
   started in.
 
+## The rail
+
+A session pane wide enough to leave a gutter beside the text carries a column
+of marks down its left edge, one per turn. It answers two things at once: how
+much of the session is on screen, and which turn of it you are on.
+
+- The brightest mark is the turn you are reading — the first one on screen,
+  counting from the top of the pane. Scrolling to the end does not move it to
+  the last turn; it stays on whichever turn heads the screen.
+- The marks under it are the other turns on screen. Any part of a turn counts,
+  so a prompt half cut off by the top edge is still lit.
+- Every other turn in the session is dim.
+- Hover a mark for the prompt that opened its turn. Press it to jump there;
+  pressing the last one also puts the pane back to following the agent as it
+  writes.
+
+A turn behind the composer is not on screen, and its mark stays dim.
+
+The last few turns of a long session cannot be brought to the top of the pane
+by scrolling. Press their marks to read them.
+
 ## Notifications
 
 When a turn finishes while Cydonia is in the background, the system is told. A
