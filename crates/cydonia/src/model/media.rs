@@ -4,16 +4,17 @@
 //! A document holds a URL, and bytes off the clipboard have no address
 //! anywhere — so somewhere has to be picked before an image block can exist,
 //! which is what `editor::set_image_store` asks the app. The answer is the
-//! project's `.cydonia/assets/`, the same directory agents are told to write
-//! into, so an article and a session share one store and a picture is named
-//! for its bytes wherever it came from.
+//! open article's own `assets/`, the same directory agents are told to write
+//! into, so what the app pastes and what an agent generates land together and
+//! a picture is named for its bytes wherever it came from. A session's
+//! attachments go to the project's shared `assets/` instead — a transcript is
+//! not an article.
 //!
 //! The editor names which document is asking, but what it hands over is an
 //! `Entity<Editor>` and the article behind one is the workspace's to know —
 //! so which directory to write into is still noted by [`aim`] as a document
 //! opens. One window and one document in front of it, so one target.
 
-use artifact::project::fs::Project;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use bezel::gpui::{App, Entity, Image, hash};
 use editor::{Editor, ImageStore, Source};
@@ -60,13 +61,10 @@ pub fn init(cx: &mut App) {
     );
 }
 
-/// Point at the project an article was opened from — its `content.md` sits at
-/// `<project>/.cydonia/articles/<id>/content.md`.
+/// Point at the `assets/` beside the article that was opened.
 pub fn aim(content: Option<&Path>) {
     if let Ok(mut target) = TARGET.lock() {
-        *target = content
-            .and_then(|content| content.ancestors().nth(4))
-            .map(|project| Project::new(project).assets());
+        *target = content.map(artifact::article::assets);
     }
 }
 

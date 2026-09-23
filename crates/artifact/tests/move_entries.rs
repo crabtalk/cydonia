@@ -191,3 +191,28 @@ fn a_board_with_no_lanes_keeps_the_card_where_it_was() {
     assert_eq!(board::carry_card(&mut from, &mut to, &card, None), None);
     assert_eq!(from.columns[0].cards.len(), 1);
 }
+
+/// An article's own `assets/` rides along inside its directory, and the whole
+/// paths the body holds into it are rewritten to where it landed.
+#[test]
+fn the_articles_own_pictures_come_along() {
+    let here = Scratch::new("move-local-here");
+    let there = Scratch::new("move-local-there");
+    let content = write_article(&here, "");
+    let assets = article::assets(&content);
+    fs::create_dir_all(&assets).unwrap();
+    fs::write(assets.join("media-cd.png"), "bytes").unwrap();
+    fs::write(
+        &content,
+        format!("![shot]({}/media-cd.png)\n", assets.display()),
+    )
+    .unwrap();
+
+    let arrived = article::move_to(&content, there.path()).unwrap();
+
+    let landed = article::assets(&arrived);
+    assert_eq!(fs::read(landed.join("media-cd.png")).unwrap(), b"bytes");
+    let text = fs::read_to_string(&arrived).unwrap();
+    assert!(text.contains(&landed.display().to_string()), "{text}");
+    assert!(!text.contains(&assets.display().to_string()), "{text}");
+}

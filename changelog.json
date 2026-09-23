@@ -22,6 +22,7 @@
       "A pinned row carries a pin that opens its menu, in place of the ···",
       "Fetch a fence's grammar when a document first asks for it, rather than ahead of one",
       "Name a page article_path in the agent tools, the way the app spells it",
+      "Keep a page's pictures in its own folder, so they move and are deleted with it",
       "Move to bezel 0.1.23"
     ],
     "fixed": [
@@ -109,6 +110,13 @@
     "version": "0.1.9",
     "date": "2026-09-18",
     "summary": "Split the window into panes, and a sidebar that stays where you put it.",
+    "media": {
+      "poster": "pics/cydonia/v0.1.9.jpg",
+      "src": "videos/cydonia/v0.1.9.mp4",
+      "alt": "…",
+      "w": 1280,
+      "h": 900
+    },
     "new": [
       "Split the window into panes and drag entries between them",
       "Group a layout’s entries under it in the sidebar, and let one span projects",

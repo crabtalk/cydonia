@@ -46,7 +46,7 @@ fn terminal_meta_uses_letters_instead_of_option_characters() {
         key.key_char = Some(character.into());
         for app_cursor in [false, true] {
             assert_eq!(
-                keystroke_bytes(&key, legacy(app_cursor), KeyEvent::Press),
+                keystroke_bytes(&key, None, legacy(app_cursor), KeyEvent::Press),
                 Some(expected.as_bytes().to_vec())
             );
         }
@@ -58,7 +58,7 @@ fn terminal_preserves_text_control_and_app_shortcuts() {
     let mut key = gpui::Keystroke::parse("a").unwrap();
     key.key_char = Some("文".into());
     assert_eq!(
-        keystroke_bytes(&key, legacy(false), KeyEvent::Press),
+        keystroke_bytes(&key, None, legacy(false), KeyEvent::Press),
         Some("文".as_bytes().to_vec())
     );
     for (chord, expected) in [
@@ -72,6 +72,7 @@ fn terminal_preserves_text_control_and_app_shortcuts() {
         assert_eq!(
             keystroke_bytes(
                 &gpui::Keystroke::parse(chord).unwrap(),
+                None,
                 legacy(false),
                 KeyEvent::Press
             ),

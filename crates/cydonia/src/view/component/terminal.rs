@@ -46,6 +46,7 @@ pub fn bindings() -> Vec<KeyBinding> {
 /// Option sends Meta using the base key, not its macOS alternate character.
 pub fn keystroke_bytes(
     key: &gpui::Keystroke,
+    layout: Option<&gpui::KeyLayout>,
     mode: KeyboardMode,
     event: KeyEvent,
 ) -> Option<Vec<u8>> {
@@ -61,6 +62,7 @@ pub fn keystroke_bytes(
     view::keystroke_bytes(
         &key.key,
         meta_char.as_deref().or(key.key_char.as_deref()),
+        layout,
         &key.modifiers,
         mode,
         event,
@@ -302,17 +304,28 @@ impl Terminal {
         } else {
             KeyEvent::Press
         };
-        self.send_key(&event.keystroke, kind, cx);
+        self.send_key(&event.keystroke, event.layout.as_ref(), kind, cx);
     }
 
     fn key_up(&mut self, event: &gpui::KeyUpEvent, _: &mut Window, cx: &mut Context<Self>) {
-        self.send_key(&event.keystroke, KeyEvent::Release, cx);
+        self.send_key(
+            &event.keystroke,
+            event.layout.as_ref(),
+            KeyEvent::Release,
+            cx,
+        );
     }
 
     /// Hand one key to the program. A release only encodes under the kitty
     /// keyboard protocol, so off it this is a no-op.
-    fn send_key(&mut self, key: &gpui::Keystroke, event: KeyEvent, cx: &mut Context<Self>) {
-        let Some(bytes) = keystroke_bytes(key, self.emulator.keyboard_mode(), event) else {
+    fn send_key(
+        &mut self,
+        key: &gpui::Keystroke,
+        layout: Option<&gpui::KeyLayout>,
+        event: KeyEvent,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(bytes) = keystroke_bytes(key, layout, self.emulator.keyboard_mode(), event) else {
             return;
         };
         // Letting a key go is not the user typing: it must not drop the

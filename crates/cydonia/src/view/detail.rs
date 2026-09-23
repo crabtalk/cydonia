@@ -19,8 +19,8 @@ use crate::{
 use artifact::{session::chat::PlanStatus, space::Member};
 use bezel::{
     gpui::{
-        AnyElement, App, Axis, Context, Div, DragMoveEvent, Empty, FocusHandle, Focusable as _,
-        SharedString, Stateful, Window, div, prelude::*, px,
+        self, AnyElement, App, Axis, Context, Div, DragMoveEvent, Empty, FocusHandle,
+        Focusable as _, Pixels, Point, SharedString, Stateful, Window, div, prelude::*, px,
     },
     motion::{Fade, Painter},
     theme::{TextStyle, Theme, Typeset},
@@ -961,17 +961,17 @@ impl Cydonia {
                 icons::social::MessageCirclePlus,
                 keys::shortcut(&NewSession, window),
                 cx,
-                move |this, _, cx| this.toggle_menu(Menu::Launch, cx),
+                move |this, at, _, cx| this.toggle_menu_at(Menu::Launch, at, cx),
             );
             rows.push(
                 self.menu_press(trigger, Menu::Launch, cx)
                     .relative()
                     .children((self.menu == Some(Menu::Launch)).then(|| {
-                        popover::anchored_menu_below(
-                            "launch-menu",
-                            self.menu_card("launch-menu", picks, cx),
-                            None,
-                        )
+                        let card = self.menu_card("launch-menu", picks, cx);
+                        match self.menu_point(&Menu::Launch) {
+                            Some(point) => popover::menu_at("launch-menu", point, card, None),
+                            None => popover::anchored_menu_below("launch-menu", card, None),
+                        }
                     }))
                     .into_any_element(),
             );
@@ -983,7 +983,7 @@ impl Cydonia {
                     icons::social::MessageCirclePlus,
                     keys::shortcut(&NewSession, window),
                     cx,
-                    move |this, window, cx| this.new_session_action(&NewSession, window, cx),
+                    move |this, _, window, cx| this.new_session_action(&NewSession, window, cx),
                 )
                 .into_any_element(),
             );
@@ -996,7 +996,7 @@ impl Cydonia {
                     icons::development::SquareKanban,
                     keys::shortcut(&NewBoard, window),
                     cx,
-                    move |this, window, cx| this.ask_new_board(ix, window, cx),
+                    move |this, _, window, cx| this.ask_new_board(ix, window, cx),
                 )
                 .into_any_element(),
             );
@@ -1008,7 +1008,7 @@ impl Cydonia {
                 icons::files::FilePlus,
                 keys::shortcut(&NewArticle, window),
                 cx,
-                move |this, window, cx| this.new_article(ix, window, cx),
+                move |this, _, window, cx| this.new_article(ix, window, cx),
             )
             .into_any_element(),
         );
@@ -1020,7 +1020,7 @@ impl Cydonia {
                     icons::files::Table2,
                     keys::shortcut(&NewTable, window),
                     cx,
-                    move |this, window, cx| this.new_table(ix, window, cx),
+                    move |this, _, window, cx| this.new_table(ix, window, cx),
                 )
                 .into_any_element(),
             );
@@ -1044,7 +1044,7 @@ impl Cydonia {
         glyph: impl Into<Icon>,
         chord: Option<SharedString>,
         cx: &mut Context<Self>,
-        make: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
+        make: impl Fn(&mut Self, Option<Point<Pixels>>, &mut Window, &mut Context<Self>) + 'static,
     ) -> Stateful<Div> {
         let theme = Theme::of(cx).clone();
         let (id, label) = (id.into(), label.into());
@@ -1064,7 +1064,14 @@ impl Cydonia {
             )
             .child(div().flex_1().child(label))
             .children(chord.map(|chord| popover::kbd_hint(&theme, chord)))
-            .on_click(cx.listener(move |this, _, window, cx| make(this, window, cx)))
+            // The press carries where it landed, for a row whose menu stands
+            // at the pointer. `None` off the keyboard, which has no point to
+            // it — see [`Cydonia::toggle_menu_at`].
+            .on_click(
+                cx.listener(move |this, click: &gpui::ClickEvent, window, cx| {
+                    make(this, click.mouse_position(), window, cx)
+                }),
+            )
     }
 
     /// The session a chat pane is on. Nothing where one was asked for with no

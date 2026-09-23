@@ -59,7 +59,9 @@ impl Project {
         self.root.join(DIR)
     }
 
-    /// Shared media that agents can manage without editing artifact metadata.
+    /// Media that belongs to the project rather than to one article: what a
+    /// session's messages carry, and the pictures in articles written before
+    /// each held its own `assets/`.
     pub fn assets(&self) -> PathBuf {
         self.cydonia().join("assets")
     }

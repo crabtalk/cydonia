@@ -50,10 +50,3 @@ opt-level = "z"
 lto = "fat"
 codegen-units = 1
 strip = "symbols"
-
-[patch.crates-io]
-bezel = { path = "../bezel/crates/bezel" }
-bezel-editor = { path = "../bezel/crates/editor" }
-bezel-markdown = { path = "../bezel/crates/markdown" }
-bezel-syntax = { path = "../bezel/crates/syntax" }
-bezel-terminal = { path = "../bezel/crates/terminal" }
