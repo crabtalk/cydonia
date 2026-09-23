@@ -2235,6 +2235,7 @@ dependencies = [
  "axum",
  "cydonia-artifact",
  "cydonia-prompts",
+ "regex",
  "serde",
  "serde_json",
  "tokio",

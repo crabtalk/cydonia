@@ -941,22 +941,7 @@ impl ChatSession {
     }
 }
 
-/// Whether nothing has been said in a transcript yet.
-///
-/// Not the same as holding no items. An agent writes to stderr as it starts —
-/// a deprecation warning, a runtime's banner — and every line of that is an
-/// item before anybody has typed a word. It is the process talking about
-/// itself rather than a conversation, so a session carrying only that is still
-/// one nothing has been said in: it keeps its empty state, and it mints no
-/// file.
-///
-/// A [`ChatItem::Notice`] does count. A connection that failed is the app
-/// saying so, and that is worth the transcript and the file both.
-pub fn nothing_said(items: &[ChatItem]) -> bool {
-    items
-        .iter()
-        .all(|item| matches!(item, ChatItem::Process { .. }))
-}
+pub use artifact::session::chat::nothing_said;
 
 /// What was run, as a command line — the head of the block its output fills.
 pub fn command_line(entry: &settings::Agent) -> String {

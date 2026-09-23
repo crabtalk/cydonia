@@ -8,7 +8,7 @@
 
 use crate::{
     model::{
-        session::{ChatSession, nothing_said},
+        session::ChatSession,
         workspace::Workspace,
     },
     view::root,
@@ -243,24 +243,11 @@ struct Turn {
     range: Range<usize>,
 }
 
-/// Start a turn at every question. The leading chunk of a session has none —
-/// a connection that failed before the first prompt is still something to show.
 fn turns(items: &[ChatItem]) -> Vec<Turn> {
-    let mut turns = Vec::new();
-    let mut start = 0;
-    for ix in 1..=items.len() {
-        if ix < items.len() && !matches!(items[ix], ChatItem::User(_)) {
-            continue;
-        }
-        // Startup stderr is not a conversation turn and has no rail mark.
-        if nothing_said(&items[start..ix]) {
-            start = ix;
-            continue;
-        }
-        turns.push(Turn { range: start..ix });
-        start = ix;
-    }
-    turns
+    artifact::session::chat::turns(items)
+        .into_iter()
+        .map(|range| Turn { range })
+        .collect()
 }
 
 /// User messages, agent responses, and session notices share selectable prose.

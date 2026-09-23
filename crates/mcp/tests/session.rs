@@ -64,3 +64,135 @@ fn no_session_starts_one_on_the_named_agent() {
         message: "foo".to_owned(),
     }));
 }
+
+/// A session filed in `scratch` holding `said`, a question and its answer
+/// per pair. Answers its reference.
+fn filed(scratch: &Scratch, said: &[(&str, &str)]) -> String {
+    use artifact::project::Project as _;
+    let store = scratch.store();
+    let record = store.create_session().unwrap();
+    let items: Vec<_> = said
+        .iter()
+        .flat_map(|(asked, answered)| [json!({ "User": asked }), json!({ "Agent": answered })])
+        .collect();
+    let filed: artifact::session::record::Record = serde_json::from_value(json!({
+        "id": record, "agent": "claude", "title": "Talk", "name": null,
+        "updated": 0, "items": items,
+    }))
+    .unwrap();
+    store.save_session(&filed);
+    format!(
+        "#{}",
+        artifact::entry::number(scratch.path(), "session", &record).unwrap()
+    )
+}
+
+#[test]
+fn a_run_of_turns_is_read_by_reference() {
+    let scratch = Scratch::new("session-read");
+    let server = scratch.server();
+    let at = filed(
+        &scratch,
+        &[("one", "a"), ("two", "b"), ("three", "c"), ("four", "d")],
+    );
+
+    let read = said(server.call(
+        "session_read",
+        json!({ "session": format!("{at}:2-3") }),
+        Some(scratch.path()),
+    ));
+
+    assert!(read.contains(&format!("## {at}:2")), "{read}");
+    assert!(
+        read.contains("user: two") && read.contains("agent: c"),
+        "{read}"
+    );
+    assert!(
+        !read.contains("user: one") && !read.contains("user: four"),
+        "{read}"
+    );
+}
+
+#[test]
+fn without_turns_the_latest_are_read() {
+    let scratch = Scratch::new("session-read-latest");
+    let server = scratch.server();
+    let at = filed(
+        &scratch,
+        &[("one", "a"), ("two", "b"), ("three", "c"), ("four", "d")],
+    );
+
+    let read = said(server.call(
+        "session_read",
+        json!({ "session": at }),
+        Some(scratch.path()),
+    ));
+
+    assert!(read.contains("turns 2-4 of 4"), "{read}");
+    assert!(!read.contains("user: one"), "{read}");
+}
+
+#[test]
+fn a_turn_past_the_end_is_refused() {
+    let scratch = Scratch::new("session-read-past");
+    let server = scratch.server();
+    let at = filed(&scratch, &[("one", "a")]);
+
+    let why = refused(server.call(
+        "session_read",
+        json!({ "session": at, "turns": "3" }),
+        Some(scratch.path()),
+    ));
+
+    assert!(why.contains("has 1 turns"), "{why}");
+}
+
+#[test]
+fn a_search_answers_turn_references() {
+    let scratch = Scratch::new("session-search");
+    let server = scratch.server();
+    let first = filed(
+        &scratch,
+        &[("where is the parser", "in artifact"), ("thanks", "ok")],
+    );
+    let second = filed(&scratch, &[("hello", "hi"), ("PARSER again", "yes")]);
+
+    let hits = said(server.call(
+        "session_search",
+        json!({ "query": "parser" }),
+        Some(scratch.path()),
+    ));
+
+    assert!(
+        hits.contains(&format!("{first}:1 Talk — where is the parser")),
+        "{hits}"
+    );
+    assert!(
+        hits.contains(&format!("{second}:2 Talk — PARSER again")),
+        "{hits}"
+    );
+    assert!(!hits.contains(&format!("{first}:2")), "{hits}");
+
+    let one = said(server.call(
+        "session_search",
+        json!({ "query": "parser", "session": second }),
+        Some(scratch.path()),
+    ));
+    assert!(!one.contains(&first), "{one}");
+}
+
+/// A query is found however the file had to escape it.
+#[test]
+fn a_query_with_quotes_is_found() {
+    let scratch = Scratch::new("session-search-quotes");
+    let server = scratch.server();
+    let at = filed(&scratch, &[(r#"say "hi" to C:\temp"#, "ok")]);
+
+    let hits = said(server.call(
+        "session_search",
+        json!({ "query": r#""HI" to c:\"# }),
+        Some(scratch.path()),
+    ));
+
+    assert!(hits.contains(&format!("{at}:1")), "{hits}");
+}

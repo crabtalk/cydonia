@@ -141,6 +141,20 @@ impl Project {
         Some(board)
     }
 
+    /// Every session file in this project by the id it is filed under,
+    /// unread.
+    pub fn session_files(&self) -> Vec<(String, PathBuf)> {
+        let Ok(entries) = std::fs::read_dir(self.sessions_dir()) else {
+            return Vec::new();
+        };
+        entries
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
+            .map(|path| (stem(&path), path))
+            .collect()
+    }
+
     fn sessions_dir(&self) -> PathBuf {
         self.cydonia().join(SESSIONS)
     }
