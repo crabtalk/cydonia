@@ -133,8 +133,8 @@ pub fn bindings() -> Vec<KeyBinding> {
         KeyBinding::new("escape", DismissCard, ctx),
         KeyBinding::new("escape", DismissFind, Some(FIND_CONTEXT)),
         KeyBinding::new("escape", CloseCardPreview, Some(DRAWER_CONTEXT)),
-        KeyBinding::new("cmd-enter", SaveCardDraft, Some(DRAWER_CONTEXT)),
-        KeyBinding::new("cmd-enter", SaveCardDraft, Some(DRAFT_CONTEXT)),
+        KeyBinding::new("secondary-enter", SaveCardDraft, Some(DRAWER_CONTEXT)),
+        KeyBinding::new("secondary-enter", SaveCardDraft, Some(DRAFT_CONTEXT)),
     ]
 }
 
@@ -1540,7 +1540,7 @@ impl Cydonia {
         &self,
         id: &'static str,
         glyph: &'static [u8],
-        label: &'static str,
+        label: impl Into<SharedString>,
         cx: &Context<Self>,
     ) -> Stateful<Div> {
         let theme = Theme::of(cx);
@@ -1558,7 +1558,10 @@ impl Cydonia {
                     .size(px(14.))
                     .text_color(theme.text_muted),
             )
-            .tooltip(move |window, cx| Tooltip::text(label, window, cx))
+            .tooltip({
+                let label = label.into();
+                move |window, cx| Tooltip::text(label.clone(), window, cx)
+            })
     }
 
     fn card_drawer(
@@ -1764,7 +1767,10 @@ impl Cydonia {
                                 self.drawer_action(
                                     "card-draft-save",
                                     icons::notifications::Check,
-                                    "Save card (⌘Enter)",
+                                    format!(
+                                        "Save card ({})",
+                                        bezel::ui::keys::printed("secondary-enter")
+                                    ),
                                     cx,
                                 )
                                 .on_click(cx.listener(

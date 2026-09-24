@@ -31,6 +31,10 @@ use cacp::{
     },
 };
 use std::process::Stdio;
+
+/// `CREATE_NO_WINDOW` from the Win32 process creation flags.
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 use std::{
     path::PathBuf,
     sync::{Arc, OnceLock},
@@ -161,8 +165,12 @@ impl Session {
     /// replays that session's history instead of starting fresh; a failed
     /// load (stale id, agent restart) falls back to a new session.
     pub async fn spawn(entry: &settings::Agent, launch: Launch, tx: Sender) -> Result<Self> {
-        let mut command = Command::new(&entry.command);
+        let mut command = Command::new(super::path::program(&entry.command));
         command.args(&entry.args).envs(&entry.env);
+        // A console program started from a GUI process opens a console window
+        // of its own on Windows.
+        #[cfg(windows)]
+        command.creation_flags(CREATE_NO_WINDOW);
         // HTTP clients can inherit a system proxy that does not exempt IP
         // loopback addresses. Our MCP server must be reached directly. Merge
         // both spellings because agents differ in which one they honor.

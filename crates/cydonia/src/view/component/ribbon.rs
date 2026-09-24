@@ -161,13 +161,14 @@ pub fn formats(formatting: &Formatting) -> Vec<Format> {
 /// Code is the second one spent that way: ⌘E is Plain text here. Both are
 /// chords the reader can move, so what a moved one leaves behind is the
 /// editor's own mark, reachable from this bar either way.
-pub fn keystroke(mark: &Mark) -> Option<&'static str> {
-    match mark {
-        Mark::Italic => Some("⌘I"),
-        Mark::Strike => Some("⇧⌘X"),
-        Mark::Custom(name) if name == editor::HIGHLIGHT_MARK => Some("⇧⌘H"),
-        _ => None,
-    }
+pub fn keystroke(mark: &Mark) -> Option<SharedString> {
+    let chord = match mark {
+        Mark::Italic => "secondary-i",
+        Mark::Strike => "secondary-shift-x",
+        Mark::Custom(name) if name == editor::HIGHLIGHT_MARK => "secondary-shift-h",
+        _ => return None,
+    };
+    Some(bezel::ui::keys::printed(chord))
 }
 
 /// The link the selection carries throughout, if it carries one.
@@ -399,7 +400,7 @@ impl Cydonia {
             .h(px(BUTTON))
             .justify_center()
             .child(icons::icon(icon).size(px(15.)).text_color(tint))
-            .tooltip(move |window, cx| match key {
+            .tooltip(move |window, cx| match key.clone() {
                 Some(key) => Tooltip::with_keystroke(label, key, window, cx),
                 None => Tooltip::text(label, window, cx),
             })

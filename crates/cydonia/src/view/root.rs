@@ -234,7 +234,14 @@ pub fn bindings() -> Vec<KeyBinding> {
         KeyBinding::new("ctrl-alt-w", ClosePane, Some("Cydonia")),
         KeyBinding::new("ctrl-alt-z", ZoomPane, Some("Cydonia")),
         // Scope the fallback to the root so focused text surfaces take priority.
-        KeyBinding::new("cmd-c", CopySelection, Some("Cydonia")),
+        KeyBinding::new(
+            "secondary-c",
+            CopySelection,
+            Some(super::keymap::platform(
+                "Cydonia",
+                "Cydonia && !CydoniaTerminal",
+            )),
+        ),
         KeyBinding::new("enter", CommitName, Some(RENAME_CONTEXT)),
         KeyBinding::new("escape", DismissName, Some(RENAME_CONTEXT)),
     ]

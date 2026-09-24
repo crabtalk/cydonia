@@ -1,6 +1,6 @@
 //! A session's shell: the PTY lives as long as this entity, even while hidden.
 
-use crate::model::typography;
+use crate::{model::typography, view::keymap};
 use bezel::{
     gpui::{
         self, App, ClipboardEntry, ClipboardItem, Context, Entity, EventEmitter, ExternalPaths,
@@ -56,13 +56,22 @@ gpui::actions!(
 
 pub fn bindings() -> Vec<KeyBinding> {
     vec![
-        KeyBinding::new("cmd-c", input::Copy, Some(CONTEXT)),
-        KeyBinding::new("cmd-v", input::Paste, Some(CONTEXT)),
-        KeyBinding::new("cmd-=", IncreaseTextSize, Some(CONTEXT)),
-        KeyBinding::new("cmd-+", IncreaseTextSize, Some(CONTEXT)),
-        KeyBinding::new("cmd-shift-=", IncreaseTextSize, Some(CONTEXT)),
-        KeyBinding::new("cmd--", DecreaseTextSize, Some(CONTEXT)),
-        KeyBinding::new("cmd-0", ResetTextSize, Some(CONTEXT)),
+        // Off macOS `ctrl-c` and `ctrl-v` are the shell's.
+        KeyBinding::new(
+            keymap::platform("cmd-c", "ctrl-shift-c"),
+            input::Copy,
+            Some(CONTEXT),
+        ),
+        KeyBinding::new(
+            keymap::platform("cmd-v", "ctrl-shift-v"),
+            input::Paste,
+            Some(CONTEXT),
+        ),
+        KeyBinding::new("secondary-=", IncreaseTextSize, Some(CONTEXT)),
+        KeyBinding::new("secondary-+", IncreaseTextSize, Some(CONTEXT)),
+        KeyBinding::new("secondary-shift-=", IncreaseTextSize, Some(CONTEXT)),
+        KeyBinding::new("secondary--", DecreaseTextSize, Some(CONTEXT)),
+        KeyBinding::new("secondary-0", ResetTextSize, Some(CONTEXT)),
     ]
 }
 

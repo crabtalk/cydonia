@@ -1,7 +1,11 @@
 //! What the login shell's answer is worth: reading a PATH out of it, and
 //! what that PATH is joined with.
 
-use cydonia::agent::path::{merge, parse};
+use cydonia::agent::path::{merge, parse, resolve};
+use std::{
+    ffi::OsStr,
+    path::{Path, PathBuf},
+};
 
 /// The plain case — an `env` dump, one variable per line, in no order this
 /// side chose.
@@ -54,4 +58,32 @@ fn an_inherited_entry_the_shell_lacks_is_kept() {
 fn empty_entries_are_dropped() {
     assert_eq!(merge("/usr/bin::/bin", ""), "/usr/bin:/bin");
     assert_eq!(merge("", "/usr/bin"), "/usr/bin");
+}
+
+/// Windows' launcher finds only `.exe` on the PATH, and npm links `.cmd` shims.
+#[test]
+fn a_bare_name_finds_its_shim_under_pathext() {
+    let path = std::env::join_paths(["/a", "/b"]).unwrap();
+    let found = resolve("npx", &path, ".COM;.EXE;.CMD", |p: &Path| {
+        p == Path::new("/b/npx.cmd")
+    });
+    assert_eq!(found, Some(PathBuf::from("/b/npx.cmd")));
+}
+
+/// An installed agent's command is the extensionless `.bin` shim beside the
+/// `.cmd` npm wrote for Windows.
+#[test]
+fn a_path_without_an_extension_finds_the_shim_beside_it() {
+    let found = resolve("/x/.bin/agent", OsStr::new(""), ".EXE;.CMD", |p: &Path| {
+        p == Path::new("/x/.bin/agent.cmd")
+    });
+    assert_eq!(found, Some(PathBuf::from("/x/.bin/agent.cmd")));
+}
+
+#[test]
+fn a_name_with_an_extension_is_taken_as_written() {
+    assert_eq!(
+        resolve("node.exe", OsStr::new("/a"), ".EXE", |_: &Path| true),
+        None
+    );
 }

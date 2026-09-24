@@ -17,7 +17,7 @@ axum = "0.8"
 base64 = "0.22"
 bezel = { version = "0.1.27", features = ["platform"] }
 cacp = { version = "0.1.2", default-features = false }
-cacp-agents = "0.1.0"
+cacp-agents = "0.1.2"
 chrono = "0.4"
 dirs = "6"
 editor = { version = "0.1.27", package = "bezel-editor" }

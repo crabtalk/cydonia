@@ -26,6 +26,7 @@ use crate::{
     view::{
         article::TogglePlainText,
         component::menu::{self as card, Menu as Open},
+        keymap,
         leaf::Pane,
         root::{
             CloseProject, Cydonia, NewArticle, NewBoard, NewSession, NewSessionNext,
@@ -67,6 +68,13 @@ actions!(
 /// an app these and there is no nib here — an item whose action nothing has
 /// bound shows no shortcut and answers to none, ⌘Q included.
 pub fn bindings() -> Vec<KeyBinding> {
+    if !NATIVE {
+        return vec![
+            KeyBinding::new("ctrl-q", Quit, keymap::GLOBAL),
+            KeyBinding::new("ctrl-w", CloseWindow, keymap::GLOBAL),
+            KeyBinding::new("f11", ToggleFullScreen, None),
+        ];
+    }
     vec![
         KeyBinding::new("cmd-q", Quit, None),
         KeyBinding::new("cmd-h", Hide, None),
