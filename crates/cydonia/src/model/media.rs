@@ -161,8 +161,8 @@ fn extension(path: &Path) -> Option<String> {
 /// Into the `assets/` of the article the editor is on, answered relative to
 /// the article's folder. An editor with no base is not an article's, and lets
 /// the picture go.
-fn keep(source: Source, editor: &Entity<Editor>, cx: &App) -> Option<String> {
-    let base = editor.read(cx).base()?.to_path_buf();
+fn keep(source: Source, _: &Entity<Editor>, base: Option<&Path>, _: &App) -> Option<String> {
+    let base = base?.to_path_buf();
     let dir = artifact::article::assets(&artifact::article::content(&base));
     let (bytes, extension) = match source {
         Source::Bytes(image) => (
