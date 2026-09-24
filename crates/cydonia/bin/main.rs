@@ -1,5 +1,8 @@
 //! Cydonia — desktop client for ACP agents.
 
+// No console window beside the app. Debug builds keep one for their output.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 use anyhow::Result;
 use bezel::{
     gpui::App,

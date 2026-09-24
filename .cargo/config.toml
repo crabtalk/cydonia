@@ -1,0 +1,4 @@
+[env]
+# Read by cl.exe and clang-cl only. The wasmtime C API headers otherwise mark
+# their symbols dllimport, and tree-sitter links them statically (LNK4217).
+CL = "-DLIBWASM_STATIC"

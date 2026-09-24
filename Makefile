@@ -25,12 +25,19 @@ ICON     := assets/icon.png
 ICON_URL := https://cdn.crabtalk.ai/logos/cydonia.png
 APP      := target/bundle/cydonia.app
 ICONSET  := target/bundle/cydonia.iconset
+# The icon on Apple's grid: $(ICON) is full-bleed, and macOS draws the tile at
+# 824 in a 1024 canvas with the margin left transparent.
+MACICON  := target/bundle/cydonia-macos.png
 DMG      := target/bundle/cydonia-$(VERSION)-$(ARCH).dmg
 DMGSTAGE := target/bundle/dmg
 DMGRW    := target/bundle/cydonia-rw.dmg
 DMGMNT   := target/bundle/mnt
 # The ten `.icns` wants. Each is also emitted at @2x, so 512 covers 1024.
 SIZES    := 16 32 128 256 512
+LINUXAPP := target/bundle/linux/cydonia.app
+TARBALL  := target/bundle/cydonia-linux-$(ARCH).tar.gz
+# The hicolor sizes the Linux tarball carries.
+LINUXSIZES := 16 32 48 64 128 256 512
 # Ad-hoc, and every target but `release` leaves it that way: a local build signs
 # with no certificate and opens on the machine that built it and nowhere else.
 # `release` overrides this from .env.release, which is the only place a
@@ -41,11 +48,11 @@ SIGN     ?= -
 # wants Xcode; this wants nothing.
 CUSTOMICON := 0000000000000000040000000000000000000000000000000000000000000000
 
-.PHONY: bundle dmg release icon open clean
+.PHONY: bundle dmg release tarball icon open clean
 
 bundle:
 	cargo build --profile $(PROFILE) $(CARGOOPT)
-	rm -rf $(APP) $(ICONSET)
+	rm -rf $(APP) $(ICONSET) $(MACICON)
 	mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources
 	cp target/$(PROFILE)/cydonia $(APP)/Contents/MacOS/cydonia
 	sed 's/@VERSION@/$(VERSION)/g' bundle/Info.plist > $(APP)/Contents/Info.plist
@@ -55,12 +62,14 @@ bundle:
 	@[ -f $(ICON) ] || $(MAKE) --no-print-directory icon || true
 	@if [ -f $(ICON) ]; then \
 		mkdir -p $(ICONSET); \
+		sips -s format png -Z 824 $(ICON) --out $(MACICON) >/dev/null; \
+		sips --padToHeightWidth 1024 1024 $(MACICON) >/dev/null; \
 		for s in $(SIZES); do \
-			sips -s format png -Z $$s $(ICON) --out $(ICONSET)/icon_$${s}x$${s}.png >/dev/null; \
-			sips -s format png -Z $$((s * 2)) $(ICON) --out $(ICONSET)/icon_$${s}x$${s}@2x.png >/dev/null; \
+			sips -s format png -Z $$s $(MACICON) --out $(ICONSET)/icon_$${s}x$${s}.png >/dev/null; \
+			sips -s format png -Z $$((s * 2)) $(MACICON) --out $(ICONSET)/icon_$${s}x$${s}@2x.png >/dev/null; \
 		done; \
 		iconutil -c icns $(ICONSET) -o $(APP)/Contents/Resources/cydonia.icns; \
-		rm -rf $(ICONSET); \
+		rm -rf $(ICONSET) $(MACICON); \
 		sips -s format png -Z 256 $(ICON) --out $(APP)/Contents/Resources/icon.png >/dev/null; \
 	else \
 		echo "no $(ICON): bundling without an icon"; \
@@ -113,6 +122,27 @@ release:
 	  xcrun stapler validate $(DMG); \
 	  spctl -a -vvv -t open --context context:primary-signature $(DMG); \
 	  echo "release ready: $(DMG)"
+
+# Linux only, and run on the machine whose architecture it names. The name has
+# no version so that install.sh can fetch it from `releases/latest/download`.
+# Icons are resized with ImageMagick's `convert`.
+tarball:
+	cargo build --profile $(PROFILE) $(CARGOOPT)
+	rm -rf $(LINUXAPP) $(TARBALL)
+	mkdir -p $(LINUXAPP)/bin $(LINUXAPP)/share/applications
+	cp target/$(PROFILE)/cydonia $(LINUXAPP)/bin/cydonia
+	cp bundle/linux/cydonia.desktop $(LINUXAPP)/share/applications/
+	@[ -f $(ICON) ] || $(MAKE) --no-print-directory icon || true
+	@if [ -f $(ICON) ]; then \
+		for s in $(LINUXSIZES); do \
+			mkdir -p $(LINUXAPP)/share/icons/hicolor/$${s}x$${s}/apps; \
+			convert $(ICON) -resize $${s}x$${s} $(LINUXAPP)/share/icons/hicolor/$${s}x$${s}/apps/cydonia.png; \
+		done; \
+	else \
+		echo "no $(ICON): packaging without an icon"; \
+	fi
+	tar -czf $(TARBALL) -C $(dir $(LINUXAPP)) cydonia.app
+	@echo "built $(TARBALL)"
 
 # Also the way to pick up a redrawn logo: it refetches rather than skipping.
 # The partial file is named apart from the real one, so an interrupted download

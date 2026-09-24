@@ -2196,6 +2196,7 @@ dependencies = [
  "cydonia-mcp",
  "cydonia-prompts",
  "dirs 6.0.0",
+ "embed-resource",
  "futures",
  "global-hotkey",
  "image",

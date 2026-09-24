@@ -9,5 +9,3 @@
 # website
 www/static/og.png
 
-# Local dependency worktrees.
-/.cargo/config.toml

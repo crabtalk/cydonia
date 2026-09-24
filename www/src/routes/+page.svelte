@@ -10,8 +10,13 @@
 	import {
 		cdn,
 		dmg,
+		builds,
+		cargo,
 		dmgFor,
 		install,
+		installWindows,
+		latestAsset,
+		nightly,
 		repo,
 		site,
 		tagline as description
@@ -75,7 +80,7 @@
 		name: 'Cydonia',
 		description,
 		applicationCategory: 'ProductivityApplication',
-		operatingSystem: 'macOS',
+		operatingSystem: 'macOS, Linux, Windows',
 		url: site,
 		downloadUrl: repo,
 		license: 'https://opensource.org/licenses/MIT',
@@ -117,7 +122,7 @@
 			</a>
 		</div>
 
-		<p class="facts">macOS on Apple silicon · pure rust · no account, no sync</p>
+		<p class="facts">macOS, Linux and Windows · pure rust · no account, no sync</p>
 	</div>
 
 	<!-- The poster is what loads; the 0.9 MB behind it waits for a click. The
@@ -197,15 +202,26 @@
 		cydonia-{latest.version}-arm64.dmg
 	</a>
 
+	<ul class="builds">
+		{#each builds as build}
+			<li>
+				<a href={latestAsset(build.file)}>{build.label}</a>
+			</li>
+		{/each}
+		<li><a href={nightly}>Nightly</a></li>
+	</ul>
+
 	<div class="alt">
 		<span class="or">or</span>
-		<span class="install code-block">
-			<code>{install}</code>
-			<button class="copy" type="button" aria-label="Copy">
-				<!-- eslint-disable-next-line svelte/no-at-html-tags -->
-				{@html Copy}{@html Check}
-			</button>
-		</span>
+		{#each [install, installWindows, cargo] as line}
+			<span class="install code-block">
+				<code>{line}</code>
+				<button class="copy" type="button" aria-label="Copy">
+					<!-- eslint-disable-next-line svelte/no-at-html-tags -->
+					{@html Copy}{@html Check}
+				</button>
+			</span>
+		{/each}
 	</div>
 </section>
 
@@ -484,6 +500,16 @@
 		align-items: center;
 		gap: 12px;
 		margin-top: 30px;
+	}
+
+	.builds {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 6px 18px;
+		margin: 16px 0 0;
+		padding: 0;
+		list-style: none;
+		font-size: 14px;
 	}
 
 	.or {
