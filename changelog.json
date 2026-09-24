@@ -10,7 +10,7 @@
     ],
     "changed": [
       "Simplify lane cards, remove the nested editor border, and mark clipped previews with …",
-      "Skip offscreen lanes, cache bounded card previews, and avoid unnecessary redraws while scrolling"
+      "Skip offscreen lanes and list rows, cache bounded card previews, and avoid unnecessary redraws while scrolling"
     ],
     "fixed": [
       "Keep horizontal board swipes from being intercepted by code and table previews",

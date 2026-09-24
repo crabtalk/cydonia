@@ -587,3 +587,143 @@ fn offscreen_lanes_do_not_build_markdown(cx: &mut TestAppContext) {
         "growing the viewport builds newly visible lanes"
     );
 }
+
+#[gpui::test]
+fn list_scroll_builds_visible_rows_and_keeps_its_extent(cx: &mut TestAppContext) {
+    let (_scratch, root, member, cards, mut cx) = open("list-window", cx);
+    cx.update(|window, cx| {
+        root.update(cx, |root, cx| {
+            root.close_card_preview(None, window, cx);
+            root.workspace.update(cx, |workspace, _| {
+                let board = &mut workspace.projects[0].boards[0];
+                board.view = View::List;
+                let column = board.columns[0].id.clone();
+                for i in 0..300 {
+                    board.add_card(
+                        &column,
+                        format!("List row {i}\n\n{}", "Long body\n".repeat(100)),
+                    );
+                }
+            });
+            cx.notify();
+        })
+    });
+    settle(&mut cx);
+    let scroll = cx.update(|_, cx| root.read(cx).boards.of(&member.id).down.clone());
+    let max = scroll.max_offset();
+    assert!(max.y > px(10000.));
+    let parsed = cx.update(|_, cx| root.read(cx).card_docs.0.borrow().len());
+    assert!(
+        parsed < 25,
+        "built {parsed} documents for the first viewport"
+    );
+    scroll.set_offset(point(px(0.), px(-3600.)));
+    cx.update(|window, _| window.refresh());
+    settle(&mut cx);
+    assert_eq!(scroll.max_offset(), max);
+    assert_eq!(scroll.offset().y, px(-3600.));
+    assert!(cx.update(|_, cx| {
+        root.read(cx)
+            .card_docs
+            .0
+            .borrow()
+            .contains_key("List row 100")
+    }));
+    let parsed = cx.update(|_, cx| root.read(cx).card_docs.0.borrow().len());
+    assert!(parsed < 50, "built {parsed} documents after jumping");
+    for step in 1..=5 {
+        cx.simulate_event(gpui::ScrollWheelEvent {
+            position: point(px(350.), px(180.)),
+            delta: gpui::ScrollDelta::Pixels(point(px(0.), px(-36.))),
+            modifiers: Default::default(),
+            touch_phase: gpui::TouchPhase::Moved,
+        });
+        settle(&mut cx);
+        assert_eq!(scroll.offset().y, px(-3600. - 36. * step as f32));
+        assert_eq!(scroll.max_offset(), max);
+    }
+    cx.update(|window, cx| {
+        root.update(cx, |root, cx| {
+            root.edit(None, Editing::Card(cards[0].clone()), window, cx);
+        })
+    });
+    settle(&mut cx);
+    cx.simulate_input("Editing still works");
+    assert!(cx.update(|_, cx| {
+        root.read(cx)
+            .leaf()
+            .card_field
+            .read(cx)
+            .content()
+            .contains("Editing still works")
+    }));
+}
+
+#[gpui::test]
+fn list_window_tracks_group_folding_and_search(cx: &mut TestAppContext) {
+    let (_scratch, root, member, _, mut cx) = open("list-groups", cx);
+    cx.update(|window, cx| {
+        root.update(cx, |root, cx| {
+            root.close_card_preview(None, window, cx);
+            root.workspace.update(cx, |workspace, _| {
+                let board = &mut workspace.projects[0].boards[0];
+                board.view = View::List;
+                let first = board.columns[0].id.clone();
+                let second = board.add_column("Second").id.clone();
+                let hidden = board.add_column("Hidden").id.clone();
+                for i in 0..60 {
+                    board.add_card(&first, format!("First row {i}"));
+                    board.add_card(&second, format!("Second row {i}"));
+                    board.add_card(&hidden, format!("Hidden row {i}"));
+                }
+                board.columns[2].collapsed = true;
+            });
+            cx.notify();
+        })
+    });
+    settle(&mut cx);
+    let scroll = cx.update(|_, cx| root.read(cx).boards.of(&member.id).down.clone());
+    let max = scroll.max_offset().y;
+    assert!(!cx.update(|_, cx| {
+        root.read(cx)
+            .card_docs
+            .0
+            .borrow()
+            .contains_key("Second row 0")
+    }));
+    cx.update(|_, cx| {
+        root.update(cx, |root, cx| {
+            root.workspace.update(cx, |workspace, _| {
+                workspace.projects[0].boards[0].columns[0].collapsed = true
+            });
+            cx.notify();
+        })
+    });
+    settle(&mut cx);
+    assert_eq!(scroll.max_offset().y, max - px(63. * LIST_ROW_HEIGHT));
+    assert!(cx.update(|_, cx| {
+        root.read(cx)
+            .card_docs
+            .0
+            .borrow()
+            .contains_key("Second row 0")
+    }));
+    cx.update(|_, cx| {
+        root.update(cx, |root, cx| {
+            root.leaf_mut().finding = true;
+            root.leaf()
+                .find_field
+                .update(cx, |field, cx| field.set_content("Hidden row 42", cx));
+            cx.notify();
+        })
+    });
+    settle(&mut cx);
+    assert_eq!(scroll.max_offset().y, px(0.));
+    assert!(cx.update(|_, cx| {
+        root.read(cx)
+            .card_docs
+            .0
+            .borrow()
+            .contains_key("Hidden row 42")
+    }));
+}

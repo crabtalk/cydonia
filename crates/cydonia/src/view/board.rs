@@ -91,6 +91,16 @@ const LANE_CHANNEL: Pixels = px(18.);
 /// line tall by construction — see [`first_line`].
 const LIST_HEADING_HEIGHT: f32 = 30.;
 const LIST_ROW_HEIGHT: f32 = 36.;
+/// Fixed-height rows need only two neighbours beyond each viewport edge.
+fn visible_list_rows(top: Pixels, height: Pixels, count: usize) -> std::ops::Range<usize> {
+    if top + height < px(-2. * LIST_ROW_HEIGHT) {
+        return 0..0;
+    }
+    let start = (f32::from(top).max(0.) / LIST_ROW_HEIGHT).floor() as usize;
+    let end = (f32::from(top + height).max(0.) / LIST_ROW_HEIGHT).ceil() as usize;
+    start.saturating_sub(2).min(count)..end.saturating_add(2).min(count)
+}
+
 const LIST_LINE: f32 = 22.;
 const LIST_HANDLE_WIDTH: f32 = 64.;
 
@@ -1134,7 +1144,10 @@ impl Cydonia {
         let cards: Vec<String> = column
             .cards
             .iter()
-            .filter(|card| card_matches(card, board.handle_of(card).as_deref(), query))
+            .filter(|card| {
+                query.trim().is_empty()
+                    || card_matches(card, board.handle_of(card).as_deref(), query)
+            })
             .map(|card| card.id.clone())
             .collect();
         Some((column.name.clone(), column.cards.len(), cards))
@@ -2152,6 +2165,23 @@ impl Cydonia {
             .map(|column| column.id.clone())
             .collect();
         let lanes = ids.len();
+        let measured_height = window
+            .use_keyed_state(
+                SharedString::from(format!("board-list-height-{held}-{on:?}")),
+                cx,
+                |_, _| Rc::new(Cell::new(px(0.))),
+            )
+            .read(cx)
+            .clone();
+        let height = measured_height.get();
+        let height = if height > px(0.) {
+            height
+        } else {
+            window.viewport_size().height
+        };
+        let viewport = (self.leaf_of(on).editing.is_none() && !cx.has_active_drag())
+            .then_some((-scroll.down.offset().y, height));
+        let mut group_top = px(0.);
         let groups: Vec<AnyElement> = ids
             .iter()
             .enumerate()
@@ -2165,6 +2195,8 @@ impl Cydonia {
                         lanes,
                         on,
                     },
+                    &mut group_top,
+                    viewport,
                     window,
                     cx,
                 )
@@ -2200,6 +2232,19 @@ impl Cydonia {
                 Axes::Vertical,
                 scroll::Beyond::Nothing,
             ))
+            .child(
+                gpui::canvas(
+                    move |bounds, window, _| {
+                        if measured_height.replace(bounds.size.height) != bounds.size.height {
+                            let view = window.current_view();
+                            window.on_next_frame(move |_, cx| cx.notify(view));
+                        }
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .inset_0(),
+            )
             .into_any_element()
     }
 
@@ -2208,6 +2253,8 @@ impl Cydonia {
     fn list_group(
         &self,
         lane: Lane<'_>,
+        group_top: &mut Pixels,
+        viewport: Option<(Pixels, Pixels)>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -2245,10 +2292,24 @@ impl Cydonia {
         // field writing a card into this lane.
         let writing = matches!(&self.leaf_of(on).editing, Some(Editing::New(_, at)) if *at == id);
         let folded = folded && query.trim().is_empty() && !writing;
+        let count = if folded { 0 } else { cards.len() };
+        let visible = viewport
+            .map(|(top, height)| {
+                visible_list_rows(top - *group_top - px(LIST_HEADING_HEIGHT), height, count)
+            })
+            .unwrap_or(0..count);
+        *group_top += px(LIST_HEADING_HEIGHT
+            + count as f32 * LIST_ROW_HEIGHT
+            + if !folded && query.trim().is_empty() {
+                LIST_ROW_HEIGHT
+            } else {
+                0.
+            });
         let mut rows: Vec<AnyElement> = cards
             .iter()
             .enumerate()
-            .filter(|_| !folded)
+            .skip(visible.start)
+            .take(visible.len())
             .map(|(row, card)| {
                 let next = cards.get(row + 1).map(String::as_str);
                 self.list_row(
@@ -2266,6 +2327,23 @@ impl Cydonia {
                 )
             })
             .collect();
+        if visible.start > 0 {
+            rows.insert(
+                0,
+                div()
+                    .flex_none()
+                    .h(px(visible.start as f32 * LIST_ROW_HEIGHT))
+                    .into_any_element(),
+            );
+        }
+        if visible.end < count {
+            rows.push(
+                div()
+                    .flex_none()
+                    .h(px((count - visible.end) as f32 * LIST_ROW_HEIGHT))
+                    .into_any_element(),
+            );
+        }
         // An empty group has no row to hang the mark off, and nothing under it
         // to be pushed down by one drawn in the flow.
         if !folded && cards.is_empty() && self.aimed_at(&id, on, cx) {
@@ -2337,6 +2415,7 @@ impl Cydonia {
                 theme
                     .ghost(SharedString::from(format!("list-add-card-{id}")))
                     .flex_none()
+                    .h(px(LIST_ROW_HEIGHT))
                     .px(px(BOARD_INSET))
                     .py(px(6.))
                     .gap(px(6.))
@@ -2565,7 +2644,10 @@ impl Cydonia {
                     .min_w_0()
                     .h(px(LIST_LINE))
                     .overflow_hidden()
-                    .child(card_body(&self.card_docs.of(first_line(&text)), window, cx)),
+                    .child({
+                        let (doc, _) = self.card_docs.preview(first_line(&text));
+                        card_body(&doc, window, cx)
+                    }),
             )
             .children(resting(status).map(|status| status_chip(status, &theme)))
             // On show, not behind a hover — a card's run is what you look at
