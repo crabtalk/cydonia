@@ -28,11 +28,11 @@ list numbering can be normalized.
 Put each displayed picture in its own paragraph, with blank lines around it:
 
 ```markdown
-![Architecture overview](/absolute/project/.cydonia/articles/1789958235652/assets/overview.png)
+![Architecture overview](assets/overview.png)
 
-![Architecture overview|480](/absolute/project/.cydonia/articles/1789958235652/assets/overview.png)
+![Architecture overview|480](assets/overview.png)
 
-![|320](/absolute/project/.cydonia/articles/1789958235652/assets/overview.png)
+![|320](assets/overview.png)
 ```
 
 - Alt text is also the standalone image's visible caption. Leave it empty
@@ -59,19 +59,21 @@ unique filenames; preserve existing files unless their replacement or removal
 was requested. Images already under `<project>/.cydonia/assets/` continue to
 work and need not be moved.
 
-Local image destinations must be absolute filesystem paths. Relative paths
-are resolved against the app process, not the article directory. Do not
-assume `file://` URLs behave like local paths. HTTP(S) image URLs can also be
-used when the image is available to the app.
+Write an image in the article's own `assets/` as a path relative to the
+article's folder, such as `assets/overview.png`. A relative path is resolved
+against the article's folder, so it keeps working when the folder is moved or
+copied. Absolute filesystem paths also work. Do not assume `file://` URLs
+behave like local paths. HTTP(S) image URLs can also be used when the image is
+available to the app.
 
 For paths containing spaces, enclose the destination in angle brackets:
 
 ```markdown
-![Overview|480](</absolute/project/.cydonia/articles/1789958235652/assets/system overview.png>)
+![Overview|480](<assets/system overview.png>)
 ```
 
 With filesystem access to the Cydonia host, copy or generate the image in
-`assets_path`, then insert its absolute path using the article tools. This
+`assets_path`, then insert it as `assets/<file>` using the article tools. This
 media workflow is allowed by the server instructions; it does not need a
 separate exception for each image. Read-only settings and filesystem permission restrictions
 still apply. An article's `assets/` goes with it when it is moved, and is
