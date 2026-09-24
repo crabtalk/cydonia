@@ -66,11 +66,12 @@ jobs:
     if: false
     runs-on: macos-14
     env:
-      KEYCHAIN: ${{ runner.temp }}/signing.keychain-db
       KEYCHAIN_PASSWORD: ${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      # `runner` is not available in a job's `env`.
+      - run: echo "KEYCHAIN=$RUNNER_TEMP/signing.keychain-db" >> "$GITHUB_ENV"
       - name: import the signing certificate
         env:
           APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}

@@ -7,6 +7,7 @@
 use crate::{
     model::workspace::Showing,
     view::{
+        chrome,
         component::{
             divider,
             menu::{self, Menu},
@@ -23,7 +24,9 @@ use bezel::{
         div, prelude::*, px, relative,
     },
     theme::Theme,
-    ui::{icons, menu::Item, popover, tabs, tooltip::Tooltip, widgets::Content},
+    ui::{
+        icons, menu::Item, popover, tabs, titlebar::CaptionSide, tooltip::Tooltip, widgets::Content,
+    },
 };
 
 /// What a seam carries while it is dragged: the split it divides, by its path
@@ -206,6 +209,14 @@ impl Cydonia {
             .and_then(|space| space.entries().first().cloned())
             .as_ref()
             == Some(entry);
+        // And the one at its top right, which carries the caption buttons
+        // unless the right panel stands between it and the edge.
+        let last = self.changes.is_none()
+            && self
+                .arrangement(cx)
+                .and_then(|space| space.zoomed().or_else(|| top_right(&space.tree)))
+                .as_ref()
+                == Some(entry);
         let theme = Theme::of(cx).clone();
         let stack = self.workspace.read(cx).stack_of(entry);
         let front = self.front_of(entry, &stack);
@@ -299,7 +310,7 @@ impl Cydonia {
                     move |this, _, window, cx| this.focus_pane(&on, window, cx)
                 }),
             )
-            .child(self.pane_bar(entry, &stack, &front, first, &theme, window, cx))
+            .child(self.pane_bar(entry, &stack, &front, first, last, &theme, window, cx))
             .child(body)
             .children(composer)
             .children(landing.map(|at| landing_mark(at, &theme)))
@@ -464,6 +475,7 @@ impl Cydonia {
         stack: &[Member],
         front: &Member,
         first: bool,
+        last: bool,
         theme: &Theme,
         window: &Window,
         cx: &mut Context<Self>,
@@ -473,7 +485,10 @@ impl Cydonia {
         // top left, so their clearance is taken by the pane that lands there
         // and nowhere another pane can see it. Fullscreen has none.
         let fold = first && !self.sidebar_open;
+        let left = fold && chrome::has(CaptionSide::Left, window, cx);
+        let right = last && chrome::has(CaptionSide::Right, window, cx);
         let lead = match (first, self.sidebar_open || window.is_fullscreen()) {
+            _ if left => 0.,
             (true, true) => crate::view::root::HEADER_INSET,
             (true, false) => crate::view::root::TOOLBAR_INSET,
             (false, _) => TAB_INSET,
@@ -485,7 +500,12 @@ impl Cydonia {
             .w_full()
             .gap(px(2.))
             .pl(px(lead))
+            .when(right, |el| el.pr_0())
             .when(aimed, |el| el.bg(theme.element_hover))
+            .children(
+                left.then(|| chrome::caption(CaptionSide::Left, window, cx))
+                    .flatten(),
+            )
             // The fold belongs to whichever column runs along the window's left
             // edge, so with the sidebar gone it is this pane's.
             .children(fold.then(|| self.fold_toggle(cx).into_any_element()))
@@ -499,7 +519,11 @@ impl Cydonia {
                         .map(|tab| self.pane_tab(pane, tab, tab == front, theme, cx)),
                 ),
             )
-            .child(div().flex_1().min_w_0())
+            .child(chrome::grip(
+                SharedString::from(format!("pane-grip-{key}")),
+                &self.drag,
+                window,
+            ))
             .child(
                 self.menu_button(
                     SharedString::from(format!("pane-menu-{key}")),
@@ -509,6 +533,11 @@ impl Cydonia {
                     cx,
                 )
                 .children(self.pane_menu(pane, cx)),
+            )
+            .children(
+                right
+                    .then(|| chrome::caption(CaptionSide::Right, window, cx))
+                    .flatten(),
             )
             .into_any_element()
     }
@@ -1009,3 +1038,15 @@ fn pane_of(showing: Showing) -> Pane {
 #[cfg(test)]
 #[path = "../../tests/unit/open_entries.rs"]
 mod open_entry_tests;
+
+/// The pane at a tree's top right: the last of a row, the first of a column.
+fn top_right(node: &Node<Member>) -> Option<Member> {
+    match node {
+        Node::Leaf { entry, .. } => Some(entry.clone()),
+        Node::Split { axis, children, .. } => match axis {
+            Split::Horizontal => children.last(),
+            Split::Vertical => children.first(),
+        }
+        .and_then(top_right),
+    }
+}

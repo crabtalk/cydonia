@@ -24,7 +24,7 @@ use std::{
     borrow::Cow,
     io::Cursor,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::Arc,
 };
 
 /// What a picture's file name begins with.
@@ -34,10 +34,6 @@ const MARK: &str = "media-";
 /// down on the way out, since a model reads no more than this and the base64
 /// of a retina screenshot is megabytes of prompt.
 pub const LONG_EDGE: u32 = 1568;
-
-/// Where the open document's pictures go. Nothing aimed is a paste the editor
-/// lets go of, which is what a screenshot pasted with no document open is.
-static TARGET: Mutex<Option<PathBuf>> = Mutex::new(None);
 
 /// A picture picked in the composer, held until the message is sent — the
 /// composer does not know which project the session it feeds is in.
@@ -59,13 +55,6 @@ pub fn init(cx: &mut App) {
             ..ImageStore::default()
         },
     );
-}
-
-/// Point at the `assets/` beside the article that was opened.
-pub fn aim(content: Option<&Path>) {
-    if let Ok(mut target) = TARGET.lock() {
-        *target = content.map(artifact::article::assets);
-    }
 }
 
 /// Write `bytes` into `dir` under a name taken from their hash, so the same
@@ -169,8 +158,12 @@ fn extension(path: &Path) -> Option<String> {
 /// An absolute path rather than a relative one: what paints the picture reads
 /// the URL as a path off this process, whose working directory is not the
 /// project's.
-fn keep(source: Source, _editor: &Entity<Editor>, _cx: &App) -> Option<String> {
-    let dir = TARGET.lock().ok()?.clone()?;
+/// Into the `assets/` of the article the editor is on, answered relative to
+/// the article's folder. An editor with no base is not an article's, and lets
+/// the picture go.
+fn keep(source: Source, _: &Entity<Editor>, base: Option<&Path>, _: &App) -> Option<String> {
+    let base = base?.to_path_buf();
+    let dir = artifact::article::assets(&artifact::article::content(&base));
     let (bytes, extension) = match source {
         Source::Bytes(image) => (
             Cow::Borrowed(image.bytes.as_slice()),
@@ -179,5 +172,6 @@ fn keep(source: Source, _editor: &Entity<Editor>, _cx: &App) -> Option<String> {
         Source::File(path) => (Cow::Owned(std::fs::read(path).ok()?), extension(path)?),
     };
     let file = store(&dir, &bytes, &extension)?;
+    let file = file.strip_prefix(&base).unwrap_or(&file);
     Some(file.to_string_lossy().into_owned())
 }

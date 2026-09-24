@@ -14,19 +14,37 @@ fn one_parse_serves_every_frame_that_draws_the_card() {
     assert_eq!(*first, markdown::parse("- [ ] ship it"));
 }
 
-/// The lane draws the whole card and a list row draws its first line, so the
-/// two texts are two entries rather than one that each evicts in turn.
 #[test]
-fn a_lane_and_a_list_row_hold_their_own_parses() {
+fn title_and_preview_share_the_full_parse() {
     let docs = Docs::default();
-    let whole = docs.of("ship it\n\nand the rest of the card");
-    let line = docs.of("ship it");
-    assert!(!Rc::ptr_eq(&whole, &line));
-    assert!(Rc::ptr_eq(
-        &whole,
-        &docs.of("ship it\n\nand the rest of the card")
-    ));
-    assert!(Rc::ptr_eq(&line, &docs.of("ship it")));
+    let source = "# Ship **it**\n\nThe full description.";
+    let full = docs.of(source);
+    assert_eq!(docs.title(source).as_ref(), "Ship it");
+    docs.preview(source);
+    assert!(Rc::ptr_eq(&full, &docs.of(source)));
+    assert_eq!(docs.0.borrow().len(), 1);
+}
+
+#[test]
+fn list_titles_handle_markdown_and_non_prose_cards() {
+    let docs = Docs::default();
+    for (source, expected) in [
+        (
+            "- [ ] **Ship** the [release](https://example.com)",
+            "Ship the release",
+        ),
+        ("```rust\nlet answer = 42;\n```", "let answer = 42;"),
+        ("| Name | Status |\n| --- | --- |\n| Task | Done |", "Name"),
+        ("![A picture](https://example.com/a.png)", "A picture"),
+        ("![](https://example.com/a.png)", "Image"),
+        ("---\n\n# A heading", "A heading"),
+        ("", "Untitled card"),
+    ] {
+        assert_eq!(docs.title(source).as_ref(), expected, "{source}");
+    }
+    let long = docs.title(&"界".repeat(1000));
+    assert_eq!(long.chars().count(), 513);
+    assert!(long.ends_with('…'));
 }
 
 /// Edited text is a key nothing asked for before, so nothing has to be told to

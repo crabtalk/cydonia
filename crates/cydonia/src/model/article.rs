@@ -11,7 +11,7 @@
 //! disagreeing — and a path already handed to an agent is not one we can
 //! rewrite the way a vault rewrites its own links.
 
-use crate::model::{cover, language, media, workspace::Workspace};
+use crate::model::{cover, language, workspace::Workspace};
 use artifact::{article as layout, article::properties};
 use bezel::{
     gpui::{App, AppContext as _, Context, Entity, ScrollHandle},
@@ -161,10 +161,6 @@ impl Article {
     /// Put a field over the title and an editor over the content. Idempotent —
     /// reopening an article is what keeps its undo history and its scroll.
     pub fn open(&mut self, text_size: f32, cx: &mut Context<Workspace>) {
-        // Whichever document is opened is the one a pasted picture belongs to,
-        // so this is above the early return: coming back to an article is how
-        // you reach one whose editor is already built. See [`media::aim`].
-        media::aim(Some(&self.path));
         if self.editor.is_some() {
             return;
         }
@@ -192,7 +188,12 @@ impl Article {
         self.saved = std::fs::read_to_string(&self.path).unwrap_or_default();
         let scroll = self.scroll.clone();
         let editor = cx.new(|cx| {
-            Editor::new(&self.saved, cx)
+            let editor = Editor::new(&self.saved, cx);
+            let editor = match self.path.parent() {
+                Some(dir) => editor.with_base(dir),
+                None => editor,
+            };
+            editor
                 .with_text_size(text_size)
                 .with_scroll(scroll)
                 .with_mode(self.mode)

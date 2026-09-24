@@ -268,6 +268,7 @@ impl Workspace {
             scrollbars: self.settings.appearance.scrollbars,
             sidebar_scrollbars: self.settings.appearance.sidebar_scrollbars,
             wrap_code: self.wrap_code,
+            highlight: self.settings.appearance.highlight,
         });
     }
 
@@ -613,6 +614,14 @@ impl Workspace {
     pub fn set_indent_project_rows(&mut self, indent: bool, cx: &mut Context<Self>) {
         self.indent_project_rows = indent;
         self.save_appearance();
+        cx.notify();
+    }
+
+    pub fn set_highlight(&mut self, value: settings::Highlight, cx: &mut Context<Self>) {
+        self.settings.appearance.highlight = value;
+        crate::view::article::set_highlight(value.color());
+        self.save_appearance();
+        cx.refresh_windows();
         cx.notify();
     }
 

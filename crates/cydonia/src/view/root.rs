@@ -258,6 +258,7 @@ pub fn open(settings: Settings, state: State, cx: &mut App) -> Result<WindowHand
             window_background: Theme::of(cx).window_background_appearance(),
             window_min_size: Some(size(px(600.), px(320.))),
             app_id: Some("cydonia".into()),
+            window_decorations: super::chrome::decorations(),
             ..Default::default()
         },
         |window, cx| {
@@ -340,6 +341,9 @@ pub struct Cydonia {
     pub(crate) panel_save: Option<bezel::gpui::Task<()>>,
     pub(crate) terminal_height: f32,
     pub(crate) changes: Option<Entity<super::component::panel::Panel>>,
+    /// The press on a [`super::chrome::grip`], shared by every band in the
+    /// window that carries one.
+    pub(crate) drag: bezel::ui::titlebar::DragState,
     pub(crate) right_panels:
         std::collections::HashMap<std::path::PathBuf, Entity<super::component::panel::Panel>>,
     /// The buffer each card's orb paints into, by card id — see
@@ -502,6 +506,66 @@ impl Cydonia {
     /// away a composer with a draft in it. Panes are ordered as the
     /// arrangement lays them out — stepping through them steps across the
     /// window.
+    /// Hand the tools what is on screen — see [`mcp::rail::shown`].
+    fn publish_shown(&self, cx: &App) {
+        let kind = |kind: artifact::space::Kind| match kind {
+            artifact::space::Kind::Session => None,
+            artifact::space::Kind::Board => Some("board"),
+            artifact::space::Kind::Article => Some("article"),
+            artifact::space::Kind::Table => Some("table"),
+        };
+        let shown = if self.leaves.iter().any(|leaf| leaf.entry.is_some()) {
+            self.leaves
+                .iter()
+                .enumerate()
+                .filter_map(|(ix, leaf)| {
+                    let entry = leaf.entry.as_ref()?;
+                    Some(mcp::rail::Shown {
+                        project: entry.project.clone(),
+                        kind: kind(entry.kind)?,
+                        id: entry.id.clone(),
+                        focused: ix == self.focused,
+                    })
+                })
+                .collect::<Vec<_>>()
+        } else {
+            let workspace = self.workspace.read(cx);
+            workspace
+                .landed()
+                .and_then(|(project, entry)| {
+                    let kind = match entry.kind {
+                        crate::model::state::Kind::Session => None,
+                        crate::model::state::Kind::Board => Some("board"),
+                        crate::model::state::Kind::Article => Some("article"),
+                        crate::model::state::Kind::Table => Some("table"),
+                    }?;
+                    Some(mcp::rail::Shown {
+                        project: project.to_path_buf(),
+                        kind,
+                        id: entry.id.clone(),
+                        focused: true,
+                    })
+                })
+                .into_iter()
+                .collect()
+        };
+        let lone = shown.len() == 1;
+        let shown = shown
+            .into_iter()
+            .map(|mut entry| {
+                // The window names an article by its `content.md`; the tools
+                // name it by its id.
+                if entry.kind == "article" {
+                    entry.id = artifact::article::id_of(&entry.project.join(&entry.id));
+                }
+                // A lone entry beside a focused chat is still the one in front.
+                entry.focused |= lone;
+                entry
+            })
+            .collect();
+        mcp::rail::set_shown(shown);
+    }
+
     pub(crate) fn sync_leaves(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let members = self.arrangement(cx).map(|space| space.entries());
         let Some(members) = members else {
@@ -806,6 +870,7 @@ impl Cydonia {
             panel_save: None,
             terminal_height: 240.,
             changes: None,
+            drag: Default::default(),
             right_panels: Default::default(),
             boards: Default::default(),
             card_marks: Default::default(),
@@ -1260,8 +1325,9 @@ impl Render for Cydonia {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_leaves(window, cx);
         self.sync_changes(cx);
+        self.publish_shown(cx);
         let theme = Theme::of(cx).clone();
-        div()
+        let root = div()
             .key_context("Cydonia")
             .size_full()
             .relative()
@@ -1320,7 +1386,9 @@ impl Render for Cydonia {
             // element's ancestors. Sized at nothing, so the pane that does hold
             // a field keeps its focus through a click anywhere else.
             .child(div().track_focus(&self.focus))
-            .when(self.sidebar_open, |root| root.child(self.sidebar(cx)))
+            .when(self.sidebar_open, |root| {
+                root.child(self.sidebar(window, cx))
+            })
             .child(self.detail(window, cx))
             // Rides on the seam between the sidebar and the detail column
             // rather than sitting in flow, so neither gives up a column.
@@ -1345,6 +1413,7 @@ impl Render for Cydonia {
             // Over every column and every floating control: nothing behind it
             // is answerable while it is asking.
             .children(self.confirm_delete(cx))
-            .children(self.new_board_dialog(cx))
+            .children(self.new_board_dialog(cx));
+        bezel::ui::window::frame(root, window, cx)
     }
 }

@@ -17,6 +17,17 @@ session of its own with the card's text as the first prompt. See
   its own answer; **Settings › Appearance** seeds new ones and does not steer
   boards that exist.
 - ⌘F finds a card by typing, and jumps to the one you meant.
+- Click a card in lanes or a list to read its full rendered content in the bottom drawer.
+  Long lane previews end with **…**. Drag the drawer's top edge to resize it, or
+  expand it to fill the pane; Restore returns to the previous height.
+  Horizontal swipes move the lanes, including over code and table previews.
+- List rows show plain titles derived from the card's Markdown. Click a group
+  heading to fold it, use **+** to add a card, or choose Rename from **…**.
+  Drag a card onto a collapsed heading to append it without unfolding the group.
+- The pencil edits in the drawer; the eye previews your draft. Enter inserts a
+  newline, and **✓** or ⌘Enter saves. The undo arrow cancels edits.
+  Switching cards or closing with **×** or Escape keeps unsaved drafts in the
+  current pane for this app session. Save before closing the pane or quitting.
 - An agent lays a board out in one call per kind: the tools that add or drop cards and columns take a list where they take one.
 - A card can be moved to another column, another board, or a board in another project. Moving it to another board gives it a new handle and clears the session it was dispatched to. An agent can move several cards in one write, and they may come off different boards.
 
@@ -24,7 +35,9 @@ session of its own with the card's text as the first prompt. See
 
 A card carries `busy`, `blocked` or `done`, and an orb while its run is going.
 An agent sets the status through the board tools and can tag several cards in
-one write; you can set it by hand from the card.
+one write; you can set it by hand from the card. Starting work records the
+session alongside the busy status. Hover the busy orb to see the linked
+session’s name, or click it to open that session.
 
 Status is how a board says what is being worked right now — see
 [Running several agents](./../agents/orchestration.md) for what that buys with

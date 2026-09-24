@@ -15,20 +15,19 @@ cydonia
 ```
 
 > [!NOTE]
-> Articles are the stable part, and a fresh install is articles and nothing
-> else. Sessions, boards and tables work and are early, so they ship off. One
+> A fresh install includes articles, sessions and boards. Tables are opt-in. One
 > agent in one project is solid; several of them working that project is what is
 > being built.
 
 ## Features
 
-The rest is off until you ask for it, in **Settings › Features** or in
+Configure features in **Settings › Features** or in
 `~/.config/cydonia/settings.toml`:
 
 ```toml
 [features]
-sessions = false   # agent conversations
-boards = false     # cards in columns
+sessions = true    # agent conversations
+boards = true      # cards in columns
 tables = false     # structured records
 ```
 

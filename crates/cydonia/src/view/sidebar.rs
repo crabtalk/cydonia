@@ -8,6 +8,7 @@ use crate::{
     model::{session::ChatSession, settings::Features, update},
     view::{
         article::TogglePlainText,
+        chrome,
         component::{
             menu::{self, Menu},
             transcript,
@@ -35,6 +36,7 @@ use bezel::{
         menu::Item,
         popover,
         surface::Surfaced as _,
+        titlebar::CaptionSide,
         tooltip::Tooltip,
         widgets::{ButtonStyle, Buttons, Content, Layout},
     },
@@ -363,7 +365,11 @@ impl Cydonia {
         cx.notify();
     }
 
-    pub(crate) fn sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    pub(crate) fn sidebar(
+        &self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
         // Taken here, where the workspace is already open, because the two
         // tooltips below are built inside closures that outlive this borrow.
@@ -382,7 +388,16 @@ impl Cydonia {
             // The fold out at the trailing edge: the lights float in the
             // leading half of the strip, which is what leaves nothing there to
             // pad them clear of.
-            .child(root::band().justify_end().child(self.fold_toggle(cx)))
+            .child(
+                root::band()
+                    .justify_end()
+                    .when(chrome::has(CaptionSide::Left, window, cx), |band| {
+                        band.pl_0()
+                    })
+                    .children(chrome::caption(CaptionSide::Left, window, cx))
+                    .child(chrome::grip("sidebar-grip", &self.drag, window))
+                    .child(self.fold_toggle(cx)),
+            )
             .child(
                 div()
                     .relative()

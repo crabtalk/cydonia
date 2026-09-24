@@ -824,3 +824,35 @@ fn a_board_is_put_away_and_then_deleted() {
     assert!(text.contains("deleted"), "{text}");
     assert!(scratch.store().boards().is_empty(), "both are off the disk");
 }
+
+#[test]
+fn busy_cards_record_the_calling_session_and_keep_it_when_cleared() {
+    let scratch = Scratch::new("busy-session");
+    let store = scratch.store();
+    let mut board = store.create_board("Roadmap", "ROAD").unwrap();
+    let column = board.add_column("Todo").id.clone();
+    board.add_card(&column, "First".into());
+    board.add_card(&column, "Second".into());
+    store.save_board(&mut board);
+    let server = scratch.server();
+    said(server.call_from(
+        "board_set_card_status",
+        json!({ "project": scratch.path(), "card": ["ROAD-1", "ROAD-2"], "status": "busy" }),
+        None,
+        Some("working-session"),
+    ));
+    for card in &store.boards()[0].columns[0].cards {
+        assert_eq!(card.status, Some(artifact::board::Status::Busy));
+        assert_eq!(card.session.as_deref(), Some("working-session"));
+    }
+    said(server.call_from(
+        "board_set_card_status",
+        json!({ "project": scratch.path(), "card": ["ROAD-1", "ROAD-2"], "status": "none" }),
+        None,
+        Some("other-session"),
+    ));
+    for card in &store.boards()[0].columns[0].cards {
+        assert_eq!(card.status, None);
+        assert_eq!(card.session.as_deref(), Some("working-session"));
+    }
+}

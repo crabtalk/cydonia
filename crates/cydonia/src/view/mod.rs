@@ -5,6 +5,7 @@
 pub mod arrangement;
 pub mod article;
 pub mod board;
+pub mod chrome;
 pub mod component;
 pub mod confirm;
 pub mod create;

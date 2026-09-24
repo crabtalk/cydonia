@@ -6,6 +6,45 @@
 use super::*;
 
 impl Workspace {
+    /// Save a draft against the latest disk contents, preserving other card fields.
+    pub fn save_card_draft(
+        &mut self,
+        member: &artifact::space::Member,
+        card: &str,
+        base: &str,
+        text: &str,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        let open = self
+            .projects
+            .iter_mut()
+            .find(|open| open.path == member.project)
+            .ok_or("The project is no longer open.")?;
+        let store = open.store();
+        let mut board = store
+            .board(&member.id)
+            .ok_or("The board could not be read.")?;
+        if let Err(error) = apply_card_draft(&mut board, card, base, text) {
+            if let Some(held) = open.boards.iter_mut().find(|held| held.id == member.id) {
+                *held = board;
+            }
+            cx.notify();
+            return Err(error);
+        }
+        store.save_board(&mut board);
+        let saved = store
+            .board(&member.id)
+            .ok_or("The saved board could not be read.")?;
+        if saved.card(card).is_none_or(|card| card.text != text) {
+            return Err("The card could not be saved. Your draft is retained.".into());
+        }
+        if let Some(held) = open.boards.iter_mut().find(|held| held.id == member.id) {
+            *held = saved;
+        }
+        cx.notify();
+        Ok(())
+    }
+
     /// A board in `project`, called and keyed as the dialog that asked for it
     /// has them, and opened as it lands. Gated here as well as in the menus
     /// that call it: this is where a board is born.
@@ -402,4 +441,18 @@ impl Workspace {
             done
         })
     }
+}
+
+fn apply_card_draft(board: &mut Board, id: &str, base: &str, text: &str) -> Result<(), String> {
+    let card = board
+        .card(id)
+        .ok_or("The card was removed or moved. Your draft is retained.")?;
+    if text.trim().is_empty() {
+        return Err("A card needs some text. Use the card menu to delete it.".into());
+    }
+    if card.text != base && card.text != text {
+        return Err("The card changed while you were editing. Copy your draft before cancelling to reload it.".into());
+    }
+    board.rewrite_card(id, text);
+    Ok(())
 }

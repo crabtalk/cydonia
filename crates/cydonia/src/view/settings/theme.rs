@@ -286,7 +286,8 @@ impl SettingsWindow {
                     .group_box()
                     .child(self.cursor_row(cx))
                     .child(self.pages_row(cx))
-                    .child(self.wrap_row(cx)),
+                    .child(self.wrap_row(cx))
+                    .child(self.highlight_row(cx)),
             )
             .into_any_element()
     }
@@ -313,6 +314,48 @@ impl SettingsWindow {
                     .update(cx, |workspace, cx| workspace.set_wrap_code(!on, cx));
             },
         )
+    }
+
+    /// The colour `==text==` is washed in.
+    pub(super) fn highlight_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        use crate::model::settings::Highlight;
+        let theme = Theme::of(cx).clone();
+        let current = self.workspace.read(cx).settings.appearance.highlight;
+        theme
+            .card_row(false)
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .child(theme.row_title("Highlight colour")),
+            )
+            .child(
+                div()
+                    .flex()
+                    .gap(px(6.))
+                    .children(Highlight::ALL.into_iter().enumerate().map(|(ix, value)| {
+                        div()
+                            .id(("highlight-color", ix))
+                            .size(px(18.))
+                            .rounded_full()
+                            .cursor_pointer()
+                            .bg(crate::view::article::highlight_solid(value.color(), &theme))
+                            .border_2()
+                            .border_color(match current == value {
+                                true => theme.accent,
+                                false => bezel::gpui::transparent_black(),
+                            })
+                            .tooltip(move |window, cx| {
+                                bezel::ui::tooltip::Tooltip::text(value.label(), window, cx)
+                            })
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.workspace
+                                    .update(cx, |workspace, cx| workspace.set_highlight(value, cx));
+                                cx.notify();
+                            }))
+                    })),
+            )
+            .into_any_element()
     }
 
     /// How wide a page is set when it has not been told otherwise.

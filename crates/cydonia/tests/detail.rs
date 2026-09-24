@@ -153,19 +153,19 @@ mod panel_sizing {
     fn a_dragged_width_is_kept() {
         assert_eq!(panel_width(Some(700.), 1800.), 700.);
         assert_eq!(panel_width(Some(300.), 1800.), 300.);
-        // Down to half the column in a window too narrow to hold it.
-        assert_eq!(panel_width(Some(700.), 800.), 400.);
+        // Wider than the chat, down to what leaves the chat its minimum.
+        assert_eq!(panel_width(Some(700.), 1000.), 700.);
+        assert_eq!(panel_width(Some(700.), 800.), 560.);
     }
 
-    /// A dragged width does not take more than half of a narrower window,
-    /// which is what a width dragged on a display did to a laptop.
+    /// A dragged width always leaves the chat its minimum.
     #[test]
-    fn a_dragged_width_never_takes_more_than_half() {
+    fn a_dragged_width_leaves_the_chat_its_minimum() {
         for available in [560., 700., 900., 1200., 1800.] {
-            let width = panel_width(Some(713.6), available);
+            let width = panel_width(Some(1713.6), available);
             assert!(
-                width <= available / 2.,
-                "{width} of {available} is more than half"
+                available - width >= 240.,
+                "{width} of {available} leaves the chat too little"
             );
         }
     }

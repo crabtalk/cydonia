@@ -8,6 +8,7 @@ use super::{
     files::Files,
     terminal::{DirectoryChanged, Exited, Terminal},
 };
+use crate::view::chrome;
 use crate::view::leaf::Pane;
 use crate::view::root::{Cydonia, ToggleChanges};
 use bezel::{
@@ -21,6 +22,7 @@ use bezel::{
         icons,
         menu::{self, Cursor, Hit, Item},
         popover, tabs,
+        titlebar::{self, CaptionSide},
         tooltip::Tooltip,
         widgets::{ButtonStyle, Buttons as _},
     },
@@ -70,6 +72,8 @@ pub struct Panel {
     closing: Option<usize>,
     focus_pending: bool,
     restore_pending: Option<persistence::SavedPanel>,
+    /// The press on the strip's [`chrome::grip`].
+    drag: titlebar::DragState,
 }
 
 impl Panel {
@@ -90,6 +94,7 @@ impl Panel {
             closing: None,
             focus_pending: false,
             restore_pending: None,
+            drag: Default::default(),
         }
     }
 
@@ -295,6 +300,7 @@ impl Render for Panel {
             self.focus(window, cx);
         }
         let theme = Theme::of(cx).clone();
+        let right = chrome::has(CaptionSide::Right, window, cx);
         let items = Self::items(window);
         let rows = items.clone();
         let popup = self.menu.then(|| {
@@ -452,6 +458,8 @@ impl Render for Panel {
             .child(
                 crate::view::root::band()
                     .gap(px(6.))
+                    // Always at the window's top right while it is up.
+                    .when(right, |band| band.pr_0())
                     .child(
                         tabs::bar("panel-tabs").children(self.ordered().map(|(id, tab)| {
                             let icon = match &tab.content {
@@ -545,7 +553,7 @@ impl Render for Panel {
                                 )
                             })),
                     )
-                    .child(div().flex_1())
+                    .child(chrome::grip("panel-grip", &self.drag, window))
                     .child(
                         // The column it acts on, which is this one: a
                         // left-panel glyph on the right panel's own hide
@@ -562,7 +570,8 @@ impl Render for Panel {
                             .on_click(|_, window, cx| {
                                 window.dispatch_action(Box::new(ToggleChanges), cx)
                             }),
-                    ),
+                    )
+                    .children(chrome::caption(CaptionSide::Right, window, cx)),
             )
             .when_some(self.closing, |panel, id| {
                 panel.child(

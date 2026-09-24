@@ -58,6 +58,18 @@ impl Agent {
     }
 }
 
+/// An entry the window is showing: an article, a board or a table.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Shown {
+    pub project: PathBuf,
+    /// `article`, `board` or `table`, as [`artifact::entry::Entry::kind`]
+    /// spells it.
+    pub kind: &'static str,
+    pub id: String,
+    /// Whether it is the pane with the focus. Always set on a lone entry.
+    pub focused: bool,
+}
+
 type Hand = Box<dyn Fn(Change) + Send + Sync>;
 
 /// What the app does about a change.
@@ -68,6 +80,9 @@ static OPEN: RwLock<Vec<PathBuf>> = RwLock::new(Vec::new());
 
 /// The agents configured, as the app last pushed them.
 static AGENTS: RwLock<Vec<Agent>> = RwLock::new(Vec::new());
+
+/// The entries on screen, as the window last pushed them.
+static SHOWN: RwLock<Vec<Shown>> = RwLock::new(Vec::new());
 
 /// Hand the rail over. The app calls this once, at launch.
 pub fn install(hand: impl Fn(Change) + Send + Sync + 'static) {
@@ -101,6 +116,21 @@ pub fn set_agents(agents: Vec<Agent>) {
 /// The agents configured, in the order `settings.toml` lists them.
 pub fn agents() -> Vec<Agent> {
     AGENTS.read().map(|held| held.clone()).unwrap_or_default()
+}
+
+/// Say what the window is showing. Pushed on every render of the window, so
+/// a write happens only when the list changed.
+pub fn set_shown(shown: Vec<Shown>) {
+    let same = SHOWN.read().is_ok_and(|held| *held == shown);
+    if !same && let Ok(mut held) = SHOWN.write() {
+        *held = shown;
+    }
+}
+
+/// The entries on screen, in the order the window lays them out. Empty when
+/// the window is on a chat, or has nothing open.
+pub fn shown() -> Vec<Shown> {
+    SHOWN.read().map(|held| held.clone()).unwrap_or_default()
 }
 
 /// Whether the rail is holding a project at `path`.

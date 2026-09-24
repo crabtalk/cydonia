@@ -77,6 +77,10 @@ fn main() -> Result<()> {
         theme::set_base_text_size(look.text_size, cx);
         workspace::apply_wrap_code(look.wrap_code, cx);
         markdown::set_source_style(cx, article::source_style);
+        markdown::set_marks(cx, article::marks());
+        article::set_highlight(look.highlight.color());
+        markdown::set_mark_paint(cx, article::mark_paint);
+        markdown::set_highlight_paint(cx, article::highlight_wash);
         // The whole catalogue, not the cached subset: the fence picker lists
         // what this list holds, and a picker that offered only what had already
         // been downloaded could not be used to ask for anything else. Naming a

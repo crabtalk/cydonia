@@ -251,6 +251,12 @@ impl Workspace {
         self.last.get(&open.path).map(|entry| entry.kind)
     }
 
+    /// The active project, and the entry it was last showing.
+    pub fn landed(&self) -> Option<(&Path, &state::Entry)> {
+        let open = self.active_project()?;
+        Some((&open.path, self.last.get(&open.path)?))
+    }
+
     /// Remember the entry a project is now showing, so the next launch lands on
     /// it. Every way of opening one arrives here.
     pub(super) fn remember(

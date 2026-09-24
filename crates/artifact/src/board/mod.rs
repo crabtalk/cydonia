@@ -401,6 +401,7 @@ impl Board {
         match self.card_mut(id) {
             Some(card) => {
                 card.session = Some(session);
+                card.status = Some(Status::Busy);
                 true
             }
             None => false,
