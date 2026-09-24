@@ -133,6 +133,11 @@ pub fn formats(formatting: &Formatting) -> Vec<Format> {
         (Mark::Italic, "Italic", icons::text::Italic),
         (Mark::Strike, "Strikethrough", icons::text::Strikethrough),
         (Mark::Code, code, icons::text::Code),
+        (
+            Mark::Custom(editor::HIGHLIGHT_MARK.into()),
+            "Highlight",
+            icons::text::Highlighter,
+        ),
     ]
     .into_iter()
     .map(|(mark, label, icon)| Format {
@@ -160,6 +165,7 @@ pub fn keystroke(mark: &Mark) -> Option<&'static str> {
     match mark {
         Mark::Italic => Some("⌘I"),
         Mark::Strike => Some("⇧⌘X"),
+        Mark::Custom(name) if name == editor::HIGHLIGHT_MARK => Some("⇧⌘H"),
         _ => None,
     }
 }

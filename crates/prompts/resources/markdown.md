@@ -23,6 +23,11 @@ and `article_rewrite` for an intentional full replacement. After an editor
 save, reread before constructing an exact match: whitespace, escaping and
 list numbering can be normalized.
 
+## Highlights
+
+Wrap text in `==` to highlight it: `a ==key phrase== here`. Highlights paint
+in one colour.
+
 ## Images
 
 Put each displayed picture in its own paragraph, with blank lines around it:
