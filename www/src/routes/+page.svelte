@@ -3,6 +3,7 @@
 	import { siGithub } from 'simple-icons';
 	import DownloadPanel from '$lib/DownloadPanel.svelte';
 	import Brand from '$lib/Brand.svelte';
+	import Files from '$lib/Files.svelte';
 	import Frame from '$lib/Frame.svelte';
 	import Media from '$lib/Media.svelte';
 	import { base } from '$app/paths';
@@ -38,7 +39,6 @@
 	];
 
 	const paths = [
-		['<project>/.cydonia/', 'articles, boards, sessions'],
 		['~/.config/cydonia/', 'settings, MCP servers, agents'],
 		['~/.local/share/', 'installed agents']
 	];
@@ -153,6 +153,8 @@
 <section class="own">
 	<h2>The work outlives the session</h2>
 	<p>Markdown, SVG, one SQLite file and a TOML config — all on your disk, all yours.</p>
+
+	<Files />
 
 	<dl class="paths">
 		{#each paths as [path, what] (path)}
@@ -393,27 +395,26 @@
 	}
 
 	.paths {
-		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-		gap: 12px;
-		margin: 32px 0 0;
+		margin: 24px 0 0;
+		border-top: 1px solid var(--line);
 	}
 
 	.paths div {
-		padding: 16px 18px;
-		border: 1px solid var(--line);
-		border-radius: 8px;
+		display: grid;
+		grid-template-columns: 240px minmax(0, 1fr);
+		gap: 16px;
+		padding: 12px 0;
+		border-bottom: 1px solid var(--line);
+		font-size: 13px;
 	}
 
 	.paths dt {
 		font-family: var(--mono);
-		font-size: 13px;
 	}
 
 	.paths dd {
-		margin: 6px 0 0;
+		margin: 0;
 		color: var(--muted);
-		font-size: 14px;
 	}
 
 	.get {
@@ -448,10 +449,12 @@
 
 	.tag {
 		padding: 2px 8px;
-		border-radius: 999px;
-		background: var(--panel-high);
+		border: 1px solid var(--line);
 		color: var(--muted);
-		font-size: 12px;
+		font-family: var(--mono);
+		font-size: 11px;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
 	}
 
 	.day {

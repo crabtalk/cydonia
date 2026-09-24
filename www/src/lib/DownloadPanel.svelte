@@ -83,25 +83,30 @@
 					onclick={() => select(name)} onkeydown={(event) => navigate(event, index)}>{name}</button>
 			{/each}
 		</div>
-		<div class="download-row">
-			{#if platform === 'Linux'}
-				<fieldset class="architecture" aria-label="Architecture">
-					<div class="segments">
-						{#each [{ value: 'x86_64', label: 'x64', name: 'x64 (Intel / AMD)' }, { value: 'aarch64', label: 'ARM64', name: 'ARM64' }] as option}
-							<label>
-								<input type="radio" name="architecture" value={option.value} bind:group={architecture} aria-label={option.name} />
-								<span>{option.label}</span>
-							</label>
-						{/each}
-					</div>
-				</fieldset>
-			{:else if platform === 'macOS'}
-				<span class="detail">Apple Silicon</span>
-			{/if}
-			<a class="control download" {href} aria-label="Download for {platform}"><span aria-hidden="true">{@html Download}</span>Download</a>
-		</div>
+		{#if platform === 'Linux'}
+			<fieldset class="architecture" aria-label="Architecture">
+				<div class="segments">
+					{#each [{ value: 'x86_64', label: 'x64', name: 'x64 (Intel / AMD)' }, { value: 'aarch64', label: 'ARM64', name: 'ARM64' }] as option}
+						<label>
+							<input type="radio" name="architecture" value={option.value} bind:group={architecture} aria-label={option.name} />
+							<span>{option.label}</span>
+						</label>
+					{/each}
+				</div>
+			</fieldset>
+		{:else if platform === 'macOS'}
+			<span class="detail">Apple Silicon</span>
+		{/if}
 	</div>
 	<div class="platform" id="download-platform" role="tabpanel" aria-labelledby="download-tab-{platforms.indexOf(platform)}" tabindex="0">
+		<div class="artifact">
+			<div>
+				<p class="for">Cydonia for {platform}</p>
+				<p class="file">{file}</p>
+			</div>
+			<a class="control download" {href} aria-label="Download for {platform}"><span aria-hidden="true">{@html Download}</span>Download</a>
+		</div>
+		<p class="or"><span>or install from a terminal</span></p>
 		{@render commandLine(command)}
 		{#if platform !== 'macOS'}
 			<p class="notice">{platform} support is new and may have bugs. See <a href="https://github.com/crabtalk/cydonia/issues/53">issue #53</a>.</p>
@@ -120,8 +125,7 @@
 		container-type: inline-size;
 		min-width: 0;
 		border: 1px solid var(--line);
-		border-radius: var(--radius-lg);
-		background: var(--panel);
+		background: var(--bg);
 		overflow: hidden;
 	}
 
@@ -129,6 +133,7 @@
 		display: flex;
 		flex-wrap: wrap;
 		align-items: center;
+		justify-content: space-between;
 		gap: 0 24px;
 		padding: 0 24px;
 		border-bottom: 1px solid var(--line);
@@ -144,16 +149,19 @@
 	}
 
 	.tabs button {
-		height: var(--control-height);
-		margin: 8px 0;
+		height: 44px;
+		margin-bottom: -1px;
 		padding: 0;
-		line-height: 1;
 		border: 0;
-		border-bottom: 2px solid transparent;
+		border-bottom: 1px solid transparent;
 		background: transparent;
 		color: var(--muted);
 		font-size: var(--control-font-size);
 		cursor: pointer;
+	}
+
+	.tabs button:hover {
+		color: var(--text);
 	}
 
 	.tabs button[aria-selected='true'] {
@@ -165,13 +173,45 @@
 		padding: 24px;
 	}
 
-	.download-row {
-		margin-left: auto;
-		padding: 8px 0;
+	.artifact {
 		display: flex;
-		flex-wrap: wrap;
+		align-items: center;
+		justify-content: space-between;
+		gap: 16px;
+	}
+
+	.for {
+		margin: 0;
+		font-size: 17px;
+		font-weight: 600;
+		letter-spacing: -0.01em;
+	}
+
+	.file {
+		margin: 4px 0 0;
+		color: var(--faint);
+		font-family: var(--mono);
+		font-size: 12px;
+	}
+
+	.or {
+		display: flex;
 		align-items: center;
 		gap: 12px;
+		margin: 24px 0 12px;
+		color: var(--faint);
+		font-family: var(--mono);
+		font-size: 11px;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+	}
+
+	.or::before,
+	.or::after {
+		content: '';
+		flex: 1;
+		height: 1px;
+		background: var(--line);
 	}
 
 	.detail {
@@ -180,6 +220,8 @@
 	}
 
 	.download {
+		height: 36px;
+		padding: 0 16px;
 		display: inline-flex;
 		justify-content: center;
 		align-items: center;
@@ -344,13 +386,13 @@
 	}
 
 	@container (max-width: 580px) {
-		.panel-header {
-			padding: 0 20px;
-		}
-
 		.tabs {
 			flex-basis: 100%;
-			gap: 0;
+		}
+
+		.artifact {
+			flex-direction: column;
+			align-items: stretch;
 		}
 
 		.tabs button {
