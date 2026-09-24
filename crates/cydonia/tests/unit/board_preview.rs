@@ -47,6 +47,7 @@ impl Render for Preview {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div().w(px(240.)).child(card_preview(
             &self.doc,
+            None,
             false,
             self.overflow.clone(),
             window,

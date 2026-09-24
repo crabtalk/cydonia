@@ -158,9 +158,10 @@ fn extension(path: &Path) -> Option<String> {
 /// An absolute path rather than a relative one: what paints the picture reads
 /// the URL as a path off this process, whose working directory is not the
 /// project's.
-/// Into the `assets/` of the article the editor is on, answered relative to
-/// the article's folder. An editor with no base is not an article's, and lets
-/// the picture go.
+/// Into the `assets/` beside the editor's base, answered relative to it: an
+/// article's own folder, or for a card its project's `.cydonia`, so a card's
+/// pictures land in the project's shared `assets/`. An editor with no base
+/// lets the picture go.
 fn keep(source: Source, _: &Entity<Editor>, base: Option<&Path>, _: &App) -> Option<String> {
     let base = base?.to_path_buf();
     let dir = artifact::article::assets(&artifact::article::content(&base));

@@ -486,7 +486,7 @@ fn migrate(project: &Path) {
 }
 
 /// The languages the document's fences are tagged with.
-fn fences(editor: &Editor) -> Vec<String> {
+pub(crate) fn fences(editor: &Editor) -> Vec<String> {
     editor
         .doc()
         .blocks
