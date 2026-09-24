@@ -1,4 +1,5 @@
 <script>
+	import ShareImage from '$lib/ShareImage.svelte';
 	import { href } from '$lib/docs/nav.js';
 	import { site } from '$lib/meta.js';
 
@@ -36,8 +37,12 @@
 		<meta property="og:description" content={data.description} />
 	{/if}
 	<meta property="og:title" content={heading} />
+	<meta property="og:type" content="article" />
+	<meta property="og:url" content={canonical} />
 	<link rel="canonical" href={canonical} />
 </svelte:head>
+
+<ShareImage />
 
 <article>
 	<h1>{data.title}</h1>

@@ -18,15 +18,18 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Option<u64> {
         let ix = self.active?;
-        self.new_session_in(ix, entry, seed, cx)
+        self.new_session_in(ix, entry, seed, true, cx)
     }
 
     /// [`Self::new_session`] in the project at `ix` rather than the active one.
+    /// `front` puts it in front of its project; without it, whatever the
+    /// window shows stays put.
     fn new_session_in(
         &mut self,
         ix: usize,
         entry: settings::Agent,
         seed: Option<String>,
+        front: bool,
         cx: &mut Context<Self>,
     ) -> Option<u64> {
         if !self.settings.features.sessions || ix >= self.projects.len() {
@@ -37,8 +40,10 @@ impl Workspace {
         let chat = ChatSession::connect(id, entry, self.projects[ix].path.clone(), seed, cx);
         let project = &mut self.projects[ix];
         project.sessions.push(chat);
-        project.active = Some(id);
-        self.reveal_project(ix, cx);
+        if front {
+            project.active = Some(id);
+            self.reveal_project(ix, cx);
+        }
         self.prune_archived_for(Some(state::Kind::Session), cx);
         cx.notify();
         Some(id)
@@ -269,11 +274,12 @@ impl Workspace {
     }
 
     /// Open a session on the agent named `agent` in the project at `path`,
-    /// seeded with `content`. Nothing happens where either is not held.
+    /// seeded with `content`, behind whatever the window shows. Nothing
+    /// happens where either is not held.
     pub fn start_in(&mut self, path: &Path, agent: &str, content: String, cx: &mut Context<Self>) {
         let entry = named(&self.settings.agents, Some(agent), agent).cloned();
         if let (Some(ix), Some(entry)) = (self.project_at(path), entry) {
-            self.new_session_in(ix, entry, Some(content), cx);
+            self.new_session_in(ix, entry, Some(content), false, cx);
         }
     }
 

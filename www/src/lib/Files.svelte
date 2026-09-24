@@ -1,79 +1,32 @@
 <script>
-	import { Braces, Database, File, FileText, FolderOpen } from 'lucide-static';
+	import { Braces, ChevronDown, Database, File, FileText, Folder, FolderOpen } from 'lucide-static';
 
-	// A made-up project after one agent session: the plan it wrote, the board
-	// it filled and the transcript. Shapes follow what cydonia writes to disk,
-	// trimmed to fit.
-	const files = [
-		{
-			path: 'articles/1790089015001/content.md',
-			text: `## Why now
+	/** Each root carries `name`, `extra` and `files`; each file `path`,
+	    `lines` as token rows from `highlight`, and an optional `note`. */
+	let { roots } = $props();
 
-The public API has no limit. One client replayed a queue
-last Tuesday and took p99 from 80ms to 4s for everyone.
-
-## Plan
-
-- Token bucket per API key, kept in Redis
-- 600 requests a minute by default, raised per plan
-- Answer 429 with \`Retry-After\`, never drop silently
-
-## Open
-
-- Do webhooks count against the same bucket?`
-		},
-		{
-			path: 'articles/1790089015001/properties.toml',
-			text: `title = "Rate limiting plan"
-archived = false`
-		},
-		{
-			path: 'boards/1790266971001.toml',
-			text: `name = "Roadmap"
-key = "ROAD"
-next_handle = 4
-
-[[columns]]
-name = "TODO"
-
-[[columns.cards]]
-handle = 1
-text = "Token bucket middleware"
-
-[[columns.cards]]
-handle = 2
-text = "429 with Retry-After"
-
-[[columns.cards]]
-handle = 3
-text = "Decide: webhooks and the bucket"`
-		},
-		{
-			path: 'sessions/1790252287183.json',
-			text: `{
-  "agent": "Claude Agent",
-  "title": "Plan rate limiting",
-  "closed": true,
-  "items": [
-    { "User": "Draft a rate limiting plan and put the work on ROAD" },
-    { "Tool": "article_add Rate limiting plan" },
-    { "Tool": "board_add_card ROAD ×3" },
-    { "Agent": "The plan is in the article; three cards are on ROAD." }
-  ]
-}`
-		}
-	];
-
+	let current = $state(0);
 	let selected = $state(0);
+	let open = $state(false);
+	let switcher = $state();
 
-	const icons = { md: FileText, toml: File, json: Braces };
-	const iconFor = (name) => icons[name.split('.').pop()] ?? File;
+	const root = $derived(roots[current]);
+	const file = $derived(root.files[selected]);
+
+	function pick(index) {
+		current = index;
+		selected = 0;
+		open = false;
+	}
+
+	const icons = { md: FileText, toml: File, json: Braces, db: Database };
+	const iconFor = (name) => (name.endsWith('/') ? Folder : (icons[name.split('.').pop()] ?? File));
 
 	// Directory rows come from the paths so the tree cannot disagree with them.
 	const rows = $derived.by(() => {
 		const out = [];
 		const seen = new Set();
-		files.forEach((file, index) => {
+		root.files.forEach((file, index) => {
 			const parts = file.path.split('/');
 			parts.forEach((name, depth) => {
 				const key = parts.slice(0, depth + 1).join('/');
@@ -85,31 +38,38 @@ text = "Decide: webhooks and the bucket"`
 		});
 		return out;
 	});
-
-	const escape = (text) =>
-		text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
-
-	// Headings bold and structure faint; everything else stays plain.
-	function paint(line, kind) {
-		const text = escape(line);
-		if (kind === 'md') {
-			if (/^#+ /.test(text)) return `<span class="t-head">${text}</span>`;
-			return text.replace(/^- /, '<span class="t-punct">- </span>');
-		}
-		if (kind === 'toml' && /^\[/.test(text)) return `<span class="t-punct">${text}</span>`;
-		return text;
-	}
-
-	const file = $derived(files[selected]);
-	const lines = $derived.by(() => {
-		const kind = file.path.split('.').pop();
-		return file.text.split('\n').map((line) => paint(line, kind));
-	});
 </script>
 
+<svelte:window
+	onpointerdown={(event) => {
+		if (open && !switcher.contains(event.target)) open = false;
+	}}
+	onkeydown={(event) => {
+		if (open && event.key === 'Escape') open = false;
+	}}
+/>
+
 <div class="files">
-	<nav class="tree" aria-label="Files in .cydonia">
-		<p class="root"><span aria-hidden="true">{@html FolderOpen}</span>.cydonia</p>
+	<nav class="tree" aria-label="Files in {root.name}">
+		<div class="switch" bind:this={switcher}>
+			<button type="button" class="root" title={root.name} aria-expanded={open}
+				onclick={() => (open = !open)}>
+				<span aria-hidden="true">{@html FolderOpen}</span><span class="label">{root.name}</span>
+				<span class="chevron" aria-hidden="true">{@html ChevronDown}</span>
+			</button>
+			{#if open}
+				<ul class="menu">
+					{#each roots as other, i (other.name)}
+						<li>
+							<button type="button" class="row" style="--depth: -1"
+								aria-current={i === current} onclick={() => pick(i)}>
+								<span aria-hidden="true">{@html Folder}</span>{other.name}
+							</button>
+						</li>
+					{/each}
+				</ul>
+			{/if}
+		</div>
 		<ul>
 			{#each rows as row (row.key)}
 				<li>
@@ -125,26 +85,28 @@ text = "Decide: webhooks and the bucket"`
 					{/if}
 				</li>
 			{/each}
-			<li>
-				<span class="row dir" style="--depth: 0">
-					<span aria-hidden="true">{@html Database}</span>entries.db
-				</span>
-			</li>
+			{#each root.extra as name (name)}
+				<li>
+					<span class="row dir" style="--depth: 0">
+						<span aria-hidden="true">{@html iconFor(name)}</span>{name}
+					</span>
+				</li>
+			{/each}
 		</ul>
 	</nav>
 	<figure class="view">
 		<figcaption>
-			<span class="where">.cydonia/{file.path}</span>
-			<span class="size">{lines.length} lines</span>
+			<span class="where">{root.name}/{file.path}</span>
+			<span class="size">{file.note ?? `${file.lines.length} lines`}</span>
 		</figcaption>
-		<pre><code>{#each lines as line, i}<span class="line"><span class="n" aria-hidden="true">{i + 1}</span><span>{@html line || ' '}</span></span>{/each}</code></pre>
+		<pre class="shiki"><code>{#each file.lines as line, i}<span class="line"><span class="n" aria-hidden="true">{i + 1}</span><span>{#each line as token}<span style={token.style}>{token.content}</span>{:else}{' '}{/each}</span></span>{/each}</code></pre>
 	</figure>
 </div>
 
 <style>
 	.files {
 		display: grid;
-		grid-template-columns: 232px minmax(0, 1fr);
+		grid-template-columns: 264px minmax(0, 1fr);
 		margin: 32px 0 0;
 		border: 1px solid var(--line);
 		overflow: hidden;
@@ -159,7 +121,7 @@ text = "Decide: webhooks and the bucket"`
 	}
 
 	.tree {
-		padding: 12px 0;
+		padding: 0 0 12px;
 		border-right: 1px solid var(--line);
 	}
 
@@ -172,10 +134,55 @@ text = "Decide: webhooks and the bucket"`
 		white-space: nowrap;
 	}
 
+	.switch {
+		position: relative;
+		margin-bottom: 8px;
+		border-bottom: 1px solid var(--line);
+	}
+
 	.root {
+		width: 100%;
+		height: 40px;
 		margin: 0;
 		padding: 0 16px;
+		border: 0;
+		background: transparent;
 		color: var(--text);
+		font: inherit;
+		cursor: pointer;
+	}
+
+	.root:hover {
+		background: var(--panel-high);
+	}
+
+	.root .label {
+		display: block;
+		flex: 1;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		color: inherit;
+		text-align: left;
+	}
+
+	.root .chevron {
+		flex: none;
+	}
+
+	.root[aria-expanded='true'] .chevron {
+		transform: rotate(180deg);
+	}
+
+	.menu {
+		position: absolute;
+		top: 100%;
+		left: 0;
+		right: 0;
+		z-index: 1;
+		padding: 4px 0;
+		border-bottom: 1px solid var(--line);
+		background: var(--bg);
 	}
 
 	.root span,
@@ -224,6 +231,7 @@ text = "Decide: webhooks and the bucket"`
 		color: var(--faint);
 	}
 
+	.root:focus-visible,
 	button.row:focus-visible {
 		outline: 2px solid var(--text);
 		outline-offset: -2px;
@@ -288,14 +296,6 @@ text = "Decide: webhooks and the bucket"`
 		color: var(--faint);
 		opacity: 0.6;
 		user-select: none;
-	}
-
-	.line :global(.t-head) {
-		font-weight: 600;
-	}
-
-	.line :global(.t-punct) {
-		color: var(--faint);
 	}
 
 	@media (max-width: 720px) {

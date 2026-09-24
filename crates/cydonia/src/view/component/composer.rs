@@ -742,7 +742,12 @@ impl Composer {
     /// the window, so a card hanging below the `/` covers the very text being
     /// typed into it. Anchored to the pill rather than the caret, it also
     /// rides up with the box as the field grows.
-    fn picker(&self, theme: &Theme, cx: &mut Context<Self>) -> Option<AnyElement> {
+    fn picker(
+        &self,
+        theme: &Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         self.command?;
         let items: Vec<Item> = self
             .filter
@@ -781,6 +786,7 @@ impl Composer {
                         "composer-commands",
                         &items,
                         &cursor,
+                        window,
                         cx,
                         move |composer, hit, _, cx| match hit {
                             // The pointer moves the same highlight the arrows do, so
@@ -837,7 +843,12 @@ impl Composer {
     /// placeholder already carries its name. Picking one is the app's call to
     /// act on: an ACP session is bound to the process serving it, so the
     /// composer only reports the choice.
-    fn chip(&self, theme: &Theme, cx: &mut Context<Self>) -> Option<AnyElement> {
+    fn chip(
+        &self,
+        theme: &Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         let agent = self.agent.and_then(|ix| self.agents.get(ix))?.clone();
         let mark = px(root::composer_height() / 2.);
         let button = div()
@@ -878,7 +889,7 @@ impl Composer {
                 // A surface draws its whole subtree in one layer, so the menu
                 // hangs off the positioning parent beside it.
                 .child(button.surface(theme, SURFACE))
-                .children(self.menu_card(theme, cx))
+                .children(self.menu_card(theme, window, cx))
                 .into_any_element(),
         )
     }
@@ -887,9 +898,14 @@ impl Composer {
     /// between, each dropping a panel of its own, and the context meter under
     /// a rule at the bottom. The meter is hung on the card rather than being a
     /// row of it, because it answers back instead of offering a choice.
-    fn menu_card(&self, theme: &Theme, cx: &mut Context<Self>) -> Option<AnyElement> {
+    fn menu_card(
+        &self,
+        theme: &Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         if let Some(row) = self.picking {
-            return self.options_card(row, theme, cx);
+            return self.options_card(row, theme, window, cx);
         }
         if !self.menu {
             return None;
@@ -903,6 +919,7 @@ impl Composer {
             "composer-menu",
             &items,
             &self.cursor,
+            window,
             cx,
             move |composer, hit, window, cx| composer.hit(&rows, hit, window, cx),
         )
@@ -921,6 +938,7 @@ impl Composer {
         &self,
         row: usize,
         theme: &Theme,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let switch = self.switches.get(row)?;
@@ -938,6 +956,7 @@ impl Composer {
             "composer-options",
             &items,
             &self.picking_cursor,
+            window,
             cx,
             move |composer, hit, window, cx| match hit {
                 Hit::Point(path) => {
@@ -1194,7 +1213,7 @@ impl Composer {
         )
     }
 
-    fn tools(&self, theme: &Theme, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+    fn tools(&self, theme: &Theme, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let button = div()
             .id("composer-tools")
             .size(px(root::composer_height()))
@@ -1235,6 +1254,7 @@ impl Composer {
                 "composer-tools-menu",
                 &items,
                 &self.tools_cursor,
+                window,
                 cx,
                 move |this, hit, window, cx| {
                     match hit {
@@ -1274,9 +1294,9 @@ impl Composer {
             .into_any_element()
     }
 
-    fn body(&mut self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn body(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::of(cx).clone();
-        let picker = self.picker(&theme, cx);
+        let picker = self.picker(&theme, window, cx);
         let tray = self.tray(&theme, cx);
         let radius = px(root::composer_height() / 2.);
         let right_inset = if self.streaming || !self.is_empty(cx) {
@@ -1308,7 +1328,7 @@ impl Composer {
                     // grows up past them.
                     .items_end()
                     .gap(px(10.))
-                    .children(self.chip(&theme, cx))
+                    .children(self.chip(&theme, window, cx))
                     .child(
                         // The pill's positioning parent, as with the agent
                         // mark: a surface draws its whole subtree in one

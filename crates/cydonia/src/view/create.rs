@@ -6,8 +6,9 @@
 //! moment the key is free is the moment before there are any, and that is this
 //! one.
 
-use crate::view::root::Cydonia;
+use crate::{model::workspace::Showing, view::root::Cydonia};
 use artifact::board::{self, key};
+use artifact::space::Member;
 use bezel::{
     gpui::{
         self, AnyElement, App, Context, Entity, Focusable as _, KeyBinding, SharedString,
@@ -44,6 +45,8 @@ pub(crate) struct Making {
     /// active, so the dialog makes the board under the heading its `+` was
     /// pressed on.
     pub project: usize,
+    /// The pane whose `+` asked for it: the board opens there as a tab.
+    pub into: Option<Member>,
     pub name: Entity<TextField>,
     pub key: Entity<TextField>,
     /// The key as last derived from the name. While the field still holds it
@@ -77,6 +80,17 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.ask_new_board_into(project, None, window, cx);
+    }
+
+    /// [`Self::ask_new_board`], opening the board as a tab of `into`.
+    pub(crate) fn ask_new_board_into(
+        &mut self,
+        project: usize,
+        into: Option<Member>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.commit(cx);
         // One editor at a time, as [`Cydonia::open_info`] keeps it.
         self.menu = None;
@@ -96,6 +110,7 @@ impl Cydonia {
         window.focus(&name.read(cx).focus_handle(cx), cx);
         self.making = Some(Making {
             project,
+            into,
             name,
             key,
             derived,
@@ -150,6 +165,7 @@ impl Cydonia {
             return;
         };
         let project = making.project;
+        let into = making.into.clone();
         let key = making.key.read(cx).content().trim().to_owned();
         // A board left unnamed is the one the old `+` made outright — see
         // [`board::NAMED`]. Nothing else in the sidebar would tell them apart.
@@ -163,7 +179,14 @@ impl Cydonia {
         match made {
             Ok(ix) => {
                 self.making = None;
-                self.open_board(project, ix, window, cx);
+                let member = self
+                    .workspace
+                    .read(cx)
+                    .member_of(project, Showing::Board(ix));
+                match into.zip(member) {
+                    Some((pane, member)) => self.add_tab(&pane, member, window, cx),
+                    None => self.open_board(project, ix, window, cx),
+                }
             }
             // Left open, holding what was typed.
             Err(why) => {

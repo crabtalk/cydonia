@@ -60,6 +60,7 @@ fn open(
     cx.update(|cx| {
         Theme::install(bezel::theme::Appearance::Dark, cx);
         input::init(cx);
+        editor::init(cx);
         cx.bind_keys(bindings());
     });
     let window = cx.add_window(|window, cx| {
@@ -97,6 +98,41 @@ fn settle(cx: &mut VisualTestContext) {
             return;
         }
     }
+}
+
+/// Replace the open card's text the way a person would: select all, type.
+fn type_card(root: &Entity<Cydonia>, text: &str, cx: &mut VisualTestContext) {
+    cx.update(|window, cx| {
+        let editor = root.read(cx).draft_for(None).unwrap().editor.clone();
+        window.focus(&editor.focus_handle(cx), cx);
+    });
+    cx.simulate_keystrokes("cmd-a");
+    match text {
+        "" => cx.simulate_keystrokes("backspace"),
+        text => cx.simulate_input(text),
+    }
+    settle(cx);
+}
+
+fn draft_text(root: &Entity<Cydonia>, cx: &mut VisualTestContext) -> String {
+    cx.update(|_, cx| {
+        root.read(cx)
+            .draft_for(None)
+            .unwrap()
+            .editor
+            .read(cx)
+            .source()
+            .trim_end()
+            .to_owned()
+    })
+}
+
+fn saved_text(scratch: &Scratch, member: &Member, card: &str) -> Option<String> {
+    fs::Project::new(&scratch.0)
+        .board(&member.id)
+        .unwrap()
+        .card(card)
+        .map(|card| card.text.trim_end().to_owned())
 }
 
 fn click(selector: &'static str, cx: &mut VisualTestContext) {
@@ -160,13 +196,7 @@ fn resizing_expanding_and_restoring_use_the_board_pane(cx: &mut TestAppContext) 
     }));
     cx.simulate_resize(size(px(240.), px(400.)));
     settle(&mut cx);
-    click("card-drawer-edit", &mut cx);
-    for selector in [
-        "card-draft-save",
-        "card-draft-cancel",
-        "card-drawer-expand",
-        "card-drawer-close",
-    ] {
+    for selector in ["card-drawer-expand", "card-drawer-close"] {
         let bounds = cx.debug_bounds(selector).unwrap();
         assert!(
             bounds.left() >= px(0.) && bounds.right() <= px(240.),
@@ -176,245 +206,132 @@ fn resizing_expanding_and_restoring_use_the_board_pane(cx: &mut TestAppContext) 
 }
 
 #[gpui::test]
-fn drafts_survive_preview_switching_cards_and_closing(cx: &mut TestAppContext) {
-    let (scratch, root, member, cards, mut cx) = open("draft", cx);
-    click("card-drawer-edit", &mut cx);
-    cx.update(|_, cx| {
-        let field = root.read(cx).draft_for(None).unwrap().field.clone();
-        field.update(cx, |field, cx| field.set_content("Draft text", cx));
-    });
-    settle(&mut cx);
-    click("card-drawer-edit", &mut cx);
+fn typing_saves_the_card(cx: &mut TestAppContext) {
+    let (scratch, root, member, cards, mut cx) = open("autosave", cx);
+    type_card(&root, "Typed text", &mut cx);
+    assert_eq!(
+        saved_text(&scratch, &member, &cards[0]).unwrap(),
+        "Typed text"
+    );
+}
+
+#[gpui::test]
+fn opening_a_card_writes_nothing(cx: &mut TestAppContext) {
+    let (scratch, root, member, cards, mut cx) = open("untouched", cx);
     cx.update(|window, cx| {
         root.update(cx, |root, cx| {
             root.open_card(None, member.clone(), cards[1].clone(), window, cx);
-            assert!(root.draft_for(None).is_none());
-            root.open_card(None, member.clone(), cards[0].clone(), window, cx);
-            assert_eq!(
-                root.draft_for(None)
-                    .unwrap()
-                    .field
-                    .read(cx)
-                    .content()
-                    .as_ref(),
-                "Draft text"
-            );
             root.close_card_preview(None, window, cx);
-            root.open_card(None, member.clone(), cards[0].clone(), window, cx);
-            assert_eq!(
-                root.draft_for(None)
-                    .unwrap()
-                    .field
-                    .read(cx)
-                    .content()
-                    .as_ref(),
-                "Draft text"
-            );
         })
     });
     assert_eq!(
-        fs::Project::new(&scratch.0)
-            .board(&member.id)
-            .unwrap()
-            .card(&cards[0])
-            .unwrap()
-            .text,
+        saved_text(&scratch, &member, &cards[0]).unwrap(),
         "First card"
     );
-    settle(&mut cx);
-    click("card-draft-save", &mut cx);
     assert_eq!(
-        fs::Project::new(&scratch.0)
-            .board(&member.id)
-            .unwrap()
-            .card(&cards[0])
-            .unwrap()
-            .text,
-        "Draft text"
+        saved_text(&scratch, &member, &cards[1]).unwrap(),
+        "Second card"
     );
-    assert!(cx.update(|_, cx| root.read(cx).draft_for(None).is_none()));
+}
+
+#[gpui::test]
+fn switching_and_closing_save_at_once(cx: &mut TestAppContext) {
+    let (scratch, root, member, cards, mut cx) = open("switch", cx);
+    type_card(&root, "Switched away", &mut cx);
+    cx.update(|window, cx| {
+        root.update(cx, |root, cx| {
+            root.open_card(None, member.clone(), cards[1].clone(), window, cx)
+        })
+    });
+    assert_eq!(
+        saved_text(&scratch, &member, &cards[0]).unwrap(),
+        "Switched away"
+    );
+    assert_eq!(draft_text(&root, &mut cx), "Second card");
+    type_card(&root, "Closed", &mut cx);
+    click("card-drawer-close", &mut cx);
+    assert_eq!(saved_text(&scratch, &member, &cards[1]).unwrap(), "Closed");
+    assert!(cx.update(|_, cx| root.read(cx).leaf().card_drafts.is_empty()));
 }
 
 #[gpui::test]
 fn save_preserves_agent_metadata_and_rejects_conflicting_text(cx: &mut TestAppContext) {
     let (scratch, root, member, cards, mut cx) = open("conflict", cx);
-    click("card-drawer-edit", &mut cx);
-    cx.update(|_, cx| {
-        let field = root.read(cx).draft_for(None).unwrap().field.clone();
-        field.update(cx, |field, cx| field.set_content("My draft", cx));
-    });
+    type_card(&root, "My draft", &mut cx);
     let store = fs::Project::new(&scratch.0);
     let mut board = store.board(&member.id).unwrap();
     board.set_card_status(&cards[0], Some(Status::Busy));
     board.card_mut(&cards[0]).unwrap().session = Some("agent-session".into());
     store.save_board(&mut board).unwrap();
-    cx.update(|window, cx| root.update(cx, |root, cx| root.save_card_draft(None, window, cx)));
+    type_card(&root, "Mine", &mut cx);
     let saved = store.board(&member.id).unwrap();
+    assert_eq!(saved.card(&cards[0]).unwrap().text.trim_end(), "Mine");
     assert_eq!(saved.card(&cards[0]).unwrap().status, Some(Status::Busy));
     assert_eq!(
         saved.card(&cards[0]).unwrap().session.as_deref(),
         Some("agent-session")
     );
 
-    cx.update(|window, cx| {
-        root.update(cx, |root, cx| {
-            root.toggle_card_edit(None, window, cx);
-            root.draft_for(None)
-                .unwrap()
-                .field
-                .clone()
-                .update(cx, |field, cx| field.set_content("New draft", cx));
-        })
-    });
     let mut board = store.board(&member.id).unwrap();
     board.rewrite_card(&cards[0], "Agent rewrite");
     store.save_board(&mut board).unwrap();
-    cx.update(|window, cx| {
-        root.update(cx, |root, cx| {
-            root.save_card_draft(None, window, cx);
-            assert!(root.draft_for(None).unwrap().error.is_some());
-            assert_eq!(
-                root.draft_for(None)
-                    .unwrap()
-                    .field
-                    .read(cx)
-                    .content()
-                    .as_ref(),
-                "New draft"
-            );
-            root.cancel_card_draft(None, window, cx);
-            assert!(root.draft_for(None).is_none());
-        })
-    });
+    type_card(&root, "New draft", &mut cx);
+    assert!(cx.update(|_, cx| root.read(cx).draft_for(None).unwrap().error.is_some()));
+    assert_eq!(draft_text(&root, &mut cx), "New draft");
     assert_eq!(
-        store
-            .board(&member.id)
-            .unwrap()
-            .card(&cards[0])
-            .unwrap()
-            .text,
+        saved_text(&scratch, &member, &cards[0]).unwrap(),
         "Agent rewrite"
     );
+    click("card-draft-discard", &mut cx);
+    assert_eq!(draft_text(&root, &mut cx), "Agent rewrite");
+    assert!(cx.update(|_, cx| root.read(cx).draft_for(None).unwrap().error.is_none()));
 }
 
 #[gpui::test]
-fn long_drafts_scroll_in_the_drawer_and_enter_does_not_save(cx: &mut TestAppContext) {
-    let (scratch, root, member, cards, mut cx) = open("long-edit", cx);
-    click("card-drawer-edit", &mut cx);
+fn an_agent_rewrite_reloads_an_untouched_card(cx: &mut TestAppContext) {
+    let (_scratch, root, _, cards, mut cx) = open("reload", cx);
     cx.update(|_, cx| {
-        let field = root.read(cx).draft_for(None).unwrap().field.clone();
-        field.update(cx, |field, cx| field.set_content("line\n".repeat(700), cx));
+        root.update(cx, |root, cx| {
+            root.workspace.update(cx, |workspace, cx| {
+                workspace.projects[0].boards[0].rewrite_card(&cards[0], "Agent rewrite");
+                cx.notify();
+            });
+            cx.notify();
+        })
     });
     settle(&mut cx);
-    cx.update(|_, cx| {
-        let root = root.read(cx);
-        let opened = root.leaf().open_card.as_ref().unwrap();
-        assert!(opened.scroll.max_offset().y > px(7000.));
-        let field = root.draft_for(None).unwrap().field.read(cx);
-        let caret = field.offset_bounds(field.cursor()).unwrap();
-        assert!(caret.top() >= opened.scroll.bounds().top());
-        assert!(
-            caret.bottom() <= opened.scroll.bounds().bottom(),
-            "caret={caret:?}, viewport={:?}, offset={:?}, max={:?}",
-            opened.scroll.bounds(),
-            opened.scroll.offset(),
-            opened.scroll.max_offset()
-        );
-    });
-    cx.simulate_keystrokes("enter");
-    cx.simulate_input("last line");
-    settle(&mut cx);
+    assert_eq!(draft_text(&root, &mut cx), "Agent rewrite");
+}
+
+#[gpui::test]
+fn emptied_cards_are_kept_and_never_saved(cx: &mut TestAppContext) {
+    let (scratch, root, member, cards, mut cx) = open("empty", cx);
+    type_card(&root, "", &mut cx);
+    assert!(cx.update(|_, cx| root.read(cx).draft_for(None).unwrap().error.is_some()));
     assert_eq!(
-        fs::Project::new(&scratch.0)
-            .board(&member.id)
-            .unwrap()
-            .card(&cards[0])
-            .unwrap()
-            .text,
+        saved_text(&scratch, &member, &cards[0]).unwrap(),
         "First card"
     );
-    cx.simulate_keystrokes("cmd-enter");
-    settle(&mut cx);
-    let saved = fs::Project::new(&scratch.0).board(&member.id).unwrap();
-    assert!(
-        saved
-            .card(&cards[0])
-            .unwrap()
-            .text
-            .ends_with("\n\nlast line")
-    );
-    assert!(cx.update(|_, cx| root.read(cx).draft_for(None).is_none()));
-}
-
-#[gpui::test]
-fn escape_keeps_the_draft_and_empty_saves_do_not_delete_cards(cx: &mut TestAppContext) {
-    let (scratch, root, member, cards, mut cx) = open("escape", cx);
-    click("card-drawer-edit", &mut cx);
-    cx.update(|_, cx| {
-        let field = root.read(cx).draft_for(None).unwrap().field.clone();
-        field.update(cx, |field, cx| field.set_content("", cx));
-    });
-    settle(&mut cx);
-    cx.simulate_keystrokes("cmd-enter");
-    settle(&mut cx);
-    assert!(cx.update(|_, cx| root.read(cx).draft_for(None).unwrap().error.is_some()));
-    assert!(
-        fs::Project::new(&scratch.0)
-            .board(&member.id)
-            .unwrap()
-            .card(&cards[0])
-            .is_some()
-    );
-    cx.simulate_keystrokes("escape");
-    settle(&mut cx);
+    click("card-drawer-close", &mut cx);
     cx.update(|window, cx| {
         root.update(cx, |root, cx| {
             assert!(root.leaf().open_card.is_none());
             root.open_card(None, member.clone(), cards[0].clone(), window, cx);
-            assert!(
-                root.draft_for(None)
-                    .unwrap()
-                    .field
-                    .read(cx)
-                    .content()
-                    .is_empty()
-            );
-            root.cancel_card_draft(None, window, cx);
         })
     });
+    assert_eq!(draft_text(&root, &mut cx), "");
 }
 
 #[gpui::test]
-fn a_removed_card_keeps_its_draft_accessible(cx: &mut TestAppContext) {
+fn a_removed_card_keeps_its_text_accessible(cx: &mut TestAppContext) {
     let (scratch, root, member, cards, mut cx) = open("removed", cx);
-    click("card-drawer-edit", &mut cx);
-    cx.update(|_, cx| {
-        root.read(cx)
-            .draft_for(None)
-            .unwrap()
-            .field
-            .clone()
-            .update(cx, |field, cx| field.set_content("Keep this draft", cx));
-    });
     let store = fs::Project::new(&scratch.0);
     let mut board = store.board(&member.id).unwrap();
     board.remove_card(&cards[0]);
     store.save_board(&mut board).unwrap();
-    cx.update(|window, cx| root.update(cx, |root, cx| root.save_card_draft(None, window, cx)));
-    settle(&mut cx);
+    type_card(&root, "Keep this text", &mut cx);
     assert!(cx.debug_bounds("card-drawer").is_some());
-    cx.update(|_, cx| {
-        assert_eq!(
-            root.read(cx)
-                .draft_for(None)
-                .unwrap()
-                .field
-                .read(cx)
-                .content()
-                .as_ref(),
-            "Keep this draft"
-        );
-    });
+    assert_eq!(draft_text(&root, &mut cx), "Keep this text");
     assert!(store.board(&member.id).unwrap().card(&cards[0]).is_none());
 }
 
@@ -731,7 +648,12 @@ fn list_window_tracks_group_folding_and_search(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn list_rows_open_drawer_and_group_controls_stay_independent(cx: &mut TestAppContext) {
-    let (_scratch, root, _, cards, mut cx) = open("list-controls", cx);
+    let (scratch, root, member, cards, mut cx) = open("list-controls", cx);
+    // On disk as well: a save reads the board back.
+    let store = fs::Project::new(&scratch.0);
+    let mut board = store.board(&member.id).unwrap();
+    board.view = View::List;
+    store.save_board(&mut board).unwrap();
     cx.update(|window, cx| {
         root.update(cx, |root, cx| {
             root.close_card_preview(None, window, cx);
@@ -759,31 +681,19 @@ fn list_rows_open_drawer_and_group_controls_stay_independent(cx: &mut TestAppCon
             .clone()),
         cards[0]
     );
-    click("card-drawer-edit", &mut cx);
-    cx.update(|_, cx| {
-        root.read(cx)
-            .draft_for(None)
-            .unwrap()
-            .field
-            .clone()
-            .update(cx, |field, cx| field.set_content("List draft", cx))
-    });
+    type_card(&root, "List text", &mut cx);
     click("card-drawer-close", &mut cx);
-    cx.simulate_mouse_down(first, MouseButton::Left, Modifiers::default());
-    cx.simulate_mouse_up(first, MouseButton::Left, Modifiers::default());
-    settle(&mut cx);
     assert_eq!(
-        cx.update(|_, cx| root
-            .read(cx)
-            .draft_for(None)
-            .unwrap()
-            .field
-            .read(cx)
-            .content()
-            .to_string()),
-        "List draft"
+        cx.update(
+            |_, cx| root.read(cx).workspace.read(cx).projects[0].boards[0]
+                .card(&cards[0])
+                .unwrap()
+                .text
+                .trim_end()
+                .to_owned()
+        ),
+        "List text"
     );
-    click("card-drawer-close", &mut cx);
     click("list-group-toggle", &mut cx);
     assert!(cx.update(|_, cx| {
         root.read(cx).workspace.read(cx).projects[0].boards[0].columns[0].collapsed

@@ -118,8 +118,7 @@ fn the_strip_names_where_to_go() {
 mod panel_sizing {
     use cydonia::view::detail::{panel_beside, panel_width};
 
-    /// A width nobody chose is a share of the window, so the same build does
-    /// not hand a laptop the slab it hands a display.
+    /// A width nobody chose is half the window.
     #[test]
     fn an_unsized_panel_takes_a_share_of_the_window() {
         let about = |width: f32, expected: f32| {
@@ -128,12 +127,9 @@ mod panel_sizing {
                 "{width} is not about {expected}"
             );
         };
-        // A third, until the ceiling.
-        about(panel_width(None, 1800.), 440.);
-        about(panel_width(None, 1200.), 396.);
-        about(panel_width(None, 900.), 297.);
-        // And never below what a diff needs to be readable.
-        about(panel_width(None, 600.), 280.);
+        about(panel_width(None, 1800.), 900.);
+        about(panel_width(None, 1200.), 600.);
+        about(panel_width(None, 600.), 300.);
     }
 
     /// The panel never takes more than half of a window it is standing in.

@@ -54,11 +54,11 @@ const CHAT_MIN: f32 = 240.;
 /// see [`panel_beside`].
 const PANEL_MIN: f32 = 280.;
 
-/// The widest the panel is given before anybody drags it.
-const PANEL_MAX: f32 = 440.;
+/// The share of the column the panel takes before anybody drags it.
+const PANEL_SHARE: f32 = 0.5;
 
-/// And the share of the column it takes between the two.
-const PANEL_SHARE: f32 = 0.33;
+/// The bottom panel's height before anybody drags it.
+const TERMINAL_HEIGHT: f32 = 240.;
 
 /// Whether there is room to stand the panel beside the chat.
 ///
@@ -73,19 +73,17 @@ pub fn panel_beside(available: f32) -> bool {
 /// How wide the panel is drawn.
 ///
 /// `preferred` is `None` until somebody drags the split. A width nobody chose
-/// is a share of what there is, bounded at both ends, so the same build is not
-/// giving a third of a laptop screen to the same slab it gives a sixth of a
-/// display. A width somebody did choose is kept as far as the chat keeps
-/// [`CHAT_MIN`].
+/// is [`PANEL_SHARE`] of what there is. Either is kept as far as the chat
+/// keeps [`CHAT_MIN`] and the panel [`PANEL_MIN`].
 pub fn panel_width(preferred: Option<f32>, available: f32) -> f32 {
-    let preferred =
-        preferred.unwrap_or_else(|| (available * PANEL_SHARE).clamp(PANEL_MIN, PANEL_MAX));
+    let preferred = preferred.unwrap_or(available * PANEL_SHARE);
     let min = PANEL_MIN.min(available / 2.);
     let max = (available - CHAT_MIN).max(min);
     preferred.clamp(min, max)
 }
 
-fn panel_height(preferred: f32, available: f32) -> f32 {
+fn panel_height(preferred: Option<f32>, available: f32) -> f32 {
+    let preferred = preferred.unwrap_or(TERMINAL_HEIGHT);
     let min = 120.0_f32.min(available / 2.);
     preferred.clamp(min, (available - 160.).max(min))
 }
@@ -657,7 +655,7 @@ impl Cydonia {
                             .active_project()
                             .and_then(|open| open.table),
                     )
-                    .and_then(|(project, at)| self.table(project, at, None, cx))
+                    .and_then(|(project, at)| self.table(project, at, None, window, cx))
                     .unwrap_or_else(|| self.launch(window, cx)),
             },
         };
@@ -772,10 +770,11 @@ impl Cydonia {
             .flex_col()
             .on_drag_move(
                 cx.listener(|this, event: &DragMoveEvent<TerminalResize>, _, cx| {
-                    this.terminal_height = panel_height(
-                        f32::from(event.bounds.bottom() - event.event.position.y),
+                    this.terminal_height = Some(panel_height(
+                        Some(f32::from(event.bounds.bottom() - event.event.position.y)),
                         f32::from(event.bounds.size.height),
-                    );
+                    ));
+                    this.save_panel_layout_settled(cx);
                     cx.notify();
                 }),
             )
@@ -908,7 +907,7 @@ impl Cydonia {
     /// The front door, and what stands where a pane would be if one were
     /// showing: a project to open, or the first entry to make in the one that
     /// already is.
-    pub(crate) fn launch(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+    pub(crate) fn launch(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         match self.workspace.read(cx).active_project().is_some() {
             true => self.nothing_open(window, cx),
             false => self.no_project(cx),
@@ -919,7 +918,7 @@ impl Cydonia {
     /// project that is open. The kinds are listed rather than named in a hint,
     /// because a list can be clicked — and only the kinds that are switched on
     /// are listed, so under the shipped defaults this is one line.
-    fn nothing_open(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+    fn nothing_open(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let workspace = self.workspace.read(cx);
         let Some(ix) = workspace.active else {
@@ -966,7 +965,7 @@ impl Cydonia {
                 self.menu_press(trigger, Menu::Launch, cx)
                     .relative()
                     .children((self.menu == Some(Menu::Launch)).then(|| {
-                        let card = self.menu_card("launch-menu", picks, cx);
+                        let card = self.menu_card("launch-menu", picks, window, cx);
                         match self.menu_point(&Menu::Launch) {
                             Some(point) => popover::menu_at("launch-menu", point, card, None),
                             None => popover::anchored_menu_below("launch-menu", card, None),

@@ -108,39 +108,11 @@ pub fn set_highlight(color: HighlightColor) {
     HIGHLIGHT.store(ix, Ordering::Relaxed);
 }
 
-/// Apple's system colour for `color`, solid, in `theme`'s appearance.
-pub fn highlight_solid(color: HighlightColor, theme: &Theme) -> bezel::gpui::Hsla {
-    let dark = theme.appearance == bezel::theme::Appearance::Dark;
-    let hex = match (color, dark) {
-        (HighlightColor::Yellow, false) => 0xFFCC00,
-        (HighlightColor::Yellow, true) => 0xFFD60A,
-        (HighlightColor::Green, false) => 0x28CD41,
-        (HighlightColor::Green, true) => 0x32D74B,
-        (HighlightColor::Blue, false) => 0x007AFF,
-        (HighlightColor::Blue, true) => 0x0A84FF,
-        (HighlightColor::Pink, false) => 0xFF2D55,
-        (HighlightColor::Pink, true) => 0xFF375F,
-        (HighlightColor::Purple, false) => 0xAF52DE,
-        (HighlightColor::Purple, true) => 0xBF5AF2,
-        _ => 0xFFD60A,
-    };
-    bezel::gpui::Hsla::from(bezel::gpui::rgb(hex))
-}
-
-/// The wash `color` paints under text: [`highlight_solid`], translucent.
-pub fn highlight_wash(color: HighlightColor, theme: &Theme) -> bezel::gpui::Hsla {
-    let alpha = match theme.appearance {
-        bezel::theme::Appearance::Dark => 0.35,
-        _ => 0.45,
-    };
-    highlight_solid(color, theme).opacity(alpha)
-}
-
 /// How [`marks`] paint: every highlight in the colour [`set_highlight`] chose.
 pub fn mark_paint(name: &str, theme: &Theme) -> Option<markdown::MarkPaint> {
     let color = HighlightColor::ALL[HIGHLIGHT.load(Ordering::Relaxed)];
     (name == editor::HIGHLIGHT_MARK).then(|| markdown::MarkPaint {
-        background: Some(highlight_wash(color, theme)),
+        background: Some(markdown::default_highlight(color, theme)),
         ..Default::default()
     })
 }
@@ -672,6 +644,7 @@ impl Cydonia {
         project: usize,
         ix: usize,
         title: String,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
@@ -721,6 +694,7 @@ impl Cydonia {
             "article-row",
             entry,
             archived,
+            window,
             cx,
         ))
         .on_click(cx.listener(move |this, _, window, cx| {

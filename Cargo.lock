@@ -618,9 +618,9 @@ checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
 
 [[package]]
 name = "bezel"
-version = "0.1.28"
+version = "0.1.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a64e826e99f66b9b7f5d878798244f18540d459de464a244dab1cc5d4ddd3bd6"
+checksum = "3f59e569a56880a4ff866d24e43f131c46517696bd58dab0655f5d905b6153b8"
 dependencies = [
  "bezel-agent",
  "bezel-gpui",
@@ -633,9 +633,9 @@ dependencies = [
 
 [[package]]
 name = "bezel-agent"
-version = "0.1.28"
+version = "0.1.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6894d9fdad0d90b27c133448823382175b29de623e5698d574786a5ee0cd8833"
+checksum = "1572ed4678a24fac797080f32ed13c3917ace401816e75971594e621207fe978"
 dependencies = [
  "bezel-gpui",
  "bezel-theme",
@@ -644,9 +644,9 @@ dependencies = [
 
 [[package]]
 name = "bezel-editor"
-version = "0.1.28"
+version = "0.1.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "740034282e712e22f08484ef9e5820c5e25e09e1eb3458da2407af154f42d040"
+checksum = "07434771bbd172a924bc32f6b4d2d2156721673162cd3a8af98a866e030bf8fb"
 dependencies = [
  "bezel-gpui",
  "bezel-markdown",
@@ -961,18 +961,18 @@ dependencies = [
 
 [[package]]
 name = "bezel-icons"
-version = "0.1.28"
+version = "0.1.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ded60c68ed4ec52d1c3d0c29625c022d7e4379cdc8a156fd2151f3f0355f8db5"
+checksum = "5de5d9bf587969967cb22e4fb1491287a9e9588d5599257719f77d86e1e2cafc"
 dependencies = [
  "bezel-gpui",
 ]
 
 [[package]]
 name = "bezel-markdown"
-version = "0.1.28"
+version = "0.1.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7b10032eb32d6defd05fb7d81b1aba385e242f747aa497a13807b555e6deb57c"
+checksum = "2a78e39a237cd9d57b83b5bd29f131dd154c333be61154eca16d469d59834333"
 dependencies = [
  "bezel-gpui",
  "bezel-theme",
@@ -982,9 +982,9 @@ dependencies = [
 
 [[package]]
 name = "bezel-motion"
-version = "0.1.28"
+version = "0.1.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4a0364060fa8c06a7533ef3c23d39d5da8743643d3607616ae4b6ecc8b45bcf6"
+checksum = "ffe19eb28ff5a277b57e7cc39519a4898971f678aacdc8dac28e8c45233ba5d5"
 dependencies = [
  "bezel-gpui",
  "web-time",
@@ -992,9 +992,9 @@ dependencies = [
 
 [[package]]
 name = "bezel-syntax"
-version = "0.1.28"
+version = "0.1.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8598136afafcbd42fb150c85767fc2094ec3d0a46d93269f1735134cd6676c13"
+checksum = "34e57c9bc16a443536413e440817d1b5ec88757560ee8f0fd29b9e3eda71a244"
 dependencies = [
  "bezel-theme",
  "tree-sitter",
@@ -1020,9 +1020,9 @@ dependencies = [
 
 [[package]]
 name = "bezel-terminal"
-version = "0.1.28"
+version = "0.1.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f7e710593d13053997bd7dd27a2d2a882fa9e8cfe51ab2cf11f772f6929baebf"
+checksum = "a59e3df9f55e9e60642b0d069dddb147e9cf16d4219bc692b10e8608ca994ef1"
 dependencies = [
  "alacritty_terminal",
  "bezel-gpui",
@@ -1034,9 +1034,9 @@ dependencies = [
 
 [[package]]
 name = "bezel-theme"
-version = "0.1.28"
+version = "0.1.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e40db9ca0c5e4b3d9f1e1b688df803734d4aa391de359d11ed82481bf7660b57"
+checksum = "61d4c1790feb0ad377150ed3d049a746c0bb3ababf14c534f34edbc052149ddc"
 dependencies = [
  "bezel-gpui",
  "objc",
@@ -1047,9 +1047,9 @@ dependencies = [
 
 [[package]]
 name = "bezel-ui"
-version = "0.1.28"
+version = "0.1.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1f585404aa137877df050b8216dd733f5f1563f14fb296e715ba6b181c5e081c"
+checksum = "5b2516893e83d6377f89b8de7916de1a81cd19c7e0765d7f37d71618778a0b14"
 dependencies = [
  "bezel-gpui",
  "bezel-icons",
@@ -2180,7 +2180,7 @@ checksum = "f27ae1dd37df86211c42e150270f82743308803d90a6f6e6651cd730d5e1732f"
 
 [[package]]
 name = "cydonia"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2220,7 +2220,7 @@ dependencies = [
 
 [[package]]
 name = "cydonia-artifact"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "anyhow",
  "cacp",
@@ -2234,7 +2234,7 @@ dependencies = [
 
 [[package]]
 name = "cydonia-mcp"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "axum",
  "cydonia-artifact",
@@ -2247,7 +2247,7 @@ dependencies = [
 
 [[package]]
 name = "cydonia-prompts"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "serde",
  "serde_yaml_ng",

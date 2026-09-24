@@ -295,7 +295,11 @@ fn workspace(cx: &mut App, f: impl FnOnce(&mut Cydonia, &mut Window, &mut Contex
 impl Cydonia {
     /// The button that opens the tree off macOS, and its card while open.
     /// `None` on macOS.
-    pub(crate) fn app_menu(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+    pub(crate) fn app_menu(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         if NATIVE {
             return None;
         }
@@ -307,7 +311,7 @@ impl Cydonia {
                     .into_iter()
                     .map(|menu| submenu(menu, window, cx))
                     .collect();
-                self.menu_card("app-menu-card", rows, cx)
+                self.menu_card("app-menu-card", rows, window, cx)
             });
         Some(
             self.menu_button("app-menu", None, icons::layout::Menu, Open::App, cx)

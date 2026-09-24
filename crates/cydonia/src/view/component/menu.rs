@@ -41,6 +41,8 @@ pub(crate) enum Menu {
     /// several bars on screen at once, so `Header` alone would open every one
     /// of them together.
     Pane(gpui::SharedString),
+    /// The `+` in one pane's bar, by the same key as [`Menu::Pane`].
+    PaneAdd(gpui::SharedString),
     /// The `···` on a table's column heading.
     Column(usize),
     /// The `···` on a board's lane, by column id. An id and not a position: a
@@ -207,6 +209,7 @@ impl Cydonia {
         &self,
         id: impl Into<SharedString>,
         rows: Vec<(Item, Act)>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = Theme::of(cx).clone();
@@ -219,6 +222,7 @@ impl Cydonia {
             id,
             &items,
             &self.menu_cursor,
+            window,
             cx,
             move |this, hit, window, cx| match hit {
                 Hit::Point(path) => {

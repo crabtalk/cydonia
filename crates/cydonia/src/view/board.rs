@@ -36,6 +36,7 @@ use bezel::{
         widgets::Buttons,
     },
 };
+use editor::{Editor, EditorEvent};
 use markdown::Typography;
 use std::{
     cell::{Cell, RefCell},
@@ -50,8 +51,7 @@ actions!(
         DismissCard,
         FindCard,
         DismissFind,
-        CloseCardPreview,
-        SaveCardDraft
+        CloseCardPreview
     ]
 );
 
@@ -63,7 +63,6 @@ const KEY_CONTEXT: &str = "CydoniaCard";
 /// everywhere else.
 const FIND_CONTEXT: &str = "CydoniaBoardFind";
 const DRAWER_CONTEXT: &str = "CydoniaCardPreview";
-const DRAFT_CONTEXT: &str = "CydoniaCardDraft";
 
 const COLUMN_WIDTH: f32 = 272.;
 
@@ -133,8 +132,6 @@ pub fn bindings() -> Vec<KeyBinding> {
         KeyBinding::new("escape", DismissCard, ctx),
         KeyBinding::new("escape", DismissFind, Some(FIND_CONTEXT)),
         KeyBinding::new("escape", CloseCardPreview, Some(DRAWER_CONTEXT)),
-        KeyBinding::new("secondary-enter", SaveCardDraft, Some(DRAWER_CONTEXT)),
-        KeyBinding::new("secondary-enter", SaveCardDraft, Some(DRAFT_CONTEXT)),
     ]
 }
 
@@ -213,10 +210,18 @@ struct Tally {
 }
 
 /// Render Markdown at the lane's text scale. Full reading uses the drawer.
-fn card_body(doc: &markdown::Doc, window: &mut Window, cx: &mut App) -> AnyElement {
+/// `base` is where a card's relative picture paths resolve: its project's
+/// `.cydonia` folder.
+fn card_body(
+    doc: &markdown::Doc,
+    base: Option<&std::path::Path>,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
     markdown::render_with(
         doc,
         markdown::Editing {
+            base,
             // A picture in a lane this narrow is a picture. Its alt text spelled
             // out underneath would be most of the card.
             caption: markdown::Caption::Hidden,
@@ -232,6 +237,7 @@ fn card_body(doc: &markdown::Doc, window: &mut Window, cx: &mut App) -> AnyEleme
 /// Measure the full rendered body, while the lane only shows its preview.
 fn card_preview(
     doc: &markdown::Doc,
+    base: Option<&std::path::Path>,
     shortened: bool,
     overflow: Entity<bool>,
     window: &mut Window,
@@ -241,22 +247,25 @@ fn card_preview(
         .max_h(px(CARD_MAX_HEIGHT))
         .overflow_hidden()
         .child(
-            div().relative().child(card_body(doc, window, cx)).child(
-                gpui::canvas(
-                    move |bounds, _, cx| {
-                        let clipped = shortened || bounds.size.height > px(CARD_MAX_HEIGHT);
-                        overflow.update(cx, |value, cx| {
-                            if *value != clipped {
-                                *value = clipped;
-                                cx.notify();
-                            }
-                        });
-                    },
-                    |_, _, _, _| {},
-                )
-                .absolute()
-                .size_full(),
-            ),
+            div()
+                .relative()
+                .child(card_body(doc, base, window, cx))
+                .child(
+                    gpui::canvas(
+                        move |bounds, _, cx| {
+                            let clipped = shortened || bounds.size.height > px(CARD_MAX_HEIGHT);
+                            overflow.update(cx, |value, cx| {
+                                if *value != clipped {
+                                    *value = clipped;
+                                    cx.notify();
+                                }
+                            });
+                        },
+                        |_, _, _, _| {},
+                    )
+                    .absolute()
+                    .size_full(),
+                ),
         )
         .into_any_element()
 }
@@ -283,7 +292,6 @@ pub struct OpenCard {
     size: DrawerSize,
     resize_grab: Option<Pixels>,
     pane_bounds: Rc<Cell<gpui::Bounds<Pixels>>>,
-    editing: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -324,14 +332,20 @@ impl DrawerSize {
     }
 }
 
-/// Drafts outlive the drawer so closing and switching cards never discard text.
+/// The editor over the card open in a pane's drawer, saved as it is typed in.
+/// Kept past the drawer only while its last save failed, so closing and
+/// switching cards never discard text.
 pub struct CardDraft {
     board: Member,
     card: String,
+    /// The card's text as last read from the board or written to it — what a
+    /// save checks the board against.
     base: String,
-    field: Entity<TextField>,
+    /// The editor's source when `base` was taken. Differs from `base` where
+    /// the editor normalises the markdown, which is not an edit.
+    shown: String,
+    editor: Entity<Editor>,
     error: Option<String>,
-    reveal_caret: Rc<Cell<bool>>,
     _subscription: gpui::Subscription,
 }
 
@@ -687,6 +701,7 @@ impl Lanes {
 /// would be clipped by the very edge it is being carried over.
 pub struct HeldCard {
     text: String,
+    base: Option<std::path::PathBuf>,
 }
 
 impl Render for HeldCard {
@@ -701,7 +716,12 @@ impl Render for HeldCard {
             .border_1()
             .border_color(theme.accent)
             .bg(theme.surface_raised)
-            .child(card_body(&markdown::parse(&self.text), window, cx))
+            .child(card_body(
+                &markdown::parse(&self.text),
+                self.base.as_deref(),
+                window,
+                cx,
+            ))
     }
 }
 
@@ -811,7 +831,7 @@ impl Cydonia {
         if let Some(on) = on {
             self.focus_pane(&on.clone(), window, cx);
         }
-        self.leaf_of_mut(on).open_card = None;
+        self.drop_drawer(on, cx);
         let board = self.workspace.read(cx).board_of(on);
         let text = match &at {
             Editing::New(..) => String::new(),
@@ -991,6 +1011,16 @@ impl Cydonia {
         cx.notify();
     }
 
+    /// Put a card at the foot of another lane of its board.
+    fn move_card_to(&mut self, board: &str, card: &str, column: &str, cx: &mut Context<Self>) {
+        self.commit(cx);
+        self.workspace.update(cx, |workspace, cx| {
+            workspace.write_board(board, |board| board.move_card_before(card, column, None));
+            cx.notify();
+        });
+        cx.notify();
+    }
+
     pub(crate) fn delete_card(&mut self, board: &str, card: &str, cx: &mut Context<Self>) {
         self.commit(cx);
         let (board, card) = (board.to_owned(), card.to_owned());
@@ -1096,7 +1126,13 @@ impl Cydonia {
 
     /// The `···` on a card: what the row of glyphs underneath should not carry,
     /// because it cannot be undone.
-    fn card_menu(&self, on: &str, card: &str, cx: &mut Context<Self>) -> Option<AnyElement> {
+    fn card_menu(
+        &self,
+        on: &str,
+        card: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         if self.menu.as_ref() != Some(&Menu::Card(card.to_owned())) {
             return None;
         }
@@ -1105,20 +1141,49 @@ impl Cydonia {
         // The card at rest is a rendered document, not a run of text somebody
         // can drag over — so without this there is no way to get a card's words
         // back out of it short of opening the editor and selecting them.
-        let rows = vec![
-            menu::row(
-                Item::action("Copy text").with_icon(icons::text::Copy),
-                move |this, _, cx| this.copy_card(&from, &copied, cx),
-            ),
-            menu::row(
-                Item::action("Delete").with_icon(icons::files::Trash),
-                move |this, _, cx| this.ask_delete_card(&held, &doomed, cx),
-            ),
-        ];
+        // Every lane but the one the card is in, in board order.
+        let lanes: Vec<(String, String)> = self
+            .workspace
+            .read(cx)
+            .board_at(on)
+            .map(|board| {
+                let at = board.column_of(card).map(|column| column.id.clone());
+                board
+                    .columns
+                    .iter()
+                    .filter(|column| Some(&column.id) != at.as_ref())
+                    .map(|column| (column.id.clone(), column.name.clone()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut rows = vec![menu::row(
+            Item::action("Copy text").with_icon(icons::text::Copy),
+            move |this, _, cx| this.copy_card(&from, &copied, cx),
+        )];
+        if !lanes.is_empty() {
+            let moves = lanes
+                .into_iter()
+                .map(|(column, name)| {
+                    let (board, card) = (on.to_owned(), card.to_owned());
+                    menu::row(Item::action(name), move |this, _, cx| {
+                        this.move_card_to(&board, &card, &column, cx)
+                    })
+                })
+                .collect();
+            rows.push(menu::submenu(
+                "Move to",
+                icons::arrows::ArrowLeftRight,
+                moves,
+            ));
+        }
+        rows.push(menu::row(
+            Item::action("Delete").with_icon(icons::files::Trash),
+            move |this, _, cx| this.ask_delete_card(&held, &doomed, cx),
+        ));
         let id = SharedString::from(format!("card-menu-card-{card}"));
         Some(popover::anchored_menu_below(
             id.clone(),
-            self.menu_card(id, rows, cx),
+            self.menu_card(id, rows, window, cx),
             None,
         ))
     }
@@ -1347,13 +1412,26 @@ impl Cydonia {
             self.focus_pane(on, window, cx);
         }
         let leaf = self.leaf_of_mut(on);
+        if leaf
+            .open_card
+            .as_ref()
+            .is_some_and(|opened| opened.board == board && opened.card == card)
+        {
+            return self.close_card_preview(on, window, cx);
+        }
+        if let Some(opened) = &self.leaf_of(on).open_card
+            && (opened.board != board || opened.card != card)
+        {
+            let (was_board, was_card) = (opened.board.clone(), opened.card.clone());
+            self.settle_card_draft(on, &was_board, &was_card, cx);
+        }
+        let leaf = self.leaf_of_mut(on);
         if let Some(opened) = &mut leaf.open_card
             && opened.board == board
         {
             if opened.card != card {
                 opened.card = card;
                 opened.scroll = ScrollHandle::new();
-                opened.editing = false;
             }
             opened.reveal.set(true);
         } else {
@@ -1368,10 +1446,11 @@ impl Cydonia {
                 size: DrawerSize::default(),
                 resize_grab: None,
                 pane_bounds: Default::default(),
-                editing: false,
             });
         }
-        window.focus(&leaf.open_card.as_ref().unwrap().focus, cx);
+        let focus = leaf.open_card.as_ref().unwrap().focus.clone();
+        self.ensure_card_draft(on, cx);
+        window.focus(&focus, cx);
         cx.notify();
     }
 
@@ -1381,9 +1460,16 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.leaf_of_mut(on).open_card = None;
+        self.drop_drawer(on, cx);
         window.focus(&self.leaf_of(on).focus, cx);
         cx.notify();
+    }
+
+    /// Put the drawer away, saving the card it had open.
+    fn drop_drawer(&mut self, on: Option<&Member>, cx: &mut Context<Self>) {
+        if let Some(opened) = self.leaf_of_mut(on).open_card.take() {
+            self.settle_card_draft(on, &opened.board, &opened.card, cx);
+        }
     }
 
     fn drawer_for(
@@ -1421,119 +1507,134 @@ impl Cydonia {
             .find(|draft| draft.board == opened.board && draft.card == opened.card)
     }
 
-    fn toggle_card_edit(
+    /// Where a card's relative picture paths resolve: its project's
+    /// `.cydonia` folder, which is where its pasted pictures are kept.
+    fn card_base(&self, project: usize, cx: &App) -> Option<std::path::PathBuf> {
+        let open = self.workspace.read(cx).projects.get(project)?;
+        Some(artifact::project::fs::Project::new(&open.path).cydonia())
+    }
+
+    fn draft_mut(
         &mut self,
         on: Option<&Member>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+        board: &Member,
+        card: &str,
+    ) -> Option<&mut CardDraft> {
+        self.leaf_of_mut(on)
+            .card_drafts
+            .iter_mut()
+            .find(|draft| draft.board == *board && draft.card == card)
+    }
+
+    /// Put an editor over the card open in the drawer, unless one is there.
+    fn ensure_card_draft(&mut self, on: Option<&Member>, cx: &mut Context<Self>) {
         let Some(opened) = self.leaf_of(on).open_card.as_ref() else {
             return;
         };
-        let (board, card, editing) = (opened.board.clone(), opened.card.clone(), opened.editing);
-        if !editing && self.draft_for(on).is_none() {
-            let Some(text) = self
-                .workspace
-                .read(cx)
-                .board_of(Some(&board))
-                .and_then(|board| board.card(&card))
-                .map(|card| card.text.clone())
-            else {
-                return;
-            };
-            let field = cx.new(|cx| {
-                let mut field = TextField::new(cx)
-                    .with_frame(false)
-                    .with_shape(Shape::Grow {
-                        min: 2,
-                        max: usize::MAX,
-                    })
-                    .with_key_context(DRAFT_CONTEXT);
-                field.set_content(text.clone(), cx);
-                field
-            });
-            let reveal_caret = Rc::new(Cell::new(true));
-            let pending = reveal_caret.clone();
-            let subscription = cx.subscribe(&field, move |_, _, _: &input::FieldEvent, cx| {
-                pending.set(true);
-                cx.notify();
-            });
-            self.leaf_of_mut(on).card_drafts.push(CardDraft {
-                board,
-                card,
-                base: text,
-                field,
-                error: None,
-                reveal_caret,
-                _subscription: subscription,
-            });
+        if self.draft_for(on).is_some() {
+            return;
         }
-        self.leaf_of_mut(on).open_card.as_mut().unwrap().editing = !editing;
-        let focus = if !editing {
-            let draft = self.draft_for(on).unwrap();
-            draft.reveal_caret.set(true);
-            draft.field.read(cx).focus_handle(cx)
-        } else {
-            self.leaf_of(on).open_card.as_ref().unwrap().focus.clone()
-        };
-        window.focus(&focus, cx);
-        cx.notify();
-    }
-
-    fn cancel_card_draft(
-        &mut self,
-        on: Option<&Member>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let leaf = self.leaf_of_mut(on);
-        let Some(opened) = &mut leaf.open_card else {
+        let (board, card) = (opened.board.clone(), opened.card.clone());
+        let scroll = opened.scroll.clone();
+        let workspace = self.workspace.read(cx);
+        let Some(text) = workspace
+            .board_of(Some(&board))
+            .and_then(|held| held.card(&card))
+            .map(|held| held.text.clone())
+        else {
             return;
         };
-        leaf.card_drafts
-            .retain(|draft| draft.board != opened.board || draft.card != opened.card);
-        opened.editing = false;
-        opened.scroll = ScrollHandle::new();
-        window.focus(&opened.focus, cx);
-        cx.notify();
+        let text_size = workspace.text_size;
+        let base = artifact::project::fs::Project::new(&board.project).cydonia();
+        let editor = cx.new(|cx| {
+            Editor::new(&text, cx)
+                .with_base(base)
+                .with_text_size(text_size)
+                .with_scroll(scroll)
+        });
+        crate::model::language::ensure(crate::model::article::fences(editor.read(cx)), cx);
+        let shown = editor.read(cx).source();
+        let (held_on, held_board, held_card) = (on.cloned(), board.clone(), card.clone());
+        let subscription = cx.subscribe(&editor, move |this, editor, event: &EditorEvent, cx| {
+            if let EditorEvent::Changed = event {
+                crate::model::language::ensure(crate::model::article::fences(editor.read(cx)), cx);
+                this.save_card(held_on.as_ref(), &held_board, &held_card, cx);
+            }
+        });
+        self.leaf_of_mut(on).card_drafts.push(CardDraft {
+            board,
+            card,
+            base: text,
+            shown,
+            editor,
+            error: None,
+            _subscription: subscription,
+        });
     }
 
-    fn save_card_draft(
+    /// Write the card's editor to the board, keeping on the draft why the
+    /// board refused it.
+    fn save_card(
         &mut self,
         on: Option<&Member>,
-        window: &mut Window,
+        board: &Member,
+        card: &str,
         cx: &mut Context<Self>,
     ) {
-        let Some(draft) = self.draft_for(on) else {
+        let Some(draft) = self.draft_mut(on, board, card) else {
             return;
         };
-        let (board, card, base, text) = (
-            draft.board.clone(),
-            draft.card.clone(),
+        let (base, shown, editor) = (
             draft.base.clone(),
-            draft.field.read(cx).content().to_string(),
+            draft.shown.clone(),
+            draft.editor.clone(),
         );
-        let result = if text == base {
-            Ok(())
-        } else {
-            self.workspace.update(cx, |workspace, cx| {
-                workspace.save_card_draft(&board, &card, &base, &text, cx)
-            })
+        let text = editor.read(cx).source();
+        let result = match text == shown {
+            true => Ok(()),
+            false => self.workspace.update(cx, |workspace, cx| {
+                workspace.save_card_draft(board, card, &base, &text, cx)
+            }),
         };
-        match result {
-            Ok(()) => self.cancel_card_draft(on, window, cx),
-            Err(error) => {
-                if let Some(draft) = self
-                    .leaf_of_mut(on)
-                    .card_drafts
-                    .iter_mut()
-                    .find(|draft| draft.board == board && draft.card == card)
-                {
-                    draft.error = Some(error);
+        if let Some(draft) = self.draft_mut(on, board, card) {
+            match result {
+                Ok(()) => {
+                    if text != draft.shown {
+                        draft.base = text.clone();
+                        draft.shown = text;
+                    }
+                    draft.error = None;
                 }
-                cx.notify();
+                Err(error) => draft.error = Some(error),
             }
         }
+        cx.notify();
+    }
+
+    /// Let a card's editor go with its drawer, unless its last save failed.
+    fn settle_card_draft(
+        &mut self,
+        on: Option<&Member>,
+        board: &Member,
+        card: &str,
+        _: &mut Context<Self>,
+    ) {
+        self.leaf_of_mut(on)
+            .card_drafts
+            .retain(|draft| draft.board != *board || draft.card != card || draft.error.is_some());
+    }
+
+    /// Drop the editor's text and read the card back off the board.
+    fn reload_card_draft(&mut self, on: Option<&Member>, cx: &mut Context<Self>) {
+        let Some(opened) = self.leaf_of(on).open_card.as_ref() else {
+            return;
+        };
+        let (board, card) = (opened.board.clone(), opened.card.clone());
+        self.leaf_of_mut(on)
+            .card_drafts
+            .retain(|draft| draft.board != board || draft.card != card);
+        self.ensure_card_draft(on, cx);
+        cx.notify();
     }
 
     fn drawer_action(
@@ -1574,116 +1675,106 @@ impl Cydonia {
     ) -> Option<AnyElement> {
         let opened = self.drawer_for(project, board_at, on, cx)?;
         let board = self.workspace.read(cx).board_in(project, board_at)?;
-        let card = board.card(&opened.card);
+        let card = board.card(&opened.card).cloned();
+        let card = card.as_ref();
         let handle = card
             .and_then(|card| board.handle_of(card))
             .unwrap_or_else(|| "Missing card".into());
         let status = card.and_then(|card| card.status);
         let draft = self.draft_for(on);
-        let text = draft
-            .map(|draft| draft.field.read(cx).content().to_string())
-            .unwrap_or_else(|| card.map(|card| card.text.clone()).unwrap_or_default());
-        let dirty = draft.is_some_and(|draft| draft.base != text);
         let error = draft.and_then(|draft| draft.error.clone()).or_else(|| {
             card.is_none().then(|| {
-                "This card was removed or moved. Copy your draft before cancelling.".into()
+                "This card was removed or moved. Copy your text before discarding it.".into()
             })
         });
-        let editing = opened.editing;
+        // The board moved under an editor with nothing of its own to keep —
+        // an agent's rewrite, most often — so the editor takes the board's.
+        if let (Some(card), Some(draft)) = (card, draft)
+            && card.text != draft.base
+            && draft.editor.read(cx).source() == draft.shown
+        {
+            let reload_on = on.cloned();
+            let this = cx.entity();
+            cx.defer(move |cx| {
+                this.update(cx, |this, cx| {
+                    this.reload_card_draft(reload_on.as_ref(), cx)
+                })
+            });
+        }
         let expanded = opened.size.expanded;
         let scroll = opened.scroll.clone();
-        let focus = if editing {
-            draft
-                .map(|draft| draft.field.read(cx).focus_handle(cx))
-                .unwrap_or_else(|| opened.focus.clone())
-        } else {
-            opened.focus.clone()
-        };
+        let focus = opened.focus.clone();
+        let editor = draft.map(|draft| draft.editor.clone());
         let working = card.and_then(|card| self.card_working(card, self.card_session(card, cx)));
         let theme = Theme::of(cx).clone();
         let bounds = opened.bounds.clone();
         let reveal = opened.reveal.clone();
         let resize_on = on.cloned();
-        let (edit_on, close_on, escape_on, focus_on, save_on, key_save_on, cancel_on, expand_on) = (
-            on.cloned(),
-            on.cloned(),
-            on.cloned(),
+        let (close_on, escape_on, focus_on, discard_on, expand_on) = (
             on.cloned(),
             on.cloned(),
             on.cloned(),
             on.cloned(),
             on.cloned(),
         );
-        let body = if editing {
-            let draft = draft?;
-            let field = draft.field.clone();
-            let pending = draft.reveal_caret.clone();
-            let caret_scroll = scroll.clone();
-            div()
-                .relative()
-                .child(field.clone())
-                .child(
-                    gpui::canvas(
-                        |_, _, _| {},
-                        move |_, _, window, cx| {
-                            if !pending.get() {
-                                return;
-                            }
-                            let input = field.read(cx);
-                            let Some(caret) = input.offset_bounds(input.cursor()) else {
-                                return;
-                            };
-                            pending.set(false);
-                            let viewport = caret_scroll.bounds();
-                            let delta = reveal_delta(
-                                caret.top(),
-                                caret.bottom(),
-                                viewport.top() + px(16.),
-                                viewport.bottom() - px(16.),
-                            );
-                            if delta != px(0.) {
-                                let offset = caret_scroll.offset();
-                                caret_scroll.set_offset(gpui::point(
-                                    offset.x,
-                                    (offset.y + delta).min(px(0.)),
-                                ));
-                                window.on_next_frame(|window, _| window.refresh());
-                            }
-                        },
-                    )
-                    .absolute()
-                    .size_full(),
-                )
-                .into_any_element()
-        } else {
-            markdown::render_with(
-                &self.card_docs.of(&text),
+        let body = match &editor {
+            Some(editor) => div()
+                .min_h_full()
+                .cursor(gpui::CursorStyle::IBeam)
+                // Below and beside the text is still the card: a press there
+                // lands the caret, as it does on an article's page.
+                .on_mouse_down(gpui::MouseButton::Left, {
+                    let editor = editor.clone();
+                    move |event, window, cx| {
+                        editor.update(cx, |editor, cx| {
+                            editor.press(
+                                event.position,
+                                event.click_count,
+                                event.modifiers,
+                                window,
+                                cx,
+                            )
+                        })
+                    }
+                })
+                .child(editor.clone())
+                .into_any_element(),
+            None => markdown::render_with(
+                &self
+                    .card_docs
+                    .of(&card.map(|card| card.text.clone()).unwrap_or_default()),
                 markdown::Editing::default(),
                 window,
                 cx,
             )
-            .into_any_element()
+            .into_any_element(),
         };
         Some(
             scroll::contain_wheel(floating::layer("card-drawer"), Axes::Both)
                 .debug_selector(|| "card-drawer".into())
                 .key_context(DRAWER_CONTEXT)
                 .track_focus(&opened.focus)
-                .on_mouse_down(
-                    gpui::MouseButton::Left,
-                    cx.listener(move |this, _, window, cx| {
-                        if let Some(on) = &focus_on {
-                            this.focus_pane(on, window, cx);
+                // Before the editor takes its own press, which the pane's
+                // focus would otherwise take back off it.
+                .capture_any_mouse_down(cx.listener(move |this, _, window, cx| {
+                    if let Some(on) = &focus_on {
+                        this.focus_pane(on, window, cx);
+                    }
+                }))
+                .on_mouse_down(gpui::MouseButton::Left, {
+                    let editor = editor.clone();
+                    move |_, window, cx| {
+                        let typing = editor
+                            .as_ref()
+                            .is_some_and(|editor| editor.focus_handle(cx).is_focused(window));
+                        if !typing {
+                            window.focus(&focus, cx);
                         }
-                        window.focus(&focus, cx);
                         cx.stop_propagation();
-                    }),
-                )
+                    }
+                })
                 .on_action(cx.listener(move |this, _: &CloseCardPreview, window, cx| {
                     this.close_card_preview(escape_on.as_ref(), window, cx);
-                }))
-                .on_action(cx.listener(move |this, _: &SaveCardDraft, window, cx| {
-                    this.save_card_draft(key_save_on.as_ref(), window, cx);
                 }))
                 .bottom_0()
                 .left_0()
@@ -1760,63 +1851,23 @@ impl Cydonia {
                         .child(div().font_family(theme.font_mono.clone()).child(handle))
                         .children(resting(status).map(|status| status_chip(status, &theme)))
                         .children(working.map(|at| self.card_orb(at, cx)))
-                        .when(dirty, |el| el.child(div().child("Draft")))
                         .child(div().flex_1())
-                        .when(draft.is_some(), |el| {
+                        .when(error.is_some() && editor.is_some(), |el| {
                             el.child(
                                 self.drawer_action(
-                                    "card-draft-save",
-                                    icons::notifications::Check,
-                                    format!(
-                                        "Save card ({})",
-                                        bezel::ui::keys::printed("secondary-enter")
-                                    ),
-                                    cx,
-                                )
-                                .on_click(cx.listener(
-                                    move |this, _, window, cx| {
-                                        cx.stop_propagation();
-                                        this.save_card_draft(save_on.as_ref(), window, cx);
-                                    },
-                                )),
-                            )
-                            .child(
-                                self.drawer_action(
-                                    "card-draft-cancel",
+                                    "card-draft-discard",
                                     icons::glyph::Undo2,
-                                    "Cancel edits",
+                                    "Discard your text and reload the card",
                                     cx,
                                 )
                                 .on_click(cx.listener(
-                                    move |this, _, window, cx| {
+                                    move |this, _, _, cx| {
                                         cx.stop_propagation();
-                                        this.cancel_card_draft(cancel_on.as_ref(), window, cx);
+                                        this.reload_card_draft(discard_on.as_ref(), cx);
                                     },
                                 )),
                             )
                         })
-                        .child(
-                            self.drawer_action(
-                                "card-drawer-edit",
-                                if editing {
-                                    icons::glyph::Eye
-                                } else {
-                                    icons::text::Pencil
-                                },
-                                if editing {
-                                    "Preview draft"
-                                } else {
-                                    "Edit card"
-                                },
-                                cx,
-                            )
-                            .on_click(cx.listener(
-                                move |this, _, window, cx| {
-                                    cx.stop_propagation();
-                                    this.toggle_card_edit(edit_on.as_ref(), window, cx);
-                                },
-                            )),
-                        )
                         .child(
                             self.drawer_action(
                                 "card-drawer-expand",
@@ -1849,7 +1900,7 @@ impl Cydonia {
                             self.drawer_action(
                                 "card-drawer-close",
                                 icons::notifications::X,
-                                "Close preview (keeps draft)",
+                                "Close",
                                 cx,
                             )
                             .on_click(cx.listener(
@@ -1930,10 +1981,29 @@ impl Cydonia {
             View::Lanes => self.lanes(project, board_at, on, window, cx),
             View::List => self.list(project, board_at, on, window, cx),
         };
+        let close_on = on.cloned();
         div()
+            .id("board-surface")
             .flex_1()
             .min_h_0()
             .relative()
+            // A click the drawer and the cards did not take closes the drawer.
+            .on_click(cx.listener(move |this, _, window, cx| {
+                let Some(opened) = this.leaf_of(close_on.as_ref()).open_card.as_ref() else {
+                    return;
+                };
+                // The focus goes back to the board only from the drawer: the
+                // click may have put it in a field of its own.
+                let inside = opened.focus.contains_focused(window, cx)
+                    || this
+                        .draft_for(close_on.as_ref())
+                        .is_some_and(|draft| draft.editor.focus_handle(cx).is_focused(window));
+                this.drop_drawer(close_on.as_ref(), cx);
+                if inside {
+                    window.focus(&this.leaf_of(close_on.as_ref()).focus, cx);
+                }
+                cx.notify();
+            }))
             .on_action(cx.listener(Self::commit_card))
             .on_action(cx.listener(Self::dismiss_card))
             .on_action(cx.listener(Self::dismiss_find))
@@ -2517,6 +2587,7 @@ impl Cydonia {
                 folded,
                 &board_id,
                 on,
+                window,
                 cx,
             ))
             .children(rows)
@@ -2573,6 +2644,7 @@ impl Cydonia {
         folded: bool,
         board: &str,
         on: Option<&Member>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let Tally { held, shown } = tally;
@@ -2678,6 +2750,7 @@ impl Cydonia {
                     View::List,
                     board,
                     on,
+                    window,
                     cx,
                 )),
             )
@@ -2689,7 +2762,7 @@ impl Cydonia {
         &self,
         at: Slot<'_>,
         on: Option<&Member>,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let Slot {
@@ -2801,10 +2874,27 @@ impl Cydonia {
                 .absolute()
                 .size_full()
             });
+        // Drawn only on the row the pointer is over, taking no room elsewhere,
+        // and decided here rather than in a hover style: gpui can resolve hover
+        // differently in prepaint and paint.
+        let actions = selected
+            || self.list_hovered.as_deref() == Some(id)
+            || self.menu.as_ref() == Some(&Menu::Card(id.to_owned()));
+        let hovered_id = id.to_owned();
         div()
             .id(SharedString::from(format!("list-row-{id}")))
             .debug_selector(|| "board-list-row".into())
-            .group("list-row")
+            .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
+                let now = match hovered {
+                    true => Some(hovered_id.clone()),
+                    false if this.list_hovered.as_ref() == Some(&hovered_id) => None,
+                    false => return,
+                };
+                if this.list_hovered != now {
+                    this.list_hovered = now;
+                    cx.notify();
+                }
+            }))
             .flex_none()
             .relative()
             .h(px(LIST_ROW_HEIGHT))
@@ -2851,46 +2941,48 @@ impl Cydonia {
             // the board to see, and hiding it would mean hunting for the one
             // that is working.
             .children(working.map(|at| self.card_orb(at, cx)))
-            .child(
-                div()
-                    .invisible()
-                    .group_hover("list-row", |el| el.visible())
-                    .when(selected, |el| el.visible())
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(2.))
-                    // Handing a card to an agent is refused once the card says
-                    // something about itself: a tag is somebody already holding
-                    // it, and a second agent at one task is work done twice.
-                    // Opening the session it has stays — reading is not doing.
-                    .children((sessions && live.is_none() && status.is_none()).then(|| {
-                        self.card_action("list-run", id, icons::multimedia::Play, cx)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                cx.stop_propagation();
-                                this.dispatch_card(&sent, &run, cx);
-                            }))
-                    })),
-            )
-            .child(
-                self.menu_button(
-                    SharedString::from(format!("list-card-menu-{id}")),
-                    Some("list-row"),
-                    icons::layout::Ellipsis,
-                    Menu::Card(id.to_owned()),
-                    cx,
+            .when(actions, |row| {
+                row.child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(2.))
+                        // Handing a card to an agent is refused once the card says
+                        // something about itself: a tag is somebody already holding
+                        // it, and a second agent at one task is work done twice.
+                        // Opening the session it has stays — reading is not doing.
+                        .children((sessions && live.is_none() && status.is_none()).then(|| {
+                            self.card_action("list-run", id, icons::multimedia::Play, cx)
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    cx.stop_propagation();
+                                    this.dispatch_card(&sent, &run, cx);
+                                }))
+                        })),
                 )
-                .children(self.card_menu(&on_board, id, cx)),
-            )
+                .child(
+                    self.menu_button(
+                        SharedString::from(format!("list-card-menu-{id}")),
+                        None,
+                        icons::layout::Ellipsis,
+                        Menu::Card(id.to_owned()),
+                        cx,
+                    )
+                    .children(self.card_menu(&on_board, id, window, cx)),
+                )
+            })
             .on_drag(
                 CardDrag {
                     card: id.to_owned(),
                     project,
                     board: board_at,
                 },
-                move |_, _, _, cx| {
-                    let text = text.clone();
-                    cx.new(|_| HeldCard { text })
+                {
+                    let base = self.card_base(project, cx);
+                    move |_, _, _, cx| {
+                        let (text, base) = (text.clone(), base.clone());
+                        cx.new(|_| HeldCard { text, base })
+                    }
                 },
             )
             .on_drag_move(cx.listener({
@@ -2919,6 +3011,7 @@ impl Cydonia {
                 }
             }))
             .on_click(cx.listener(move |this, _, window, cx| {
+                cx.stop_propagation();
                 if let Some(member) = &member {
                     this.open_card(pane.as_ref(), member.clone(), opened.clone(), window, cx);
                 }
@@ -3073,6 +3166,7 @@ impl Cydonia {
                 lanes,
                 &on_board,
                 on,
+                window,
                 cx,
             ))
             .child(
@@ -3177,6 +3271,7 @@ impl Cydonia {
         lanes: usize,
         board: &str,
         on: Option<&Member>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let Tally { held, shown } = tally;
@@ -3240,6 +3335,7 @@ impl Cydonia {
                     View::Lanes,
                     board,
                     on,
+                    window,
                     cx,
                 )),
             )
@@ -3266,6 +3362,7 @@ impl Cydonia {
         view: View,
         board: &str,
         pane: Option<&Member>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         if self.menu != Some(Menu::Lane(id.to_owned())) {
@@ -3363,7 +3460,7 @@ impl Cydonia {
         let card = SharedString::from(format!("lane-menu-{id}"));
         Some(popover::anchored_menu_below(
             card.clone(),
-            self.menu_card(card, rows, cx),
+            self.menu_card(card, rows, window, cx),
             None,
         ))
     }
@@ -3561,7 +3658,8 @@ impl Cydonia {
                     .gap(px(6.))
                     .child(div().flex_1().min_w_0().child({
                         let (doc, shortened) = self.card_docs.preview(&text);
-                        card_preview(&doc, shortened, overflow, window, cx)
+                        let base = self.card_base(project, cx);
+                        card_preview(&doc, base.as_deref(), shortened, overflow, window, cx)
                     }))
                     // What is done *to* the card. The row underneath carries
                     // the run; where the card sits is the drag.
@@ -3573,7 +3671,7 @@ impl Cydonia {
                             Menu::Card(id.to_owned()),
                             cx,
                         )
-                        .children(self.card_menu(&on_board, id, cx)),
+                        .children(self.card_menu(&on_board, id, window, cx)),
                     ),
             )
             .when(truncated, |el| {
@@ -3646,9 +3744,12 @@ impl Cydonia {
                     project,
                     board: board_at,
                 },
-                move |_, _, _, cx| {
-                    let text = text.clone();
-                    cx.new(|_| HeldCard { text })
+                {
+                    let base = self.card_base(project, cx);
+                    move |_, _, _, cx| {
+                        let (text, base) = (text.clone(), base.clone());
+                        cx.new(|_| HeldCard { text, base })
+                    }
                 },
             )
             .on_drag_move(cx.listener({
@@ -3677,6 +3778,7 @@ impl Cydonia {
                 }
             }))
             .on_click(cx.listener(move |this, _, window, cx| {
+                cx.stop_propagation();
                 if let Some(member) = &member {
                     this.open_card(pane.as_ref(), member.clone(), opened.clone(), window, cx);
                 }
@@ -3705,16 +3807,16 @@ impl Cydonia {
     /// chase the pointer it is answering.
     fn landing_mark(&self, at: Mark, cx: &Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
-        let mark = div().h(px(2.)).rounded_full().bg(theme.accent);
+        let mark = div().h(px(1.)).rounded_full().bg(theme.accent.opacity(0.6));
         if at == Mark::Flow {
             return mark.flex_none().into_any_element();
         }
         let mark = mark.absolute().left_0().right_0();
         match at {
-            Mark::Above => mark.top(px(-5.)),
+            Mark::Above => mark.top(px(-4.5)),
             Mark::Top => mark.top_0(),
             Mark::Foot => mark.bottom_0(),
-            _ => mark.bottom(px(-5.)),
+            _ => mark.bottom(px(-4.5)),
         }
         .into_any_element()
     }

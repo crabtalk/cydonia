@@ -341,11 +341,11 @@ impl UniformListDecoration for PinnedHead {
         scroll: Point<Pixels>,
         item_height: Pixels,
         _count: usize,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut App,
     ) -> AnyElement {
         self.0.update(cx, |this, cx| {
-            this.pinned_head(visible.start, scroll.y, item_height, cx)
+            this.pinned_head(visible.start, scroll.y, item_height, window, cx)
         })
     }
 }
@@ -367,7 +367,7 @@ impl Cydonia {
 
     pub(crate) fn sidebar(
         &self,
-        window: &Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
@@ -408,8 +408,10 @@ impl Cydonia {
                         uniform_list(
                             "project-list",
                             count,
-                            cx.processor(move |this, range: Range<usize>, _, cx| {
-                                range.map(|ix| this.sidebar_row(rows[ix], cx)).collect()
+                            cx.processor(move |this, range: Range<usize>, window, cx| {
+                                range
+                                    .map(|ix| this.sidebar_row(rows[ix], window, cx))
+                                    .collect()
                             }),
                         )
                         .track_scroll(&self.rail)
@@ -580,6 +582,7 @@ impl Cydonia {
         first: usize,
         scroll: Pixels,
         item_height: Pixels,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let rows = self.rows(cx);
@@ -622,7 +625,7 @@ impl Cydonia {
                     .w_full()
                     .h(px(ROW_HEIGHT))
                     .overflow_hidden()
-                    .child(self.project_head(ix, true, cx)),
+                    .child(self.project_head(ix, true, window, cx)),
             )
             .into_any_element()
     }
@@ -634,7 +637,13 @@ impl Cydonia {
     /// list. It gives up the pill for the column's full width, and takes the
     /// glass the floating cluster below it is cut from — a heading with rows
     /// running under it has to be read against whatever is passing.
-    fn project_head(&self, ix: usize, pinned: bool, cx: &mut Context<Self>) -> AnyElement {
+    fn project_head(
+        &self,
+        ix: usize,
+        pinned: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let (name, expanded) = match self.workspace.read(cx).projects.get(ix) {
             Some(project) => (project.name(), project.expanded),
@@ -722,7 +731,7 @@ impl Cydonia {
                 // On the trigger, not the row: the card pins to the bottom
                 // left of whatever it is mounted on, and from the row it hangs
                 // off the far side of the sidebar rather than under the `···`.
-                .children(self.project_menu(ix, cx)),
+                .children(self.project_menu(ix, window, cx)),
             )
             .child(
                 self.menu_button(
@@ -732,7 +741,7 @@ impl Cydonia {
                     Menu::Add(ix),
                     cx,
                 )
-                .children(self.add_menu(ix, cx)),
+                .children(self.add_menu(ix, window, cx)),
             )
             // A press on the copy is a press on where it came from: the list
             // goes back to the heading it is standing in for, rather than
@@ -1048,13 +1057,13 @@ impl Cydonia {
     /// One line, built when the list scrolls it into view. The box around it is
     /// what holds the pitch: the row inside paints the wash, and the pixel
     /// either side of it is the gap between two.
-    fn sidebar_row(&self, row: Row, cx: &mut Context<Self>) -> AnyElement {
+    fn sidebar_row(&self, row: Row, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let workspace = self.workspace.read(cx);
         let inner = match row {
-            Row::Project(ix) => self.project_head(ix, false, cx),
+            Row::Project(ix) => self.project_head(ix, false, window, cx),
             Row::Archive(ix) => self.archive_divider(ix, cx),
             Row::Session { project, id } => match self.session_of(project, id, cx) {
-                Some(session) => self.session_row(session, cx),
+                Some(session) => self.session_row(session, window, cx),
                 None => Empty.into_any_element(),
             },
             Row::Board { project, ix } => {
@@ -1063,7 +1072,7 @@ impl Cydonia {
                     .get(project)
                     .and_then(|open| open.boards.get(ix).map(|board| board.label().to_owned()))
                 {
-                    Some(name) => self.board_row(project, ix, name, cx),
+                    Some(name) => self.board_row(project, ix, name, window, cx),
                     None => Empty.into_any_element(),
                 }
             }
@@ -1073,7 +1082,9 @@ impl Cydonia {
                         .get(ix)
                         .map(|article| article.label().to_owned())
                 }) {
-                    Some(title) => self.article_row(project, ix, title, cx).into_any_element(),
+                    Some(title) => self
+                        .article_row(project, ix, title, window, cx)
+                        .into_any_element(),
                     None => Empty.into_any_element(),
                 }
             }
@@ -1083,7 +1094,9 @@ impl Cydonia {
                     .get(project)
                     .and_then(|open| open.tables.get(ix).map(|table| table.name.clone()))
                 {
-                    Some(name) => self.table_row(project, ix, name, cx).into_any_element(),
+                    Some(name) => self
+                        .table_row(project, ix, name, window, cx)
+                        .into_any_element(),
                     None => Empty.into_any_element(),
                 }
             }
@@ -1113,7 +1126,7 @@ impl Cydonia {
                 )
                 .children(
                     (!self.pinned(row, cx))
-                        .then(|| self.entry_menu(Menu::Entry(row), row, archived, cx))
+                        .then(|| self.entry_menu(Menu::Entry(row), row, archived, window, cx))
                         .flatten(),
                 )
             })
@@ -1375,7 +1388,12 @@ impl Cydonia {
     /// With more than one agent installed the session row asks which, since
     /// the one `⌘N` would pick is whoever the project last talked to — which
     /// leaves every other agent with no way in.
-    fn add_menu(&self, ix: usize, cx: &mut Context<Self>) -> Option<AnyElement> {
+    fn add_menu(
+        &self,
+        ix: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         if self.menu != Some(Menu::Add(ix)) {
             return None;
         }
@@ -1437,14 +1455,19 @@ impl Cydonia {
         let id = SharedString::from(format!("add-menu-{ix}"));
         Some(popover::anchored_menu_below(
             id.clone(),
-            self.menu_card(id, rows, cx),
+            self.menu_card(id, rows, window, cx),
             None,
         ))
     }
 
     /// What a press on the heading opens. Removing closes the tab — the
     /// directory and everything in it stays where it is.
-    fn project_menu(&self, ix: usize, cx: &mut Context<Self>) -> Option<AnyElement> {
+    fn project_menu(
+        &self,
+        ix: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         if self.menu != Some(Menu::Project(ix)) {
             return None;
         }
@@ -1487,7 +1510,7 @@ impl Cydonia {
         let id = SharedString::from(format!("project-menu-{ix}"));
         Some(popover::anchored_menu_below(
             id.clone(),
-            self.menu_card(id, rows, cx),
+            self.menu_card(id, rows, window, cx),
             None,
         ))
     }
@@ -1513,7 +1536,12 @@ impl Cydonia {
     }
 
     /// One session: its mark and its name.
-    fn session_row(&self, session: SessionRow, cx: &mut Context<Self>) -> AnyElement {
+    fn session_row(
+        &self,
+        session: SessionRow,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let entry = Row::Session {
             project: session.project,
             id: session.id,
@@ -1577,6 +1605,7 @@ impl Cydonia {
             "session-row",
             entry,
             session.archived,
+            window,
             cx,
         ))
         .on_click(cx.listener(move |this, _, window, cx| {
@@ -1688,6 +1717,7 @@ impl Cydonia {
         project: usize,
         ix: usize,
         name: String,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = Theme::of(cx).clone();
@@ -1729,6 +1759,7 @@ impl Cydonia {
             "board-row",
             entry,
             archived,
+            window,
             cx,
         ))
         .on_click(cx.listener(move |this, _, window, cx| this.open_board(project, ix, window, cx)))
@@ -1755,6 +1786,7 @@ impl Cydonia {
         group: &'static str,
         entry: Row,
         archived: bool,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let theme = Theme::of(cx).clone();
@@ -1776,7 +1808,7 @@ impl Cydonia {
                 // than off the left edge of the row it is mounted on. A row
                 // with no button of its own draws it from the wrapper, where
                 // a right press is all there is to anchor to.
-                .children(self.entry_menu(at, entry, archived, cx));
+                .children(self.entry_menu(at, entry, archived, window, cx));
         }
         let held = self.menu.as_ref() == Some(&Menu::Entry(entry));
         let mark = match archived {
@@ -1892,6 +1924,7 @@ impl Cydonia {
         at: Menu,
         entry: Row,
         archived: bool,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         if self.menu.as_ref() != Some(&at) {
@@ -2006,10 +2039,17 @@ impl Cydonia {
         // button — the `···`, the pin — there is none, and the card drops
         // right-aligned to the trigger, whose affordance is at the row's end.
         Some(match self.menu_point(&at) {
-            Some(point) => popover::menu_at(id.clone(), point, self.menu_card(id, rows, cx), None),
-            None => {
-                popover::anchored_menu_below_end(id.clone(), self.menu_card(id, rows, cx), None)
-            }
+            Some(point) => popover::menu_at(
+                id.clone(),
+                point,
+                self.menu_card(id, rows, window, cx),
+                None,
+            ),
+            None => popover::anchored_menu_below_end(
+                id.clone(),
+                self.menu_card(id, rows, window, cx),
+                None,
+            ),
         })
     }
 

@@ -10,6 +10,8 @@
 	import { anchor, day, latest, media, releases } from '$lib/changelog.js';
 	import { repo, site, tagline as description } from '$lib/meta.js';
 
+	let { data } = $props();
+
 	const featured = releases.find((release) => media(release));
 	const featureMedia = featured ? media(featured) : null;
 	const acp = 'https://agentclientprotocol.com';
@@ -38,10 +40,6 @@
 		}
 	];
 
-	const paths = [
-		['~/.config/cydonia/', 'settings, MCP servers, agents'],
-		['~/.local/share/', 'installed agents']
-	];
 
 	// The outline follows the reel: whichever scene owns the middle of the
 	// viewport is the one it marks.
@@ -85,9 +83,9 @@
 </script>
 
 <svelte:head>
-	<title>Cydonia — a workspace for the agents you run</title>
+	<title>Cydonia — where agents keep their work</title>
 	<meta name="description" content={description} />
-	<meta property="og:title" content="Cydonia — a workspace for the agents you run" />
+	<meta property="og:title" content="Cydonia — where agents keep their work" />
 	<meta property="og:description" content={description} />
 	<meta property="og:type" content="website" />
 	{@html jsonLdHtml}
@@ -97,7 +95,7 @@
 
 <section class="hero">
 	<div class="say">
-		<h1>Agents that leave something behind.</h1>
+		<h1>Where agents keep their work.</h1>
 		<div class="hero-actions">
 			<div class="cta">
 				<a class="control button primary" href="#download">Download</a>
@@ -154,16 +152,7 @@
 	<h2>The work outlives the session</h2>
 	<p>Markdown, SVG, one SQLite file and a TOML config — all on your disk, all yours.</p>
 
-	<Files />
-
-	<dl class="paths">
-		{#each paths as [path, what] (path)}
-			<div>
-				<dt>{path}</dt>
-				<dd>{what}</dd>
-			</div>
-		{/each}
-	</dl>
+	<Files roots={data.roots} />
 </section>
 
 <section class="get" id="download">
@@ -407,29 +396,6 @@
 
 	.own p {
 		max-width: 52ch;
-		margin: 0;
-		color: var(--muted);
-	}
-
-	.paths {
-		margin: 24px 0 0;
-		border-top: 1px solid var(--line);
-	}
-
-	.paths div {
-		display: grid;
-		grid-template-columns: 240px minmax(0, 1fr);
-		gap: 16px;
-		padding: 12px 0;
-		border-bottom: 1px solid var(--line);
-		font-size: 13px;
-	}
-
-	.paths dt {
-		font-family: var(--mono);
-	}
-
-	.paths dd {
 		margin: 0;
 		color: var(--muted);
 	}

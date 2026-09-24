@@ -35,6 +35,9 @@ struct SavedPanels {
     /// share of the window, which is not a number to write down.
     #[serde(skip_serializing_if = "Option::is_none")]
     width: Option<f32>,
+    /// Absent until the bottom panel is dragged.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    terminal_height: Option<f32>,
     /// One panel per working directory — see [`Cydonia::changes_for`]. Up to
     /// 0.1.11 this held one per session inside each project, which
     /// [`crate::model::migrate::v0_1_11`] clears.
@@ -161,11 +164,15 @@ impl Cydonia {
         self.changes_width = saved
             .width
             .filter(|width| width.is_finite() && *width >= 200.);
+        self.terminal_height = saved
+            .terminal_height
+            .filter(|height| height.is_finite() && *height >= 120.);
     }
 
     pub(crate) fn save_panel_layout(&mut self, cx: &mut App) {
         let mut saved = load();
         saved.width = self.changes_width;
+        saved.terminal_height = self.terminal_height;
         // The session in front is kept on disk and remembered as its
         // project's last entry here, which is the one write that still happens
         // per session rather than per directory.
