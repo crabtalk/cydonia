@@ -351,7 +351,9 @@ pub struct Cydonia {
     /// each move, so only a drag that stopped reaches the disk. See
     /// [`Cydonia::save_panel_layout_settled`].
     pub(crate) panel_save: Option<bezel::gpui::Task<()>>,
-    pub(crate) terminal_height: f32,
+    /// How tall the bottom panel was dragged, and `None` for one nobody has
+    /// dragged. See [`super::detail::panel_height`].
+    pub(crate) terminal_height: Option<f32>,
     pub(crate) changes: Option<Entity<super::component::panel::Panel>>,
     /// The press on a [`super::chrome::grip`], shared by every band in the
     /// window that carries one.
@@ -880,7 +882,7 @@ impl Cydonia {
             changes_shown: Default::default(),
             changes_width: None,
             panel_save: None,
-            terminal_height: 240.,
+            terminal_height: None,
             changes: None,
             drag: Default::default(),
             right_panels: Default::default(),
