@@ -1,9 +1,9 @@
 name: release
 
-# Pushing `v<version>` promotes the `nightly` pre-release built from that same
-# commit: its files are kept, and the release moves to the tag, takes the
-# version's changelog.json entry as its notes, and becomes the latest release.
-# Nothing is rebuilt.
+# Pushing `v<version>` publishes the files of the `nightly` pre-release built
+# from that same commit as a release on the tag, with the version's
+# changelog.json entry as its notes, and makes it the latest release. The
+# nightly pre-release stays as it is. Nothing is rebuilt.
 on:
   push:
     tags: ["v*"]
@@ -37,7 +37,8 @@ jobs:
           if [ "$(gh release view nightly --json isPrerelease -q .isPrerelease)" != "true" ]; then
             echo "::error::there is no nightly pre-release to promote"; exit 1
           fi
-      - name: promote
+      - name: publish
         run: |
-          gh release edit nightly --tag "$TAG" --title "$TAG" --notes-file notes.md \
-            --prerelease=false --latest
+          gh release download nightly --dir dist
+          gh release create "$TAG" dist/* --title "$TAG" --notes-file notes.md \
+            --verify-tag --latest
