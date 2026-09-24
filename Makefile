@@ -25,6 +25,9 @@ ICON     := assets/icon.png
 ICON_URL := https://cdn.crabtalk.ai/logos/cydonia.png
 APP      := target/bundle/cydonia.app
 ICONSET  := target/bundle/cydonia.iconset
+# The icon on Apple's grid: $(ICON) is full-bleed, and macOS draws the tile at
+# 824 in a 1024 canvas with the margin left transparent.
+MACICON  := target/bundle/cydonia-macos.png
 DMG      := target/bundle/cydonia-$(VERSION)-$(ARCH).dmg
 DMGSTAGE := target/bundle/dmg
 DMGRW    := target/bundle/cydonia-rw.dmg
@@ -45,7 +48,7 @@ CUSTOMICON := 0000000000000000040000000000000000000000000000000000000000000000
 
 bundle:
 	cargo build --profile $(PROFILE) $(CARGOOPT)
-	rm -rf $(APP) $(ICONSET)
+	rm -rf $(APP) $(ICONSET) $(MACICON)
 	mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources
 	cp target/$(PROFILE)/cydonia $(APP)/Contents/MacOS/cydonia
 	sed 's/@VERSION@/$(VERSION)/g' bundle/Info.plist > $(APP)/Contents/Info.plist
@@ -55,12 +58,14 @@ bundle:
 	@[ -f $(ICON) ] || $(MAKE) --no-print-directory icon || true
 	@if [ -f $(ICON) ]; then \
 		mkdir -p $(ICONSET); \
+		sips -s format png -Z 824 $(ICON) --out $(MACICON) >/dev/null; \
+		sips --padToHeightWidth 1024 1024 $(MACICON) >/dev/null; \
 		for s in $(SIZES); do \
-			sips -s format png -Z $$s $(ICON) --out $(ICONSET)/icon_$${s}x$${s}.png >/dev/null; \
-			sips -s format png -Z $$((s * 2)) $(ICON) --out $(ICONSET)/icon_$${s}x$${s}@2x.png >/dev/null; \
+			sips -s format png -Z $$s $(MACICON) --out $(ICONSET)/icon_$${s}x$${s}.png >/dev/null; \
+			sips -s format png -Z $$((s * 2)) $(MACICON) --out $(ICONSET)/icon_$${s}x$${s}@2x.png >/dev/null; \
 		done; \
 		iconutil -c icns $(ICONSET) -o $(APP)/Contents/Resources/cydonia.icns; \
-		rm -rf $(ICONSET); \
+		rm -rf $(ICONSET) $(MACICON); \
 		sips -s format png -Z 256 $(ICON) --out $(APP)/Contents/Resources/icon.png >/dev/null; \
 	else \
 		echo "no $(ICON): bundling without an icon"; \
