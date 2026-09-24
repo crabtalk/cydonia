@@ -46,6 +46,10 @@ toml_edit.workspace = true
 ureq.workspace = true
 url.workspace = true
 
+[build-dependencies]
+embed-resource = "3"
+image = { version = "0.25", default-features = false, features = ["ico", "png"] }
+
 [features]
 # Lists the Developer section in settings — see
 # `crate::view::settings::Section::listed`. Off, so what ships does not carry
