@@ -233,7 +233,9 @@ fn archived_history_unloads_and_metadata_edits_preserve_the_disk_transcript() {
     chat.draft = "unfinished draft".into();
     chat.closed = true;
     chat.mint_record();
-    fs::Project::new(&scratch.0).save_session(&chat.to_record());
+    fs::Project::new(&scratch.0)
+        .save_session(&chat.to_record())
+        .unwrap();
     let stored = fs::Project::new(&scratch.0)
         .session(chat.record.as_deref().unwrap())
         .unwrap();
@@ -268,10 +270,14 @@ fn missing_archive_cannot_be_overwritten_with_an_empty_transcript() {
     chat.items.push(ChatItem::User("Persisted message".into()));
     chat.closed = true;
     chat.mint_record();
-    fs::Project::new(&scratch.0).save_session(&chat.to_record());
+    fs::Project::new(&scratch.0)
+        .save_session(&chat.to_record())
+        .unwrap();
     chat.unload_history();
     let store = fs::Project::new(&scratch.0);
-    store.remove_session(chat.record.as_deref().unwrap());
+    store
+        .remove_session(chat.record.as_deref().unwrap())
+        .unwrap();
     assert!(!chat.load_history());
     chat.flush();
     assert!(store.sessions().is_empty());

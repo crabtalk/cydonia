@@ -110,38 +110,30 @@ pub struct Entry {
 
 /// Discover existing content without creating storage in an empty project.
 pub fn list(project: &Path) -> Result<Vec<Entry>> {
-    use crate::{article, project::Project as _};
+    use crate::project::Project as _;
     let store = fs::Project::new(project);
     let mut entries = Vec::new();
     for board in store.boards() {
         entries.push(Entry {
-            number: number(project, "board", &board.id)?,
+            number: store.number("board", &board.id)?,
             title: board.label().to_owned(),
             kind: "board",
             id: board.id,
             archived: board.archived,
         });
     }
-    if article::dir(project).is_dir() {
-        for item in std::fs::read_dir(article::dir(project))? {
-            let content = article::content(&item?.path());
-            if !content.is_file() {
-                continue;
-            }
-            let properties = article::properties::all(&content);
-            let id = article::id_of(&content);
-            entries.push(Entry {
-                number: number(project, "article", &id)?,
-                kind: "article",
-                id,
-                title: properties.title,
-                archived: properties.archived,
-            });
-        }
+    for article in store.articles() {
+        entries.push(Entry {
+            number: store.number("article", &article.id)?,
+            kind: "article",
+            id: article.id,
+            title: article.title,
+            archived: article.archived,
+        });
     }
     for session in store.sessions() {
         entries.push(Entry {
-            number: number(project, "session", &session.id)?,
+            number: store.number("session", &session.id)?,
             kind: "session",
             id: session.id,
             title: session.name.unwrap_or(session.title),
@@ -163,7 +155,7 @@ pub fn list(project: &Path) -> Result<Vec<Entry>> {
                 )
                 .unwrap_or_else(|_| (id.clone(), false));
             entries.push(Entry {
-                number: number(project, "table", &id)?,
+                number: store.number("table", &id)?,
                 kind: "table",
                 id,
                 title,
@@ -189,8 +181,7 @@ pub fn read(project: &Path, entry: &Entry) -> Result<serde_json::Value> {
     use crate::project::Project as _;
     let store = fs::Project::new(project);
     Ok(match entry.kind {
-        "article" => serde_json::json!({"markdown": std::fs::read_to_string(
-            crate::article::content(&crate::article::dir(project).join(&entry.id)))?}),
+        "article" => serde_json::json!({"markdown": store.read_article(&entry.id)?}),
         "board" => serde_json::to_value(
             store
                 .boards()

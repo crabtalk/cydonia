@@ -39,7 +39,7 @@ impl Scratch {
     /// Put a board in it, the way the app's own store does.
     pub fn store_create(&self, name: &str, key: &str) -> Option<artifact::board::Board> {
         use artifact::project::Project as _;
-        self.store().create_board(name, key)
+        self.store().create_board(name, key).ok()
     }
 
     /// A server with every tool set on it — the same call the app makes, and

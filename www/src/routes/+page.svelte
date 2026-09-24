@@ -360,6 +360,23 @@
 		gap: 88px;
 	}
 
+	/* Browsers without scroll-driven animations show the scenes as they are. */
+	@media (prefers-reduced-motion: no-preference) {
+		@supports (animation-timeline: view()) {
+			.reel article {
+				animation: reveal linear both;
+				animation-timeline: view();
+				animation-range: entry 0% entry 40%;
+			}
+		}
+	}
+
+	@keyframes reveal {
+		from {
+			opacity: 0;
+		}
+	}
+
 	.reel h2 {
 		margin: 0 0 10px;
 		font-size: clamp(22px, 2.6vw, 28px);

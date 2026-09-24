@@ -16,7 +16,7 @@ fn a_session_is_sent_to_by_its_reference() {
     let record = store.create_session().unwrap();
     let filed: artifact::session::record::Record =
         serde_json::from_value(json!({"id": record, "agent": "claude", "title": "t", "name": null, "updated": 0, "items": []})).unwrap();
-    store.save_session(&filed);
+    store.save_session(&filed).unwrap();
     let number = artifact::entry::number(scratch.path(), "session", &record).unwrap();
 
     said(server.call(
@@ -118,7 +118,7 @@ fn filed(scratch: &Scratch, said: &[(&str, &str)]) -> String {
         "updated": 0, "items": items,
     }))
     .unwrap();
-    store.save_session(&filed);
+    store.save_session(&filed).unwrap();
     format!(
         "#{}",
         artifact::entry::number(scratch.path(), "session", &record).unwrap()

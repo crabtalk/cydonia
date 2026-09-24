@@ -8,22 +8,21 @@
 //! here keeps a second map from one to the other — `boards/<id>.toml` is the
 //! whole lookup, and a board handed back can be written again from its id
 //! alone.
-//!
-//! Every write is best effort. A board that cannot be saved is not worth
-//! failing a click over, and the caller has nothing better to do about it than
-//! the person who can see the file does.
 
 use crate::{
+    article::{self, Article, properties::Properties},
     board::{self, Board, key},
-    id,
+    entry, id,
     session::record::Record,
     stamp,
 };
+use anyhow::Result;
 use std::{
     cmp::Reverse,
     collections::HashSet,
     path::{Path, PathBuf},
 };
+use url::Url;
 
 /// Everything cydonia holds for a project lives here: its articles, its
 /// sessions, its boards and its database.
@@ -121,8 +120,9 @@ impl Project {
         }
         board.id = stem(&free(&to, stamp::now()));
         board.name = board::NAMED.to_owned();
-        super::Project::save_board(self, &mut board);
-        let _ = std::fs::remove_file(old);
+        if super::Project::save_board(self, &mut board).is_ok() {
+            let _ = std::fs::remove_file(old);
+        }
     }
 
     /// Read one persisted session without loading the rest of the project.
@@ -130,14 +130,14 @@ impl Project {
         let body = std::fs::read_to_string(self.session_file(id)).ok()?;
         let mut record: Record = serde_json::from_str(&body).ok()?;
         record.id = id.to_owned();
-        record.number = crate::entry::number(&self.root, "session", id).ok();
+        record.number = super::Project::number(self, "session", id).ok();
         Some(record)
     }
 
     /// Read one board for a lazily opened archive entry.
     pub fn board(&self, id: &str) -> Option<Board> {
         let mut board = self.read_board(&self.board_file(id))?;
-        board.number = crate::entry::number(&self.root, "board", id).ok();
+        board.number = super::Project::number(self, "board", id).ok();
         Some(board)
     }
 
@@ -153,6 +153,24 @@ impl Project {
             .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
             .map(|path| (stem(&path), path))
             .collect()
+    }
+
+    /// The `content.md` of an article that is here.
+    fn article_file(&self, id: &str) -> Result<PathBuf> {
+        let content = article::content(&article::dir(&self.root).join(component(id)?));
+        anyhow::ensure!(content.is_file(), "no article {id}");
+        Ok(content)
+    }
+
+    fn describe(&self, content: &Path) -> Article {
+        let properties = article::properties::all(content);
+        Article {
+            id: article::id_of(content),
+            title: properties.title,
+            archived: properties.archived,
+            touched: article::touched(content),
+            cover: article::cover::of(content).and_then(|path| Url::from_file_path(path).ok()),
+        }
     }
 
     fn sessions_dir(&self) -> PathBuf {
@@ -189,22 +207,23 @@ impl super::Project for Project {
         // itself and every re-read would report a change nobody made. The
         // write costs one watch event, which finds nothing left to mint.
         for board in &mut boards {
-            board.number = crate::entry::number(&self.root, "board", &board.id).ok();
+            board.number = self.number("board", &board.id).ok();
             let keyed = board.key.is_empty();
             if keyed {
                 board.key = key::derive(&board.name, &keys);
                 keys.insert(board.key.clone());
             }
             if board.mint_ids() || keyed {
-                super::Project::save_board(self, board);
+                let _ = self.save_board(board);
             }
         }
         boards.sort_by_key(|board| Reverse(board.touched));
         boards
     }
-    fn create_board(&self, name: &str, key: &str) -> Option<Board> {
-        let dir = self.init().ok()?.join(BOARDS);
-        std::fs::create_dir_all(&dir).ok()?;
+
+    fn create_board(&self, name: &str, key: &str) -> Result<Board> {
+        let dir = self.init()?.join(BOARDS);
+        std::fs::create_dir_all(&dir)?;
         let mut board = Board::new(stem(&free(&dir, stamp::now())), name);
         board.key = match key::normalize(key) {
             Some(key) => key,
@@ -213,35 +232,28 @@ impl super::Project for Project {
             // them. Reading them is also what settles any key they are still
             // missing.
             None => {
-                let taken: HashSet<String> = super::Project::boards(self)
-                    .into_iter()
-                    .map(|board| board.key)
-                    .collect();
+                let taken: HashSet<String> =
+                    self.boards().into_iter().map(|board| board.key).collect();
                 key::derive(&board.name, &taken)
             }
         };
-        board.number = crate::entry::number(&self.root, "board", &board.id).ok();
-        super::Project::save_board(self, &mut board);
-        Some(board)
-    }
-    /// Write a board back, and take the time it was written at — the key the
-    /// sidebar orders on.
-    fn save_board(&self, board: &mut Board) {
-        let Ok(body) = toml::to_string_pretty(&*board) else {
-            return;
-        };
-        if std::fs::write(self.board_file(&board.id), body).is_ok() {
-            board.touched = stamp::now();
-        }
-    }
-    fn remove_board(&self, id: &str) {
-        if std::fs::remove_file(self.board_file(id)).is_ok() {
-            let _ = crate::entry::Registry::open(&self.root)
-                .and_then(|registry| registry.remove("board", id));
-        }
+        board.number = self.number("board", &board.id).ok();
+        self.save_board(&mut board)?;
+        Ok(board)
     }
 
-    /// Every session filed in this project, most recently updated first.
+    fn save_board(&self, board: &mut Board) -> Result<()> {
+        let body = toml::to_string_pretty(&*board)?;
+        std::fs::write(self.board_file(&board.id), body)?;
+        board.touched = stamp::now();
+        Ok(())
+    }
+
+    fn remove_board(&self, id: &str) -> Result<()> {
+        std::fs::remove_file(self.board_file(id))?;
+        self.retire("board", id)
+    }
+
     fn sessions(&self) -> Vec<Record> {
         let Ok(entries) = std::fs::read_dir(self.sessions_dir()) else {
             return Vec::new();
@@ -257,21 +269,21 @@ impl super::Project for Project {
                 if record.id.is_empty() {
                     record.id = stem(&path);
                 }
-                record.number = crate::entry::number(&self.root, "session", &record.id).ok();
+                record.number = self.number("session", &record.id).ok();
                 Some(record)
             })
             .collect();
         found.sort_by_key(|record| Reverse(record.updated));
         found
     }
-    /// Mint the id a session is filed under. Nothing is written: a session
-    /// that never says anything leaves no file.
+
+    /// Nothing is written: a session that never says anything leaves no file.
     ///
     /// Unique within this process — see [`stamp::fresh`] — and clear of any
     /// file already in the directory, which `-2` settles.
-    fn create_session(&self) -> Option<String> {
-        let dir = self.init().ok()?.join(SESSIONS);
-        std::fs::create_dir_all(&dir).ok()?;
+    fn create_session(&self) -> Result<String> {
+        let dir = self.init()?.join(SESSIONS);
+        std::fs::create_dir_all(&dir)?;
         let stamp = stamp::fresh();
         let mut id = stamp.to_string();
         for n in 2.. {
@@ -280,18 +292,92 @@ impl super::Project for Project {
             }
             id = format!("{stamp}-{n}");
         }
-        Some(id)
+        Ok(id)
     }
-    fn save_session(&self, record: &Record) {
-        if let Ok(body) = serde_json::to_string_pretty(record) {
-            let _ = std::fs::write(self.session_file(&record.id), body);
-        }
+
+    fn save_session(&self, record: &Record) -> Result<()> {
+        let body = serde_json::to_string_pretty(record)?;
+        std::fs::write(self.session_file(&record.id), body)?;
+        Ok(())
     }
-    fn remove_session(&self, id: &str) {
-        if std::fs::remove_file(self.session_file(id)).is_ok() {
-            let _ = crate::entry::Registry::open(&self.root)
-                .and_then(|registry| registry.remove("session", id));
-        }
+
+    fn remove_session(&self, id: &str) -> Result<()> {
+        std::fs::remove_file(self.session_file(id))?;
+        self.retire("session", id)
+    }
+
+    fn articles(&self) -> Vec<Article> {
+        let Ok(entries) = std::fs::read_dir(article::dir(&self.root)) else {
+            return Vec::new();
+        };
+        let mut found: Vec<Article> = entries
+            .flatten()
+            .map(|entry| article::content(&entry.path()))
+            .filter(|content| content.is_file())
+            .map(|content| self.describe(&content))
+            .collect();
+        found.sort_by_key(|article| Reverse(article.touched));
+        found
+    }
+
+    fn create_article(&self, markdown: &str) -> Result<Article> {
+        let dir = article::init(&self.root)?;
+        let landing = article::free(&dir, stamp::now());
+        std::fs::create_dir_all(&landing)?;
+        let content = article::content(&landing);
+        std::fs::write(&content, markdown)?;
+        Ok(self.describe(&content))
+    }
+
+    fn read_article(&self, id: &str) -> Result<String> {
+        Ok(std::fs::read_to_string(self.article_file(id)?)?)
+    }
+
+    fn write_article(&self, id: &str, markdown: &str) -> Result<()> {
+        std::fs::write(self.article_file(id)?, markdown)?;
+        Ok(())
+    }
+
+    fn properties(&self, id: &str) -> Properties {
+        self.article_file(id)
+            .map(|content| article::properties::all(&content))
+            .unwrap_or_default()
+    }
+
+    fn save_properties(&self, id: &str, properties: &Properties) -> Result<()> {
+        article::properties::save(&self.article_file(id)?, properties)?;
+        Ok(())
+    }
+
+    fn remove_article(&self, id: &str) -> Result<()> {
+        article::remove(&self.article_file(id)?)?;
+        Ok(())
+    }
+
+    fn asset(&self, id: &str, name: &str) -> Result<Vec<u8>> {
+        let content = self.article_file(id)?;
+        Ok(std::fs::read(
+            article::assets(&content).join(component(name)?),
+        )?)
+    }
+
+    fn put_asset(&self, id: &str, name: &str, bytes: &[u8]) -> Result<()> {
+        let dir = article::assets(&self.article_file(id)?);
+        std::fs::create_dir_all(&dir)?;
+        std::fs::write(dir.join(component(name)?), bytes)?;
+        Ok(())
+    }
+
+    fn number(&self, kind: &str, id: &str) -> Result<u64> {
+        entry::Registry::open(&self.root)?.number(kind, id)
+    }
+
+    fn resolve(&self, kind: &str, number: u64) -> Result<Option<String>> {
+        entry::Registry::open(&self.root)?.resolve(kind, number)
+    }
+
+    fn retire(&self, kind: &str, id: &str) -> Result<()> {
+        entry::Registry::open(&self.root)?.remove(kind, id)
     }
 }
 
@@ -300,6 +386,16 @@ fn stem(path: &Path) -> String {
     path.file_stem()
         .and_then(|stem| stem.to_str())
         .map_or_else(id::mint, str::to_owned)
+}
+
+/// An id or asset name as one path component, refused where it would reach
+/// outside the directory it names something in.
+fn component(name: &str) -> Result<&str> {
+    anyhow::ensure!(
+        !name.is_empty() && name != "." && name != ".." && !name.contains(['/', '\\']),
+        "{name:?} is not a name"
+    );
+    Ok(name)
 }
 
 /// This millisecond's file, or the first after it that is not taken. Two

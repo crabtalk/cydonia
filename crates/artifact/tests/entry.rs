@@ -107,7 +107,7 @@ fn archived_sessions_are_discoverable_and_readable() {
         entry::read(scratch.path(), session).unwrap()["agent"],
         "codex"
     );
-    scratch.store().remove_session("old");
+    scratch.store().remove_session("old").unwrap();
     assert!(entry::list(scratch.path()).unwrap().is_empty());
     assert_eq!(
         Registry::open(scratch.path())

@@ -342,7 +342,7 @@ impl Workspace {
         // Closing a session is what deletes it: leaving the file would put
         // the row back on the next launch.
         if let Some(record) = project.session(id).and_then(|chat| chat.record.clone()) {
-            project.store().remove_session(&record);
+            let _ = project.store().remove_session(&record);
         }
         project.sessions.retain(|chat| chat.id != id);
         if project.active == Some(id) {

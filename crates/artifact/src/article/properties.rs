@@ -97,6 +97,41 @@ pub fn set_full_width(content: &Path, wide: Option<bool>) {
     set(content, FULL_WIDTH, wide.map(toml_edit::value));
 }
 
+/// Write every field at once, in one pass over the file. Keys this module does
+/// not know about are kept.
+pub fn save(content: &Path, properties: &Properties) -> std::io::Result<()> {
+    let Some(path) = path(content) else {
+        return Ok(());
+    };
+    let mut doc = read(&path);
+    let fields = [
+        (
+            TITLE,
+            (!properties.title.is_empty()).then(|| toml_edit::value(properties.title.as_str())),
+        ),
+        (
+            ARCHIVED,
+            properties.archived.then(|| toml_edit::value(true)),
+        ),
+        (FULL_WIDTH, properties.full_width.map(toml_edit::value)),
+    ];
+    for (key, value) in fields {
+        match value {
+            Some(value) => doc[key] = value,
+            None => {
+                doc.remove(key);
+            }
+        }
+    }
+    if doc.is_empty() {
+        return match std::fs::remove_file(&path) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+            _ => Ok(()),
+        };
+    }
+    std::fs::write(&path, doc.to_string())
+}
+
 /// Put a key in, or take it out when there is nothing to say. A properties file
 /// with nothing left in it is removed: an article that has never been named
 /// should not leave a file behind saying so.
