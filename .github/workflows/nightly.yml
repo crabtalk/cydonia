@@ -44,17 +44,20 @@ jobs:
           sudo apt-get install -y --no-install-recommends imagemagick
       - if: runner.os == 'Linux'
         run: make tarball
+      # The installer, built by Inno Setup 6, which ships on the
+      # windows-latest image.
       - if: runner.os == 'Windows'
+        shell: bash
         run: |
           cargo build --release --bin cydonia
-          New-Item -ItemType Directory -Force target/bundle | Out-Null
-          Compress-Archive -Path target/release/cydonia.exe -DestinationPath target/bundle/cydonia-windows-x86_64.zip
+          version=$(sed -n '/^\[workspace.package\]/,/^\[/ s/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" "//DVersion=$version" bundle/windows/cydonia.iss
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.name }}
           path: |
             target/bundle/*.tar.gz
-            target/bundle/*.zip
+            target/bundle/*.exe
           if-no-files-found: error
 
   # Signed and notarized through `make release`. The secrets are described in
