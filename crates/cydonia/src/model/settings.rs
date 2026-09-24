@@ -799,6 +799,12 @@ pub fn put_agent(agent: &Agent, supersedes: Option<&str>) -> Result<()> {
         let agents = doc["agents"].or_insert(toml_edit::Item::ArrayOfTables(
             toml_edit::ArrayOfTables::new(),
         ));
+        // A freshly generated file serialises no agents as `agents = []`.
+        if agents.is_array()
+            && let Ok(tables) = std::mem::take(agents).into_array_of_tables()
+        {
+            *agents = toml_edit::Item::ArrayOfTables(tables);
+        }
         let Some(agents) = agents.as_array_of_tables_mut() else {
             anyhow::bail!("`agents` in settings.toml is not a list of tables");
         };

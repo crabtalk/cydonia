@@ -509,6 +509,7 @@ impl Cydonia {
             // The fold belongs to whichever column runs along the window's left
             // edge, so with the sidebar gone it is this pane's.
             .children(fold.then(|| self.fold_toggle(cx).into_any_element()))
+            .children(fold.then(|| self.app_menu(window, cx)).flatten())
             // The tabs in a strip of their own, which scrolls sideways once
             // they no longer fit: the bar's other children are the pane's
             // chrome and keep their places while it does.

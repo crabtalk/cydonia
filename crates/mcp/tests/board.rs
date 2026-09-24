@@ -833,7 +833,7 @@ fn busy_cards_record_the_calling_session_and_keep_it_when_cleared() {
     let column = board.add_column("Todo").id.clone();
     board.add_card(&column, "First".into());
     board.add_card(&column, "Second".into());
-    store.save_board(&mut board);
+    store.save_board(&mut board).unwrap();
     let server = scratch.server();
     said(server.call_from(
         "board_set_card_status",

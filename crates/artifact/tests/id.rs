@@ -54,7 +54,7 @@ fn sessions_made_together_are_named_apart() {
     let scratch = Scratch::new("session-pair");
     let store = scratch.store();
     let one = store.create_session().expect("minted");
-    store.save_session(&record(&one));
+    store.save_session(&record(&one)).unwrap();
     let two = store.create_session().expect("minted");
 
     assert_ne!(one, two);

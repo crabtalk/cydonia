@@ -186,11 +186,11 @@ impl Command {
     pub fn default(self) -> Option<&'static str> {
         Some(match self {
             // What macOS binds Preferences to in every other app.
-            Self::OpenSettings => "cmd-,",
-            Self::NewSession => "cmd-n",
+            Self::OpenSettings => "secondary-,",
+            Self::NewSession => "secondary-n",
             // ⌘N's other agent: the chord a second agent needs, since ⌘N
             // stays with whoever the project last talked to.
-            Self::NewSessionNext => "alt-cmd-n",
+            Self::NewSessionNext => "alt-secondary-n",
             Self::NewBoard | Self::NewArticle | Self::NewTable | Self::CloseProject => return None,
             // Nothing: ⌃⇥ and ⇧⌃⇥ are what step between entries, and they are
             // bound where nothing can name them — see [`root::bindings`]. A
@@ -198,15 +198,15 @@ impl Command {
             // equivalent is claimed by AppKit before the window is offered the
             // chord (user report: the pair drawn here did nothing at all).
             Self::NextEntry | Self::PrevEntry => return None,
-            Self::OpenProject => "cmd-o",
+            Self::OpenProject => "secondary-o",
             // What every app with a sidebar binds it to.
-            Self::ToggleSidebar => "cmd-b",
-            Self::ToggleTerminal => "cmd-j",
-            Self::ToggleChanges => "cmd-l",
-            Self::OpenFiles => "cmd-shift-f",
-            Self::OpenReview => "cmd-shift-g",
-            Self::PlainText => "cmd-e",
-            Self::FindCard => "cmd-f",
+            Self::ToggleSidebar => "secondary-b",
+            Self::ToggleTerminal => "secondary-j",
+            Self::ToggleChanges => "secondary-l",
+            Self::OpenFiles => "secondary-shift-f",
+            Self::OpenReview => "secondary-shift-g",
+            Self::PlainText => "secondary-e",
+            Self::FindCard => "secondary-f",
         })
     }
 
@@ -214,29 +214,55 @@ impl Command {
     /// chord at all.
     fn binding(self, chord: Option<&str>) -> Option<KeyBinding> {
         let chord = chord?;
+        let context = GLOBAL;
         Some(match self {
-            Self::OpenSettings => KeyBinding::new(chord, OpenSettings, None),
-            Self::NewSession => KeyBinding::new(chord, NewSession, None),
-            Self::NewSessionNext => KeyBinding::new(chord, NewSessionNext, None),
-            Self::NewBoard => KeyBinding::new(chord, NewBoard, None),
-            Self::NewArticle => KeyBinding::new(chord, NewArticle, None),
-            Self::NewTable => KeyBinding::new(chord, NewTable, None),
-            Self::OpenProject => KeyBinding::new(chord, OpenProject, None),
-            Self::CloseProject => KeyBinding::new(chord, CloseProject, None),
-            Self::ToggleSidebar => KeyBinding::new(chord, ToggleSidebar, None),
-            Self::ToggleTerminal => KeyBinding::new(chord, ToggleTerminal, None),
-            Self::ToggleChanges => KeyBinding::new(chord, ToggleChanges, None),
-            Self::OpenFiles => KeyBinding::new(chord, OpenFiles, None),
-            Self::OpenReview => KeyBinding::new(chord, OpenReview, None),
-            Self::NextEntry => KeyBinding::new(chord, NextEntry, None),
-            Self::PrevEntry => KeyBinding::new(chord, PrevEntry, None),
-            Self::PlainText => KeyBinding::new(chord, TogglePlainText, None),
+            Self::OpenSettings => KeyBinding::new(chord, OpenSettings, context),
+            Self::NewSession => KeyBinding::new(chord, NewSession, context),
+            Self::NewSessionNext => KeyBinding::new(chord, NewSessionNext, context),
+            Self::NewBoard => KeyBinding::new(chord, NewBoard, context),
+            Self::NewArticle => KeyBinding::new(chord, NewArticle, context),
+            Self::NewTable => KeyBinding::new(chord, NewTable, context),
+            Self::OpenProject => KeyBinding::new(chord, OpenProject, context),
+            Self::CloseProject => KeyBinding::new(chord, CloseProject, context),
+            Self::ToggleSidebar => KeyBinding::new(chord, ToggleSidebar, context),
+            Self::ToggleTerminal => KeyBinding::new(chord, ToggleTerminal, context),
+            Self::ToggleChanges => KeyBinding::new(chord, ToggleChanges, context),
+            Self::OpenFiles => KeyBinding::new(chord, OpenFiles, context),
+            Self::OpenReview => KeyBinding::new(chord, OpenReview, context),
+            Self::NextEntry => KeyBinding::new(chord, NextEntry, context),
+            Self::PrevEntry => KeyBinding::new(chord, PrevEntry, context),
+            Self::PlainText => KeyBinding::new(chord, TogglePlainText, context),
             // Everywhere but the files panel, which holds ⌘F for its own
             // filter — see [`bind_all`]. Scoped rather than left app-wide
             // because commands are bound last and would take the chord from
             // it.
-            Self::FindCard => KeyBinding::new(chord, board::FindCard, Some("!SessionPanel")),
+            Self::FindCard => KeyBinding::new(
+                chord,
+                board::FindCard,
+                Some(match NATIVE {
+                    true => "!SessionPanel",
+                    false => "!SessionPanel && !CydoniaTerminal",
+                }),
+            ),
         })
+    }
+}
+
+const NATIVE: bool = cfg!(target_os = "macos");
+
+/// The context an app-wide chord is bound in. Off macOS the secondary modifier
+/// is `ctrl`, and a shell reads every `ctrl` letter, so there a focused
+/// terminal keeps the keystroke.
+pub(crate) const GLOBAL: Option<&str> = match NATIVE {
+    true => None,
+    false => Some("!CydoniaTerminal"),
+};
+
+/// `mac` on macOS, `other` everywhere else.
+pub(crate) const fn platform(mac: &'static str, other: &'static str) -> &'static str {
+    match NATIVE {
+        true => mac,
+        false => other,
     }
 }
 
@@ -295,8 +321,22 @@ pub fn label(command: Command, shortcuts: &Shortcuts) -> Option<SharedString> {
 pub fn claimed(wanted: &str, mine: Command, shortcuts: &Shortcuts) -> Vec<Command> {
     Command::ALL
         .into_iter()
-        .filter(|&command| command != mine && chord(command, shortcuts) == Some(wanted))
+        .filter(|&command| {
+            command != mine && chord(command, shortcuts).is_some_and(|chord| same(chord, wanted))
+        })
         .collect()
+}
+
+/// Whether two chords name the same keystrokes: `secondary-b` and `ctrl-b`
+/// are one chord off macOS.
+fn same(a: &str, b: &str) -> bool {
+    let strokes = |chord: &str| {
+        chord
+            .split_whitespace()
+            .map(|stroke| Keystroke::parse(stroke).ok())
+            .collect::<Option<Vec<_>>>()
+    };
+    a == b || strokes(a).is_some_and(|a| strokes(b) == Some(a))
 }
 
 /// Optional word shortcuts, scoped to editable text.
@@ -362,22 +402,22 @@ pub fn bind_all(shortcuts: &Shortcuts, cx: &mut App) {
     cx.bind_keys(terminal::bindings());
     cx.bind_keys([
         KeyBinding::new(
-            "cmd-f",
+            "secondary-f",
             super::component::files::ToggleFilter,
-            Some("SessionPanel"),
+            Some(platform("SessionPanel", "SessionPanel && !CydoniaTerminal")),
         ),
         KeyBinding::new(
-            "cmd-p",
+            "secondary-p",
             super::component::panel::OpenFile,
-            Some("SessionPanel"),
+            Some(platform("SessionPanel", "SessionPanel && !CydoniaTerminal")),
         ),
         KeyBinding::new(
-            "cmd-w",
+            platform("cmd-w", "ctrl-shift-w"),
             super::component::panel::CloseTab,
             Some("SessionPanel || BottomTerminalPanel"),
         ),
         KeyBinding::new(
-            "cmd-t",
+            platform("cmd-t", "ctrl-shift-t"),
             super::component::panel::NewTerminal,
             Some("SessionPanel || BottomTerminalPanel"),
         ),
@@ -396,31 +436,35 @@ pub fn bind_all(shortcuts: &Shortcuts, cx: &mut App) {
             super::component::panel::PrevTab,
             Some("SessionPanel || BottomTerminalPanel"),
         ),
-        KeyBinding::new("cmd-s", super::component::file::Save, Some("FileEditor")),
-        KeyBinding::new("cmd-c", input::Copy, Some("FileEditor")),
-        KeyBinding::new("cmd-a", input::SelectAll, Some("FileEditor")),
         KeyBinding::new(
-            "cmd-=",
+            "secondary-s",
+            super::component::file::Save,
+            Some("FileEditor"),
+        ),
+        KeyBinding::new("secondary-c", input::Copy, Some("FileEditor")),
+        KeyBinding::new("secondary-a", input::SelectAll, Some("FileEditor")),
+        KeyBinding::new(
+            "secondary-=",
             super::component::file::IncreaseTextSize,
             Some("FileEditor"),
         ),
         KeyBinding::new(
-            "cmd-+",
+            "secondary-+",
             super::component::file::IncreaseTextSize,
             Some("FileEditor"),
         ),
         KeyBinding::new(
-            "cmd-shift-=",
+            "secondary-shift-=",
             super::component::file::IncreaseTextSize,
             Some("FileEditor"),
         ),
         KeyBinding::new(
-            "cmd--",
+            "secondary--",
             super::component::file::DecreaseTextSize,
             Some("FileEditor"),
         ),
         KeyBinding::new(
-            "cmd-0",
+            "secondary-0",
             super::component::file::ResetTextSize,
             Some("FileEditor"),
         ),

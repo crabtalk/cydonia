@@ -23,26 +23,61 @@
 //! resumable, so a restart here is the same door as ⌘Q — which is the argument
 //! [`crate::view::menubar`] already makes for closing the window.
 //!
-//! # What is trusted
-//!
-//! Nothing this process downloads carries `com.apple.quarantine` — that is set
-//! by browsers, not by us — so Gatekeeper will never assess the staged bundle
-//! on first launch. The assessment it would have made is therefore made here,
-//! before the swap is offered: the copy must verify against its own signature,
-//! Apple must have notarized it, and it must be signed by whoever signed *this*
-//! copy. That last one needs no certificate written down anywhere — the running
-//! app is the reference.
+//! What a release is and how it is swapped in is per platform: a dmg on macOS
+//! (`update/macos.rs`), the tarball on Linux (`update/linux.rs`), the installer
+//! on Windows (`update/windows.rs`).
 
 use crate::model::settings;
-use anyhow::{Context as _, Result, bail};
+#[cfg(unix)]
+use anyhow::bail;
+use anyhow::{Context as _, Result};
 use bezel::gpui::{App, AppContext as _, Context, Entity, Global, SharedString, Task};
 use serde::Deserialize;
+#[cfg(unix)]
 use std::{
     ffi::OsStr,
-    path::{Path, PathBuf},
     process::{Command, Output},
+};
+use std::{
+    path::{Path, PathBuf},
     time::Duration,
 };
+
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(windows)]
+mod windows;
+#[cfg(target_os = "linux")]
+use linux as platform;
+#[cfg(target_os = "macos")]
+use macos as platform;
+#[cfg(windows)]
+use windows as platform;
+
+/// Every other platform: no release is cut for it.
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+mod platform {
+    use anyhow::{Result, bail};
+    use bezel::gpui::App;
+    use std::path::{Path, PathBuf};
+
+    pub(super) const SUPPORTED: bool = false;
+    pub(super) const SUFFIX: &str = "";
+    pub(super) fn remote(_: &str) -> String {
+        String::new()
+    }
+    pub(super) fn bundle(_: &App) -> Option<PathBuf> {
+        None
+    }
+    pub(super) fn stage(_: &str, _: &Path) -> Result<PathBuf> {
+        bail!("no release is cut for this platform")
+    }
+    pub(super) fn swap_on_exit(_: &Path, _: &Path) -> Result<()> {
+        bail!("no release is cut for this platform")
+    }
+}
 
 /// The feed: the same history the changelog page renders, as a file on the CDN
 /// — see `www/src/routes/changelog.json/+server.js`. Built out of the homepage
@@ -56,20 +91,9 @@ const REPO: &str = env!("CARGO_PKG_REPOSITORY");
 /// What every image is named after, ahead of the version it carries.
 const IMAGE: &str = "cydonia-";
 
-/// And what a staged bundle's directory is named after, beside the app it is
-/// waiting to become. Dot-prefixed so the Finder keeps it out of the way.
+/// And what a staged copy's directory is named after, beside the app it is
+/// waiting to become. Dot-prefixed so a file manager keeps it out of the way.
 const STAGING: &str = ".cydonia-update-";
-
-/// The architecture a release is cut for, spelled the way the image that ships
-/// is named. `arm64` is Apple's word for it — `uname -m`, which is what the
-/// Makefile reads — where rustc's is `aarch64`; this is the one place the two
-/// meet, and [`SUPPORTED`] is what keeps the other one from asking.
-const ARCH: &str = "arm64";
-
-/// Whether this build is one a published release could stand in for. x86_64 and
-/// Linux are compiled from source by whoever runs them, so there is no image to
-/// hand them and nothing here ever offers one.
-const SUPPORTED: bool = cfg!(all(target_os = "macos", target_arch = "aarch64"));
 
 /// How long after launch the first check waits. Behind the window and the
 /// first paint, and no longer: opening the app is when being out of date is
@@ -146,7 +170,7 @@ impl Global for Handle {}
 
 /// Install it, beside the other `init`s. `auto` is `settings.auto_update`.
 pub fn init(auto: bool, cx: &mut App) {
-    let app = bundle(cx);
+    let app = platform::SUPPORTED.then(|| platform::bundle(cx)).flatten();
     if let Some(app) = app.as_deref() {
         sweep(app);
     }
@@ -267,7 +291,7 @@ impl Updater {
             }
             let staged = cx
                 .background_executor()
-                .spawn(async move { stage(&release, &app) })
+                .spawn(async move { platform::stage(&release, &app) })
                 .await;
             let _ = this.update(cx, |this, cx| {
                 let status = match staged {
@@ -291,7 +315,7 @@ impl Updater {
             let (Status::Ready { staged, .. }, Some(app)) = (&self.status, &self.app) else {
                 return;
             };
-            swap_on_exit(app, staged)
+            platform::swap_on_exit(app, staged)
         };
         match handed {
             // Not `cx.restart()`: that script re-opens the bundle and nothing
@@ -339,19 +363,32 @@ impl Updater {
     }
 }
 
-/// The bundle a release could replace this one at: the `.app` this process runs
-/// from, on the one platform an image is cut for.
-///
-/// A build whose version is ahead of the feed's is still admitted — it just
-/// never finds anything, which is what a working copy during development is.
-fn bundle(cx: &App) -> Option<PathBuf> {
-    if !SUPPORTED {
-        return None;
-    }
-    // Unbundled, `app_path` answers with the directory the executable sits in,
-    // which is not something to move a release on top of.
-    let path = cx.app_path().ok()?;
-    (path.extension()? == "app").then_some(path)
+/// The file a version is kept as on disk, whatever the release calls it:
+/// always named after the version, so [`version_of`] can read it back.
+pub fn asset(version: &str) -> String {
+    format!("{IMAGE}{version}{}", platform::SUFFIX)
+}
+
+/// And the version back out of that name, for a file found on disk rather than
+/// asked for. `None` is a name this did not write — a half-finished download
+/// among them — which [`sweep`] reads as "not worth keeping".
+pub fn version_of(image: &Path) -> Option<String> {
+    let name = image.file_name()?.to_str()?;
+    Some(
+        name.strip_prefix(IMAGE)?
+            .strip_suffix(platform::SUFFIX)?
+            .to_owned(),
+    )
+    .filter(|version| !version.is_empty())
+}
+
+/// And where that release is published: under the tag named after the
+/// version, which is the whole reason the feed carries no addresses.
+pub fn url(version: &str) -> String {
+    format!(
+        "{REPO}/releases/download/v{version}/{}",
+        platform::remote(version)
+    )
 }
 
 /// The version the feed offers, if it is ahead of this build.
@@ -416,163 +453,6 @@ fn pretend() -> SharedString {
         Some([major, minor, patch]) => format!("{major}.{minor}.{}", patch + 1).into(),
         None => VERSION.into(),
     }
-}
-
-/// The image a version ships as, named as the Makefile names it.
-pub fn asset(version: &str) -> String {
-    format!("{IMAGE}{version}-{ARCH}.dmg")
-}
-
-/// And the version back out of that name, for a file found on disk rather than
-/// asked for. `None` is a name this did not write — a half-finished download
-/// among them — which [`sweep`] reads as "not worth keeping".
-pub fn version_of(image: &Path) -> Option<String> {
-    let name = image.file_name()?.to_str()?;
-    Some(
-        name.strip_prefix(IMAGE)?
-            .strip_suffix(&format!("-{ARCH}.dmg"))?
-            .to_owned(),
-    )
-}
-
-/// And where that image is published — the tag and the asset are both named
-/// after the version, which is the whole reason the feed carries no addresses.
-pub fn url(version: &str) -> String {
-    format!("{REPO}/releases/download/v{version}/{}", asset(version))
-}
-
-/// Put a verified copy of `version` beside the running app, and answer with where
-/// it is.
-///
-/// Ordered so that the expensive thing happens after the thing that can fail
-/// for free: a bundle in a directory this user cannot write to is a refusal
-/// that should not cost a download first.
-fn stage(version: &str, app: &Path) -> Result<PathBuf> {
-    let parent = app.parent().context("the app is at the root of a volume")?;
-    // Beside the app it replaces, because the swap is a rename and a rename
-    // does not cross volumes — a home directory on another disk would put the
-    // download somewhere `mv` could not move it from. Dot-prefixed so the
-    // Finder keeps it out of the way while it waits.
-    let staging = parent.join(format!("{STAGING}{version}"));
-    let _ = std::fs::remove_dir_all(&staging);
-    std::fs::create_dir_all(&staging)
-        .with_context(|| format!("{} cannot be written to", parent.display()))?;
-
-    let image = download(version)?;
-    let mount = cache()?.join("mount");
-    let _ = std::fs::create_dir_all(&mount);
-    // In case a crash left the last one attached: `attach` will not take a
-    // mountpoint that is already in use, and this is the only thing that uses
-    // this one.
-    let _ = run(
-        "/usr/bin/hdiutil",
-        [
-            OsStr::new("detach"),
-            mount.as_os_str(),
-            OsStr::new("-quiet"),
-        ],
-    );
-    run(
-        "/usr/bin/hdiutil",
-        [
-            OsStr::new("attach"),
-            image.as_os_str(),
-            OsStr::new("-nobrowse"),
-            OsStr::new("-readonly"),
-            OsStr::new("-noautoopen"),
-            OsStr::new("-mountpoint"),
-            mount.as_os_str(),
-        ],
-    )?;
-    // Detaching is unconditional: a failure in here must not leave the image
-    // mounted — the same rule the Makefile's `dmg` target follows.
-    let staged = copy_out(&mount, &staging);
-    let _ = run(
-        "/usr/bin/hdiutil",
-        [
-            OsStr::new("detach"),
-            mount.as_os_str(),
-            OsStr::new("-quiet"),
-        ],
-    );
-    let staged = staged?;
-
-    match verify(&staged, app) {
-        Ok(()) => Ok(staged),
-        // A copy that does not verify is not left lying next to the app it
-        // failed to become.
-        Err(err) => {
-            let _ = std::fs::remove_dir_all(&staging);
-            Err(err)
-        }
-    }
-}
-
-/// Copy the mounted bundle into the staging directory.
-///
-/// `ditto` rather than `cp -R`: it carries the extended attributes and symlinks
-/// a bundle is made of, and a signature does not survive a copy that drops
-/// them. The name is read off the image rather than assumed, so a renamed
-/// install is still updated by the image it came from.
-fn copy_out(mount: &Path, staging: &Path) -> Result<PathBuf> {
-    let bundle = std::fs::read_dir(mount)?
-        .flatten()
-        .map(|entry| entry.path())
-        .find(|path| path.extension().is_some_and(|ext| ext == "app"))
-        .context("the image holds no app")?;
-    let staged = staging.join(bundle.file_name().context("the app has no name")?);
-    run("/usr/bin/ditto", [bundle.as_os_str(), staged.as_os_str()])?;
-    Ok(staged)
-}
-
-/// The assessment Gatekeeper will not make, because nothing marked this
-/// download as having come from anywhere — see the module note.
-fn verify(staged: &Path, running: &Path) -> Result<()> {
-    run(
-        "/usr/bin/codesign",
-        [
-            OsStr::new("--verify"),
-            OsStr::new("--strict"),
-            staged.as_os_str(),
-        ],
-    )
-    .context("the release does not match its own signature")?;
-    run(
-        "/usr/sbin/spctl",
-        [
-            OsStr::new("--assess"),
-            OsStr::new("--type"),
-            OsStr::new("exec"),
-            staged.as_os_str(),
-        ],
-    )
-    .context("the release is not notarized")?;
-    // Whoever signed the copy that is running is the only publisher this app
-    // will take a replacement from. No certificate is named anywhere in the
-    // source — an ad-hoc local build has no team at all, and refuses every
-    // release, which is the safe side of that trade.
-    if team(staged)? != team(running)? {
-        bail!("the release is signed by another developer than this copy");
-    }
-    Ok(())
-}
-
-/// The Apple team a bundle is signed by, or `None` for one signed ad-hoc.
-fn team(bundle: &Path) -> Result<Option<String>> {
-    let out = run(
-        "/usr/bin/codesign",
-        [
-            OsStr::new("-d"),
-            OsStr::new("--verbose=4"),
-            bundle.as_os_str(),
-        ],
-    )?;
-    // `codesign -d` reports on stderr, one `key=value` to a line.
-    Ok(String::from_utf8_lossy(&out.stderr)
-        .lines()
-        .find_map(|line| line.strip_prefix("TeamIdentifier="))
-        .filter(|team| *team != "not set")
-        .map(str::to_owned))
 }
 
 /// The image on disk, fetched if it is not there yet.
@@ -670,14 +550,15 @@ fn downloads() -> Result<PathBuf> {
     Ok(cache()?.join("updates"))
 }
 
-/// Wait for this process to be gone, put the staged bundle where the running
-/// one is, and open it.
+/// Wait for this process to be gone, put the staged copy where the running one
+/// is, and run `launch`.
 ///
 /// `$0` is the pid, `$1` the app and `$2` the staged copy — the same shape
-/// gpui's own restart script uses. The old bundle is moved aside rather than
-/// deleted, so a rename that fails part way can be undone; `open` runs whatever
-/// the outcome, because the one thing this must never do is leave somebody with
-/// no app at all.
+/// gpui's own restart script uses. The old copy is moved aside rather than
+/// deleted, so a rename that fails part way can be undone; `launch` runs
+/// whatever the outcome, because the one thing this must never do is leave
+/// somebody with no app at all.
+#[cfg(unix)]
 const SWAP: &str = r#"
     while kill -0 $0 2> /dev/null; do
         sleep 0.1
@@ -694,35 +575,27 @@ const SWAP: &str = r#"
             mv "$old" "$app"
         fi
     fi
-    open "$app"
 "#;
 
-fn swap_on_exit(app: &Path, staged: &Path) -> Result<()> {
-    let mut command = Command::new("/bin/bash");
+#[cfg(unix)]
+fn swap_on_exit(app: &Path, staged: &Path, launch: &str) -> Result<()> {
+    use std::os::unix::process::CommandExt as _;
+    let mut command = Command::new("/bin/sh");
     command
         .arg("-c")
-        .arg(SWAP)
+        .arg(format!("{SWAP}    {launch}\n"))
         .arg(std::process::id().to_string())
         .arg(app)
-        .arg(staged);
-    detach(&mut command);
+        .arg(staged)
+        // A process group of its own, so whatever ends this process does not
+        // take the swap with it. gpui's own `restart` does the same.
+        .process_group(0);
     command.spawn().context("the update script did not start")?;
     Ok(())
 }
 
-/// Put the script in a process group of its own, so whatever ends this process
-/// does not take the swap with it. gpui's own `restart` does the same, for the
-/// same reason.
-#[cfg(unix)]
-fn detach(command: &mut Command) {
-    use std::os::unix::process::CommandExt as _;
-    command.process_group(0);
-}
-
-#[cfg(not(unix))]
-fn detach(_: &mut Command) {}
-
 /// Run a tool, and turn a non-zero exit into the error it printed.
+#[cfg(unix)]
 fn run<'a>(program: &str, args: impl IntoIterator<Item = &'a OsStr>) -> Result<Output> {
     let out = Command::new(program)
         .args(args)

@@ -327,7 +327,7 @@ fn add(args: Args<'_>) -> Outcome {
     }
     let board = project
         .create_board(name, &key)
-        .ok_or_else(|| Trouble::Refused("The board could not be written.".into()))?;
+        .map_err(|e| Trouble::Refused(format!("The board could not be written — {e}.")))?;
     Ok(Answer::said(outline(&board)).with(shape(&board)))
 }
 
@@ -374,7 +374,7 @@ fn rename(args: Args<'_>) -> Outcome {
     if let Some(key) = key {
         board.key = key;
     }
-    project.save_board(&mut board);
+    project.save_board(&mut board).map_err(unwritten)?;
     let said = match rekeyed {
         Some((from, to)) => format!("{was} is now {name}, and {from}-1 is now {to}-1"),
         None => format!("{was} is now {name}"),
@@ -391,7 +391,7 @@ fn archive(args: Args<'_>) -> Outcome {
         let mut board = board(project, needle)?;
         board.archived = archived;
         said.push(spoken(&board));
-        project.save_board(&mut board);
+        project.save_board(&mut board).map_err(unwritten)?;
     }
     let what = match archived {
         true => "put away",
@@ -412,7 +412,7 @@ fn remove(args: Args<'_>) -> Outcome {
     }
     let gone: Vec<String> = found.iter().map(spoken).collect();
     for board in &found {
-        project.remove_board(&board.id);
+        project.remove_board(&board.id).map_err(unwritten)?;
     }
     Ok(Answer::said(format!("{} deleted", gone.join(", "))))
 }
@@ -479,7 +479,7 @@ fn add_card(args: Args<'_>) -> Outcome {
         added.push(json!({ "id": card.id, "handle": handle }));
         handles.push(handle);
     }
-    project.save_board(&mut board);
+    project.save_board(&mut board).map_err(unwritten)?;
     Ok(
         Answer::said(format!("{} added to {name}", handles.join(", ")))
             .with(json!({ "cards": added })),
@@ -492,7 +492,7 @@ fn rewrite_card(args: Args<'_>) -> Outcome {
     let text = args.text(TEXT_NOW)?;
     let handle = named(&board, &id);
     board.rewrite_card(&id, text);
-    project.save_board(&mut board);
+    project.save_board(&mut board).map_err(unwritten)?;
     Ok(Answer::said(format!("{handle} now reads: {}", line(text))))
 }
 
@@ -556,7 +556,7 @@ fn set_card_status(args: Args<'_>) -> Outcome {
             tagged.push(json!({ "id": id, "handle": handle, "status": status }));
             handles.push(handle);
         }
-        project.save_board(&mut board);
+        project.save_board(&mut board).map_err(unwritten)?;
     }
     let named = handles.join(", ");
     let are = match handles.len() {
@@ -673,9 +673,9 @@ fn move_card(args: Args<'_>) -> Outcome {
     }
     let label = to.label().to_owned();
     for board in &mut moved {
-        project.save_board(board);
+        project.save_board(board).map_err(unwritten)?;
     }
-    destination.save_board(&mut to);
+    destination.save_board(&mut to).map_err(unwritten)?;
     Ok(Answer::said(format!(
         "{spoken} moved to {label} as {}",
         carried.join(", ")
@@ -715,7 +715,7 @@ fn within(
         moved.push(board);
     }
     for board in &mut moved {
-        project.save_board(board);
+        project.save_board(board).map_err(unwritten)?;
     }
     Ok(Answer::said(format!("{spoken} moved to {name}")))
 }
@@ -747,7 +747,7 @@ fn remove_card(args: Args<'_>) -> Outcome {
             let card = board.remove_card(id).expect("the card was located above");
             gone.push(format!("{handle} — {}", line(&card.text)));
         }
-        project.save_board(&mut board);
+        project.save_board(&mut board).map_err(unwritten)?;
     }
     Ok(Answer::said(format!("removed {}", gone.join("; "))))
 }
@@ -765,7 +765,7 @@ fn add_column(args: Args<'_>) -> Outcome {
         names.push(column.name.clone());
     }
     let label = board.label().to_owned();
-    project.save_board(&mut board);
+    project.save_board(&mut board).map_err(unwritten)?;
     Ok(
         Answer::said(format!("{} added to {label}", names.join(", ")))
             .with(json!({ "columns": added })),
@@ -782,7 +782,7 @@ fn rename_column(args: Args<'_>) -> Outcome {
         .map(|column| column.name.clone())
         .unwrap_or_default();
     board.rename_column(&id, name);
-    project.save_board(&mut board);
+    project.save_board(&mut board).map_err(unwritten)?;
     Ok(Answer::said(format!("{was} is now {name}")))
 }
 
@@ -807,7 +807,7 @@ fn move_column(args: Args<'_>) -> Outcome {
             "{name} is already where it is being sent"
         )));
     }
-    project.save_board(&mut board);
+    project.save_board(&mut board).map_err(unwritten)?;
     Ok(Answer::said(match anchor {
         Some(anchor) => format!("{name} now sits in front of {anchor}"),
         None => format!("{name} now sits at the end"),
@@ -845,7 +845,7 @@ fn remove_column(args: Args<'_>) -> Outcome {
         board.remove_column(id);
         names.push(name.clone());
     }
-    project.save_board(&mut board);
+    project.save_board(&mut board).map_err(unwritten)?;
     Ok(Answer::said(format!(
         "{} removed from {label}",
         names.join(", ")
@@ -1092,4 +1092,9 @@ fn columns(board: &Board) -> String {
             .collect::<Vec<_>>()
             .join(", "),
     }
+}
+
+/// A write the backend refused, as the answer the agent reads.
+fn unwritten(error: impl std::fmt::Display) -> Trouble {
+    Trouble::Refused(format!("The board could not be written — {error}."))
 }

@@ -189,7 +189,7 @@ impl ChatSession {
         cx: &mut Context<Workspace>,
     ) -> Self {
         let preferences = session_preferences::load(&cwd, &entry, None);
-        let record = fs::Project::new(&cwd).create_session();
+        let record = fs::Project::new(&cwd).create_session().ok();
         let pump = pump(
             id,
             &entry,
@@ -383,7 +383,7 @@ impl ChatSession {
     /// first prompt, so it is about to have something to file anyway.
     pub fn mint_record(&mut self) -> Option<&str> {
         if self.record.is_none() {
-            self.record = fs::Project::new(&self.cwd).create_session();
+            self.record = fs::Project::new(&self.cwd).create_session().ok();
         }
         if self.number.is_none() {
             self.number = self
@@ -410,7 +410,7 @@ impl ChatSession {
             return None;
         }
         self.mint_record()?;
-        fs::Project::new(&self.cwd).save_session(&self.to_record());
+        let _ = fs::Project::new(&self.cwd).save_session(&self.to_record());
         self.written = true;
         self.save_preferences();
         self.record.clone()
@@ -427,7 +427,7 @@ impl ChatSession {
         let store = fs::Project::new(&self.cwd);
         self.mint_record();
         if self.record.is_some() {
-            store.save_session(&self.to_record());
+            let _ = store.save_session(&self.to_record());
             self.written = true;
             self.save_preferences();
         }
@@ -440,7 +440,7 @@ impl ChatSession {
             return;
         }
         if self.record.is_none() {
-            self.record = fs::Project::new(&self.cwd).create_session();
+            self.record = fs::Project::new(&self.cwd).create_session().ok();
         }
         self._pump = pump(
             self.id,

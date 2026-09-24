@@ -1,9 +1,9 @@
 <script>
 	import ShareImage from '$lib/ShareImage.svelte';
-	import { Download, Tag } from 'lucide-static';
+	import { Tag } from 'lucide-static';
 	import { anchor, day, groups, media, releases } from '$lib/changelog.js';
 	import Media from '$lib/Media.svelte';
-	import { dmgFor, releaseFor } from '$lib/meta.js';
+	import { releaseFor } from '$lib/meta.js';
 
 	const description =
 		'Every release of Cydonia — what is new, what changed and what is fixed in each version.';
@@ -28,6 +28,11 @@
 				<div class="head">
 					<a class="num" href="#{anchor(release.version)}">{release.version}</a>
 					<span class="day">{day(release.date)}</span>
+					<a class="release-link" href={releaseFor(release.version)} target="_blank" rel="noreferrer">
+						<!-- eslint-disable-next-line svelte/no-at-html-tags -->
+						{@html Tag}
+						v{release.version}
+					</a>
 				</div>
 
 				<div class="body">
@@ -38,19 +43,6 @@
 					{#if media(release)}
 						<Media media={media(release)} />
 					{/if}
-
-					<div class="links">
-						<a href={releaseFor(release.version)} target="_blank" rel="noreferrer">
-							<!-- eslint-disable-next-line svelte/no-at-html-tags -->
-							{@html Tag}
-							v{release.version}
-						</a>
-						<a href={dmgFor(release.version)}>
-							<!-- eslint-disable-next-line svelte/no-at-html-tags -->
-							{@html Download}
-							cydonia-{release.version}-arm64.dmg
-						</a>
-					</div>
 
 					{#each groups(release) as group (group.title)}
 						<h2>{group.title}</h2>
@@ -89,7 +81,7 @@
 	ol > li {
 		padding: 36px 0;
 		border-top: 1px solid var(--line);
-		scroll-margin-top: 24px;
+		scroll-margin-top: calc(var(--header) + 24px);
 	}
 
 	ol > li:first-child {
@@ -108,13 +100,9 @@
 	}
 
 	.head {
-		margin-bottom: 16px;
-	}
-
-	.num {
-		font-family: var(--mono);
-		font-size: 15px;
-		font-weight: 500;
+		display: grid;
+		justify-items: start;
+		align-content: start;
 	}
 
 	.day {
@@ -124,28 +112,25 @@
 		font-size: 13.5px;
 	}
 
-	.links {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		gap: 20px;
-		margin-top: 18px;
+	.num {
+		font-family: var(--mono);
+		font-size: 15px;
+		font-weight: 500;
 	}
 
-	/* Both name the thing they fetch — a tag and a file — so both are set in the
-	   face the rest of the page uses for names of that kind. */
-	.links a {
+	.release-link {
 		display: inline-flex;
 		align-items: center;
-		gap: 7px;
+		gap: 6px;
+		margin-top: 12px;
 		color: var(--muted);
 		font-family: var(--mono);
-		font-size: 13px;
+		font-size: 12px;
 	}
 
-	.links :global(svg) {
-		width: 14px;
-		height: 14px;
+	.release-link :global(svg) {
+		width: 13px;
+		height: 13px;
 	}
 
 	.body {
@@ -179,9 +164,4 @@
 		color: var(--muted);
 	}
 
-	@media (min-width: 820px) {
-		.head {
-			margin-bottom: 0;
-		}
-	}
 </style>

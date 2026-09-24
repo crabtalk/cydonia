@@ -2,28 +2,24 @@
 #
 #   irm https://cydonia.sh/install.ps1 | iex
 #
-# The zip is unpacked into %LOCALAPPDATA%\Programs\cydonia, with a Start menu
-# shortcut to it.
+# Runs the release's installer silently: per-user, into
+# %LOCALAPPDATA%\Programs\cydonia, with a Start menu shortcut and an entry in
+# Installed apps.
 $ErrorActionPreference = 'Stop'
 
-$url = 'https://github.com/crabtalk/cydonia/releases/latest/download/cydonia-windows-x86_64.zip'
-$dir = Join-Path $env:LOCALAPPDATA 'Programs\cydonia'
-$zip = Join-Path ([IO.Path]::GetTempPath()) "cydonia-$([guid]::NewGuid()).zip"
+$url = 'https://github.com/crabtalk/cydonia/releases/latest/download/cydonia-windows-x86_64-setup.exe'
+$setup = Join-Path ([IO.Path]::GetTempPath()) "cydonia-$([guid]::NewGuid())-setup.exe"
 
 Write-Host "downloading $url"
-Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
+Invoke-WebRequest -Uri $url -OutFile $setup -UseBasicParsing
 try {
-    New-Item -ItemType Directory -Force $dir | Out-Null
-    Expand-Archive -Path $zip -DestinationPath $dir -Force
+    $run = Start-Process -FilePath $setup -Wait -PassThru `
+        -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CLOSEAPPLICATIONS'
+    if ($run.ExitCode -ne 0) {
+        throw "the installer exited with code $($run.ExitCode)"
+    }
 } finally {
-    Remove-Item $zip -ErrorAction SilentlyContinue
+    Remove-Item $setup -ErrorAction SilentlyContinue
 }
 
-$exe = Join-Path $dir 'cydonia.exe'
-$shortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'Cydonia.lnk'
-$link = (New-Object -ComObject WScript.Shell).CreateShortcut($shortcut)
-$link.TargetPath = $exe
-$link.WorkingDirectory = $dir
-$link.Save()
-
-Write-Host "installed cydonia to $exe"
+Write-Host "installed cydonia to $(Join-Path $env:LOCALAPPDATA 'Programs\cydonia\cydonia.exe')"

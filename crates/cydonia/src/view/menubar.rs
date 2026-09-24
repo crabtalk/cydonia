@@ -1,5 +1,6 @@
-//! The macOS menu bar: the tree, the commands only it names, and the wiring
-//! that decides which of them are live.
+//! The menu bar: the tree, the commands only it names, and the wiring that
+//! decides which of them are live. macOS hangs the tree on the system bar; off
+//! macOS [`Cydonia::app_menu`] opens it from a button in the window.
 //!
 //! An item carries an action and a name, never a shortcut. `set_menus` reads
 //! the equivalent off the keymap, so [`crate::view::keymap`] stays the one
@@ -17,11 +18,15 @@
 //! every key equivalent, so an item greys itself exactly when nothing in the
 //! focused path handles its action — which is what [`Cydonia::commands`] is
 //! for, and why a greyed item's shortcut still reaches the keymap underneath.
+//! The in-window menu asks [`bezel::gpui::Window::is_action_available`] the
+//! same question each time it opens.
 
 use crate::{
     model::{settings, update},
     view::{
         article::TogglePlainText,
+        component::menu::{self as card, Menu as Open},
+        keymap,
         leaf::Pane,
         root::{
             CloseProject, Cydonia, NewArticle, NewBoard, NewSession, NewSessionNext,
@@ -32,10 +37,15 @@ use crate::{
 };
 use bezel::{
     gpui::{
-        self, App, Context, Div, KeyBinding, Menu, MenuItem, OsAction, Window, actions, prelude::*,
+        self, AnyElement, App, Context, Div, KeyBinding, Menu, MenuItem, OsAction, OwnedMenu,
+        OwnedMenuItem, Window, actions, prelude::*,
     },
-    ui::input,
+    ui::{icons, input, menu::Item},
 };
+
+/// Whether the tree hangs on the system bar rather than behind
+/// [`Cydonia::app_menu`].
+const NATIVE: bool = cfg!(target_os = "macos");
 
 actions!(
     cydonia,
@@ -58,6 +68,13 @@ actions!(
 /// an app these and there is no nib here — an item whose action nothing has
 /// bound shows no shortcut and answers to none, ⌘Q included.
 pub fn bindings() -> Vec<KeyBinding> {
+    if !NATIVE {
+        return vec![
+            KeyBinding::new("ctrl-q", Quit, keymap::GLOBAL),
+            KeyBinding::new("ctrl-w", CloseWindow, keymap::GLOBAL),
+            KeyBinding::new("f11", ToggleFullScreen, None),
+        ];
+    }
     vec![
         KeyBinding::new("cmd-q", Quit, None),
         KeyBinding::new("cmd-h", Hide, None),
@@ -141,12 +158,16 @@ fn menus(cx: &App) -> Vec<Menu> {
     app.extend([
         MenuItem::action("Settings…", OpenSettings),
         MenuItem::separator(),
-        MenuItem::action("Hide cydonia", Hide),
-        MenuItem::action("Hide Others", HideOthers),
-        MenuItem::action("Show All", ShowAll),
-        MenuItem::separator(),
-        MenuItem::action("Quit cydonia", Quit),
     ]);
+    if NATIVE {
+        app.extend([
+            MenuItem::action("Hide cydonia", Hide),
+            MenuItem::action("Hide Others", HideOthers),
+            MenuItem::action("Show All", ShowAll),
+            MenuItem::separator(),
+        ]);
+    }
+    app.push(MenuItem::action("Quit cydonia", Quit));
     let file = file_menu();
     vec![
         // Titled for the unbundled binary alone — a bundle takes the first
@@ -272,6 +293,29 @@ fn workspace(cx: &mut App, f: impl FnOnce(&mut Cydonia, &mut Window, &mut Contex
 }
 
 impl Cydonia {
+    /// The button that opens the tree off macOS, and its card while open.
+    /// `None` on macOS.
+    pub(crate) fn app_menu(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if NATIVE {
+            return None;
+        }
+        let card = (self.menu == Some(Open::App))
+            .then(|| cx.get_menus())
+            .flatten()
+            .map(|menus| {
+                let rows = menus
+                    .into_iter()
+                    .map(|menu| submenu(menu, window, cx))
+                    .collect();
+                self.menu_card("app-menu-card", rows, cx)
+            });
+        Some(
+            self.menu_button("app-menu", None, icons::layout::Menu, Open::App, cx)
+                .children(card)
+                .into_any_element(),
+        )
+    }
+
     /// Hang the menu's commands on the root, each under the condition that
     /// makes it mean something — a board cannot be started in a window with no
     /// project open, so with none there is nothing here to handle `NewBoard`
@@ -326,4 +370,41 @@ impl Cydonia {
                     .on_action(cx.listener(Self::prev_entry))
             })
     }
+}
+
+/// One menu of the tree as a row that opens it. Each item dispatches its action
+/// to the window, greyed where nothing in the focused path would handle it.
+fn submenu(menu: OwnedMenu, window: &Window, cx: &App) -> (Item, card::Act) {
+    let (items, acts): (Vec<Item>, Vec<card::Act>) = menu
+        .items
+        .into_iter()
+        .filter_map(|item| match item {
+            OwnedMenuItem::Separator => Some((Item::Separator, inert())),
+            OwnedMenuItem::Submenu(menu) => Some(submenu(menu, window, cx)),
+            OwnedMenuItem::SystemMenu(_) => None,
+            OwnedMenuItem::Action { name, action, .. } => {
+                let item = Item::action(name).with_shortcut(&*action, window);
+                let item = match window.is_action_available(&*action, cx) {
+                    true => item,
+                    false => item.disabled(),
+                };
+                let act: card::Act = Box::new(move |_, _, window, cx| {
+                    window.dispatch_action(action.boxed_clone(), cx)
+                });
+                Some((item, act))
+            }
+        })
+        .unzip();
+    let act: card::Act = Box::new(move |this, path, window, cx| {
+        if let Some((&at, rest)) = path.split_first()
+            && let Some(act) = acts.get(at)
+        {
+            act(this, rest, window, cx);
+        }
+    });
+    (Item::submenu(menu.name, items), act)
+}
+
+fn inert() -> card::Act {
+    Box::new(|_, _, _, _| {})
 }

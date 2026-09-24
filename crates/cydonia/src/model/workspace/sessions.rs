@@ -70,7 +70,7 @@ impl Workspace {
     pub fn retain_active_session(&mut self, id: u64, cx: &mut Context<Self>) -> Option<String> {
         let ix = self.project_of(id)?;
         let record = self.retain_session(id, cx)?;
-        self.remember(ix, state::Kind::Session, record.clone(), cx);
+        self.note_landing(ix, state::Kind::Session, record.clone(), cx);
         cx.notify();
         Some(record)
     }
@@ -342,7 +342,7 @@ impl Workspace {
         // Closing a session is what deletes it: leaving the file would put
         // the row back on the next launch.
         if let Some(record) = project.session(id).and_then(|chat| chat.record.clone()) {
-            project.store().remove_session(&record);
+            let _ = project.store().remove_session(&record);
         }
         project.sessions.retain(|chat| chat.id != id);
         if project.active == Some(id) {

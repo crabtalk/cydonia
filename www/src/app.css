@@ -12,11 +12,14 @@
 	--faint: #8b8f96;
 	--mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
 
-	/* Three radii for the whole site. Controls and inline marks share the small
-	   one, bordered boxes the middle, and only full-bleed media gets the large. */
-	--radius-sm: 4px;
-	--radius: 6px;
-	--radius-lg: 12px;
+	/* Boxes and media are square. Only controls and inline marks round, and
+	   only slightly. */
+	--radius-sm: 2px;
+	--radius: 2px;
+	--radius-lg: 0;
+	--control-height: 28px;
+	--control-font-size: 13px;
+	--control-padding: 10px;
 
 	/* The gutter the header, every section and the footer share. Named here so
 	   the step down for narrow screens happens once, not in each of them. */
@@ -91,6 +94,17 @@ a {
 	}
 }
 
+.control {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	height: var(--control-height);
+	padding: 0 var(--control-padding);
+	font-family: inherit;
+	font-size: var(--control-font-size);
+	line-height: 1;
+}
+
 code {
 	font-family: var(--mono);
 	font-size: 0.875em;
@@ -151,8 +165,8 @@ h3 {
 	right: 8px;
 	display: grid;
 	place-items: center;
-	width: 32px;
-	height: 32px;
+	width: var(--control-height);
+	height: var(--control-height);
 	padding: 0;
 	border: 0;
 	border-radius: var(--radius);
@@ -168,14 +182,6 @@ h3 {
 	.copy:hover {
 		color: var(--text);
 		background: var(--panel-high);
-	}
-}
-
-/* A finger needs more than the 32px a cursor is happy with. */
-@media (pointer: coarse) {
-	.copy {
-		width: 40px;
-		height: 40px;
 	}
 }
 

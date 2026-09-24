@@ -133,8 +133,8 @@ pub fn bindings() -> Vec<KeyBinding> {
         KeyBinding::new("escape", DismissCard, ctx),
         KeyBinding::new("escape", DismissFind, Some(FIND_CONTEXT)),
         KeyBinding::new("escape", CloseCardPreview, Some(DRAWER_CONTEXT)),
-        KeyBinding::new("cmd-enter", SaveCardDraft, Some(DRAWER_CONTEXT)),
-        KeyBinding::new("cmd-enter", SaveCardDraft, Some(DRAFT_CONTEXT)),
+        KeyBinding::new("secondary-enter", SaveCardDraft, Some(DRAWER_CONTEXT)),
+        KeyBinding::new("secondary-enter", SaveCardDraft, Some(DRAFT_CONTEXT)),
     ]
 }
 
@@ -635,10 +635,13 @@ impl Marks {
     }
 }
 
-/// A card's orb, read off the model with the card — the thinking orb the
-/// sidebar's session row and the transcript already use, because a card
-/// reporting a run is reporting the same run they are.
+/// A card's mark, read off the model with the card: the thinking orb the
+/// sidebar's session row and the transcript already use while the card is
+/// busy, and the linked session's `#number` while it is not.
 struct Working {
+    busy: bool,
+    /// The linked session's project entry number, for the idle mark.
+    number: Option<u64>,
     session: Option<(u64, String)>,
     state: bezel::agent::orbs::OrbState,
     since: std::time::Duration,
@@ -1127,27 +1130,39 @@ impl Cydonia {
         self.workspace.read(cx).session_by_record(record)
     }
 
-    /// The orb a card spins, and nothing for a card at rest.
+    /// A card's mark: the orb while it is busy, the linked session's `#number`
+    /// while it is not, and nothing when no session is linked. A session stays
+    /// linked after the tag is taken off, and one session tags many cards.
     ///
-    /// The thinking orb the sidebar's session row and the transcript already
-    /// use — a card reporting a run is reporting the same run they are, and a
-    /// second kind of orb for it would read as a second kind of work.
-    /// What a card's orb needs, read out of the model before the card is built
-    /// — the sidebar's [`SessionRow`] rule, and for the same reason: the orb
-    /// leases the frame clock, which wants the app mutably.
-    ///
-    /// Nothing for a card at rest.
+    /// Read out of the model before the card is built — the sidebar's
+    /// [`SessionRow`] rule, and for the same reason: the orb leases the frame
+    /// clock, which wants the app mutably.
     fn card_working(&self, card: &Card, chat: Option<&ChatSession>) -> Option<Working> {
         let session = chat.map(|chat| (chat.id, chat.label()));
+        let number = chat.and_then(|chat| chat.number);
+        if card.status != Some(Status::Busy) {
+            return chat.map(|chat| Working {
+                busy: false,
+                number,
+                session,
+                state: transcript::orb_for(&card.text),
+                since: SINCE.elapsed(),
+                frame: chat.transcript.mark.clone(),
+            });
+        }
         match chat.filter(|chat| chat.streaming) {
             Some(chat) => Some(Working {
+                busy: true,
+                number,
                 session,
                 state: transcript::orb_of(chat),
                 since: chat.elapsed().unwrap_or_default(),
                 frame: chat.transcript.mark.clone(),
             }),
             // Busy without a streaming session uses the board’s animation clock.
-            None => (card.status == Some(Status::Busy)).then(|| Working {
+            None => Some(Working {
+                busy: true,
+                number,
                 session,
                 state: transcript::orb_for(&card.text),
                 since: SINCE.elapsed(),
@@ -1157,7 +1172,19 @@ impl Cydonia {
     }
 
     fn card_orb(&self, at: Working, cx: &mut Context<Self>) -> AnyElement {
-        let orb = transcript::orb(at.state, at.since, &at.frame, cx);
+        let theme = Theme::of(cx).clone();
+        let orb = match at.busy {
+            true => transcript::orb(at.state, at.since, &at.frame, cx),
+            false => div()
+                .text_style(TextStyle::Caption)
+                .font_family(theme.font_mono.clone())
+                .text_color(theme.text_faint)
+                .child(match at.number {
+                    Some(number) => format!("#{number}"),
+                    None => "#".into(),
+                })
+                .into_any_element(),
+        };
         let session = at
             .session
             .filter(|_| self.workspace.read(cx).settings.features.sessions);
@@ -1513,7 +1540,7 @@ impl Cydonia {
         &self,
         id: &'static str,
         glyph: &'static [u8],
-        label: &'static str,
+        label: impl Into<SharedString>,
         cx: &Context<Self>,
     ) -> Stateful<Div> {
         let theme = Theme::of(cx);
@@ -1531,7 +1558,10 @@ impl Cydonia {
                     .size(px(14.))
                     .text_color(theme.text_muted),
             )
-            .tooltip(move |window, cx| Tooltip::text(label, window, cx))
+            .tooltip({
+                let label = label.into();
+                move |window, cx| Tooltip::text(label.clone(), window, cx)
+            })
     }
 
     fn card_drawer(
@@ -1737,7 +1767,10 @@ impl Cydonia {
                                 self.drawer_action(
                                     "card-draft-save",
                                     icons::notifications::Check,
-                                    "Save card (⌘Enter)",
+                                    format!(
+                                        "Save card ({})",
+                                        bezel::ui::keys::printed("secondary-enter")
+                                    ),
                                     cx,
                                 )
                                 .on_click(cx.listener(

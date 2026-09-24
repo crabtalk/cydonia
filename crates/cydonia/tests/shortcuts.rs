@@ -17,7 +17,10 @@ fn shortcuts(body: &str) -> Shortcuts {
 #[test]
 fn a_command_nobody_moved_keeps_its_default() {
     let held = shortcuts("");
-    assert_eq!(keymap::chord(Command::ToggleSidebar, &held), Some("cmd-b"));
+    assert_eq!(
+        keymap::chord(Command::ToggleSidebar, &held),
+        Some("secondary-b")
+    );
     // And one that ships with no chord at all still has none.
     assert_eq!(keymap::chord(Command::NewBoard, &held), None);
 }
@@ -56,23 +59,41 @@ fn an_empty_chord_is_a_command_that_answers_to_nothing() {
 #[test]
 fn a_chord_that_is_not_one_falls_back_rather_than_unbinding() {
     let held = shortcuts(r#"toggle_sidebar = "cmd-nonsense-key""#);
-    assert_eq!(keymap::chord(Command::ToggleSidebar, &held), Some("cmd-b"));
+    assert_eq!(
+        keymap::chord(Command::ToggleSidebar, &held),
+        Some("secondary-b")
+    );
 }
 
 /// Two commands on one chord is not an error the keymap raises — the later
 /// binding wins and the other goes quiet — so the section has to ask.
 #[test]
 fn a_chord_already_spoken_for_names_who_has_it() {
-    let held = shortcuts(r#"new_board = "cmd-b""#);
+    let held = shortcuts(r#"new_board = "secondary-b""#);
     assert_eq!(
-        keymap::claimed("cmd-b", Command::NewBoard, &held),
+        keymap::claimed("secondary-b", Command::NewBoard, &held),
         vec![Command::ToggleSidebar]
     );
     // Symmetric, and neither of them counts itself: each is told who else is
     // on the chord, which is what a row has to say.
     assert_eq!(
-        keymap::claimed("cmd-b", Command::ToggleSidebar, &held),
+        keymap::claimed("secondary-b", Command::ToggleSidebar, &held),
         vec![Command::NewBoard]
+    );
+}
+
+/// A recorder writes the platform's own modifier, and the defaults are written
+/// with `secondary`: the two spellings are one chord.
+#[test]
+fn a_recorded_chord_meets_the_default_it_spells_differently() {
+    let recorded = if cfg!(target_os = "macos") {
+        "cmd-b"
+    } else {
+        "ctrl-b"
+    };
+    assert_eq!(
+        keymap::claimed(recorded, Command::NewBoard, &shortcuts("")),
+        vec![Command::ToggleSidebar]
     );
 }
 
@@ -141,6 +162,6 @@ fn a_fresh_file_holds_no_shortcuts_at_all() {
     assert_eq!(read.shortcuts.activate(), None);
     assert_eq!(
         keymap::chord(Command::ToggleSidebar, &read.shortcuts),
-        Some("cmd-b")
+        Some("secondary-b")
     );
 }

@@ -1,6 +1,6 @@
 <script>
 	import '../app.css';
-	import { siApple, siDiscord, siGithub, siX } from 'simple-icons';
+	import { siDiscord, siGithub, siX } from 'simple-icons';
 	import { base } from '$app/paths';
 	import Brand from '$lib/Brand.svelte';
 	import Logo from '$lib/Logo.svelte';
@@ -50,8 +50,7 @@
 
 		<nav>
 			<a class="docs" href="{base}/docs/">Docs</a>
-			<a class="button" href="{base}/#download">
-				<Brand icon={siApple} size={14} />
+			<a class="control button" href="{base}/#download">
 				Download
 			</a>
 		</nav>
@@ -190,12 +189,9 @@
 		display: inline-flex;
 		align-items: center;
 		gap: 7px;
-		height: 32px;
-		padding: 0 12px;
 		border-radius: var(--radius);
 		background: var(--accent);
 		color: var(--accent-ink);
-		font-size: 13px;
 		font-weight: 500;
 	}
 

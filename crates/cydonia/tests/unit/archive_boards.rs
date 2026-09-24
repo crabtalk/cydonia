@@ -9,7 +9,7 @@ fn archived_boards_keep_metadata_and_load_cards_only_on_demand() {
     let column = board.add_column("Todo").id.clone();
     board.add_card(&column, "Preserve this card".into());
     board.archived = true;
-    store.save_board(&mut board);
+    store.save_board(&mut board).unwrap();
     let mut project = Project::new(path.clone());
     assert!(project.boards[0].columns.is_empty());
     assert_eq!(project.boards[0].name, "Archive");

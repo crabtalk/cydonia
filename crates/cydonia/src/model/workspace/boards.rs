@@ -31,7 +31,7 @@ impl Workspace {
             cx.notify();
             return Err(error);
         }
-        store.save_board(&mut board);
+        let _ = store.save_board(&mut board);
         let saved = store
             .board(&member.id)
             .ok_or("The saved board could not be read.")?;
@@ -79,12 +79,12 @@ impl Workspace {
         let mut board = open
             .store()
             .create_board(name.trim(), &key)
-            .ok_or("The board could not be written.".to_owned())?;
+            .map_err(|e| format!("The board could not be written — {e}."))?;
         // What the app is set to, written into the board as it is made — see
         // [`artifact::board::Board::view`]. From here the board answers for
         // itself, and the setting moving does not move it.
         board.view = view;
-        open.store().save_board(&mut board);
+        let _ = open.store().save_board(&mut board);
         open.boards.insert(0, board);
         self.reveal_project(project, cx);
         self.open_board(project, 0, cx);
@@ -119,7 +119,7 @@ impl Workspace {
         if ix >= project.boards.len() {
             return;
         }
-        project.store().remove_board(&project.boards.remove(ix).id);
+        let _ = project.store().remove_board(&project.boards.remove(ix).id);
         project.board = project
             .board
             .filter(|open| *open != ix)
@@ -168,7 +168,7 @@ impl Workspace {
         if let Some(board) = open.boards.iter_mut().find(|board| board.id == id) {
             board.name = name.trim().to_owned();
             board.key = key;
-            store.save_board(board);
+            let _ = store.save_board(board);
         }
         self.prune_archived(cx);
         cx.notify();
@@ -186,7 +186,7 @@ impl Workspace {
     ) {
         self.with_board(id, |store, board| {
             board.view = view;
-            store.save_board(board);
+            let _ = store.save_board(board);
         });
         cx.notify();
     }
@@ -194,7 +194,7 @@ impl Workspace {
     pub fn archive_board(&mut self, id: &str, archived: bool, cx: &mut Context<Self>) {
         self.with_board(id, |store, board| {
             board.archived = archived;
-            store.save_board(board);
+            let _ = store.save_board(board);
         });
         self.prune_archived(cx);
         cx.notify();
@@ -229,7 +229,7 @@ impl Workspace {
     pub fn new_column(&mut self, board: &str, cx: &mut Context<Self>) -> Option<String> {
         let id = self.with_board(board, |store, board| {
             let id = board.add_column(artifact::board::column::NAMED).id.clone();
-            store.save_board(board);
+            let _ = store.save_board(board);
             id
         })?;
         cx.notify();
@@ -251,7 +251,7 @@ impl Workspace {
                 .add_column_beside(artifact::board::column::NAMED, id, after)?
                 .id
                 .clone();
-            store.save_board(board);
+            let _ = store.save_board(board);
             Some(minted)
         })??;
         cx.notify();
@@ -261,7 +261,7 @@ impl Workspace {
     pub fn rename_column(&mut self, board: &str, id: &str, name: String, cx: &mut Context<Self>) {
         self.with_board(board, |store, board| {
             if board.rename_column(id, name.trim()) {
-                store.save_board(board);
+                let _ = store.save_board(board);
             }
         });
         cx.notify();
@@ -288,7 +288,7 @@ impl Workspace {
                 false => board.columns.get(to).map(|column| column.id.clone()),
             };
             if board.move_column_before(id, before.as_deref()) {
-                store.save_board(board);
+                let _ = store.save_board(board);
             }
         });
         cx.notify();
@@ -304,7 +304,7 @@ impl Workspace {
                 return;
             };
             column.collapsed = !column.collapsed;
-            store.save_board(board);
+            let _ = store.save_board(board);
         });
         cx.notify();
     }
@@ -314,7 +314,7 @@ impl Workspace {
     pub fn remove_column(&mut self, board: &str, id: &str, cx: &mut Context<Self>) {
         self.with_board(board, |store, board| {
             if board.remove_column(id) {
-                store.save_board(board);
+                let _ = store.save_board(board);
             }
         });
         cx.notify();
@@ -371,7 +371,7 @@ impl Workspace {
         if !board.move_card_before(card, column, before) {
             return false;
         }
-        store.save_board(board);
+        let _ = store.save_board(board);
         true
     }
 
@@ -412,7 +412,7 @@ impl Workspace {
                 continue;
             };
             let store = open.store();
-            store.save_board(&mut board);
+            let _ = store.save_board(&mut board);
             if let Some(held) = open.boards.iter_mut().find(|held| held.id == board.id) {
                 *held = board;
             }
@@ -437,7 +437,7 @@ impl Workspace {
     pub fn write_board<T>(&mut self, id: &str, edit: impl FnOnce(&mut Board) -> T) -> Option<T> {
         self.with_board(id, |store, board| {
             let done = edit(board);
-            store.save_board(board);
+            let _ = store.save_board(board);
             done
         })
     }

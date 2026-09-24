@@ -1,29 +1,17 @@
 <script>
 	import ShareImage from '$lib/ShareImage.svelte';
-	import { siApple, siGithub } from 'simple-icons';
-	import { Check, Copy, Download } from 'lucide-static';
+	import { siGithub } from 'simple-icons';
+	import DownloadPanel from '$lib/DownloadPanel.svelte';
 	import Brand from '$lib/Brand.svelte';
+	import Files from '$lib/Files.svelte';
 	import Frame from '$lib/Frame.svelte';
 	import Media from '$lib/Media.svelte';
 	import { base } from '$app/paths';
-	import { anchor, day, latest, media } from '$lib/changelog.js';
-	import {
-		cdn,
-		dmg,
-		builds,
-		cargo,
-		dmgFor,
-		install,
-		installWindows,
-		latestAsset,
-		nightly,
-		repo,
-		site,
-		tagline as description
-	} from '$lib/meta.js';
+	import { anchor, day, latest, media, releases } from '$lib/changelog.js';
+	import { repo, site, tagline as description } from '$lib/meta.js';
 
-	const video = `${cdn}/videos/cydonia/v0.1.0.mp4`;
-	const poster = `${cdn}/pics/cydonia/v0.1.0.jpg`;
+	const featured = releases.find((release) => media(release));
+	const featureMedia = featured ? media(featured) : null;
 	const acp = 'https://agentclientprotocol.com';
 
 	// Off until there are real screenshots to put in the frames — three empty
@@ -51,7 +39,6 @@
 	];
 
 	const paths = [
-		['<project>/.cydonia/', 'articles, boards, sessions'],
 		['~/.config/cydonia/', 'settings, MCP servers, agents'],
 		['~/.local/share/', 'installed agents']
 	];
@@ -111,33 +98,31 @@
 <section class="hero">
 	<div class="say">
 		<h1>Agents that leave something behind.</h1>
-		<div class="cta">
-			<a class="button primary" href={dmg}>
-				<Brand icon={siApple} size={14} />
-				Download
-			</a>
-			<a class="button" href={repo}>
-				<Brand icon={siGithub} size={14} />
-				Source
-			</a>
+		<div class="hero-actions">
+			<div class="cta">
+				<a class="control button primary" href="#download">Download</a>
+				<a class="control button" href={repo}>
+					<Brand icon={siGithub} size={14} />
+					Source
+				</a>
+			</div>
+			<p class="facts">pure rust · no account, no sync</p>
 		</div>
-
-		<p class="facts">macOS, Linux and Windows · pure rust · no account, no sync</p>
 	</div>
 
-	<!-- The poster is what loads; the 0.9 MB behind it waits for a click. The
-	     ratio is spelled out in CSS so the box does not reflow when it does. -->
-	<video
-		class="demo"
-		src={video}
-		{poster}
-		controls
-		loop
-		muted
-		playsinline
-		preload="none"
-		aria-label="Cydonia in use"
-	></video>
+	{#if featured && featureMedia}
+		<figure class="feature">
+			<Media media={featureMedia} />
+			<figcaption>
+				{#if featured.summary}
+					<p>{featured.summary}</p>
+				{/if}
+				<a href="{base}/changelog/#{anchor(featured.version)}">
+					What’s new in {featured.version} <span aria-hidden="true">→</span>
+				</a>
+			</figcaption>
+		</figure>
+	{/if}
 </section>
 
 {#if showcase}
@@ -169,6 +154,8 @@
 	<h2>The work outlives the session</h2>
 	<p>Markdown, SVG, one SQLite file and a TOML config — all on your disk, all yours.</p>
 
+	<Files />
+
 	<dl class="paths">
 		{#each paths as [path, what] (path)}
 			<div>
@@ -186,46 +173,19 @@
 		<a class="num" href="{base}/changelog/#{anchor(latest.version)}">{latest.version}</a>
 		<span class="tag">Latest</span>
 		<span class="day">{day(latest.date)}</span>
+		<a class="release-link" href="{base}/changelog/#{anchor(latest.version)}">Release notes</a>
 	</div>
 
-	{#if latest.summary}
-		<p class="summary">{latest.summary}</p>
-	{/if}
-
-	{#if media(latest)}
-		<Media media={media(latest)} height={280} />
-	{/if}
-
-	<a class="dl" href={dmgFor(latest.version)}>
-		<!-- eslint-disable-next-line svelte/no-at-html-tags -->
-		{@html Download}
-		cydonia-{latest.version}-arm64.dmg
-	</a>
-
-	<ul class="builds">
-		{#each builds as build}
-			<li>
-				<a href={latestAsset(build.file)}>{build.label}</a>
-			</li>
-		{/each}
-		<li><a href={nightly}>Nightly</a></li>
-	</ul>
-
-	<div class="alt">
-		<span class="or">or</span>
-		{#each [install, installWindows, cargo] as line}
-			<span class="install code-block">
-				<code>{line}</code>
-				<button class="copy" type="button" aria-label="Copy">
-					<!-- eslint-disable-next-line svelte/no-at-html-tags -->
-					{@html Copy}{@html Check}
-				</button>
-			</span>
-		{/each}
+	<div class="release-content">
+		<DownloadPanel version={latest.version} />
 	</div>
 </section>
 
 <style>
+	.release-content {
+		margin-top: 24px;
+	}
+
 	section {
 		max-width: 1080px;
 		margin: 0 auto;
@@ -234,27 +194,63 @@
 
 	.hero {
 		display: grid;
-		grid-template-columns: minmax(0, 1fr) minmax(0, 1.08fr);
-		align-items: center;
-		gap: 56px;
+		gap: 40px;
 		padding-top: 72px;
 		padding-bottom: 88px;
 	}
 
+	.say {
+		display: flex;
+		align-items: flex-end;
+		justify-content: space-between;
+		gap: 40px;
+	}
+
+	.hero-actions {
+		flex-shrink: 0;
+		padding-bottom: 4px;
+	}
+
 	h1 {
 		margin: 0;
+		max-width: 17ch;
 		font-size: clamp(36px, 4.6vw, 52px);
+		text-wrap: balance;
 		font-weight: 600;
 		letter-spacing: -0.03em;
 	}
 
-	.demo {
+	.feature {
+		min-width: 0;
+		margin: 0;
+	}
+
+	.feature :global(.media) {
 		width: 100%;
-		aspect-ratio: 1280 / 804;
-		border: 1px solid var(--line);
+		height: auto;
+		margin: 0;
+		border: 0;
 		border-radius: var(--radius-lg);
-		background: var(--panel);
-		object-fit: cover;
+		background: transparent;
+	}
+
+	.feature figcaption {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: 16px 40px;
+		margin-top: 16px;
+		font-size: 13px;
+	}
+
+	.feature figcaption a {
+		flex-shrink: 0;
+	}
+
+	.feature p {
+		max-width: 72ch;
+		margin: 0;
+		color: var(--muted);
 	}
 
 	.reel a {
@@ -266,18 +262,14 @@
 	.cta {
 		display: flex;
 		gap: 12px;
-		margin-top: 30px;
 	}
 
 	.button {
 		display: inline-flex;
 		align-items: center;
 		gap: 7px;
-		height: 32px;
-		padding: 0 12px;
 		border: 1px solid var(--line-strong);
 		border-radius: var(--radius);
-		font-size: 13px;
 		font-weight: 500;
 	}
 
@@ -368,6 +360,23 @@
 		gap: 88px;
 	}
 
+	/* Browsers without scroll-driven animations show the scenes as they are. */
+	@media (prefers-reduced-motion: no-preference) {
+		@supports (animation-timeline: view()) {
+			.reel article {
+				animation: reveal linear both;
+				animation-timeline: view();
+				animation-range: entry 0% entry 40%;
+			}
+		}
+	}
+
+	@keyframes reveal {
+		from {
+			opacity: 0;
+		}
+	}
+
 	.reel h2 {
 		margin: 0 0 10px;
 		font-size: clamp(22px, 2.6vw, 28px);
@@ -403,30 +412,30 @@
 	}
 
 	.paths {
-		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-		gap: 12px;
-		margin: 32px 0 0;
+		margin: 24px 0 0;
+		border-top: 1px solid var(--line);
 	}
 
 	.paths div {
-		padding: 16px 18px;
-		border: 1px solid var(--line);
-		border-radius: 8px;
+		display: grid;
+		grid-template-columns: 240px minmax(0, 1fr);
+		gap: 16px;
+		padding: 12px 0;
+		border-bottom: 1px solid var(--line);
+		font-size: 13px;
 	}
 
 	.paths dt {
 		font-family: var(--mono);
-		font-size: 13px;
 	}
 
 	.paths dd {
-		margin: 6px 0 0;
+		margin: 0;
 		color: var(--muted);
-		font-size: 14px;
 	}
 
 	.get {
+		scroll-margin-top: calc(var(--header) + 24px);
 		padding-bottom: 96px;
 	}
 
@@ -441,10 +450,10 @@
 		margin-top: 34px;
 	}
 
-	/* Version, badge and day are one line, with the date at the far end so a
-	   column of them lines up as the list grows. */
+	/* Release metadata stays separate from platform choices. */
 	.head {
 		display: flex;
+		flex-wrap: wrap;
 		align-items: center;
 		gap: 10px;
 	}
@@ -457,99 +466,22 @@
 
 	.tag {
 		padding: 2px 8px;
-		border-radius: 999px;
-		background: var(--panel-high);
+		border: 1px solid var(--line);
 		color: var(--muted);
-		font-size: 12px;
+		font-family: var(--mono);
+		font-size: 11px;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
 	}
 
 	.day {
-		margin-left: auto;
 		color: var(--faint);
 		font-size: 13.5px;
 	}
 
-	.summary {
-		max-width: 62ch;
-		margin: 12px 0 0;
-		color: var(--muted);
-	}
-
-	/* Every release names its file the same quiet way. The page's one filled
-	   button is in the hero, where a call to action belongs. */
-	.dl {
-		display: inline-flex;
-		align-items: center;
-		gap: 8px;
-		margin-top: 14px;
-		color: var(--muted);
-		font-family: var(--mono);
+	.release-link {
 		font-size: 13px;
-	}
-
-	.dl :global(svg) {
-		width: 14px;
-		height: 14px;
-	}
-
-	/* The other way in, under the file rather than beside it. A one-liner needs
-	   no tab, heading or rule to introduce it — just the word `or`. */
-	.alt {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		gap: 12px;
-		margin-top: 30px;
-	}
-
-	.builds {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 6px 18px;
-		margin: 16px 0 0;
-		padding: 0;
-		list-style: none;
-		font-size: 14px;
-	}
-
-	.or {
-		color: var(--faint);
-		font-size: 14px;
-	}
-
-	.install {
-		display: inline-flex;
-		align-items: center;
-		max-width: 100%;
-		padding: 6px 40px 6px 12px;
-		border: 1px solid var(--line);
-		border-radius: var(--radius);
-		background: var(--panel);
-		overflow-x: auto;
-	}
-
-	.install code {
-		background: none;
-		padding: 0;
-		font-size: 13px;
-		/* The body's 1.6 is what made this a block rather than a line. */
-		line-height: 1.5;
-		white-space: nowrap;
-	}
-
-	/* Sized with the box it sits in: the shared 32px — 40px on touch — was
-	   built for a panel and is taller than this line. */
-	.install :global(.copy) {
-		top: 50%;
-		right: 5px;
-		width: 26px;
-		height: 26px;
-		transform: translateY(-50%);
-	}
-
-	.install :global(.copy svg) {
-		width: 13px;
-		height: 13px;
+		color: var(--muted);
 	}
 
 	@media (max-width: 940px) {
@@ -576,6 +508,17 @@
 	}
 
 	@media (max-width: 720px) {
+		.say,
+		.feature figcaption {
+			flex-direction: column;
+			align-items: flex-start;
+			gap: 24px;
+		}
+
+		.feature figcaption {
+			gap: 8px;
+		}
+
 		.cta {
 			flex-wrap: wrap;
 		}

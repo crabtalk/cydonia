@@ -34,6 +34,7 @@ fn a_version_this_cannot_order_is_not_offered() {
 /// The image's name, which the Makefile writes and nothing checks at runtime:
 /// `arm64` is Apple's spelling, and a build that asked for rustc's `aarch64`
 /// would ask GitHub for a file no release has ever carried.
+#[cfg(target_os = "macos")]
 #[test]
 fn the_image_is_named_as_the_makefile_names_it() {
     assert_eq!(update::asset("0.1.4"), "cydonia-0.1.4-arm64.dmg");
@@ -41,11 +42,33 @@ fn the_image_is_named_as_the_makefile_names_it() {
 
 /// And the address it is published at, which has to be the same one the
 /// download button on the site builds — `www/src/lib/meta.js`, `dmgFor`.
+#[cfg(target_os = "macos")]
 #[test]
 fn the_release_is_where_the_site_says_it_is() {
     assert_eq!(
         update::url("0.1.4"),
         "https://github.com/crabtalk/cydonia/releases/download/v0.1.4/cydonia-0.1.4-arm64.dmg"
+    );
+}
+
+/// The tarball carries no version on the release, the name `make tarball`
+/// writes and `www/src/lib/meta.js` links; the tag is what says which one.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[test]
+fn the_tarball_is_under_the_versions_tag() {
+    assert_eq!(
+        update::url("0.1.4"),
+        "https://github.com/crabtalk/cydonia/releases/download/v0.1.4/cydonia-linux-x86_64.tar.gz"
+    );
+}
+
+/// The installer, as `bundle/windows/cydonia.iss` names it.
+#[cfg(windows)]
+#[test]
+fn the_installer_is_under_the_versions_tag() {
+    assert_eq!(
+        update::url("0.1.4"),
+        "https://github.com/crabtalk/cydonia/releases/download/v0.1.4/cydonia-windows-x86_64-setup.exe"
     );
 }
 
@@ -65,9 +88,11 @@ fn an_image_names_its_own_version() {
     assert_eq!(update::version_of(&image).as_deref(), Some("0.1.4"));
 
     // Not ours, or not finished. Either way not an image to keep.
+    let part = std::path::PathBuf::from(update::asset("0.1.4")).with_extension("part");
     for name in [
         "cydonia-0.1.4-x86_64.dmg",
-        "cydonia-0.1.4-arm64.part",
+        part.to_str().unwrap(),
+        "cydonia-",
         "mnt",
     ] {
         let path = std::path::PathBuf::from(name);

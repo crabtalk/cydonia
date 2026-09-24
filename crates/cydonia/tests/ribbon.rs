@@ -80,8 +80,13 @@ fn code_is_named_for_what_it_would_make() {
 fn the_two_chords_this_app_spent_elsewhere_are_not_advertised() {
     assert_eq!(keystroke(&Mark::Bold), None);
     assert_eq!(keystroke(&Mark::Code), None);
-    assert_eq!(keystroke(&Mark::Italic), Some("⌘I"));
-    assert_eq!(keystroke(&Mark::Strike), Some("⇧⌘X"));
+    let (italic, strike) = if cfg!(target_os = "macos") {
+        ("⌘I", "⇧⌘X")
+    } else {
+        ("Ctrl+I", "Ctrl+Shift+X")
+    };
+    assert_eq!(keystroke(&Mark::Italic).as_deref(), Some(italic));
+    assert_eq!(keystroke(&Mark::Strike).as_deref(), Some(strike));
 }
 
 #[test]

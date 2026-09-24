@@ -55,7 +55,7 @@ fn open(
             .id
             .clone(),
     ];
-    store.save_board(&mut board);
+    store.save_board(&mut board).unwrap();
     let member = Member::new(&scratch.0, artifact::space::Kind::Board, board.id.clone());
     cx.update(|cx| {
         Theme::install(bezel::theme::Appearance::Dark, cx);
@@ -247,7 +247,7 @@ fn save_preserves_agent_metadata_and_rejects_conflicting_text(cx: &mut TestAppCo
     let mut board = store.board(&member.id).unwrap();
     board.set_card_status(&cards[0], Some(Status::Busy));
     board.card_mut(&cards[0]).unwrap().session = Some("agent-session".into());
-    store.save_board(&mut board);
+    store.save_board(&mut board).unwrap();
     cx.update(|window, cx| root.update(cx, |root, cx| root.save_card_draft(None, window, cx)));
     let saved = store.board(&member.id).unwrap();
     assert_eq!(saved.card(&cards[0]).unwrap().status, Some(Status::Busy));
@@ -268,7 +268,7 @@ fn save_preserves_agent_metadata_and_rejects_conflicting_text(cx: &mut TestAppCo
     });
     let mut board = store.board(&member.id).unwrap();
     board.rewrite_card(&cards[0], "Agent rewrite");
-    store.save_board(&mut board);
+    store.save_board(&mut board).unwrap();
     cx.update(|window, cx| {
         root.update(cx, |root, cx| {
             root.save_card_draft(None, window, cx);
@@ -399,7 +399,7 @@ fn a_removed_card_keeps_its_draft_accessible(cx: &mut TestAppContext) {
     let store = fs::Project::new(&scratch.0);
     let mut board = store.board(&member.id).unwrap();
     board.remove_card(&cards[0]);
-    store.save_board(&mut board);
+    store.save_board(&mut board).unwrap();
     cx.update(|window, cx| root.update(cx, |root, cx| root.save_card_draft(None, window, cx)));
     settle(&mut cx);
     assert!(cx.debug_bounds("card-drawer").is_some());
@@ -857,11 +857,23 @@ fn busy_orb_opens_its_session_without_opening_the_card(cx: &mut TestAppContext) 
                 project.sessions.push(chat);
                 project.boards[0].view = View::List;
                 project.boards[0].dispatch_card(&cards[0], "orb-session".into());
+                project.boards[0].set_card_status(&cards[0], None);
+            });
+            // Linked and not busy: the session's number, not the orb.
+            let card = &root.workspace.read(cx).projects[0].boards[0].columns[0].cards[0];
+            let idle = root
+                .card_working(card, root.card_session(card, cx))
+                .unwrap();
+            assert!(!idle.busy);
+            assert_eq!(idle.session, Some((77, "Polish boards".into())));
+            root.workspace.update(cx, |workspace, _| {
+                workspace.projects[0].boards[0].set_card_status(&cards[0], Some(Status::Busy));
             });
             let card = &root.workspace.read(cx).projects[0].boards[0].columns[0].cards[0];
             let working = root
                 .card_working(card, root.card_session(card, cx))
                 .unwrap();
+            assert!(working.busy);
             assert_eq!(working.session, Some((77, "Polish boards".into())));
             cx.notify();
         });
@@ -898,7 +910,7 @@ fn list_cards_drop_into_a_collapsed_group_without_unfolding(cx: &mut TestAppCont
                         board.add_card(&target, "Already here".into());
                     }
                     board.columns[1].collapsed = true;
-                    store.save_board(board);
+                    store.save_board(board).unwrap();
                     target
                 });
                 cx.notify();

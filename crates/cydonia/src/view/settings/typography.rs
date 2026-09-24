@@ -145,11 +145,22 @@ impl Font {
         }
     }
 
-    fn description(self) -> &'static str {
+    fn description(self) -> String {
+        let zoom = || {
+            format!(
+                "{} / {} zooms; {} resets.",
+                bezel::ui::keys::printed("secondary-="),
+                bezel::ui::keys::printed("secondary--"),
+                bezel::ui::keys::printed("secondary-0"),
+            )
+        };
         match self {
-            Self::Ui => "Sizes for menus, controls, and the rest of the interface.",
-            Self::Article => "Default for articles. ⌘+/− zooms; ⌘0 resets.",
-            Self::Mono => "Default for terminals, file source and previews. ⌘+/− zooms; ⌘0 resets.",
+            Self::Ui => "Sizes for menus, controls, and the rest of the interface.".into(),
+            Self::Article => format!("Default for articles. {}", zoom()),
+            Self::Mono => format!(
+                "Default for terminals, file source and previews. {}",
+                zoom()
+            ),
         }
     }
 

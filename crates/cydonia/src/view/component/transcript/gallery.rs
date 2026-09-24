@@ -174,7 +174,12 @@ impl Gallery {
                                     .ml(px(self.drag))
                                     .size_full()
                                     .child(
+                                        // Pinned to the slide's edges: under
+                                        // `size_full` alone the height takes
+                                        // the picture's own ratio and is cut.
                                         img(source.clone())
+                                            .absolute()
+                                            .inset_0()
                                             .size_full()
                                             .object_fit(ObjectFit::Contain),
                                     )

@@ -11,9 +11,14 @@
 //! for afterwards, because the child inherits whatever we were handed.
 //!
 //! So ask the login shell what the PATH is, once, before anything is spawned.
+//!
+//! Windows has no login shell to ask, and its process launcher finds only
+//! `.exe` files on the PATH: an npm shim is `npx.cmd`. [`program`] finds the
+//! file a bare name stands for there.
 
 use std::{
     ffi::OsStr,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
     time::{Duration, Instant},
 };
@@ -37,6 +42,11 @@ const TICK: Duration = Duration::from_millis(20);
 /// Silent on every failure, because each one leaves the PATH we were launched
 /// with and that is no worse than not having asked.
 pub fn adopt() {
+    // Unix only: `merge` joins with `:`, and a `SHELL` on Windows is Git
+    // Bash's, whose PATH is not one Windows can read.
+    if cfg!(windows) {
+        return;
+    }
     // A terminal launch is already carrying the shell's PATH, and `TERM` is
     // how it says so: launchd sets neither, a terminal sets both. Nothing to
     // fix, and asking would cost a shell startup on every `cargo run`.
@@ -112,4 +122,48 @@ pub fn merge(shell: &str, inherited: &str) -> String {
         }
     }
     kept.join(":")
+}
+
+/// The program to spawn for `command`. On Windows a bare name is looked up on
+/// `PATH` under each `PATHEXT` extension, so `npx` finds `npx.cmd`; elsewhere,
+/// and when nothing matches, `command` is returned as given.
+pub fn program(command: &str) -> PathBuf {
+    if !cfg!(windows) {
+        return PathBuf::from(command);
+    }
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let pathext = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into());
+    resolve(command, &path, &pathext, |candidate| candidate.is_file())
+        .unwrap_or_else(|| PathBuf::from(command))
+}
+
+/// [`program`]'s lookup, with the environment and the filesystem handed in.
+/// A name with a directory is tried under each extension where it stands, and
+/// a bare one in each `PATH` directory. `None` for a name that already carries
+/// an extension, which the launcher takes as written.
+pub fn resolve(
+    command: &str,
+    path: &OsStr,
+    pathext: &str,
+    exists: impl Fn(&Path) -> bool,
+) -> Option<PathBuf> {
+    let name = Path::new(command);
+    if name.extension().is_some() {
+        return None;
+    }
+    let under = |base: PathBuf| {
+        pathext
+            .split(';')
+            .filter(|ext| !ext.is_empty())
+            .map(|ext| {
+                let mut candidate = base.clone().into_os_string();
+                candidate.push(ext.to_ascii_lowercase());
+                PathBuf::from(candidate)
+            })
+            .find(|candidate| exists(candidate))
+    };
+    match name.components().count() {
+        1 => std::env::split_paths(path).find_map(|dir| under(dir.join(name))),
+        _ => under(name.to_path_buf()),
+    }
 }

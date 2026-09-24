@@ -194,6 +194,11 @@ impl Cydonia {
             // The fold belongs to whichever column runs along the window's
             // left edge, so with the sidebar gone it is this one's.
             .children((!self.sidebar_open).then(|| self.fold_toggle(cx).into_any_element()))
+            .children(
+                (!self.sidebar_open)
+                    .then(|| self.app_menu(window, cx))
+                    .flatten(),
+            )
             .children(toolbar.map(|toolbar| {
                 match renaming {
                     true => div().flex_1().min_w_0().child(self.name_field(cx)),

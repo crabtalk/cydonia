@@ -376,7 +376,13 @@ impl SettingsWindow {
             // Shift alone is not a modifier a shortcut can be built on: bound
             // app-wide, ⇧N is what happens every time a capital N is typed.
             _ if !modified => {
-                recording.refused = Some("Needs ⌘, ⌃ or ⌥".into());
+                recording.refused = Some(
+                    match cfg!(target_os = "macos") {
+                        true => "Needs ⌘, ⌃ or ⌥",
+                        false => "Needs Ctrl, Alt or Super",
+                    }
+                    .into(),
+                );
                 cx.notify();
             }
             _ => {
