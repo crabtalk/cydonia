@@ -412,6 +412,9 @@ pub struct Cydonia {
     /// [`Cydonia::toggle_menu_at`].
     pub(crate) menu_point: Option<gpui::Point<gpui::Pixels>>,
     pub(crate) sidebar_hovered: Option<Menu>,
+    /// The list row the pointer is over, by card id: its actions are drawn
+    /// only there. See [`Self::sidebar_hovered`].
+    pub(crate) list_hovered: Option<String>,
     /// Which of the open menu's rows is live. Held here rather than in the
     /// card, which is rebuilt every frame: the pointer moves the cursor, and
     /// a cursor made afresh each paint would light nothing.
@@ -901,6 +904,7 @@ impl Cydonia {
             menu: None,
             menu_point: None,
             sidebar_hovered: None,
+            list_hovered: None,
             menu_cursor: Cursor::default(),
             menu_pressed: false,
             renaming: None,

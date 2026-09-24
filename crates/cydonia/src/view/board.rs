@@ -2874,10 +2874,27 @@ impl Cydonia {
                 .absolute()
                 .size_full()
             });
+        // Drawn only on the row the pointer is over, taking no room elsewhere,
+        // and decided here rather than in a hover style: gpui can resolve hover
+        // differently in prepaint and paint.
+        let actions = selected
+            || self.list_hovered.as_deref() == Some(id)
+            || self.menu.as_ref() == Some(&Menu::Card(id.to_owned()));
+        let hovered_id = id.to_owned();
         div()
             .id(SharedString::from(format!("list-row-{id}")))
             .debug_selector(|| "board-list-row".into())
-            .group("list-row")
+            .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
+                let now = match hovered {
+                    true => Some(hovered_id.clone()),
+                    false if this.list_hovered.as_ref() == Some(&hovered_id) => None,
+                    false => return,
+                };
+                if this.list_hovered != now {
+                    this.list_hovered = now;
+                    cx.notify();
+                }
+            }))
             .flex_none()
             .relative()
             .h(px(LIST_ROW_HEIGHT))
@@ -2924,37 +2941,36 @@ impl Cydonia {
             // the board to see, and hiding it would mean hunting for the one
             // that is working.
             .children(working.map(|at| self.card_orb(at, cx)))
-            .child(
-                div()
-                    .invisible()
-                    .group_hover("list-row", |el| el.visible())
-                    .when(selected, |el| el.visible())
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(2.))
-                    // Handing a card to an agent is refused once the card says
-                    // something about itself: a tag is somebody already holding
-                    // it, and a second agent at one task is work done twice.
-                    // Opening the session it has stays — reading is not doing.
-                    .children((sessions && live.is_none() && status.is_none()).then(|| {
-                        self.card_action("list-run", id, icons::multimedia::Play, cx)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                cx.stop_propagation();
-                                this.dispatch_card(&sent, &run, cx);
-                            }))
-                    })),
-            )
-            .child(
-                self.menu_button(
-                    SharedString::from(format!("list-card-menu-{id}")),
-                    Some("list-row"),
-                    icons::layout::Ellipsis,
-                    Menu::Card(id.to_owned()),
-                    cx,
+            .when(actions, |row| {
+                row.child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(2.))
+                        // Handing a card to an agent is refused once the card says
+                        // something about itself: a tag is somebody already holding
+                        // it, and a second agent at one task is work done twice.
+                        // Opening the session it has stays — reading is not doing.
+                        .children((sessions && live.is_none() && status.is_none()).then(|| {
+                            self.card_action("list-run", id, icons::multimedia::Play, cx)
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    cx.stop_propagation();
+                                    this.dispatch_card(&sent, &run, cx);
+                                }))
+                        })),
                 )
-                .children(self.card_menu(&on_board, id, window, cx)),
-            )
+                .child(
+                    self.menu_button(
+                        SharedString::from(format!("list-card-menu-{id}")),
+                        None,
+                        icons::layout::Ellipsis,
+                        Menu::Card(id.to_owned()),
+                        cx,
+                    )
+                    .children(self.card_menu(&on_board, id, window, cx)),
+                )
+            })
             .on_drag(
                 CardDrag {
                     card: id.to_owned(),
