@@ -42,15 +42,23 @@ jobs:
       - run: sudo .github/scripts/linux-deps
       - run: cargo clippy --workspace --all-targets
 
-  # Linux, and only Linux. cydonia is developed and shipped on macOS, so that
-  # is the platform that cannot break unnoticed — this is the one that can.
-  # gpui builds for both, and the Linux half goes stale in silence otherwise.
+  # Every platform but macOS, which is built on the machines cydonia is
+  # developed on. 22.04 sets the glibc floor of a Linux build.
   build:
-    name: build (linux)
-    runs-on: ubuntu-latest
+    name: build (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: linux-x86_64, os: ubuntu-22.04 }
+          - { name: linux-aarch64, os: ubuntu-22.04-arm }
+          - { name: windows-x86_64, os: windows-latest }
+          - { name: windows-aarch64, os: windows-11-arm }
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: mozilla-actions/sccache-action@v0.0.11
-      - run: sudo .github/scripts/linux-deps
+      - if: runner.os == 'Linux'
+        run: sudo .github/scripts/linux-deps
       - run: cargo build --bin cydonia
