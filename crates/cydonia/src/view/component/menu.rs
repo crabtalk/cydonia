@@ -17,7 +17,7 @@ use bezel::{
 
 /// What a row does when it is picked, handed the rest of the path — which of a
 /// submenu's rows it was, and empty for a row that opens nothing.
-type Act = Box<dyn Fn(&mut Cydonia, &[usize], &mut Window, &mut Context<Cydonia>)>;
+pub(crate) type Act = Box<dyn Fn(&mut Cydonia, &[usize], &mut Window, &mut Context<Cydonia>)>;
 
 /// Which menu is open. One field rather than a flag each, so opening one
 /// closes the rest by construction.
@@ -55,6 +55,8 @@ pub(crate) enum Menu {
     Turn,
     /// The `···` on a card, by card id.
     Card(String),
+    /// The menu bar's tree, off macOS — see [`crate::view::menubar::button`].
+    App,
 }
 
 /// One row of a menu, and what picking it does.
