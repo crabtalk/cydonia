@@ -502,6 +502,52 @@ impl Cydonia {
     /// away a composer with a draft in it. Panes are ordered as the
     /// arrangement lays them out — stepping through them steps across the
     /// window.
+    /// Hand the tools what is on screen — see [`mcp::rail::shown`].
+    fn publish_shown(&self, cx: &App) {
+        let kind = |kind: artifact::space::Kind| match kind {
+            artifact::space::Kind::Session => None,
+            artifact::space::Kind::Board => Some("board"),
+            artifact::space::Kind::Article => Some("article"),
+            artifact::space::Kind::Table => Some("table"),
+        };
+        let shown = if self.leaves.iter().any(|leaf| leaf.entry.is_some()) {
+            self.leaves
+                .iter()
+                .enumerate()
+                .filter_map(|(ix, leaf)| {
+                    let entry = leaf.entry.as_ref()?;
+                    Some(mcp::rail::Shown {
+                        project: entry.project.clone(),
+                        kind: kind(entry.kind)?,
+                        id: entry.id.clone(),
+                        focused: ix == self.focused,
+                    })
+                })
+                .collect()
+        } else {
+            let workspace = self.workspace.read(cx);
+            workspace
+                .landed()
+                .and_then(|(project, entry)| {
+                    let kind = match entry.kind {
+                        crate::model::state::Kind::Session => None,
+                        crate::model::state::Kind::Board => Some("board"),
+                        crate::model::state::Kind::Article => Some("article"),
+                        crate::model::state::Kind::Table => Some("table"),
+                    }?;
+                    Some(mcp::rail::Shown {
+                        project: project.to_path_buf(),
+                        kind,
+                        id: entry.id.clone(),
+                        focused: true,
+                    })
+                })
+                .into_iter()
+                .collect()
+        };
+        mcp::rail::set_shown(shown);
+    }
+
     pub(crate) fn sync_leaves(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let members = self.arrangement(cx).map(|space| space.entries());
         let Some(members) = members else {
@@ -1260,6 +1306,7 @@ impl Render for Cydonia {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_leaves(window, cx);
         self.sync_changes(cx);
+        self.publish_shown(cx);
         let theme = Theme::of(cx).clone();
         div()
             .key_context("Cydonia")
