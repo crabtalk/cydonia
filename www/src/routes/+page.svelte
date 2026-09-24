@@ -10,6 +10,8 @@
 	import { anchor, day, latest, media, releases } from '$lib/changelog.js';
 	import { repo, site, tagline as description } from '$lib/meta.js';
 
+	let { data } = $props();
+
 	const featured = releases.find((release) => media(release));
 	const featureMedia = featured ? media(featured) : null;
 	const acp = 'https://agentclientprotocol.com';
@@ -154,7 +156,7 @@
 	<h2>The work outlives the session</h2>
 	<p>Markdown, SVG, one SQLite file and a TOML config — all on your disk, all yours.</p>
 
-	<Files />
+	<Files files={data.files} />
 
 	<dl class="paths">
 		{#each paths as [path, what] (path)}
