@@ -857,11 +857,23 @@ fn busy_orb_opens_its_session_without_opening_the_card(cx: &mut TestAppContext) 
                 project.sessions.push(chat);
                 project.boards[0].view = View::List;
                 project.boards[0].dispatch_card(&cards[0], "orb-session".into());
+                project.boards[0].set_card_status(&cards[0], None);
+            });
+            // Linked and not busy: the session's number, not the orb.
+            let card = &root.workspace.read(cx).projects[0].boards[0].columns[0].cards[0];
+            let idle = root
+                .card_working(card, root.card_session(card, cx))
+                .unwrap();
+            assert!(!idle.busy);
+            assert_eq!(idle.session, Some((77, "Polish boards".into())));
+            root.workspace.update(cx, |workspace, _| {
+                workspace.projects[0].boards[0].set_card_status(&cards[0], Some(Status::Busy));
             });
             let card = &root.workspace.read(cx).projects[0].boards[0].columns[0].cards[0];
             let working = root
                 .card_working(card, root.card_session(card, cx))
                 .unwrap();
+            assert!(working.busy);
             assert_eq!(working.session, Some((77, "Polish boards".into())));
             cx.notify();
         });
