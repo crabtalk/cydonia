@@ -3705,16 +3705,16 @@ impl Cydonia {
     /// chase the pointer it is answering.
     fn landing_mark(&self, at: Mark, cx: &Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
-        let mark = div().h(px(2.)).rounded_full().bg(theme.accent);
+        let mark = div().h(px(1.)).rounded_full().bg(theme.accent.opacity(0.6));
         if at == Mark::Flow {
             return mark.flex_none().into_any_element();
         }
         let mark = mark.absolute().left_0().right_0();
         match at {
-            Mark::Above => mark.top(px(-5.)),
+            Mark::Above => mark.top(px(-4.5)),
             Mark::Top => mark.top_0(),
             Mark::Foot => mark.bottom_0(),
-            _ => mark.bottom(px(-5.)),
+            _ => mark.bottom(px(-4.5)),
         }
         .into_any_element()
     }
