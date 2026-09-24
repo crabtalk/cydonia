@@ -991,6 +991,16 @@ impl Cydonia {
         cx.notify();
     }
 
+    /// Put a card at the foot of another lane of its board.
+    fn move_card_to(&mut self, board: &str, card: &str, column: &str, cx: &mut Context<Self>) {
+        self.commit(cx);
+        self.workspace.update(cx, |workspace, cx| {
+            workspace.write_board(board, |board| board.move_card_before(card, column, None));
+            cx.notify();
+        });
+        cx.notify();
+    }
+
     pub(crate) fn delete_card(&mut self, board: &str, card: &str, cx: &mut Context<Self>) {
         self.commit(cx);
         let (board, card) = (board.to_owned(), card.to_owned());
@@ -1111,16 +1121,45 @@ impl Cydonia {
         // The card at rest is a rendered document, not a run of text somebody
         // can drag over — so without this there is no way to get a card's words
         // back out of it short of opening the editor and selecting them.
-        let rows = vec![
-            menu::row(
-                Item::action("Copy text").with_icon(icons::text::Copy),
-                move |this, _, cx| this.copy_card(&from, &copied, cx),
-            ),
-            menu::row(
-                Item::action("Delete").with_icon(icons::files::Trash),
-                move |this, _, cx| this.ask_delete_card(&held, &doomed, cx),
-            ),
-        ];
+        // Every lane but the one the card is in, in board order.
+        let lanes: Vec<(String, String)> = self
+            .workspace
+            .read(cx)
+            .board_at(on)
+            .map(|board| {
+                let at = board.column_of(card).map(|column| column.id.clone());
+                board
+                    .columns
+                    .iter()
+                    .filter(|column| Some(&column.id) != at.as_ref())
+                    .map(|column| (column.id.clone(), column.name.clone()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut rows = vec![menu::row(
+            Item::action("Copy text").with_icon(icons::text::Copy),
+            move |this, _, cx| this.copy_card(&from, &copied, cx),
+        )];
+        if !lanes.is_empty() {
+            let moves = lanes
+                .into_iter()
+                .map(|(column, name)| {
+                    let (board, card) = (on.to_owned(), card.to_owned());
+                    menu::row(Item::action(name), move |this, _, cx| {
+                        this.move_card_to(&board, &card, &column, cx)
+                    })
+                })
+                .collect();
+            rows.push(menu::submenu(
+                "Move to",
+                icons::arrows::ArrowLeftRight,
+                moves,
+            ));
+        }
+        rows.push(menu::row(
+            Item::action("Delete").with_icon(icons::files::Trash),
+            move |this, _, cx| this.ask_delete_card(&held, &doomed, cx),
+        ));
         let id = SharedString::from(format!("card-menu-card-{card}"));
         Some(popover::anchored_menu_below(
             id.clone(),
