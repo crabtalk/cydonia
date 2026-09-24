@@ -41,6 +41,8 @@ pub(crate) enum Menu {
     /// several bars on screen at once, so `Header` alone would open every one
     /// of them together.
     Pane(gpui::SharedString),
+    /// The `+` in one pane's bar, by the same key as [`Menu::Pane`].
+    PaneAdd(gpui::SharedString),
     /// The `···` on a table's column heading.
     Column(usize),
     /// The `···` on a board's lane, by column id. An id and not a position: a

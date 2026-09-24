@@ -51,6 +51,16 @@ pub enum Landing {
     Bar,
 }
 
+/// What a pane's `+` makes.
+#[derive(Clone, Copy)]
+enum New {
+    /// On the agent at this index of the settings.
+    Session(usize),
+    Board,
+    Article,
+    Table,
+}
+
 /// The least of a split a pane may be squeezed to. A pane thinner than this
 /// has nothing left to grab it by.
 const MIN_SHARE: f64 = 0.08;
@@ -497,6 +507,7 @@ impl Cydonia {
         // is lit while a drag is aimed at it rather than at an edge.
         let aimed = self.pane_landing.as_ref() == Some(&(pane.clone(), Landing::Bar));
         crate::view::root::band()
+            .group("pane-bar")
             .w_full()
             .gap(px(2.))
             .pl(px(lead))
@@ -520,6 +531,16 @@ impl Cydonia {
                         .map(|tab| self.pane_tab(pane, tab, tab == front, theme, cx)),
                 ),
             )
+            .children(self.pane_project(front, cx).map(|project| {
+                self.menu_button(
+                    SharedString::from(format!("pane-add-{key}")),
+                    Some("pane-bar"),
+                    icons::math::Plus,
+                    Menu::PaneAdd(key.clone()),
+                    cx,
+                )
+                .children(self.pane_add_menu(pane, project, cx))
+            }))
             .child(chrome::grip(
                 SharedString::from(format!("pane-grip-{key}")),
                 &self.drag,
@@ -949,26 +970,169 @@ impl Cydonia {
         let Some((_, landing)) = self.pane_landing.take() else {
             return;
         };
-        self.workspace.update(cx, |workspace, cx| match landing {
+        match landing {
             Landing::Edge(side) => {
-                workspace.arrange(target, arriving, side, cx);
+                self.workspace.update(cx, |workspace, cx| {
+                    workspace.arrange(target, arriving, side, cx)
+                });
+                self.sync_leaves(window, cx);
+                self.focused = usize::MAX;
+                self.focus_pane(arriving, window, cx);
+                cx.notify();
             }
-            Landing::Bar => workspace.stack_pane(target, arriving, cx),
+            Landing::Bar => self.add_tab(target, arriving.clone(), window, cx),
+        }
+    }
+
+    /// Put `arriving` in `pane`'s strip as its front tab, and focus it.
+    pub(crate) fn add_tab(
+        &mut self,
+        pane: &Member,
+        arriving: Member,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.workspace.update(cx, |workspace, cx| {
+            workspace.stack_pane(pane, &arriving, cx)
         });
-        // The pane's name can have changed under the drop — a tab dragged out
+        // The pane's name can have changed under the move — a tab dragged out
         // of a strip leaves the one behind it holding the pane — so the strip
         // is read back rather than assumed.
-        if let Landing::Bar = landing {
-            let stack = self.workspace.read(cx).stack_of(arriving);
-            if let Some(pane) = stack.first().cloned() {
-                self.fronts.insert(key_of(&pane), arriving.clone());
-                self.remember_front(arriving);
-            }
+        let stack = self.workspace.read(cx).stack_of(&arriving);
+        if let Some(pane) = stack.first().cloned() {
+            self.fronts.insert(key_of(&pane), arriving.clone());
+            self.remember_front(&arriving);
         }
         self.sync_leaves(window, cx);
         self.focused = usize::MAX;
-        self.focus_pane(arriving, window, cx);
+        self.focus_pane(&arriving, window, cx);
         cx.notify();
+    }
+
+    /// The open project a pane's front tab is in.
+    fn pane_project(&self, front: &Member, cx: &App) -> Option<usize> {
+        self.workspace
+            .read(cx)
+            .showing_of(front)
+            .map(|(project, _)| project)
+    }
+
+    /// What the `+` in a pane's bar starts: the sidebar's `+` for the
+    /// project of the pane's front tab, landing as a tab of the pane.
+    fn pane_add_menu(
+        &self,
+        pane: &Member,
+        project: usize,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let key = key_of(pane);
+        if self.menu.as_ref() != Some(&Menu::PaneAdd(key.clone())) {
+            return None;
+        }
+        let workspace = self.workspace.read(cx);
+        let features = &workspace.settings.features;
+        let (sessions, boards, tables) = (features.sessions, features.boards, features.tables);
+        let agents: Vec<(String, Option<icons::Icon>)> = workspace
+            .settings
+            .agents
+            .iter()
+            .map(|entry| (entry.name.clone(), workspace.agent_icon(&entry.name)))
+            .collect();
+        let mut rows = Vec::new();
+        if sessions && agents.len() > 1 {
+            let picks = agents
+                .into_iter()
+                .enumerate()
+                .map(|(at, (name, icon))| {
+                    let icon = icon.unwrap_or_else(|| icons::social::MessageCircle.into());
+                    let pane = pane.clone();
+                    menu::row(
+                        Item::action(name).with_icon(icon),
+                        move |this, window, cx| {
+                            this.new_in_pane(&pane, project, New::Session(at), window, cx)
+                        },
+                    )
+                })
+                .collect();
+            rows.push(menu::submenu(
+                "New session",
+                icons::social::MessageCirclePlus,
+                picks,
+            ));
+        } else if sessions && agents.len() == 1 {
+            let pane = pane.clone();
+            rows.push(menu::row(
+                Item::action("New session").with_icon(icons::social::MessageCirclePlus),
+                move |this, window, cx| {
+                    this.new_in_pane(&pane, project, New::Session(0), window, cx)
+                },
+            ));
+        }
+        for (shown, label, icon, kind) in [
+            (
+                boards,
+                "New board",
+                icons::Icon::from(icons::development::SquareKanban),
+                New::Board,
+            ),
+            (
+                true,
+                "New article",
+                icons::files::FilePlus.into(),
+                New::Article,
+            ),
+            (tables, "New table", icons::files::Table2.into(), New::Table),
+        ] {
+            if !shown {
+                continue;
+            }
+            let pane = pane.clone();
+            rows.push(menu::row(
+                Item::action(label).with_icon(icon),
+                move |this, window, cx| this.new_in_pane(&pane, project, kind, window, cx),
+            ));
+        }
+        let id = SharedString::from(format!("pane-add-card-{key}"));
+        Some(popover::anchored_menu_below(
+            id.clone(),
+            self.menu_card(id, rows, cx),
+            None,
+        ))
+    }
+
+    /// Make an entry in `project` and open it as the front tab of `pane`.
+    fn new_in_pane(
+        &mut self,
+        pane: &Member,
+        project: usize,
+        kind: New,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.commit(cx);
+        if let New::Board = kind {
+            return self.ask_new_board_into(project, Some(pane.clone()), window, cx);
+        }
+        let member = self.workspace.update(cx, |workspace, cx| {
+            workspace.select_project(project, cx);
+            let showing = match kind {
+                New::Session(at) => {
+                    let agent = workspace.settings.agents.get(at).cloned()?;
+                    let id = workspace.new_session(agent, None, cx)?;
+                    // A space names its members by file, and a new session
+                    // has none until its first turn.
+                    workspace.retain_session(id, cx)?;
+                    Showing::Session(id)
+                }
+                New::Article => Showing::Article(workspace.new_article(cx)?),
+                New::Table => Showing::Table(workspace.new_table(cx)?),
+                New::Board => return None,
+            };
+            workspace.member_of(project, showing)
+        });
+        if let Some(member) = member {
+            self.add_tab(pane, member, window, cx);
+        }
     }
 
     /// Put the seam after `at` where the pointer left it.
