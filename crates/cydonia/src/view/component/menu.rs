@@ -209,6 +209,7 @@ impl Cydonia {
         &self,
         id: impl Into<SharedString>,
         rows: Vec<(Item, Act)>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = Theme::of(cx).clone();
@@ -221,6 +222,7 @@ impl Cydonia {
             id,
             &items,
             &self.menu_cursor,
+            window,
             cx,
             move |this, hit, window, cx| match hit {
                 Hit::Point(path) => {

@@ -309,6 +309,7 @@ impl Render for Panel {
                 "panel-menu",
                 &items,
                 &self.cursor,
+                window,
                 cx,
                 move |this, hit, window, cx| {
                     match hit {

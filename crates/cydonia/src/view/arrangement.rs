@@ -487,7 +487,7 @@ impl Cydonia {
         first: bool,
         last: bool,
         theme: &Theme,
-        window: &Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let key = key_of(pane);
@@ -539,7 +539,7 @@ impl Cydonia {
                     Menu::PaneAdd(key.clone()),
                     cx,
                 )
-                .children(self.pane_add_menu(pane, project, cx))
+                .children(self.pane_add_menu(pane, project, window, cx))
             }))
             .child(chrome::grip(
                 SharedString::from(format!("pane-grip-{key}")),
@@ -554,7 +554,7 @@ impl Cydonia {
                     Menu::Pane(key.clone()),
                     cx,
                 )
-                .children(self.pane_menu(pane, cx)),
+                .children(self.pane_menu(pane, window, cx)),
             )
             .children(
                 right
@@ -654,7 +654,12 @@ impl Cydonia {
     /// click from the moves would also be a delete nobody meant.
     ///
     /// Closing is not here either: it keeps the button on the bar.
-    fn pane_menu(&self, entry: &Member, cx: &mut Context<Self>) -> Option<AnyElement> {
+    fn pane_menu(
+        &self,
+        entry: &Member,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         let key = key_of(entry);
         if self.menu.as_ref() != Some(&Menu::Pane(key.clone())) {
             return None;
@@ -700,7 +705,7 @@ impl Cydonia {
         let id = SharedString::from(format!("pane-menu-card-{key}"));
         Some(popover::anchored_menu_below(
             id.clone(),
-            self.menu_card(id, rows, cx),
+            self.menu_card(id, rows, window, cx),
             None,
         ))
     }
@@ -818,7 +823,7 @@ impl Cydonia {
                 .article(project, at, on, window, cx)
                 .unwrap_or_else(|| self.launch(window, cx)),
             Showing::Table(at) => self
-                .table(project, at, on, cx)
+                .table(project, at, on, window, cx)
                 .unwrap_or_else(|| self.launch(window, cx)),
         }
     }
@@ -1023,6 +1028,7 @@ impl Cydonia {
         &self,
         pane: &Member,
         project: usize,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let key = key_of(pane);
@@ -1095,7 +1101,7 @@ impl Cydonia {
         let id = SharedString::from(format!("pane-add-card-{key}"));
         Some(popover::anchored_menu_below(
             id.clone(),
-            self.menu_card(id, rows, cx),
+            self.menu_card(id, rows, window, cx),
             None,
         ))
     }

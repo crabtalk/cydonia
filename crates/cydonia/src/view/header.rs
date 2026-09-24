@@ -282,6 +282,7 @@ impl Cydonia {
                                 Menu::Header,
                                 entry.row,
                                 entry.archived,
+                                window,
                                 cx,
                             ))
                         })),

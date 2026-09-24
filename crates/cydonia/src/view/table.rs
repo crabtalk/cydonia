@@ -282,6 +282,7 @@ impl Cydonia {
         project: usize,
         at: usize,
         on: Option<&Member>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let theme = Theme::of(cx).clone();
@@ -350,7 +351,7 @@ impl Cydonia {
         let count = columns.len();
         let mut headings: Vec<AnyElement> = Vec::with_capacity(count + 1);
         for (ix, column) in columns.iter().enumerate() {
-            headings.push(self.heading(ix, column.kind, &declared[ix], on, cx));
+            headings.push(self.heading(ix, column.kind, &declared[ix], on, window, cx));
         }
         headings.push(
             table::header_cell(&theme, &declared[count], None)
@@ -449,6 +450,7 @@ impl Cydonia {
         kind: ColType,
         shape: &table::Column,
         on: Option<&Member>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = Theme::of(cx).clone();
@@ -474,7 +476,7 @@ impl Cydonia {
                     Menu::Column(ix),
                     cx,
                 )
-                .children(self.column_menu(ix, kind, cx)),
+                .children(self.column_menu(ix, kind, window, cx)),
             )
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.edit_cell(Cell::Head(ix), window, cx);
@@ -483,7 +485,13 @@ impl Cydonia {
     }
 
     /// What the `···` does to a column: what it holds, and whether it stays.
-    fn column_menu(&self, ix: usize, kind: ColType, cx: &mut Context<Self>) -> Option<AnyElement> {
+    fn column_menu(
+        &self,
+        ix: usize,
+        kind: ColType,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         if self.menu != Some(Menu::Column(ix)) {
             return None;
         }
@@ -506,7 +514,7 @@ impl Cydonia {
         let id = SharedString::from(format!("column-menu-{ix}"));
         Some(popover::anchored_menu_below(
             id.clone(),
-            self.menu_card(id, rows, cx),
+            self.menu_card(id, rows, window, cx),
             None,
         ))
     }
@@ -564,6 +572,7 @@ impl Cydonia {
         project: usize,
         ix: usize,
         name: String,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
@@ -618,6 +627,7 @@ impl Cydonia {
             "table-row",
             entry,
             archived,
+            window,
             cx,
         ))
         .on_click(cx.listener(move |this, _, window, cx| {

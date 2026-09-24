@@ -655,7 +655,7 @@ impl Cydonia {
                             .active_project()
                             .and_then(|open| open.table),
                     )
-                    .and_then(|(project, at)| self.table(project, at, None, cx))
+                    .and_then(|(project, at)| self.table(project, at, None, window, cx))
                     .unwrap_or_else(|| self.launch(window, cx)),
             },
         };
@@ -907,7 +907,7 @@ impl Cydonia {
     /// The front door, and what stands where a pane would be if one were
     /// showing: a project to open, or the first entry to make in the one that
     /// already is.
-    pub(crate) fn launch(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+    pub(crate) fn launch(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         match self.workspace.read(cx).active_project().is_some() {
             true => self.nothing_open(window, cx),
             false => self.no_project(cx),
@@ -918,7 +918,7 @@ impl Cydonia {
     /// project that is open. The kinds are listed rather than named in a hint,
     /// because a list can be clicked — and only the kinds that are switched on
     /// are listed, so under the shipped defaults this is one line.
-    fn nothing_open(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+    fn nothing_open(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let workspace = self.workspace.read(cx);
         let Some(ix) = workspace.active else {
@@ -965,7 +965,7 @@ impl Cydonia {
                 self.menu_press(trigger, Menu::Launch, cx)
                     .relative()
                     .children((self.menu == Some(Menu::Launch)).then(|| {
-                        let card = self.menu_card("launch-menu", picks, cx);
+                        let card = self.menu_card("launch-menu", picks, window, cx);
                         match self.menu_point(&Menu::Launch) {
                             Some(point) => popover::menu_at("launch-menu", point, card, None),
                             None => popover::anchored_menu_below("launch-menu", card, None),

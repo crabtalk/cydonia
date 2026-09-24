@@ -1096,7 +1096,13 @@ impl Cydonia {
 
     /// The `···` on a card: what the row of glyphs underneath should not carry,
     /// because it cannot be undone.
-    fn card_menu(&self, on: &str, card: &str, cx: &mut Context<Self>) -> Option<AnyElement> {
+    fn card_menu(
+        &self,
+        on: &str,
+        card: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         if self.menu.as_ref() != Some(&Menu::Card(card.to_owned())) {
             return None;
         }
@@ -1118,7 +1124,7 @@ impl Cydonia {
         let id = SharedString::from(format!("card-menu-card-{card}"));
         Some(popover::anchored_menu_below(
             id.clone(),
-            self.menu_card(id, rows, cx),
+            self.menu_card(id, rows, window, cx),
             None,
         ))
     }
@@ -2517,6 +2523,7 @@ impl Cydonia {
                 folded,
                 &board_id,
                 on,
+                window,
                 cx,
             ))
             .children(rows)
@@ -2573,6 +2580,7 @@ impl Cydonia {
         folded: bool,
         board: &str,
         on: Option<&Member>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let Tally { held, shown } = tally;
@@ -2678,6 +2686,7 @@ impl Cydonia {
                     View::List,
                     board,
                     on,
+                    window,
                     cx,
                 )),
             )
@@ -2689,7 +2698,7 @@ impl Cydonia {
         &self,
         at: Slot<'_>,
         on: Option<&Member>,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let Slot {
@@ -2880,7 +2889,7 @@ impl Cydonia {
                     Menu::Card(id.to_owned()),
                     cx,
                 )
-                .children(self.card_menu(&on_board, id, cx)),
+                .children(self.card_menu(&on_board, id, window, cx)),
             )
             .on_drag(
                 CardDrag {
@@ -3073,6 +3082,7 @@ impl Cydonia {
                 lanes,
                 &on_board,
                 on,
+                window,
                 cx,
             ))
             .child(
@@ -3177,6 +3187,7 @@ impl Cydonia {
         lanes: usize,
         board: &str,
         on: Option<&Member>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let Tally { held, shown } = tally;
@@ -3240,6 +3251,7 @@ impl Cydonia {
                     View::Lanes,
                     board,
                     on,
+                    window,
                     cx,
                 )),
             )
@@ -3266,6 +3278,7 @@ impl Cydonia {
         view: View,
         board: &str,
         pane: Option<&Member>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         if self.menu != Some(Menu::Lane(id.to_owned())) {
@@ -3363,7 +3376,7 @@ impl Cydonia {
         let card = SharedString::from(format!("lane-menu-{id}"));
         Some(popover::anchored_menu_below(
             card.clone(),
-            self.menu_card(card, rows, cx),
+            self.menu_card(card, rows, window, cx),
             None,
         ))
     }
@@ -3573,7 +3586,7 @@ impl Cydonia {
                             Menu::Card(id.to_owned()),
                             cx,
                         )
-                        .children(self.card_menu(&on_board, id, cx)),
+                        .children(self.card_menu(&on_board, id, window, cx)),
                     ),
             )
             .when(truncated, |el| {

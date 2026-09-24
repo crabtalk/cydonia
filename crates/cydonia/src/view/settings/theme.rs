@@ -339,7 +339,7 @@ impl SettingsWindow {
                             .size(px(18.))
                             .rounded_full()
                             .cursor_pointer()
-                            .bg(crate::view::article::highlight_solid(value.color(), &theme))
+                            .bg(markdown::highlight_solid(value.color(), &theme))
                             .border_2()
                             .border_color(match current == value {
                                 true => theme.accent,

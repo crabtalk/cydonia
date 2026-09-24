@@ -320,7 +320,7 @@ impl Cydonia {
     pub(crate) fn ribbon(
         &self,
         on: Option<&Member>,
-        window: &Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         if on.is_some() && self.leaf().entry.as_ref() != on {
@@ -361,7 +361,7 @@ impl Cydonia {
         let card = match linking {
             true => card.child(self.link_field(&theme, cx)),
             false => card
-                .child(self.turn_trigger(&formatting, &theme, cx))
+                .child(self.turn_trigger(&formatting, &theme, window, cx))
                 .child(divider(&theme))
                 .children(
                     formats(&formatting)
@@ -466,6 +466,7 @@ impl Cydonia {
         &self,
         formatting: &Formatting,
         theme: &Theme,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
         let current = formatting.block.clone();
@@ -491,7 +492,7 @@ impl Cydonia {
                 cx.stop_propagation();
                 this.toggle_menu(Menu::Turn, cx);
             }))
-            .children(self.turn_menu(current, cx));
+            .children(self.turn_menu(current, window, cx));
         self.menu_press(button, Menu::Turn, cx)
     }
 
@@ -500,6 +501,7 @@ impl Cydonia {
     fn turn_menu(
         &self,
         current: Option<SharedString>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         if self.menu.as_ref() != Some(&Menu::Turn) {
@@ -517,7 +519,7 @@ impl Cydonia {
         let id = SharedString::from("ribbon-turn-card");
         Some(popover::anchored_menu_below(
             id.clone(),
-            self.menu_card(id, rows, cx),
+            self.menu_card(id, rows, window, cx),
             None,
         ))
     }
