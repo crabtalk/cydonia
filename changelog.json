@@ -2,23 +2,35 @@
   {
     "version": "0.1.15",
     "date": "2026-09-24",
-    "summary": "Board cards open in a resizable drawer for reading and editing, with quieter lanes and less work while scrolling.",
+    "summary": "Board cards open in a resizable drawer, articles gain highlights and portable image paths, and agents can see what is on screen.",
     "new": [
       "Read a card’s full rendered content in a bottom drawer, with resize, expand and restore controls",
       "Edit and preview cards in the drawer, save with ⌘Enter, or cancel edits",
-      "Keep unsaved card drafts when switching cards or closing the drawer, until the pane or app closes"
+      "Keep unsaved card drafts when switching cards or closing the drawer, until the pane or app closes",
+      "Highlight text in an article with ==text==, from the formatting bar or ⇧⌘H",
+      "Pick the highlight colour in Settings → Appearance, from Apple's yellow, green, blue, pink and purple",
+      "Let agents list an article's highlights through article_highlights",
+      "Let agents see the entries on screen through workspace_focus",
+      "Type a file's path into the terminal when it is dropped or pasted there"
     ],
     "changed": [
       "Simplify lane cards, remove the nested editor border, and mark clipped previews with …",
       "Give list rows readable single-line titles and quieter styling, open them in the shared drawer, and simplify group controls",
       "Skip offscreen lanes and list rows, cache bounded card previews, and avoid unnecessary redraws while scrolling",
       "Replace card chat buttons with a clickable busy orb that shows the working session on hover",
-      "Move to bezel 0.1.26"
+      "Store body images as paths relative to the article folder, so a copied article keeps its pictures",
+      "Remove the preview badge from the board feature",
+      "Move to bezel 0.1.27"
     ],
     "fixed": [
       "Keep horizontal board swipes from being intercepted by code and table previews",
       "Keep board scrollbars from highlighting while resizing the drawer",
-      "Preserve card metadata when saving drafts and report conflicting edits without discarding the draft"
+      "Preserve card metadata when saving drafts and report conflicting edits without discarding the draft",
+      "Place the caret and start selections from presses on the article's page margins",
+      "Release the article editor's focus on a press outside the article",
+      "Name focused articles by id in workspace_focus, and mark a lone entry focused",
+      "Let a dragged side panel grow wider than the main panel",
+      "Highlight collapsed list groups as drop targets"
     ]
   },
   {
