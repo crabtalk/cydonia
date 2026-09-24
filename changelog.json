@@ -3,6 +3,13 @@
     "version": "0.1.15",
     "date": "2026-09-24",
     "summary": "Board cards open in a resizable drawer, articles gain highlights and portable image paths, and agents can see what is on screen.",
+    "media": {
+      "poster": "pics/cydonia/v0.1.15.jpg",
+      "src": "videos/cydonia/v0.1.15.mp4",
+      "alt": "…",
+      "w": 1280,
+      "h": 900
+    },
     "new": [
       "Read a card’s full rendered content in a bottom drawer, with resize, expand and restore controls",
       "Edit and preview cards in the drawer, save with ⌘Enter, or cancel edits",
