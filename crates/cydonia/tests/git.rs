@@ -266,6 +266,8 @@ fn untracked_patch_is_applicable_and_empty_files_have_metadata() {
 
 #[test]
 fn syntax_uses_head_index_and_working_versions_and_reuses_unchanged_previews() {
+    cydonia::model::language::paintable();
+    syntax_std::install();
     use bezel::theme::HighlightKind;
     use cydonia::model::git::preview::{Kind, Preview};
     use std::sync::Arc;
