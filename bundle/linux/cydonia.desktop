@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Cydonia
+Comment=Desktop workspace for the ACP agents you run
+Exec=cydonia %U
+Icon=cydonia
+Terminal=false
+Categories=Development;
+StartupWMClass=cydonia

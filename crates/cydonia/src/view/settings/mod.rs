@@ -220,7 +220,7 @@ pub fn open(
             }),
             // Opaque on purpose — see the module note.
             window_background: WindowBackgroundAppearance::Opaque,
-            app_id: Some("cydonia-settings".into()),
+            app_id: Some("cydonia".into()),
             ..Default::default()
         },
         |window, cx| {
