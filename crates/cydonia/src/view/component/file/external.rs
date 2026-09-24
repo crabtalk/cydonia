@@ -53,6 +53,8 @@ pub(super) struct Application {
     /// opening rather than an application; empty for an application.
     #[serde(default)]
     kind: String,
+    /// Base64 PNG from the macOS lister, decoded into `image`.
+    #[cfg(target_os = "macos")]
     #[serde(default)]
     icon: String,
     #[serde(skip)]
@@ -225,7 +227,6 @@ fn applications(_: &Path) -> Result<Vec<Application>> {
         name: name.to_owned(),
         path,
         kind: kind.to_owned(),
-        icon: String::new(),
         image: None,
     };
     let mut apps: Vec<Application> = EDITORS
