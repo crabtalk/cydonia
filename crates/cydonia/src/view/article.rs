@@ -85,6 +85,20 @@ pub fn source_style(theme: &Theme) -> markdown::SourceStyle {
     }
 }
 
+/// The custom marks an article is read and written with: `==text==` is
+/// [`editor::HIGHLIGHT_MARK`].
+pub fn marks() -> markdown::Marks {
+    markdown::Marks::new().with(editor::HIGHLIGHT_MARK, "==")
+}
+
+/// How [`marks`] paint. Every highlight takes the yellow wash.
+pub fn mark_paint(name: &str, theme: &Theme) -> Option<markdown::MarkPaint> {
+    (name == editor::HIGHLIGHT_MARK).then(|| markdown::MarkPaint {
+        background: Some(theme.highlight(bezel::theme::HighlightColor::Yellow)),
+        ..Default::default()
+    })
+}
+
 fn source_offset(editor: &editor::Editor, cx: &App) -> f32 {
     if editor.mode() != Mode::Source {
         return 0.;
@@ -406,39 +420,39 @@ impl Cydonia {
                     .min_h_full()
                     .flex()
                     .justify_center()
+                    .cursor(CursorStyle::IBeam)
+                    .on_mouse_down(MouseButton::Left, {
+                        let editor = editor.clone();
+                        move |event, window, cx| {
+                            editor.update(cx, |editor, cx| {
+                                editor.press(
+                                    event.position,
+                                    event.click_count,
+                                    event.modifiers,
+                                    window,
+                                    cx,
+                                )
+                            })
+                        }
+                    })
                     .child(
                         // A page, not a paragraph. The editor's box is only
                         // as tall as the document, and a pane of dead space
                         // under a one-line note reads as something you
-                        // cannot type in: the floor is what makes a click
-                        // down there land a caret, and the I-beam is what
-                        // says so before the click.
+                        // cannot type in: the band around it is what makes
+                        // a click down there or beside it land a caret, and
+                        // the I-beam is what says so before the click.
                         column(wide)
                             .px(px(COLUMN_INSET))
                             .pt(px(20.))
                             .pb(px(TAIL))
                             .flex()
-                            .cursor(CursorStyle::IBeam)
-                            .on_mouse_down(MouseButton::Left, {
-                                let editor = editor.clone();
-                                move |event, window, cx| {
-                                    editor.update(cx, |editor, cx| {
-                                        editor.press(
-                                            event.position,
-                                            event.click_count,
-                                            event.modifiers,
-                                            window,
-                                            cx,
-                                        )
-                                    })
-                                }
-                            })
                             .child(
                                 div()
                                     .flex_1()
                                     .min_w_0()
                                     .ml(px(-source_offset))
-                                    .child(editor),
+                                    .child(editor.clone()),
                             ),
                     ),
             );
@@ -449,6 +463,17 @@ impl Cydonia {
                 .w_full()
                 .flex()
                 .flex_col()
+                // The editor paints its selection only while focused, and a
+                // press on chrome with no focus of its own leaves focus where
+                // it was.
+                .on_mouse_down_out({
+                    let editor = editor.clone();
+                    move |_, window, cx| {
+                        if editor.focus_handle(cx).is_focused(window) {
+                            window.blur(cx);
+                        }
+                    }
+                })
                 // Above the scroll box rather than inside it: a document long
                 // enough to scroll would carry the notice off the top of the
                 // pane, and it is about the document as a whole.
