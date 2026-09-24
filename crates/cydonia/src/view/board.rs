@@ -1353,6 +1353,14 @@ impl Cydonia {
             self.focus_pane(on, window, cx);
         }
         let leaf = self.leaf_of_mut(on);
+        if leaf
+            .open_card
+            .as_ref()
+            .is_some_and(|opened| opened.board == board && opened.card == card)
+        {
+            return self.close_card_preview(on, window, cx);
+        }
+        let leaf = self.leaf_of_mut(on);
         if let Some(opened) = &mut leaf.open_card
             && opened.board == board
         {
@@ -1936,10 +1944,24 @@ impl Cydonia {
             View::Lanes => self.lanes(project, board_at, on, window, cx),
             View::List => self.list(project, board_at, on, window, cx),
         };
+        let close_on = on.cloned();
         div()
+            .id("board-surface")
             .flex_1()
             .min_h_0()
             .relative()
+            // A click the drawer and the cards did not take closes the drawer.
+            .on_click(cx.listener(move |this, _, window, cx| {
+                let Some(opened) = this.leaf_of_mut(close_on.as_ref()).open_card.take() else {
+                    return;
+                };
+                // The focus goes back to the board only from the drawer: the
+                // click may have put it in a field of its own.
+                if opened.focus.contains_focused(window, cx) {
+                    window.focus(&this.leaf_of(close_on.as_ref()).focus, cx);
+                }
+                cx.notify();
+            }))
             .on_action(cx.listener(Self::commit_card))
             .on_action(cx.listener(Self::dismiss_card))
             .on_action(cx.listener(Self::dismiss_find))
@@ -2928,6 +2950,7 @@ impl Cydonia {
                 }
             }))
             .on_click(cx.listener(move |this, _, window, cx| {
+                cx.stop_propagation();
                 if let Some(member) = &member {
                     this.open_card(pane.as_ref(), member.clone(), opened.clone(), window, cx);
                 }
@@ -3690,6 +3713,7 @@ impl Cydonia {
                 }
             }))
             .on_click(cx.listener(move |this, _, window, cx| {
+                cx.stop_propagation();
                 if let Some(member) = &member {
                     this.open_card(pane.as_ref(), member.clone(), opened.clone(), window, cx);
                 }
