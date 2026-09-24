@@ -45,9 +45,13 @@ struct Preview {
 
 impl Render for Preview {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .w(px(240.))
-            .child(card_preview(&self.doc, self.overflow.clone(), window, cx))
+        div().w(px(240.)).child(card_preview(
+            &self.doc,
+            false,
+            self.overflow.clone(),
+            window,
+            cx,
+        ))
     }
 }
 
@@ -73,4 +77,85 @@ fn rendered_overflow_updates_when_a_card_is_shortened(cx: &mut TestAppContext) {
     });
     cx.run_until_parked();
     assert!(!cx.update(|_, cx| *page.read(cx).overflow.read(cx)));
+}
+
+#[test]
+fn lane_preview_bounds_large_documents_without_changing_full_content() {
+    let docs = Docs::default();
+    let source = "A paragraph.\n\n".repeat(1000);
+    let full = docs.of(&source);
+    let (preview, shortened) = docs.preview(&source);
+    assert!(shortened);
+    assert_eq!(preview.blocks.len(), 16);
+    assert_eq!(full.blocks.len(), 1000);
+    assert!(Rc::ptr_eq(&full, &docs.of(&source)));
+    assert!(Rc::ptr_eq(&preview, &docs.preview(&source).0));
+
+    let source = format!("```rust\n{}\n```", "let answer = 42;\n".repeat(1000));
+    let (preview, shortened) = docs.preview(&source);
+    assert!(shortened);
+    assert!(
+        preview.blocks[0]
+            .text_at(markdown::Part::Code)
+            .unwrap()
+            .text
+            .lines()
+            .count()
+            <= 17
+    );
+    assert!(
+        docs.of(&source).blocks[0]
+            .text_at(markdown::Part::Code)
+            .unwrap()
+            .text
+            .lines()
+            .count()
+            >= 1000
+    );
+}
+
+#[test]
+fn bounded_preview_preserves_unicode_marks_and_short_documents() {
+    let docs = Docs::default();
+    let source = format!("**{}**", "界".repeat(5000));
+    let (preview, shortened) = docs.preview(&source);
+    assert!(shortened);
+    let text = preview.blocks[0].text_at(markdown::Part::Body).unwrap();
+    assert_eq!(text.text.chars().count(), 4096);
+    assert!(
+        text.marks
+            .iter()
+            .all(|span| span.range.end <= text.text.len())
+    );
+    assert_eq!(text.marks[0].range.end, text.text.len());
+
+    let source = "# Heading\n\nA **short** card.";
+    let (preview, shortened) = docs.preview(source);
+    assert!(!shortened);
+    assert_eq!(preview, docs.of(source));
+}
+
+#[test]
+fn lane_window_is_bounded_at_board_edges() {
+    assert_eq!(visible_lanes(px(0.), px(700.), 20), 0..4);
+    assert_eq!(visible_lanes(px(-2720.), px(700.), 20), 8..14);
+    assert_eq!(visible_lanes(px(-9000.), px(700.), 20), 20..20);
+    assert_eq!(visible_lanes(px(0.), px(700.), 0), 0..0);
+}
+
+#[test]
+fn preview_limits_table_rows_but_keeps_the_full_table() {
+    let source = format!("| Column |\n| --- |\n{}", "| cell |\n".repeat(1000));
+    let docs = Docs::default();
+    let (preview, shortened) = docs.preview(&source);
+    assert!(shortened);
+    let markdown::BlockKind::Table { rows, .. } = &preview.blocks[0].kind else {
+        panic!("table expected")
+    };
+    assert_eq!(rows.len(), 12);
+    let full = docs.of(&source);
+    let markdown::BlockKind::Table { rows, .. } = &full.blocks[0].kind else {
+        panic!("table expected")
+    };
+    assert_eq!(rows.len(), 1000);
 }

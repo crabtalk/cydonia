@@ -2177,7 +2177,7 @@ checksum = "f27ae1dd37df86211c42e150270f82743308803d90a6f6e6651cd730d5e1732f"
 
 [[package]]
 name = "cydonia"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2217,7 +2217,7 @@ dependencies = [
 
 [[package]]
 name = "cydonia-artifact"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "anyhow",
  "cacp",
@@ -2231,7 +2231,7 @@ dependencies = [
 
 [[package]]
 name = "cydonia-mcp"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "axum",
  "cydonia-artifact",
@@ -2244,7 +2244,7 @@ dependencies = [
 
 [[package]]
 name = "cydonia-prompts"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "serde",
  "serde_yaml_ng",

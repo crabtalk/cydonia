@@ -50,7 +50,8 @@ actions!(
         DismissCard,
         FindCard,
         DismissFind,
-        CloseCardPreview
+        CloseCardPreview,
+        SaveCardDraft
     ]
 );
 
@@ -62,8 +63,18 @@ const KEY_CONTEXT: &str = "CydoniaCard";
 /// everywhere else.
 const FIND_CONTEXT: &str = "CydoniaBoardFind";
 const DRAWER_CONTEXT: &str = "CydoniaCardPreview";
+const DRAFT_CONTEXT: &str = "CydoniaCardDraft";
 
 const COLUMN_WIDTH: f32 = 272.;
+
+/// Keep one neighbouring lane ready on either side of the viewport.
+fn visible_lanes(offset: Pixels, width: Pixels, count: usize) -> std::ops::Range<usize> {
+    let left = (-f32::from(offset) - BOARD_INSET).max(0.);
+    let right = (left + f32::from(width)).max(0.);
+    let start = (left / COLUMN_WIDTH).floor() as usize;
+    let end = (right / COLUMN_WIDTH).ceil() as usize;
+    start.saturating_sub(1).min(count)..end.saturating_add(1).min(count)
+}
 
 /// What the board holds itself off the window's edges by, and how far short of
 /// the foot a lane's bar stops — the session's bar clears its composer the same
@@ -115,6 +126,8 @@ pub fn bindings() -> Vec<KeyBinding> {
         KeyBinding::new("escape", DismissCard, ctx),
         KeyBinding::new("escape", DismissFind, Some(FIND_CONTEXT)),
         KeyBinding::new("escape", CloseCardPreview, Some(DRAWER_CONTEXT)),
+        KeyBinding::new("cmd-enter", SaveCardDraft, Some(DRAWER_CONTEXT)),
+        KeyBinding::new("cmd-enter", SaveCardDraft, Some(DRAFT_CONTEXT)),
     ]
 }
 
@@ -200,6 +213,7 @@ fn card_body(doc: &markdown::Doc, window: &mut Window, cx: &mut App) -> AnyEleme
             // A picture in a lane this narrow is a picture. Its alt text spelled
             // out underneath would be most of the card.
             caption: markdown::Caption::Hidden,
+            copy: markdown::CopyButton::Hidden,
             typography: Some(Typography::of(cx).scaled(CARD_TEXT_SCALE)),
             ..Default::default()
         },
@@ -211,6 +225,7 @@ fn card_body(doc: &markdown::Doc, window: &mut Window, cx: &mut App) -> AnyEleme
 /// Measure the full rendered body, while the lane only shows its preview.
 fn card_preview(
     doc: &markdown::Doc,
+    shortened: bool,
     overflow: Entity<bool>,
     window: &mut Window,
     cx: &mut App,
@@ -222,7 +237,7 @@ fn card_preview(
             div().relative().child(card_body(doc, window, cx)).child(
                 gpui::canvas(
                     move |bounds, _, cx| {
-                        let clipped = bounds.size.height > px(CARD_MAX_HEIGHT);
+                        let clipped = shortened || bounds.size.height > px(CARD_MAX_HEIGHT);
                         overflow.update(cx, |value, cx| {
                             if *value != clipped {
                                 *value = clipped;
@@ -270,6 +285,59 @@ pub struct OpenCard {
     reveal: Rc<Cell<bool>>,
     bounds: Rc<Cell<gpui::Bounds<Pixels>>>,
     adjustments: Rc<RefCell<HashMap<String, LaneAdjustment>>>,
+    size: DrawerSize,
+    resize_grab: Option<Pixels>,
+    pane_bounds: Rc<Cell<gpui::Bounds<Pixels>>>,
+    editing: bool,
+}
+
+#[derive(Clone, Copy)]
+struct DrawerSize {
+    fraction: f32,
+    expanded: bool,
+}
+
+impl Default for DrawerSize {
+    fn default() -> Self {
+        Self {
+            fraction: 0.5,
+            expanded: false,
+        }
+    }
+}
+
+impl DrawerSize {
+    fn fraction(&self, pane_height: Pixels) -> f32 {
+        if self.expanded {
+            return 1.;
+        }
+        let height = f32::from(pane_height);
+        if height <= 0. {
+            return self.fraction;
+        }
+        self.fraction.max((160. / height).min(1.)).min(1.)
+    }
+
+    fn resize(&mut self, pointer_y: Pixels, pane: gpui::Bounds<Pixels>) {
+        let height = f32::from(pane.size.height);
+        if height <= 0. {
+            return;
+        }
+        self.fraction =
+            (f32::from(pane.bottom() - pointer_y) / height).clamp((160. / height).min(1.), 1.);
+        self.expanded = false;
+    }
+}
+
+/// Drafts outlive the drawer so closing and switching cards never discard text.
+pub struct CardDraft {
+    board: Member,
+    card: String,
+    base: String,
+    field: Entity<TextField>,
+    error: Option<String>,
+    reveal_caret: Rc<Cell<bool>>,
+    _subscription: gpui::Subscription,
 }
 
 struct LaneAdjustment {
@@ -378,6 +446,7 @@ pub struct Scrolls(RefCell<HashMap<String, Scroll>>);
 pub struct Scroll {
     /// The lanes across.
     pub across: ScrollHandle,
+    wheel: Rc<RefCell<gpui::OngoingScroll>>,
     /// The list down, which scrolls the other way — see [`artifact::board::View`].
     /// Its own handle rather than the lanes': one offset read along both axes
     /// would land the list wherever the lanes were scrolled to.
@@ -411,32 +480,89 @@ impl Scrolls {
 #[derive(Default)]
 pub struct Marks(RefCell<HashMap<String, Rc<RefCell<Frame>>>>);
 
-/// What a card's text parses to, by the text itself.
-///
-/// A board is rebuilt whole on every frame and a scroll is a frame per wheel
-/// event, so without this a lane costs one markdown parse per card per frame —
-/// [`card_body`] renders a document, not a string.
-///
-/// Keyed by the source rather than by the card, which is what lets the lane and
-/// the list hold one board at once: a row shows [`first_line`] and a lane the
-/// whole card, and keyed by card those two would take turns evicting each
-/// other. Edited text is a key nothing asks for again, so nothing has to be
-/// invalidated.
-///
-/// Never pruned, the way [`Marks`] is not: an entry is a parsed document, and
-/// a board's worth of them is smaller than the board.
+/// Parsed source and bounded lane previews, reused across scroll frames.
+/// Full documents remain available to the drawer and list.
 #[derive(Default)]
-pub struct Docs(RefCell<HashMap<String, Rc<markdown::Doc>>>);
+pub struct Docs(RefCell<HashMap<String, CachedDoc>>);
+
+struct CachedDoc {
+    full: Rc<markdown::Doc>,
+    preview: Option<(Rc<markdown::Doc>, bool)>,
+}
 
 impl Docs {
     fn of(&self, text: &str) -> Rc<markdown::Doc> {
-        if let Some(doc) = self.0.borrow().get(text) {
-            return doc.clone();
+        if let Some(cached) = self.0.borrow().get(text) {
+            return cached.full.clone();
         }
-        let doc = Rc::new(markdown::parse(text));
-        self.0.borrow_mut().insert(text.to_owned(), doc.clone());
-        doc
+        self.0
+            .borrow_mut()
+            .entry(text.to_owned())
+            .or_insert_with(|| CachedDoc {
+                full: Rc::new(markdown::parse(text)),
+                preview: None,
+            })
+            .full
+            .clone()
     }
+
+    fn preview(&self, text: &str) -> (Rc<markdown::Doc>, bool) {
+        if let Some(cached) = self.0.borrow_mut().get_mut(text) {
+            return cached
+                .preview
+                .get_or_insert_with(|| {
+                    let (doc, shortened) = preview_doc(&cached.full);
+                    (Rc::new(doc), shortened)
+                })
+                .clone();
+        }
+        self.of(text);
+        self.preview(text)
+    }
+}
+
+/// Bound layout and syntax highlighting for the 140px lane preview only.
+fn preview_doc(full: &markdown::Doc) -> (markdown::Doc, bool) {
+    let mut shortened = full.blocks.len() > 16;
+    let mut doc = markdown::Doc {
+        blocks: full.blocks.iter().take(16).cloned().collect(),
+    };
+    for block in &mut doc.blocks {
+        if let markdown::BlockKind::Table { rows, .. } = &mut block.kind {
+            shortened |= rows.len() > 12;
+            rows.truncate(12);
+        }
+        let code = matches!(block.kind, markdown::BlockKind::Code { .. });
+        for part in block.parts() {
+            let Some(text) = block.text_at_mut(part) else {
+                continue;
+            };
+            let mut end = text
+                .text
+                .char_indices()
+                .nth(4096)
+                .map(|(at, _)| at)
+                .unwrap_or(text.text.len());
+            if code {
+                end = end.min(
+                    text.text
+                        .match_indices('\n')
+                        .nth(16)
+                        .map(|(at, _)| at)
+                        .unwrap_or(end),
+                );
+            }
+            if end < text.text.len() {
+                shortened = true;
+                text.text.truncate(end);
+                text.marks.retain_mut(|span| {
+                    span.range.end = span.range.end.min(end);
+                    span.range.start < span.range.end
+                });
+            }
+        }
+    }
+    (doc, shortened)
 }
 
 impl Marks {
@@ -1114,6 +1240,7 @@ impl Cydonia {
             if opened.card != card {
                 opened.card = card;
                 opened.scroll = ScrollHandle::new();
+                opened.editing = false;
             }
             opened.reveal.set(true);
         } else {
@@ -1125,6 +1252,10 @@ impl Cydonia {
                 reveal: Rc::new(Cell::new(true)),
                 bounds: Default::default(),
                 adjustments: Default::default(),
+                size: DrawerSize::default(),
+                resize_grab: None,
+                pane_bounds: Default::default(),
+                editing: false,
             });
         }
         window.focus(&leaf.open_card.as_ref().unwrap().focus, cx);
@@ -1158,8 +1289,163 @@ impl Cydonia {
         {
             return None;
         }
-        workspace.board_in(project, board_at)?.card(&opened.card)?;
+        if workspace
+            .board_in(project, board_at)?
+            .card(&opened.card)
+            .is_none()
+            && self.draft_for(on).is_none()
+        {
+            return None;
+        }
         Some(opened)
+    }
+
+    fn draft_for(&self, on: Option<&Member>) -> Option<&CardDraft> {
+        let leaf = self.leaf_of(on);
+        let opened = leaf.open_card.as_ref()?;
+        leaf.card_drafts
+            .iter()
+            .find(|draft| draft.board == opened.board && draft.card == opened.card)
+    }
+
+    fn toggle_card_edit(
+        &mut self,
+        on: Option<&Member>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(opened) = self.leaf_of(on).open_card.as_ref() else {
+            return;
+        };
+        let (board, card, editing) = (opened.board.clone(), opened.card.clone(), opened.editing);
+        if !editing && self.draft_for(on).is_none() {
+            let Some(text) = self
+                .workspace
+                .read(cx)
+                .board_of(Some(&board))
+                .and_then(|board| board.card(&card))
+                .map(|card| card.text.clone())
+            else {
+                return;
+            };
+            let field = cx.new(|cx| {
+                let mut field = TextField::new(cx)
+                    .with_frame(false)
+                    .with_shape(Shape::Grow {
+                        min: 2,
+                        max: usize::MAX,
+                    })
+                    .with_key_context(DRAFT_CONTEXT);
+                field.set_content(text.clone(), cx);
+                field
+            });
+            let reveal_caret = Rc::new(Cell::new(true));
+            let pending = reveal_caret.clone();
+            let subscription = cx.subscribe(&field, move |_, _, _: &input::FieldEvent, cx| {
+                pending.set(true);
+                cx.notify();
+            });
+            self.leaf_of_mut(on).card_drafts.push(CardDraft {
+                board,
+                card,
+                base: text,
+                field,
+                error: None,
+                reveal_caret,
+                _subscription: subscription,
+            });
+        }
+        self.leaf_of_mut(on).open_card.as_mut().unwrap().editing = !editing;
+        let focus = if !editing {
+            let draft = self.draft_for(on).unwrap();
+            draft.reveal_caret.set(true);
+            draft.field.read(cx).focus_handle(cx)
+        } else {
+            self.leaf_of(on).open_card.as_ref().unwrap().focus.clone()
+        };
+        window.focus(&focus, cx);
+        cx.notify();
+    }
+
+    fn cancel_card_draft(
+        &mut self,
+        on: Option<&Member>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let leaf = self.leaf_of_mut(on);
+        let Some(opened) = &mut leaf.open_card else {
+            return;
+        };
+        leaf.card_drafts
+            .retain(|draft| draft.board != opened.board || draft.card != opened.card);
+        opened.editing = false;
+        opened.scroll = ScrollHandle::new();
+        window.focus(&opened.focus, cx);
+        cx.notify();
+    }
+
+    fn save_card_draft(
+        &mut self,
+        on: Option<&Member>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(draft) = self.draft_for(on) else {
+            return;
+        };
+        let (board, card, base, text) = (
+            draft.board.clone(),
+            draft.card.clone(),
+            draft.base.clone(),
+            draft.field.read(cx).content().to_string(),
+        );
+        let result = if text == base {
+            Ok(())
+        } else {
+            self.workspace.update(cx, |workspace, cx| {
+                workspace.save_card_draft(&board, &card, &base, &text, cx)
+            })
+        };
+        match result {
+            Ok(()) => self.cancel_card_draft(on, window, cx),
+            Err(error) => {
+                if let Some(draft) = self
+                    .leaf_of_mut(on)
+                    .card_drafts
+                    .iter_mut()
+                    .find(|draft| draft.board == board && draft.card == card)
+                {
+                    draft.error = Some(error);
+                }
+                cx.notify();
+            }
+        }
+    }
+
+    fn drawer_action(
+        &self,
+        id: &'static str,
+        glyph: &'static [u8],
+        label: &'static str,
+        cx: &Context<Self>,
+    ) -> Stateful<Div> {
+        let theme = Theme::of(cx);
+        theme
+            .ghost(id)
+            .debug_selector(move || id.to_owned())
+            .flex_none()
+            .size(px(24.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(px(Theme::control_radius()))
+            .child(
+                icons::icon(glyph)
+                    .size(px(14.))
+                    .text_color(theme.text_muted),
+            )
+            .tooltip(move |window, cx| Tooltip::text(label, window, cx))
     }
 
     fn card_drawer(
@@ -1172,21 +1458,99 @@ impl Cydonia {
     ) -> Option<AnyElement> {
         let opened = self.drawer_for(project, board_at, on, cx)?;
         let board = self.workspace.read(cx).board_in(project, board_at)?;
-        let card = board.card(&opened.card)?;
-        let handle = board.handle_of(card).unwrap_or_default();
-        let text = card.text.clone();
-        let status = card.status;
+        let card = board.card(&opened.card);
+        let handle = card
+            .and_then(|card| board.handle_of(card))
+            .unwrap_or_else(|| "Missing card".into());
+        let status = card.and_then(|card| card.status);
+        let draft = self.draft_for(on);
+        let text = draft
+            .map(|draft| draft.field.read(cx).content().to_string())
+            .unwrap_or_else(|| card.map(|card| card.text.clone()).unwrap_or_default());
+        let dirty = draft.is_some_and(|draft| draft.base != text);
+        let error = draft.and_then(|draft| draft.error.clone()).or_else(|| {
+            card.is_none().then(|| {
+                "This card was removed or moved. Copy your draft before cancelling.".into()
+            })
+        });
+        let editing = opened.editing;
+        let expanded = opened.size.expanded;
         let scroll = opened.scroll.clone();
-        let id = card.id.clone();
-        let edit_on = on.cloned();
-        let close_on = on.cloned();
+        let focus = if editing {
+            draft
+                .map(|draft| draft.field.read(cx).focus_handle(cx))
+                .unwrap_or_else(|| opened.focus.clone())
+        } else {
+            opened.focus.clone()
+        };
+        let working = card.and_then(|card| self.card_working(card, self.card_session(card, cx)));
         let theme = Theme::of(cx).clone();
         let bounds = opened.bounds.clone();
-        let escape_on = on.cloned();
-        let focus_on = on.cloned();
-        let focus = opened.focus.clone();
+        let reveal = opened.reveal.clone();
+        let resize_on = on.cloned();
+        let (edit_on, close_on, escape_on, focus_on, save_on, key_save_on, cancel_on, expand_on) = (
+            on.cloned(),
+            on.cloned(),
+            on.cloned(),
+            on.cloned(),
+            on.cloned(),
+            on.cloned(),
+            on.cloned(),
+            on.cloned(),
+        );
+        let body = if editing {
+            let draft = draft?;
+            let field = draft.field.clone();
+            let pending = draft.reveal_caret.clone();
+            let caret_scroll = scroll.clone();
+            div()
+                .relative()
+                .child(field.clone())
+                .child(
+                    gpui::canvas(
+                        |_, _, _| {},
+                        move |_, _, window, cx| {
+                            if !pending.get() {
+                                return;
+                            }
+                            let input = field.read(cx);
+                            let Some(caret) = input.offset_bounds(input.cursor()) else {
+                                return;
+                            };
+                            pending.set(false);
+                            let viewport = caret_scroll.bounds();
+                            let delta = reveal_delta(
+                                caret.top(),
+                                caret.bottom(),
+                                viewport.top() + px(16.),
+                                viewport.bottom() - px(16.),
+                            );
+                            if delta != px(0.) {
+                                let offset = caret_scroll.offset();
+                                caret_scroll.set_offset(gpui::point(
+                                    offset.x,
+                                    (offset.y + delta).min(px(0.)),
+                                ));
+                                window.on_next_frame(|window, _| window.refresh());
+                            }
+                        },
+                    )
+                    .absolute()
+                    .size_full(),
+                )
+                .into_any_element()
+        } else {
+            markdown::render_with(
+                &self.card_docs.of(&text),
+                markdown::Editing::default(),
+                window,
+                cx,
+            )
+            .into_any_element()
+        };
         Some(
             scroll::contain_wheel(floating::layer("card-drawer"), Axes::Both)
+                .debug_selector(|| "card-drawer".into())
                 .key_context(DRAWER_CONTEXT)
                 .track_focus(&opened.focus)
                 .on_mouse_down(
@@ -1202,12 +1566,21 @@ impl Cydonia {
                 .on_action(cx.listener(move |this, _: &CloseCardPreview, window, cx| {
                     this.close_card_preview(escape_on.as_ref(), window, cx);
                 }))
+                .on_action(cx.listener(move |this, _: &SaveCardDraft, window, cx| {
+                    this.save_card_draft(key_save_on.as_ref(), window, cx);
+                }))
                 .bottom_0()
                 .left_0()
                 .right_0()
-                .h(gpui::relative(0.5))
+                .h(gpui::relative(
+                    opened.size.fraction(opened.pane_bounds.get().size.height),
+                ))
                 .bg(theme.surface_raised)
-                .rounded_t(px(Theme::control_radius()))
+                .rounded_t(px(if expanded {
+                    0.
+                } else {
+                    Theme::control_radius()
+                }))
                 .border_t_1()
                 .border_l_1()
                 .border_r_1()
@@ -1225,61 +1598,160 @@ impl Cydonia {
                 .overflow_hidden()
                 .child(
                     div()
+                        .id("card-drawer-resize")
+                        .debug_selector(|| "card-drawer-resize".into())
+                        .group("drawer-resize")
+                        .flex_none()
+                        .h(px(9.))
+                        .w_full()
+                        .cursor_row_resize()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(
+                            div()
+                                .w(px(32.))
+                                .h(px(2.))
+                                .rounded_full()
+                                .bg(theme.text_faint.opacity(0.4))
+                                .group_hover("drawer-resize", |el| el.bg(theme.text_muted)),
+                        )
+                        .on_mouse_down(
+                            gpui::MouseButton::Left,
+                            cx.listener(move |this, event: &gpui::MouseDownEvent, _, cx| {
+                                if let Some(opened) =
+                                    &mut this.leaf_of_mut(resize_on.as_ref()).open_card
+                                {
+                                    opened.resize_grab =
+                                        Some(event.position.y - opened.bounds.get().top());
+                                    cx.notify();
+                                }
+                                cx.stop_propagation();
+                            }),
+                        ),
+                )
+                .child(
+                    div()
                         .flex_none()
                         .flex()
                         .items_center()
                         .gap(px(6.))
                         .px(px(16.))
-                        .py(px(8.))
+                        .pb(px(6.))
+                        .flex_wrap()
                         .text_style(TextStyle::Caption)
                         .text_color(theme.text_muted)
                         .child(div().font_family(theme.font_mono.clone()).child(handle))
                         .children(resting(status).map(|status| status_chip(status, &theme)))
+                        .children(
+                            working.map(|at| transcript::orb(at.state, at.since, &at.frame, cx)),
+                        )
+                        .when(dirty, |el| el.child(div().child("Draft")))
                         .child(div().flex_1())
-                        .child(
-                            theme
-                                .ghost("card-drawer-edit")
-                                .size(px(24.))
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .rounded(px(Theme::control_radius()))
-                                .child(
-                                    icons::icon(icons::text::Pencil)
-                                        .size(px(14.))
-                                        .text_color(theme.text_muted),
+                        .when(draft.is_some(), |el| {
+                            el.child(
+                                self.drawer_action(
+                                    "card-draft-save",
+                                    icons::notifications::Check,
+                                    "Save card (⌘Enter)",
+                                    cx,
                                 )
-                                .tooltip(|window, cx| Tooltip::text("Edit card", window, cx))
-                                .on_click(cx.listener(move |this, _, window, cx| {
+                                .on_click(cx.listener(
+                                    move |this, _, window, cx| {
+                                        cx.stop_propagation();
+                                        this.save_card_draft(save_on.as_ref(), window, cx);
+                                    },
+                                )),
+                            )
+                            .child(
+                                self.drawer_action(
+                                    "card-draft-cancel",
+                                    icons::glyph::Undo2,
+                                    "Cancel edits",
+                                    cx,
+                                )
+                                .on_click(cx.listener(
+                                    move |this, _, window, cx| {
+                                        cx.stop_propagation();
+                                        this.cancel_card_draft(cancel_on.as_ref(), window, cx);
+                                    },
+                                )),
+                            )
+                        })
+                        .child(
+                            self.drawer_action(
+                                "card-drawer-edit",
+                                if editing {
+                                    icons::glyph::Eye
+                                } else {
+                                    icons::text::Pencil
+                                },
+                                if editing {
+                                    "Preview draft"
+                                } else {
+                                    "Edit card"
+                                },
+                                cx,
+                            )
+                            .on_click(cx.listener(
+                                move |this, _, window, cx| {
                                     cx.stop_propagation();
-                                    this.edit(
-                                        edit_on.as_ref(),
-                                        Editing::Card(id.clone()),
-                                        window,
-                                        cx,
-                                    );
-                                })),
+                                    this.toggle_card_edit(edit_on.as_ref(), window, cx);
+                                },
+                            )),
                         )
                         .child(
-                            theme
-                                .ghost("card-drawer-close")
-                                .size(px(24.))
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .rounded(px(Theme::control_radius()))
-                                .child(
-                                    icons::icon(icons::notifications::X)
-                                        .size(px(14.))
-                                        .text_color(theme.text_muted),
-                                )
-                                .tooltip(|window, cx| Tooltip::text("Close preview", window, cx))
-                                .on_click(cx.listener(move |this, _, window, cx| {
+                            self.drawer_action(
+                                "card-drawer-expand",
+                                if expanded {
+                                    icons::arrows::Shrink
+                                } else {
+                                    icons::arrows::Expand
+                                },
+                                if expanded {
+                                    "Restore drawer"
+                                } else {
+                                    "Expand drawer"
+                                },
+                                cx,
+                            )
+                            .on_click(cx.listener(
+                                move |this, _, _, cx| {
+                                    cx.stop_propagation();
+                                    if let Some(opened) =
+                                        &mut this.leaf_of_mut(expand_on.as_ref()).open_card
+                                    {
+                                        opened.size.expanded = !opened.size.expanded;
+                                        opened.reveal.set(!opened.size.expanded);
+                                    }
+                                    cx.notify();
+                                },
+                            )),
+                        )
+                        .child(
+                            self.drawer_action(
+                                "card-drawer-close",
+                                icons::notifications::X,
+                                "Close preview (keeps draft)",
+                                cx,
+                            )
+                            .on_click(cx.listener(
+                                move |this, _, window, cx| {
                                     cx.stop_propagation();
                                     this.close_card_preview(close_on.as_ref(), window, cx);
-                                })),
+                                },
+                            )),
                         ),
                 )
+                .children(error.map(|error| {
+                    div()
+                        .flex_none()
+                        .px(px(16.))
+                        .pb(px(8.))
+                        .text_style(TextStyle::Caption)
+                        .text_color(theme.danger)
+                        .child(error)
+                }))
                 .child(
                     div()
                         .flex_1()
@@ -1290,12 +1762,7 @@ impl Cydonia {
                                 .size_full()
                                 .track_scroll(&scroll)
                                 .p(px(16.))
-                                .child(markdown::render_with(
-                                    &self.card_docs.of(&text),
-                                    markdown::Editing::default(),
-                                    window,
-                                    cx,
-                                )),
+                                .child(body),
                         )
                         .child(scrollbars::Overlay::new(
                             "card-drawer-scroll",
@@ -1306,8 +1773,12 @@ impl Cydonia {
                 .child(
                     gpui::canvas(
                         move |measured, window, _| {
-                            if bounds.replace(measured) != measured {
-                                window.refresh();
+                            let old = bounds.replace(measured);
+                            if old != measured {
+                                if !expanded {
+                                    reveal.set(true);
+                                }
+                                window.on_next_frame(|window, _| window.refresh());
                             }
                         },
                         |_, _, _, _| {},
@@ -1366,6 +1837,19 @@ impl Cydonia {
             }))
             // A release no lane took.
             .on_drop(cx.listener(|this, _: &CardDrag, _, cx| this.aim_card(None, cx)))
+            .children(self.drawer_for(project, board_at, on, cx).map(|opened| {
+                let bounds = opened.pane_bounds.clone();
+                gpui::canvas(
+                    move |measured, window, _| {
+                        if bounds.replace(measured) != measured {
+                            window.on_next_frame(|window, _| window.refresh());
+                        }
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .size_full()
+            }))
             .child(body)
             .children(self.view_pill(&id, view, cx))
             .children(self.find_bar(on, cx))
@@ -1373,6 +1857,52 @@ impl Cydonia {
                 (view == View::Lanes)
                     .then(|| self.card_drawer(project, board_at, on, window, cx))
                     .flatten(),
+            )
+            .children(
+                self.drawer_for(project, board_at, on, cx)
+                    .and_then(|opened| {
+                        opened.resize_grab.map(|grab| {
+                            let move_on = on.cloned();
+                            let release_on = on.cloned();
+                            let release =
+                                move |this: &mut Self,
+                                      _: &gpui::MouseUpEvent,
+                                      _: &mut Window,
+                                      cx: &mut Context<Self>| {
+                                    if let Some(opened) =
+                                        &mut this.leaf_of_mut(release_on.as_ref()).open_card
+                                    {
+                                        opened.resize_grab = None;
+                                        cx.notify();
+                                    }
+                                    cx.stop_propagation();
+                                };
+                            floating::layer("card-drawer-resizing")
+                                .inset_0()
+                                .cursor_row_resize()
+                                .on_mouse_move(cx.listener(
+                                    move |this, event: &gpui::MouseMoveEvent, _, cx| {
+                                        if let Some(opened) =
+                                            &mut this.leaf_of_mut(move_on.as_ref()).open_card
+                                        {
+                                            if event.pressed_button == Some(gpui::MouseButton::Left)
+                                            {
+                                                opened.size.resize(
+                                                    event.position.y - grab,
+                                                    opened.pane_bounds.get(),
+                                                );
+                                            } else {
+                                                opened.resize_grab = None;
+                                            }
+                                            cx.notify();
+                                        }
+                                        cx.stop_propagation();
+                                    },
+                                ))
+                                .on_mouse_up(gpui::MouseButton::Left, cx.listener(release.clone()))
+                                .on_mouse_up_out(gpui::MouseButton::Left, cx.listener(release))
+                        })
+                    }),
             )
             .into_any_element()
     }
@@ -1456,10 +1986,41 @@ impl Cydonia {
             .map(|column| column.id.clone())
             .collect();
         let lanes = ids.len();
+        let editing_lane = match &self.leaf_of(on).editing {
+            Some(Editing::New(_, column)) => Some(column.clone()),
+            Some(Editing::Card(card)) => board
+                .columns
+                .iter()
+                .find(|column| column.cards.iter().any(|held| &held.id == card))
+                .map(|column| column.id.clone()),
+            None => None,
+        };
+        let measured_width = window
+            .use_keyed_state(
+                SharedString::from(format!("board-lane-width-{held}-{on:?}")),
+                cx,
+                |_, _| Rc::new(Cell::new(px(0.))),
+            )
+            .read(cx)
+            .clone();
+        let width = measured_width.get();
+        let width = if width > px(0.) {
+            width
+        } else {
+            window.viewport_size().width
+        };
+        let visible = visible_lanes(scroll.across.offset().x, width, lanes);
         let columns: Vec<AnyElement> = ids
             .iter()
             .enumerate()
             .map(|(at, id)| {
+                if !visible.contains(&at) && editing_lane.as_deref() != Some(id.as_str()) {
+                    return div()
+                        .flex_none()
+                        .w(px(COLUMN_WIDTH))
+                        .h_full()
+                        .into_any_element();
+                }
                 self.column(
                     Lane {
                         project,
@@ -1488,11 +2049,18 @@ impl Cydonia {
                     .children(columns)
                     .child(self.new_column_lane(&held, cx)),
             )
-            .child(scrollbars::Overlay::new(
-                "board-bar",
-                &scroll.across,
-                bezel::gpui::Axis::Horizontal,
-            ))
+            .child(
+                scrollbars::Overlay::new(
+                    "board-bar",
+                    &scroll.across,
+                    bezel::gpui::Axis::Horizontal,
+                )
+                .when(
+                    self.drawer_for(project, board_at, on, cx)
+                        .is_some_and(|drawer| drawer.resize_grab.is_some()),
+                    |bar| bar.visibility(scrollbars::Visibility::Never),
+                ),
+            )
             // A lane off the side of the window is one a drag cannot reach:
             // reaching for it would mean letting go.
             .child(scroll::drift(
@@ -1501,6 +2069,57 @@ impl Cydonia {
                 Axes::Horizontal,
                 scroll::Beyond::Nothing,
             ))
+            // Preview code and tables must not take a sideways swipe from the board.
+            .child(
+                gpui::canvas(
+                    move |bounds, window, _| {
+                        if measured_width.replace(bounds.size.width) != bounds.size.width {
+                            let view = window.current_view();
+                            window.on_next_frame(move |_, cx| cx.notify(view));
+                        }
+                        window.insert_hitbox(bounds, gpui::HitboxBehavior::Normal)
+                    },
+                    move |_, hitbox, window, _| {
+                        let handle = scroll.across.clone();
+                        let gesture = scroll.wheel.clone();
+                        let view = window.current_view();
+                        window.on_mouse_event(
+                            move |event: &gpui::ScrollWheelEvent, phase, window, cx| {
+                                if phase != gpui::DispatchPhase::Capture
+                                    || !hitbox.should_handle_scroll(window)
+                                {
+                                    return;
+                                }
+                                let raw = event.delta.pixel_delta(window.line_height());
+                                let mut delta = raw;
+                                if event.delta.precise() {
+                                    gesture.borrow_mut().filter(&mut delta, event.touch_phase);
+                                } else if delta.x.abs() <= delta.y.abs() {
+                                    return;
+                                }
+                                let sideways = delta.x.abs() > delta.y.abs();
+                                let filtered_out = delta.x == px(0.)
+                                    && delta.y == px(0.)
+                                    && (raw.x != px(0.) || raw.y != px(0.));
+                                if sideways || filtered_out {
+                                    let offset = handle.offset();
+                                    let next = gpui::point(
+                                        (offset.x + delta.x).clamp(-handle.max_offset().x, px(0.)),
+                                        offset.y,
+                                    );
+                                    if next != offset {
+                                        handle.set_offset(next);
+                                        cx.notify(view);
+                                    }
+                                    cx.stop_propagation();
+                                }
+                            },
+                        );
+                    },
+                )
+                .absolute()
+                .inset_0(),
+            )
             .into_any_element()
     }
 
@@ -2254,7 +2873,12 @@ impl Cydonia {
                     .child(
                         scrollbars::Overlay::new(bar_id, &scroll, bezel::gpui::Axis::Vertical)
                             .end_inset(px(BOARD_INSET))
-                            .channel(LANE_CHANNEL),
+                            .channel(LANE_CHANNEL)
+                            .when(
+                                self.drawer_for(project, board_at, on, cx)
+                                    .is_some_and(|drawer| drawer.resize_grab.is_some()),
+                                |bar| bar.visibility(scrollbars::Visibility::Never),
+                            ),
                     ),
             )
             .into_any_element()
@@ -2572,7 +3196,10 @@ impl Cydonia {
         let reveal = self
             .drawer_for(project, board_at, on, cx)
             .filter(|drawer| {
-                selected && drawer.reveal.get() && drawer.bounds.get().size.height > px(0.)
+                selected
+                    && !drawer.size.expanded
+                    && drawer.reveal.get()
+                    && drawer.bounds.get().size.height > px(0.)
             })
             .map(|drawer| {
                 let pending = drawer.reveal.clone();
@@ -2610,7 +3237,7 @@ impl Cydonia {
                         }
                         adjustment.after = after;
                         scroll.set_offset(after);
-                        window.refresh();
+                        window.on_next_frame(|window, _| window.refresh());
                     },
                     |_, _, _, _| {},
                 )
@@ -2642,12 +3269,10 @@ impl Cydonia {
                     .flex_row()
                     .items_start()
                     .gap(px(6.))
-                    .child(div().flex_1().min_w_0().child(card_preview(
-                        &self.card_docs.of(&text),
-                        overflow,
-                        window,
-                        cx,
-                    )))
+                    .child(div().flex_1().min_w_0().child({
+                        let (doc, shortened) = self.card_docs.preview(&text);
+                        card_preview(&doc, shortened, overflow, window, cx)
+                    }))
                     // What is done *to* the card. The row underneath carries
                     // the run; where the card sits is the drag.
                     .child(
@@ -2867,3 +3492,7 @@ mod doc_tests;
 #[cfg(test)]
 #[path = "../../tests/unit/board_preview.rs"]
 mod preview_tests;
+
+#[cfg(test)]
+#[path = "../../tests/unit/board_drawer.rs"]
+mod drawer_tests;

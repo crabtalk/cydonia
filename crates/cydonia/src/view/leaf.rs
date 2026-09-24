@@ -80,6 +80,7 @@ pub struct Leaf {
     pub(crate) asked_session: bool,
     pub(crate) editing: Option<Editing>,
     pub(crate) open_card: Option<board::OpenCard>,
+    pub(crate) card_drafts: Vec<board::CardDraft>,
     pub(crate) card_field: Entity<TextField>,
     /// The board's find field, and whether its bar is up.
     ///
@@ -119,6 +120,7 @@ impl Leaf {
             asked_session: false,
             editing: None,
             open_card: None,
+            card_drafts: Vec::new(),
             card_field,
             find_field,
             finding: false,

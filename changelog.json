@@ -1,5 +1,24 @@
 [
   {
+    "version": "0.1.15",
+    "date": "2026-09-24",
+    "summary": "Board cards open in a resizable drawer for reading and editing, with quieter lanes and less work while scrolling.",
+    "new": [
+      "Read a card’s full rendered content in a bottom drawer, with resize, expand and restore controls",
+      "Edit and preview cards in the drawer, save with ⌘Enter, or cancel edits",
+      "Keep unsaved card drafts when switching cards or closing the drawer, until the pane or app closes"
+    ],
+    "changed": [
+      "Simplify lane cards, remove the nested editor border, and mark clipped previews with …",
+      "Skip offscreen lanes, cache bounded card previews, and avoid unnecessary redraws while scrolling"
+    ],
+    "fixed": [
+      "Keep horizontal board swipes from being intercepted by code and table previews",
+      "Keep board scrollbars from highlighting while resizing the drawer",
+      "Preserve card metadata when saving drafts and report conflicting edits without discarding the draft"
+    ]
+  },
+  {
     "version": "0.1.14",
     "date": "2026-09-23",
     "summary": "Sessions talk to each other, read and search one another by turn, and thoughts fold to a line.",
