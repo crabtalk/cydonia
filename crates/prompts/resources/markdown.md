@@ -27,6 +27,7 @@ list numbering can be normalized.
 
 Wrap text in `==` to highlight it: `a ==key phrase== here`. Highlights paint
 in one colour.
+`article_highlights` lists an article's highlights with their line numbers.
 
 ## Images
 

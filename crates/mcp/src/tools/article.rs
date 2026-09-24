@@ -92,7 +92,7 @@ const REPLACE_ALL: Arg = Arg {
     about: "Replace every non-overlapping occurrence. Defaults to false, requiring exactly one match.",
 };
 
-pub static TOOLS: [Tool; 10] = [
+pub static TOOLS: [Tool; 11] = [
     Tool {
         name: "article_list",
         description: "List the project's articles, most recently written first.",
@@ -108,6 +108,14 @@ pub static TOOLS: [Tool; 10] = [
         writes: false,
         deletes: false,
         call: read,
+    },
+    Tool {
+        name: "article_highlights",
+        description: "List the passages a person highlighted in one article (`==text==` in its markdown), in document order, each with its line number and the paragraph it sits in.",
+        schema: |bound| fields(bound, &[PROJECT, ARTICLE]),
+        writes: false,
+        deletes: false,
+        call: highlights,
     },
     Tool {
         name: "article_add",
@@ -243,6 +251,122 @@ fn read(args: Args<'_>) -> Outcome {
         "article_path": folder(&found.content),
         "cover_path": article::cover::of(&found.content),
     })))
+}
+
+fn highlights(args: Args<'_>) -> Outcome {
+    let project = root(&args)?;
+    let found = locate(project, args.text(ARTICLE)?)?;
+    let text = std::fs::read_to_string(&found.content)
+        .map_err(|e| Trouble::Refused(format!("{} cannot be read — {e}", found.label())))?;
+    let found_marks = marked(&text);
+    if found_marks.is_empty() {
+        return Ok(Answer::said(format!("{} has no highlights", found.label())));
+    }
+    let said = found_marks
+        .iter()
+        .map(|mark| format!("line {}: {}", mark.line, mark.text.replace('\n', " ")))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let data = found_marks
+        .iter()
+        .map(|mark| json!({ "text": mark.text, "line": mark.line, "paragraph": mark.paragraph }))
+        .collect::<Vec<_>>();
+    Ok(Answer::said(said).with(json!({
+        "id": found.id,
+        "number": found.number,
+        "title": found.title,
+        "highlights": data,
+    })))
+}
+
+/// One `==text==` span.
+struct Marked {
+    text: String,
+    /// 1-based line the span opens on.
+    line: usize,
+    paragraph: String,
+}
+
+/// Every `==text==` span in `markdown`, outside fences and inline code. A span
+/// never crosses a blank line.
+fn marked(markdown: &str) -> Vec<Marked> {
+    let mut found = Vec::new();
+    let mut fence: Option<&str> = None;
+    let mut paragraph: Vec<(usize, &str)> = Vec::new();
+    for (ix, line) in markdown.lines().enumerate() {
+        let trimmed = line.trim_start();
+        let opener = ["```", "~~~"]
+            .into_iter()
+            .find(|marker| trimmed.starts_with(marker));
+        match (fence, opener) {
+            (Some(open), Some(marker)) if open == marker => {
+                fence = None;
+                continue;
+            }
+            (Some(_), _) => continue,
+            (None, Some(marker)) => {
+                scan(&paragraph, &mut found);
+                paragraph.clear();
+                fence = Some(marker);
+                continue;
+            }
+            (None, None) => {}
+        }
+        if trimmed.is_empty() {
+            scan(&paragraph, &mut found);
+            paragraph.clear();
+        } else {
+            paragraph.push((ix + 1, line));
+        }
+    }
+    scan(&paragraph, &mut found);
+    found
+}
+
+fn scan(lines: &[(usize, &str)], found: &mut Vec<Marked>) {
+    let Some(&(first, _)) = lines.first() else {
+        return;
+    };
+    let text = lines
+        .iter()
+        .map(|(_, line)| *line)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let bytes = text.as_bytes();
+    let mut at = 0;
+    let mut open: Option<usize> = None;
+    while at < bytes.len() {
+        if bytes[at] == b'`' {
+            let run = bytes[at..].iter().take_while(|&&b| b == b'`').count();
+            let fence = &text[at..at + run];
+            match text[at + run..].find(fence) {
+                Some(close) => at += run + close + run,
+                None => at += run,
+            }
+            continue;
+        }
+        if bytes[at] == b'\\' {
+            at += 2;
+            continue;
+        }
+        if text[at..].starts_with("==") {
+            match open {
+                Some(start) if at > start && !text[start..at].trim().is_empty() => {
+                    found.push(Marked {
+                        text: text[start..at].to_string(),
+                        line: first + text[..start].matches('\n').count(),
+                        paragraph: text.clone(),
+                    });
+                    open = None;
+                }
+                Some(_) => open = None,
+                None => open = Some(at + 2),
+            }
+            at += 2;
+            continue;
+        }
+        at += 1;
+    }
 }
 
 fn add(args: Args<'_>) -> Outcome {

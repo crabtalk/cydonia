@@ -159,6 +159,55 @@ pub struct Appearance {
     /// Whether a line too long for a code block wraps rather than scrolling
     /// sideways inside it — `markdown::Layout::wrap_code`.
     pub wrap_code: bool,
+    /// The wash `==text==` paints in.
+    pub highlight: Highlight,
+}
+
+/// A highlight colour, by the name [`markdown::HighlightColor`] stores.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Highlight {
+    #[default]
+    Yellow,
+    Green,
+    Blue,
+    Pink,
+    Purple,
+}
+
+impl Highlight {
+    pub const ALL: [Self; 5] = [
+        Self::Yellow,
+        Self::Green,
+        Self::Blue,
+        Self::Pink,
+        Self::Purple,
+    ];
+
+    pub fn color(self) -> markdown::HighlightColor {
+        use markdown::HighlightColor;
+        match self {
+            Self::Yellow => HighlightColor::Yellow,
+            Self::Green => HighlightColor::Green,
+            Self::Blue => HighlightColor::Blue,
+            Self::Pink => HighlightColor::Pink,
+            Self::Purple => HighlightColor::Purple,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Yellow => "Yellow",
+            Self::Green => "Green",
+            Self::Blue => "Blue",
+            Self::Pink => "Pink",
+            Self::Purple => "Purple",
+        }
+    }
+
+    pub fn key(self) -> &'static str {
+        self.color().name()
+    }
 }
 
 /// When overflowing panes show their scrollbars.
@@ -226,6 +275,7 @@ impl Default for Appearance {
             // nothing scrolls a fence back to a caret typed off its right
             // edge — that is the cost, and the switch is the way back.
             wrap_code: false,
+            highlight: Highlight::default(),
         }
     }
 }
@@ -640,6 +690,7 @@ fn write_appearance(doc: &mut toml_edit::DocumentMut, appearance: &Appearance) -
     held["scrollbars"] = toml_edit::value(appearance.scrollbars.key());
     held["sidebar_scrollbars"] = toml_edit::value(appearance.sidebar_scrollbars.key());
     held["wrap_code"] = toml_edit::value(appearance.wrap_code);
+    held["highlight"] = toml_edit::value(appearance.highlight.key());
     Ok(())
 }
 

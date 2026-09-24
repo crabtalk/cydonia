@@ -317,3 +317,44 @@ fn a_run_that_names_a_stranger_deletes_none_of_it() {
     assert!(listed.contains("First"), "still there: {listed}");
     assert!(listed.contains("Second"), "still there: {listed}");
 }
+
+/// Highlights come back in order with their line, and code is not searched.
+#[test]
+fn highlights_are_listed_outside_code() {
+    let scratch = Scratch::new("highlights");
+    let server = scratch.server();
+    said(server.call(
+        "article_add",
+        json!({
+            "project": scratch.path(),
+            "title": "Marked",
+            "text": "Intro ==first== and `==not==`.\n\n```\n==fenced==\n```\n\nA ==second\nline== here.",
+        }),
+        None,
+    ));
+    let listed = server
+        .call(
+            "article_highlights",
+            json!({ "project": scratch.path(), "article": "Marked" }),
+            None,
+        )
+        .unwrap_or_else(|_| panic!("highlights failed"));
+    assert_eq!(listed.text, "line 1: first\nline 7: second line");
+    let data = listed.data.unwrap();
+    assert_eq!(
+        data["highlights"][1]["paragraph"],
+        json!("A ==second\nline== here.")
+    );
+
+    said(server.call(
+        "article_add",
+        json!({ "project": scratch.path(), "title": "Plain", "text": "a == b" }),
+        None,
+    ));
+    let none = said(server.call(
+        "article_highlights",
+        json!({ "project": scratch.path(), "article": "Plain" }),
+        None,
+    ));
+    assert!(none.ends_with("has no highlights"), "{none}");
+}

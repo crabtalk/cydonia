@@ -26,7 +26,11 @@ use bezel::{
     },
 };
 use editor::Mode;
-use std::path::{Path, PathBuf};
+use markdown::HighlightColor;
+use std::{
+    path::{Path, PathBuf},
+    sync::atomic::{AtomicUsize, Ordering},
+};
 
 actions!(cydonia_article, [LeaveTitle, TogglePlainText]);
 
@@ -91,10 +95,52 @@ pub fn marks() -> markdown::Marks {
     markdown::Marks::new().with(editor::HIGHLIGHT_MARK, "==")
 }
 
-/// How [`marks`] paint. Every highlight takes the yellow wash.
+/// The colour [`mark_paint`] washes a highlight in, as an index into
+/// [`HighlightColor::ALL`]. Global because a painter is a bare `fn`.
+static HIGHLIGHT: AtomicUsize = AtomicUsize::new(0);
+
+/// Paint every highlight in `color` from the next frame on.
+pub fn set_highlight(color: HighlightColor) {
+    let ix = HighlightColor::ALL
+        .iter()
+        .position(|c| *c == color)
+        .unwrap_or(0);
+    HIGHLIGHT.store(ix, Ordering::Relaxed);
+}
+
+/// Apple's system colour for `color`, solid, in `theme`'s appearance.
+pub fn highlight_solid(color: HighlightColor, theme: &Theme) -> bezel::gpui::Hsla {
+    let dark = theme.appearance == bezel::theme::Appearance::Dark;
+    let hex = match (color, dark) {
+        (HighlightColor::Yellow, false) => 0xFFCC00,
+        (HighlightColor::Yellow, true) => 0xFFD60A,
+        (HighlightColor::Green, false) => 0x28CD41,
+        (HighlightColor::Green, true) => 0x32D74B,
+        (HighlightColor::Blue, false) => 0x007AFF,
+        (HighlightColor::Blue, true) => 0x0A84FF,
+        (HighlightColor::Pink, false) => 0xFF2D55,
+        (HighlightColor::Pink, true) => 0xFF375F,
+        (HighlightColor::Purple, false) => 0xAF52DE,
+        (HighlightColor::Purple, true) => 0xBF5AF2,
+        _ => 0xFFD60A,
+    };
+    bezel::gpui::Hsla::from(bezel::gpui::rgb(hex))
+}
+
+/// The wash `color` paints under text: [`highlight_solid`], translucent.
+pub fn highlight_wash(color: HighlightColor, theme: &Theme) -> bezel::gpui::Hsla {
+    let alpha = match theme.appearance {
+        bezel::theme::Appearance::Dark => 0.35,
+        _ => 0.45,
+    };
+    highlight_solid(color, theme).opacity(alpha)
+}
+
+/// How [`marks`] paint: every highlight in the colour [`set_highlight`] chose.
 pub fn mark_paint(name: &str, theme: &Theme) -> Option<markdown::MarkPaint> {
+    let color = HighlightColor::ALL[HIGHLIGHT.load(Ordering::Relaxed)];
     (name == editor::HIGHLIGHT_MARK).then(|| markdown::MarkPaint {
-        background: Some(theme.highlight(bezel::theme::HighlightColor::Yellow)),
+        background: Some(highlight_wash(color, theme)),
         ..Default::default()
     })
 }
