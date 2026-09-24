@@ -3,6 +3,13 @@
     "version": "0.1.16",
     "date": "2026-09-25",
     "summary": "Cydonia runs on Windows and Linux and updates itself there, spaces can create entries in place, and the board drawer and card menu get quicker to use.",
+    "media": {
+      "poster": "pics/cydonia/v0.1.16.jpg",
+      "src": "videos/cydonia/v0.1.16.mp4",
+      "alt": "…",
+      "w": 1280,
+      "h": 900
+    },
     "new": [
       "Run Cydonia on Windows and Linux, with a Windows installer, Ctrl shortcuts and the menu bar's tree behind a button",
       "Update in place on Windows and Linux",
