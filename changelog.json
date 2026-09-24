@@ -1,5 +1,35 @@
 [
   {
+    "version": "0.1.16",
+    "date": "2026-09-25",
+    "summary": "Cydonia runs on Windows and Linux and updates itself there, spaces can create entries in place, and the board drawer and card menu get quicker to use.",
+    "new": [
+      "Run Cydonia on Windows and Linux, with a Windows installer, Ctrl shortcuts and the menu bar's tree behind a button",
+      "Update in place on Windows and Linux",
+      "Reveal files and open them with another app on Windows and Linux",
+      "Create a session, board, article or table right in a space's pane from the + in its tab bar",
+      "Move a card to another column from its ··· menu",
+      "Close the card drawer by clicking its card again or anywhere else on the board"
+    ],
+    "changed": [
+      "Open the right panel at half the width the first time, and remember the terminal panel's height across restarts",
+      "Draw the board's drop line thinner and softer",
+      "Spin a card's orb only while it is busy, and show its session otherwise",
+      "Open a long composer switch as a capped, scrolling list, and cap every menu at the window height",
+      "Follow the terminal's working directory as the shell reports it, including PowerShell's cd",
+      "Move to bezel 0.1.29, with thinner scrollbars and its highlight colours"
+    ],
+    "fixed": [
+      "Fade scrollbars once the pointer leaves the window",
+      "Keep a session started by another session in the background instead of switching to it",
+      "Keep a space open when the right panel saves its layout",
+      "Install agents into a freshly generated settings.toml",
+      "Fit tall pictures inside expanded previews",
+      "Copy the text itself from inside a code fence",
+      "Keep multi-byte text from crashing article_highlights"
+    ]
+  },
+  {
     "version": "0.1.15",
     "date": "2026-09-24",
     "summary": "Board cards open in a resizable drawer, articles gain highlights and portable image paths, and agents can see what is on screen.",
