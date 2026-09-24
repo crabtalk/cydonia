@@ -73,6 +73,18 @@ fn picture(attachment: &Attachment) -> gpui::Img {
     }
 }
 
+/// The picture's pixel size, read from its header.
+fn dimensions(attachment: &Attachment) -> Option<(u32, u32)> {
+    match attachment {
+        Attachment::Bytes(image) => image::ImageReader::new(std::io::Cursor::new(&image.bytes))
+            .with_guessed_format()
+            .ok()?
+            .into_dimensions()
+            .ok(),
+        Attachment::File(path) => image::image_dimensions(path).ok(),
+    }
+}
+
 pub fn bindings() -> Vec<KeyBinding> {
     let ctx = Some(KEY_CONTEXT);
     let mut bindings = vec![
@@ -1248,12 +1260,28 @@ impl Composer {
         let theme = Theme::of(cx).clone();
         let viewport = window.viewport_size();
         let composer = cx.entity().downgrade();
+        // Sized here rather than left to `img`, which lays out at the
+        // picture's own size and lets a tall one run past `max_h`.
+        let (width, height) = (
+            viewport.width * PREVIEW_SHARE,
+            viewport.height * PREVIEW_SHARE,
+        );
+        let (width, height) = match dimensions(attachment) {
+            Some((w, h)) if w > 0 && h > 0 => {
+                let ratio = w as f32 / h as f32;
+                match f32::from(width) / f32::from(height) > ratio {
+                    true => (height * ratio, height),
+                    false => (width, width / ratio),
+                }
+            }
+            _ => (width, height),
+        };
         let card = image_preview::frame(
             &theme,
             "composer-preview-close",
             picture(attachment)
-                .max_w(viewport.width * PREVIEW_SHARE)
-                .max_h(viewport.height * PREVIEW_SHARE)
+                .w(width)
+                .h(height)
                 .object_fit(ObjectFit::Contain)
                 .rounded(px(16.)),
             cx.listener(|composer, _, _, cx| {
