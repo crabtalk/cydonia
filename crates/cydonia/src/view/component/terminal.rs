@@ -3,8 +3,9 @@
 use crate::model::typography;
 use bezel::{
     gpui::{
-        self, App, ClipboardItem, Context, Entity, EventEmitter, FocusHandle, Focusable,
-        KeyBinding, Render, Subscription, Task, Window, div, prelude::*, px,
+        self, App, ClipboardEntry, ClipboardItem, Context, Entity, EventEmitter, ExternalPaths,
+        FocusHandle, Focusable, KeyBinding, Render, Subscription, Task, Window, div, prelude::*,
+        px,
     },
     theme::{TextStyle, Theme, Typeset},
     ui::{icons, input, tooltip::Tooltip},
@@ -25,6 +26,28 @@ use terminal::{
 };
 
 const CONTEXT: &str = "CydoniaTerminal";
+
+/// Paths as a shell reads them: each single-quoted where it needs to be,
+/// joined by spaces, with a trailing space so the next word starts clean.
+fn shell_words(paths: &ExternalPaths) -> String {
+    let mut out = String::new();
+    for path in paths.paths() {
+        let path = path.to_string_lossy();
+        let plain = !path.is_empty()
+            && path
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || "/._-+,:@%=".contains(c));
+        if plain {
+            out.push_str(&path);
+        } else {
+            out.push('\'');
+            out.push_str(&path.replace('\'', "'\\''"));
+            out.push('\'');
+        }
+        out.push(' ');
+    }
+    out
+}
 
 gpui::actions!(
     cydonia_terminal,
@@ -366,14 +389,33 @@ impl Terminal {
     }
 
     fn paste(&mut self, _: &input::Paste, _: &mut Window, cx: &mut Context<Self>) {
-        if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
-            self.emulator.scroll_to_bottom();
-            self.write(view::paste_bytes(
-                &text,
-                self.emulator.bracketed_paste_mode(),
-            ));
-            cx.notify();
+        let Some(item) = cx.read_from_clipboard() else {
+            return;
+        };
+        let files = item.entries().iter().find_map(|entry| match entry {
+            ClipboardEntry::ExternalPaths(paths) => Some(shell_words(paths)),
+            _ => None,
+        });
+        if let Some(text) = files.or_else(|| item.text()) {
+            self.type_in(&text, cx);
         }
+    }
+
+    fn drop_paths(&mut self, paths: &ExternalPaths, window: &mut Window, cx: &mut Context<Self>) {
+        window.focus(&self.focus, cx);
+        self.type_in(&shell_words(paths), cx);
+    }
+
+    fn type_in(&mut self, text: &str, cx: &mut Context<Self>) {
+        if text.is_empty() {
+            return;
+        }
+        self.emulator.scroll_to_bottom();
+        self.write(view::paste_bytes(
+            text,
+            self.emulator.bracketed_paste_mode(),
+        ));
+        cx.notify();
     }
 
     /// Which cell a window position landed on, or `None` before the grid has
@@ -494,6 +536,7 @@ impl Render for Terminal {
                     .on_action(|_: &ResetTextSize, _, cx| typography::reset_terminal_zoom(cx))
                     .on_action(cx.listener(Self::copy))
                     .on_action(cx.listener(Self::paste))
+                    .on_drop(cx.listener(Self::drop_paths))
                     .on_mouse_down(
                         gpui::MouseButton::Left,
                         cx.listener(|this, event: &gpui::MouseDownEvent, window, cx| {
