@@ -83,9 +83,9 @@
 </script>
 
 <svelte:head>
-	<title>Cydonia — a workspace for the agents you run</title>
+	<title>Cydonia — where agents keep their work</title>
 	<meta name="description" content={description} />
-	<meta property="og:title" content="Cydonia — a workspace for the agents you run" />
+	<meta property="og:title" content="Cydonia — where agents keep their work" />
 	<meta property="og:description" content={description} />
 	<meta property="og:type" content="website" />
 	{@html jsonLdHtml}
@@ -95,7 +95,7 @@
 
 <section class="hero">
 	<div class="say">
-		<h1>Agents that leave something behind.</h1>
+		<h1>Where agents keep their work.</h1>
 		<div class="hero-actions">
 			<div class="cta">
 				<a class="control button primary" href="#download">Download</a>

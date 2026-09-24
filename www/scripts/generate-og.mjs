@@ -77,8 +77,8 @@ export async function generateOg(latest) {
 	const output = await sharp(background).composite([
 		{ input: await text('Cydonia', 28, 'Semi-Bold'), left: 103, top: 47 },
 		{ input: version, left: 1140 - versionWidth, top: 53 },
-		{ input: await text('A workspace for', 56, 'Semi-Bold'), left: 60, top: 117 },
-		{ input: await text('the agents you run.', 56, 'Semi-Bold'), left: 60, top: 182 },
+		{ input: await text('Where agents keep', 56, 'Semi-Bold'), left: 60, top: 117 },
+		{ input: await text('their work.', 56, 'Semi-Bold'), left: 60, top: 182 },
 		{ input: screenshot, left: 60, top: 278 }
 	]).png().toBuffer();
 	await writeFile(at('../static/og.png'), output);

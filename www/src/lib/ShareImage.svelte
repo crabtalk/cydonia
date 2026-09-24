@@ -2,7 +2,7 @@
 	import { latest } from './changelog.js';
 	import { site } from './meta.js';
 	const url = `${site}/og.png?v=${encodeURIComponent(latest.version)}`;
-	const alt = `Cydonia — a workspace for the agents you run. Screenshot from v${latest.version}.`;
+	const alt = `Cydonia — where agents keep their work. Screenshot from v${latest.version}.`;
 </script>
 
 <svelte:head>
