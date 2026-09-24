@@ -56,6 +56,11 @@ const WARN_AT: f32 = 0.8;
 /// of it.
 const PICKER_HEIGHT: f32 = 320.;
 
+/// The most options a switch drops as a submenu. A menu panel has no height
+/// cap of its own, so a longer list — a catalog of models — opens as a flat
+/// list clamped at [`PICKER_HEIGHT`] instead.
+const SUBMENU_ROWS: usize = 12;
+
 /// The side of a picture waiting in the composer.
 const THUMB: f32 = 64.;
 const THUMB_RADIUS: f32 = 8.;
@@ -248,6 +253,11 @@ pub struct Composer {
     /// of them has its own panel down. One cursor for both devices, so a
     /// submenu can only ever hang off the row the pointer is on.
     cursor: Cursor,
+    /// The switch whose options are open as a flat list, in place of the menu
+    /// — see [`SUBMENU_ROWS`].
+    picking: Option<usize>,
+    picking_cursor: Cursor,
+    picking_scroll: ScrollHandle,
 }
 
 impl EventEmitter<ComposerEvent> for Composer {}
@@ -312,6 +322,9 @@ impl Composer {
             tools_menu: false,
             tools_cursor: Cursor::default(),
             cursor: Cursor::default(),
+            picking: None,
+            picking_cursor: Cursor::default(),
+            picking_scroll: ScrollHandle::new(),
         }
     }
 
@@ -716,7 +729,7 @@ impl Composer {
             self.tools_menu = false;
         } else if self.cursor.ascend() {
             // A submenu shuts before the menu holding it — one press, one level.
-        } else if self.menu {
+        } else if self.menu || self.picking.is_some() {
             self.close_menu();
         } else if self.command.take().is_none() {
             cx.emit(ComposerEvent::Cancel);
@@ -816,6 +829,8 @@ impl Composer {
     fn close_menu(&mut self) {
         self.menu = false;
         self.cursor.clear();
+        self.picking = None;
+        self.picking_cursor.clear();
     }
 
     /// The agent the session runs on, as the mark that opens the rest — the
@@ -848,7 +863,7 @@ impl Composer {
             })
             // Outside-click dismissal runs before the trigger's click handler.
             .capture_any_mouse_down(cx.listener(|composer, _, _, _| {
-                composer.menu_pressed = composer.menu;
+                composer.menu_pressed = composer.menu || composer.picking.is_some();
             }))
             .on_click(cx.listener(|composer, _, _, cx| {
                 composer.tools_menu = false;
@@ -873,6 +888,9 @@ impl Composer {
     /// a rule at the bottom. The meter is hung on the card rather than being a
     /// row of it, because it answers back instead of offering a choice.
     fn menu_card(&self, theme: &Theme, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if let Some(row) = self.picking {
+            return self.options_card(row, theme, cx);
+        }
         if !self.menu {
             return None;
         }
@@ -897,6 +915,73 @@ impl Composer {
         ))
     }
 
+    /// A long switch's options, one level, clamped at [`PICKER_HEIGHT`] and
+    /// scrolled — the command picker's shape.
+    fn options_card(
+        &self,
+        row: usize,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let switch = self.switches.get(row)?;
+        let items: Vec<Item> = switch
+            .options
+            .iter()
+            .map(|option| {
+                Item::action(option.name.clone())
+                    .checked(switch.current.as_ref() == Some(&option.id))
+            })
+            .collect();
+        let rows = items.clone();
+        let card = menu::card(
+            theme,
+            "composer-options",
+            &items,
+            &self.picking_cursor,
+            cx,
+            move |composer, hit, window, cx| match hit {
+                Hit::Point(path) => {
+                    if composer.picking_cursor.point_at(&rows, &path) {
+                        cx.notify();
+                    }
+                }
+                Hit::Choose(path) => {
+                    let Some(&at) = path.first() else { return };
+                    composer.close_menu();
+                    window.focus(&composer.focus_handle(cx), cx);
+                    if let Some(switch) = composer.switches.get(row)
+                        && let Some(option) = switch.options.get(at)
+                    {
+                        cx.emit(ComposerEvent::Switch(switch.id.clone(), option.id.clone()));
+                    }
+                    cx.notify();
+                }
+                Hit::Dismiss => {
+                    composer.close_menu();
+                    window.focus(&composer.focus_handle(cx), cx);
+                    cx.notify();
+                }
+            },
+        )
+        .id("composer-options-list")
+        .max_h(px(PICKER_HEIGHT))
+        .overflow_y_scroll()
+        .track_scroll(&self.picking_scroll);
+        Some(popover::anchored_menu_above(
+            "composer-options",
+            div()
+                .relative()
+                .child(card)
+                .child(scrollbars::Overlay::new(
+                    "composer-options-bar",
+                    &self.picking_scroll,
+                    bezel::gpui::Axis::Vertical,
+                ))
+                .into_any_element(),
+            None,
+        ))
+    }
+
     /// The menu's rows: whatever the live session offers, one submenu each.
     /// Each switch carries the value it is on in its own name — the reason to
     /// open one of these is as often to read what it is set to as to change it,
@@ -912,6 +997,10 @@ impl Composer {
         self.switches
             .iter()
             .map(|switch| {
+                if switch.options.len() > SUBMENU_ROWS {
+                    return Item::action(set_to(&switch.name, self.value_of(switch)))
+                        .with_keystroke("›");
+                }
                 Item::submenu(
                     set_to(&switch.name, self.value_of(switch)),
                     switch
@@ -938,6 +1027,21 @@ impl Composer {
                 }
             }
             Hit::Choose(path) => {
+                if let [row] = path[..] {
+                    // A long switch: its options open as their own list.
+                    self.close_menu();
+                    self.picking = Some(row);
+                    if let Some(at) = self.switches.get(row).and_then(|switch| {
+                        switch
+                            .options
+                            .iter()
+                            .position(|option| switch.current.as_ref() == Some(&option.id))
+                    }) {
+                        self.picking_scroll.scroll_to_item(at);
+                    }
+                    cx.notify();
+                    return;
+                }
                 let [row, at] = path[..] else { return };
                 // Picking anything shuts the menu: every choice here is the
                 // session's, and none of them is made twice in a row.
