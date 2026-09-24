@@ -18,7 +18,6 @@ use std::{
 };
 
 const LIMIT: u64 = 256 * 1024;
-#[cfg(target_os = "macos")]
 pub(crate) mod external;
 /// How long a keystroke waits before the file is parsed again. Every edit
 /// re-parses the whole file — the field holds text, not a syntax tree — so a
@@ -112,11 +111,8 @@ pub struct FileView {
     ready: bool,
     loading: bool,
     pub error: Option<String>,
-    #[cfg(target_os = "macos")]
     opening_external: bool,
-    #[cfg(target_os = "macos")]
     external_menu: external::Menu,
-    #[cfg(target_os = "macos")]
     external_error: Option<String>,
     changed: bool,
     preview: bool,
@@ -215,11 +211,8 @@ impl FileView {
             ready: false,
             loading: true,
             error: None,
-            #[cfg(target_os = "macos")]
             opening_external: false,
-            #[cfg(target_os = "macos")]
             external_menu: external::Menu::default(),
-            #[cfg(target_os = "macos")]
             external_error: None,
             changed: false,
             preview: true,
@@ -555,12 +548,10 @@ impl FileView {
                         })),
                 )
             });
-        #[cfg(target_os = "macos")]
         let bar = bar.child(self.external_button(cx));
         bar.into_any_element()
     }
 
-    #[cfg(target_os = "macos")]
     fn open_external(&mut self, target: external::Target, cx: &mut Context<Self>) {
         let opens_file = matches!(
             target,
@@ -770,7 +761,6 @@ impl Render for FileView {
             .extension()
             .is_some_and(|ext| ext == "md" || ext == "markdown");
         let notice = self.error.clone().or_else(|| self.changed.then(|| "File changed on disk. Reload discards your edits; overwrite saves your version.".into()));
-        #[cfg(target_os = "macos")]
         let external_notice = self.external_error.clone().map(|error| {
             div()
                 .p(px(8.))
@@ -789,8 +779,6 @@ impl Render for FileView {
                 )
                 .into_any_element()
         });
-        #[cfg(not(target_os = "macos"))]
-        let external_notice: Option<gpui::AnyElement> = None;
         div()
             .size_full()
             .flex()

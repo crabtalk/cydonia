@@ -1,9 +1,11 @@
 use super::*;
 use anyhow::{Context as _, Result, bail};
+#[cfg(target_os = "macos")]
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use bezel::ui::{icons, popover, tooltip::Tooltip};
 use std::{process::Command, sync::Arc};
 
+#[cfg(target_os = "macos")]
 const APPLICATIONS: &str = r#"
 ObjC.import('AppKit');
 function run(argv) {
@@ -47,6 +49,8 @@ function run(argv) {
 pub(super) struct Application {
     name: String,
     path: PathBuf,
+    /// `default` or `terminal` for the entries that stand for a way of
+    /// opening rather than an application; empty for an application.
     #[serde(default)]
     kind: String,
     #[serde(default)]
@@ -92,6 +96,7 @@ pub(super) enum Target {
     Folder,
 }
 
+#[cfg(target_os = "macos")]
 fn open_command(file: &Path, target: &Target) -> Command {
     let mut command = Command::new("/usr/bin/open");
     let path = match target {
@@ -113,6 +118,53 @@ fn open_command(file: &Path, target: &Target) -> Command {
     command
 }
 
+/// Off macOS there is no terminal to name: [`Target::Terminal`] opens the
+/// file's folder the way [`Target::Default`] opens a file.
+#[cfg(not(target_os = "macos"))]
+fn open_command(file: &Path, target: &Target) -> Command {
+    let folder = file.parent().unwrap_or(file);
+    #[cfg_attr(not(windows), allow(unused_mut))]
+    let mut command = match target {
+        Target::Application(app) => {
+            let mut command = Command::new(app);
+            command.arg(file);
+            command
+        }
+        #[cfg(windows)]
+        Target::Folder => {
+            use std::os::windows::process::CommandExt as _;
+            let mut command = Command::new("explorer.exe");
+            // Explorer reads `/select,` and the path as one argument, and
+            // takes the path in quotes of its own.
+            command.raw_arg(format!("/select,\"{}\"", file.display()));
+            command
+        }
+        #[cfg(not(windows))]
+        Target::Folder => opener(folder),
+        Target::Default => opener(file),
+        Target::Terminal => opener(folder),
+    };
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt as _;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    command
+}
+
+/// The desktop's own way to open `path` with whatever it is associated with.
+#[cfg(not(target_os = "macos"))]
+fn opener(path: &Path) -> Command {
+    let mut command = Command::new(if cfg!(windows) {
+        "explorer.exe"
+    } else {
+        "xdg-open"
+    });
+    command.arg(path);
+    command
+}
+
 fn output(result: std::process::Output) -> Result<String> {
     if !result.status.success() {
         bail!("{}", String::from_utf8_lossy(&result.stderr).trim());
@@ -122,6 +174,7 @@ fn output(result: std::process::Output) -> Result<String> {
         .to_owned())
 }
 
+#[cfg(target_os = "macos")]
 fn applications(file: &Path) -> Result<Vec<Application>> {
     let json = output(
         Command::new("/usr/bin/osascript")
@@ -150,7 +203,40 @@ fn applications(file: &Path) -> Result<Vec<Application>> {
     Ok(apps)
 }
 
-/// Show a path in Finder: a directory opened, anything else selected in the
+/// Editors found on `PATH`, then the desktop's default for the file. No
+/// application icons off macOS.
+#[cfg(not(target_os = "macos"))]
+fn applications(_: &Path) -> Result<Vec<Application>> {
+    const EDITORS: [(&str, &str); 4] = [
+        ("Zed", "zed"),
+        ("Visual Studio Code", "code"),
+        ("Cursor", "cursor"),
+        ("Sublime Text", "subl"),
+    ];
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let pathext = std::env::var("PATHEXT").unwrap_or_default();
+    let find = |program: &str| match cfg!(windows) {
+        true => crate::agent::path::resolve(program, &path, &pathext, |p| p.is_file()),
+        false => std::env::split_paths(&path)
+            .map(|dir| dir.join(program))
+            .find(|candidate| candidate.is_file()),
+    };
+    let application = |name: &str, path: PathBuf, kind: &str| Application {
+        name: name.to_owned(),
+        path,
+        kind: kind.to_owned(),
+        icon: String::new(),
+        image: None,
+    };
+    let mut apps: Vec<Application> = EDITORS
+        .into_iter()
+        .filter_map(|(name, program)| Some(application(name, find(program)?, "")))
+        .collect();
+    apps.push(application("Default app", PathBuf::new(), "default"));
+    Ok(apps)
+}
+
+/// Show a path in the file manager: a directory opened, anything else selected in the
 /// folder it is in.
 pub(crate) fn show(path: &Path) -> Result<()> {
     let target = match path.is_dir() {
@@ -161,6 +247,13 @@ pub(crate) fn show(path: &Path) -> Result<()> {
 }
 
 pub(super) fn open(file: &Path, target: &Target) -> Result<()> {
+    // Explorer exits 1 when it has done what it was asked.
+    if cfg!(windows) {
+        open_command(file, target)
+            .spawn()
+            .context("Could not open the selected destination")?;
+        return Ok(());
+    }
     output(
         open_command(file, target)
             .output()
@@ -284,6 +377,6 @@ impl FileView {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 #[path = "../../../../tests/unit/external_apps.rs"]
 mod tests;

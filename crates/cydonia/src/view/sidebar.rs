@@ -1469,10 +1469,15 @@ impl Cydonia {
                 by("Manual", state::Sort::Manual),
             ],
         )];
-        // Finder is the one file manager this knows how to ask.
-        #[cfg(target_os = "macos")]
         rows.push(menu::row(
-            Item::action("Reveal in Finder").with_icon(icons::files::FolderOpen),
+            Item::action(if cfg!(target_os = "macos") {
+                "Reveal in Finder"
+            } else if cfg!(windows) {
+                "Show in Explorer"
+            } else {
+                "Open in File Manager"
+            })
+            .with_icon(icons::files::FolderOpen),
             move |this, _, cx| this.reveal_project(ix, cx),
         ));
         rows.push(menu::row(
@@ -1487,10 +1492,9 @@ impl Cydonia {
         ))
     }
 
-    /// Show the project's directory in Finder. Best effort and off the main
-    /// thread: `open` is a process, and a Finder that will not come to the
-    /// front is not worth blocking a frame over.
-    #[cfg(target_os = "macos")]
+    /// Show the project's directory in the file manager. Best effort and off
+    /// the main thread: opening it is a process, and a file manager that will
+    /// not come to the front is not worth blocking a frame over.
     fn reveal_project(&mut self, ix: usize, cx: &mut Context<Self>) {
         let Some(path) = self
             .workspace
