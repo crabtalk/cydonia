@@ -70,7 +70,7 @@ impl Workspace {
     pub fn retain_active_session(&mut self, id: u64, cx: &mut Context<Self>) -> Option<String> {
         let ix = self.project_of(id)?;
         let record = self.retain_session(id, cx)?;
-        self.remember(ix, state::Kind::Session, record.clone(), cx);
+        self.note_landing(ix, state::Kind::Session, record.clone(), cx);
         cx.notify();
         Some(record)
     }
