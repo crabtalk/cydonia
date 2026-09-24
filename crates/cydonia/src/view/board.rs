@@ -86,10 +86,8 @@ const BOARD_INSET: f32 = 16.;
 /// it.
 const LANE_CHANNEL: Pixels = px(18.);
 
-/// The list's metrics: the heading over a group, a card's row, the line the
-/// row shows of the card, and the column its handle is set in. A row is one
-/// line tall by construction — see [`first_line`].
-const LIST_HEADING_HEIGHT: f32 = 30.;
+/// Fixed group and row heights keep list virtualization aligned.
+const LIST_HEADING_HEIGHT: f32 = 36.;
 const LIST_ROW_HEIGHT: f32 = 36.;
 /// Fixed-height rows need only two neighbours beyond each viewport edge.
 fn visible_list_rows(top: Pixels, height: Pixels, count: usize) -> std::ops::Range<usize> {
@@ -101,7 +99,6 @@ fn visible_list_rows(top: Pixels, height: Pixels, count: usize) -> std::ops::Ran
     start.saturating_sub(2).min(count)..end.saturating_add(2).min(count)
 }
 
-const LIST_LINE: f32 = 22.;
 const LIST_HANDLE_WIDTH: f32 = 64.;
 
 /// What the list leaves clear at its foot for the pill floating there — see
@@ -262,18 +259,6 @@ fn card_preview(
             ),
         )
         .into_any_element()
-}
-
-/// The card's first line, which is what a row of the list shows of it.
-///
-/// A card can be a document, and a row is one line tall: what a row leaves out
-/// is read by opening the card, the way a lane cuts one off at
-/// [`CARD_MAX_HEIGHT`].
-fn first_line(text: &str) -> &str {
-    text.lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty())
-        .unwrap_or("")
 }
 
 /// What the field is attached to. By id, never by position: a re-read
@@ -498,6 +483,7 @@ pub struct Docs(RefCell<HashMap<String, CachedDoc>>);
 struct CachedDoc {
     full: Rc<markdown::Doc>,
     preview: Option<(Rc<markdown::Doc>, bool)>,
+    title: Option<SharedString>,
 }
 
 impl Docs {
@@ -511,8 +497,19 @@ impl Docs {
             .or_insert_with(|| CachedDoc {
                 full: Rc::new(markdown::parse(text)),
                 preview: None,
+                title: None,
             })
             .full
+            .clone()
+    }
+
+    fn title(&self, text: &str) -> SharedString {
+        self.of(text);
+        let mut docs = self.0.borrow_mut();
+        let cached = docs.get_mut(text).unwrap();
+        cached
+            .title
+            .get_or_insert_with(|| list_title(&cached.full).into())
             .clone()
     }
 
@@ -529,6 +526,59 @@ impl Docs {
         self.of(text);
         self.preview(text)
     }
+}
+
+fn list_title(doc: &markdown::Doc) -> String {
+    use markdown::BlockKind;
+    for block in &doc.blocks {
+        let candidate = match &block.kind {
+            BlockKind::Image { alt, .. } => {
+                if alt.text.trim().is_empty() {
+                    "Image".into()
+                } else {
+                    alt.text.clone()
+                }
+            }
+            BlockKind::Bookmark { url, .. } => url.clone(),
+            BlockKind::Table { header, rows, .. } => header
+                .iter()
+                .chain(rows.iter().flatten())
+                .find(|cell| !cell.text.trim().is_empty())
+                .map(|cell| cell.text.clone())
+                .unwrap_or_else(|| "Table".into()),
+            BlockKind::Rule => continue,
+            BlockKind::Code { code, .. } => code
+                .text
+                .lines()
+                .find(|line| !line.trim().is_empty())
+                .unwrap_or("Code")
+                .to_owned(),
+            _ => block
+                .text_at(markdown::Part::Body)
+                .map(|text| text.text.clone())
+                .unwrap_or_default(),
+        };
+        let mut title = String::new();
+        let mut length = 0;
+        for word in candidate.split_whitespace() {
+            if !title.is_empty() {
+                title.push(' ');
+                length += 1;
+            }
+            for ch in word.chars() {
+                if length >= 512 {
+                    title.push('…');
+                    return title;
+                }
+                title.push(ch);
+                length += 1;
+            }
+        }
+        if !title.is_empty() {
+            return title;
+        }
+    }
+    "Untitled card".into()
 }
 
 /// Bound layout and syntax highlighting for the 140px lane preview only.
@@ -1866,11 +1916,7 @@ impl Cydonia {
             .child(body)
             .children(self.view_pill(&id, view, cx))
             .children(self.find_bar(on, cx))
-            .children(
-                (view == View::Lanes)
-                    .then(|| self.card_drawer(project, board_at, on, window, cx))
-                    .flatten(),
-            )
+            .children(self.card_drawer(project, board_at, on, window, cx))
             .children(
                 self.drawer_for(project, board_at, on, cx)
                     .and_then(|opened| {
@@ -2214,16 +2260,27 @@ impl Cydonia {
                     // width of the last row — see [`Self::view_pill`]. The lanes
                     // need none: what the pill covers there is the empty half of
                     // `Add a column`.
-                    .pb(px(BOARD_INSET + PILL_CLEARANCE))
+                    .pb(px(BOARD_INSET + PILL_CLEARANCE)
+                        + self
+                            .drawer_for(project, board_at, on, cx)
+                            .map(|drawer| drawer.bounds.get().size.height)
+                            .unwrap_or_default())
                     .track_scroll(&scroll.down)
                     .children(groups)
                     .child(self.new_column_row(&held, cx)),
             )
-            .child(scrollbars::Overlay::new(
-                "board-list-bar",
-                &scroll.down,
-                bezel::gpui::Axis::Vertical,
-            ))
+            .child(
+                scrollbars::Overlay::new(
+                    "board-list-bar",
+                    &scroll.down,
+                    bezel::gpui::Axis::Vertical,
+                )
+                .when(
+                    self.drawer_for(project, board_at, on, cx)
+                        .is_some_and(|drawer| drawer.resize_grab.is_some()),
+                    |bar| bar.visibility(scrollbars::Visibility::Never),
+                ),
+            )
             // A group off the foot of the window is one a drag cannot reach:
             // reaching for it would mean letting go.
             .child(scroll::drift(
@@ -2300,7 +2357,7 @@ impl Cydonia {
             .unwrap_or(0..count);
         *group_top += px(LIST_HEADING_HEIGHT
             + count as f32 * LIST_ROW_HEIGHT
-            + if !folded && query.trim().is_empty() {
+            + if !folded && cards.is_empty() && query.trim().is_empty() {
                 LIST_ROW_HEIGHT
             } else {
                 0.
@@ -2411,34 +2468,36 @@ impl Cydonia {
             .children(rows)
             // Nothing to write into a narrowed lane: a card that does not
             // answer the query would be filed and vanish in one gesture.
-            .children((!folded && query.trim().is_empty()).then(|| {
-                theme
-                    .ghost(SharedString::from(format!("list-add-card-{id}")))
-                    .flex_none()
-                    .h(px(LIST_ROW_HEIGHT))
-                    .px(px(BOARD_INSET))
-                    .py(px(6.))
-                    .gap(px(6.))
-                    .child(
-                        icons::icon(icons::math::Plus)
-                            .size(px(12.))
-                            .text_color(theme.text_faint),
-                    )
-                    .child(
-                        div()
-                            .text_style(TextStyle::Callout)
-                            .text_color(theme.text_faint)
-                            .child("Add a card"),
-                    )
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.edit(
-                            pane.as_ref(),
-                            Editing::New(Place::End, written.clone()),
-                            window,
-                            cx,
-                        );
-                    }))
-            }))
+            .children(
+                (!folded && cards.is_empty() && query.trim().is_empty()).then(|| {
+                    theme
+                        .ghost(SharedString::from(format!("list-add-card-{id}")))
+                        .flex_none()
+                        .h(px(LIST_ROW_HEIGHT))
+                        .px(px(BOARD_INSET))
+                        .py(px(6.))
+                        .gap(px(6.))
+                        .child(
+                            icons::icon(icons::math::Plus)
+                                .size(px(12.))
+                                .text_color(theme.text_faint),
+                        )
+                        .child(
+                            div()
+                                .text_style(TextStyle::Callout)
+                                .text_color(theme.text_faint)
+                                .child("Add a card"),
+                        )
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.edit(
+                                pane.as_ref(),
+                                Editing::New(Place::End, written.clone()),
+                                window,
+                                cx,
+                            );
+                        }))
+                }),
+            )
             .into_any_element()
     }
 
@@ -2465,6 +2524,7 @@ impl Cydonia {
         let Tally { held, shown } = tally;
         let theme = Theme::of(cx).clone();
         let row = div()
+            .id(SharedString::from(format!("list-group-header-{id}")))
             .flex_none()
             .h(px(LIST_HEADING_HEIGHT))
             .px(px(BOARD_INSET))
@@ -2472,62 +2532,72 @@ impl Cydonia {
             .flex_row()
             .items_center()
             .gap(px(6.))
-            .bg(theme.surface_raised)
-            .border_b_1()
-            .border_color(theme.border)
             .text_style(TextStyle::Subheadline);
         if matches!(&self.renaming, Some(Renaming::Column(_, at)) if at == id) {
             return row.child(self.name_field(cx)).into_any_element();
         }
-        let named = id.to_owned();
-        let on_board = board.to_owned();
         let folding = (board.to_owned(), id.to_owned());
+        let add_on = on.cloned();
+        let add_column = id.to_owned();
+        let can_add = self.board_query(on, cx).trim().is_empty();
         row.group("list-group")
             .child(
-                theme
-                    .ghost(SharedString::from(format!("list-group-fold-{id}")))
-                    .flex_none()
-                    .p(px(2.))
+                div()
+                    .id(SharedString::from(format!("list-group-fold-{id}")))
+                    .debug_selector(|| "list-group-toggle".into())
+                    .flex_1()
+                    .min_w_0()
+                    .h_full()
+                    .flex()
+                    .items_center()
+                    .gap(px(6.))
+                    .cursor_pointer()
                     .child(
-                        icons::icon(match folded {
-                            true => icons::arrows::ChevronRight,
-                            false => icons::arrows::ChevronDown,
+                        icons::icon(if folded {
+                            icons::arrows::ChevronRight
+                        } else {
+                            icons::arrows::ChevronDown
                         })
                         .size(px(12.))
                         .text_color(theme.text_faint),
                     )
+                    .child(
+                        div()
+                            .min_w_0()
+                            .text_ellipsis()
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(theme.text_muted)
+                            .child(name),
+                    )
+                    .child(
+                        div()
+                            .flex_none()
+                            .text_color(theme.text_faint)
+                            .child(if shown == held {
+                                held.to_string()
+                            } else {
+                                format!("{shown}/{held}")
+                            }),
+                    )
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        let (board, id) = folding.clone();
                         this.workspace.update(cx, |workspace, cx| {
-                            workspace.toggle_column_collapsed(&board, &id, cx)
+                            workspace.toggle_column_collapsed(&folding.0, &folding.1, cx)
                         });
                         cx.notify();
                     })),
             )
-            .child(
-                div()
-                    .id(SharedString::from(format!("list-group-name-{id}")))
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(theme.text_muted)
-                    .cursor_pointer()
-                    .child(name)
+            .children(can_add.then(|| {
+                self.drawer_action("list-group-add", icons::math::Plus, "Add card", cx)
                     .on_click(cx.listener(move |this, _, window, cx| {
-                        this.start_rename(
-                            Renaming::Column(on_board.clone(), named.clone()),
+                        cx.stop_propagation();
+                        this.edit(
+                            add_on.as_ref(),
+                            Editing::New(Place::Top, add_column.clone()),
                             window,
                             cx,
                         );
-                    })),
-            )
-            .child(
-                div()
-                    .text_color(theme.text_faint)
-                    .child(match shown == held {
-                        true => held.to_string(),
-                        false => format!("{shown}/{held}"),
-                    }),
-            )
-            .child(div().flex_1())
+                    }))
+            }))
             .child(
                 self.menu_button(
                     SharedString::from(format!("list-group-menu-{id}")),
@@ -2550,15 +2620,12 @@ impl Cydonia {
             .into_any_element()
     }
 
-    /// One card as a row: what it is called, its first line, and what is being
-    /// done with it.
-    ///
-    /// The first line rather than the card's whole text — see [`first_line`].
+    /// A fixed-height title row; the drawer holds the full card.
     fn list_row(
         &self,
         at: Slot<'_>,
         on: Option<&Member>,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let Slot {
@@ -2600,6 +2667,14 @@ impl Cydonia {
         let (opened, run) = (id.to_owned(), id.to_owned());
         let sent = on_board.clone();
         let pane = on.cloned();
+        let member = self
+            .workspace
+            .read(cx)
+            .member_of(project, Showing::Board(board_at));
+        let selected = self
+            .drawer_for(project, board_at, on, cx)
+            .is_some_and(|opened| opened.card == id);
+
         let ahead = cx.has_active_drag()
             && self
                 .leaf_of(on)
@@ -2611,8 +2686,60 @@ impl Cydonia {
         // out of the pane still answers for the strip of window its bounds
         // landed on. The lanes clip against their lane; here there is one.
         let viewport = self.scrolls(project, board_at, cx).down;
+        let reveal = self
+            .drawer_for(project, board_at, on, cx)
+            .filter(|drawer| {
+                selected
+                    && !drawer.size.expanded
+                    && drawer.reveal.get()
+                    && drawer.bounds.get().size.height > px(0.)
+            })
+            .map(|drawer| {
+                let pending = drawer.reveal.clone();
+                let drawer_top = drawer.bounds.get().top();
+                let adjustments = drawer.adjustments.clone();
+                let scroll = viewport.clone();
+                let column = "list".to_owned();
+                gpui::canvas(
+                    move |bounds, window, _| {
+                        if !pending.replace(false) {
+                            return;
+                        }
+                        let delta = reveal_delta(
+                            bounds.top(),
+                            bounds.bottom(),
+                            scroll.bounds().top(),
+                            drawer_top - px(8.),
+                        );
+                        if delta == px(0.) {
+                            return;
+                        }
+                        let before = scroll.offset();
+                        let after = gpui::point(before.x, (before.y + delta).min(px(0.)));
+                        let mut adjustments = adjustments.borrow_mut();
+                        let adjustment =
+                            adjustments
+                                .entry(column.clone())
+                                .or_insert_with(|| LaneAdjustment {
+                                    scroll: scroll.clone(),
+                                    before,
+                                    after: before,
+                                });
+                        if adjustment.after != before {
+                            adjustment.before = before;
+                        }
+                        adjustment.after = after;
+                        scroll.set_offset(after);
+                        window.on_next_frame(|window, _| window.refresh());
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .size_full()
+            });
         div()
             .id(SharedString::from(format!("list-row-{id}")))
+            .debug_selector(|| "board-list-row".into())
             .group("list-row")
             .flex_none()
             .relative()
@@ -2623,9 +2750,17 @@ impl Cydonia {
             .items_center()
             .gap(px(8.))
             .border_b_1()
-            .border_color(theme.border)
+            .border_color(theme.border.opacity(0.3))
+            .when(selected, |el| el.bg(theme.accent.opacity(0.08)))
             .cursor_pointer()
-            .hover(|el| el.bg(theme.element_hover))
+            .hover(|el| {
+                el.bg(if selected {
+                    theme.accent.opacity(0.12)
+                } else {
+                    theme.element_hover
+                })
+            })
+            .children(reveal)
             // What to call this card out loud, in the mono face for the reason
             // the delete dialog sets a path there. Ahead of the text and at a
             // width of its own, so the lines under one another start together.
@@ -2642,12 +2777,10 @@ impl Cydonia {
                 div()
                     .flex_1()
                     .min_w_0()
-                    .h(px(LIST_LINE))
-                    .overflow_hidden()
-                    .child({
-                        let (doc, _) = self.card_docs.preview(first_line(&text));
-                        card_body(&doc, window, cx)
-                    }),
+                    .text_style(TextStyle::Callout)
+                    .text_color(theme.text)
+                    .text_ellipsis()
+                    .child(self.card_docs.title(&text)),
             )
             .children(resting(status).map(|status| status_chip(status, &theme)))
             // On show, not behind a hover — a card's run is what you look at
@@ -2658,6 +2791,7 @@ impl Cydonia {
                 div()
                     .invisible()
                     .group_hover("list-row", |el| el.visible())
+                    .when(selected, |el| el.visible())
                     .flex()
                     .flex_row()
                     .items_center()
@@ -2729,7 +2863,9 @@ impl Cydonia {
                 }
             }))
             .on_click(cx.listener(move |this, _, window, cx| {
-                this.edit(pane.as_ref(), Editing::Card(opened.clone()), window, cx);
+                if let Some(member) = &member {
+                    this.open_card(pane.as_ref(), member.clone(), opened.clone(), window, cx);
+                }
             }))
             .children(ahead.then(|| self.landing_mark(Mark::Top, cx)))
             .children(behind.then(|| self.landing_mark(Mark::Foot, cx)))
@@ -3099,6 +3235,7 @@ impl Cydonia {
         // written from the head of one belongs at the head of it.
         let written = id.to_owned();
         let pane = pane.cloned();
+        let rename_pane = pane.clone();
         let on_board = board.to_owned();
         let mut rows = vec![menu::row(
             Item::action("Add card").with_icon(icons::math::Plus),
@@ -3111,6 +3248,21 @@ impl Cydonia {
                 )
             },
         )];
+        let renamed = id.to_owned();
+        let rename_board = board.to_owned();
+        rows.push(menu::row(
+            Item::action("Rename").with_icon(icons::design::Pencil),
+            move |this, window, cx| {
+                if let Some(pane) = &rename_pane {
+                    this.focus_pane(pane, window, cx);
+                }
+                this.start_rename(
+                    Renaming::Column(rename_board.clone(), renamed.clone()),
+                    window,
+                    cx,
+                );
+            },
+        ));
         // Then the two that write a lane either side of this one, so a board
         // is not only ever grown at its right-hand end.
         let beside = [(false, back), (true, on)]

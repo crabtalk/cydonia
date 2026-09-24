@@ -627,7 +627,8 @@ fn list_scroll_builds_visible_rows_and_keeps_its_extent(cx: &mut TestAppContext)
             .card_docs
             .0
             .borrow()
-            .contains_key("List row 100")
+            .keys()
+            .any(|text| text.starts_with("List row 100\n"))
     }));
     let parsed = cx.update(|_, cx| root.read(cx).card_docs.0.borrow().len());
     assert!(parsed < 50, "built {parsed} documents after jumping");
@@ -700,7 +701,7 @@ fn list_window_tracks_group_folding_and_search(cx: &mut TestAppContext) {
         })
     });
     settle(&mut cx);
-    assert_eq!(scroll.max_offset().y, max - px(63. * LIST_ROW_HEIGHT));
+    assert_eq!(scroll.max_offset().y, max - px(62. * LIST_ROW_HEIGHT));
     assert!(cx.update(|_, cx| {
         root.read(cx)
             .card_docs
@@ -726,4 +727,104 @@ fn list_window_tracks_group_folding_and_search(cx: &mut TestAppContext) {
             .borrow()
             .contains_key("Hidden row 42")
     }));
+}
+
+#[gpui::test]
+fn list_rows_open_drawer_and_group_controls_stay_independent(cx: &mut TestAppContext) {
+    let (_scratch, root, _, cards, mut cx) = open("list-controls", cx);
+    cx.update(|window, cx| {
+        root.update(cx, |root, cx| {
+            root.close_card_preview(None, window, cx);
+            root.workspace.update(cx, |workspace, _| {
+                workspace.projects[0].boards[0].view = View::List
+            });
+            cx.notify();
+        })
+    });
+    settle(&mut cx);
+    let first = point(px(180.), px(LIST_HEADING_HEIGHT + LIST_ROW_HEIGHT / 2.));
+    cx.simulate_mouse_down(first, MouseButton::Left, Modifiers::default());
+    cx.simulate_mouse_up(first, MouseButton::Left, Modifiers::default());
+    settle(&mut cx);
+    assert!(cx.debug_bounds("card-drawer").is_some());
+    assert!(cx.update(|_, cx| root.read(cx).leaf().editing.is_none()));
+    assert_eq!(
+        cx.update(|_, cx| root
+            .read(cx)
+            .leaf()
+            .open_card
+            .as_ref()
+            .unwrap()
+            .card
+            .clone()),
+        cards[0]
+    );
+    click("card-drawer-edit", &mut cx);
+    cx.update(|_, cx| {
+        root.read(cx)
+            .draft_for(None)
+            .unwrap()
+            .field
+            .clone()
+            .update(cx, |field, cx| field.set_content("List draft", cx))
+    });
+    click("card-drawer-close", &mut cx);
+    cx.simulate_mouse_down(first, MouseButton::Left, Modifiers::default());
+    cx.simulate_mouse_up(first, MouseButton::Left, Modifiers::default());
+    settle(&mut cx);
+    assert_eq!(
+        cx.update(|_, cx| root
+            .read(cx)
+            .draft_for(None)
+            .unwrap()
+            .field
+            .read(cx)
+            .content()
+            .to_string()),
+        "List draft"
+    );
+    click("card-drawer-close", &mut cx);
+    click("list-group-toggle", &mut cx);
+    assert!(cx.update(|_, cx| {
+        root.read(cx).workspace.read(cx).projects[0].boards[0].columns[0].collapsed
+    }));
+    assert!(cx.update(|_, cx| root.read(cx).renaming.is_none()));
+    click("list-group-add", &mut cx);
+    assert!(cx.update(|_, cx| matches!(
+        root.read(cx).leaf().editing,
+        Some(Editing::New(Place::Top, _))
+    )));
+}
+
+#[gpui::test]
+fn list_drawer_reveals_lower_rows_and_restores_scroll(cx: &mut TestAppContext) {
+    let (_scratch, root, member, _, mut cx) = open("list-reveal", cx);
+    cx.update(|window, cx| {
+        root.update(cx, |root, cx| {
+            root.close_card_preview(None, window, cx);
+            root.workspace.update(cx, |workspace, _| {
+                let board = &mut workspace.projects[0].boards[0];
+                board.view = View::List;
+                let column = board.columns[0].id.clone();
+                for i in 0..30 {
+                    board.add_card(&column, format!("Task {i}"));
+                }
+            });
+            cx.notify();
+        })
+    });
+    settle(&mut cx);
+    let scroll = cx.update(|_, cx| root.read(cx).boards.of(&member.id).down.clone());
+    let before = scroll.offset();
+    let position = point(px(180.), px(530.));
+    cx.simulate_mouse_down(position, MouseButton::Left, Modifiers::default());
+    cx.simulate_mouse_up(position, MouseButton::Left, Modifiers::default());
+    settle(&mut cx);
+    assert!(cx.debug_bounds("card-drawer").is_some());
+    assert!(
+        scroll.offset().y < before.y,
+        "selected row should be revealed above the drawer"
+    );
+    click("card-drawer-close", &mut cx);
+    assert_eq!(scroll.offset(), before);
 }
