@@ -1,11 +1,8 @@
 name: ci
 
-# Branches reach `main` through a pull request, so `pull_request` covers them —
-# pushing to a branch that has one open would otherwise run everything twice.
-# `push` is left for `main` itself, which is merged into rather than pushed.
+# Pull requests only. A merge to `main` runs `nightly.yml`, which builds every
+# platform in release.
 on:
-  push:
-    branches: [main]
   pull_request:
 
 # A second push to the same branch cancels the first: only the tip matters.
