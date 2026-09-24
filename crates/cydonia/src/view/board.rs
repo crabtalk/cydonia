@@ -639,6 +639,7 @@ impl Marks {
 /// sidebar's session row and the transcript already use, because a card
 /// reporting a run is reporting the same run they are.
 struct Working {
+    session: Option<(u64, String)>,
     state: bezel::agent::orbs::OrbState,
     since: std::time::Duration,
     frame: Rc<RefCell<Frame>>,
@@ -1137,22 +1138,44 @@ impl Cydonia {
     ///
     /// Nothing for a card at rest.
     fn card_working(&self, card: &Card, chat: Option<&ChatSession>) -> Option<Working> {
+        let session = chat.map(|chat| (chat.id, chat.label()));
         match chat.filter(|chat| chat.streaming) {
             Some(chat) => Some(Working {
+                session,
                 state: transcript::orb_of(chat),
                 since: chat.elapsed().unwrap_or_default(),
                 frame: chat.transcript.mark.clone(),
             }),
-            // Tagged busy by an agent with no session in this window — see
-            // `board_set_card_status`. Nothing was written down when the tag
-            // went on, so it runs off the window's own clock: the animation is
-            // periodic, so where in the cycle it starts says nothing.
+            // Busy without a streaming session uses the board’s animation clock.
             None => (card.status == Some(Status::Busy)).then(|| Working {
+                session,
                 state: transcript::orb_for(&card.text),
                 since: SINCE.elapsed(),
                 frame: self.card_marks.of(&card.id),
             }),
         }
+    }
+
+    fn card_orb(&self, at: Working, cx: &mut Context<Self>) -> AnyElement {
+        let orb = transcript::orb(at.state, at.since, &at.frame, cx);
+        let session = at
+            .session
+            .filter(|_| self.workspace.read(cx).settings.features.sessions);
+        div()
+            .id("card-busy-orb")
+            .debug_selector(|| "card-busy-orb".into())
+            .flex_none()
+            .child(orb)
+            .when_some(session, |el, (session, title)| {
+                el.cursor_pointer()
+                    .tooltip(move |window, cx| Tooltip::text(title.clone(), window, cx))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        cx.stop_propagation();
+                        this.select_session(session, window, cx);
+                        this.show_pane(Pane::Chat, cx);
+                    }))
+            })
+            .into_any_element()
     }
 
     /// Where the board at `board_at` sits — see [`Scrolls`].
@@ -1706,9 +1729,7 @@ impl Cydonia {
                         .text_color(theme.text_muted)
                         .child(div().font_family(theme.font_mono.clone()).child(handle))
                         .children(resting(status).map(|status| status_chip(status, &theme)))
-                        .children(
-                            working.map(|at| transcript::orb(at.state, at.since, &at.frame, cx)),
-                        )
+                        .children(working.map(|at| self.card_orb(at, cx)))
                         .when(dirty, |el| el.child(div().child("Draft")))
                         .child(div().flex_1())
                         .when(draft.is_some(), |el| {
@@ -2786,7 +2807,7 @@ impl Cydonia {
             // On show, not behind a hover — a card's run is what you look at
             // the board to see, and hiding it would mean hunting for the one
             // that is working.
-            .children(working.map(|at| transcript::orb(at.state, at.since, &at.frame, cx)))
+            .children(working.map(|at| self.card_orb(at, cx)))
             .child(
                 div()
                     .invisible()
@@ -2796,14 +2817,6 @@ impl Cydonia {
                     .flex_row()
                     .items_center()
                     .gap(px(2.))
-                    .children(sessions.then_some(live).flatten().map(|session| {
-                        self.card_action("list-open", id, icons::social::MessageCircle, cx)
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                cx.stop_propagation();
-                                this.select_session(session, window, cx);
-                                this.show_pane(Pane::Chat, cx);
-                            }))
-                    }))
                     // Handing a card to an agent is refused once the card says
                     // something about itself: a tag is somebody already holding
                     // it, and a second agent at one task is work done twice.
@@ -3551,7 +3564,7 @@ impl Cydonia {
                     // two belong in one slot. On show rather than behind the
                     // hover the actions sit behind — a card's run is what you
                     // look at the board to see.
-                    .children(working.map(|at| transcript::orb(at.state, at.since, &at.frame, cx)))
+                    .children(working.map(|at| self.card_orb(at, cx)))
                     .child(
                         div()
                             .invisible()
@@ -3564,14 +3577,6 @@ impl Cydonia {
                             // so the control goes with them: with sessions off
                             // the play would start nothing, and the card is
                             // still a card without it.
-                            .children(sessions.then_some(live).flatten().map(|session| {
-                                self.card_action("open", id, icons::social::MessageCircle, cx)
-                                    .on_click(cx.listener(move |this, _, window, cx| {
-                                        cx.stop_propagation();
-                                        this.select_session(session, window, cx);
-                                        this.show_pane(Pane::Chat, cx);
-                                    }))
-                            }))
                             // Handing a card to an agent is refused once the card
                             // says something about itself: a tag is somebody
                             // already holding it, and a second agent at one task is

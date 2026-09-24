@@ -334,6 +334,7 @@ fn a_dispatched_card_keeps_its_session() {
 
     let body = toml::to_string_pretty(&board).unwrap();
     let back: Board = toml::from_str(&body).unwrap();
+    assert_eq!(back.card(&card).unwrap().status, Some(Status::Busy));
     assert_eq!(
         back.card(&card).unwrap().session.as_deref(),
         Some("1757000009999")

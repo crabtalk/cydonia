@@ -828,3 +828,50 @@ fn list_drawer_reveals_lower_rows_and_restores_scroll(cx: &mut TestAppContext) {
     click("card-drawer-close", &mut cx);
     assert_eq!(scroll.offset(), before);
 }
+
+#[gpui::test]
+fn busy_orb_opens_its_session_without_opening_the_card(cx: &mut TestAppContext) {
+    let (_scratch, root, _, cards, mut cx) = open("busy-orb", cx);
+    cx.update(|window, cx| {
+        root.update(cx, |root, cx| {
+            root.close_card_preview(None, window, cx);
+            root.workspace.update(cx, |workspace, _| {
+                workspace.settings.features.sessions = true;
+                let project = &mut workspace.projects[0];
+                let chat = ChatSession::restore(
+                    77,
+                    project.path.clone(),
+                    crate::model::settings::Agent {
+                        name: "test".into(),
+                        id: None,
+                        command: String::new(),
+                        args: Vec::new(),
+                        env: Default::default(),
+                    },
+                    serde_json::from_value(serde_json::json!({
+                        "id": "orb-session", "agent": "test", "title": "Polish boards",
+                        "name": null, "updated": 1, "items": []
+                    }))
+                    .unwrap(),
+                );
+                project.sessions.push(chat);
+                project.boards[0].view = View::List;
+                project.boards[0].dispatch_card(&cards[0], "orb-session".into());
+            });
+            let card = &root.workspace.read(cx).projects[0].boards[0].columns[0].cards[0];
+            let working = root
+                .card_working(card, root.card_session(card, cx))
+                .unwrap();
+            assert_eq!(working.session, Some((77, "Polish boards".into())));
+            cx.notify();
+        });
+    });
+    settle(&mut cx);
+    click("card-busy-orb", &mut cx);
+    cx.update(|_, cx| {
+        let root = root.read(cx);
+        assert_eq!(root.workspace.read(cx).projects[0].active, Some(77));
+        assert!(matches!(root.leaf().pane, Pane::Chat));
+        assert!(root.leaf().open_card.is_none());
+    });
+}

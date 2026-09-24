@@ -12,6 +12,7 @@
       "Simplify lane cards, remove the nested editor border, and mark clipped previews with …",
       "Give list rows readable single-line titles and quieter styling, open them in the shared drawer, and simplify group controls",
       "Skip offscreen lanes and list rows, cache bounded card previews, and avoid unnecessary redraws while scrolling",
+      "Replace card chat buttons with a clickable busy orb that shows the working session on hover",
       "Move to bezel 0.1.26"
     ],
     "fixed": [

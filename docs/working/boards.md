@@ -34,7 +34,9 @@ session of its own with the card's text as the first prompt. See
 
 A card carries `busy`, `blocked` or `done`, and an orb while its run is going.
 An agent sets the status through the board tools and can tag several cards in
-one write; you can set it by hand from the card.
+one write; you can set it by hand from the card. Starting work records the
+session alongside the busy status. Hover the busy orb to see the linked
+session’s name, or click it to open that session.
 
 Status is how a board says what is being worked right now — see
 [Running several agents](./../agents/orchestration.md) for what that buys with

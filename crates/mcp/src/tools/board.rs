@@ -220,7 +220,7 @@ pub static TOOLS: [Tool; 15] = [
     },
     Tool {
         name: "board_set_card_status",
-        description: "Say how the work on one card or several is going — tag them busy while working on them, and clear the tag when the turn is over. This is not where a card sits: use board_move_card for that.",
+        description: "Say how the work on one card or several is going — tag them busy while working on them, and clear the tag when the turn is over. Busy also links the calling session when available. This is not where a card sits: use board_move_card for that.",
         schema: |bound| {
             let mut schema = fields(bound, &[PROJECT, CARDS, STATUS]);
             schema["properties"][STATUS.name]["enum"] = json!(statuses());
@@ -548,6 +548,11 @@ fn set_card_status(args: Args<'_>) -> Outcome {
         for id in ids {
             let handle = named(&board, &id);
             board.set_card_status(&id, status);
+            if status == Some(artifact::board::Status::Busy)
+                && let Some(session) = args.session()
+            {
+                board.dispatch_card(&id, session.to_owned());
+            }
             tagged.push(json!({ "id": id, "handle": handle, "status": status }));
             handles.push(handle);
         }
