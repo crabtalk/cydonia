@@ -349,7 +349,7 @@ fn scan(lines: &[(usize, &str)], found: &mut Vec<Marked>) {
             at += 2;
             continue;
         }
-        if text[at..].starts_with("==") {
+        if bytes[at..].starts_with(b"==") {
             match open {
                 Some(start) if at > start && !text[start..at].trim().is_empty() => {
                     found.push(Marked {
