@@ -1,0 +1,140 @@
+name: nightly
+
+# Every merge to `main` rebuilds the `nightly` pre-release: the tag is moved to
+# the merged commit and its files replaced. `releases/latest` skips
+# pre-releases, so `install.sh` never picks this up.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: nightly
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  ICON_URL: https://cdn.crabtalk.ai/logos/cydonia.png
+
+jobs:
+  build:
+    name: build (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: linux-x86_64, os: ubuntu-22.04 }
+          - { name: linux-aarch64, os: ubuntu-22.04-arm }
+          - { name: windows-x86_64, os: windows-latest }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      # The logo is not in git. The Linux tarball and the Windows exe both
+      # carry it.
+      - shell: bash
+        run: mkdir -p assets && curl -fsSL "$ICON_URL" -o assets/icon.png
+      # ImageMagick resizes the icons in `make tarball`.
+      - if: runner.os == 'Linux'
+        run: |
+          sudo .github/scripts/linux-deps
+          sudo apt-get install -y --no-install-recommends imagemagick
+      - if: runner.os == 'Linux'
+        run: make tarball
+      - if: runner.os == 'Windows'
+        run: |
+          cargo build --release --bin cydonia
+          New-Item -ItemType Directory -Force target/bundle | Out-Null
+          Compress-Archive -Path target/release/cydonia.exe -DestinationPath target/bundle/cydonia-windows-x86_64.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: |
+            target/bundle/*.tar.gz
+            target/bundle/*.zip
+          if-no-files-found: error
+
+  # Signed and notarized through `make release`. The secrets are described in
+  # the cydonia article "macOS signing secrets for the nightly build".
+  # TODO: off until the signing secrets are in the repository (PLAT-7). Turn
+  # it on together with `macos` in `publish.needs`.
+  macos:
+    name: build (macos-arm64)
+    if: false
+    runs-on: macos-14
+    env:
+      KEYCHAIN: ${{ runner.temp }}/signing.keychain-db
+      KEYCHAIN_PASSWORD: ${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: import the signing certificate
+        env:
+          APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          echo "$APPLE_CERTIFICATE_P12" | base64 --decode > "$RUNNER_TEMP/signing.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/signing.p12" -k "$KEYCHAIN" -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          security default-keychain -s "$KEYCHAIN"
+          rm "$RUNNER_TEMP/signing.p12"
+      - name: store the notarization profile
+        env:
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          echo "$APPLE_API_KEY_P8" | base64 --decode > "$RUNNER_TEMP/api-key.p8"
+          xcrun notarytool store-credentials cydonia-ci \
+            --key "$RUNNER_TEMP/api-key.p8" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER" \
+            --keychain "$KEYCHAIN"
+          rm "$RUNNER_TEMP/api-key.p8"
+          printf 'APPLE_SIGNING_IDENTITY="%s"\nAPPLE_KEYCHAIN_PROFILE=cydonia-ci\n' "$APPLE_SIGNING_IDENTITY" > .env.release
+      - run: make release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-arm64
+          path: target/bundle/*.dmg
+          if-no-files-found: error
+      - name: remove the keychain
+        if: always()
+        run: security delete-keychain "$KEYCHAIN" || true
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: move the tag
+        run: |
+          git tag -f nightly "$GITHUB_SHA"
+          git push -f origin nightly
+      - name: update the release
+        run: |
+          version=$(sed -n '/^\[workspace.package\]/,/^\[/ s/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          title="nightly — v$version ($(git rev-parse --short=7 HEAD))"
+          .github/scripts/release-notes "$version" > notes.md \
+            || echo "No changelog entry for v$version yet." > notes.md
+          printf '\n---\n\nBuilt from %s on %s. Unsigned; replaced on every merge to main.\n' \
+            "$GITHUB_SHA" "$(date -u +%Y-%m-%d)" >> notes.md
+          if gh release view nightly >/dev/null 2>&1; then
+            gh release edit nightly --prerelease --title "$title" --notes-file notes.md
+          else
+            gh release create nightly --prerelease --title "$title" --notes-file notes.md --verify-tag
+          fi
+          gh release upload nightly dist/* --clobber

@@ -1,0 +1,43 @@
+name: release
+
+# Pushing `v<version>` promotes the `nightly` pre-release built from that same
+# commit: its files are kept, and the release moves to the tag, takes the
+# version's changelog.json entry as its notes, and becomes the latest release.
+# Nothing is rebuilt.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: check the tag against the nightly
+        run: |
+          version=$(sed -n '/^\[workspace.package\]/,/^\[/ s/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          if [ "$TAG" != "v$version" ]; then
+            echo "::error::$TAG does not match the workspace version $version"; exit 1
+          fi
+          if ! .github/scripts/release-notes "$version" > notes.md; then
+            echo "::error::changelog.json has no entry for $version"; exit 1
+          fi
+          nightly=$(git rev-parse -q --verify 'refs/tags/nightly^{commit}' || true)
+          if [ "$nightly" != "$GITHUB_SHA" ]; then
+            echo "::error::the nightly is built from ${nightly:-nothing}, not $GITHUB_SHA; wait for it or rerun nightly on this commit"; exit 1
+          fi
+          if [ "$(gh release view nightly --json isPrerelease -q .isPrerelease)" != "true" ]; then
+            echo "::error::there is no nightly pre-release to promote"; exit 1
+          fi
+      - name: promote
+        run: |
+          gh release edit nightly --tag "$TAG" --title "$TAG" --notes-file notes.md \
+            --prerelease=false --latest

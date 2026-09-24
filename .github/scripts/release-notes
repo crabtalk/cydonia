@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Prints the changelog.json entry for version $1 as release-note markdown.
+# Exits non-zero, printing nothing, when there is no entry for it.
+set -euo pipefail
+jq -re --arg v "$1" '
+  first(.[] | select(.version == $v))
+  | . as $e
+  | [$e.summary]
+    + [("new", "changed", "fixed") as $k
+        | select(($e[$k] // []) | length > 0)
+        | "### \($k[:1] | ascii_upcase)\($k[1:])\n\n" + ($e[$k] | map("- " + .) | join("\n"))]
+  | join("\n\n")
+' changelog.json
