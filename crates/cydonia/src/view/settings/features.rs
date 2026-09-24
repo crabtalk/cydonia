@@ -1,11 +1,7 @@
 //! The features section: the surfaces a project can hold, and which of them
 //! this install shows.
 //!
-//! Everything here is off in a fresh `settings.toml`, so what the app opens as
-//! is articles and nothing else. The switches are the room's whole content —
-//! what each one costs or unlocks is said on its own row, because the reasons
-//! are not the same: sessions run a program on this machine, and boards and
-//! tables are finished work held back to keep the first release one thing.
+//! Sessions and boards default to on; tables are opt-in.
 
 use crate::{
     model::settings::Feature,
@@ -42,7 +38,7 @@ fn copy(
             icons::development::SquareKanban,
             "Boards",
             "Cards in columns, one board to a file.",
-            Some("Preview"),
+            None,
         ),
         Feature::Tables => (
             icons::files::Table2,
