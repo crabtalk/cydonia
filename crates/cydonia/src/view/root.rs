@@ -523,7 +523,7 @@ impl Cydonia {
                         focused: ix == self.focused,
                     })
                 })
-                .collect()
+                .collect::<Vec<_>>()
         } else {
             let workspace = self.workspace.read(cx);
             workspace
@@ -545,6 +545,20 @@ impl Cydonia {
                 .into_iter()
                 .collect()
         };
+        let lone = shown.len() == 1;
+        let shown = shown
+            .into_iter()
+            .map(|mut entry| {
+                // The window names an article by its `content.md`; the tools
+                // name it by its id.
+                if entry.kind == "article" {
+                    entry.id = artifact::article::id_of(&entry.project.join(&entry.id));
+                }
+                // A lone entry beside a focused chat is still the one in front.
+                entry.focused |= lone;
+                entry
+            })
+            .collect();
         mcp::rail::set_shown(shown);
     }
 

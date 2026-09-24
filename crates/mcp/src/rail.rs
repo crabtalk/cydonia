@@ -66,8 +66,7 @@ pub struct Shown {
     /// spells it.
     pub kind: &'static str,
     pub id: String,
-    /// Whether it is the pane with the focus. Always set on the one entry of a
-    /// window with no space open.
+    /// Whether it is the pane with the focus. Always set on a lone entry.
     pub focused: bool,
 }
 
