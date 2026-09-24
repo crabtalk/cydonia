@@ -22,6 +22,13 @@
 		const agent = navigator.userAgent;
 		if (/Windows/i.test(agent)) platform = 'Windows';
 		else if (/Linux/i.test(agent) && !/Android/i.test(agent)) platform = 'Linux';
+		if (/aarch64|arm64/i.test(agent)) architecture = 'aarch64';
+		navigator.userAgentData?.getHighEntropyValues(['architecture'])
+			.then(({ architecture: arch }) => {
+				if (arch === 'arm') architecture = 'aarch64';
+				else if (arch === 'x86') architecture = 'x86_64';
+			})
+			.catch(() => {});
 		return () => clearTimeout(timer);
 	});
 
@@ -96,6 +103,9 @@
 	</div>
 	<div class="platform" id="download-platform" role="tabpanel" aria-labelledby="download-tab-{platforms.indexOf(platform)}" tabindex="0">
 		{@render commandLine(command)}
+		{#if platform !== 'macOS'}
+			<p class="notice">{platform} support is new and may have bugs. See <a href="https://github.com/crabtalk/cydonia/issues/53">issue #53</a>.</p>
+		{/if}
 	</div>
 	<details>
 		<summary>Build from source</summary>
@@ -248,6 +258,12 @@
 	.segments input:focus-visible + span {
 		outline: 2px solid var(--text);
 		outline-offset: 1px;
+	}
+
+	.notice {
+		margin: 12px 0 0;
+		color: var(--muted);
+		font-size: 13px;
 	}
 
 	.label {
