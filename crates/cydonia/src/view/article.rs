@@ -419,6 +419,20 @@ impl Cydonia {
                             .pb(px(TAIL))
                             .flex()
                             .cursor(CursorStyle::IBeam)
+                            .on_mouse_down(MouseButton::Left, {
+                                let editor = editor.clone();
+                                move |event, window, cx| {
+                                    editor.update(cx, |editor, cx| {
+                                        editor.press(
+                                            event.position,
+                                            event.click_count,
+                                            event.modifiers,
+                                            window,
+                                            cx,
+                                        )
+                                    })
+                                }
+                            })
                             .child(
                                 div()
                                     .flex_1()
