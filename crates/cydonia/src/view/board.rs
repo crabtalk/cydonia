@@ -2546,6 +2546,7 @@ impl Cydonia {
         let theme = Theme::of(cx).clone();
         let row = div()
             .id(SharedString::from(format!("list-group-header-{id}")))
+            .relative()
             .flex_none()
             .h(px(LIST_HEADING_HEIGHT))
             .px(px(BOARD_INSET))
@@ -2553,7 +2554,16 @@ impl Cydonia {
             .flex_row()
             .items_center()
             .gap(px(6.))
-            .text_style(TextStyle::Subheadline);
+            .text_style(TextStyle::Subheadline)
+            .when(folded && self.aimed_at(id, on, cx), |row| {
+                row.bg(theme.accent.opacity(0.08)).child(
+                    div()
+                        .debug_selector(|| "list-collapsed-drop-target".into())
+                        .absolute()
+                        .inset_0()
+                        .child(self.landing_mark(Mark::Foot, cx)),
+                )
+            });
         if matches!(&self.renaming, Some(Renaming::Column(_, at)) if at == id) {
             return row.child(self.name_field(cx)).into_any_element();
         }

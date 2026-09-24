@@ -875,3 +875,64 @@ fn busy_orb_opens_its_session_without_opening_the_card(cx: &mut TestAppContext) 
         assert!(root.leaf().open_card.is_none());
     });
 }
+
+#[gpui::test]
+fn list_cards_drop_into_a_collapsed_group_without_unfolding(cx: &mut TestAppContext) {
+    for populated in [false, true] {
+        let name = if populated {
+            "collapsed-drop-full"
+        } else {
+            "collapsed-drop-empty"
+        };
+        let (_scratch, root, _, cards, mut cx) = open(name, cx);
+        let target = cx.update(|window, cx| {
+            root.update(cx, |root, cx| {
+                root.close_card_preview(None, window, cx);
+                let target = root.workspace.update(cx, |workspace, _| {
+                    let project = &mut workspace.projects[0];
+                    let store = project.store();
+                    let board = &mut project.boards[0];
+                    board.view = View::List;
+                    let target = board.add_column("Later").id.clone();
+                    if populated {
+                        board.add_card(&target, "Already here".into());
+                    }
+                    board.columns[1].collapsed = true;
+                    store.save_board(board);
+                    target
+                });
+                cx.notify();
+                target
+            })
+        });
+        settle(&mut cx);
+        let source = point(px(180.), px(LIST_HEADING_HEIGHT + LIST_ROW_HEIGHT / 2.));
+        let destination = point(
+            px(180.),
+            px(LIST_HEADING_HEIGHT * 1.5 + LIST_ROW_HEIGHT * 2.),
+        );
+        cx.simulate_mouse_down(source, MouseButton::Left, Modifiers::default());
+        cx.simulate_mouse_move(
+            source + point(px(15.), px(0.)),
+            Some(MouseButton::Left),
+            Modifiers::default(),
+        );
+        settle(&mut cx);
+        cx.simulate_mouse_move(destination, Some(MouseButton::Left), Modifiers::default());
+        settle(&mut cx);
+        assert!(cx.update(|_, cx| root.read(cx).aimed_at(&target, None, cx)));
+        let indicator = cx
+            .debug_bounds("list-collapsed-drop-target")
+            .expect("visible drop target");
+        assert_eq!(indicator.size.height, px(LIST_HEADING_HEIGHT));
+        cx.simulate_mouse_up(destination, MouseButton::Left, Modifiers::default());
+        settle(&mut cx);
+        cx.update(|_, cx| {
+            let workspace = root.read(cx).workspace.read(cx);
+            let column = workspace.projects[0].boards[0].column(&target).unwrap();
+            assert!(column.collapsed);
+            assert_eq!(column.cards.len(), if populated { 2 } else { 1 });
+            assert_eq!(column.cards.last().unwrap().id, cards[0]);
+        });
+    }
+}

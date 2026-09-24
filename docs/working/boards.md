@@ -23,6 +23,7 @@ session of its own with the card's text as the first prompt. See
   Horizontal swipes move the lanes, including over code and table previews.
 - List rows show plain titles derived from the card's Markdown. Click a group
   heading to fold it, use **+** to add a card, or choose Rename from **…**.
+  Drag a card onto a collapsed heading to append it without unfolding the group.
 - The pencil edits in the drawer; the eye previews your draft. Enter inserts a
   newline, and **✓** or ⌘Enter saves. The undo arrow cancels edits.
   Switching cards or closing with **×** or Escape keeps unsaved drafts in the
