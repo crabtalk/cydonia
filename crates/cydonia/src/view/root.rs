@@ -261,8 +261,13 @@ pub fn open(settings: Settings, state: State, cx: &mut App) -> Result<WindowHand
                 traffic_light_position: Some(point(px(TRAFFIC_LIGHT_X), px(TRAFFIC_LIGHT_Y))),
                 ..Default::default()
             }),
-            // Glass needs a blurred window background to blur into.
-            window_background: Theme::of(cx).window_background_appearance(),
+            // Glass needs a blurred window background to blur into. A window
+            // that frames itself opens transparent, or its frame band is
+            // filled; bezel's reapply keeps it so on each appearance switch.
+            window_background: match super::chrome::decorations() {
+                Some(_) => bezel::gpui::WindowBackgroundAppearance::Transparent,
+                None => Theme::of(cx).window_background_appearance(),
+            },
             window_min_size: Some(size(px(600.), px(320.))),
             app_id: Some("cydonia".into()),
             window_decorations: super::chrome::decorations(),

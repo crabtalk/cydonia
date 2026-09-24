@@ -294,11 +294,19 @@ impl Terminal {
                                 let reply = this.emulator.feed(&bytes);
                                 this.write(reply);
                                 this.arm_hold_release(cx);
+                                // What the shell reports through `OSC 7` or
+                                // `OSC 9;9` first: PowerShell's `cd` does not
+                                // move its process directory.
                                 if let Some(directory) = this
-                                    .shell
-                                    .as_ref()
-                                    .and_then(|shell| shell.pid)
-                                    .and_then(process_directory)
+                                    .emulator
+                                    .directory()
+                                    .map(Path::to_path_buf)
+                                    .or_else(|| {
+                                        this.shell
+                                            .as_ref()
+                                            .and_then(|shell| shell.pid)
+                                            .and_then(process_directory)
+                                    })
                                     && directory != this.directory
                                 {
                                     this.directory = directory;
