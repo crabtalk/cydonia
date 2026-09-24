@@ -8,6 +8,7 @@
 
 use crate::model::workspace::Showing;
 use crate::view::{
+    chrome,
     component::menu::Menu,
     leaf::Pane,
     root::{self, Cydonia, ToggleChanges},
@@ -19,6 +20,7 @@ use bezel::{
     theme::{TextStyle, Theme, Typeset},
     ui::{
         icons,
+        titlebar::CaptionSide,
         tooltip::Tooltip,
         widgets::{ButtonStyle, Buttons as _},
     },
@@ -158,6 +160,12 @@ impl Cydonia {
             true => root::HEADER_INSET,
             false => root::TOOLBAR_INSET,
         };
+        // The window's corners, when this band is the one at them: the
+        // sidebar holds the left one while it is open, and the right panel
+        // the right one.
+        let left = !self.sidebar_open && chrome::has(CaptionSide::Left, window, cx);
+        let right = self.changes.is_none() && chrome::has(CaptionSide::Right, window, cx);
+        let bare = toolbar.is_none();
         let renaming = self.header_renaming(cx).is_some();
         // Which board the band is showing, if any — the only entry with a
         // panel.
@@ -176,7 +184,12 @@ impl Cydonia {
             .gap(px(8.))
             // Past the lights, which are the window's and are drawn over
             // whatever is at its top left.
-            .pl(px(inset))
+            .pl(px(if left { 0. } else { inset }))
+            .when(right, |band| band.pr_0())
+            .children(
+                left.then(|| chrome::caption(CaptionSide::Left, window, cx))
+                    .flatten(),
+            )
             // Above the pane, which runs under it.
             // The fold belongs to whichever column runs along the window's
             // left edge, so with the sidebar gone it is this one's.
@@ -246,7 +259,8 @@ impl Cydonia {
                                         .text_color(theme.text_muted)
                                         .child(format!("#{number}"))
                                 }))
-                                .children(board.as_deref().and_then(|id| self.info_panel(id, cx))),
+                                .children(board.as_deref().and_then(|id| self.info_panel(id, cx)))
+                                .child(chrome::grip("header-grip", &self.drag, window)),
                         )
                         .children(toolbar.entry.map(|entry| {
                             self.menu_button(
@@ -273,6 +287,14 @@ impl Cydonia {
                 // — see [`Cydonia::shell_cwd`].
                 (!self.changes_open && self.shell_cwd(cx).is_some())
                     .then(|| self.changes_toggle(cx)),
+            )
+            .when(bare, |band| {
+                band.child(chrome::grip("header-grip", &self.drag, window))
+            })
+            .children(
+                right
+                    .then(|| chrome::caption(CaptionSide::Right, window, cx))
+                    .flatten(),
             )
             .into_any_element()
     }

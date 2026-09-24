@@ -258,6 +258,7 @@ pub fn open(settings: Settings, state: State, cx: &mut App) -> Result<WindowHand
             window_background: Theme::of(cx).window_background_appearance(),
             window_min_size: Some(size(px(600.), px(320.))),
             app_id: Some("cydonia".into()),
+            window_decorations: super::chrome::decorations(),
             ..Default::default()
         },
         |window, cx| {
@@ -340,6 +341,9 @@ pub struct Cydonia {
     pub(crate) panel_save: Option<bezel::gpui::Task<()>>,
     pub(crate) terminal_height: f32,
     pub(crate) changes: Option<Entity<super::component::panel::Panel>>,
+    /// The press on a [`super::chrome::grip`], shared by every band in the
+    /// window that carries one.
+    pub(crate) drag: bezel::ui::titlebar::DragState,
     pub(crate) right_panels:
         std::collections::HashMap<std::path::PathBuf, Entity<super::component::panel::Panel>>,
     /// The buffer each card's orb paints into, by card id — see
@@ -866,6 +870,7 @@ impl Cydonia {
             panel_save: None,
             terminal_height: 240.,
             changes: None,
+            drag: Default::default(),
             right_panels: Default::default(),
             boards: Default::default(),
             card_marks: Default::default(),
@@ -1322,7 +1327,7 @@ impl Render for Cydonia {
         self.sync_changes(cx);
         self.publish_shown(cx);
         let theme = Theme::of(cx).clone();
-        div()
+        let root = div()
             .key_context("Cydonia")
             .size_full()
             .relative()
@@ -1381,7 +1386,9 @@ impl Render for Cydonia {
             // element's ancestors. Sized at nothing, so the pane that does hold
             // a field keeps its focus through a click anywhere else.
             .child(div().track_focus(&self.focus))
-            .when(self.sidebar_open, |root| root.child(self.sidebar(cx)))
+            .when(self.sidebar_open, |root| {
+                root.child(self.sidebar(window, cx))
+            })
             .child(self.detail(window, cx))
             // Rides on the seam between the sidebar and the detail column
             // rather than sitting in flow, so neither gives up a column.
@@ -1406,6 +1413,7 @@ impl Render for Cydonia {
             // Over every column and every floating control: nothing behind it
             // is answerable while it is asking.
             .children(self.confirm_delete(cx))
-            .children(self.new_board_dialog(cx))
+            .children(self.new_board_dialog(cx));
+        bezel::ui::window::frame(root, window, cx)
     }
 }

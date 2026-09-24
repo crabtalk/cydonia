@@ -153,6 +153,8 @@ impl Section {
 
 pub struct SettingsWindow {
     workspace: Entity<Workspace>,
+    /// The press on the window's [`crate::view::chrome::grip`].
+    drag: bezel::ui::titlebar::DragState,
     section: Section,
     /// The catalog, once it has been fetched. `None` while it is in flight —
     /// which is the difference between "still looking" and "nothing here".
@@ -218,9 +220,15 @@ pub fn open(
                 traffic_light_position: Some(point(px(TRAFFIC_LIGHT_X), px(TRAFFIC_LIGHT_Y))),
                 ..Default::default()
             }),
-            // Opaque on purpose — see the module note.
-            window_background: WindowBackgroundAppearance::Opaque,
+            // Opaque on purpose — see the module note. The root paints the
+            // page's own background, so where the window frames itself the
+            // surface is transparent and only the frame's band shows through.
+            window_background: match crate::view::chrome::decorations() {
+                Some(_) => WindowBackgroundAppearance::Transparent,
+                None => WindowBackgroundAppearance::Opaque,
+            },
             app_id: Some("cydonia".into()),
+            window_decorations: crate::view::chrome::decorations(),
             ..Default::default()
         },
         |window, cx| {
@@ -259,6 +267,7 @@ pub fn open(
                 let mono_font =
                     typography::FamilyPicker::new(typography::Face::Mono, fonts.mono, cx);
                 let mut this = SettingsWindow {
+                    drag: Default::default(),
                     workspace,
                     section,
                     listings: None,
@@ -473,10 +482,27 @@ impl SettingsWindow {
 }
 
 impl Render for SettingsWindow {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        use crate::view::chrome;
+        use bezel::ui::titlebar::CaptionSide;
         let theme = Theme::of(cx).clone();
         let owns_scroll = self.section.owns_scroll();
-        div()
+        // Off macOS the window's top edge is a strip of its own, over the
+        // sidebar's empty band and the page's top margin.
+        let strip = (!cfg!(target_os = "macos")).then(|| {
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .right_0()
+                .h(px(HEADER_HEIGHT))
+                .flex()
+                .flex_row()
+                .children(chrome::caption(CaptionSide::Left, window, cx))
+                .child(chrome::grip("settings-grip", &self.drag, window))
+                .children(chrome::caption(CaptionSide::Right, window, cx))
+        });
+        let root = div()
             .size_full()
             .relative()
             .flex()
@@ -499,6 +525,7 @@ impl Render for SettingsWindow {
                     .when(!owns_scroll, |el| el.overflow_y_scroll())
                     .px(px(32.))
                     .py(px(32.))
+                    .when(strip.is_some(), |el| el.pt(px(HEADER_HEIGHT)))
                     .flex()
                     .flex_col()
                     .items_center()
@@ -552,7 +579,9 @@ impl Render for SettingsWindow {
                         .into_any_element(),
                     }),
             )
+            .children(strip)
             .children(self.cover_dialog(cx))
-            .children(self.trust_dialog(cx))
+            .children(self.trust_dialog(cx));
+        bezel::ui::window::frame(root, window, cx)
     }
 }
