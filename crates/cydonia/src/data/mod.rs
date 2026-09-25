@@ -30,7 +30,7 @@ pub use artifact::table::{
     rows::{Edit, Page, Row, Rows},
 };
 
-pub(crate) const FILE: &str = "data.db";
+pub(crate) const FILE: &str = fs::DATA;
 const BUSY: Duration = Duration::from_secs(5);
 
 /// The one thing stored beside the data: a table's display name, which SQL has

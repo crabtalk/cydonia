@@ -17,6 +17,25 @@ use crate::{
     session::record::Record,
 };
 use anyhow::Result;
+use std::sync::Arc;
+
+/// A watch a backend keeps up for as long as this is held.
+pub struct Watching {
+    /// Whether it is on everything the backend reads back. `false` for one on
+    /// a stand-in that only knocks when the real thing can be watched, which
+    /// is when the caller asks again.
+    pub settled: bool,
+    _guard: Box<dyn Send>,
+}
+
+impl Watching {
+    pub fn new(settled: bool, guard: impl Send + 'static) -> Self {
+        Self {
+            settled,
+            _guard: Box::new(guard),
+        }
+    }
+}
 
 pub trait Project {
     // ── boards ───────────────────────────────────────────────────────
@@ -87,6 +106,16 @@ pub trait Project {
     fn asset(&self, id: &str, name: &str) -> Result<Vec<u8>>;
 
     fn put_asset(&self, id: &str, name: &str, bytes: &[u8]) -> Result<()>;
+
+    // ── changes ──────────────────────────────────────────────────────
+
+    /// Call `knock` whenever something this backend reads back changes under
+    /// it, from any thread. A knock carries nothing: the answer to one is a
+    /// re-read. `None` for a backend that has nothing to watch or cannot.
+    fn watch(&self, knock: Arc<dyn Fn() + Send + Sync>) -> Option<Watching> {
+        let _ = knock;
+        None
+    }
 
     // ── numbers ──────────────────────────────────────────────────────
 

@@ -1,6 +1,6 @@
 //! What a project's watch lets through.
 
-use cydonia::model::watch::ours;
+use cydonia_artifact::project::fs::ours;
 use std::path::Path;
 
 /// The filter, and the two paths that must not pass it. Written down

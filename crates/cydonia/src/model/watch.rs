@@ -1,25 +1,20 @@
 //! What a project's `.cydonia/` is doing while cydonia is not the one doing it.
 //!
 //! An agent runs with the project as its `cwd`, so the articles, boards and
-//! tables on screen are files it can write. The watch is what makes that show
-//! up: the OS says the directory moved, and the project re-reads it.
+//! tables on screen are things it can write. The project's backend knocks when
+//! they change — see [`artifact::project::Project::watch`] — and the project
+//! re-reads.
 //!
-//! The event is a knock, never the news. Which paths a backend reports and
-//! under which kind is not something the platforms agree on — FSEvents
-//! coalesces a burst into the directory that held it, an atomic save arrives as
-//! a rename nobody paired, and a rename out of the tree looks like one into it.
-//! So nothing here reads an event beyond *where* it landed: the answer to any
-//! of them is the same re-read.
+//! The event is a knock, never the news. Which paths the OS reports and under
+//! which kind is not something the platforms agree on — FSEvents coalesces a
+//! burst into the directory that held it, an atomic save arrives as a rename
+//! nobody paired, and a rename out of the tree looks like one into it. So a
+//! knock carries nothing: the answer to any of them is the same re-read.
 
-use crate::{data, model::workspace::Workspace};
-use artifact::project::fs;
+use crate::model::{store, workspace::Workspace};
 use bezel::gpui::{Context, Task};
 use futures::{StreamExt as _, channel::mpsc};
-use notify::{RecommendedWatcher, RecursiveMode, Watcher as _};
-use std::{
-    path::{Path, PathBuf},
-    time::Duration,
-};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 /// How quiet the directory has to go before it is re-read, in milliseconds, and
 /// what the setting behind it defaults to. Writing one document is a string of
@@ -56,8 +51,12 @@ impl Watch {
     pub fn open(root: PathBuf, cx: &mut Context<Workspace>) -> Self {
         let pump = cx.spawn(async move |workspace, cx| {
             loop {
-                let Some((_watcher, mut knocks, deep)) = arm(&root) else {
-                    // No watcher this platform will give us, and no event
+                let (tx, mut knocks) = mpsc::unbounded();
+                let knock = Arc::new(move || {
+                    let _ = tx.unbounded_send(());
+                });
+                let Some(watching) = store::open(&root).watch(knock) else {
+                    // No watcher this backend will give us, and no event
                     // coming to say otherwise. Watching nothing beats spinning.
                     return;
                 };
@@ -79,9 +78,9 @@ impl Watch {
                     if !held {
                         return;
                     }
-                    // Armed on the project because it had no `.cydonia/` yet,
-                    // and now it has one: drop out and arm on the real thing.
-                    if !deep && fs::Project::new(&root).cydonia().exists() {
+                    // Armed on a stand-in: ask again, and keep whichever
+                    // watch lands on the real thing.
+                    if !watching.settled {
                         break;
                     }
                 }
@@ -89,66 +88,4 @@ impl Watch {
         });
         Self { _pump: pump }
     }
-}
-
-/// Put a watcher up, and say whether it landed on what was actually wanted.
-///
-/// `.cydonia/` is made the first time a project keeps anything, which can be
-/// long after it was opened — so a project without one is watched shallowly at
-/// its own root, where the one event that matters is the directory appearing.
-fn arm(root: &Path) -> Option<(RecommendedWatcher, mpsc::UnboundedReceiver<()>, bool)> {
-    // The prefix every event is matched against, resolved once. FSEvents
-    // reports the real path, so a project reached through a symlink would never
-    // match the prefix it was armed with.
-    let dir =
-        fs::Project::new(std::fs::canonicalize(root).unwrap_or_else(|_| root.to_owned())).cydonia();
-    let (tx, rx) = mpsc::unbounded();
-    let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
-        let Ok(event) = event else {
-            return;
-        };
-        if event.paths.iter().any(|path| ours(&dir, path)) {
-            let _ = tx.unbounded_send(());
-        }
-    })
-    .ok()?;
-    match watcher.watch(&fs::Project::new(root).cydonia(), RecursiveMode::Recursive) {
-        Ok(()) => Some((watcher, rx, true)),
-        Err(_) => watcher
-            .watch(root, RecursiveMode::NonRecursive)
-            .ok()
-            .map(|()| (watcher, rx, false)),
-    }
-}
-
-/// Whether a path that moved is one this app reads back.
-///
-/// Sessions are left out on purpose. This process writes a transcript on every
-/// frame of a streaming turn, so a watch that covered them would be a watch on
-/// ourselves — and a session is a live connection, not something that could be
-/// adopted back off disk anyway.
-pub fn ours(dir: &Path, path: &Path) -> bool {
-    let Ok(rest) = path.strip_prefix(dir) else {
-        // Outside `.cydonia/`, where the only thing worth a knock is the
-        // directory itself coming into existence.
-        return path == dir;
-    };
-    let Some(head) = rest.components().next() else {
-        return true;
-    };
-    let head = head.as_os_str().to_string_lossy();
-    if head == "articles" || head == "boards" {
-        return true;
-    }
-    // The store, and the log a commit actually lands in — the database runs in
-    // WAL, so the file itself only moves at a checkpoint.
-    //
-    // Named one by one rather than taken by prefix, to leave `-shm` out. That
-    // is the reader's shared index, and *this* process writes it every time it
-    // reads a table back — a watch on it would be a watch on our own re-reads,
-    // and the loop between the two would never settle.
-    let Some(tail) = head.strip_prefix(data::FILE) else {
-        return false;
-    };
-    matches!(tail, "" | "-wal" | "-journal")
 }

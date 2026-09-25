@@ -12,6 +12,7 @@ categories = ["data-structures"]
 
 [dependencies]
 anyhow.workspace = true
+notify.workspace = true
 rusqlite.workspace = true
 cacp.workspace = true
 serde.workspace = true

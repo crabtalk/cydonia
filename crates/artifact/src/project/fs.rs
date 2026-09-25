@@ -17,10 +17,12 @@ use crate::{
     stamp,
 };
 use anyhow::Result;
+use notify::{RecursiveMode, Watcher as _};
 use std::{
     cmp::Reverse,
     collections::HashSet,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 use url::Url;
 
@@ -32,6 +34,9 @@ const DIR: &str = ".cydonia";
 /// allowed was called.
 const BOARDS: &str = "boards";
 const BOARD_FILE: &str = "board.toml";
+
+/// The project's SQL tables.
+pub const DATA: &str = "data.db";
 
 /// Where a project's sessions live. One file each, so writing one does not
 /// rewrite the rest.
@@ -366,6 +371,35 @@ impl super::Project for Project {
         Ok(())
     }
 
+    /// `.cydonia/` is made the first time a project keeps anything, which can
+    /// be long after it was opened — so a project without one is watched
+    /// shallowly at its own root, unsettled, where the one event that matters
+    /// is the directory appearing.
+    fn watch(&self, knock: Arc<dyn Fn() + Send + Sync>) -> Option<super::Watching> {
+        // The prefix every event is matched against, resolved once. FSEvents
+        // reports the real path, so a project reached through a symlink would
+        // never match the prefix it was armed with.
+        let dir = std::fs::canonicalize(&self.root)
+            .unwrap_or_else(|_| self.root.clone())
+            .join(DIR);
+        let mut watcher =
+            notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+                if let Ok(event) = event
+                    && event.paths.iter().any(|path| ours(&dir, path))
+                {
+                    knock();
+                }
+            })
+            .ok()?;
+        match watcher.watch(&self.cydonia(), RecursiveMode::Recursive) {
+            Ok(()) => Some(super::Watching::new(true, watcher)),
+            Err(_) => watcher
+                .watch(&self.root, RecursiveMode::NonRecursive)
+                .ok()
+                .map(|()| super::Watching::new(false, watcher)),
+        }
+    }
+
     fn number(&self, kind: &str, id: &str) -> Result<u64> {
         entry::Registry::open(&self.root)?.number(kind, id)
     }
@@ -384,6 +418,34 @@ fn stem(path: &Path) -> String {
     path.file_stem()
         .and_then(|stem| stem.to_str())
         .map_or_else(id::mint, str::to_owned)
+}
+
+/// Whether a path that moved under `dir` (a project's `.cydonia/`) is one this
+/// backend reads back.
+///
+/// Sessions are left out: the app writes a transcript on every frame of a
+/// streaming turn, so a watch that covered them would be a watch on itself.
+pub fn ours(dir: &Path, path: &Path) -> bool {
+    let Ok(rest) = path.strip_prefix(dir) else {
+        // Outside `.cydonia/`, where the only thing worth a knock is the
+        // directory itself coming into existence.
+        return path == dir;
+    };
+    let Some(head) = rest.components().next() else {
+        return true;
+    };
+    let head = head.as_os_str().to_string_lossy();
+    if head == article::DIR || head == BOARDS {
+        return true;
+    }
+    // The database, and the log a commit actually lands in — it runs in WAL,
+    // so the file itself only moves at a checkpoint. `-shm` is left out: the
+    // reader's shared index is written on every read, so a watch on it would
+    // knock on the app's own re-reads and never settle.
+    let Some(tail) = head.strip_prefix(DATA) else {
+        return false;
+    };
+    matches!(tail, "" | "-wal" | "-journal")
 }
 
 /// An id or asset name as one path component, refused where it would reach

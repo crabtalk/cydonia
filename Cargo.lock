@@ -2205,7 +2205,6 @@ dependencies = [
  "image",
  "libc",
  "lru",
- "notify",
  "portable-pty",
  "rusqlite",
  "serde",
@@ -2224,6 +2223,7 @@ version = "0.1.16"
 dependencies = [
  "anyhow",
  "cacp",
+ "notify",
  "rusqlite",
  "serde",
  "serde_json",

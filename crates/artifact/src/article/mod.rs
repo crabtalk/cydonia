@@ -49,7 +49,7 @@ pub struct Article {
 
 /// Where a project's articles live, and what the document is called inside the
 /// directory that is one.
-const DIR: &str = "articles";
+pub(crate) const DIR: &str = "articles";
 const CONTENT: &str = "content.md";
 
 /// Where the pictures in one article's body go, inside the directory that is
