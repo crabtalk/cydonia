@@ -15,6 +15,7 @@ pub mod session_preferences;
 pub mod settings;
 pub mod spaces;
 pub mod state;
+pub mod store;
 pub mod update;
 pub mod watch;
 pub mod welcome;

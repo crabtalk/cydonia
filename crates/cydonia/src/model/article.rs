@@ -85,7 +85,9 @@ impl Article {
         let held = properties::all(&path);
         Self {
             number: path.ancestors().nth(4).and_then(|project| {
-                artifact::entry::number(project, "article", &layout::id_of(&path)).ok()
+                crate::model::store::open(project)
+                    .number("article", &layout::id_of(&path))
+                    .ok()
             }),
             cover: cover::of(&path),
             title: held.title,

@@ -9,14 +9,12 @@ use crate::{
     model::{
         article::{self, Article},
         session::ChatSession,
+        store::{self, Store},
         watch::Watch,
         workspace::Workspace,
     },
 };
-use artifact::{
-    board::Board,
-    project::{Project as _, fs},
-};
+use artifact::board::Board;
 use bezel::gpui::Context;
 use std::{
     collections::HashMap,
@@ -64,7 +62,7 @@ pub struct Project {
 impl Project {
     pub fn new(path: PathBuf) -> Self {
         let mut this = Self {
-            boards: fs::Project::new(&path).boards(),
+            boards: store::open(&path).boards(),
             unloaded_boards: Default::default(),
             articles: article::list(&path),
             data: Data::attach(&path),
@@ -275,11 +273,9 @@ impl Project {
         }
     }
 
-    /// Where this project's work is kept. The filesystem, for this app —
-    /// [`artifact::project::Project`] is what a different one would answer, and
-    /// nothing above here names a file.
-    pub fn store(&self) -> fs::Project {
-        fs::Project::new(&self.path)
+    /// Where this project's work is kept — see [`store::open`].
+    pub fn store(&self) -> Store {
+        store::open(&self.path)
     }
 
     /// The tab's label: the directory's own name, or the whole path when it

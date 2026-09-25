@@ -23,10 +23,7 @@ use crate::{
         watch::{self, Watch},
     },
 };
-use artifact::{
-    board::Board,
-    project::{Project as _, fs},
-};
+use artifact::board::Board;
 use bezel::{
     gpui::{App, ClipboardItem, Context, EntityId, EventEmitter, Window},
     theme::{self, Brand, Tint, Vibrancy, appearance::AppearanceMode},

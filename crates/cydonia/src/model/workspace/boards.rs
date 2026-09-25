@@ -330,7 +330,7 @@ impl Workspace {
     fn with_board<T>(
         &mut self,
         id: &str,
-        edit: impl FnOnce(&fs::Project, &mut Board) -> T,
+        edit: impl FnOnce(&crate::model::store::Store, &mut Board) -> T,
     ) -> Option<T> {
         for open in &mut self.projects {
             if !open.load_board(id) {

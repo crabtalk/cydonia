@@ -125,22 +125,6 @@ impl Project {
         }
     }
 
-    /// Read one persisted session without loading the rest of the project.
-    pub fn session(&self, id: &str) -> Option<Record> {
-        let body = std::fs::read_to_string(self.session_file(id)).ok()?;
-        let mut record: Record = serde_json::from_str(&body).ok()?;
-        record.id = id.to_owned();
-        record.number = super::Project::number(self, "session", id).ok();
-        Some(record)
-    }
-
-    /// Read one board for a lazily opened archive entry.
-    pub fn board(&self, id: &str) -> Option<Board> {
-        let mut board = self.read_board(&self.board_file(id))?;
-        board.number = super::Project::number(self, "board", id).ok();
-        Some(board)
-    }
-
     /// Every session file in this project by the id it is filed under,
     /// unread.
     pub fn session_files(&self) -> Vec<(String, PathBuf)> {
@@ -183,6 +167,20 @@ impl Project {
 }
 
 impl super::Project for Project {
+    fn session(&self, id: &str) -> Option<Record> {
+        let body = std::fs::read_to_string(self.session_file(id)).ok()?;
+        let mut record: Record = serde_json::from_str(&body).ok()?;
+        record.id = id.to_owned();
+        record.number = self.number("session", id).ok();
+        Some(record)
+    }
+
+    fn board(&self, id: &str) -> Option<Board> {
+        let mut board = self.read_board(&self.board_file(id))?;
+        board.number = self.number("board", id).ok();
+        Some(board)
+    }
+
     fn boards(&self) -> Vec<Board> {
         self.migrate_board();
         let Ok(entries) = std::fs::read_dir(self.boards_dir()) else {

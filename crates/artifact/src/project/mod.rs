@@ -24,6 +24,9 @@ pub trait Project {
     /// This project's boards, most recently written first.
     fn boards(&self) -> Vec<Board>;
 
+    /// One board, without reading the rest of the project.
+    fn board(&self, id: &str) -> Option<Board>;
+
     /// Mint a board and file it, called and keyed as the caller has them.
     /// An empty key is derived from the name, clear of the keys the project's
     /// other boards hold — see [`crate::board::key`].
@@ -40,6 +43,9 @@ pub trait Project {
 
     /// Every session filed here, most recently updated first.
     fn sessions(&self) -> Vec<Record>;
+
+    /// One session, without reading the rest of the project.
+    fn session(&self, id: &str) -> Option<Record>;
 
     /// Mint the id a session is filed under from here on. Called on its first
     /// write and not before: opening a project must not put anything in it.

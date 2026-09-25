@@ -17,17 +17,15 @@ use crate::{
         notify,
         session_preferences::{self, Choices},
         settings,
+        store::{self, Store},
         workspace::Workspace,
     },
     view::component::transcript,
 };
 use anyhow::anyhow;
-use artifact::{
-    project::{Project as _, fs},
-    session::{
-        chat::{ChatItem, PlanStatus, ToolStatus},
-        record::{ForkOrigin, Record},
-    },
+use artifact::session::{
+    chat::{ChatItem, PlanStatus, ToolStatus},
+    record::{ForkOrigin, Record},
 };
 use bezel::gpui::{Context, Task};
 use cacp::schema::{
@@ -179,6 +177,11 @@ pub struct ChatSession {
 }
 
 impl ChatSession {
+    /// Where this session is filed — its project's backend.
+    fn store(&self) -> Store {
+        store::open(&self.cwd)
+    }
+
     /// Open a session on `entry`. `seed` is its first prompt, sent as soon as
     /// the agent is up — what a dispatched card rides in on.
     pub fn connect(
@@ -189,7 +192,7 @@ impl ChatSession {
         cx: &mut Context<Workspace>,
     ) -> Self {
         let preferences = session_preferences::load(&cwd, &entry, None);
-        let record = fs::Project::new(&cwd).create_session().ok();
+        let record = store::open(&cwd).create_session().ok();
         let pump = pump(
             id,
             &entry,
@@ -287,7 +290,7 @@ impl ChatSession {
         let Some(record) = self
             .record
             .as_deref()
-            .and_then(|id| fs::Project::new(&self.cwd).session(id))
+            .and_then(|id| self.store().session(id))
         else {
             return false;
         };
@@ -307,7 +310,7 @@ impl ChatSession {
         let Some(record) = self
             .record
             .as_deref()
-            .and_then(|id| fs::Project::new(&self.cwd).session(id))
+            .and_then(|id| self.store().session(id))
         else {
             return;
         };
@@ -363,7 +366,7 @@ impl ChatSession {
 
     pub fn fork_at(&self, id: u64, before: usize) -> Option<Self> {
         let source = if self.history_unloaded {
-            fs::Project::new(&self.cwd).session(self.record.as_deref()?)?
+            self.store().session(self.record.as_deref()?)?
         } else {
             self.to_record()
         };
@@ -383,13 +386,13 @@ impl ChatSession {
     /// first prompt, so it is about to have something to file anyway.
     pub fn mint_record(&mut self) -> Option<&str> {
         if self.record.is_none() {
-            self.record = fs::Project::new(&self.cwd).create_session().ok();
+            self.record = self.store().create_session().ok();
         }
         if self.number.is_none() {
             self.number = self
                 .record
                 .as_deref()
-                .and_then(|id| artifact::entry::number(&self.cwd, "session", id).ok());
+                .and_then(|id| self.store().number("session", id).ok());
         }
         self.record.as_deref()
     }
@@ -410,7 +413,7 @@ impl ChatSession {
             return None;
         }
         self.mint_record()?;
-        let _ = fs::Project::new(&self.cwd).save_session(&self.to_record());
+        let _ = self.store().save_session(&self.to_record());
         self.written = true;
         self.save_preferences();
         self.record.clone()
@@ -424,7 +427,7 @@ impl ChatSession {
         if self.unsaid() && self.fork.is_none() {
             return;
         }
-        let store = fs::Project::new(&self.cwd);
+        let store = self.store();
         self.mint_record();
         if self.record.is_some() {
             let _ = store.save_session(&self.to_record());
@@ -440,7 +443,7 @@ impl ChatSession {
             return;
         }
         if self.record.is_none() {
-            self.record = fs::Project::new(&self.cwd).create_session().ok();
+            self.record = self.store().create_session().ok();
         }
         self._pump = pump(
             self.id,

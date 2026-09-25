@@ -6,7 +6,7 @@ use crate::{
     tools::{PROJECT, fields, project_of, root},
 };
 use artifact::{
-    project::fs,
+    project::{Project as _, fs},
     reference::{self, Reference, Target, Turns},
     session::{
         chat::{self, ChatItem, ToolStatus},
@@ -178,8 +178,9 @@ fn send(args: Args<'_>) -> Outcome {
 /// not a session, or one with no turn on disk yet.
 fn sender(args: &Args<'_>, to: &Path) -> Option<String> {
     let (at, record) = (args.at()?, args.session()?);
-    let turn = chat::turns(&fs::Project::new(at).session(record)?.items).len();
-    let number = artifact::entry::number(at, "session", record).ok()?;
+    let store = fs::Project::new(at);
+    let turn = chat::turns(&store.session(record)?.items).len();
+    let number = store.number("session", record).ok()?;
     let project = match same_dir(at, to) {
         true => String::new(),
         false => at.file_name()?.to_string_lossy().into_owned(),
@@ -266,11 +267,12 @@ fn found(args: &Args<'_>, named: &str) -> Result<Found, Trouble> {
     let project = project_of(args, &reference)?;
     // Resolved through the registry alone: listing the project's entries would
     // parse every session file to find one.
-    let id = artifact::entry::Registry::open(&project)
-        .and_then(|registry| registry.resolve("session", number))
+    let store = fs::Project::new(&project);
+    let id = store
+        .resolve("session", number)
         .map_err(|e| Trouble::Refused(e.to_string()))?
         .ok_or_else(|| Trouble::Refused(format!("no session #{number} in this project")))?;
-    let record = fs::Project::new(&project)
+    let record = store
         .session(&id)
         .ok_or_else(|| Trouble::Refused(format!("session #{number} cannot be read")))?;
     Ok(Found {
@@ -469,7 +471,8 @@ fn grepped(
     project: &Path,
     pattern: &regex::bytes::Regex,
 ) -> impl Iterator<Item = (u64, Record)> + use<> {
-    let mut matched: Vec<(u64, String, Vec<u8>)> = fs::Project::new(project)
+    let store = fs::Project::new(project);
+    let mut matched: Vec<(u64, String, Vec<u8>)> = store
         .session_files()
         .into_iter()
         .filter_map(|(id, path)| {
@@ -477,7 +480,7 @@ fn grepped(
             if !pattern.is_match(&bytes) {
                 return None;
             }
-            let number = artifact::entry::number(project, "session", &id).ok()?;
+            let number = store.number("session", &id).ok()?;
             Some((number, id, bytes))
         })
         .collect();
