@@ -10,6 +10,7 @@
 //! this trait.
 
 pub mod fs;
+pub mod memory;
 
 use crate::{
     article::{Article, properties::Properties},

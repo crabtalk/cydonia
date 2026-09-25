@@ -11,7 +11,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Record {
     /// What names this session here, minted when its file is and never moving
     /// after. Not [`Record::session`]: that one is the agent's, absent until
