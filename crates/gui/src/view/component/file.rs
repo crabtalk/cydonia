@@ -6,7 +6,7 @@ use bezel::{
         self, Context, Entity, Focusable, Render, Subscription, Task, Window, div, prelude::*, px,
     },
     theme::{ControlSize, Sizing as _, TextStyle, Theme, Typeset},
-    ui::input::{FieldEvent, Shape, TextField},
+    ui::input::{Edit, FieldEvent, Shape, TextField},
     ui::widgets::{ButtonStyle, Buttons as _, Controls as _},
 };
 #[cfg(feature = "desktop")]
@@ -152,8 +152,6 @@ pub struct FileView {
     /// The parse in flight. Replaced by the next edit, which drops it — that
     /// is the debounce.
     _recolour: Task<()>,
-    /// The text the field's spans were last lined up with.
-    painted: gpui::SharedString,
 }
 
 impl FileView {
@@ -169,16 +167,15 @@ impl FileView {
                 .with_key_context("FileEditor")
         });
         let watch = cx.subscribe(&field, |this, _, event: &FieldEvent, cx| {
-            if matches!(event, FieldEvent::Changed | FieldEvent::Moved) {
+            if matches!(event, FieldEvent::Changed(_) | FieldEvent::Moved) {
                 this.reveal.set(true);
             }
             // Loading a file emits this too — `set_content` is an edit as far
             // as the field is concerned — so first paint is coloured by the
             // same path that keeps typing coloured.
-            if matches!(event, FieldEvent::Changed) {
+            if matches!(event, FieldEvent::Changed(_)) {
                 this.preview_selection = None;
                 this.preview_dragging = false;
-                this.realign(cx);
                 this.recolour(cx);
             }
             cx.notify();
@@ -251,22 +248,7 @@ impl FileView {
             _watch: watch,
             _poll: poll,
             _recolour: Task::ready(()),
-            painted: gpui::SharedString::default(),
         }
-    }
-
-    /// Carry the spans the field holds over the edit just made, so they stay on
-    /// their characters until the next parse replaces them.
-    fn realign(&mut self, cx: &mut Context<Self>) {
-        let field = self.field.read(cx);
-        let now = field.content().clone();
-        let shifted = (!field.spans().is_empty() && !self.painted.is_empty())
-            .then(|| shift_spans(field.spans(), &self.painted, &now));
-        if let Some(spans) = shifted {
-            self.field
-                .update(cx, |field, cx| field.set_spans(spans, cx));
-        }
-        self.painted = now;
     }
 
     /// Parse the file again and hand the spans to the field.
@@ -296,9 +278,11 @@ impl FileView {
             let _ = this.update(cx, |this, cx| {
                 // Edits made while this parse ran moved the text on from
                 // `source`, so the spans are carried over them.
-                let now = this.field.read(cx).content().clone();
-                let spans = shift_spans(&spans, &source, &now);
-                this.painted = now;
+                let edit = Edit::between(&source, this.field.read(cx).content());
+                let spans = spans
+                    .into_iter()
+                    .filter_map(|(range, kind)| Some((edit.map(range)?, kind)))
+                    .collect();
                 this.field
                     .update(cx, |field, cx| field.set_spans(spans, cx));
             });
@@ -976,56 +960,3 @@ impl Render for FileView {
 #[path = "../../../tests/unit/file.rs"]
 mod tests;
 
-/// `spans`, laid over `old`, moved onto `new`. The edit is found as the run
-/// between the longest common prefix and suffix: spans before it stay, spans
-/// after it move by the change in length, a span the edit falls inside grows or
-/// shrinks with it, and a span it cuts into keeps what lies outside the edit.
-pub fn shift_spans<K: Copy>(
-    spans: &[(std::ops::Range<usize>, K)],
-    old: &str,
-    new: &str,
-) -> Vec<(std::ops::Range<usize>, K)> {
-    let (old_b, new_b) = (old.as_bytes(), new.as_bytes());
-    let mut start = old_b.iter().zip(new_b).take_while(|(a, b)| a == b).count();
-    while !(old.is_char_boundary(start) && new.is_char_boundary(start)) {
-        start -= 1;
-    }
-    let most = old_b.len().min(new_b.len()) - start;
-    let mut tail = old_b
-        .iter()
-        .rev()
-        .zip(new_b.iter().rev())
-        .take(most)
-        .take_while(|(a, b)| a == b)
-        .count();
-    while !(old.is_char_boundary(old_b.len() - tail) && new.is_char_boundary(new_b.len() - tail)) {
-        tail -= 1;
-    }
-    let old_end = old_b.len() - tail;
-    let new_end = new_b.len() - tail;
-    let moved = |at: usize| at + new_end - old_end;
-    spans
-        .iter()
-        .flat_map(|(range, kind)| {
-            let (a, b) = (range.start, range.end);
-            let pieces: [Option<std::ops::Range<usize>>; 2] = if b <= start {
-                [Some(a..b), None]
-            } else if a >= old_end {
-                [Some(moved(a)..moved(b)), None]
-            } else if a <= start && b >= old_end {
-                [Some(a..moved(b)), None]
-            } else {
-                [
-                    (a < start).then_some(a..start),
-                    (b > old_end).then(|| new_end..moved(b)),
-                ]
-            };
-            pieces
-                .into_iter()
-                .flatten()
-                .filter(|range| !range.is_empty())
-                .map(|range| (range, *kind))
-                .collect::<Vec<_>>()
-        })
-        .collect()
-}

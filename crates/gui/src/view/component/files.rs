@@ -112,7 +112,7 @@ impl Files {
     pub fn new(root: PathBuf, cx: &mut Context<Self>) -> Self {
         let filter = cx.new(|cx| TextField::new(cx).with_placeholder("Filter files…"));
         let watch = cx.subscribe(&filter, |this, _, event: &FieldEvent, cx| {
-            if matches!(event, FieldEvent::Changed) {
+            if matches!(event, FieldEvent::Changed(_)) {
                 this.refresh(cx);
             }
         });

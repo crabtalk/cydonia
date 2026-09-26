@@ -287,7 +287,7 @@ impl Composer {
         cx.subscribe(
             &field,
             |composer: &mut Self, _, event: &FieldEvent, cx| match event {
-                FieldEvent::Changed => {
+                FieldEvent::Changed(_) => {
                     composer.reread(cx);
                     if let Some(id) = composer.session {
                         cx.emit(ComposerEvent::Draft(
