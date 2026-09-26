@@ -429,6 +429,9 @@ pub struct Cydonia {
     /// [`Cydonia::toggle_menu_at`].
     pub(crate) menu_point: Option<gpui::Point<gpui::Pixels>>,
     pub(crate) sidebar_hovered: Option<Menu>,
+    /// The space pane whose bar the pointer is over, by its key: its `+` and
+    /// `···` take room in the bar only there. See [`Self::sidebar_hovered`].
+    pub(crate) pane_hovered: Option<gpui::SharedString>,
     /// The list row the pointer is over, by card id: its actions are drawn
     /// only there. See [`Self::sidebar_hovered`].
     pub(crate) list_hovered: Option<String>,
@@ -927,6 +930,7 @@ impl Cydonia {
             menu: None,
             menu_point: None,
             sidebar_hovered: None,
+            pane_hovered: None,
             list_hovered: None,
             menu_cursor: Cursor::default(),
             menu_pressed: false,

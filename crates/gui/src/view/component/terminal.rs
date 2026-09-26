@@ -117,11 +117,17 @@ impl Drop for Shell {
 
 impl Shell {
     fn open(cwd: &Path) -> anyhow::Result<(Self, mpsc::Receiver<Vec<u8>>)> {
-        let shell = std::env::var_os("SHELL")
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "/bin/zsh".into());
-        let mut command = CommandBuilder::new(shell);
-        command.arg("-l");
+        let shell = std::env::var_os("SHELL").filter(|s| !s.is_empty());
+        // `$SHELL` is unset on Windows unless something like Git Bash put it
+        // there, and `-l` is a unix shell's flag.
+        #[cfg(windows)]
+        let command = CommandBuilder::new(shell.unwrap_or_else(|| "powershell.exe".into()));
+        #[cfg(not(windows))]
+        let command = {
+            let mut command = CommandBuilder::new(shell.unwrap_or_else(|| "/bin/zsh".into()));
+            command.arg("-l");
+            command
+        };
         Self::open_command(cwd, command)
     }
 

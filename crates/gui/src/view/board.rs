@@ -2724,6 +2724,8 @@ impl Cydonia {
             )
             .children(can_add.then(|| {
                 self.drawer_action("list-group-add", icons::math::Plus, "Add card", cx)
+                    .invisible()
+                    .group_hover("list-group", |el| el.visible())
                     .on_click(cx.listener(move |this, _, window, cx| {
                         cx.stop_propagation();
                         this.edit(

@@ -634,6 +634,7 @@ impl Cydonia {
         let live = self.workspace.read(cx).reachable();
         let showing = self.showing(cx);
         let arranged = self.workspace.read(cx).active_space().is_some();
+        let active = self.workspace.read(cx).active_id();
         // A space arranges several entries, so it draws its own panes. One
         // entry open on its own is the single pane below.
         let body = match self.panes(window, cx) {
@@ -749,8 +750,8 @@ impl Cydonia {
                                 .flex()
                                 .flex_col()
                                 .gap(px(8.))
-                                .children(self.plan(cx))
-                                .children(self.permission(cx))
+                                .children(self.plan(active, cx))
+                                .children(self.permission(active, cx))
                                 .child(self.leaf().composer.clone()),
                             footer_height.clone(),
                         )),
@@ -1236,9 +1237,13 @@ impl Cydonia {
     }
 
     /// The agent's plan, while it still has something left to do.
-    fn plan(&self, cx: &Context<Self>) -> Option<impl IntoElement + use<>> {
+    pub(crate) fn plan(
+        &self,
+        session: Option<u64>,
+        cx: &Context<Self>,
+    ) -> Option<impl IntoElement + use<>> {
         let theme = Theme::of(cx).clone();
-        let chat = self.workspace.read(cx).active_session()?;
+        let chat = self.workspace.read(cx).session(session?)?;
         if chat.plan.is_empty() || chat.plan.iter().all(|(_, s)| *s == PlanStatus::Done) {
             return None;
         }
@@ -1276,9 +1281,13 @@ impl Cydonia {
     /// a checkbox saying how long the answer holds. See [`alert`] for why two
     /// buttons carry four options, and for what an agent has to ask to get the
     /// stack of rows instead.
-    fn permission(&self, cx: &Context<Self>) -> Option<impl IntoElement + use<>> {
+    pub(crate) fn permission(
+        &self,
+        session: Option<u64>,
+        cx: &Context<Self>,
+    ) -> Option<impl IntoElement + use<>> {
         let theme = Theme::of(cx).clone();
-        let chat = self.workspace.read(cx).active_session()?;
+        let chat = self.workspace.read(cx).session(session?)?;
         let prompt = chat.permission.as_ref()?;
         let id = chat.id;
         let painter = Painter::of(cx);

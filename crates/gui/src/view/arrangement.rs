@@ -248,11 +248,22 @@ impl Cydonia {
             Some((project, showing)) => self.pane_body(project, showing, Some(&front), window, cx),
         };
         let composer = match showing {
-            Some((_, Showing::Session(_))) => self
+            Some((_, Showing::Session(id))) => self
                 .leaves
                 .iter()
                 .find(|leaf| leaf.entry.as_ref() == Some(&front))
-                .map(|leaf| crate::view::detail::footer(leaf.composer.clone(), None)),
+                .map(|leaf| {
+                    crate::view::detail::footer(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(8.))
+                            .children(self.plan(Some(id), cx))
+                            .children(self.permission(Some(id), cx))
+                            .child(leaf.composer.clone()),
+                        None,
+                    )
+                }),
             _ => None,
         };
         let landing = self
@@ -506,8 +517,18 @@ impl Cydonia {
         // The bar is a drop target of its own — see [`Landing::Bar`] — so it
         // is lit while a drag is aimed at it rather than at an edge.
         let aimed = self.pane_landing.as_ref() == Some(&(pane.clone(), Landing::Bar));
+        let hovered = key.clone();
         crate::view::root::band()
+            .id(SharedString::from(format!("pane-bar-{key}")))
             .group("pane-bar")
+            .on_hover(cx.listener(move |this, over: &bool, _, cx| {
+                match (*over, this.pane_hovered.as_ref() == Some(&hovered)) {
+                    (true, false) => this.pane_hovered = Some(hovered.clone()),
+                    (false, true) => this.pane_hovered = None,
+                    _ => return,
+                }
+                cx.notify();
+            }))
             .w_full()
             .gap(px(2.))
             .pl(px(lead))
@@ -524,13 +545,16 @@ impl Cydonia {
             // The tabs in a strip of their own, which scrolls sideways once
             // they no longer fit: the bar's other children are the pane's
             // chrome and keep their places while it does.
-            .child(
+            .child(crate::view::component::strip::strip(
+                format!("pane-strip-{key}"),
                 tabs::bar(SharedString::from(format!("pane-strip-{key}"))).children(
                     stack
                         .iter()
                         .map(|tab| self.pane_tab(pane, tab, tab == front, theme, cx)),
                 ),
-            )
+                window,
+                cx,
+            ))
             .children(self.pane_project(front, cx).map(|project| {
                 self.menu_button(
                     SharedString::from(format!("pane-add-{key}")),

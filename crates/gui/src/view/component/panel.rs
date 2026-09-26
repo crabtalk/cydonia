@@ -585,7 +585,8 @@ impl Render for Panel {
                     .gap(px(6.))
                     // Always at the window's top right while it is up.
                     .when(right, |band| band.pr_0())
-                    .child(
+                    .child(super::strip::strip(
+                        "panel-tabs",
                         tabs::bar("panel-tabs").children(self.ordered().map(|(id, tab)| {
                             let icon = match &tab.content {
                                 Content::Review(_) => icons::development::GitCompare,
@@ -651,7 +652,9 @@ impl Render for Panel {
                                     }),
                                 ))
                         })),
-                    )
+                        window,
+                        cx,
+                    ))
                     .child(
                         div()
                             .relative()
