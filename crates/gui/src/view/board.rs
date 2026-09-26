@@ -181,6 +181,8 @@ fn resting(status: Option<Status>) -> Option<Status> {
     status.filter(|status| *status != Status::Busy)
 }
 
+const STATUS_CHIP_HEIGHT: f32 = 16.;
+
 /// How the work on a card is going, said in a word — see
 /// [`artifact::board::Status`]. Written by whoever is doing the work, which is
 /// usually an agent through `board_set_card_status`.
@@ -192,13 +194,19 @@ fn status_chip(status: Status, theme: &Theme) -> AnyElement {
         Status::Blocked => theme.danger,
         Status::Done => theme.text_faint,
     };
+    // A fixed height with the text box held to the glyphs, so the word sits in
+    // the middle of the border and the chip on the row's centre line.
     div()
         .flex_none()
-        .px(px(5.))
+        .h(px(STATUS_CHIP_HEIGHT))
+        .flex()
+        .items_center()
+        .px(px(6.))
         .rounded_full()
         .border_1()
         .border_color(tint)
         .text_style(TextStyle::Caption)
+        .line_height(gpui::relative(1.))
         .text_color(tint)
         .child(status.key())
         .into_any_element()
@@ -3842,7 +3850,12 @@ impl Cydonia {
                             .child(handle)
                     }))
                     .child(div().flex_1())
-                    .children(resting(status).map(|status| status_chip(status, &theme)))
+                    .children(resting(status).map(|status| {
+                        div()
+                            .flex_none()
+                            .when(working.is_some(), |chip| chip.mr(px(6.)))
+                            .child(status_chip(status, &theme))
+                    }))
                     // Where ▶ stands, because it is what ▶ becomes: a card is
                     // either one you can start or one that is running, and the
                     // two belong in one slot. On show rather than behind the
