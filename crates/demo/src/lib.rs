@@ -1,17 +1,26 @@
 //! Cydonia in a browser tab: the same window the desktop app opens, on gpui's
-//! web platform, over the welcome project held in memory.
+//! web platform, over the welcome and tour projects held in memory.
 //!
-//! Single-threaded, like bezel's gallery. Sessions are read back and never
-//! connect; there is no terminal, settings window, updater or tool server —
-//! see `cydonia-gui`'s `desktop` feature.
+//! Single-threaded, like bezel's gallery. Sessions answer with a stand-in
+//! rather than an agent; there is no terminal, settings window, updater or
+//! tool server — see `cydonia-gui`'s `desktop` feature.
 
 #![cfg(target_family = "wasm")]
 
-use artifact::project::memory;
+use artifact::{
+    project::{fs, memory},
+    space::{Axis, Kind, Member, Node},
+};
 use bezel::gpui::{App, Application, ApplicationHandle};
 use gui::{
     boot,
-    model::{language, settings::Settings, state::State, store, welcome},
+    model::{
+        disk, language,
+        settings::{Agent, Settings},
+        spaces,
+        state::State,
+        store, welcome,
+    },
     view::root,
 };
 use std::{borrow::Cow, cell::RefCell, rc::Rc, sync::Arc};
@@ -35,6 +44,48 @@ const FONTS: [&[u8]; 5] = [
 /// under.
 const PROJECT: &str = "/welcome";
 
+/// The tour project, beside it. Its files are under `assets/showcase/`.
+const TOUR: &str = "/tour";
+
+/// A file of the tour project, named under `.cydonia/`, and its bytes.
+macro_rules! tour {
+    ($path:literal) => {
+        (
+            $path,
+            include_bytes!(concat!("../assets/showcase/.cydonia/", $path)) as &[u8],
+        )
+    };
+}
+
+const TOUR_FILES: [(&str, &[u8]); 4] = [
+    tour!("articles/1790000000100/content.md"),
+    tour!("articles/1790000000100/properties.toml"),
+    tour!("boards/1790000000200.toml"),
+    tour!("sessions/1790000000300.json"),
+];
+
+/// The tour's working tree, which the right panel's Files lists: named from
+/// the project's root, beside `.cydonia/`.
+const TOUR_TREE: [(&str, &[u8]); 4] = [
+    ("README.md", include_bytes!("../assets/showcase/README.md")),
+    (
+        "Cargo.toml",
+        include_bytes!("../assets/showcase/Cargo.toml"),
+    ),
+    (
+        "src/main.rs",
+        include_bytes!("../assets/showcase/src/main.rs"),
+    ),
+    (
+        "src/notes.rs",
+        include_bytes!("../assets/showcase/src/notes.rs"),
+    ),
+];
+
+/// And the welcome project's.
+const WELCOME_TREE: [(&str, &[u8]); 1] =
+    [("README.md", include_bytes!("../assets/welcome/README.md"))];
+
 thread_local! {
     /// The whole app, and the reason it stays alive: on wasm the run loop is
     /// the browser's, so `run_embedded` returns at once and hands back the one
@@ -53,6 +104,32 @@ fn show(text: &str) {
     }
 }
 
+/// The tour's article beside its board, with the session behind the board's
+/// cards under it.
+fn tour_space() {
+    let article = fs::Project::new(TOUR)
+        .cydonia()
+        .join("articles/1790000000100/content.md");
+    let article = Member::new(TOUR, Kind::Article, article.to_string_lossy());
+    let Some(mut space) = spaces::create("Tour", article.clone()) else {
+        return;
+    };
+    space.tree = Node::split(
+        Axis::Horizontal,
+        vec![
+            Node::leaf(article),
+            Node::split(
+                Axis::Vertical,
+                vec![
+                    Node::leaf(Member::new(TOUR, Kind::Board, "1790000000200")),
+                    Node::leaf(Member::new(TOUR, Kind::Session, "1790000000300")),
+                ],
+            ),
+        ],
+    );
+    spaces::save(&mut space);
+}
+
 #[wasm_bindgen(start)]
 pub fn start() {
     std::panic::set_hook(Box::new(|info| {
@@ -62,10 +139,26 @@ pub fn start() {
     gpui_web::init_logging();
     language::prepare(PREPARED);
     store::seed(PROJECT, memory::Project::seed(welcome::files()));
+    store::seed(TOUR, memory::Project::seed(TOUR_FILES));
+    tour_space();
+    disk::seed(PROJECT.as_ref(), WELCOME_TREE);
+    disk::seed(TOUR.as_ref(), TOUR_TREE);
 
-    let settings = Settings::default();
+    // The name the tour's session was filed under, so it reads back as one
+    // this agent can answer.
+    let settings = Settings {
+        agents: vec![Agent {
+            name: "Demo agent".into(),
+            id: None,
+            command: "demo".into(),
+            args: Vec::new(),
+            env: Default::default(),
+        }],
+        ..Settings::default()
+    };
     let state = State {
-        projects: vec![PROJECT.into()],
+        projects: vec![PROJECT.into(), TOUR.into()],
+        last: [(PROJECT.into(), welcome::landing(PROJECT.as_ref()))].into(),
         ..State::default()
     };
     let platform = Rc::new(gpui_web::WebPlatform::new(false));

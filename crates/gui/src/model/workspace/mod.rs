@@ -275,8 +275,23 @@ impl Workspace {
     /// thread — the registry is a blocking fetch on a cold cache — and a
     /// failure just leaves the map empty.
     fn load_agent_icons(&mut self, cx: &mut Context<Self>) {
+        // No registry without the `desktop` feature: every agent is the
+        // stand-in, and wears the shell.
         #[cfg(not(feature = "desktop"))]
-        let _ = cx;
+        {
+            let _ = cx;
+            self.agent_icons = self
+                .settings
+                .agents
+                .iter()
+                .map(|agent| {
+                    (
+                        agent.name.clone(),
+                        Icon::from(bezel::ui::icons::glyph::Shell),
+                    )
+                })
+                .collect();
+        }
         #[cfg(feature = "desktop")]
         let configured = self.settings.agents.clone();
         #[cfg(feature = "desktop")]

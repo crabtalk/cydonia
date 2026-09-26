@@ -3,9 +3,10 @@
 //! this draws on it.
 
 use crate::model::state;
-use crate::model::workspace::Showing;
 #[cfg(feature = "desktop")]
-use crate::{model::update, view::section::Section};
+use crate::model::update;
+use crate::model::workspace::Showing;
+use crate::view::section::Section;
 use crate::{
     model::{session::ChatSession, settings::Features},
     view::{
@@ -484,9 +485,7 @@ impl Cydonia {
     /// Nothing shows here until a bundle is staged and verified, which on most
     /// days is never — see [`crate::model::update`], and the Developer section
     /// for the switch that puts it on screen without one.
-    /// The gear that opens the settings window, which only the desktop build
-    /// has.
-    #[cfg(feature = "desktop")]
+    /// The gear that opens the settings window.
     fn settings_button(
         &self,
         settings_chord: Option<SharedString>,
@@ -516,16 +515,6 @@ impl Cydonia {
                 )
                 .on_click(cx.listener(|this, _, _, cx| this.open_settings(Section::General, cx))),
         )
-    }
-
-    #[cfg(not(feature = "desktop"))]
-    fn settings_button(
-        &self,
-        settings_chord: Option<SharedString>,
-        cx: &mut Context<Self>,
-    ) -> Option<Empty> {
-        let _ = (settings_chord, cx);
-        None
     }
 
     #[cfg(not(feature = "desktop"))]
@@ -1547,6 +1536,10 @@ impl Cydonia {
     /// the main thread: opening it is a process, and a file manager that will
     /// not come to the front is not worth blocking a frame over.
     fn reveal_project(&mut self, ix: usize, cx: &mut Context<Self>) {
+        if cfg!(not(feature = "desktop")) {
+            self.desktop_only("Showing a project in the file manager", cx);
+            return;
+        }
         let Some(path) = self
             .workspace
             .read(cx)

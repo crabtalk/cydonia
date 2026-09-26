@@ -609,6 +609,7 @@ pub fn load() -> Result<Settings> {
 /// Edited with `toml_edit` rather than re-serialised: the file is meant to be
 /// opened and changed by hand, and a round trip through a value tree would
 /// silently delete every comment in it.
+#[cfg(feature = "desktop")]
 fn edit(change: impl FnOnce(&mut toml_edit::DocumentMut) -> Result<bool>) -> Result<()> {
     let path = path()?;
     let body = std::fs::read_to_string(&path).unwrap_or_default();
@@ -618,6 +619,20 @@ fn edit(change: impl FnOnce(&mut toml_edit::DocumentMut) -> Result<bool>) -> Res
         return Ok(());
     }
     std::fs::write(&path, doc.to_string())?;
+    Ok(())
+}
+
+/// The same without the `desktop` feature, which has no config directory:
+/// the document is held for as long as the process runs.
+#[cfg(not(feature = "desktop"))]
+fn edit(change: impl FnOnce(&mut toml_edit::DocumentMut) -> Result<bool>) -> Result<()> {
+    static HELD: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+    let mut held = HELD.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut doc: toml_edit::DocumentMut =
+        held.parse().context("settings.toml is not valid toml")?;
+    if change(&mut doc)? {
+        *held = doc.to_string();
+    }
     Ok(())
 }
 

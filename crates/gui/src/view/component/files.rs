@@ -41,13 +41,12 @@ fn scan(
         rows: &mut Vec<Entry>,
     ) -> anyhow::Result<()> {
         let mut entries = Vec::new();
-        for entry in std::fs::read_dir(path)? {
+        for entry in crate::model::disk::read_dir(path)? {
             if *remaining == 0 {
                 break;
             }
             *remaining -= 1;
-            let entry = entry?;
-            entries.push((entry.file_type()?.is_dir(), entry.path()));
+            entries.push(entry);
         }
         entries.sort_by(|a, b| {
             b.0.cmp(&a.0)

@@ -98,19 +98,21 @@ pub fn seed(state: &mut State) {
     // Straight into the first article rather than the front door: a project
     // with something to read in it that opens on `Nothing open` reads as an
     // empty one.
-    state.last.insert(
-        root.clone(),
-        state::Entry {
-            kind: state::Kind::Article,
-            id: fs::Project::new(&root)
-                .cydonia()
-                .join(LANDING)
-                .to_string_lossy()
-                .into_owned(),
-        },
-    );
+    state.last.insert(root.clone(), landing(&root));
     state.projects.insert(0, root);
     state.active = 0;
+}
+
+/// The entry a welcome project at `root` opens on.
+pub fn landing(root: &Path) -> state::Entry {
+    state::Entry {
+        kind: state::Kind::Article,
+        id: fs::Project::new(root)
+            .cydonia()
+            .join(LANDING)
+            .to_string_lossy()
+            .into_owned(),
+    }
 }
 
 /// Write the seed under `root`, oldest entry first.

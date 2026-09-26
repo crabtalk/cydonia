@@ -1,0 +1,62 @@
+id = "1790000000200"
+archived = false
+name = "Launch"
+key = "LAUNCH"
+next_handle = 8
+view = "lanes"
+
+[[columns]]
+id = "1790000000201"
+name = "TODO"
+collapsed = false
+
+[[columns.cards]]
+id = "1790000000211"
+handle = 5
+text = "Record a short video of a session working a board"
+
+[[columns.cards]]
+id = "1790000000212"
+handle = 6
+text = "Write the announcement post"
+
+[[columns.cards]]
+id = "1790000000213"
+handle = 7
+text = "Try it yourself: drag this card to DONE"
+
+[[columns]]
+id = "1790000000202"
+name = "DOING"
+collapsed = false
+
+[[columns.cards]]
+id = "1790000000221"
+handle = 3
+text = "Draft release notes from the merged changes"
+session = "1790000000300"
+status = "busy"
+
+[[columns.cards]]
+id = "1790000000222"
+handle = 4
+text = "Sign and notarize the macOS build"
+status = "blocked"
+
+[[columns]]
+id = "1790000000203"
+name = "DONE"
+collapsed = false
+
+[[columns.cards]]
+id = "1790000000231"
+handle = 1
+text = "Freeze features for the release"
+status = "done"
+
+[[columns.cards]]
+id = "1790000000232"
+handle = 2
+text = "Run the test suite on every platform"
+session = "1790000000300"
+status = "done"

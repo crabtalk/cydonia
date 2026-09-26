@@ -7,12 +7,14 @@
 //! The section is absent from a release build altogether; see
 //! [`super::Section::listed`].
 
-use crate::{
-    model::update,
-    view::settings::{SettingsWindow, Switch},
-};
+#[cfg(feature = "desktop")]
+use crate::model::update;
+use crate::view::settings::SettingsWindow;
+#[cfg(feature = "desktop")]
+use crate::view::settings::Switch;
+use bezel::gpui::{AnyElement, Context, div, prelude::*, px};
+#[cfg(feature = "desktop")]
 use bezel::{
-    gpui::{AnyElement, Context, div, prelude::*, px},
     theme::Theme,
     ui::{icons, widgets::Scaffolding},
 };
@@ -36,6 +38,13 @@ impl SettingsWindow {
     /// one: the sidebar reads the same updater. It is inert, though — see
     /// [`crate::model::update::Updater::ready`] — so the app does not restart
     /// out from under whoever is looking at it.
+    #[cfg(not(feature = "desktop"))]
+    fn notifier_row(&self, cx: &Context<Self>) -> Option<AnyElement> {
+        let _ = cx;
+        None
+    }
+
+    #[cfg(feature = "desktop")]
     fn notifier_row(&self, cx: &Context<Self>) -> Option<AnyElement> {
         let updater = update::of(cx)?;
         let theme = Theme::of(cx).clone();

@@ -292,20 +292,12 @@ pub fn adrift_line(agent: &str, others: bool) -> String {
 }
 
 impl Cydonia {
-    /// Nothing without the `desktop` feature: no project there is a directory.
-    #[cfg(not(feature = "desktop"))]
-    pub(crate) fn shell_cwd(&self, cx: &App) -> Option<PathBuf> {
-        let _ = cx;
-        None
-    }
-
     /// Where the window's shell opens: under a space, the project the first
     /// pane is in; the session's working directory when a chat is in front —
     /// its worktree, where it has one — and the project's otherwise.
     ///
     /// Asked again for each tab, not once for the panel: the panel outlives
     /// whatever was in front when it was opened.
-    #[cfg(feature = "desktop")]
     pub(crate) fn shell_cwd(&self, cx: &App) -> Option<PathBuf> {
         let workspace = self.workspace.read(cx);
         if let Some(space) = workspace.active_space() {
@@ -322,7 +314,8 @@ impl Cydonia {
     /// Nothing without the `desktop` feature: there is no shell to run.
     #[cfg(not(feature = "desktop"))]
     pub(crate) fn show_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let _ = (window, cx);
+        let _ = window;
+        self.desktop_only("The terminal", cx);
     }
 
     #[cfg(not(feature = "desktop"))]
@@ -332,7 +325,7 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let _ = (window, cx);
+        self.show_terminal(window, cx);
     }
 
     #[cfg(feature = "desktop")]

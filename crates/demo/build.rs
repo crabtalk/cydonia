@@ -1,19 +1,24 @@
-//! The fences in the welcome project, painted here on the host: the browser
-//! build carries no grammars. Written to `prepared.rs` as the table
+//! The fences in the welcome and tour projects, painted here on the host: the
+//! browser build carries no grammars. Written to `prepared.rs` as the table
 //! `gui::model::language::prepare` takes.
 
 use std::{env, fmt::Write as _, fs, path::PathBuf};
 
 fn main() {
-    let articles = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap())
-        .join("../gui/assets/welcome/.cydonia/articles");
-    println!("cargo::rerun-if-changed={}", articles.display());
+    let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
+    let projects = [
+        manifest.join("../gui/assets/welcome/.cydonia/articles"),
+        manifest.join("assets/showcase/.cydonia/articles"),
+    ];
+    for articles in &projects {
+        println!("cargo::rerun-if-changed={}", articles.display());
+    }
     syntax_std::install();
 
     let mut table = String::from("const PREPARED: &[gui::model::language::Prepared] = &[\n");
-    let mut documents: Vec<PathBuf> = fs::read_dir(&articles)
-        .unwrap()
-        .flatten()
+    let mut documents: Vec<PathBuf> = projects
+        .iter()
+        .flat_map(|articles| fs::read_dir(articles).unwrap().flatten())
         .map(|entry| entry.path().join("content.md"))
         .filter(|path| path.is_file())
         .collect();

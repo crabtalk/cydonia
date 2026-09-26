@@ -1,16 +1,22 @@
 //! The general section: what this copy of cydonia is, whether a newer one is
 //! out, and where the people who use it are.
 
+#[cfg(feature = "desktop")]
+use crate::model::update::{self, Status, Updater};
 use crate::{
     assets,
-    model::update::{self, Status, Updater},
     view::settings::{SettingsWindow, Switch},
 };
 use bezel::{
-    gpui::{AnyElement, Context, Entity, SharedString, div, img, prelude::*, px},
-    motion::{Fade, Painter},
+    gpui::{AnyElement, Context, div, img, prelude::*, px},
     theme::{TextStyle, Theme, Typeset},
-    ui::widgets::{ButtonStyle, Buttons, Content, Controls, Scaffolding},
+    ui::widgets::{Content, Scaffolding},
+};
+#[cfg(feature = "desktop")]
+use bezel::{
+    gpui::{Entity, SharedString},
+    motion::{Fade, Painter},
+    ui::widgets::{ButtonStyle, Buttons, Controls},
 };
 
 /// What this build is, read at compile time from `Cargo.toml` — the same
@@ -28,6 +34,7 @@ const COMMUNITY: &str = "https://discord.gg/yGZDYnwbx6";
 /// And where a release is picked up by hand, for the builds that cannot take
 /// one on their own. The site, not the tag: it hands out the image for the
 /// machine asking, which is the part this build got wrong by not being it.
+#[cfg(feature = "desktop")]
 const HOMEPAGE: &str = env!("CARGO_PKG_HOMEPAGE");
 
 /// What the notification switch says it does. The background is the whole of
@@ -140,6 +147,13 @@ impl SettingsWindow {
     /// question left a person with nowhere to ask it. What changes is the
     /// answer: those builds are told where to pick it up rather than offered a
     /// restart, and the menu bar still carries no check for them.
+    #[cfg(not(feature = "desktop"))]
+    fn updates(&self, cx: &Context<Self>) -> Option<AnyElement> {
+        let _ = cx;
+        None
+    }
+
+    #[cfg(feature = "desktop")]
     fn updates(&self, cx: &Context<Self>) -> Option<AnyElement> {
         let updater = update::of(cx)?;
         let theme = Theme::of(cx).clone();
@@ -199,6 +213,7 @@ impl SettingsWindow {
     /// What the updater is doing, and the one thing to do about it. The restart
     /// is the only control here that is prominent: it is the only one that acts
     /// on the app rather than on what it knows.
+    #[cfg(feature = "desktop")]
     fn release_row(&self, updater: &Entity<Updater>, cx: &Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let painter = Painter::of(cx);

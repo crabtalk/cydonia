@@ -50,6 +50,24 @@ use std::{
 };
 use web_time::{Instant, SystemTime, UNIX_EPOCH};
 
+/// What the stand-in answers without the `desktop` feature, one per turn in
+/// order and then round again.
+#[cfg(not(feature = "desktop"))]
+const STAND_IN: [&str; 3] = [
+    "I'm a stand-in: this browser demo has no agent behind it. In the desktop app, \
+     this session starts a real one — Claude Code, Codex, Gemini or any agent that \
+     speaks ACP — in the project's directory, and it can read and edit the boards and \
+     articles you see here.\n\nDownload Cydonia at https://cydonia.sh to try it on a \
+     project of your own.",
+    "I can't do that from here — nothing in this tab can reach a disk or run a \
+     process. On the desktop, an agent would pick up a card like LAUNCH-5, tag it \
+     busy while it works, and file what it made as an article. Open **Plan the \
+     launch** in the sidebar to read one that did.",
+    "Still a stand-in, I'm afraid. Everything else in this window is the real app, \
+     so drag a card, edit an article, or make a board — and get the desktop app at \
+     https://cydonia.sh when you want an agent that answers.",
+];
+
 #[cfg(feature = "desktop")]
 const STREAM_FRAME: Duration = Duration::from_millis(120);
 
@@ -569,6 +587,10 @@ impl ChatSession {
             return;
         }
         self.updated = SystemTime::now();
+        // No agent to wait for: the stand-in answers at once.
+        #[cfg(not(feature = "desktop"))]
+        self.prompt(content);
+        #[cfg(feature = "desktop")]
         if self.streaming || !self.live() {
             self.queue.push_back(content);
             self.flush();
@@ -590,7 +612,22 @@ impl ChatSession {
     fn prompt(&mut self, content: String) {
         #[cfg(not(feature = "desktop"))]
         {
-            self.queue.push_front(content);
+            let turn = self
+                .items
+                .iter()
+                .filter(|item| matches!(item, ChatItem::User(_)))
+                .count();
+            self.sent_at.insert(
+                self.items.len(),
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+            );
+            self.items.push(ChatItem::User(content));
+            self.items
+                .push(ChatItem::Agent(STAND_IN[turn % STAND_IN.len()].to_owned()));
+            self.flush();
         }
         #[cfg(feature = "desktop")]
         {

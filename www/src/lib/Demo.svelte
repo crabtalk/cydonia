@@ -18,7 +18,6 @@
 		{/if}
 		<button class="run" class:alone={!media} type="button" onclick={() => (running = true)}>
 			Run it here
-			<span class="note">in this tab — agents, terminal and git left out</span>
 		</button>
 	{/if}
 </div>
@@ -57,9 +56,6 @@
 		position: absolute;
 		top: 12px;
 		right: 12px;
-		display: flex;
-		align-items: baseline;
-		gap: 8px;
 		padding: 7px 12px;
 		border: 0;
 		border-radius: var(--radius);
@@ -74,13 +70,6 @@
 
 	.run:hover {
 		background: var(--accent-hover);
-	}
-
-	.note {
-		opacity: 0.7;
-		font-family: var(--mono);
-		font-size: 11px;
-		font-weight: 400;
 	}
 
 	@media (hover: hover) {

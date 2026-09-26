@@ -9,9 +9,10 @@ use bezel::{
     ui::input::{FieldEvent, Shape, TextField},
     ui::widgets::{ButtonStyle, Buttons as _, Controls as _},
 };
+#[cfg(feature = "desktop")]
+use std::io::{Read, Write};
 use std::{
     cell::Cell,
-    io::{Read, Write},
     path::{Path, PathBuf},
     rc::Rc,
     time::Duration,
@@ -29,10 +30,16 @@ gpui::actions!(
 );
 
 pub(crate) fn read_text(path: &Path) -> anyhow::Result<String> {
-    anyhow::ensure!(std::fs::metadata(path)?.is_file(), "Choose a regular file");
-    let file = std::fs::File::open(path)?;
-    let mut bytes = Vec::new();
-    file.take(LIMIT + 1).read_to_end(&mut bytes)?;
+    #[cfg(feature = "desktop")]
+    let bytes = {
+        anyhow::ensure!(std::fs::metadata(path)?.is_file(), "Choose a regular file");
+        let file = std::fs::File::open(path)?;
+        let mut bytes = Vec::new();
+        file.take(LIMIT + 1).read_to_end(&mut bytes)?;
+        bytes
+    };
+    #[cfg(not(feature = "desktop"))]
+    let bytes = crate::model::disk::read(path)?;
     anyhow::ensure!(
         bytes.len() as u64 <= LIMIT,
         "Files larger than 256 KiB must be opened externally"
@@ -60,6 +67,13 @@ pub(crate) fn write_text(
         source.len() as u64 <= LIMIT,
         "Files larger than 256 KiB must be edited externally"
     );
+    replace(path, saved, source, overwrite)
+}
+
+/// Put `source` where `path` is, through a temporary beside it so a failed
+/// write leaves the file as it was.
+#[cfg(feature = "desktop")]
+fn replace(path: &Path, saved: &str, source: &str, overwrite: bool) -> anyhow::Result<()> {
     static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let sequence = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let temporary = path.with_file_name(format!(".cydonia-save-{}-{sequence}", std::process::id()));
@@ -86,6 +100,12 @@ pub(crate) fn write_text(
         let _ = std::fs::remove_file(&temporary);
     }
     result
+}
+
+#[cfg(not(feature = "desktop"))]
+fn replace(path: &Path, saved: &str, source: &str, overwrite: bool) -> anyhow::Result<()> {
+    let _ = (saved, overwrite);
+    Ok(crate::model::disk::write(path, source.as_bytes())?)
 }
 
 fn normalized(source: &str) -> String {
@@ -553,6 +573,12 @@ impl FileView {
     }
 
     fn open_external(&mut self, target: external::Target, cx: &mut Context<Self>) {
+        if cfg!(not(feature = "desktop")) {
+            cx.emit(crate::view::desktop::DesktopOnly(
+                "Opening a file in another app",
+            ));
+            return;
+        }
         let opens_file = matches!(
             target,
             external::Target::Application(_) | external::Target::Default
@@ -744,6 +770,8 @@ impl Focusable for FileView {
         self.focus.clone()
     }
 }
+
+impl gpui::EventEmitter<crate::view::desktop::DesktopOnly> for FileView {}
 
 impl Render for FileView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {

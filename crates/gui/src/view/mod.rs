@@ -9,6 +9,7 @@ pub mod chrome;
 pub mod component;
 pub mod confirm;
 pub mod create;
+pub mod desktop;
 pub mod detail;
 pub mod header;
 #[cfg(feature = "desktop")]
@@ -19,7 +20,6 @@ pub mod leaf;
 pub mod menubar;
 pub mod root;
 pub mod section;
-#[cfg(feature = "desktop")]
 pub mod settings;
 pub mod sidebar;
 pub mod table;

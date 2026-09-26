@@ -5,9 +5,9 @@ mod persistence;
 #[cfg(feature = "desktop")]
 use super::terminal::{DirectoryChanged, Exited, Terminal};
 use super::{changes::Changes, file::FileView, files::Files};
-use crate::view::chrome;
 use crate::view::leaf::Pane;
 use crate::view::root::{Cydonia, ToggleChanges};
+use crate::view::{chrome, desktop::DesktopOnly};
 use bezel::{
     gpui::{
         self, AnyElement, Axis, Context, DragMoveEvent, Empty, Entity, Focusable, Render,
@@ -39,6 +39,8 @@ gpui::actions!(
 );
 
 struct FilesResize;
+
+impl gpui::EventEmitter<DesktopOnly> for Panel {}
 
 enum Content {
     Review(Entity<Changes>),
@@ -130,6 +132,10 @@ impl Panel {
     }
 
     pub fn review(&mut self, cx: &mut Context<Self>) {
+        if cfg!(not(feature = "desktop")) {
+            cx.emit(DesktopOnly("Review"));
+            return;
+        }
         let open = self
             .ordered()
             .find(|(_, tab)| matches!(tab.content, Content::Review(_)))
@@ -147,10 +153,11 @@ impl Panel {
         self.push(Content::Review(review), vec![open, watch], cx);
     }
 
-    /// Nothing without the `desktop` feature: there is no shell to run.
+    /// Without the `desktop` feature there is no shell to run.
     #[cfg(not(feature = "desktop"))]
     fn terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let _ = (window, cx);
+        let _ = window;
+        cx.emit(DesktopOnly("The terminal"));
     }
 
     #[cfg(feature = "desktop")]
@@ -228,7 +235,10 @@ impl Panel {
             file
         });
         let watch = cx.observe(&file, |_, _, cx| cx.notify());
-        self.push(Content::File(file), vec![watch], cx);
+        let forward = cx.subscribe(&file, |_, _, event: &DesktopOnly, cx| {
+            cx.emit(DesktopOnly(event.0))
+        });
+        self.push(Content::File(file), vec![watch, forward], cx);
     }
 
     /// Step to the tab `step` along, wrapping at the ends — the row is a ring,
@@ -831,12 +841,17 @@ impl Cydonia {
             self.right_panels
                 .entry(cwd.clone())
                 .or_insert_with(|| {
-                    cx.new(|cx| {
+                    let panel = cx.new(|cx| {
                         let mut panel = Panel::new(cwd.clone(), cx);
                         panel.restore_pending = persistence::saved_panel(&cwd);
                         panel.project_root = cwd.canonicalize().unwrap_or(cwd);
                         panel
+                    });
+                    cx.subscribe(&panel, |this, _, event: &DesktopOnly, cx| {
+                        this.desktop_only(event.0, cx)
                     })
+                    .detach();
+                    panel
                 })
                 .clone()
         });

@@ -1,6 +1,8 @@
 //! Root view: the window's grid, the state the chrome owns, and the frame
 //! the sidebar and the chat column are hung in.
 
+#[cfg(not(feature = "desktop"))]
+use crate::view::settings::{self, SettingsWindow};
 #[cfg(feature = "desktop")]
 use crate::{
     model::update,
@@ -379,10 +381,16 @@ pub struct Cydonia {
     pub(crate) boards: board::Scrolls,
     #[cfg(feature = "desktop")]
     settings_window: Option<WindowHandle<SettingsWindow>>,
+    /// Settings drawn over the window, while they are up.
+    #[cfg(not(feature = "desktop"))]
+    settings_sheet: Option<Entity<SettingsWindow>>,
     /// The delete waiting to be agreed to, and the name to ask about. Held
     /// with its label rather than looked up when the dialog draws: what is
     /// being asked about must not change wording under the question.
     pub(crate) confirming: Option<confirm::Confirming>,
+    /// What [`Cydonia::desktop_only`] was last asked about, while its notice
+    /// is up.
+    pub(crate) desktop_only: Option<&'static str>,
     /// The spaces whose members are folded away, by space id.
     ///
     /// Collapsed rather than expanded, so a space is open until someone folds
@@ -905,11 +913,14 @@ impl Cydonia {
             card_docs: Default::default(),
             #[cfg(feature = "desktop")]
             settings_window: None,
+            #[cfg(not(feature = "desktop"))]
+            settings_sheet: None,
             collapsed_spaces: Default::default(),
             pane_landing: None,
             fronts: Default::default(),
             tab_history: Vec::new(),
             confirming: None,
+            desktop_only: None,
             info: None,
             making: None,
             info_pressed: false,
@@ -1252,7 +1263,6 @@ impl Cydonia {
         self.close_project(ix, cx);
     }
 
-    /// Nothing without the `desktop` feature, which is what has the window.
     pub(crate) fn open_settings(&mut self, section: Section, cx: &mut Context<Self>) {
         #[cfg(feature = "desktop")]
         {
@@ -1260,7 +1270,75 @@ impl Cydonia {
             self.settings_window = settings::open(workspace, self.settings_window, section, cx);
         }
         #[cfg(not(feature = "desktop"))]
-        let _ = (section, cx);
+        {
+            self.menu = None;
+            self.settings_sheet = Some(settings::embed(self.workspace.clone(), section, cx));
+            cx.notify();
+        }
+    }
+
+    /// The settings page over a scrim that takes the press putting it away.
+    #[cfg(not(feature = "desktop"))]
+    fn settings_sheet(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let sheet = self.settings_sheet.clone()?;
+        let theme = Theme::of(cx).clone();
+        Some(
+            div()
+                .id("settings-scrim")
+                .absolute()
+                .inset_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .p(px(24.))
+                .bg(theme.scrim())
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.settings_sheet = None;
+                    cx.notify();
+                }))
+                .child(
+                    div()
+                        .id("settings-sheet")
+                        .w_full()
+                        .h_full()
+                        .max_w(px(900.))
+                        .max_h(px(620.))
+                        .overflow_hidden()
+                        .rounded(px(Theme::panel_radius()))
+                        .border_1()
+                        .border_color(theme.border)
+                        .relative()
+                        .on_click(|_, _, cx| cx.stop_propagation())
+                        .child(sheet)
+                        .child(
+                            theme
+                                .ghost("settings-close")
+                                .absolute()
+                                .top(px(10.))
+                                .right(px(10.))
+                                .p(px(6.))
+                                .tooltip(|window, cx| {
+                                    bezel::ui::tooltip::Tooltip::text("Close", window, cx)
+                                })
+                                .child(
+                                    icons::icon(icons::notifications::X)
+                                        .size(px(14.))
+                                        .text_color(theme.text_muted),
+                                )
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.settings_sheet = None;
+                                    cx.notify();
+                                })),
+                        ),
+                )
+                .into_any_element(),
+        )
+    }
+
+    #[cfg(feature = "desktop")]
+    fn settings_sheet(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let _ = cx;
+        None
     }
 
     pub(crate) fn open_project_action(
@@ -1269,6 +1347,10 @@ impl Cydonia {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if cfg!(not(feature = "desktop")) {
+            self.desktop_only("Opening a project", cx);
+            return;
+        }
         let picked = cx.prompt_for_paths(PathPromptOptions {
             files: false,
             directories: true,
@@ -1449,6 +1531,8 @@ impl Render for Cydonia {
             // Over every column and every floating control: nothing behind it
             // is answerable while it is asking.
             .children(self.confirm_delete(cx))
+            .children(self.settings_sheet(cx))
+            .children(self.desktop_only_notice(cx))
             .children(self.new_board_dialog(cx));
         bezel::ui::window::frame(root, window, cx)
     }

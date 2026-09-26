@@ -4,29 +4,47 @@
 //! A window rather than a sheet, and **opaque** rather than vibrant. Settings
 //! is content, not chrome — a translucent panel would put the app you just
 //! navigated away from directly behind the form you are filling in.
+//!
+//! Without the `desktop` feature there is one window, and this is drawn inside
+//! it — see [`embed`].
 
+#[cfg(feature = "desktop")]
 use crate::{
     agent::Listing,
-    model::{update, workspace::Workspace},
-    view::root::{HEADER_HEIGHT, TRAFFIC_LIGHT_X, TRAFFIC_LIGHT_Y},
+    model::update,
+    view::root::{TRAFFIC_LIGHT_X, TRAFFIC_LIGHT_Y},
 };
+use crate::{model::workspace::Workspace, view::root::HEADER_HEIGHT};
 use bezel::ui::scroll as scrollbars;
 use bezel::{
     gpui::{
-        AnyElement, App, Bounds, Context, ElementId, Entity, Render, SharedString, TitlebarOptions,
-        Window, WindowBackgroundAppearance, WindowBounds, WindowHandle, WindowOptions, div, point,
-        prelude::*, px, size,
+        AnyElement, App, Context, ElementId, Entity, Render, SharedString, Window, div, prelude::*,
+        px,
     },
     motion::{Fade, Painter},
-    theme::{TextStyle, Theme, Typeset, appearance},
+    theme::{TextStyle, Theme, Typeset},
     ui::{
         icons,
-        input::{FieldEvent, Shape, TextField},
+        input::TextField,
         widgets::{Content, Controls, Layout, Scaffolding},
     },
 };
+#[cfg(feature = "desktop")]
+use bezel::{
+    gpui::{
+        Bounds, TitlebarOptions, WindowBackgroundAppearance, WindowBounds, WindowHandle,
+        WindowOptions, point, size,
+    },
+    theme::appearance,
+    ui::input::{FieldEvent, Shape},
+};
+#[cfg(feature = "desktop")]
 use std::collections::{HashMap, HashSet};
 
+#[cfg(feature = "desktop")]
+mod agents;
+#[cfg(not(feature = "desktop"))]
+#[path = "agents_web.rs"]
 mod agents;
 mod developer;
 mod features;
@@ -140,11 +158,14 @@ pub struct SettingsWindow {
     section: Section,
     /// The catalog, once it has been fetched. `None` while it is in flight —
     /// which is the difference between "still looking" and "nothing here".
+    #[cfg(feature = "desktop")]
     listings: Option<Vec<Listing>>,
     /// Agents with an install or a removal running.
+    #[cfg(feature = "desktop")]
     busy: HashSet<String>,
     /// The row whose install is waiting to be agreed to — see
     /// [`SettingsWindow::trust_dialog`].
+    #[cfg(feature = "desktop")]
     trusting: Option<usize>,
     /// The catalogue's rows, built only where they are on screen.
     ///
@@ -153,14 +174,17 @@ pub struct SettingsWindow {
     /// out on every frame a scroll draws — which is where this section's time
     /// went, measured. Keyed by agent id, so narrowing the search reconciles
     /// against what is on screen rather than scrolling it.
+    #[cfg(feature = "desktop")]
     agents_list: bezel::ui::list::VariableList<String>,
     /// What the installer has printed for each of them, newest last: the tail
     /// is the row's status while it runs, and the whole of it is all a failure
     /// has to explain itself with — see [`crate::agent::record`].
+    #[cfg(feature = "desktop")]
     output: HashMap<String, Vec<String>>,
     /// What the agents section is being searched for. Held by the window
     /// rather than made where it is drawn: what has been typed has to outlive
     /// the frame, and a section is drawn afresh on every one.
+    #[cfg(feature = "desktop")]
     search: Entity<TextField>,
     /// The family pickers, held for the same reason the search field is: the
     /// menu one of them has open has to outlive the frame it was opened in.
@@ -172,11 +196,13 @@ pub struct SettingsWindow {
     /// The shortcut row taking keys, while one is — see
     /// [`shortcuts::Recording`].
     recording: Option<shortcuts::Recording>,
+    #[cfg(feature = "desktop")]
     error: Option<SharedString>,
 }
 
 /// Open the window, or bring the open one forward — a second settings window
 /// would be two views of one preference.
+#[cfg(feature = "desktop")]
 pub fn open(
     workspace: Entity<Workspace>,
     existing: Option<WindowHandle<SettingsWindow>>,
@@ -219,73 +245,95 @@ pub fn open(
             // onto every window on each appearance switch, which is what keeps
             // the main window's frost alive and would frost this one with it.
             appearance::keep_background(window, cx);
-            cx.new(|cx| {
-                let search = cx.new(|cx| {
-                    TextField::new(cx)
-                        .with_shape(Shape::Line)
-                        .with_frame(false)
-                        .with_placeholder("Search agents…")
-                });
-                // The list narrows as it is typed into. Subscribed rather than
-                // observed: a field notifies on its own caret blink, and this
-                // would rebuild the catalogue twice a second.
-                cx.subscribe(&search, |_, _, event: &FieldEvent, cx| {
-                    if *event == FieldEvent::Changed {
-                        cx.notify();
-                    }
-                })
-                .detach();
-                // The general section reads the updater, which moves on its own
-                // — a check that lands while this window sits open has to reach
-                // the row that reports it.
-                if let Some(updater) = update::of(cx) {
-                    cx.observe(&updater, |_, _, cx| cx.notify()).detach();
-                }
-                let fonts = workspace.read(cx).fonts.clone();
-                let interface_font =
-                    typography::FamilyPicker::new(typography::Face::Interface, fonts.sans, cx);
-                let article_font =
-                    typography::FamilyPicker::new(typography::Face::Article, fonts.body, cx);
-                let mono_font =
-                    typography::FamilyPicker::new(typography::Face::Mono, fonts.mono, cx);
-                let mut this = SettingsWindow {
-                    drag: Default::default(),
-                    workspace,
-                    section,
-                    listings: None,
-                    busy: HashSet::new(),
-                    trusting: None,
-                    agents_list: {
-                        let list = bezel::ui::list::VariableList::default();
-                        // A catalogue is read from the top. Following the tail
-                        // is the transcript's rule, and what this comes set to.
-                        list.state.set_follow_mode(bezel::gpui::FollowMode::Normal);
-                        list
-                    },
-                    output: HashMap::new(),
-                    search,
-                    interface_font,
-                    article_font,
-                    mono_font,
-                    editing: None,
-                    recording: None,
-                    error: None,
-                };
-                this.load(cx);
-                // The keymap is emptied while a chord is being recorded, so a
-                // window shut in the middle of that has to put it back — see
-                // [`shortcuts`].
-                cx.on_release(|this: &mut SettingsWindow, cx| {
-                    if this.recording.is_some() {
-                        shortcuts::restore(&this.workspace, cx);
-                    }
-                })
-                .detach();
-                this
-            })
+            cx.new(|cx| SettingsWindow::new(workspace, section, cx))
         },
     )
     .ok()
+}
+
+/// The same page, drawn inside the one window there is.
+#[cfg(not(feature = "desktop"))]
+pub fn embed(
+    workspace: Entity<Workspace>,
+    section: Section,
+    cx: &mut App,
+) -> Entity<SettingsWindow> {
+    cx.new(|cx| SettingsWindow::new(workspace, section, cx))
+}
+
+impl SettingsWindow {
+    fn new(workspace: Entity<Workspace>, section: Section, cx: &mut Context<Self>) -> Self {
+        #[cfg(feature = "desktop")]
+        let search = cx.new(|cx| {
+            TextField::new(cx)
+                .with_shape(Shape::Line)
+                .with_frame(false)
+                .with_placeholder("Search agents…")
+        });
+        // The list narrows as it is typed into. Subscribed rather than
+        // observed: a field notifies on its own caret blink, and this
+        // would rebuild the catalogue twice a second.
+        #[cfg(feature = "desktop")]
+        cx.subscribe(&search, |_, _, event: &FieldEvent, cx| {
+            if *event == FieldEvent::Changed {
+                cx.notify();
+            }
+        })
+        .detach();
+        // The general section reads the updater, which moves on its own
+        // — a check that lands while this window sits open has to reach
+        // the row that reports it.
+        #[cfg(feature = "desktop")]
+        if let Some(updater) = update::of(cx) {
+            cx.observe(&updater, |_, _, cx| cx.notify()).detach();
+        }
+        let fonts = workspace.read(cx).fonts.clone();
+        let interface_font =
+            typography::FamilyPicker::new(typography::Face::Interface, fonts.sans, cx);
+        let article_font = typography::FamilyPicker::new(typography::Face::Article, fonts.body, cx);
+        let mono_font = typography::FamilyPicker::new(typography::Face::Mono, fonts.mono, cx);
+        let mut this = SettingsWindow {
+            drag: Default::default(),
+            workspace,
+            section,
+            #[cfg(feature = "desktop")]
+            listings: None,
+            #[cfg(feature = "desktop")]
+            busy: HashSet::new(),
+            #[cfg(feature = "desktop")]
+            trusting: None,
+            #[cfg(feature = "desktop")]
+            agents_list: {
+                let list = bezel::ui::list::VariableList::default();
+                // A catalogue is read from the top. Following the tail
+                // is the transcript's rule, and what this comes set to.
+                list.state.set_follow_mode(bezel::gpui::FollowMode::Normal);
+                list
+            },
+            #[cfg(feature = "desktop")]
+            output: HashMap::new(),
+            #[cfg(feature = "desktop")]
+            search,
+            interface_font,
+            article_font,
+            mono_font,
+            editing: None,
+            recording: None,
+            #[cfg(feature = "desktop")]
+            error: None,
+        };
+        this.load(cx);
+        // The keymap is emptied while a chord is being recorded, so a
+        // window shut in the middle of that has to put it back — see
+        // [`shortcuts`].
+        cx.on_release(|this: &mut SettingsWindow, cx| {
+            if this.recording.is_some() {
+                shortcuts::restore(&this.workspace, cx);
+            }
+        })
+        .detach();
+        this
+    }
 }
 
 /// One row of a settings group that carries a switch: an optional icon, a
@@ -442,7 +490,10 @@ impl SettingsWindow {
             .pb(px(8.))
             // Clears the traffic lights, which have no strip of their own.
             // Set after the shorthand — `p` writes every side.
-            .pt(px(HEADER_HEIGHT))
+            .pt(px(match cfg!(feature = "desktop") {
+                true => HEADER_HEIGHT,
+                false => 12.,
+            }))
             .children(
                 Section::ALL
                     .into_iter()
@@ -471,7 +522,7 @@ impl Render for SettingsWindow {
         let owns_scroll = self.section.owns_scroll();
         // Off macOS the window's top edge is a strip of its own, over the
         // sidebar's empty band and the page's top margin.
-        let strip = (!cfg!(target_os = "macos")).then(|| {
+        let strip = (!cfg!(target_os = "macos") && cfg!(feature = "desktop")).then(|| {
             div()
                 .absolute()
                 .top_0()
@@ -564,6 +615,9 @@ impl Render for SettingsWindow {
             .children(strip)
             .children(self.cover_dialog(cx))
             .children(self.trust_dialog(cx));
-        bezel::ui::window::frame(root, window, cx)
+        #[cfg(feature = "desktop")]
+        return bezel::ui::window::frame(root, window, cx);
+        #[cfg(not(feature = "desktop"))]
+        root
     }
 }

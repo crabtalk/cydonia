@@ -11,10 +11,11 @@
 //! the keyboard actually sends. While a row is recording the app answers to
 //! nothing at all — see [`SettingsWindow::record`].
 
+#[cfg(feature = "desktop")]
+use crate::view::hotkey;
 use crate::{
     model::{settings::Shortcuts, workspace::Workspace},
     view::{
-        hotkey,
         keymap::{self, Command, Menu},
         settings::{self, SettingsWindow, Switch},
     },
@@ -434,4 +435,25 @@ pub(super) fn restore(workspace: &Entity<Workspace>, cx: &mut App) {
     let shortcuts = workspace.read(cx).settings.shortcuts.clone();
     keymap::rebind(&shortcuts, cx);
     hotkey::apply(shortcuts.activate(), cx);
+}
+
+/// No system-wide chord without the `desktop` feature: the page cannot hear a
+/// key while it is not in front.
+#[cfg(not(feature = "desktop"))]
+mod hotkey {
+    use bezel::gpui::{App, SharedString};
+
+    pub fn refused(cx: &App) -> Option<SharedString> {
+        let _ = cx;
+        Some("A browser tab cannot answer a chord while it is in the background.".into())
+    }
+
+    pub fn holdable(chord: &str) -> bool {
+        let _ = chord;
+        true
+    }
+
+    pub fn apply(chord: Option<&str>, cx: &mut App) {
+        let _ = (chord, cx);
+    }
 }
