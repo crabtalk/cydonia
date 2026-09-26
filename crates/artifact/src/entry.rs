@@ -1,12 +1,20 @@
 //! Stable, project-wide numbers alongside each entry's storage identity.
 
-use crate::project::{Project, fs};
+use crate::project::Project;
+#[cfg(feature = "sqlite")]
+use crate::project::fs;
 use anyhow::Result;
+#[cfg(feature = "sqlite")]
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
-use std::{path::Path, time::Duration};
+#[cfg(feature = "sqlite")]
+use std::path::Path;
+#[cfg(feature = "sqlite")]
+use std::time::Duration;
 
+#[cfg(feature = "sqlite")]
 pub struct Registry(Connection);
 
+#[cfg(feature = "sqlite")]
 impl Registry {
     pub fn open(project: &Path) -> Result<Self> {
         let path = fs::Project::new(project).init()?.join("entries.db");
@@ -80,6 +88,7 @@ impl Registry {
     }
 }
 
+#[cfg(feature = "sqlite")]
 pub fn number(project: &Path, kind: &str, id: &str) -> Result<u64> {
     Registry::open(project)?.number(kind, id)
 }
@@ -162,6 +171,7 @@ pub fn open(store: &impl Project, entry: &Entry) -> Result<Option<serde_json::Va
 
 /// Discover existing content without creating storage in an empty project:
 /// the [`catalog`] of its files, and the tables in its database.
+#[cfg(feature = "sqlite")]
 pub fn list(project: &Path) -> Result<Vec<Entry>> {
     let store = fs::Project::new(project);
     let mut entries = catalog(&store)?;
@@ -192,6 +202,7 @@ pub fn list(project: &Path) -> Result<Vec<Entry>> {
     Ok(entries)
 }
 
+#[cfg(feature = "sqlite")]
 fn data(project: &Path) -> Result<Connection> {
     let connection = Connection::open_with_flags(
         fs::Project::new(project).cydonia().join(fs::DATA),
@@ -202,6 +213,7 @@ fn data(project: &Path) -> Result<Connection> {
 }
 
 /// Read the catalog's entry; table previews contain at most 200 rows.
+#[cfg(feature = "sqlite")]
 pub fn read(project: &Path, entry: &Entry) -> Result<serde_json::Value> {
     let store = fs::Project::new(project);
     if let Some(value) = open(&store, entry)? {

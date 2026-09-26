@@ -1,7 +1,8 @@
 //! Language detection and on-demand WASM syntax highlighting.
 //!
-//! Without the `desktop` feature there are no grammars: nothing is installed
-//! or painted, and only Markdown is recognised.
+//! Without the `desktop` feature there are no grammars: nothing is installed,
+//! only Markdown is recognised, and a fence is painted only when its spans
+//! were worked out ahead of time and handed to [`prepare`].
 
 #[cfg(feature = "desktop")]
 use bezel::gpui::App;
@@ -166,7 +167,22 @@ pub fn highlight(language: &str, source: &str) -> Option<Vec<(Range<usize>, High
 mod none {
     use super::{HighlightKind, Language, MARKDOWN, Status};
     use bezel::gpui::App;
-    use std::{ops::Range, path::Path};
+    use std::{ops::Range, path::Path, sync::OnceLock};
+
+    /// A fence painted ahead of time: its language, its source, and the spans
+    /// as byte offsets into that source.
+    pub type Prepared = (
+        &'static str,
+        &'static str,
+        &'static [(usize, usize, HighlightKind)],
+    );
+
+    static PREPARED: OnceLock<&'static [Prepared]> = OnceLock::new();
+
+    /// The fences this build can paint. Set once; a second call is ignored.
+    pub fn prepare(table: &'static [Prepared]) {
+        let _ = PREPARED.set(table);
+    }
 
     pub fn of(path: &Path) -> Option<Language> {
         let ext = path.extension()?.to_str()?;
@@ -185,9 +201,23 @@ mod none {
         let _ = (labels.into_iter(), cx);
     }
 
+    /// Matched on the source with trailing whitespace ignored, which is the
+    /// one way a fence's body and the file it was read from differ.
     pub fn highlight(language: &str, source: &str) -> Option<Vec<(Range<usize>, HighlightKind)>> {
-        let _ = (language, source);
-        None
+        if language == MARKDOWN {
+            return Some(markdown::source::spans(source));
+        }
+        let (_, _, spans) = PREPARED
+            .get()?
+            .iter()
+            .find(|(name, text, _)| *name == language && text.trim_end() == source.trim_end())?;
+        Some(
+            spans
+                .iter()
+                .filter(|(start, end, _)| *end <= source.len() && start < end)
+                .map(|(start, end, kind)| (*start..*end, *kind))
+                .collect(),
+        )
     }
 
     pub fn status(name: &str) -> Status {
@@ -206,4 +236,7 @@ mod none {
 }
 
 #[cfg(not(feature = "desktop"))]
-pub use none::{available, ensure, highlight, of, offerable, paintable, start_install, status};
+pub use none::{
+    Prepared, available, ensure, highlight, of, offerable, paintable, prepare, start_install,
+    status,
+};

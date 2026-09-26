@@ -23,4 +23,4 @@ tokio = { workspace = true, optional = true }
 default = ["http"]
 # The server over HTTP. Off, the tools, the protocol and the rail build for
 # wasm32.
-http = ["dep:axum", "dep:tokio"]
+http = ["artifact/sqlite", "dep:axum", "dep:tokio"]

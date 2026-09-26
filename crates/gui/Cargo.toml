@@ -30,7 +30,7 @@ lru.workspace = true
 markdown.workspace = true
 mcp.workspace = true
 portable-pty = { workspace = true, optional = true }
-rusqlite.workspace = true
+rusqlite = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
@@ -50,6 +50,8 @@ default = ["desktop"]
 # terminal, global hotkeys, the updater and live syntax grammars. Off, the
 # crate builds for wasm32.
 desktop = [
+    "artifact/sqlite",
+    "dep:rusqlite",
     "bezel/platform",
     "cacp/client",
     "cacp-agents/install",

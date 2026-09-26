@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/cydonia", "crates/gui", "crates/artifact", "crates/mcp", "crates/prompts"]
+members = ["crates/cydonia", "crates/gui", "crates/demo", "crates/artifact", "crates/mcp", "crates/prompts"]
 resolver = "3"
 
 [workspace.package]
@@ -11,7 +11,7 @@ repository = "https://github.com/crabtalk/cydonia"
 homepage = "https://cydonia.sh"
 
 [workspace.dependencies]
-artifact = { version = "0.1.16", path = "crates/artifact", package = "cydonia-artifact" }
+artifact = { version = "0.1.16", path = "crates/artifact", package = "cydonia-artifact", default-features = false }
 anyhow = "1"
 axum = "0.8"
 base64 = "0.22"
@@ -22,7 +22,7 @@ chrono = "0.4"
 dirs = "6"
 editor = { version = "0.1.29", package = "bezel-editor" }
 futures = "0.3"
-gui = { version = "0.1.16", path = "crates/gui", package = "cydonia-gui" }
+gui = { version = "0.1.16", path = "crates/gui", package = "cydonia-gui", default-features = false }
 global-hotkey = "0.8"
 image = "0.25"
 lru = "0.18"

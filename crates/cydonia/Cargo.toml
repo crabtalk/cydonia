@@ -18,8 +18,7 @@ path = "bin/main.rs"
 [dependencies]
 anyhow.workspace = true
 bezel = { workspace = true, features = ["platform"] }
-gui.workspace = true
-markdown.workspace = true
+gui = { workspace = true, features = ["desktop"] }
 
 [build-dependencies]
 embed-resource = "3"

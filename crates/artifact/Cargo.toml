@@ -10,10 +10,17 @@ homepage.workspace = true
 keywords = ["acp", "agents", "artifacts", "cydonia"]
 categories = ["data-structures"]
 
+[features]
+default = ["sqlite"]
+# The filesystem backend's project numbers (`entries.db`) and the catalog's
+# tables (`data.db`). Off, the crate links for wasm32; the filesystem backend
+# then has no numbers to give.
+sqlite = ["dep:rusqlite"]
+
 [dependencies]
 anyhow.workspace = true
 notify.workspace = true
-rusqlite.workspace = true
+rusqlite = { workspace = true, optional = true }
 cacp.workspace = true
 serde.workspace = true
 serde_json.workspace = true

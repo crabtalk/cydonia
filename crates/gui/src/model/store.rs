@@ -2,25 +2,55 @@
 //!
 //! Every read and write of boards, sessions, articles and numbers goes through
 //! the [`Store`] that [`open`] answers, and `open` is the one place that picks
-//! the backend.
+//! the backend: the memory project [`seed`] put at a path, else the files
+//! there.
 
 use anyhow::Result;
 use artifact::{
     article::{Article, properties::Properties},
     board::Board,
-    project::{Project, Watching, fs},
+    project::{Project, Watching, fs, memory},
     session::record::Record,
 };
-use std::path::Path;
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex, OnceLock},
+};
 
 /// Every backend this build can hold a project in.
 #[derive(Clone)]
 pub enum Store {
     Fs(fs::Project),
+    Memory(Arc<memory::Project>),
+}
+
+/// Projects held in memory, by the path they stand at, for the life of the
+/// process.
+fn seeded() -> &'static Mutex<HashMap<PathBuf, Arc<memory::Project>>> {
+    static SEEDED: OnceLock<Mutex<HashMap<PathBuf, Arc<memory::Project>>>> = OnceLock::new();
+    SEEDED.get_or_init(Default::default)
+}
+
+/// Stand `project` at `path`: every [`open`] of that path answers it from here
+/// on, and nothing is read from or written to the disk there.
+pub fn seed(path: impl Into<PathBuf>, project: memory::Project) {
+    seeded()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .insert(path.into(), Arc::new(project));
 }
 
 pub fn open(path: &Path) -> Store {
-    Store::Fs(fs::Project::new(path))
+    let held = seeded()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .get(path)
+        .cloned();
+    match held {
+        Some(project) => Store::Memory(project),
+        None => Store::Fs(fs::Project::new(path)),
+    }
 }
 
 /// The same call on whichever backend is held.
@@ -28,6 +58,7 @@ macro_rules! each {
     ($self:ident, $store:ident => $call:expr) => {
         match $self {
             Store::Fs($store) => $call,
+            Store::Memory($store) => $call,
         }
     };
 }

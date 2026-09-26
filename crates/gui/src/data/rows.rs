@@ -5,7 +5,7 @@
 //! deletion, with no surrogate key column to hide from the person and no
 //! position index that means something different the moment the order changes.
 
-use crate::data::{self, Data, Edit, Page, Row};
+use super::{self as data, Data, Edit, Page, Row};
 use anyhow::{Result, bail};
 use artifact::table::Column;
 use rusqlite::params_from_iter;

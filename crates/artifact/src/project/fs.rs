@@ -9,10 +9,12 @@
 //! whole lookup, and a board handed back can be written again from its id
 //! alone.
 
+#[cfg(feature = "sqlite")]
+use crate::entry;
 use crate::{
     article::{self, Article, properties::Properties},
     board::{self, Board, key},
-    entry, id,
+    id,
     session::record::Record,
     stamp,
 };
@@ -440,15 +442,24 @@ impl super::Project for Project {
     }
 
     fn number(&self, kind: &str, id: &str) -> Result<u64> {
-        entry::Registry::open(&self.root)?.number(kind, id)
+        #[cfg(feature = "sqlite")]
+        return entry::Registry::open(&self.root)?.number(kind, id);
+        #[cfg(not(feature = "sqlite"))]
+        no_numbers(kind, id)
     }
 
     fn resolve(&self, kind: &str, number: u64) -> Result<Option<String>> {
-        entry::Registry::open(&self.root)?.resolve(kind, number)
+        #[cfg(feature = "sqlite")]
+        return entry::Registry::open(&self.root)?.resolve(kind, number);
+        #[cfg(not(feature = "sqlite"))]
+        no_numbers(kind, &number.to_string())
     }
 
     fn retire(&self, kind: &str, id: &str) -> Result<()> {
-        entry::Registry::open(&self.root)?.remove(kind, id)
+        #[cfg(feature = "sqlite")]
+        return entry::Registry::open(&self.root)?.remove(kind, id);
+        #[cfg(not(feature = "sqlite"))]
+        no_numbers(kind, id)
     }
 }
 
@@ -457,6 +468,11 @@ fn stem(path: &Path) -> String {
     path.file_stem()
         .and_then(|stem| stem.to_str())
         .map_or_else(id::mint, str::to_owned)
+}
+
+#[cfg(not(feature = "sqlite"))]
+fn no_numbers<T>(kind: &str, id: &str) -> Result<T> {
+    anyhow::bail!("no number for {kind} {id}: built without the sqlite feature")
 }
 
 /// Whether a path that moved under `dir` (a project's `.cydonia/`) is one this

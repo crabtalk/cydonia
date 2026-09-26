@@ -58,3 +58,18 @@ jobs:
       - if: runner.os == 'Linux'
         run: sudo .github/scripts/linux-deps
       - run: cargo build --bin cydonia
+
+  # The browser build — see `crates/demo`. Built, not checked: a native
+  # library reaching the wasm32 graph fails at link time.
+  wasm:
+    name: wasm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: clippy
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      - run: cargo clippy -p cydonia-demo --target wasm32-unknown-unknown
+      - run: cargo build -p cydonia-demo --lib --target wasm32-unknown-unknown

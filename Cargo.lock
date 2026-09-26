@@ -2184,7 +2184,6 @@ version = "0.1.16"
 dependencies = [
  "anyhow",
  "bezel",
- "bezel-markdown",
  "cydonia-gui",
  "embed-resource",
  "image",
@@ -2204,6 +2203,20 @@ dependencies = [
  "toml 0.8.23",
  "toml_edit 0.22.27",
  "url",
+]
+
+[[package]]
+name = "cydonia-demo"
+version = "0.1.16"
+dependencies = [
+ "bezel",
+ "bezel-gpui-web",
+ "bezel-syntax",
+ "bezel-syntax-std",
+ "console_error_panic_hook",
+ "cydonia-artifact",
+ "cydonia-gui",
+ "wasm-bindgen",
 ]
 
 [[package]]

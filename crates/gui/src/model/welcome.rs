@@ -51,6 +51,11 @@ const SEED: &[&[File]] = &[
     ],
 ];
 
+/// Every file of the welcome project, named under `.cydonia/`.
+pub fn files() -> impl Iterator<Item = File> {
+    SEED.iter().flat_map(|entry| entry.iter().copied())
+}
+
 /// The entry a first run lands on, under `.cydonia/`. An article is remembered
 /// by the path of its document rather than by its id — see
 /// `workspace::articles`. It is the newest entry, so it is also the top of the

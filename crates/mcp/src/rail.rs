@@ -16,6 +16,7 @@
 //! nothing installed — the tests, a caller that mounted the tool sets on their
 //! own — refuses rather than pretends.
 
+#[cfg(feature = "http")]
 use crate::tool::Trouble;
 use std::{
     path::{Path, PathBuf},
@@ -148,6 +149,7 @@ pub fn is_open(path: &Path) -> bool {
 }
 
 /// Ask for the change, which is as far as a tool can take it.
+#[cfg(feature = "http")]
 pub(crate) fn ask(change: Change) -> Result<(), Trouble> {
     let held = HAND.read().map_err(|_| nobody())?;
     let Some(hand) = held.as_ref() else {
@@ -157,6 +159,7 @@ pub(crate) fn ask(change: Change) -> Result<(), Trouble> {
     Ok(())
 }
 
+#[cfg(feature = "http")]
 fn nobody() -> Trouble {
     Trouble::Refused("no cydonia window to open a project in".to_owned())
 }

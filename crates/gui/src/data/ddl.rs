@@ -2,7 +2,7 @@
 //! by which arguments arrive — and because the shape is the thing the display
 //! reads back, so every path to it has to be the same path.
 
-use crate::data::{self, ColType, Column, Data};
+use super::{self as data, ColType, Column, Data};
 use anyhow::{Result, bail};
 
 impl Data {
