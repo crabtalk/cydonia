@@ -9,17 +9,21 @@
 //! whole lookup, and a board handed back can be written again from its id
 //! alone.
 
+#[cfg(feature = "sqlite")]
+use crate::entry;
 use crate::{
     article::{self, Article, properties::Properties},
     board::{self, Board, key},
-    entry, id,
+    id,
     session::record::Record,
     stamp,
 };
 use anyhow::Result;
+use notify::{RecursiveMode, Watcher as _};
 use std::{
     cmp::Reverse,
     collections::HashSet,
+    io::{Read as _, Seek as _, SeekFrom, Write as _},
     path::{Path, PathBuf},
 };
 use url::Url;
@@ -33,11 +37,15 @@ const DIR: &str = ".cydonia";
 const BOARDS: &str = "boards";
 const BOARD_FILE: &str = "board.toml";
 
+/// The project's SQL tables.
+pub const DATA: &str = "data.db";
+
 /// Where a project's sessions live. One file each, so writing one does not
 /// rewrite the rest.
 const SESSIONS: &str = "sessions";
 
 /// A project on this disk.
+#[derive(Clone)]
 pub struct Project {
     root: PathBuf,
 }
@@ -96,6 +104,7 @@ impl Project {
         let body = std::fs::read_to_string(path).ok()?;
         let mut board: Board = toml::from_str(&body).ok()?;
         board.touched = stamp::of(path);
+        board.version = Some(version(body.as_bytes()));
         // A board written before ids existed already has one — the name of the
         // file it is in. Its columns and cards have none at all, and filling
         // those is [`Board::mint_ids`], which `boards` calls once it has the
@@ -120,25 +129,11 @@ impl Project {
         }
         board.id = stem(&free(&to, stamp::now()));
         board.name = board::NAMED.to_owned();
+        // A new file, so there is nothing there to be checked against.
+        board.version = None;
         if super::Project::save_board(self, &mut board).is_ok() {
             let _ = std::fs::remove_file(old);
         }
-    }
-
-    /// Read one persisted session without loading the rest of the project.
-    pub fn session(&self, id: &str) -> Option<Record> {
-        let body = std::fs::read_to_string(self.session_file(id)).ok()?;
-        let mut record: Record = serde_json::from_str(&body).ok()?;
-        record.id = id.to_owned();
-        record.number = super::Project::number(self, "session", id).ok();
-        Some(record)
-    }
-
-    /// Read one board for a lazily opened archive entry.
-    pub fn board(&self, id: &str) -> Option<Board> {
-        let mut board = self.read_board(&self.board_file(id))?;
-        board.number = super::Project::number(self, "board", id).ok();
-        Some(board)
     }
 
     /// Every session file in this project by the id it is filed under,
@@ -169,7 +164,7 @@ impl Project {
             title: properties.title,
             archived: properties.archived,
             touched: article::touched(content),
-            cover: article::cover::of(content).and_then(|path| Url::from_file_path(path).ok()),
+            cover: cover_url(content),
         }
     }
 
@@ -183,6 +178,20 @@ impl Project {
 }
 
 impl super::Project for Project {
+    fn session(&self, id: &str) -> Option<Record> {
+        let body = std::fs::read_to_string(self.session_file(id)).ok()?;
+        let mut record: Record = serde_json::from_str(&body).ok()?;
+        record.id = id.to_owned();
+        record.number = self.number("session", id).ok();
+        Some(record)
+    }
+
+    fn board(&self, id: &str) -> Option<Board> {
+        let mut board = self.read_board(&self.board_file(id))?;
+        board.number = self.number("board", id).ok();
+        Some(board)
+    }
+
     fn boards(&self) -> Vec<Board> {
         self.migrate_board();
         let Ok(entries) = std::fs::read_dir(self.boards_dir()) else {
@@ -242,10 +251,39 @@ impl super::Project for Project {
         Ok(board)
     }
 
+    /// The check and the write happen under an exclusive lock on the file,
+    /// so two cydonia processes saving one board cannot both pass the check.
+    /// The lock is advisory: a writer that does not take it is not stopped.
     fn save_board(&self, board: &mut Board) -> Result<()> {
         let body = toml::to_string_pretty(&*board)?;
-        std::fs::write(self.board_file(&board.id), body)?;
+        let path = self.board_file(&board.id);
+        match &board.version {
+            Some(seen) => {
+                let mut file = match std::fs::OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .open(&path)
+                {
+                    Ok(file) => file,
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                        return Err(super::Stale.into());
+                    }
+                    Err(e) => return Err(e.into()),
+                };
+                file.lock()?;
+                let mut held = Vec::new();
+                file.read_to_end(&mut held)?;
+                if version(&held) != *seen {
+                    return Err(super::Stale.into());
+                }
+                file.set_len(0)?;
+                file.seek(SeekFrom::Start(0))?;
+                file.write_all(body.as_bytes())?;
+            }
+            None => std::fs::write(&path, &body)?,
+        }
         board.touched = stamp::now();
+        board.version = Some(version(body.as_bytes()));
         Ok(())
     }
 
@@ -320,6 +358,12 @@ impl super::Project for Project {
         found
     }
 
+    fn article(&self, id: &str) -> Option<Article> {
+        self.article_file(id)
+            .ok()
+            .map(|content| self.describe(&content))
+    }
+
     fn create_article(&self, markdown: &str) -> Result<Article> {
         let dir = article::init(&self.root)?;
         let landing = article::free(&dir, stamp::now());
@@ -368,16 +412,54 @@ impl super::Project for Project {
         Ok(())
     }
 
+    /// `.cydonia/` is made the first time a project keeps anything, which can
+    /// be long after it was opened — so a project without one is watched
+    /// shallowly at its own root, unsettled, where the one event that matters
+    /// is the directory appearing.
+    fn watch(&self, knock: impl Fn() + Send + Sync + 'static) -> Option<super::Watching> {
+        // The prefix every event is matched against, resolved once. FSEvents
+        // reports the real path, so a project reached through a symlink would
+        // never match the prefix it was armed with.
+        let dir = std::fs::canonicalize(&self.root)
+            .unwrap_or_else(|_| self.root.clone())
+            .join(DIR);
+        let mut watcher =
+            notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+                if let Ok(event) = event
+                    && event.paths.iter().any(|path| ours(&dir, path))
+                {
+                    knock();
+                }
+            })
+            .ok()?;
+        match watcher.watch(&self.cydonia(), RecursiveMode::Recursive) {
+            Ok(()) => Some(super::Watching::new(true, watcher)),
+            Err(_) => watcher
+                .watch(&self.root, RecursiveMode::NonRecursive)
+                .ok()
+                .map(|()| super::Watching::new(false, watcher)),
+        }
+    }
+
     fn number(&self, kind: &str, id: &str) -> Result<u64> {
-        entry::Registry::open(&self.root)?.number(kind, id)
+        #[cfg(feature = "sqlite")]
+        return entry::Registry::open(&self.root)?.number(kind, id);
+        #[cfg(not(feature = "sqlite"))]
+        no_numbers(kind, id)
     }
 
     fn resolve(&self, kind: &str, number: u64) -> Result<Option<String>> {
-        entry::Registry::open(&self.root)?.resolve(kind, number)
+        #[cfg(feature = "sqlite")]
+        return entry::Registry::open(&self.root)?.resolve(kind, number);
+        #[cfg(not(feature = "sqlite"))]
+        no_numbers(kind, &number.to_string())
     }
 
     fn retire(&self, kind: &str, id: &str) -> Result<()> {
-        entry::Registry::open(&self.root)?.remove(kind, id)
+        #[cfg(feature = "sqlite")]
+        return entry::Registry::open(&self.root)?.remove(kind, id);
+        #[cfg(not(feature = "sqlite"))]
+        no_numbers(kind, id)
     }
 }
 
@@ -386,6 +468,61 @@ fn stem(path: &Path) -> String {
     path.file_stem()
         .and_then(|stem| stem.to_str())
         .map_or_else(id::mint, str::to_owned)
+}
+
+#[cfg(not(feature = "sqlite"))]
+fn no_numbers<T>(kind: &str, id: &str) -> Result<T> {
+    anyhow::bail!("no number for {kind} {id}: built without the sqlite feature")
+}
+
+/// Whether a path that moved under `dir` (a project's `.cydonia/`) is one this
+/// backend reads back.
+///
+/// Sessions are left out: the app writes a transcript on every frame of a
+/// streaming turn, so a watch that covered them would be a watch on itself.
+pub fn ours(dir: &Path, path: &Path) -> bool {
+    let Ok(rest) = path.strip_prefix(dir) else {
+        // Outside `.cydonia/`, where the only thing worth a knock is the
+        // directory itself coming into existence.
+        return path == dir;
+    };
+    let Some(head) = rest.components().next() else {
+        return true;
+    };
+    let head = head.as_os_str().to_string_lossy();
+    if head == article::DIR || head == BOARDS {
+        return true;
+    }
+    // The database, and the log a commit actually lands in — it runs in WAL,
+    // so the file itself only moves at a checkpoint. `-shm` is left out: the
+    // reader's shared index is written on every read, so a watch on it would
+    // knock on the app's own re-reads and never settle.
+    let Some(tail) = head.strip_prefix(DATA) else {
+        return false;
+    };
+    matches!(tail, "" | "-wal" | "-journal")
+}
+
+/// The cover beside a document, as the `file://` it is. wasm32 has no file
+/// URLs, and no cover.
+#[cfg(not(target_family = "wasm"))]
+fn cover_url(content: &Path) -> Option<Url> {
+    article::cover::of(content).and_then(|path| Url::from_file_path(path).ok())
+}
+
+#[cfg(target_family = "wasm")]
+fn cover_url(_: &Path) -> Option<Url> {
+    None
+}
+
+/// What a file held, as the version a save is checked against: a hash of the
+/// bytes, so every build of cydonia reading one file agrees on it.
+fn version(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 /// An id or asset name as one path component, refused where it would reach

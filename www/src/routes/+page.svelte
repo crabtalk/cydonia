@@ -2,18 +2,18 @@
 	import ShareImage from '$lib/ShareImage.svelte';
 	import { siGithub } from 'simple-icons';
 	import DownloadPanel from '$lib/DownloadPanel.svelte';
+	import Demo from '$lib/Demo.svelte';
 	import Brand from '$lib/Brand.svelte';
 	import Files from '$lib/Files.svelte';
 	import Frame from '$lib/Frame.svelte';
-	import Media from '$lib/Media.svelte';
 	import { base } from '$app/paths';
 	import { anchor, day, latest, media, releases } from '$lib/changelog.js';
 	import { repo, site, tagline as description } from '$lib/meta.js';
 
 	let { data } = $props();
 
-	const featured = releases.find((release) => media(release));
-	const featureMedia = featured ? media(featured) : null;
+	const featured = releases.find((release) => media(release)) ?? latest;
+	const featureMedia = media(featured);
 	const acp = 'https://agentclientprotocol.com';
 
 	// Off until there are real screenshots to put in the frames — three empty
@@ -108,9 +108,9 @@
 		</div>
 	</div>
 
-	{#if featured && featureMedia}
-		<figure class="feature">
-			<Media media={featureMedia} />
+	<figure class="feature">
+		<Demo media={featureMedia} />
+		{#if featured}
 			<figcaption>
 				{#if featured.summary}
 					<p>{featured.summary}</p>
@@ -119,8 +119,8 @@
 					What’s new in {featured.version} <span aria-hidden="true">→</span>
 				</a>
 			</figcaption>
-		</figure>
-	{/if}
+		{/if}
+	</figure>
 </section>
 
 {#if showcase}
@@ -214,14 +214,6 @@
 		margin: 0;
 	}
 
-	.feature :global(.media) {
-		width: 100%;
-		height: auto;
-		margin: 0;
-		border: 0;
-		border-radius: var(--radius-lg);
-		background: transparent;
-	}
 
 	.feature figcaption {
 		display: flex;

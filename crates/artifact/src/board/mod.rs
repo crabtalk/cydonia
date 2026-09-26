@@ -76,6 +76,12 @@ pub struct Board {
     /// into the record, which would be a second copy able to disagree.
     #[serde(skip)]
     pub touched: u128,
+    /// What the backend held when this copy was read, as the backend spells
+    /// it. A save carrying one is refused with [`crate::project::Stale`] when
+    /// the backend has moved on since. `None` for a board not read from a
+    /// backend, whose save is not checked.
+    #[serde(skip)]
+    pub version: Option<String>,
     /// Put away: listed under the divider rather than gone.
     #[serde(default)]
     pub archived: bool,
@@ -108,6 +114,7 @@ impl Board {
         Self {
             id,
             number: None,
+            version: None,
             touched: stamp::now(),
             archived: false,
             name: name.to_owned(),

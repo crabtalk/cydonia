@@ -1,5 +1,27 @@
 [
   {
+    "version": "0.1.17",
+    "date": "2026-09-26",
+    "summary": "Boards, sessions and articles are read and written through one project backend, so a project can live somewhere other than disk, and Cydonia runs in the browser on one held in memory.",
+    "media": {
+      "poster": "pics/cydonia/v0.1.17.jpg",
+      "src": "videos/cydonia/v0.1.17.mp4",
+      "alt": "…",
+      "w": 1280,
+      "h": 900
+    },
+    "new": [
+      "Try Cydonia in the browser from the website, on a welcome project and a tour project held in memory, with a stand-in agent, settings and project files",
+      "Keep projects in memory as well as on disk, through a project backend that boards, sessions, articles, numbering and watching all go through"
+    ],
+    "changed": [
+      "Split the workspace into the cydonia-gui crate, with agents, the terminal, the MCP server, hotkeys and the updater behind a desktop feature"
+    ],
+    "fixed": [
+      "Keep a board edit from overwriting a change another writer saved first: it is replayed on the fresh board instead"
+    ]
+  },
+  {
     "version": "0.1.16",
     "date": "2026-09-25",
     "summary": "Cydonia runs on Windows and Linux and updates itself there, spaces can create entries in place, and the board drawer and card menu get quicker to use.",

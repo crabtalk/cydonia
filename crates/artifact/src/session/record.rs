@@ -6,12 +6,10 @@
 
 use crate::session::chat::ChatItem;
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::BTreeMap,
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
+use std::{collections::BTreeMap, time::Duration};
+use web_time::{SystemTime, UNIX_EPOCH};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Record {
     /// What names this session here, minted when its file is and never moving
     /// after. Not [`Record::session`]: that one is the agent's, absent until

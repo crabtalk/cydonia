@@ -1,12 +1,20 @@
 //! Stable, project-wide numbers alongside each entry's storage identity.
 
+use crate::project::Project;
+#[cfg(feature = "sqlite")]
 use crate::project::fs;
 use anyhow::Result;
+#[cfg(feature = "sqlite")]
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
-use std::{path::Path, time::Duration};
+#[cfg(feature = "sqlite")]
+use std::path::Path;
+#[cfg(feature = "sqlite")]
+use std::time::Duration;
 
+#[cfg(feature = "sqlite")]
 pub struct Registry(Connection);
 
+#[cfg(feature = "sqlite")]
 impl Registry {
     pub fn open(project: &Path) -> Result<Self> {
         let path = fs::Project::new(project).init()?.join("entries.db");
@@ -80,6 +88,7 @@ impl Registry {
     }
 }
 
+#[cfg(feature = "sqlite")]
 pub fn number(project: &Path, kind: &str, id: &str) -> Result<u64> {
     Registry::open(project)?.number(kind, id)
 }
@@ -108,10 +117,8 @@ pub struct Entry {
     pub archived: bool,
 }
 
-/// Discover existing content without creating storage in an empty project.
-pub fn list(project: &Path) -> Result<Vec<Entry>> {
-    use crate::project::Project as _;
-    let store = fs::Project::new(project);
+/// A backend's boards, articles and sessions as entries, in no order.
+pub fn catalog(store: &impl Project) -> Result<Vec<Entry>> {
     let mut entries = Vec::new();
     for board in store.boards() {
         entries.push(Entry {
@@ -140,7 +147,35 @@ pub fn list(project: &Path) -> Result<Vec<Entry>> {
             archived: session.closed,
         });
     }
-    if store.cydonia().join("data.db").is_file() {
+    Ok(entries)
+}
+
+/// One of [`catalog`]'s entries as a client reads it. `None` for a kind the
+/// backend does not hold.
+pub fn open(store: &impl Project, entry: &Entry) -> Result<Option<serde_json::Value>> {
+    Ok(Some(match entry.kind {
+        "article" => serde_json::json!({"markdown": store.read_article(&entry.id)?}),
+        "board" => serde_json::to_value(
+            store
+                .board(&entry.id)
+                .ok_or_else(|| anyhow::anyhow!("board no longer exists"))?,
+        )?,
+        "session" => serde_json::to_value(
+            store
+                .session(&entry.id)
+                .ok_or_else(|| anyhow::anyhow!("session no longer exists"))?,
+        )?,
+        _ => return Ok(None),
+    }))
+}
+
+/// Discover existing content without creating storage in an empty project:
+/// the [`catalog`] of its files, and the tables in its database.
+#[cfg(feature = "sqlite")]
+pub fn list(project: &Path) -> Result<Vec<Entry>> {
+    let store = fs::Project::new(project);
+    let mut entries = catalog(&store)?;
+    if store.cydonia().join(fs::DATA).is_file() {
         let connection = data(project)?;
         let mut query = connection.prepare(
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name <> '_tables' ORDER BY name",
@@ -167,9 +202,10 @@ pub fn list(project: &Path) -> Result<Vec<Entry>> {
     Ok(entries)
 }
 
+#[cfg(feature = "sqlite")]
 fn data(project: &Path) -> Result<Connection> {
     let connection = Connection::open_with_flags(
-        fs::Project::new(project).cydonia().join("data.db"),
+        fs::Project::new(project).cydonia().join(fs::DATA),
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
     )?;
     connection.busy_timeout(Duration::from_secs(5))?;
@@ -177,25 +213,13 @@ fn data(project: &Path) -> Result<Connection> {
 }
 
 /// Read the catalog's entry; table previews contain at most 200 rows.
+#[cfg(feature = "sqlite")]
 pub fn read(project: &Path, entry: &Entry) -> Result<serde_json::Value> {
-    use crate::project::Project as _;
     let store = fs::Project::new(project);
+    if let Some(value) = open(&store, entry)? {
+        return Ok(value);
+    }
     Ok(match entry.kind {
-        "article" => serde_json::json!({"markdown": store.read_article(&entry.id)?}),
-        "board" => serde_json::to_value(
-            store
-                .boards()
-                .into_iter()
-                .find(|board| board.id == entry.id)
-                .ok_or_else(|| anyhow::anyhow!("board no longer exists"))?,
-        )?,
-        "session" => serde_json::to_value(
-            store
-                .sessions()
-                .into_iter()
-                .find(|session| session.id == entry.id)
-                .ok_or_else(|| anyhow::anyhow!("session no longer exists"))?,
-        )?,
         "table" => {
             use rusqlite::types::ValueRef;
             let connection = data(project)?;

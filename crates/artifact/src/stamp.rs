@@ -3,7 +3,7 @@
 use std::{
     path::Path,
     sync::atomic::{AtomicU64, Ordering},
-    time::{SystemTime, UNIX_EPOCH},
+    time::UNIX_EPOCH,
 };
 
 /// The last stamp [`fresh`] handed out in this process.
@@ -11,8 +11,8 @@ static LAST: AtomicU64 = AtomicU64::new(0);
 
 /// Now.
 pub fn now() -> u128 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
+    web_time::SystemTime::now()
+        .duration_since(web_time::UNIX_EPOCH)
         .map(|since| since.as_millis())
         .unwrap_or_default()
 }

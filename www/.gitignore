@@ -2,3 +2,5 @@ node_modules
 .svelte-kit
 build
 .cache
+static/demo/cydonia_demo.js
+static/demo/cydonia_demo_bg.wasm

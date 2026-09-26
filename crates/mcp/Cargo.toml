@@ -12,9 +12,15 @@ categories = ["development-tools"]
 
 [dependencies]
 artifact.workspace = true
-axum.workspace = true
+axum = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 prompts.workspace = true
 regex.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, optional = true }
+
+[features]
+default = ["http"]
+# The server over HTTP. Off, the tools, the protocol and the rail build for
+# wasm32.
+http = ["artifact/sqlite", "dep:axum", "dep:tokio"]

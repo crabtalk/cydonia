@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>Cydonia, in the browser</title>
+		<style>
+			* {
+				margin: 0;
+				padding: 0;
+				box-sizing: border-box;
+			}
+
+			body {
+				overflow: hidden;
+				width: 100vw;
+				height: 100vh;
+				background: #fff;
+			}
+
+			@media (prefers-color-scheme: dark) {
+				body {
+					background: #0b0b0c;
+				}
+			}
+
+			/* Out of flow: gpui sizes its canvas `100%` and appends it to the
+			   body, and in normal flow the two would size each other. */
+			body > canvas {
+				position: fixed;
+				inset: 0;
+				display: block;
+				width: 100%;
+				height: 100%;
+			}
+
+			#boot {
+				position: fixed;
+				z-index: 1;
+				pointer-events: none;
+				top: 50%;
+				left: 50%;
+				transform: translate(-50%, -50%);
+				color: #8b8f96;
+				font: 14px -apple-system, system-ui, sans-serif;
+			}
+		</style>
+	</head>
+	<body>
+		<p id="boot">Starting Cydonia…</p>
+		<script type="module">
+			import init from './cydonia_demo.js';
+
+			init()
+				.then(() => document.getElementById('boot')?.remove())
+				.catch((error) => {
+					// A panic has already written its own message here.
+					const boot = document.getElementById('boot');
+					if (boot && !boot.textContent.startsWith('Cydonia did not start'))
+						boot.textContent = `Cydonia did not start: ${error?.message ?? error}`;
+					console.error(error);
+				});
+		</script>
+	</body>
+</html>

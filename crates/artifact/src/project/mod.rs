@@ -10,6 +10,7 @@
 //! this trait.
 
 pub mod fs;
+pub mod memory;
 
 use crate::{
     article::{Article, properties::Properties},
@@ -18,11 +19,46 @@ use crate::{
 };
 use anyhow::Result;
 
+/// A write refused because what it was based on is no longer what the backend
+/// holds: another writer got there first. Read again, apply the change again,
+/// and save that.
+#[derive(Debug)]
+pub struct Stale;
+
+impl std::fmt::Display for Stale {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("it changed since it was read")
+    }
+}
+
+impl std::error::Error for Stale {}
+
+/// A watch a backend keeps up for as long as this is held.
+pub struct Watching {
+    /// Whether it is on everything the backend reads back. `false` for one on
+    /// a stand-in that only knocks when the real thing can be watched, which
+    /// is when the caller asks again.
+    pub settled: bool,
+    _guard: Box<dyn Send>,
+}
+
+impl Watching {
+    pub fn new(settled: bool, guard: impl Send + 'static) -> Self {
+        Self {
+            settled,
+            _guard: Box::new(guard),
+        }
+    }
+}
+
 pub trait Project {
     // ── boards ───────────────────────────────────────────────────────
 
     /// This project's boards, most recently written first.
     fn boards(&self) -> Vec<Board>;
+
+    /// One board, without reading the rest of the project.
+    fn board(&self, id: &str) -> Option<Board>;
 
     /// Mint a board and file it, called and keyed as the caller has them.
     /// An empty key is derived from the name, clear of the keys the project's
@@ -30,7 +66,9 @@ pub trait Project {
     fn create_board(&self, name: &str, key: &str) -> Result<Board>;
 
     /// Write a board back, and take the time it was written at — the key the
-    /// sidebar orders on, which only the backend knows.
+    /// sidebar orders on, which only the backend knows — and the version it
+    /// now has. Refused with [`Stale`] when the board carries a version the
+    /// backend no longer holds, or when it is gone.
     fn save_board(&self, board: &mut Board) -> Result<()>;
 
     /// Take a board out, and retire its number.
@@ -40,6 +78,9 @@ pub trait Project {
 
     /// Every session filed here, most recently updated first.
     fn sessions(&self) -> Vec<Record>;
+
+    /// One session, without reading the rest of the project.
+    fn session(&self, id: &str) -> Option<Record>;
 
     /// Mint the id a session is filed under from here on. Called on its first
     /// write and not before: opening a project must not put anything in it.
@@ -55,6 +96,9 @@ pub trait Project {
     /// Every article filed here, most recently touched first. Bodies are not
     /// read.
     fn articles(&self) -> Vec<Article>;
+
+    /// One article, without reading the rest of the project.
+    fn article(&self, id: &str) -> Option<Article>;
 
     /// Mint an article holding this markdown, with no properties.
     fn create_article(&self, markdown: &str) -> Result<Article>;
@@ -81,6 +125,16 @@ pub trait Project {
     fn asset(&self, id: &str, name: &str) -> Result<Vec<u8>>;
 
     fn put_asset(&self, id: &str, name: &str, bytes: &[u8]) -> Result<()>;
+
+    // ── changes ──────────────────────────────────────────────────────
+
+    /// Call `knock` whenever something this backend reads back changes under
+    /// it, from any thread. A knock carries nothing: the answer to one is a
+    /// re-read. `None` for a backend that has nothing to watch or cannot.
+    fn watch(&self, knock: impl Fn() + Send + Sync + 'static) -> Option<Watching> {
+        let _ = knock;
+        None
+    }
 
     // ── numbers ──────────────────────────────────────────────────────
 

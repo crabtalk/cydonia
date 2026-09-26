@@ -17,7 +17,9 @@
 pub mod cover;
 pub mod properties;
 
-use crate::{entry, project::fs, stamp};
+#[cfg(feature = "sqlite")]
+use crate::entry;
+use crate::{project::fs, stamp};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use url::Url;
@@ -49,7 +51,7 @@ pub struct Article {
 
 /// Where a project's articles live, and what the document is called inside the
 /// directory that is one.
-const DIR: &str = "articles";
+pub(crate) const DIR: &str = "articles";
 const CONTENT: &str = "content.md";
 
 /// Where the pictures in one article's body go, inside the directory that is
@@ -149,6 +151,7 @@ pub fn move_to(content: &Path, to: &Path) -> std::io::Result<PathBuf> {
     let arrived = self::content(&landing);
     repoint(&arrived, from_dir, &landing);
     carry_assets(&arrived, from, to);
+    #[cfg(feature = "sqlite")]
     let _ = entry::Registry::open(from).and_then(|registry| registry.remove("article", &id));
     Ok(arrived)
 }
@@ -167,10 +170,13 @@ pub fn remove(content: &Path) -> std::io::Result<()> {
     let id = id_of(content);
     let project = project_of(content).map(Path::to_path_buf);
     std::fs::remove_dir_all(dir)?;
+    #[cfg(feature = "sqlite")]
     if let Some(project) = project {
         let _ =
             entry::Registry::open(&project).and_then(|registry| registry.remove("article", &id));
     }
+    #[cfg(not(feature = "sqlite"))]
+    let _ = (id, project);
     Ok(())
 }
 

@@ -1,0 +1,81 @@
+[package]
+name = "cydonia-gui"
+description = "The GPUI workspace behind cydonia: projects, boards, articles, sessions and spaces"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["acp", "agents", "gpui", "workspace"]
+categories = ["gui", "development-tools"]
+
+[lib]
+name = "cydonia_gui"
+
+[dependencies]
+artifact.workspace = true
+anyhow.workspace = true
+base64.workspace = true
+bezel.workspace = true
+cacp.workspace = true
+cacp-agents.workspace = true
+chrono.workspace = true
+dirs.workspace = true
+editor.workspace = true
+futures.workspace = true
+global-hotkey = { workspace = true, optional = true }
+image.workspace = true
+lru.workspace = true
+markdown.workspace = true
+mcp.workspace = true
+portable-pty = { workspace = true, optional = true }
+rusqlite = { workspace = true, optional = true }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+syntax = { workspace = true, optional = true }
+prompts.workspace = true
+terminal = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+toml.workspace = true
+toml_edit.workspace = true
+ureq = { workspace = true, optional = true }
+url.workspace = true
+web-time.workspace = true
+
+
+[features]
+default = ["desktop"]
+# Everything that needs a native host: agents over ACP, the MCP server, the
+# terminal, global hotkeys, the updater and live syntax grammars. Off, the
+# crate builds for wasm32.
+desktop = [
+    "artifact/sqlite",
+    "dep:rusqlite",
+    "bezel/platform",
+    "cacp/client",
+    "cacp-agents/install",
+    "dep:global-hotkey",
+    "mcp/http",
+    "dep:portable-pty",
+    "dep:syntax",
+    "dep:terminal",
+    "dep:tokio",
+    "dep:ureq",
+]
+# Lists the Developer section in settings — see
+# `crate::view::settings::Section::listed`. Off, so what ships does not carry
+# it; `make bundle FEATURES=developer` is a release-profile bundle that does.
+developer = []
+
+[dev-dependencies]
+syntax-std = { version = "0.1.21", package = "bezel-syntax-std" }
+gpui = { version = "0.3.11", package = "bezel-gpui", features = ["test-support"] }
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+# Headless UI tests do not require the Metal compiler toolchain.
+gpui_platform = { version = "0.3.11", package = "bezel-gpui-platform", features = ["runtime_shaders"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2"

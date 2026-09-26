@@ -44,19 +44,7 @@ pub fn all(content: &Path) -> Properties {
     let Some(path) = path(content) else {
         return Properties::default();
     };
-    let doc = read(&path);
-    Properties {
-        title: doc
-            .get(TITLE)
-            .and_then(|title| title.as_str())
-            .unwrap_or_default()
-            .to_owned(),
-        archived: doc
-            .get(ARCHIVED)
-            .and_then(|archived| archived.as_bool())
-            .unwrap_or_default(),
-        full_width: doc.get(FULL_WIDTH).and_then(|wide| wide.as_bool()),
-    }
+    parse(&std::fs::read_to_string(path).unwrap_or_default())
 }
 
 /// The article's title, or nothing for one that has never been given a name.
@@ -103,7 +91,38 @@ pub fn save(content: &Path, properties: &Properties) -> std::io::Result<()> {
     let Some(path) = path(content) else {
         return Ok(());
     };
-    let mut doc = read(&path);
+    let text = std::fs::read_to_string(&path).unwrap_or_default();
+    match apply(&text, properties) {
+        Some(text) => std::fs::write(&path, text),
+        None => match std::fs::remove_file(&path) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+            _ => Ok(()),
+        },
+    }
+}
+
+/// Every field read out of a properties file's text.
+pub fn parse(text: &str) -> Properties {
+    let doc: toml_edit::DocumentMut = text.parse().unwrap_or_default();
+    Properties {
+        title: doc
+            .get(TITLE)
+            .and_then(|title| title.as_str())
+            .unwrap_or_default()
+            .to_owned(),
+        archived: doc
+            .get(ARCHIVED)
+            .and_then(|archived| archived.as_bool())
+            .unwrap_or_default(),
+        full_width: doc.get(FULL_WIDTH).and_then(|wide| wide.as_bool()),
+    }
+}
+
+/// A properties file's text with every field written in, keeping keys this
+/// module does not know about. `None` when nothing is left to say, which is a
+/// file that should not exist.
+pub fn apply(text: &str, properties: &Properties) -> Option<String> {
+    let mut doc: toml_edit::DocumentMut = text.parse().unwrap_or_default();
     let fields = [
         (
             TITLE,
@@ -123,13 +142,7 @@ pub fn save(content: &Path, properties: &Properties) -> std::io::Result<()> {
             }
         }
     }
-    if doc.is_empty() {
-        return match std::fs::remove_file(&path) {
-            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
-            _ => Ok(()),
-        };
-    }
-    std::fs::write(&path, doc.to_string())
+    (!doc.is_empty()).then(|| doc.to_string())
 }
 
 /// Put a key in, or take it out when there is nothing to say. A properties file

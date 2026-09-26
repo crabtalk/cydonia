@@ -8,3 +8,9 @@
 # the day it ships without sending each of those asks to the origin.
 /changelog.json
   Cache-Control: public, max-age=900
+
+# The demo's files are not content-hashed, so this is also how long a deploy
+# can keep serving the previous build. It stops every open of the dialog
+# revalidating the wasm first.
+/demo/*
+  Cache-Control: public, max-age=300

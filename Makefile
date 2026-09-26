@@ -18,7 +18,7 @@ ARCH     := $(shell uname -m)
 PROFILE  ?= release
 # Cargo features the app is built with. Empty for everything that ships;
 # `make bundle FEATURES=developer` lists the Developer section in a bundle
-# built at the shipping profile — see crates/cydonia/src/view/settings/mod.rs.
+# built at the shipping profile — see crates/gui/src/view/settings/mod.rs.
 FEATURES ?=
 CARGOOPT := $(if $(FEATURES),--features $(FEATURES),)
 ICON     := assets/icon.png
