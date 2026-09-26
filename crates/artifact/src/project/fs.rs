@@ -21,6 +21,7 @@ use notify::{RecursiveMode, Watcher as _};
 use std::{
     cmp::Reverse,
     collections::HashSet,
+    io::{Read as _, Seek as _, SeekFrom, Write as _},
     path::{Path, PathBuf},
 };
 use url::Url;
@@ -101,6 +102,7 @@ impl Project {
         let body = std::fs::read_to_string(path).ok()?;
         let mut board: Board = toml::from_str(&body).ok()?;
         board.touched = stamp::of(path);
+        board.version = Some(version(body.as_bytes()));
         // A board written before ids existed already has one — the name of the
         // file it is in. Its columns and cards have none at all, and filling
         // those is [`Board::mint_ids`], which `boards` calls once it has the
@@ -125,6 +127,8 @@ impl Project {
         }
         board.id = stem(&free(&to, stamp::now()));
         board.name = board::NAMED.to_owned();
+        // A new file, so there is nothing there to be checked against.
+        board.version = None;
         if super::Project::save_board(self, &mut board).is_ok() {
             let _ = std::fs::remove_file(old);
         }
@@ -245,10 +249,39 @@ impl super::Project for Project {
         Ok(board)
     }
 
+    /// The check and the write happen under an exclusive lock on the file,
+    /// so two cydonia processes saving one board cannot both pass the check.
+    /// The lock is advisory: a writer that does not take it is not stopped.
     fn save_board(&self, board: &mut Board) -> Result<()> {
         let body = toml::to_string_pretty(&*board)?;
-        std::fs::write(self.board_file(&board.id), body)?;
+        let path = self.board_file(&board.id);
+        match &board.version {
+            Some(seen) => {
+                let mut file = match std::fs::OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .open(&path)
+                {
+                    Ok(file) => file,
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                        return Err(super::Stale.into());
+                    }
+                    Err(e) => return Err(e.into()),
+                };
+                file.lock()?;
+                let mut held = Vec::new();
+                file.read_to_end(&mut held)?;
+                if version(&held) != *seen {
+                    return Err(super::Stale.into());
+                }
+                file.set_len(0)?;
+                file.seek(SeekFrom::Start(0))?;
+                file.write_all(body.as_bytes())?;
+            }
+            None => std::fs::write(&path, &body)?,
+        }
         board.touched = stamp::now();
+        board.version = Some(version(body.as_bytes()));
         Ok(())
     }
 
@@ -452,6 +485,16 @@ pub fn ours(dir: &Path, path: &Path) -> bool {
         return false;
     };
     matches!(tail, "" | "-wal" | "-journal")
+}
+
+/// What a file held, as the version a save is checked against: a hash of the
+/// bytes, so every build of cydonia reading one file agrees on it.
+fn version(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 /// An id or asset name as one path component, refused where it would reach

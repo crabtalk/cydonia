@@ -29,6 +29,8 @@ pub struct Project(Mutex<State>);
 #[derive(Default)]
 struct State {
     boards: BTreeMap<String, Board>,
+    /// How many times each board has been written, which is its version.
+    writes: HashMap<String, u64>,
     sessions: BTreeMap<String, Record>,
     articles: BTreeMap<String, Held>,
     /// `(kind, id)` to the number issued to it.
@@ -154,6 +156,14 @@ impl State {
         number
     }
 
+    fn version(&self, board: &str) -> String {
+        self.writes
+            .get(board)
+            .copied()
+            .unwrap_or_default()
+            .to_string()
+    }
+
     fn retire(&mut self, kind: &str, id: &str) {
         if let Some(number) = self.numbers.remove(&(kind.to_owned(), id.to_owned()))
             && let Some(entry) = self.issued.get_mut(&number)
@@ -190,6 +200,7 @@ impl super::Project for Project {
                 let number = state.number("board", &id);
                 let mut board = state.boards[&id].clone();
                 board.number = Some(number);
+                board.version = Some(state.version(&id));
                 board
             })
             .collect();
@@ -201,6 +212,7 @@ impl super::Project for Project {
         let mut state = self.state();
         let mut board = state.boards.get(id)?.clone();
         board.number = Some(state.number("board", id));
+        board.version = Some(state.version(id));
         Some(board)
     }
 
@@ -220,13 +232,22 @@ impl super::Project for Project {
         };
         board.touched = stamp::now();
         board.number = Some(state.number("board", &board.id));
+        board.version = Some(state.version(&board.id));
         state.boards.insert(board.id.clone(), board.clone());
         Ok(board)
     }
 
     fn save_board(&self, board: &mut Board) -> Result<()> {
+        let mut state = self.state();
+        if let Some(seen) = &board.version
+            && (!state.boards.contains_key(&board.id) || *seen != state.version(&board.id))
+        {
+            return Err(super::Stale.into());
+        }
+        *state.writes.entry(board.id.clone()).or_default() += 1;
         board.touched = stamp::now();
-        self.state().boards.insert(board.id.clone(), board.clone());
+        board.version = Some(state.version(&board.id));
+        state.boards.insert(board.id.clone(), board.clone());
         Ok(())
     }
 

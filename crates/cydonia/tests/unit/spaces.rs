@@ -963,3 +963,52 @@ fn a_pane_answers_for_its_own_board(cx: &mut gpui::TestAppContext) {
         );
     });
 }
+
+/// Another writer saving a board between this window's read and its write —
+/// a terminal cydonia on the same project — keeps its change, and this
+/// window's edit lands on top of it.
+#[gpui::test]
+fn a_stale_board_write_lands_on_the_other_writers_board(cx: &mut gpui::TestAppContext) {
+    use artifact::project::Project as _;
+    let scratch = Scratch::new("stale-board");
+    cx.update(|cx| bezel::theme::Theme::install(bezel::theme::Appearance::Light, cx));
+    let workspace = cx.new(|cx| Workspace::new(Settings::default(), state::State::default(), cx));
+
+    workspace.update(cx, |workspace, cx| {
+        let path = scratch.project("one");
+        workspace.open_project(path.clone(), cx);
+        workspace.new_board(0, "Plans".into(), "PLAN", cx).ok();
+        let id = workspace.active_board().expect("a board").id.clone();
+        let column = workspace
+            .write_board(&id, |board| board.add_column("Todo").id.clone())
+            .expect("the board");
+
+        // The other writer, straight through the backend, unseen by the window.
+        let other = crate::model::store::open(&path);
+        let mut theirs = other.board(&id).expect("on disk");
+        theirs.add_card(&column, "theirs".into());
+        other.save_board(&mut theirs).expect("their save");
+
+        workspace
+            .write_board(&id, |board| {
+                board.add_card(&column, "mine".into());
+            })
+            .expect("the board");
+
+        let texts = |board: &Board| -> Vec<String> {
+            board
+                .column(&column)
+                .expect("the lane")
+                .cards
+                .iter()
+                .map(|card| card.text.clone())
+                .collect()
+        };
+        let saved = other.board(&id).expect("on disk");
+        assert_eq!(texts(&saved), ["theirs", "mine"]);
+        assert_eq!(
+            texts(workspace.active_board().expect("held")),
+            ["theirs", "mine"]
+        );
+    });
+}

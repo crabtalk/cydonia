@@ -892,20 +892,20 @@ impl Cydonia {
             return;
         };
         self.workspace.update(cx, |workspace, cx| {
-            workspace.write_board(&id, |board| match at {
+            workspace.write_board(&id, |board| match &at {
                 Editing::New(place, column) => {
                     if !text.is_empty() {
                         match place {
-                            Place::Top => board.prepend_card(&column, text),
-                            Place::End => board.add_card(&column, text),
+                            Place::Top => board.prepend_card(column, text.clone()),
+                            Place::End => board.add_card(column, text.clone()),
                         };
                     }
                 }
                 Editing::Card(id) => {
                     if text.is_empty() {
-                        board.remove_card(&id);
+                        board.remove_card(id);
                     } else {
-                        board.rewrite_card(&id, &text);
+                        board.rewrite_card(id, &text);
                     }
                 }
             });
@@ -1119,7 +1119,7 @@ impl Cydonia {
             };
             // The link lands on the board, so the board is written — it is what
             // the ▶ reads after a quit.
-            workspace.write_board(&board, |held| held.dispatch_card(&card, record));
+            workspace.write_board(&board, |held| held.dispatch_card(&card, record.clone()));
         });
         cx.notify();
     }

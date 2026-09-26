@@ -4,7 +4,7 @@
 //! `use super::*`: these methods work on the same struct and reach the same
 //! names as the rest of it.
 use super::*;
-use artifact::project::Project as _;
+use artifact::project::{Project as _, Stale};
 
 impl Workspace {
     /// Save a draft against the latest disk contents, preserving other card fields.
@@ -22,17 +22,24 @@ impl Workspace {
             .find(|open| open.path == member.project)
             .ok_or("The project is no longer open.")?;
         let store = open.store();
-        let mut board = store
-            .board(&member.id)
-            .ok_or("The board could not be read.")?;
-        if let Err(error) = apply_card_draft(&mut board, card, base, text) {
-            if let Some(held) = open.boards.iter_mut().find(|held| held.id == member.id) {
-                *held = board;
+        // Twice at most: a save refused as stale is another writer landing
+        // between this read and this write, and the draft goes onto theirs.
+        for _ in 0..2 {
+            let mut board = store
+                .board(&member.id)
+                .ok_or("The board could not be read.")?;
+            if let Err(error) = apply_card_draft(&mut board, card, base, text) {
+                if let Some(held) = open.boards.iter_mut().find(|held| held.id == member.id) {
+                    *held = board;
+                }
+                cx.notify();
+                return Err(error);
             }
-            cx.notify();
-            return Err(error);
+            match store.save_board(&mut board) {
+                Err(error) if error.is::<Stale>() => continue,
+                _ => break,
+            }
         }
-        let _ = store.save_board(&mut board);
         let saved = store
             .board(&member.id)
             .ok_or("The saved board could not be read.")?;
@@ -162,15 +169,12 @@ impl Workspace {
         {
             return Err(format!("{key} is another board's key here."));
         }
-        if !open.load_board(id) {
-            return Err("The board could not be read.".into());
-        }
-        let store = open.store();
-        if let Some(board) = open.boards.iter_mut().find(|board| board.id == id) {
-            board.name = name.trim().to_owned();
-            board.key = key;
-            let _ = store.save_board(board);
-        }
+        let name = name.trim().to_owned();
+        self.with_board(id, |board| {
+            board.name = name.clone();
+            board.key = key.clone();
+        })
+        .ok_or("The board could not be read.")?;
         self.prune_archived(cx);
         cx.notify();
         Ok(())
@@ -185,17 +189,15 @@ impl Workspace {
         view: artifact::board::View,
         cx: &mut Context<Self>,
     ) {
-        self.with_board(id, |store, board| {
+        self.with_board(id, |board| {
             board.view = view;
-            let _ = store.save_board(board);
         });
         cx.notify();
     }
 
     pub fn archive_board(&mut self, id: &str, archived: bool, cx: &mut Context<Self>) {
-        self.with_board(id, |store, board| {
+        self.with_board(id, |board| {
             board.archived = archived;
-            let _ = store.save_board(board);
         });
         self.prune_archived(cx);
         cx.notify();
@@ -228,10 +230,8 @@ impl Workspace {
     /// A lane at the end of one board, answered by its id so the pane can open
     /// it straight into its name.
     pub fn new_column(&mut self, board: &str, cx: &mut Context<Self>) -> Option<String> {
-        let id = self.with_board(board, |store, board| {
-            let id = board.add_column(artifact::board::column::NAMED).id.clone();
-            let _ = store.save_board(board);
-            id
+        let id = self.with_board(board, |board| {
+            board.add_column(artifact::board::column::NAMED).id.clone()
         })?;
         cx.notify();
         Some(id)
@@ -247,12 +247,11 @@ impl Workspace {
         after: bool,
         cx: &mut Context<Self>,
     ) -> Option<String> {
-        let minted = self.with_board(board, |store, board| {
+        let minted = self.with_board(board, |board| {
             let minted = board
                 .add_column_beside(artifact::board::column::NAMED, id, after)?
                 .id
                 .clone();
-            let _ = store.save_board(board);
             Some(minted)
         })??;
         cx.notify();
@@ -260,10 +259,8 @@ impl Workspace {
     }
 
     pub fn rename_column(&mut self, board: &str, id: &str, name: String, cx: &mut Context<Self>) {
-        self.with_board(board, |store, board| {
-            if board.rename_column(id, name.trim()) {
-                let _ = store.save_board(board);
-            }
+        self.with_board(board, |board| {
+            board.rename_column(id, name.trim());
         });
         cx.notify();
     }
@@ -272,7 +269,7 @@ impl Workspace {
     /// [`Board::move_column_before`]. `None` at either end is a lane already
     /// where it is being asked to go.
     pub fn move_column(&mut self, board: &str, id: &str, step: isize, cx: &mut Context<Self>) {
-        self.with_board(board, |store, board| {
+        self.with_board(board, |board| {
             let Some(at) = board.columns.iter().position(|column| column.id == id) else {
                 return;
             };
@@ -288,9 +285,7 @@ impl Workspace {
                 true => board.columns.get(to + 1).map(|column| column.id.clone()),
                 false => board.columns.get(to).map(|column| column.id.clone()),
             };
-            if board.move_column_before(id, before.as_deref()) {
-                let _ = store.save_board(board);
-            }
+            board.move_column_before(id, before.as_deref());
         });
         cx.notify();
     }
@@ -300,12 +295,11 @@ impl Workspace {
     /// have two boards on screen, and the lane pressed is not always on the
     /// one in front.
     pub fn toggle_column_collapsed(&mut self, board: &str, id: &str, cx: &mut Context<Self>) {
-        self.with_board(board, |store, board| {
+        self.with_board(board, |board| {
             let Some(column) = board.columns.iter_mut().find(|column| column.id == id) else {
                 return;
             };
             column.collapsed = !column.collapsed;
-            let _ = store.save_board(board);
         });
         cx.notify();
     }
@@ -313,34 +307,49 @@ impl Workspace {
     /// Drop a lane, which a board refuses while it still holds cards — see
     /// [`Board::remove_column`].
     pub fn remove_column(&mut self, board: &str, id: &str, cx: &mut Context<Self>) {
-        self.with_board(board, |store, board| {
-            if board.remove_column(id) {
-                let _ = store.save_board(board);
-            }
+        self.with_board(board, |board| {
+            board.remove_column(id);
         });
         cx.notify();
     }
 
-    /// Reach the board a file names, wherever it is open, with the store that
-    /// holds it — and answer whatever the edit did. Nothing where no open
-    /// project holds that board.
+    /// Change the board an id names, wherever it is open, and write it back
+    /// when the edit changed it — and answer whatever the edit did. Nothing
+    /// where no open project holds that board.
+    ///
+    /// A save refused as [`Stale`] — another writer saved the board since it
+    /// was read — takes the board as the backend now holds it, applies the
+    /// same edit to that, and saves it once more. A board removed in the
+    /// meantime keeps the edit in memory only.
     ///
     /// Every write to a board goes through here, named by the board: the
     /// window can have two on screen, and the project's own selection answers
     /// for at most one of them.
-    fn with_board<T>(
-        &mut self,
-        id: &str,
-        edit: impl FnOnce(&crate::model::store::Store, &mut Board) -> T,
-    ) -> Option<T> {
+    fn with_board<T>(&mut self, id: &str, mut edit: impl FnMut(&mut Board) -> T) -> Option<T> {
         for open in &mut self.projects {
             if !open.load_board(id) {
                 return None;
             }
             let store = open.store();
-            if let Some(board) = open.boards.iter_mut().find(|board| board.id == id) {
-                return Some(edit(&store, board));
+            let Some(board) = open.boards.iter_mut().find(|board| board.id == id) else {
+                continue;
+            };
+            let before = serde_json::to_value(&*board).ok();
+            let mut done = edit(board);
+            if serde_json::to_value(&*board).ok() == before {
+                return Some(done);
             }
+            match store.save_board(board) {
+                Err(error) if error.is::<Stale>() => {
+                    if let Some(mut fresh) = store.board(id) {
+                        done = edit(&mut fresh);
+                        let _ = store.save_board(&mut fresh);
+                        *board = fresh;
+                    }
+                }
+                _ => {}
+            }
+            return Some(done);
         }
         None
     }
@@ -362,18 +371,8 @@ impl Workspace {
         let Some(id) = open.boards.get(ix).map(|board| board.id.clone()) else {
             return false;
         };
-        if !open.load_board(&id) {
-            return false;
-        }
-        let store = open.store();
-        let Some(board) = open.boards.get_mut(ix) else {
-            return false;
-        };
-        if !board.move_card_before(card, column, before) {
-            return false;
-        }
-        let _ = store.save_board(board);
-        true
+        self.with_board(&id, |board| board.move_card_before(card, column, before))
+            .unwrap_or(false)
     }
 
     /// Carry a card to another board, which may be in another project.
@@ -407,13 +406,28 @@ impl Workspace {
         // away.
         let mut source = self.loaded_board(from)?;
         let mut landing = self.loaded_board(to)?;
-        let landed = artifact::board::carry_card(&mut source, &mut landing, card, column)?;
-        for ((project, _), mut board) in [(from, source), (to, landing)] {
+        let mut landed = artifact::board::carry_card(&mut source, &mut landing, card, column)?;
+        // The landing is written first: refused there, nothing has moved, and
+        // the carry is made again over both boards as their backends hold
+        // them now. Refused at the source after the landing took the card is
+        // a writer landing between the two saves, which is not retried.
+        let (source_store, landing_store) = (
+            self.projects.get(from.0)?.store(),
+            self.projects.get(to.0)?.store(),
+        );
+        if let Err(error) = landing_store.save_board(&mut landing)
+            && error.is::<Stale>()
+        {
+            source = source_store.board(&source.id)?;
+            landing = landing_store.board(&landing.id)?;
+            landed = artifact::board::carry_card(&mut source, &mut landing, card, column)?;
+            let _ = landing_store.save_board(&mut landing);
+        }
+        let _ = source_store.save_board(&mut source);
+        for ((project, _), board) in [(from, source), (to, landing)] {
             let Some(open) = self.projects.get_mut(project) else {
                 continue;
             };
-            let store = open.store();
-            let _ = store.save_board(&mut board);
             if let Some(held) = open.boards.iter_mut().find(|held| held.id == board.id) {
                 *held = board;
             }
@@ -435,12 +449,10 @@ impl Workspace {
     /// [`crate::model::workspace::Workspace::board_of`] for how a pane names
     /// the board it is showing. Answers what the edit did, or nothing where no
     /// open project holds that board.
-    pub fn write_board<T>(&mut self, id: &str, edit: impl FnOnce(&mut Board) -> T) -> Option<T> {
-        self.with_board(id, |store, board| {
-            let done = edit(board);
-            let _ = store.save_board(board);
-            done
-        })
+    ///
+    /// The edit may run twice — see [`Self::with_board`].
+    pub fn write_board<T>(&mut self, id: &str, edit: impl FnMut(&mut Board) -> T) -> Option<T> {
+        self.with_board(id, edit)
     }
 }
 
