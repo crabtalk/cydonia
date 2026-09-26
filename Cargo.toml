@@ -66,14 +66,3 @@ bezel-motion = { path = "../bezel/crates/motion" }
 bezel-ui = { path = "../bezel/crates/ui" }
 bezel-icons = { path = "../bezel/crates/icons" }
 bezel-agent = { path = "../bezel/crates/agent" }
-bezel-gpui = { path = "../zed/crates/gpui" }
-bezel-gpui-apple = { path = "../zed/crates/gpui_apple" }
-bezel-gpui-linux = { path = "../zed/crates/gpui_linux" }
-bezel-gpui-macos = { path = "../zed/crates/gpui_macos" }
-bezel-gpui-macros = { path = "../zed/crates/gpui_macros" }
-bezel-gpui-platform = { path = "../zed/crates/gpui_platform" }
-bezel-gpui-shared-string = { path = "../zed/crates/gpui_shared_string" }
-bezel-gpui-util = { path = "../zed/crates/gpui_util" }
-bezel-gpui-web = { path = "../zed/crates/gpui_web" }
-bezel-gpui-wgpu = { path = "../zed/crates/gpui_wgpu" }
-bezel-gpui-windows = { path = "../zed/crates/gpui_windows" }
