@@ -9,8 +9,12 @@
 /changelog.json
   Cache-Control: public, max-age=900
 
-# The demo's files are not content-hashed, so this is also how long a deploy
-# can keep serving the previous build. It stops every open of the dialog
-# revalidating the wasm first.
-/demo/*
-  Cache-Control: public, max-age=300
+# The demo page is always revalidated; it names the build of the JS and wasm it
+# loads in their query strings (scripts/stamp-demo.mjs).
+/demo/
+  Cache-Control: no-cache
+/demo/index.html
+  Cache-Control: no-cache
+
+/demo/cydonia_demo*
+  Cache-Control: public, max-age=31536000, immutable
