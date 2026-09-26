@@ -82,6 +82,9 @@ pub trait Project {
     /// read.
     fn articles(&self) -> Vec<Article>;
 
+    /// One article, without reading the rest of the project.
+    fn article(&self, id: &str) -> Option<Article>;
+
     /// Mint an article holding this markdown, with no properties.
     fn create_article(&self, markdown: &str) -> Result<Article>;
 

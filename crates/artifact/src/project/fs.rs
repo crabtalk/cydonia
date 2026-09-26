@@ -323,6 +323,12 @@ impl super::Project for Project {
         found
     }
 
+    fn article(&self, id: &str) -> Option<Article> {
+        self.article_file(id)
+            .ok()
+            .map(|content| self.describe(&content))
+    }
+
     fn create_article(&self, markdown: &str) -> Result<Article> {
         let dir = article::init(&self.root)?;
         let landing = article::free(&dir, stamp::now());

@@ -11,18 +11,22 @@
 //! disagreeing — and a path already handed to an agent is not one we can
 //! rewrite the way a vault rewrites its own links.
 
-use crate::model::{cover, language, workspace::Workspace};
-use artifact::{article as layout, article::properties};
+use crate::model::{
+    cover, language,
+    store::{self, Store},
+    workspace::Workspace,
+};
+use artifact::{
+    article as layout,
+    article::properties::{self, Properties},
+};
 use bezel::{
     gpui::{App, AppContext as _, Context, Entity, ScrollHandle},
     ui::input::{Shape, TextField},
 };
 use editor::{Editor, Mode};
 use markdown::Typography;
-use std::{
-    cmp::Reverse,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 use url::Url;
 
 /// What articles were called before they were named for their age, and what an
@@ -38,7 +42,12 @@ pub const TITLE_CONTEXT: &str = "CydoniaArticleTitle";
 
 pub struct Article {
     pub number: Option<u64>,
+    /// What the project's backend names it by.
+    pub id: String,
+    /// Where its document is, derived from the project and the id whether or
+    /// not the backend keeps files. What the app tells articles apart by.
     pub path: PathBuf,
+    store: Store,
     /// The picture above the document, if it has been given one. See
     /// [`crate::model::cover`] — this is a cache of a file's existence, and the
     /// file is what decides.
@@ -81,26 +90,33 @@ pub struct Article {
 }
 
 impl Article {
-    fn new(path: PathBuf) -> Self {
-        let held = properties::all(&path);
+    fn new(project: &Path, store: Store, held: layout::Article) -> Self {
+        let properties = store.properties(&held.id);
         Self {
-            number: path.ancestors().nth(4).and_then(|project| {
-                crate::model::store::open(project)
-                    .number("article", &layout::id_of(&path))
-                    .ok()
-            }),
-            cover: cover::of(&path),
-            title: held.title,
-            touched: layout::touched(&path),
-            archived: held.archived,
-            full_width: held.full_width,
-            path,
+            number: store.number("article", &held.id).ok(),
+            path: layout::content(&layout::dir(project).join(&held.id)),
+            cover: held.cover.and_then(|cover| cover.to_file_path().ok()),
+            title: properties.title,
+            touched: held.touched,
+            archived: properties.archived,
+            full_width: properties.full_width,
+            id: held.id,
+            store,
             field: None,
             editor: None,
             scroll: ScrollHandle::new(),
             mode: Mode::default(),
             saved: String::new(),
             stale: false,
+        }
+    }
+
+    /// What is held beside the markdown, as the backend files it.
+    fn properties(&self) -> Properties {
+        Properties {
+            title: self.title.clone(),
+            archived: self.archived,
+            full_width: self.full_width,
         }
     }
 
@@ -116,14 +132,14 @@ impl Article {
 
     pub fn archive(&mut self, archived: bool) {
         self.archived = archived;
-        properties::set_archived(&self.path, archived);
+        let _ = self.store.save_properties(&self.id, &self.properties());
     }
 
     /// Set the page across the pane, or back in the column. `None` hands it
     /// back to the reader's default and takes the key out of the file.
     pub fn set_full_width(&mut self, wide: Option<bool>) {
         self.full_width = wide;
-        properties::set_full_width(&self.path, wide);
+        let _ = self.store.save_properties(&self.id, &self.properties());
     }
 
     /// How wide this page is actually drawn, against the app's own default.
@@ -187,7 +203,7 @@ impl Article {
         })
         .detach();
 
-        self.saved = std::fs::read_to_string(&self.path).unwrap_or_default();
+        self.saved = self.store.read_article(&self.id).unwrap_or_default();
         let scroll = self.scroll.clone();
         let editor = cx.new(|cx| {
             let editor = Editor::new(&self.saved, cx);
@@ -242,7 +258,7 @@ impl Article {
                 if moved {
                     self.title = title;
                     self.touched = artifact::stamp::now();
-                    properties::set_title(&self.path, &self.title);
+                    let _ = self.store.save_properties(&self.id, &self.properties());
                 }
                 moved
             }
@@ -250,7 +266,7 @@ impl Article {
         };
         if let Some(editor) = &self.editor {
             let source = editor.read(cx).source();
-            if self.saved != source && std::fs::write(&self.path, &source).is_ok() {
+            if self.saved != source && self.store.write_article(&self.id, &source).is_ok() {
                 self.saved = source;
                 self.touched = artifact::stamp::now();
                 // The buffer is the file again, whatever landed under it while
@@ -293,7 +309,7 @@ impl Article {
         // The echo of our own write, which every save produces. `saved` is what
         // this process last put on disk, so the two agreeing is the file saying
         // nothing new.
-        let disk = std::fs::read_to_string(&self.path).unwrap_or_default();
+        let disk = self.store.read_article(&self.id).unwrap_or_default();
         if disk == self.saved && fresh.title == self.title {
             return false;
         }
@@ -315,10 +331,12 @@ impl Article {
         // Carried over, since the surfaces are not: a file that moved under
         // the document is not somebody asking to leave the markdown.
         self.mode = self.mode(cx);
-        let held = properties::all(&self.path);
+        let held = self.store.properties(&self.id);
         self.title = held.title;
-        self.touched = layout::touched(&self.path);
-        self.cover = cover::of(&self.path);
+        if let Some(article) = self.store.article(&self.id) {
+            self.touched = article.touched;
+            self.cover = article.cover.and_then(|cover| cover.to_file_path().ok());
+        }
         self.archived = held.archived;
         self.full_width = held.full_width;
         let text_size = self
@@ -345,10 +363,9 @@ impl Article {
                 .is_some_and(|field| *field.read(cx).content() != self.title)
     }
 
-    /// All of it: the directory is the article — see
-    /// [`artifact::article::remove`], which the tools delete through as well.
+    /// All of it: document, properties, cover and assets, and its number.
     pub fn remove(&self) {
-        let _ = artifact::article::remove(&self.path);
+        let _ = self.store.remove_article(&self.id);
     }
 
     /// Put a cover on the document, or take it off: `Some` brings that image
@@ -403,7 +420,7 @@ impl Article {
 impl From<&Article> for layout::Article {
     fn from(article: &Article) -> Self {
         Self {
-            id: layout::id_of(&article.path),
+            id: article.id.clone(),
             title: article.title.clone(),
             archived: article.archived,
             touched: article.touched,
@@ -415,32 +432,22 @@ impl From<&Article> for layout::Article {
     }
 }
 
-/// This project's articles, or none for a project that has never had one. Each
-/// subdirectory is one; a directory with no document in it is not.
+/// This project's articles, most recently touched first.
 pub fn list(project: &Path) -> Vec<Article> {
     migrate(project);
-    let Ok(entries) = std::fs::read_dir(layout::dir(project)) else {
-        return Vec::new();
-    };
-    let paths: Vec<PathBuf> = entries
-        .flatten()
-        .map(|entry| layout::content(&entry.path()))
-        .filter(|path| path.is_file())
-        .collect();
-    let mut articles: Vec<Article> = paths.into_iter().map(Article::new).collect();
-    articles.sort_by_key(|article| Reverse(article.touched));
-    articles
+    let store = store::open(project);
+    store
+        .articles()
+        .into_iter()
+        .map(|held| Article::new(project, store.clone(), held))
+        .collect()
 }
 
-/// A new document, with a cover already cut: an article is made from the
-/// sidebar with nothing in it, so the band is all there is to look at.
+/// A new, empty document.
 pub fn create(project: &Path) -> Option<Article> {
-    let dir = layout::init(project).ok()?;
-    let article = layout::free(&dir, artifact::stamp::now());
-    std::fs::create_dir_all(&article).ok()?;
-    let path = layout::content(&article);
-    std::fs::write(&path, "").ok()?;
-    Some(Article::new(path))
+    let store = store::open(project);
+    let held = store.create_article("").ok()?;
+    Some(Article::new(project, store, held))
 }
 
 /// Articles used to sit loose in `.cydonia/` as `foo.md` beside `foo.cover-N.svg`,

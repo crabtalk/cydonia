@@ -17,7 +17,8 @@ use crate::{
     tools::{PROJECT, fields, many, on_the_rail, root},
 };
 use artifact::{
-    article::{self, properties},
+    article::{self, properties::Properties},
+    project::{Project as _, fs},
     stamp,
 };
 use serde_json::{Value, json};
@@ -241,7 +242,8 @@ fn list(args: Args<'_>) -> Outcome {
 fn read(args: Args<'_>) -> Outcome {
     let project = root(&args)?;
     let found = locate(project, args.text(ARTICLE)?)?;
-    let text = std::fs::read_to_string(&found.content)
+    let text = fs::Project::new(project)
+        .read_article(&found.id)
         .map_err(|e| Trouble::Refused(format!("{} cannot be read — {e}", found.label())))?;
     Ok(Answer::said(text).with(json!({
         "id": found.id,
@@ -256,7 +258,8 @@ fn read(args: Args<'_>) -> Outcome {
 fn highlights(args: Args<'_>) -> Outcome {
     let project = root(&args)?;
     let found = locate(project, args.text(ARTICLE)?)?;
-    let text = std::fs::read_to_string(&found.content)
+    let text = fs::Project::new(project)
+        .read_article(&found.id)
         .map_err(|e| Trouble::Refused(format!("{} cannot be read — {e}", found.label())))?;
     let found_marks = marked(&text);
     if found_marks.is_empty() {
@@ -373,19 +376,21 @@ fn add(args: Args<'_>) -> Outcome {
     let project = root(&args)?;
     let title = args.text(TITLE)?;
     let text = args.text(MARKDOWN)?;
-    let dir = article::init(project).map_err(|e| {
-        Trouble::Refused(format!("{} cannot be written to — {e}", project.display()))
-    })?;
-    let home = article::free(&dir, stamp::now());
-    let content = article::content(&home);
-    std::fs::create_dir_all(&home)
-        .and_then(|()| std::fs::write(&content, text))
+    let store = fs::Project::new(project);
+    let made = store
+        .create_article(text)
         .map_err(|e| Trouble::Refused(format!("the article cannot be written — {e}")))?;
-    // After the document, because the properties file sits beside it and the
-    // directory has to be there first.
-    properties::set_title(&content, title);
-    let id = article::id_of(&content);
-    let number = artifact::entry::number(project, "article", &id)
+    let titled = Properties {
+        title: title.to_owned(),
+        ..Properties::default()
+    };
+    store
+        .save_properties(&made.id, &titled)
+        .map_err(|e| Trouble::Refused(format!("the article cannot be named — {e}")))?;
+    let id = made.id;
+    let content = article::content(&article::dir(project).join(&id));
+    let number = store
+        .number("article", &id)
         .map_err(|e| Trouble::Refused(e.to_string()))?;
     Ok(
         Answer::said(format!("#{number} {title} written")).with(json!({
@@ -460,9 +465,11 @@ fn assets_path(content: &Path) -> PathBuf {
 }
 
 fn rewrite(args: Args<'_>) -> Outcome {
-    let found = locate(root(&args)?, args.text(ARTICLE)?)?;
+    let project = root(&args)?;
+    let found = locate(project, args.text(ARTICLE)?)?;
     let text = args.text(MARKDOWN_NOW)?;
-    std::fs::write(&found.content, text)
+    fs::Project::new(project)
+        .write_article(&found.id, text)
         .map_err(|e| Trouble::Refused(format!("{} cannot be written — {e}", found.label())))?;
     Ok(Answer::said(format!("{} rewritten", found.label())))
 }
@@ -474,8 +481,10 @@ fn edit(args: Args<'_>) -> Outcome {
     if old.is_empty() {
         return Err(Trouble::Invalid("old_string must not be empty".to_owned()));
     }
-    let found = locate(root(&args)?, args.text(ARTICLE)?)?;
-    let text = std::fs::read_to_string(&found.content)
+    let project = root(&args)?;
+    let found = locate(project, args.text(ARTICLE)?)?;
+    let text = fs::Project::new(project)
+        .read_article(&found.id)
         .map_err(|e| Trouble::Refused(format!("{} cannot be read — {e}", found.label())))?;
     let count = text.matches(old).count();
     if count == 0 {
@@ -490,7 +499,8 @@ fn edit(args: Args<'_>) -> Outcome {
         )));
     }
     let edited = text.replacen(old, new, count);
-    std::fs::write(&found.content, edited)
+    fs::Project::new(project)
+        .write_article(&found.id, &edited)
         .map_err(|e| Trouble::Refused(format!("{} cannot be written — {e}", found.label())))?;
     Ok(
         Answer::said(format!("{} edited: {count} replacement(s)", found.label()))
@@ -499,9 +509,15 @@ fn edit(args: Args<'_>) -> Outcome {
 }
 
 fn rename(args: Args<'_>) -> Outcome {
-    let found = locate(root(&args)?, args.text(ARTICLE)?)?;
+    let project = root(&args)?;
+    let found = locate(project, args.text(ARTICLE)?)?;
     let title = args.text(TITLE_NOW)?;
-    properties::set_title(&found.content, title);
+    let store = fs::Project::new(project);
+    let mut held = store.properties(&found.id);
+    held.title = title.to_owned();
+    store
+        .save_properties(&found.id, &held)
+        .map_err(|e| Trouble::Refused(format!("{} cannot be renamed — {e}", found.label())))?;
     Ok(Answer::said(format!("{} is now {title}", found.label())))
 }
 
@@ -512,7 +528,12 @@ fn archive(args: Args<'_>) -> Outcome {
     let mut said: Vec<String> = Vec::new();
     for needle in args.list(ARTICLES)? {
         let found = locate(root, needle)?;
-        properties::set_archived(&found.content, archived);
+        let store = fs::Project::new(root);
+        let mut held = store.properties(&found.id);
+        held.archived = archived;
+        store
+            .save_properties(&found.id, &held)
+            .map_err(|e| Trouble::Refused(format!("{} cannot be written — {e}", found.label())))?;
         said.push(found.label().to_owned());
     }
     let what = match archived {
@@ -535,9 +556,11 @@ fn remove(args: Args<'_>) -> Outcome {
     }
     let mut gone: Vec<String> = Vec::new();
     for article in &found {
-        artifact::article::remove(&article.content).map_err(|e| {
-            Trouble::Refused(format!("{} cannot be deleted — {e}", article.label()))
-        })?;
+        fs::Project::new(root)
+            .remove_article(&article.id)
+            .map_err(|e| {
+                Trouble::Refused(format!("{} cannot be deleted — {e}", article.label()))
+            })?;
         gone.push(article.label().to_owned());
     }
     Ok(Answer::said(format!("{} deleted", gone.join(", "))))
@@ -629,27 +652,19 @@ fn move_article(args: Args<'_>) -> Outcome {
 }
 
 fn articles(project: &Path) -> Vec<Held> {
-    let Ok(entries) = std::fs::read_dir(article::dir(project)) else {
-        return Vec::new();
-    };
-    let mut held: Vec<Held> = entries
-        .flatten()
-        .map(|entry| article::content(&entry.path()))
-        .filter(|content| content.is_file())
-        .map(|content| {
-            let held = properties::all(&content);
-            Held {
-                number: artifact::entry::number(project, "article", &article::id_of(&content)).ok(),
-                id: article::id_of(&content),
-                title: held.title,
-                archived: held.archived,
-                touched: article::touched(&content),
-                content,
-            }
+    let store = fs::Project::new(project);
+    store
+        .articles()
+        .into_iter()
+        .map(|found| Held {
+            number: store.number("article", &found.id).ok(),
+            content: article::content(&article::dir(project).join(&found.id)),
+            id: found.id,
+            title: found.title,
+            archived: found.archived,
+            touched: found.touched,
         })
-        .collect();
-    held.sort_by_key(|article| std::cmp::Reverse(article.touched));
-    held
+        .collect()
 }
 
 /// The article a needle names: its id, or its title. A title that hits twice is

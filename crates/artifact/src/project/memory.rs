@@ -295,6 +295,11 @@ impl super::Project for Project {
         found
     }
 
+    fn article(&self, id: &str) -> Option<Article> {
+        let state = self.state();
+        state.articles.get(id).map(|held| state.describe(id, held))
+    }
+
     fn create_article(&self, markdown: &str) -> Result<Article> {
         let mut state = self.state();
         let id = (stamp::now()..)
