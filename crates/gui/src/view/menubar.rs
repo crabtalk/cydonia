@@ -300,13 +300,13 @@ fn workspace(cx: &mut App, f: impl FnOnce(&mut Cydonia, &mut Window, &mut Contex
 
 impl Cydonia {
     /// The button that opens the tree off macOS, and its card while open.
-    /// `None` on macOS.
+    /// `None` on macOS and in a browser.
     pub(crate) fn app_menu(
         &self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        if NATIVE {
+        if NATIVE || cfg!(target_family = "wasm") {
             return None;
         }
         let card = (self.menu == Some(Open::App))

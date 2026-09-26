@@ -5,7 +5,8 @@
 	"scripts": {
 		"og": "node scripts/generate-og.mjs",
 		"dev": "vite dev",
-		"build": "vite build",
+		"demo": "cd .. && cargo build -p cydonia-demo --lib --target wasm32-unknown-unknown --release && wasm-bindgen --target web --no-typescript --remove-name-section --out-dir www/static/demo target/wasm32-unknown-unknown/release/cydonia_demo.wasm && wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext --enable-mutable-globals --enable-reference-types -o www/static/demo/cydonia_demo_bg.wasm www/static/demo/cydonia_demo_bg.wasm && node www/scripts/patch-ios-wasm-loader.mjs",
+		"build": "npm run demo && vite build",
 		"preview": "vite preview",
 		"deploy": "npm run build && wrangler pages deploy build --project-name=cydonia --branch=main"
 	},

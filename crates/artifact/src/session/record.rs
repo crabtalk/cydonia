@@ -6,10 +6,8 @@
 
 use crate::session::chat::ChatItem;
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::BTreeMap,
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
+use std::{collections::BTreeMap, time::Duration};
+use web_time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Record {

@@ -2203,6 +2203,7 @@ dependencies = [
  "toml 0.8.23",
  "toml_edit 0.22.27",
  "url",
+ "web-time",
 ]
 
 [[package]]
@@ -2217,6 +2218,7 @@ dependencies = [
  "cydonia-artifact",
  "cydonia-gui",
  "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]
@@ -2255,6 +2257,7 @@ dependencies = [
  "toml_edit 0.22.27",
  "ureq",
  "url",
+ "web-time",
 ]
 
 [[package]]

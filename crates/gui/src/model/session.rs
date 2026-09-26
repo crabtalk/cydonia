@@ -46,8 +46,9 @@ use cacp::schema::{
 use std::{
     collections::{BTreeMap, VecDeque},
     path::PathBuf,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::Duration,
 };
+use web_time::{Instant, SystemTime, UNIX_EPOCH};
 
 #[cfg(feature = "desktop")]
 const STREAM_FRAME: Duration = Duration::from_millis(120);

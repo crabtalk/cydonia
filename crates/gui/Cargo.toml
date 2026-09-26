@@ -42,6 +42,7 @@ toml.workspace = true
 toml_edit.workspace = true
 ureq = { workspace = true, optional = true }
 url.workspace = true
+web-time.workspace = true
 
 
 [features]

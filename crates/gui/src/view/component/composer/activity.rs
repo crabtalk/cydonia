@@ -3,7 +3,8 @@ use crate::model::session::{ChatSession, Connection};
 use crate::view::component::transcript;
 use artifact::session::chat::{ChatItem, ToolStatus};
 use bezel::agent::orbs::OrbState;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 #[derive(Clone, PartialEq)]
 pub struct Activity {

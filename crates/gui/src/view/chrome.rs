@@ -7,14 +7,15 @@
 //! whichever sits under the traffic lights.
 //!
 //! On macOS both are inert: AppKit paints the lights and drags the window by
-//! the transparent titlebar.
+//! the transparent titlebar. In a browser both are inert too: the page owns
+//! the frame the window sits in.
 
 use bezel::{
     gpui::{AnyElement, App, ElementId, Window, WindowDecorations, div, prelude::*},
     ui::titlebar::{self, CaptionSide, DragState},
 };
 
-const NATIVE: bool = cfg!(target_os = "macos");
+const NATIVE: bool = cfg!(any(target_os = "macos", target_family = "wasm"));
 
 /// The caption buttons for `side`, or nothing where [`has`] says none.
 pub fn caption(side: CaptionSide, window: &Window, cx: &App) -> Option<AnyElement> {
@@ -36,10 +37,11 @@ pub fn grip(id: impl Into<ElementId>, drag: &DragState, window: &Window) -> AnyE
     }
 }
 
-/// Whether [`caption`] draws buttons on `side`: never on macOS or in full
-/// screen, and on the side the desktop's button layout names. A platform with
-/// no layout puts them all on the right. A band that has them drops its inset
-/// on that side, so the buttons sit flush with the window's edge.
+/// Whether [`caption`] draws buttons on `side`: never on macOS, in a browser
+/// or in full screen, and on the side the desktop's button layout names. A
+/// platform with no layout puts them all on the right. A band that has them
+/// drops its inset on that side, so the buttons sit flush with the window's
+/// edge.
 pub fn has(side: CaptionSide, window: &Window, cx: &App) -> bool {
     if NATIVE || window.is_fullscreen() {
         return false;

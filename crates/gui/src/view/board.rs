@@ -664,8 +664,8 @@ struct Working {
 
 /// When this window opened, for the one orb with nothing better to count from
 /// — see [`Cydonia::card_working`].
-static SINCE: std::sync::LazyLock<std::time::Instant> =
-    std::sync::LazyLock::new(std::time::Instant::now);
+static SINCE: std::sync::LazyLock<web_time::Instant> =
+    std::sync::LazyLock::new(web_time::Instant::now);
 
 /// One scroll, one drift and one follow per lane, minted the first time the
 /// lane is drawn.

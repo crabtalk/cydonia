@@ -43,6 +43,7 @@ toml = "0.8"
 toml_edit = "0.22"
 ureq = "3"
 url = { version = "2", features = ["serde"] }
+web-time = "1"
 
 [profile.dev]
 debug = "line-tables-only"

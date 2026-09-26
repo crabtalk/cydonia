@@ -774,11 +774,12 @@ impl Cydonia {
     /// the same reason the panel's width is written on a settle — see
     /// [`Cydonia::save_panel_layout_settled`].
     fn set_changes_open(&mut self, open: bool, cx: &mut Context<Self>) {
-        self.changes_open = open;
         // Which directory this is about, in case the first sync of the frame
         // has not run yet: leaving it unanswered would let `follow_changes`
-        // read the saved bit back over what was just pressed.
+        // read the saved bit back over what was just pressed. With none, there
+        // is nothing for the panel to show.
         self.changes_for = self.changes_for.take().or_else(|| self.shell_cwd(cx));
+        self.changes_open = open && self.changes_for.is_some();
         if let Some(cwd) = self.changes_for.clone() {
             self.changes_shown.insert(cwd, open);
         }
