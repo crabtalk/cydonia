@@ -338,6 +338,7 @@ impl Cydonia {
         let workspace = self.workspace.read(cx);
         let features = &workspace.settings.features;
         let (sessions, boards, tables) = (features.sessions, features.boards, features.tables);
+        let (review, files) = (features.panel.review, features.panel.files);
         let project = workspace.active.is_some();
         // Nothing on screen is nothing to step from — the launch view is not
         // an entry, and its neighbour is not another one.
@@ -367,6 +368,20 @@ impl Cydonia {
             // needs, for the directory its first shell opens in.
             .when(project, |root| {
                 root.on_action(cx.listener(Self::toggle_terminal))
+            })
+            .when(review, |root| {
+                root.on_action(cx.listener(
+                    |this, _: &crate::view::root::OpenReview, window, cx| {
+                        this.show_changes(window, cx)
+                    },
+                ))
+            })
+            .when(files, |root| {
+                root.on_action(
+                    cx.listener(|this, _: &crate::view::root::OpenFiles, window, cx| {
+                        this.toggle_files(window, cx)
+                    }),
+                )
             })
             // Pane-specific commands grey themselves everywhere else.
             .when(showing == Some(Pane::Article), |root| {

@@ -6,7 +6,7 @@ use bezel::{
         self, Context, Entity, Focusable, Render, Subscription, Task, Window, div, prelude::*, px,
     },
     theme::{ControlSize, Sizing as _, TextStyle, Theme, Typeset},
-    ui::input::{FieldEvent, Shape, TextField},
+    ui::input::{Edit, FieldEvent, Shape, TextField},
     ui::widgets::{ButtonStyle, Buttons as _, Controls as _},
 };
 #[cfg(feature = "desktop")]
@@ -167,13 +167,13 @@ impl FileView {
                 .with_key_context("FileEditor")
         });
         let watch = cx.subscribe(&field, |this, _, event: &FieldEvent, cx| {
-            if matches!(event, FieldEvent::Changed | FieldEvent::Moved) {
+            if matches!(event, FieldEvent::Changed(_) | FieldEvent::Moved) {
                 this.reveal.set(true);
             }
             // Loading a file emits this too — `set_content` is an edit as far
             // as the field is concerned — so first paint is coloured by the
             // same path that keeps typing coloured.
-            if matches!(event, FieldEvent::Changed) {
+            if matches!(event, FieldEvent::Changed(_)) {
                 this.preview_selection = None;
                 this.preview_dragging = false;
                 this.recolour(cx);
@@ -268,13 +268,21 @@ impl FileView {
         let source = self.field.read(cx).content().clone();
         self._recolour = cx.spawn(async move |this, cx| {
             cx.background_executor().timer(RECOLOUR).await;
+            let parsed = source.clone();
             let spans =
                 cx.background_executor()
                     .spawn(async move {
-                        crate::model::language::spans(&path, &source).unwrap_or_default()
+                        crate::model::language::spans(&path, &parsed).unwrap_or_default()
                     })
                     .await;
             let _ = this.update(cx, |this, cx| {
+                // Edits made while this parse ran moved the text on from
+                // `source`, so the spans are carried over them.
+                let edit = Edit::between(&source, this.field.read(cx).content());
+                let spans = spans
+                    .into_iter()
+                    .filter_map(|(range, kind)| Some((edit.map(range)?, kind)))
+                    .collect();
                 this.field
                     .update(cx, |field, cx| field.set_spans(spans, cx));
             });
@@ -498,7 +506,7 @@ impl FileView {
 
     pub fn status_bar(
         &mut self,
-        files_open: bool,
+        files: Option<bool>,
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
@@ -556,7 +564,7 @@ impl FileView {
                         .child(name),
                 )
             })
-            .child(super::status::files_toggle(files_open, &theme))
+            .children(files.map(|open| super::status::files_toggle(open, &theme)))
             .when(self.dirty(cx), |row| {
                 row.child(
                     div()

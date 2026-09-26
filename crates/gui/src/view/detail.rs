@@ -72,11 +72,11 @@ pub fn panel_beside(available: f32) -> bool {
 
 /// How wide the panel is drawn.
 ///
-/// `preferred` is `None` until somebody drags the split. A width nobody chose
-/// is [`PANEL_SHARE`] of what there is. Either is kept as far as the chat
-/// keeps [`CHAT_MIN`] and the panel [`PANEL_MIN`].
-pub fn panel_width(preferred: Option<f32>, available: f32) -> f32 {
-    let preferred = preferred.unwrap_or(available * PANEL_SHARE);
+/// `share` is the part of `available` the split was dragged to, and `None`
+/// until somebody drags it, which is [`PANEL_SHARE`]. Either is kept as far as
+/// the chat keeps [`CHAT_MIN`] and the panel [`PANEL_MIN`].
+pub fn panel_width(share: Option<f32>, available: f32) -> f32 {
+    let preferred = available * share.unwrap_or(PANEL_SHARE);
     let min = PANEL_MIN.min(available / 2.);
     let max = (available - CHAT_MIN).max(min);
     preferred.clamp(min, max)
@@ -604,11 +604,13 @@ impl Cydonia {
                 live.and_then(|chat| chat.usage),
             ));
         }
+        let tabs = workspace.settings.features.panel;
         for (leaf, point) in self.leaves.iter().zip(pointed) {
             let (session, draft, placeholder, commands, streaming, activity, current, sw, usage) =
                 point;
             leaf.composer.update(cx, |composer, cx| {
                 composer.set_tools(!arranged, cx);
+                composer.set_panel_tabs(tabs, cx);
                 composer.set_session(session, &draft, cx);
                 composer.set_placeholder(&placeholder, cx);
                 composer.set_commands(&commands, cx);
@@ -632,6 +634,7 @@ impl Cydonia {
         let live = self.workspace.read(cx).reachable();
         let showing = self.showing(cx);
         let arranged = self.workspace.read(cx).active_space().is_some();
+        let active = self.workspace.read(cx).active_id();
         // A space arranges several entries, so it draws its own panes. One
         // entry open on its own is the single pane below.
         let body = match self.panes(window, cx) {
@@ -747,8 +750,8 @@ impl Cydonia {
                                 .flex()
                                 .flex_col()
                                 .gap(px(8.))
-                                .children(self.plan(cx))
-                                .children(self.permission(cx))
+                                .children(self.plan(active, cx))
+                                .children(self.permission(active, cx))
                                 .child(self.leaf().composer.clone()),
                             footer_height.clone(),
                         )),
@@ -778,7 +781,7 @@ impl Cydonia {
         let available = available.max(0.);
         // Beside the chat, or over it in a window too narrow to hold both.
         let beside = panel_beside(available);
-        let width = panel_width(self.changes_width, available);
+        let width = panel_width(self.changes_share, available);
         let height = panel_height(
             self.terminal_height,
             f32::from(window.viewport_size().height),
@@ -811,10 +814,13 @@ impl Cydonia {
                     .flex_row()
                     .on_drag_move(cx.listener(
                         |this, event: &DragMoveEvent<ChangesResize>, _, cx| {
-                            this.changes_width = Some(panel_width(
-                                Some(f32::from(event.bounds.right() - event.event.position.x)),
-                                f32::from(event.bounds.size.width),
-                            ));
+                            let available = f32::from(event.bounds.size.width);
+                            let dragged = f32::from(event.bounds.right() - event.event.position.x);
+                            if available > 0. {
+                                this.changes_share = Some(
+                                    panel_width(Some(dragged / available), available) / available,
+                                );
+                            }
                             this.save_panel_layout_settled(cx);
                             cx.notify();
                         },
@@ -1147,7 +1153,7 @@ impl Cydonia {
         let beside = self.changes.is_some() && panel_beside(available);
         let column = available
             - match beside {
-                true => panel_width(self.changes_width, available),
+                true => panel_width(self.changes_share, available),
                 false => 0.,
             };
         // The column, less what a space gives the panes beside this one. The
@@ -1234,9 +1240,13 @@ impl Cydonia {
     }
 
     /// The agent's plan, while it still has something left to do.
-    fn plan(&self, cx: &Context<Self>) -> Option<impl IntoElement + use<>> {
+    pub(crate) fn plan(
+        &self,
+        session: Option<u64>,
+        cx: &Context<Self>,
+    ) -> Option<impl IntoElement + use<>> {
         let theme = Theme::of(cx).clone();
-        let chat = self.workspace.read(cx).active_session()?;
+        let chat = self.workspace.read(cx).session(session?)?;
         if chat.plan.is_empty() || chat.plan.iter().all(|(_, s)| *s == PlanStatus::Done) {
             return None;
         }
@@ -1274,9 +1284,13 @@ impl Cydonia {
     /// a checkbox saying how long the answer holds. See [`alert`] for why two
     /// buttons carry four options, and for what an agent has to ask to get the
     /// stack of rows instead.
-    fn permission(&self, cx: &Context<Self>) -> Option<impl IntoElement + use<>> {
+    pub(crate) fn permission(
+        &self,
+        session: Option<u64>,
+        cx: &Context<Self>,
+    ) -> Option<impl IntoElement + use<>> {
         let theme = Theme::of(cx).clone();
-        let chat = self.workspace.read(cx).active_session()?;
+        let chat = self.workspace.read(cx).session(session?)?;
         let prompt = chat.permission.as_ref()?;
         let id = chat.id;
         let painter = Painter::of(cx);

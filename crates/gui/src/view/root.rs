@@ -190,6 +190,20 @@ const TRAFFIC_LIGHT_SPACING: f32 = 23.;
 /// the first control it puts past them.
 pub(crate) const HEADER_INSET: f32 = 16.;
 
+/// How far the glyph of a control at the end of a row stands from its
+/// column's edge: the lights' own inset, mirrored. Measured to the glyph, not
+/// the button around it.
+pub(crate) const EDGE: f32 = TRAFFIC_LIGHT_X;
+
+/// What an icon button leaves on each side of its glyph.
+const BUTTON_SLACK: f32 = (Theme::BUTTON_HEIGHT - ICON_GLYPH) / 2.;
+
+/// The glyph size of `Buttons::icon_button`, which bezel does not export.
+const ICON_GLYPH: f32 = 14.;
+
+/// The trailing padding that puts an icon button's glyph at [`EDGE`].
+pub(crate) const BUTTON_EDGE: f32 = EDGE - BUTTON_SLACK;
+
 /// The band across the top of a column, and the only place its height and its
 /// inset are written: the header, the sidebar's, a pane's in a space, and the
 /// right panel's are all this row. A control in one stands where the same
@@ -204,7 +218,8 @@ pub(crate) fn band() -> Div {
         .flex()
         .flex_row()
         .items_center()
-        .px(px(HEADER_INSET))
+        .pl(px(HEADER_INSET))
+        .pr(px(BUTTON_EDGE))
 }
 
 /// Where the toolbar's own controls start: clear of the three lights AppKit
@@ -256,13 +271,66 @@ pub fn bindings() -> Vec<KeyBinding> {
     ]
 }
 
+impl Cydonia {
+    fn save_window(&mut self, cx: &mut App) {
+        if let Some(frame) = self.window_frame.take() {
+            self.workspace
+                .update(cx, |workspace, _| workspace.set_window(frame));
+        }
+    }
+}
+
+/// The frame a window was left at, where some display still shows it.
+fn restored(frame: crate::model::state::Frame, cx: &App) -> Option<WindowBounds> {
+    use crate::model::state::Mode;
+    let valid = [frame.x, frame.y, frame.width, frame.height]
+        .iter()
+        .all(|n| n.is_finite())
+        && frame.width >= 600.
+        && frame.height >= 320.;
+    let bounds = Bounds::new(
+        point(px(frame.x), px(frame.y)),
+        size(px(frame.width), px(frame.height)),
+    );
+    let shown = cx
+        .displays()
+        .iter()
+        .any(|display| display.bounds().intersects(&bounds));
+    (valid && shown).then_some(match frame.mode {
+        Mode::Windowed => WindowBounds::Windowed(bounds),
+        Mode::Maximized => WindowBounds::Maximized(bounds),
+        Mode::Fullscreen => WindowBounds::Fullscreen(bounds),
+    })
+}
+
+fn frame_of(bounds: WindowBounds) -> crate::model::state::Frame {
+    use crate::model::state::Mode;
+    let (bounds, mode) = match bounds {
+        WindowBounds::Windowed(bounds) => (bounds, Mode::Windowed),
+        WindowBounds::Maximized(bounds) => (bounds, Mode::Maximized),
+        WindowBounds::Fullscreen(bounds) => (bounds, Mode::Fullscreen),
+    };
+    crate::model::state::Frame {
+        x: f32::from(bounds.origin.x),
+        y: f32::from(bounds.origin.y),
+        width: f32::from(bounds.size.width),
+        height: f32::from(bounds.size.height),
+        mode,
+    }
+}
+
 /// Open the workspace window. Called at launch, and again when the Dock
 /// reopens an app whose window ⌘W closed.
 pub fn open(settings: Settings, state: State, cx: &mut App) -> Result<WindowHandle<Cydonia>> {
-    let bounds = Bounds::centered(None, size(px(1100.), px(760.)), cx);
+    let bounds = state
+        .window
+        .and_then(|frame| restored(frame, cx))
+        .unwrap_or_else(|| {
+            WindowBounds::Windowed(Bounds::centered(None, size(px(1100.), px(760.)), cx))
+        });
     cx.open_window(
         WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            window_bounds: Some(bounds),
             // No strip of its own: the traffic lights sit in the nav, so the
             // window owes no titlebar above it.
             titlebar: Some(TitlebarOptions {
@@ -287,13 +355,31 @@ pub fn open(settings: Settings, state: State, cx: &mut App) -> Result<WindowHand
             cx.new(|cx| {
                 let mut root = Cydonia::new(settings, state, window, cx);
                 root.restore_panel_layout();
-                cx.on_release(|root: &mut Cydonia, cx| root.save_panel_layout(cx))
-                    .detach();
+                cx.observe_window_bounds(window, |root: &mut Cydonia, window, cx| {
+                    root.window_frame = Some(frame_of(window.window_bounds()));
+                    root.window_save = Some(cx.spawn(async move |this, cx| {
+                        cx.background_executor()
+                            .timer(std::time::Duration::from_millis(400))
+                            .await;
+                        this.update(cx, |this, cx| {
+                            this.window_save = None;
+                            this.save_window(cx);
+                        })
+                        .ok();
+                    }));
+                })
+                .detach();
+                cx.on_release(|root: &mut Cydonia, cx| {
+                    root.save_panel_layout(cx);
+                    root.save_window(cx);
+                })
+                .detach();
                 // ⌘Q tears the process down without releasing the root, so a
                 // release hook alone loses everything dragged in the session
                 // that quit.
                 cx.on_app_quit(|root: &mut Cydonia, cx| {
                     root.save_panel_layout(cx);
+                    root.save_window(cx);
                     async {}
                 })
                 .detach();
@@ -353,14 +439,19 @@ pub struct Cydonia {
     /// panel's shells open in.
     pub(crate) changes_for: Option<std::path::PathBuf>,
     pub(crate) changes_shown: std::collections::HashMap<std::path::PathBuf, bool>,
-    /// How wide the right-hand panel was dragged, and `None` for one nobody
-    /// has dragged — which is given a share of the window instead. See
-    /// [`super::detail::panel_width`].
-    pub(crate) changes_width: Option<f32>,
+    /// The share of the row the right-hand panel was dragged to, and `None`
+    /// for one nobody has dragged. See [`super::detail::panel_width`].
+    pub(crate) changes_share: Option<f32>,
     /// The pending write of a width being dragged — dropped and replaced by
     /// each move, so only a drag that stopped reaches the disk. See
     /// [`Cydonia::save_panel_layout_settled`].
     pub(crate) panel_save: Option<bezel::gpui::Task<()>>,
+    /// The pending write of the window's frame, replaced by each move or
+    /// resize so only one that stopped reaches the disk.
+    window_save: Option<bezel::gpui::Task<()>>,
+    /// The frame that write carries, taken by whichever of it and the quit
+    /// gets there first.
+    window_frame: Option<crate::model::state::Frame>,
     /// How tall the bottom panel was dragged, and `None` for one nobody has
     /// dragged. See [`super::detail::panel_height`].
     pub(crate) terminal_height: Option<f32>,
@@ -429,6 +520,9 @@ pub struct Cydonia {
     /// [`Cydonia::toggle_menu_at`].
     pub(crate) menu_point: Option<gpui::Point<gpui::Pixels>>,
     pub(crate) sidebar_hovered: Option<Menu>,
+    /// The space pane whose bar the pointer is over, by its key: its `+` and
+    /// `···` take room in the bar only there. See [`Self::sidebar_hovered`].
+    pub(crate) pane_hovered: Option<gpui::SharedString>,
     /// The list row the pointer is over, by card id: its actions are drawn
     /// only there. See [`Self::sidebar_hovered`].
     pub(crate) list_hovered: Option<String>,
@@ -902,8 +996,10 @@ impl Cydonia {
             changes_open: false,
             changes_for: None,
             changes_shown: Default::default(),
-            changes_width: None,
+            changes_share: None,
             panel_save: None,
+            window_save: None,
+            window_frame: None,
             terminal_height: None,
             changes: None,
             drag: Default::default(),
@@ -927,6 +1023,7 @@ impl Cydonia {
             menu: None,
             menu_point: None,
             sidebar_hovered: None,
+            pane_hovered: None,
             list_hovered: None,
             menu_cursor: Cursor::default(),
             menu_pressed: false,
@@ -1384,6 +1481,22 @@ impl Cydonia {
     /// it, so with nothing open there is no pane to name — least of all the
     /// chat, which under the shipped defaults is itself switched off.
     pub(crate) fn showing(&self, cx: &App) -> Option<Pane> {
+        // A pane in a space is whatever its entry is, whether or not it has
+        // been focused yet: `leaf.pane` is only written by the focus.
+        if let Some(entry) = &self.leaf().entry
+            && let Some((_, showing)) = {
+                let workspace = self.workspace.read(cx);
+                let front = self.front_of(entry, &workspace.stack_of(entry));
+                workspace.showing_of(&front)
+            }
+        {
+            return Some(match showing {
+                Showing::Session(_) => Pane::Chat,
+                Showing::Board(_) => Pane::Board,
+                Showing::Article(_) => Pane::Article,
+                Showing::Table(_) => Pane::Table,
+            });
+        }
         if self.has_pane(self.leaf().pane, cx) {
             return Some(self.leaf().pane);
         }
@@ -1477,10 +1590,6 @@ impl Render for Cydonia {
             .on_action(cx.listener(|this, _: &ZoomPane, _, cx| this.zoom_focused_pane(cx)))
             .on_action(cx.listener(Self::toggle_changes))
             .on_action(cx.listener(Self::open_session_file))
-            .on_action(
-                cx.listener(|this, _: &OpenReview, window, cx| this.show_changes(window, cx)),
-            )
-            .on_action(cx.listener(|this, _: &OpenFiles, window, cx| this.toggle_files(window, cx)))
             .on_action(cx.listener(Self::copy_selection))
             .on_action(cx.listener(Self::commit_cell_action))
             .on_action(cx.listener(Self::dismiss_cell))

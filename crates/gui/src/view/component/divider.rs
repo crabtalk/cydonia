@@ -8,7 +8,10 @@ use bezel::{
 pub const HIT: f32 = 9.;
 
 pub fn divider(theme: &Theme, axis: Axis) -> Div {
+    // Occluding: the target overlaps the panes on either side, and a press
+    // that reached them too would start a text selection under the drag.
     let handle = div()
+        .occlude()
         .group("pane-divider")
         .flex_none()
         .flex()

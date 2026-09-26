@@ -275,7 +275,7 @@ impl SettingsWindow {
         // would rebuild the catalogue twice a second.
         #[cfg(feature = "desktop")]
         cx.subscribe(&search, |_, _, event: &FieldEvent, cx| {
-            if *event == FieldEvent::Changed {
+            if matches!(event, FieldEvent::Changed(_)) {
                 cx.notify();
             }
         })

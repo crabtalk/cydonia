@@ -131,6 +131,9 @@ pub struct Workspace {
     /// — see [`order`], which [`state::Sort::Manual`] reads and the other two
     /// leave alone.
     pub(super) sort: BTreeMap<PathBuf, state::Sort>,
+    /// The main window's last frame, carried so the whole-file rewrite in
+    /// [`Self::save`] keeps it.
+    window: Option<state::Frame>,
     /// The arrangements this machine holds, and which one the window is
     /// showing. The window's rather than a project's: a space can hold panes
     /// from several — see [`spaces`].
@@ -187,6 +190,7 @@ impl Workspace {
             order: state.order,
             pinned: state.pinned,
             sort: state.sort,
+            window: state.window,
             spaces: Self::in_order(crate::model::spaces::all(), &state.spaces),
             space: None,
         };
@@ -239,7 +243,16 @@ impl Workspace {
             sort: self.sort.clone(),
             space: self.active_space().map(|space| space.id.clone()),
             spaces: self.spaces.iter().map(|space| space.id.clone()).collect(),
+            window: self.window,
         });
+    }
+
+    /// Write down where the main window stands, if it has moved.
+    pub fn set_window(&mut self, frame: state::Frame) {
+        if self.window != Some(frame) {
+            self.window = Some(frame);
+            self.save();
+        }
     }
 
     /// The other half of [`Self::save`]: the preferences, into the file a

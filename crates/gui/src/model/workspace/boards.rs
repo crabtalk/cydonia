@@ -290,6 +290,21 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Put a lane in front of `before`, or at the end for `None` — see
+    /// [`Board::move_column_before`].
+    pub fn move_column_before(
+        &mut self,
+        board: &str,
+        id: &str,
+        before: Option<&str>,
+        cx: &mut Context<Self>,
+    ) {
+        self.with_board(board, |board| {
+            board.move_column_before(id, before);
+        });
+        cx.notify();
+    }
+
     /// Fold a lane shut in the list view, or open it back up. Named by the
     /// board it sits on rather than taken from the active one: a space can
     /// have two boards on screen, and the lane pressed is not always on the

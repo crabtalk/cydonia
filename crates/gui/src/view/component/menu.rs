@@ -181,14 +181,17 @@ impl Cydonia {
             .when_some(
                 group.filter(|_| self.menu.as_ref() != Some(&menu)),
                 |el, group| {
-                    if matches!(menu, Menu::Add(_) | Menu::Entry(_)) {
-                        // Resolve space during render, never in a hover style:
-                        // GPUI can resolve hover differently in prepaint and paint.
-                        el.when(self.sidebar_hovered.as_ref() != Some(&menu), |el| {
-                            el.hidden()
-                        })
-                    } else {
-                        el.invisible().group_hover(group, |el| el.visible())
+                    // Resolve space during render, never in a hover style:
+                    // GPUI can resolve hover differently in prepaint and paint.
+                    match &menu {
+                        Menu::Add(_) | Menu::Entry(_) => el
+                            .when(self.sidebar_hovered.as_ref() != Some(&menu), |el| {
+                                el.hidden()
+                            }),
+                        Menu::Pane(pane) | Menu::PaneAdd(pane) => {
+                            el.when(self.pane_hovered.as_ref() != Some(pane), |el| el.hidden())
+                        }
+                        _ => el.invisible().group_hover(group, |el| el.visible()),
                     }
                 },
             )

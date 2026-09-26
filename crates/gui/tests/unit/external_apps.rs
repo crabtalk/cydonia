@@ -70,7 +70,7 @@ impl Render for ExternalBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let bar = self
             .file
-            .update(cx, |file, cx| file.status_bar(false, window, cx));
+            .update(cx, |file, cx| file.status_bar(Some(false), window, cx));
         div().size_full().flex().flex_col().justify_end().child(bar)
     }
 }

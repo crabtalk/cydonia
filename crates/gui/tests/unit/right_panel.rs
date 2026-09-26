@@ -124,8 +124,8 @@ fn a_second_project_gets_a_panel_of_its_own(cx: &mut gpui::TestAppContext) {
             root.sync_changes(cx);
 
             assert!(
-                !root.changes_open,
-                "a directory nobody has opened the panel in gets none"
+                root.changes_open,
+                "a directory with nothing written down opens with the panel up"
             );
             root.show_changes(window, cx);
             assert_ne!(

@@ -31,10 +31,11 @@ pub(super) struct SavedPanel {
 #[derive(Default, Serialize, Deserialize)]
 #[serde(default)]
 struct SavedPanels {
-    /// Absent until the split is dragged: a panel nobody has sized is given a
-    /// share of the window, which is not a number to write down.
+    /// The share of the row the right-hand panel was dragged to. Absent until
+    /// the split is dragged. An older file holds a `width` in pixels instead,
+    /// which is not read.
     #[serde(skip_serializing_if = "Option::is_none")]
-    width: Option<f32>,
+    share: Option<f32>,
     /// Absent until the bottom panel is dragged.
     #[serde(skip_serializing_if = "Option::is_none")]
     terminal_height: Option<f32>,
@@ -162,9 +163,9 @@ impl Cydonia {
 
     pub(crate) fn restore_panel_layout(&mut self) {
         let saved = load();
-        self.changes_width = saved
-            .width
-            .filter(|width| width.is_finite() && *width >= 200.);
+        self.changes_share = saved
+            .share
+            .filter(|share| share.is_finite() && *share > 0. && *share < 1.);
         self.terminal_height = saved
             .terminal_height
             .filter(|height| height.is_finite() && *height >= 120.);
@@ -172,7 +173,7 @@ impl Cydonia {
 
     pub(crate) fn save_panel_layout(&mut self, cx: &mut App) {
         let mut saved = load();
-        saved.width = self.changes_width;
+        saved.share = self.changes_share;
         saved.terminal_height = self.terminal_height;
         // The session in front is kept on disk and remembered as its
         // project's last entry here, which is the one write that still happens

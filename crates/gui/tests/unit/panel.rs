@@ -156,7 +156,7 @@ fn files_opens_project_tree_instead_of_native_picker(cx: &mut gpui::TestAppConte
     let window = cx.add_window(|_, cx| Panel::new(std::env::temp_dir(), cx));
     window
         .update(cx, |panel, window, cx| {
-            panel.choose(2, window, cx);
+            panel.choose(Launch::Files, window, cx);
             assert!(panel.files_open);
             assert!(panel.files.is_some());
             assert!(panel.strip.is_empty());
@@ -311,7 +311,7 @@ fn terminal_menu_and_new_tab_use_cmd_t(cx: &mut gpui::TestAppContext) {
     let window = cx.add_window(|_, cx| Panel::new(std::env::temp_dir(), cx));
     window
         .update(cx, |panel, window, cx| {
-            let items = Panel::items(window);
+            let items = Panel::items(&panel.launchers(), window);
             let Item::Action { keystroke, .. } = &items[1] else {
                 panic!("terminal action")
             };
@@ -359,6 +359,35 @@ fn closing_the_front_tab_hands_the_front_to_its_right(cx: &mut gpui::TestAppCont
             );
             panel.remove(2, cx);
             assert_eq!(panel.strip.active().copied(), None);
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn switched_off_tabs_leave_the_launchers_and_close(cx: &mut gpui::TestAppContext) {
+    cx.update(|cx| Theme::install(Appearance::Light, cx));
+    let window = cx.add_window(|_, cx| Panel::new(std::env::temp_dir(), cx));
+    window
+        .update(cx, |panel, window, cx| {
+            panel.choose(Launch::Files, window, cx);
+            assert!(panel.files_open);
+            panel.set_tabs(
+                PanelTabs {
+                    review: true,
+                    files: false,
+                },
+                cx,
+            );
+            assert!(!panel.files_open);
+            assert_eq!(panel.files_state(), None);
+            panel.choose(Launch::Files, window, cx);
+            assert!(!panel.files_open);
+            let labels: Vec<_> = panel.launchers().iter().map(|l| l.label()).collect();
+            assert_eq!(labels, ["Review", "Terminal"]);
+            assert_eq!(
+                panel.switched_off().as_deref(),
+                Some("Files is off in Settings")
+            );
         })
         .unwrap();
 }

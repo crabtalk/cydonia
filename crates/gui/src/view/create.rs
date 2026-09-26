@@ -102,7 +102,7 @@ impl Cydonia {
         // Subscribed rather than observed: a field notifies on its own caret
         // blink, and the key would be rederived twice a second.
         let watch = cx.subscribe(&name, |this, field, event: &FieldEvent, cx| {
-            if *event == FieldEvent::Changed {
+            if matches!(event, FieldEvent::Changed(_)) {
                 let typed = field.read(cx).content().clone();
                 this.follow_key(&typed, cx);
             }

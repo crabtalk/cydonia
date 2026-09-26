@@ -59,6 +59,35 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Move an article, its folder and assets with it, into another open
+    /// project. Its buffer is written first, so what moves is what is on
+    /// screen. Both projects are read again afterwards.
+    pub fn move_article(&mut self, from: usize, ix: usize, to: usize, cx: &mut Context<Self>) {
+        if from == to {
+            return;
+        }
+        let (Some(source), Some(target)) = (
+            self.projects.get(from).map(|open| open.path.clone()),
+            self.projects.get(to).map(|open| open.path.clone()),
+        ) else {
+            return;
+        };
+        let Some(article) = self
+            .projects
+            .get_mut(from)
+            .and_then(|open| open.articles.get_mut(ix))
+        else {
+            return;
+        };
+        article.write(cx);
+        let content = article.path.clone();
+        if artifact::article::move_to(&content, &target).is_err() {
+            return;
+        }
+        self.reload_project(&source, cx);
+        self.reload_project(&target, cx);
+    }
+
     /// Drop the article: the file goes with it.
     pub fn delete_article(&mut self, project: usize, ix: usize, cx: &mut Context<Self>) {
         let Some(project) = self.projects.get_mut(project) else {

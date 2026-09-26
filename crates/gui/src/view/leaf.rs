@@ -94,6 +94,9 @@ pub struct Leaf {
     /// cards the pointer crosses and read by the one that draws the mark —
     /// see [`board::Landing`].
     pub(crate) landing: Option<board::Landing>,
+    /// Where the list group now in the air would land — see
+    /// [`board::GroupLanding`].
+    pub(crate) group_landing: Option<board::GroupLanding>,
     /// What the table pane's field is attached to, and the field itself.
     pub(crate) cell: Option<table::Cell>,
     pub(crate) cell_field: Entity<TextField>,
@@ -125,6 +128,7 @@ impl Leaf {
             find_field,
             finding: false,
             landing: None,
+            group_landing: None,
             cell: None,
             cell_field,
             ribbon,

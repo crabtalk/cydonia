@@ -440,9 +440,11 @@ impl Cydonia {
             )
             .children(self.restart_notice(cx))
             .child(
+                // Its buttons pad their glyphs by 8, which the margin makes
+                // up to the column's edge.
                 div()
                     .flex_none()
-                    .mx(px(8.))
+                    .mx(px(root::EDGE - 8.))
                     .mb(px(8.))
                     .flex()
                     .flex_row()
@@ -2050,6 +2052,34 @@ impl Cydonia {
                     move |this, window, cx| this.toggle_plain_text(&TogglePlainText, window, cx),
                 ),
             );
+        }
+        // Into any other open project, the folder and its pictures with it.
+        if let Row::Article { project, ix } = entry {
+            let targets: Vec<(Item, menu::Act)> = self
+                .workspace
+                .read(cx)
+                .projects
+                .iter()
+                .enumerate()
+                .filter(|(at, _)| *at != project)
+                .map(|(to, open)| {
+                    menu::row(
+                        Item::action(open.name()).with_icon(icons::files::Folder),
+                        move |this, _, cx| {
+                            this.workspace.update(cx, |workspace, cx| {
+                                workspace.move_article(project, ix, to, cx)
+                            });
+                        },
+                    )
+                })
+                .collect();
+            if !targets.is_empty() {
+                rows.push(menu::submenu(
+                    "Move to",
+                    icons::arrows::ArrowRightLeft,
+                    targets,
+                ));
+            }
         }
         rows.push(menu::row(
             Item::action("Delete").with_icon(icons::files::Trash),

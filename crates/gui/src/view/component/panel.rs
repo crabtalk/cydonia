@@ -5,6 +5,7 @@ mod persistence;
 #[cfg(feature = "desktop")]
 use super::terminal::{DirectoryChanged, Exited, Terminal};
 use super::{changes::Changes, file::FileView, files::Files};
+use crate::model::settings::PanelTabs;
 use crate::view::leaf::Pane;
 use crate::view::root::{Cydonia, ToggleChanges};
 use crate::view::{chrome, desktop::DesktopOnly};
@@ -40,7 +41,37 @@ gpui::actions!(
 
 struct FilesResize;
 
+/// The launch view's link to the settings that switch its tabs back on.
+pub struct OpenFeatures;
+
 impl gpui::EventEmitter<DesktopOnly> for Panel {}
+impl gpui::EventEmitter<OpenFeatures> for Panel {}
+
+/// What the launch view and the `+` menu offer.
+#[derive(Clone, Copy)]
+enum Launch {
+    Review,
+    Terminal,
+    Files,
+}
+
+impl Launch {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Review => "Review",
+            Self::Terminal => "Terminal",
+            Self::Files => "Files",
+        }
+    }
+
+    fn icon(self) -> &'static [u8] {
+        match self {
+            Self::Review => icons::development::GitCompare,
+            Self::Terminal => icons::development::Terminal,
+            Self::Files => icons::files::Folder,
+        }
+    }
+}
 
 enum Content {
     Review(Entity<Changes>),
@@ -74,6 +105,8 @@ pub struct Panel {
     restore_pending: Option<persistence::SavedPanel>,
     /// The press on the strip's [`chrome::grip`].
     drag: titlebar::DragState,
+    /// Which switchable tabs the settings allow, pushed in by the root.
+    tabs: PanelTabs,
 }
 
 impl Panel {
@@ -95,6 +128,56 @@ impl Panel {
             focus_pending: false,
             restore_pending: None,
             drag: Default::default(),
+            tabs: PanelTabs::default(),
+        }
+    }
+
+    /// Take the settings' word on which tabs may be open, closing the ones
+    /// that may not.
+    pub(crate) fn set_tabs(&mut self, tabs: PanelTabs, cx: &mut Context<Self>) {
+        if self.tabs == tabs {
+            return;
+        }
+        self.tabs = tabs;
+        if !tabs.review {
+            let reviews: Vec<usize> = self
+                .ordered()
+                .filter(|(_, tab)| matches!(tab.content, Content::Review(_)))
+                .map(|(id, _)| id)
+                .collect();
+            for id in reviews {
+                self.remove(id, cx);
+            }
+        }
+        if !tabs.files {
+            self.files_open = false;
+        }
+        cx.notify();
+    }
+
+    /// Whether the files tree's toggle is drawn, and if so which way it faces.
+    fn files_state(&self) -> Option<bool> {
+        self.tabs.files.then_some(self.files_open)
+    }
+
+    fn launchers(&self) -> Vec<Launch> {
+        [
+            (self.tabs.review, Launch::Review),
+            (true, Launch::Terminal),
+            (self.tabs.files, Launch::Files),
+        ]
+        .into_iter()
+        .filter_map(|(on, launch)| on.then_some(launch))
+        .collect()
+    }
+
+    /// The launch view's line naming what the settings have switched off.
+    fn switched_off(&self) -> Option<String> {
+        match (self.tabs.review, self.tabs.files) {
+            (true, true) => None,
+            (false, false) => Some("Review and Files are off in Settings".into()),
+            (false, true) => Some("Review is off in Settings".into()),
+            (true, false) => Some("Files is off in Settings".into()),
         }
     }
 
@@ -132,6 +215,9 @@ impl Panel {
     }
 
     pub fn review(&mut self, cx: &mut Context<Self>) {
+        if !self.tabs.review {
+            return;
+        }
         if cfg!(not(feature = "desktop")) {
             cx.emit(DesktopOnly("Review"));
             return;
@@ -190,6 +276,9 @@ impl Panel {
     }
 
     fn files(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.tabs.files {
+            return;
+        }
         if self.files.is_none() {
             let files = cx.new(|cx| Files::new(self.project_root.clone(), cx));
             self.files_subscription = Some(cx.subscribe(
@@ -282,29 +371,28 @@ impl Panel {
         }
     }
 
-    fn choose(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+    fn choose(&mut self, launch: Launch, window: &mut Window, cx: &mut Context<Self>) {
         self.menu = false;
-        match index {
-            0 => self.review(cx),
-            1 => self.terminal(window, cx),
-            2 => self.files(window, cx),
-            _ => {}
+        match launch {
+            Launch::Review => self.review(cx),
+            Launch::Terminal => self.terminal(window, cx),
+            Launch::Files => self.files(window, cx),
         }
         cx.notify();
     }
 
-    fn items(window: &Window) -> Vec<Item> {
-        vec![
-            Item::action("Review")
-                .with_icon(icons::development::GitCompare)
-                .with_shortcut(&crate::view::root::OpenReview, window),
-            Item::action("Terminal")
-                .with_icon(icons::development::Terminal)
-                .with_shortcut_in(&NewTerminal, "SessionPanel", window),
-            Item::action("Files")
-                .with_icon(icons::files::Folder)
-                .with_shortcut(&crate::view::root::OpenFiles, window),
-        ]
+    fn items(launchers: &[Launch], window: &Window) -> Vec<Item> {
+        launchers
+            .iter()
+            .map(|launch| {
+                let item = Item::action(launch.label()).with_icon(launch.icon());
+                match launch {
+                    Launch::Review => item.with_shortcut(&crate::view::root::OpenReview, window),
+                    Launch::Terminal => item.with_shortcut_in(&NewTerminal, "SessionPanel", window),
+                    Launch::Files => item.with_shortcut(&crate::view::root::OpenFiles, window),
+                }
+            })
+            .collect()
     }
 }
 
@@ -317,8 +405,10 @@ impl Render for Panel {
         }
         let theme = Theme::of(cx).clone();
         let right = chrome::has(CaptionSide::Right, window, cx);
-        let items = Self::items(window);
+        let launchers = self.launchers();
+        let items = Self::items(&launchers, window);
         let rows = items.clone();
+        let chosen = launchers.clone();
         let popup = self.menu.then(|| {
             menu::card(
                 &theme,
@@ -333,8 +423,8 @@ impl Render for Panel {
                             this.cursor.point_at(&rows, &path);
                         }
                         Hit::Choose(path) => {
-                            if let Some(index) = path.first() {
-                                this.choose(*index, window, cx);
+                            if let Some(launch) = path.first().and_then(|ix| chosen.get(*ix)) {
+                                this.choose(*launch, window, cx);
                             }
                         }
                         Hit::Dismiss => this.menu = false,
@@ -359,11 +449,11 @@ impl Render for Panel {
         let status = self
             .front()
             .map(|tab| match &tab.content {
-                Content::File(file) => {
-                    file.update(cx, |file, cx| file.status_bar(self.files_open, window, cx))
-                }
+                Content::File(file) => file.update(cx, |file, cx| {
+                    file.status_bar(self.files_state(), window, cx)
+                }),
                 Content::Review(review) => {
-                    review.update(cx, |review, cx| review.status_bar(self.files_open, cx))
+                    review.update(cx, |review, cx| review.status_bar(self.files_state(), cx))
                 }
                 #[cfg(feature = "desktop")]
                 Content::Terminal(terminal) => {
@@ -373,7 +463,10 @@ impl Render for Panel {
                             directory,
                             directory.display().to_string(),
                         ))
-                        .child(super::status::files_toggle(self.files_open, &theme))
+                        .children(
+                            self.files_state()
+                                .map(|open| super::status::files_toggle(open, &theme)),
+                        )
                         .into_any_element()
                 }
             })
@@ -383,7 +476,10 @@ impl Render for Panel {
                         &self.project_root,
                         self.project_root.display().to_string(),
                     ))
-                    .child(super::status::files_toggle(self.files_open, &theme))
+                    .children(
+                        self.files_state()
+                            .map(|open| super::status::files_toggle(open, &theme)),
+                    )
                     .into_any_element()
             });
         let body: AnyElement = self
@@ -402,32 +498,39 @@ impl Render for Panel {
                     .justify_center()
                     .gap(px(6.))
                     .p(px(24.))
-                    .children(
-                        [
-                            ("Review", icons::development::GitCompare),
-                            ("Terminal", icons::development::Terminal),
-                            ("Files", icons::files::Folder),
-                        ]
-                        .into_iter()
-                        .enumerate()
-                        .map(|(index, (label, icon))| {
-                            div()
-                                .id(("panel-launch", index))
-                                .h(px(42.))
-                                .flex()
-                                .items_center()
-                                .gap(px(12.))
-                                .px(px(12.))
-                                .rounded(px(8.))
-                                .bg(theme.element_hover)
-                                .cursor_pointer()
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.choose(index, window, cx)
-                                }))
-                                .child(icons::icon(icon).size(px(16.)).text_color(theme.text_muted))
-                                .child(label)
-                        }),
-                    )
+                    .children(launchers.into_iter().enumerate().map(|(index, launch)| {
+                        div()
+                            .id(("panel-launch", index))
+                            .h(px(42.))
+                            .flex()
+                            .items_center()
+                            .gap(px(12.))
+                            .px(px(12.))
+                            .rounded(px(8.))
+                            .bg(theme.element_hover)
+                            .cursor_pointer()
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.choose(launch, window, cx)
+                            }))
+                            .child(
+                                icons::icon(launch.icon())
+                                    .size(px(16.))
+                                    .text_color(theme.text_muted),
+                            )
+                            .child(launch.label())
+                    }))
+                    .children(self.switched_off().map(|line| {
+                        let bright = theme.text;
+                        div()
+                            .id("panel-switched-off")
+                            .pt(px(6.))
+                            .text_style(TextStyle::Caption)
+                            .text_color(theme.text_muted)
+                            .cursor_pointer()
+                            .hover(move |text| text.text_color(bright))
+                            .child(line)
+                            .on_click(cx.listener(|_, _, _, cx| cx.emit(OpenFeatures)))
+                    }))
                     .into_any_element()
             });
         div()
@@ -447,6 +550,9 @@ impl Render for Panel {
             )
             .on_action(
                 cx.listener(|this, action: &super::files::ToggleFilter, window, cx| {
+                    if !this.tabs.files {
+                        return;
+                    }
                     if !this.files_open {
                         this.files(window, cx);
                     }
@@ -479,7 +585,8 @@ impl Render for Panel {
                     .gap(px(6.))
                     // Always at the window's top right while it is up.
                     .when(right, |band| band.pr_0())
-                    .child(
+                    .child(super::strip::strip(
+                        "panel-tabs",
                         tabs::bar("panel-tabs").children(self.ordered().map(|(id, tab)| {
                             let icon = match &tab.content {
                                 Content::Review(_) => icons::development::GitCompare,
@@ -545,7 +652,9 @@ impl Render for Panel {
                                     }),
                                 ))
                         })),
-                    )
+                        window,
+                        cx,
+                    ))
                     .child(
                         div()
                             .relative()
@@ -800,8 +909,9 @@ impl Cydonia {
     ///
     /// The panel is a property of the directory in front, not of the window:
     /// what it was left at there is what it comes back as, and a directory
-    /// nobody has opened it in gets no panel. A directory first seen this run
-    /// is read off disk once and kept, which is what survives a quit.
+    /// with nothing written down for it opens with the panel up. A directory
+    /// first seen this run is read off disk once and kept, which is what
+    /// survives a quit.
     fn follow_changes(&mut self, cx: &mut Context<Self>) {
         let active = self.shell_cwd(cx);
         if self.changes_for == active {
@@ -814,7 +924,7 @@ impl Cydonia {
             Some(cwd) => match self.changes_shown.get(cwd) {
                 Some(open) => *open,
                 None => {
-                    let open = persistence::saved_panel(cwd).is_some_and(|saved| saved.open);
+                    let open = persistence::saved_panel(cwd).is_none_or(|saved| saved.open);
                     self.changes_shown.insert(cwd.clone(), open);
                     open
                 }
@@ -851,10 +961,18 @@ impl Cydonia {
                         this.desktop_only(event.0, cx)
                     })
                     .detach();
+                    cx.subscribe(&panel, |this, _, _: &OpenFeatures, cx| {
+                        this.open_settings(crate::view::section::Section::Features, cx)
+                    })
+                    .detach();
                     panel
                 })
                 .clone()
         });
+        let tabs = self.workspace.read(cx).settings.features.panel;
+        if let Some(panel) = &self.changes {
+            panel.update(cx, |panel, cx| panel.set_tabs(tabs, cx));
+        }
     }
 
     /// Every directory the window can still reach a panel through: the open

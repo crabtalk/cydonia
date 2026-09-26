@@ -12,13 +12,30 @@
     },
     "new": [
       "Try Cydonia in the browser from the website, on a welcome project and a tour project held in memory, with a stand-in agent, settings and project files",
-      "Keep projects in memory as well as on disk, through a project backend that boards, sessions, articles, numbering and watching all go through"
+      "Keep projects in memory as well as on disk, through a project backend that boards, sessions, articles, numbering and watching all go through",
+      "Switch the right panel's Review and Files tabs on or off under Settings → Features, with a link from the panel back to the switch",
+      "Move an article to another open project from its ··· menu, pictures included",
+      "Drag list groups by their heading to reorder them",
+      "Reopen the window where it was left, at the same size, maximised or in full screen"
     ],
     "changed": [
-      "Split the workspace into the cydonia-gui crate, with agents, the terminal, the MCP server, hotkeys and the updater behind a desktop feature"
+      "Split the workspace into the cydonia-gui crate, with agents, the terminal, the MCP server, hotkeys and the updater behind a desktop feature",
+      "Open the right panel at half the window in a directory it has never been used in, and keep its width as a share of the window",
+      "Carry a list row as one line while dragging it, rather than as a card",
+      "Show a space pane's + and ··· only while its tab bar is hovered, and a list group's + beside its ···",
+      "Scroll tab strips with an overlay bar that takes no room",
+      "Stand the controls at the end of a row 12pt off the edge, mirroring the traffic lights",
+      "Right-align a card's status in the lanes, centred and spaced off the session mark",
+      "Build on bezel 0.2.1"
     ],
     "fixed": [
-      "Keep a board edit from overwriting a change another writer saved first: it is replayed on the fresh board instead"
+      "Keep a board edit from overwriting a change another writer saved first: it is replayed on the fresh board instead",
+      "Start the terminal on Windows, in PowerShell when no shell is set",
+      "Show an agent's approval prompt and plan in a session pane inside a space",
+      "Keep a drag on a resize bar from selecting text in the panes beside it",
+      "Scroll a board sideways smoothly: one handler moves it instead of two",
+      "Keep syntax colours on their characters while a file is edited, until it is highlighted again",
+      "Find cards with ⌘F in a space's board pane before it has been clicked"
     ]
   },
   {
