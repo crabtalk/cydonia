@@ -190,6 +190,20 @@ const TRAFFIC_LIGHT_SPACING: f32 = 23.;
 /// the first control it puts past them.
 pub(crate) const HEADER_INSET: f32 = 16.;
 
+/// How far the glyph of a control at the end of a row stands from its
+/// column's edge: the lights' own inset, mirrored. Measured to the glyph, not
+/// the button around it.
+pub(crate) const EDGE: f32 = TRAFFIC_LIGHT_X;
+
+/// What an icon button leaves on each side of its glyph.
+const BUTTON_SLACK: f32 = (Theme::BUTTON_HEIGHT - ICON_GLYPH) / 2.;
+
+/// The glyph size of `Buttons::icon_button`, which bezel does not export.
+const ICON_GLYPH: f32 = 14.;
+
+/// The trailing padding that puts an icon button's glyph at [`EDGE`].
+pub(crate) const BUTTON_EDGE: f32 = EDGE - BUTTON_SLACK;
+
 /// The band across the top of a column, and the only place its height and its
 /// inset are written: the header, the sidebar's, a pane's in a space, and the
 /// right panel's are all this row. A control in one stands where the same
@@ -204,7 +218,8 @@ pub(crate) fn band() -> Div {
         .flex()
         .flex_row()
         .items_center()
-        .px(px(HEADER_INSET))
+        .pl(px(HEADER_INSET))
+        .pr(px(BUTTON_EDGE))
 }
 
 /// Where the toolbar's own controls start: clear of the three lights AppKit

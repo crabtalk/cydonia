@@ -440,9 +440,11 @@ impl Cydonia {
             )
             .children(self.restart_notice(cx))
             .child(
+                // Its buttons pad their glyphs by 8, which the margin makes
+                // up to the column's edge.
                 div()
                     .flex_none()
-                    .mx(px(8.))
+                    .mx(px(root::EDGE - 8.))
                     .mb(px(8.))
                     .flex()
                     .flex_row()
