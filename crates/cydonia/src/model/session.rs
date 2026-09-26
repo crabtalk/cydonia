@@ -23,6 +23,7 @@ use crate::{
     view::component::transcript,
 };
 use anyhow::anyhow;
+use artifact::project::Project as _;
 use artifact::session::{
     chat::{ChatItem, PlanStatus, ToolStatus},
     record::{ForkOrigin, Record},

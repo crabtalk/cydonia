@@ -1,5 +1,5 @@
 use super::*;
-use artifact::project::{Project as _, fs};
+use artifact::project::fs;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 struct Scratch(PathBuf);

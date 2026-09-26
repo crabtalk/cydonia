@@ -15,6 +15,7 @@ use crate::{
     },
 };
 use artifact::board::Board;
+use artifact::project::Project as _;
 use bezel::gpui::Context;
 use std::{
     collections::HashMap,

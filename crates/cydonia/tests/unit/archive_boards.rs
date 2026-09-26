@@ -1,5 +1,5 @@
 use super::*;
-use artifact::project::{Project as _, fs};
+use artifact::project::fs;
 use gpui::AppContext as _;
 #[test]
 fn archived_boards_keep_metadata_and_load_cards_only_on_demand() {

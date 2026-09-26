@@ -4,6 +4,7 @@
 //! `use super::*`: these methods work on the same struct and reach the same
 //! names as the rest of it.
 use super::*;
+use artifact::project::Project as _;
 
 impl Workspace {
     /// Open a session in the active project. `seed` is its first prompt, sent

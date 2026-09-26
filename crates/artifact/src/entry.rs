@@ -109,7 +109,7 @@ pub struct Entry {
 }
 
 /// A backend's boards, articles and sessions as entries, in no order.
-pub fn catalog(store: &dyn Project) -> Result<Vec<Entry>> {
+pub fn catalog(store: &impl Project) -> Result<Vec<Entry>> {
     let mut entries = Vec::new();
     for board in store.boards() {
         entries.push(Entry {
@@ -143,7 +143,7 @@ pub fn catalog(store: &dyn Project) -> Result<Vec<Entry>> {
 
 /// One of [`catalog`]'s entries as a client reads it. `None` for a kind the
 /// backend does not hold.
-pub fn open(store: &dyn Project, entry: &Entry) -> Result<Option<serde_json::Value>> {
+pub fn open(store: &impl Project, entry: &Entry) -> Result<Option<serde_json::Value>> {
     Ok(Some(match entry.kind {
         "article" => serde_json::json!({"markdown": store.read_article(&entry.id)?}),
         "board" => serde_json::to_value(

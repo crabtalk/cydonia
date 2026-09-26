@@ -16,6 +16,7 @@ use crate::model::{
     store::{self, Store},
     workspace::Workspace,
 };
+use artifact::project::Project as _;
 use artifact::{
     article as layout,
     article::properties::{self, Properties},

@@ -22,7 +22,6 @@ use std::{
     cmp::Reverse,
     collections::HashSet,
     path::{Path, PathBuf},
-    sync::Arc,
 };
 use url::Url;
 
@@ -43,6 +42,7 @@ pub const DATA: &str = "data.db";
 const SESSIONS: &str = "sessions";
 
 /// A project on this disk.
+#[derive(Clone)]
 pub struct Project {
     root: PathBuf,
 }
@@ -381,7 +381,7 @@ impl super::Project for Project {
     /// be long after it was opened — so a project without one is watched
     /// shallowly at its own root, unsettled, where the one event that matters
     /// is the directory appearing.
-    fn watch(&self, knock: Arc<dyn Fn() + Send + Sync>) -> Option<super::Watching> {
+    fn watch(&self, knock: impl Fn() + Send + Sync + 'static) -> Option<super::Watching> {
         // The prefix every event is matched against, resolved once. FSEvents
         // reports the real path, so a project reached through a symlink would
         // never match the prefix it was armed with.

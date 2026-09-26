@@ -130,5 +130,5 @@ fn a_number_resolves_only_under_its_own_kind() {
 #[test]
 fn nothing_is_watched() {
     let store = memory::Project::new();
-    assert!(store.watch(std::sync::Arc::new(|| {})).is_none());
+    assert!(store.watch(|| {}).is_none());
 }

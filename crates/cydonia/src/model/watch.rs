@@ -12,9 +12,10 @@
 //! knock carries nothing: the answer to any of them is the same re-read.
 
 use crate::model::{store, workspace::Workspace};
+use artifact::project::Project as _;
 use bezel::gpui::{Context, Task};
 use futures::{StreamExt as _, channel::mpsc};
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{path::PathBuf, time::Duration};
 
 /// How quiet the directory has to go before it is re-read, in milliseconds, and
 /// what the setting behind it defaults to. Writing one document is a string of
@@ -52,9 +53,9 @@ impl Watch {
         let pump = cx.spawn(async move |workspace, cx| {
             loop {
                 let (tx, mut knocks) = mpsc::unbounded();
-                let knock = Arc::new(move || {
+                let knock = move || {
                     let _ = tx.unbounded_send(());
-                });
+                };
                 let Some(watching) = store::open(&root).watch(knock) else {
                     // No watcher this backend will give us, and no event
                     // coming to say otherwise. Watching nothing beats spinning.

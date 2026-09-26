@@ -18,7 +18,6 @@ use crate::{
     session::record::Record,
 };
 use anyhow::Result;
-use std::sync::Arc;
 
 /// A watch a backend keeps up for as long as this is held.
 pub struct Watching {
@@ -116,7 +115,7 @@ pub trait Project {
     /// Call `knock` whenever something this backend reads back changes under
     /// it, from any thread. A knock carries nothing: the answer to one is a
     /// re-read. `None` for a backend that has nothing to watch or cannot.
-    fn watch(&self, knock: Arc<dyn Fn() + Send + Sync>) -> Option<Watching> {
+    fn watch(&self, knock: impl Fn() + Send + Sync + 'static) -> Option<Watching> {
         let _ = knock;
         None
     }
