@@ -1,8 +1,10 @@
 <script>
-	import { latest } from './changelog.js';
+	import images from './generated/og.json';
 	import { site } from './meta.js';
-	const url = `${site}/og.png?v=${encodeURIComponent(latest.version)}`;
-	const alt = `Cydonia — where agents keep their work. Screenshot from v${latest.version}.`;
+	let { card = 'home' } = $props();
+	const image = $derived(images[card]);
+	const url = $derived(`${site}${image.path}`);
+	const alt = $derived(image.alt);
 </script>
 
 <svelte:head>

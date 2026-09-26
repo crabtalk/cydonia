@@ -27,18 +27,20 @@ if (newest?.version !== version) {
 // `define` and the guard above are resolved once, when this config is
 // evaluated. Vite watches the config file but cannot know it read these two, so
 // a dev server started before a version bump keeps serving the old one.
+let images;
 const release = {
 	name: 'watch-release-inputs',
 	async configResolved(config) {
-		// SvelteKit also starts an SSR build; only the client build needs to
-		// write the static asset. Dev restarts regenerate it on release edits.
-		if (!config.build.ssr && !config.isPreview) await generateOg(entries.find((entry) => !entry.nightly));
+		// The manifest must exist before either SSR or client compilation.
+		if (!config.isPreview) await (images ??= generateOg());
 	},
 	configureServer(server) {
-		const watched = [resolve(at('../Cargo.toml')), resolve(at('../changelog.json'))];
+		const docs = resolve(at('../docs'));
+		const watched = [resolve(at('../Cargo.toml')), resolve(at('../changelog.json')), docs, resolve(at('./scripts/generate-og.mjs'))];
 		server.watcher.add(watched);
-		server.watcher.on('change', (file) => {
-			if (watched.includes(resolve(file))) server.restart();
+		server.watcher.on('all', (event, file) => {
+			if (!['add', 'change', 'unlink'].includes(event)) return;
+			if (watched.includes(resolve(file)) || resolve(file).startsWith(`${docs}/`)) server.restart();
 		});
 	}
 };

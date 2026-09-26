@@ -1,11 +1,13 @@
 // One file at the repo root is the whole history, the same shape bezel keeps:
 // a version, the day it shipped, a sentence, and the three change groups.
 import entries from '../../../changelog.json';
+import { published } from './releases.js';
+export { releasePath } from './releases.js';
 export { media } from './media.js';
 
 /** Newest first, leaving out entries marked `nightly`: a version still being
     built, whose release does not exist yet. */
-export const releases = entries.filter((entry) => !entry.nightly);
+export const releases = published(entries);
 
 export const latest = releases[0];
 

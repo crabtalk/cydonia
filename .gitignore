@@ -9,3 +9,5 @@
 # website
 www/static/og.png
 
+www/static/og/
+www/src/lib/generated/

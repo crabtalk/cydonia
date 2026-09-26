@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { dirname, relative, resolve } from 'node:path';
 import matter from 'gray-matter';
 import rehypeAutolinkHeadings from 'rehype-autolink-headings';
@@ -11,13 +11,13 @@ import remarkRehype from 'remark-rehype';
 import { unified } from 'unified';
 import { visit } from 'unist-util-visit';
 import { href } from './nav.js';
+import { slugs, dir } from './catalog.js';
+export { slugs } from './catalog.js';
 
 /** The docs live in `docs/` at the root of the repository, beside the crates
     they describe rather than inside the site. Read with `fs` because the
     directory is outside Vite's root, and read at build time only: every page
     under `/docs` is prerendered, so none of this reaches the client. */
-const dir = resolve(process.cwd(), '../docs');
-
 const source = (slug) => readFileSync(resolve(dir, `${slug}.md`), 'utf8');
 
 
@@ -51,19 +51,6 @@ export function outline() {
 		section.pages.push({ title: entry[1], slug });
 	}
 	return sections;
-}
-
-/** Every `.md` under the directory, a group at a time — `working/articles` is
-    both the file and the path it is served at. Drives the prerender entries,
-    so a page left out of `SUMMARY.md` is still written: an unlinked page beats
-    a 404 on a link somebody shared. */
-export function slugs(group = '') {
-	return readdirSync(resolve(dir, group), { withFileTypes: true }).flatMap((entry) => {
-		const path = group ? `${group}/${entry.name}` : entry.name;
-		if (entry.isDirectory()) return slugs(path);
-		if (!entry.name.endsWith('.md') || entry.name === 'SUMMARY.md') return [];
-		return [path.replace(/\.md$/, '')];
-	});
 }
 
 /** A page links to its neighbour by relative path — `../agents/mcp.md`, which

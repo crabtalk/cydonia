@@ -42,7 +42,7 @@
 	<link rel="canonical" href={canonical} />
 </svelte:head>
 
-<ShareImage />
+<ShareImage card={`docs/${data.slug}`} />
 
 <article>
 	<h1>{data.title}</h1>

@@ -1,9 +1,10 @@
 <script>
 	import ShareImage from '$lib/ShareImage.svelte';
 	import { Tag } from 'lucide-static';
-	import { anchor, day, groups, media, releases } from '$lib/changelog.js';
-	import Media from '$lib/Media.svelte';
-	import { releaseFor } from '$lib/meta.js';
+	import { anchor, day, releasePath, releases } from '$lib/changelog.js';
+	import ReleaseNotes from '$lib/ReleaseNotes.svelte';
+	import { base } from '$app/paths';
+	import { releaseFor, site } from '$lib/meta.js';
 
 	const description =
 		'Every release of Cydonia — what is new, what changed and what is fixed in each version.';
@@ -15,9 +16,11 @@
 	<meta property="og:title" content="Cydonia — changelog" />
 	<meta property="og:description" content={description} />
 	<meta property="og:type" content="website" />
+	<meta property="og:url" content={`${site}/changelog/`} />
+	<link rel="canonical" href={`${site}/changelog/`} />
 </svelte:head>
 
-<ShareImage />
+<ShareImage card="changelog" />
 
 <section class="log">
 	<h1>Changelog</h1>
@@ -26,7 +29,7 @@
 		{#each releases as release (release.version)}
 			<li id={anchor(release.version)}>
 				<div class="head">
-					<a class="num" href="#{anchor(release.version)}">{release.version}</a>
+					<a class="num" href={`${base}${releasePath(release.version)}`}>{release.version}</a>
 					<span class="day">{day(release.date)}</span>
 					<a class="release-link" href={releaseFor(release.version)} target="_blank" rel="noreferrer">
 						<!-- eslint-disable-next-line svelte/no-at-html-tags -->
@@ -35,24 +38,7 @@
 					</a>
 				</div>
 
-				<div class="body">
-					{#if release.summary}
-						<p class="summary">{release.summary}</p>
-					{/if}
-
-					{#if media(release)}
-						<Media media={media(release)} />
-					{/if}
-
-					{#each groups(release) as group (group.title)}
-						<h2>{group.title}</h2>
-						<ul>
-							{#each group.items as item (item)}
-								<li>{item}</li>
-							{/each}
-						</ul>
-					{/each}
-				</div>
+				<ReleaseNotes {release} />
 			</li>
 		{/each}
 	</ol>
@@ -131,37 +117,6 @@
 	.release-link :global(svg) {
 		width: 13px;
 		height: 13px;
-	}
-
-	.body {
-		min-width: 0;
-	}
-
-	.summary {
-		max-width: 68ch;
-		margin: 0;
-		font-size: 18px;
-		line-height: 1.5;
-	}
-
-	h2 {
-		margin: 28px 0 0;
-		color: var(--muted);
-		font-size: 12px;
-		font-weight: 500;
-		letter-spacing: 0.14em;
-		text-transform: uppercase;
-	}
-
-	ul {
-		max-width: 72ch;
-		margin: 12px 0 0;
-		padding-left: 20px;
-	}
-
-	ul li {
-		margin-top: 10px;
-		color: var(--muted);
 	}
 
 </style>

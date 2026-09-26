@@ -1,9 +1,10 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import sharp from 'sharp';
-import { media } from '../src/lib/media.js';
+import { published } from '../src/lib/releases.js';
+import { metadata, slugs } from '../src/lib/docs/catalog.js';
 
 const at = (path) => fileURLToPath(new URL(path, import.meta.url));
 const svg = (body, width = 1200, height = 630) => Buffer.from(
@@ -35,57 +36,62 @@ const escape = (text) => text.replace(/[&<>"']/g, (char) => ({
 	'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;'
 })[char]);
 
-/** Fetch the newest release's still. A missing poster must not silently ship
- * an old release's image. Upload the media before building the site. */
-export async function generateOg(latest) {
-	const shot = media(latest);
-	const source = shot?.video ? shot.poster : shot?.src;
-	if (!source) throw new Error(`OG image: v${latest.version} needs a screenshot or video poster`);
-	const response = await fetch(source, { signal: AbortSignal.timeout(30_000) });
-	if (!response.ok) throw new Error(`OG image: ${response.status} fetching ${source}`);
-	const input = Buffer.from(await response.arrayBuffer());
-	const { width, height } = await sharp(input).metadata();
-	if (!width || !height) throw new Error(`OG image: invalid screenshot at ${source}`);
+const mark = '<path d="M79 98 404 0 316 185Z"/><path d="M162 166 365 261 0 393Z"/>';
 
-	// Show the top half at full card width, preserving its proportions. The
-	// window continues below the card rather than squeezing a whole desktop in.
-	const screenshot = await sharp(input)
-		.extract({ left: 0, top: 0, width, height: Math.ceil(height / 2) })
-		.resize(1080, 352, { fit: 'cover', position: 'north' })
-		.composite([{ input: svg('<rect width="1080" height="704" rx="16" fill="white"/>', 1080, 352), blend: 'dest-in' }])
-		.png().toBuffer();
-
-	const fontfile = await inter();
-	const text = async (value, size, weight = '', color = '#0b0b0c') => sharp({
+/** Render the same brand family without depending on release screenshots. */
+export async function renderCard({ title, label, subtitle }, fontfile = undefined) {
+	fontfile ??= await inter();
+	const text = async (value, size, color = '#eaeaea', width = undefined) => sharp({
 		text: {
 			text: `<span foreground="${color}">${escape(value)}</span>`,
-			font: `Inter ${weight} ${size}`,
-			fontfile,
-			rgba: true,
-			dpi: 72
+			font: `Inter Semi-Bold ${size}`, fontfile, rgba: true, dpi: 72,
+			...(width ? { width, wrap: 'word-char' } : {})
 		}
 	}).png().toBuffer();
+	let heading;
+	for (let size = 68; size >= 36; size -= 2) {
+		heading = await text(title, size, '#eaeaea', 680);
+		if ((await sharp(heading).metadata()).height <= 240) break;
+	}
+	if ((await sharp(heading).metadata()).height > 240) throw new Error(`OG title is too long: ${title}`);
 	const background = svg(`
-		<rect width="1200" height="630" fill="#f7f7f5"/>
-		<g transform="translate(60 46) scale(.075)" fill="#0b0b0c">
-			<path d="M79 98 404 0 316 185Z"/><path d="M162 166 365 261 0 393Z"/>
-		</g>
-		<rect x="48" y="266" width="1104" height="780" rx="28" fill="#e9e9e6" stroke="#dededb"/>
+		<rect width="1200" height="630" fill="#272727"/>
+		<g transform="translate(64 52) scale(.08)" fill="#eaeaea">${mark}</g>
+		<g transform="translate(849 194) scale(.624)" fill="#eaeaea">${mark}</g>
 	`);
-	const version = await text(`v${latest.version}`, 20, '', '#737373');
-	const versionWidth = (await sharp(version).metadata()).width;
-	const output = await sharp(background).composite([
-		{ input: await text('Cydonia', 28, 'Semi-Bold'), left: 103, top: 47 },
-		{ input: version, left: 1140 - versionWidth, top: 53 },
-		{ input: await text('Where agents keep', 56, 'Semi-Bold'), left: 60, top: 117 },
-		{ input: await text('their work.', 56, 'Semi-Bold'), left: 60, top: 182 },
-		{ input: screenshot, left: 60, top: 278 }
+	return sharp(background).composite([
+		{ input: await text('Cydonia', 28), left: 112, top: 55 },
+		...(label ? [{ input: await text(label, 18, '#aaaaaa'), left: 64, top: 151 }] : []),
+		{ input: heading, left: 60, top: 204 },
+		{ input: await text(subtitle, 23, '#aaaaaa'), left: 64, top: 472 },
+		{ input: await text('cydonia.sh', 18, '#aaaaaa'), left: 64, top: 564 }
 	]).png().toBuffer();
-	await writeFile(at('../static/og.png'), output);
-	console.log(`OG image: v${latest.version} → static/og.png`);
+}
+
+export async function generateOg() {
+	const releases = published(JSON.parse(await readFile(at('../../changelog.json'), 'utf8')));
+	const cards = [
+		{ key: 'home', title: 'Where agents\nkeep their work.', label: '', subtitle: 'A desktop workspace for coding agents.' },
+		{ key: 'changelog', title: 'Changelog', label: 'Releases', subtitle: 'What’s new. What’s changed.' },
+		...releases.map(({ version }) => ({ key: `releases/${version}`, title: `v${version}`, label: 'Release notes', subtitle: 'Where agents keep their work.' })),
+		...slugs().map((slug) => ({ key: `docs/${slug}`, title: metadata(slug).title, label: 'Documentation', subtitle: 'A desktop workspace for coding agents.' }))
+	];
+	const manifest = {};
+	const fontfile = await inter();
+	for (const card of cards) {
+		const output = await renderCard(card, fontfile);
+		const path = `/og/${card.key}.${digest(output).slice(0, 16)}.png`;
+		await mkdir(dirname(at(`../static${path}`)), { recursive: true });
+		await writeFile(at(`../static${path}`), output);
+		manifest[card.key] = { path, alt: `Cydonia — ${card.title.replaceAll('\n', ' ')}. ${card.subtitle}` };
+		if (card.key === 'home') await writeFile(at('../static/og.png'), output);
+	}
+	await mkdir(at('../src/lib/generated'), { recursive: true });
+	await writeFile(at('../src/lib/generated/og.json'), JSON.stringify(manifest, null, 2) + '\n');
+	console.log(`OG images: ${cards.length} cards → static/og/`);
+	return manifest;
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-	const [latest] = JSON.parse(await readFile(at('../../changelog.json'), 'utf8'));
-	await generateOg(latest);
+	await generateOg();
 }

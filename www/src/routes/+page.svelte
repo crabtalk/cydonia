@@ -7,7 +7,7 @@
 	import Files from '$lib/Files.svelte';
 	import Frame from '$lib/Frame.svelte';
 	import { base } from '$app/paths';
-	import { anchor, day, latest, media, releases } from '$lib/changelog.js';
+	import { releasePath, day, latest, media, releases } from '$lib/changelog.js';
 	import { repo, site, tagline as description } from '$lib/meta.js';
 
 	let { data } = $props();
@@ -88,6 +88,8 @@
 	<meta property="og:title" content="Cydonia — where agents keep their work" />
 	<meta property="og:description" content={description} />
 	<meta property="og:type" content="website" />
+	<meta property="og:url" content={`${site}/`} />
+	<link rel="canonical" href={`${site}/`} />
 	{@html jsonLdHtml}
 </svelte:head>
 
@@ -115,7 +117,7 @@
 				{#if featured.summary}
 					<p>{featured.summary}</p>
 				{/if}
-				<a href="{base}/changelog/#{anchor(featured.version)}">
+				<a href="{base}{releasePath(featured.version)}">
 					What’s new in {featured.version} <span aria-hidden="true">→</span>
 				</a>
 			</figcaption>
@@ -159,10 +161,10 @@
 	<h2>Try Cydonia</h2>
 
 	<div class="head">
-		<a class="num" href="{base}/changelog/#{anchor(latest.version)}">{latest.version}</a>
+		<a class="num" href="{base}{releasePath(latest.version)}">{latest.version}</a>
 		<span class="tag">Latest</span>
 		<span class="day">{day(latest.date)}</span>
-		<a class="release-link" href="{base}/changelog/#{anchor(latest.version)}">Release notes</a>
+		<a class="release-link" href="{base}{releasePath(latest.version)}">Release notes</a>
 	</div>
 
 	<div class="release-content">
