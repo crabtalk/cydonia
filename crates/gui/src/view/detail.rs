@@ -72,11 +72,11 @@ pub fn panel_beside(available: f32) -> bool {
 
 /// How wide the panel is drawn.
 ///
-/// `preferred` is `None` until somebody drags the split. A width nobody chose
-/// is [`PANEL_SHARE`] of what there is. Either is kept as far as the chat
-/// keeps [`CHAT_MIN`] and the panel [`PANEL_MIN`].
-pub fn panel_width(preferred: Option<f32>, available: f32) -> f32 {
-    let preferred = preferred.unwrap_or(available * PANEL_SHARE);
+/// `share` is the part of `available` the split was dragged to, and `None`
+/// until somebody drags it, which is [`PANEL_SHARE`]. Either is kept as far as
+/// the chat keeps [`CHAT_MIN`] and the panel [`PANEL_MIN`].
+pub fn panel_width(share: Option<f32>, available: f32) -> f32 {
+    let preferred = available * share.unwrap_or(PANEL_SHARE);
     let min = PANEL_MIN.min(available / 2.);
     let max = (available - CHAT_MIN).max(min);
     preferred.clamp(min, max)
@@ -781,7 +781,7 @@ impl Cydonia {
         let available = available.max(0.);
         // Beside the chat, or over it in a window too narrow to hold both.
         let beside = panel_beside(available);
-        let width = panel_width(self.changes_width, available);
+        let width = panel_width(self.changes_share, available);
         let height = panel_height(
             self.terminal_height,
             f32::from(window.viewport_size().height),
@@ -814,10 +814,13 @@ impl Cydonia {
                     .flex_row()
                     .on_drag_move(cx.listener(
                         |this, event: &DragMoveEvent<ChangesResize>, _, cx| {
-                            this.changes_width = Some(panel_width(
-                                Some(f32::from(event.bounds.right() - event.event.position.x)),
-                                f32::from(event.bounds.size.width),
-                            ));
+                            let available = f32::from(event.bounds.size.width);
+                            let dragged = f32::from(event.bounds.right() - event.event.position.x);
+                            if available > 0. {
+                                this.changes_share = Some(
+                                    panel_width(Some(dragged / available), available) / available,
+                                );
+                            }
                             this.save_panel_layout_settled(cx);
                             cx.notify();
                         },
@@ -1150,7 +1153,7 @@ impl Cydonia {
         let beside = self.changes.is_some() && panel_beside(available);
         let column = available
             - match beside {
-                true => panel_width(self.changes_width, available),
+                true => panel_width(self.changes_share, available),
                 false => 0.,
             };
         // The column, less what a space gives the panes beside this one. The

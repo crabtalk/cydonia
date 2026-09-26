@@ -118,15 +118,16 @@ fn the_strip_names_where_to_go() {
 mod panel_sizing {
     use cydonia_gui::view::detail::{panel_beside, panel_width};
 
+    fn about(width: f32, expected: f32) {
+        assert!(
+            (width - expected).abs() < 0.01,
+            "{width} is not about {expected}"
+        );
+    }
+
     /// A width nobody chose is half the window.
     #[test]
     fn an_unsized_panel_takes_a_share_of_the_window() {
-        let about = |width: f32, expected: f32| {
-            assert!(
-                (width - expected).abs() < 0.01,
-                "{width} is not about {expected}"
-            );
-        };
         about(panel_width(None, 1800.), 900.);
         about(panel_width(None, 1200.), 600.);
         about(panel_width(None, 600.), 300.);
@@ -144,21 +145,24 @@ mod panel_sizing {
         }
     }
 
-    /// A width somebody dragged is kept as far as it fits.
+    /// A share somebody dragged is kept as far as it fits, at any width.
     #[test]
-    fn a_dragged_width_is_kept() {
-        assert_eq!(panel_width(Some(700.), 1800.), 700.);
-        assert_eq!(panel_width(Some(300.), 1800.), 300.);
+    fn a_dragged_share_is_kept() {
+        about(panel_width(Some(0.4), 1800.), 720.);
+        about(panel_width(Some(0.4), 1000.), 400.);
+        about(panel_width(Some(0.2), 1800.), 360.);
         // Wider than the chat, down to what leaves the chat its minimum.
-        assert_eq!(panel_width(Some(700.), 1000.), 700.);
-        assert_eq!(panel_width(Some(700.), 800.), 560.);
+        about(panel_width(Some(0.7), 1000.), 700.);
+        about(panel_width(Some(0.9), 800.), 560.);
+        // Never thinner than the panel's minimum.
+        about(panel_width(Some(0.1), 1200.), 280.);
     }
 
     /// A dragged width always leaves the chat its minimum.
     #[test]
     fn a_dragged_width_leaves_the_chat_its_minimum() {
         for available in [560., 700., 900., 1200., 1800.] {
-            let width = panel_width(Some(1713.6), available);
+            let width = panel_width(Some(0.95), available);
             assert!(
                 available - width >= 240.,
                 "{width} of {available} leaves the chat too little"

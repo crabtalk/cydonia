@@ -94,6 +94,31 @@ pub struct State {
     /// everything here — the same rule `order` above follows for entries.
     #[serde(default)]
     pub spaces: Vec<String>,
+    /// The main window's frame when it last moved, resized or closed. Nothing
+    /// until it has done one of those.
+    #[serde(default)]
+    pub window: Option<Frame>,
+}
+
+/// Where the main window stands, in the platform's logical pixels. For a
+/// window maximised or in fullscreen, the frame it goes back to.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Frame {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+    #[serde(default)]
+    pub mode: Mode,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Mode {
+    #[default]
+    Windowed,
+    Maximized,
+    Fullscreen,
 }
 
 /// `~/.config/cydonia/state.toml`, beside the settings it is not.
@@ -128,6 +153,7 @@ pub fn restore() -> State {
         sort: stored.sort,
         space: stored.space,
         spaces: stored.spaces,
+        window: stored.window,
     }
 }
 

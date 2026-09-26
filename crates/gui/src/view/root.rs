@@ -256,13 +256,66 @@ pub fn bindings() -> Vec<KeyBinding> {
     ]
 }
 
+impl Cydonia {
+    fn save_window(&mut self, cx: &mut App) {
+        if let Some(frame) = self.window_frame.take() {
+            self.workspace
+                .update(cx, |workspace, _| workspace.set_window(frame));
+        }
+    }
+}
+
+/// The frame a window was left at, where some display still shows it.
+fn restored(frame: crate::model::state::Frame, cx: &App) -> Option<WindowBounds> {
+    use crate::model::state::Mode;
+    let valid = [frame.x, frame.y, frame.width, frame.height]
+        .iter()
+        .all(|n| n.is_finite())
+        && frame.width >= 600.
+        && frame.height >= 320.;
+    let bounds = Bounds::new(
+        point(px(frame.x), px(frame.y)),
+        size(px(frame.width), px(frame.height)),
+    );
+    let shown = cx
+        .displays()
+        .iter()
+        .any(|display| display.bounds().intersects(&bounds));
+    (valid && shown).then_some(match frame.mode {
+        Mode::Windowed => WindowBounds::Windowed(bounds),
+        Mode::Maximized => WindowBounds::Maximized(bounds),
+        Mode::Fullscreen => WindowBounds::Fullscreen(bounds),
+    })
+}
+
+fn frame_of(bounds: WindowBounds) -> crate::model::state::Frame {
+    use crate::model::state::Mode;
+    let (bounds, mode) = match bounds {
+        WindowBounds::Windowed(bounds) => (bounds, Mode::Windowed),
+        WindowBounds::Maximized(bounds) => (bounds, Mode::Maximized),
+        WindowBounds::Fullscreen(bounds) => (bounds, Mode::Fullscreen),
+    };
+    crate::model::state::Frame {
+        x: f32::from(bounds.origin.x),
+        y: f32::from(bounds.origin.y),
+        width: f32::from(bounds.size.width),
+        height: f32::from(bounds.size.height),
+        mode,
+    }
+}
+
 /// Open the workspace window. Called at launch, and again when the Dock
 /// reopens an app whose window ⌘W closed.
 pub fn open(settings: Settings, state: State, cx: &mut App) -> Result<WindowHandle<Cydonia>> {
-    let bounds = Bounds::centered(None, size(px(1100.), px(760.)), cx);
+    let bounds = state
+        .window
+        .and_then(|frame| restored(frame, cx))
+        .unwrap_or_else(|| {
+            WindowBounds::Windowed(Bounds::centered(None, size(px(1100.), px(760.)), cx))
+        });
     cx.open_window(
         WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            window_bounds: Some(bounds),
             // No strip of its own: the traffic lights sit in the nav, so the
             // window owes no titlebar above it.
             titlebar: Some(TitlebarOptions {
@@ -287,13 +340,31 @@ pub fn open(settings: Settings, state: State, cx: &mut App) -> Result<WindowHand
             cx.new(|cx| {
                 let mut root = Cydonia::new(settings, state, window, cx);
                 root.restore_panel_layout();
-                cx.on_release(|root: &mut Cydonia, cx| root.save_panel_layout(cx))
-                    .detach();
+                cx.observe_window_bounds(window, |root: &mut Cydonia, window, cx| {
+                    root.window_frame = Some(frame_of(window.window_bounds()));
+                    root.window_save = Some(cx.spawn(async move |this, cx| {
+                        cx.background_executor()
+                            .timer(std::time::Duration::from_millis(400))
+                            .await;
+                        this.update(cx, |this, cx| {
+                            this.window_save = None;
+                            this.save_window(cx);
+                        })
+                        .ok();
+                    }));
+                })
+                .detach();
+                cx.on_release(|root: &mut Cydonia, cx| {
+                    root.save_panel_layout(cx);
+                    root.save_window(cx);
+                })
+                .detach();
                 // ⌘Q tears the process down without releasing the root, so a
                 // release hook alone loses everything dragged in the session
                 // that quit.
                 cx.on_app_quit(|root: &mut Cydonia, cx| {
                     root.save_panel_layout(cx);
+                    root.save_window(cx);
                     async {}
                 })
                 .detach();
@@ -353,14 +424,19 @@ pub struct Cydonia {
     /// panel's shells open in.
     pub(crate) changes_for: Option<std::path::PathBuf>,
     pub(crate) changes_shown: std::collections::HashMap<std::path::PathBuf, bool>,
-    /// How wide the right-hand panel was dragged, and `None` for one nobody
-    /// has dragged — which is given a share of the window instead. See
-    /// [`super::detail::panel_width`].
-    pub(crate) changes_width: Option<f32>,
+    /// The share of the row the right-hand panel was dragged to, and `None`
+    /// for one nobody has dragged. See [`super::detail::panel_width`].
+    pub(crate) changes_share: Option<f32>,
     /// The pending write of a width being dragged — dropped and replaced by
     /// each move, so only a drag that stopped reaches the disk. See
     /// [`Cydonia::save_panel_layout_settled`].
     pub(crate) panel_save: Option<bezel::gpui::Task<()>>,
+    /// The pending write of the window's frame, replaced by each move or
+    /// resize so only one that stopped reaches the disk.
+    window_save: Option<bezel::gpui::Task<()>>,
+    /// The frame that write carries, taken by whichever of it and the quit
+    /// gets there first.
+    window_frame: Option<crate::model::state::Frame>,
     /// How tall the bottom panel was dragged, and `None` for one nobody has
     /// dragged. See [`super::detail::panel_height`].
     pub(crate) terminal_height: Option<f32>,
@@ -905,8 +981,10 @@ impl Cydonia {
             changes_open: false,
             changes_for: None,
             changes_shown: Default::default(),
-            changes_width: None,
+            changes_share: None,
             panel_save: None,
+            window_save: None,
+            window_frame: None,
             terminal_height: None,
             changes: None,
             drag: Default::default(),

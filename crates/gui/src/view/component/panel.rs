@@ -909,8 +909,9 @@ impl Cydonia {
     ///
     /// The panel is a property of the directory in front, not of the window:
     /// what it was left at there is what it comes back as, and a directory
-    /// nobody has opened it in gets no panel. A directory first seen this run
-    /// is read off disk once and kept, which is what survives a quit.
+    /// with nothing written down for it opens with the panel up. A directory
+    /// first seen this run is read off disk once and kept, which is what
+    /// survives a quit.
     fn follow_changes(&mut self, cx: &mut Context<Self>) {
         let active = self.shell_cwd(cx);
         if self.changes_for == active {
@@ -923,7 +924,7 @@ impl Cydonia {
             Some(cwd) => match self.changes_shown.get(cwd) {
                 Some(open) => *open,
                 None => {
-                    let open = persistence::saved_panel(cwd).is_some_and(|saved| saved.open);
+                    let open = persistence::saved_panel(cwd).is_none_or(|saved| saved.open);
                     self.changes_shown.insert(cwd.clone(), open);
                     open
                 }
