@@ -2053,6 +2053,34 @@ impl Cydonia {
                 ),
             );
         }
+        // Into any other open project, the folder and its pictures with it.
+        if let Row::Article { project, ix } = entry {
+            let targets: Vec<(Item, menu::Act)> = self
+                .workspace
+                .read(cx)
+                .projects
+                .iter()
+                .enumerate()
+                .filter(|(at, _)| *at != project)
+                .map(|(to, open)| {
+                    menu::row(
+                        Item::action(open.name()).with_icon(icons::files::Folder),
+                        move |this, _, cx| {
+                            this.workspace.update(cx, |workspace, cx| {
+                                workspace.move_article(project, ix, to, cx)
+                            });
+                        },
+                    )
+                })
+                .collect();
+            if !targets.is_empty() {
+                rows.push(menu::submenu(
+                    "Move to",
+                    icons::arrows::ArrowRightLeft,
+                    targets,
+                ));
+            }
+        }
         rows.push(menu::row(
             Item::action("Delete").with_icon(icons::files::Trash),
             move |this, _, cx| this.ask_delete(entry, cx),
