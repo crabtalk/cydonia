@@ -108,6 +108,9 @@ const PILL_CLEARANCE: f32 = 32.;
 /// does not fit in this much of a lane is read by opening it.
 const CARD_MAX_HEIGHT: f32 = 140.;
 
+/// The widest a list row in flight is drawn; a longer title ends in `…`.
+const HELD_ROW_WIDTH: f32 = 360.;
+
 /// Where the card editor would start scrolling inside itself. Set past any
 /// card worth a lane, which is to say never: a scroll box inside a scrolling
 /// column is two wheels for one gesture, and a run dragged into the half that
@@ -428,6 +431,23 @@ pub struct CardDrag {
     board: usize,
 }
 
+/// A list group in flight, by its lane and the board it belongs to. Groups move
+/// within their own board only.
+#[derive(Clone)]
+pub struct GroupDrag {
+    column: String,
+    project: usize,
+    board: usize,
+}
+
+/// Where the group in the air would land: beside the group the pointer is
+/// over, above it or below it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GroupLanding {
+    pub over: String,
+    pub below: bool,
+}
+
 /// Where the card in the air would land — the lane, and the card it would go
 /// in front of, `None` being the end of the lane.
 ///
@@ -725,6 +745,30 @@ impl Render for HeldCard {
     }
 }
 
+/// A list row in flight: its title on one line, the way the list shows it.
+pub struct HeldRow {
+    title: SharedString,
+}
+
+impl Render for HeldRow {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = Theme::of(cx).clone();
+        div()
+            .max_w(px(HELD_ROW_WIDTH))
+            .h(px(LIST_ROW_HEIGHT))
+            .flex()
+            .items_center()
+            .px(px(12.))
+            .rounded(px(Theme::control_radius()))
+            .border_1()
+            .border_color(theme.accent)
+            .bg(theme.surface_raised)
+            .text_style(TextStyle::Callout)
+            .text_color(theme.text)
+            .child(div().min_w_0().truncate().child(self.title.clone()))
+    }
+}
+
 /// Where a card sits, as the lane draws it: which board it is on, which lane,
 /// whether it is the first in that lane, and what comes under it.
 ///
@@ -964,6 +1008,47 @@ impl Cydonia {
             self.leaf_mut().landing = landing;
             cx.notify();
         }
+    }
+
+    fn aim_group(&mut self, landing: Option<GroupLanding>, cx: &mut Context<Self>) {
+        if self.leaf().group_landing != landing {
+            self.leaf_mut().group_landing = landing;
+            cx.notify();
+        }
+    }
+
+    /// Let a carried group go beside the one it was aimed at.
+    fn drop_group(&mut self, drag: &GroupDrag, at: (usize, usize), cx: &mut Context<Self>) {
+        let Some(landing) = self.leaf_mut().group_landing.take() else {
+            return;
+        };
+        if (drag.project, drag.board) != at {
+            cx.notify();
+            return;
+        }
+        let Some(board) = self.workspace.read(cx).board_in(at.0, at.1) else {
+            return;
+        };
+        let before = match landing.below {
+            false => Some(landing.over.clone()),
+            true => board
+                .columns
+                .iter()
+                .position(|column| column.id == landing.over)
+                .and_then(|ix| board.columns.get(ix + 1))
+                .map(|column| column.id.clone()),
+        };
+        // Beside itself is where it already is.
+        if before.as_deref() == Some(drag.column.as_str()) {
+            cx.notify();
+            return;
+        }
+        let (board, column) = (board.id.clone(), drag.column.clone());
+        self.commit(cx);
+        self.workspace.update(cx, |workspace, cx| {
+            workspace.move_column_before(&board, &column, before.as_deref(), cx)
+        });
+        cx.notify();
     }
 
     /// Let the card go, into the lane the release actually landed on — gpui
@@ -2024,6 +2109,7 @@ impl Cydonia {
             }))
             // A release no lane took.
             .on_drop(cx.listener(|this, _: &CardDrag, _, cx| this.aim_card(None, cx)))
+            .on_drop(cx.listener(|this, _: &GroupDrag, _, cx| this.aim_group(None, cx)))
             .children(self.drawer_for(project, board_at, on, cx).map(|opened| {
                 let bounds = opened.pane_bounds.clone();
                 gpui::canvas(
@@ -2554,10 +2640,44 @@ impl Cydonia {
         let lane = id.clone();
         let taken = id.clone();
         let written = id.clone();
+        let aimed = id.clone();
+        let group_mark = cx
+            .has_active_drag()
+            .then(|| self.leaf_of(on).group_landing.clone())
+            .flatten()
+            .filter(|landing| landing.over == id)
+            // The first group's top and the last one's foot are the scroller's
+            // own edges, where a mark in the gap would be clipped away.
+            .map(|landing| match (landing.below, at == 0, at + 1 == lanes) {
+                (false, true, _) => Mark::Top,
+                (false, false, _) => Mark::Above,
+                (true, _, true) => Mark::Foot,
+                (true, _, false) => Mark::Below,
+            });
         div()
+            .relative()
             .flex_none()
             .flex()
             .flex_col()
+            .on_drag_move(
+                cx.listener(move |this, event: &DragMoveEvent<GroupDrag>, _, cx| {
+                    let at = event.event.position;
+                    if !event.bounds.contains(&at) {
+                        return;
+                    }
+                    this.aim_group(
+                        Some(GroupLanding {
+                            over: aimed.clone(),
+                            below: at.y >= event.bounds.center().y,
+                        }),
+                        cx,
+                    );
+                }),
+            )
+            .on_drop(cx.listener(move |this, drag: &GroupDrag, _, cx| {
+                this.drop_group(drag, (project, board_at), cx);
+            }))
+            .children(group_mark.map(|mark| self.landing_mark(mark, cx)))
             // The whole group, heading and all: a card held over the name of a
             // lane is being put in that lane. Coarser than the rows below it
             // and run before them, so whichever one the pointer is actually
@@ -2582,6 +2702,7 @@ impl Cydonia {
                 this.drop_card(drag, (project, board_at), &taken, cx);
             }))
             .child(self.list_group_header(
+                (project, board_at),
                 &id,
                 name,
                 Tally {
@@ -2642,6 +2763,7 @@ impl Cydonia {
     #[allow(clippy::too_many_arguments)]
     fn list_group_header(
         &self,
+        (project, board_at): (usize, usize),
         id: &str,
         name: String,
         tally: Tally,
@@ -2682,7 +2804,19 @@ impl Cydonia {
         let add_on = on.cloned();
         let add_column = id.to_owned();
         let can_add = self.board_query(on, cx).trim().is_empty();
+        let held_name = SharedString::from(name.clone());
         row.group("list-group")
+            .on_drag(
+                GroupDrag {
+                    column: id.to_owned(),
+                    project,
+                    board: board_at,
+                },
+                move |_, _, _, cx| {
+                    let title = held_name.clone();
+                    cx.new(|_| HeldRow { title })
+                },
+            )
             .child(
                 div()
                     .id(SharedString::from(format!("list-group-fold-{id}")))
@@ -2986,10 +3120,10 @@ impl Cydonia {
                     board: board_at,
                 },
                 {
-                    let base = self.card_base(project, cx);
+                    let title = self.card_docs.title(&text);
                     move |_, _, _, cx| {
-                        let (text, base) = (text.clone(), base.clone());
-                        cx.new(|_| HeldCard { text, base })
+                        let title = title.clone();
+                        cx.new(|_| HeldRow { title })
                     }
                 },
             )
@@ -3707,8 +3841,8 @@ impl Cydonia {
                             .text_color(theme.text_faint)
                             .child(handle)
                     }))
-                    .children(resting(status).map(|status| status_chip(status, &theme)))
                     .child(div().flex_1())
+                    .children(resting(status).map(|status| status_chip(status, &theme)))
                     // Where ▶ stands, because it is what ▶ becomes: a card is
                     // either one you can start or one that is running, and the
                     // two belong in one slot. On show rather than behind the
