@@ -1481,6 +1481,22 @@ impl Cydonia {
     /// it, so with nothing open there is no pane to name — least of all the
     /// chat, which under the shipped defaults is itself switched off.
     pub(crate) fn showing(&self, cx: &App) -> Option<Pane> {
+        // A pane in a space is whatever its entry is, whether or not it has
+        // been focused yet: `leaf.pane` is only written by the focus.
+        if let Some(entry) = &self.leaf().entry
+            && let Some((_, showing)) = {
+                let workspace = self.workspace.read(cx);
+                let front = self.front_of(entry, &workspace.stack_of(entry));
+                workspace.showing_of(&front)
+            }
+        {
+            return Some(match showing {
+                Showing::Session(_) => Pane::Chat,
+                Showing::Board(_) => Pane::Board,
+                Showing::Article(_) => Pane::Article,
+                Showing::Table(_) => Pane::Table,
+            });
+        }
         if self.has_pane(self.leaf().pane, cx) {
             return Some(self.leaf().pane);
         }
