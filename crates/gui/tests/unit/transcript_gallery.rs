@@ -28,9 +28,11 @@ fn clicking_opens_preview_and_horizontal_drag_switches_images(cx: &mut gpui::Tes
     visual.simulate_click(center, gpui::Modifiers::default());
     visual.run_until_parked();
     window
-        .update(&mut visual, |gallery, _, _| assert!(gallery.preview))
+        .update(&mut visual, |gallery, _, cx| {
+            assert!(gallery.is_preview_open(cx))
+        })
         .unwrap();
-    let center = visual.debug_bounds("sent-image-preview").unwrap().center();
+    let center = visual.debug_bounds("image-preview").unwrap().center();
     visual.simulate_mouse_down(center, MouseButton::Left, gpui::Modifiers::default());
     let left = Point {
         x: center.x - px(120.),
@@ -40,17 +42,24 @@ fn clicking_opens_preview_and_horizontal_drag_switches_images(cx: &mut gpui::Tes
     visual.simulate_mouse_up(left, MouseButton::Left, gpui::Modifiers::default());
     visual.run_until_parked();
     window
-        .update(&mut visual, |gallery, _, _| assert_eq!(gallery.selected, 1))
+        .update(&mut visual, |gallery, _, cx| {
+            assert_eq!(gallery.preview.read(cx).selected, 1)
+        })
         .unwrap();
     visual.simulate_keystrokes("right");
     visual.run_until_parked();
     window
-        .update(&mut visual, |gallery, _, _| assert_eq!(gallery.selected, 2))
+        .update(&mut visual, |gallery, _, cx| {
+            assert_eq!(gallery.preview.read(cx).selected, 2)
+        })
         .unwrap();
     visual.simulate_keystrokes("left escape");
     visual.run_until_parked();
     window
-        .update(&mut visual, |gallery, _, _| assert!(!gallery.preview))
+        .update(&mut visual, |gallery, _, cx| {
+            assert!(!gallery.is_preview_open(cx));
+            assert_eq!(gallery.selected, 1, "the strip follows the preview");
+        })
         .unwrap();
     let center = visual.debug_bounds("sent-image").unwrap().center();
     visual.simulate_mouse_down(center, MouseButton::Left, gpui::Modifiers::default());
@@ -62,9 +71,12 @@ fn clicking_opens_preview_and_horizontal_drag_switches_images(cx: &mut gpui::Tes
     visual.simulate_mouse_up(right, MouseButton::Left, gpui::Modifiers::default());
     visual.run_until_parked();
     window
-        .update(&mut visual, |gallery, _, _| {
+        .update(&mut visual, |gallery, _, cx| {
             assert_eq!(gallery.selected, 0);
-            assert!(!gallery.preview, "dragging must not open the preview");
+            assert!(
+                !gallery.is_preview_open(cx),
+                "dragging must not open the preview"
+            );
         })
         .unwrap();
 }
@@ -87,7 +99,7 @@ fn dots_select_images_and_single_images_have_no_dots(cx: &mut gpui::TestAppConte
     window
         .update(&mut visual, |gallery, _, cx| {
             assert_eq!(gallery.selected, 1);
-            assert!(!gallery.preview);
+            assert!(!gallery.is_preview_open(cx));
             gallery.images.truncate(1);
             gallery.selected = 0;
             cx.notify();
@@ -109,23 +121,61 @@ fn preview_close_button_is_above_the_image_and_closes_the_dialog(cx: &mut gpui::
         png.into_inner(),
     ));
     let window = cx.add_window(|_, cx| {
-        let mut gallery = Gallery::new(vec![], Path::new("/tmp"), cx);
-        gallery.images.push(picture.into());
-        gallery.preview = true;
+        let gallery = Gallery::new(vec![], Path::new("/tmp"), cx);
+        gallery.preview.update(cx, |preview, _| {
+            preview.images.push(picture.into());
+            preview.open = true;
+        });
         gallery
     });
     let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
     visual.simulate_resize(gpui::size(px(500.), px(500.)));
     visual.run_until_parked();
     let button = visual
-        .debug_bounds("sent-image-close")
+        .debug_bounds("image-preview-close")
         .expect("close button is painted");
-    let image = visual.debug_bounds("sent-image-preview").unwrap();
+    let image = visual.debug_bounds("image-preview").unwrap();
     assert!(image.contains(&button.center()));
     visual.simulate_click(button.center(), gpui::Modifiers::default());
     visual.run_until_parked();
     window
-        .update(&mut visual, |gallery, _, _| assert!(!gallery.preview))
+        .update(&mut visual, |gallery, _, cx| {
+            assert!(!gallery.is_preview_open(cx))
+        })
         .unwrap();
-    assert!(visual.debug_bounds("sent-image-close").is_none());
+    assert!(visual.debug_bounds("image-preview-close").is_none());
+}
+
+#[gpui::test]
+fn preview_zooms_by_button_and_key_and_resets_on_paging(cx: &mut gpui::TestAppContext) {
+    cx.update(|cx| Theme::install(bezel::theme::Appearance::Light, cx));
+    let window = cx.add_window(|_, cx| {
+        Gallery::new(
+            vec!["one.png".into(), "two.png".into()],
+            Path::new("/tmp"),
+            cx,
+        )
+    });
+    let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+    visual.simulate_resize(gpui::size(px(500.), px(500.)));
+    visual.run_until_parked();
+    let center = visual.debug_bounds("sent-image").unwrap().center();
+    visual.simulate_click(center, gpui::Modifiers::default());
+    visual.run_until_parked();
+    let zoom_in = visual.debug_bounds("preview-zoom-in").unwrap().center();
+    visual.simulate_click(zoom_in, gpui::Modifiers::default());
+    visual.simulate_keystrokes("=");
+    visual.run_until_parked();
+    let zoom = |visual: &mut gpui::VisualTestContext| {
+        window
+            .update(visual, |gallery, _, cx| gallery.preview.read(cx).zoom)
+            .unwrap()
+    };
+    assert!((zoom(&mut visual) - 1.5625).abs() < 1e-4);
+    visual.simulate_keystrokes("- - - -");
+    visual.run_until_parked();
+    assert_eq!(zoom(&mut visual), 1., "zoom stops at fit");
+    visual.simulate_keystrokes("= right");
+    visual.run_until_parked();
+    assert_eq!(zoom(&mut visual), 1., "paging resets zoom");
 }

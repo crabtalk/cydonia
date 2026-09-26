@@ -1,10 +1,11 @@
+use crate::view::component::image_preview::Preview;
 use bezel::{
     gpui::{
-        self, AnyElement, Context, MouseButton, ObjectFit, Pixels, Point, Render, SharedString,
-        Window, div, img, prelude::*, px, relative,
+        self, Context, Entity, MouseButton, ObjectFit, Pixels, Point, Render, SharedString, Window,
+        div, img, prelude::*, px, relative,
     },
     theme::Theme,
-    ui::{popover, tooltip::Tooltip},
+    ui::tooltip::Tooltip,
 };
 use std::{cell::Cell, path::Path, rc::Rc, sync::Arc};
 
@@ -22,87 +23,79 @@ pub(crate) fn document(text: &str) -> (markdown::Doc, Vec<String>) {
     (doc, images)
 }
 
+/// Where an image URL in a message points: a `file:` URL or a path against
+/// the session's directory reads from disk, any other URL is fetched.
+pub(crate) fn source(url: &str, cwd: &Path) -> gpui::ImageSource {
+    if let Ok(url) = url::Url::parse(url) {
+        if let Some(path) = crate::model::file_url::to_path(&url) {
+            return Arc::<Path>::from(path).into();
+        }
+        return SharedString::from(url.to_string()).into();
+    }
+    Arc::<Path>::from(cwd.join(url)).into()
+}
+
 pub(crate) struct Gallery {
     images: Vec<gpui::ImageSource>,
-    focus: gpui::FocusHandle,
-    previous_focus: Option<gpui::FocusHandle>,
     selected: usize,
-    preview: bool,
+    preview: Entity<Preview>,
     press: Option<Point<Pixels>>,
     drag: f32,
     moved: bool,
     width: Rc<Cell<f32>>,
-    preview_width: Rc<Cell<f32>>,
 }
 
 impl Gallery {
     pub(crate) fn new(images: Vec<String>, cwd: &Path, cx: &mut Context<Self>) -> Self {
+        let images: Vec<_> = images.iter().map(|url| source(url, cwd)).collect();
+        let preview = cx.new(|cx| Preview::new(images.clone(), cx));
+        // Closing the preview leaves the strip on the image it was showing.
+        cx.observe(&preview, |this, preview, cx| {
+            let preview = preview.read(cx);
+            if !preview.open && this.selected != preview.selected {
+                this.selected = preview.selected;
+                cx.notify();
+            }
+        })
+        .detach();
         Self {
-            focus: cx.focus_handle(),
-            previous_focus: None,
-            images: images
-                .into_iter()
-                .map(|url| {
-                    if let Ok(url) = url::Url::parse(&url) {
-                        if let Some(path) = crate::model::file_url::to_path(&url) {
-                            return Arc::<Path>::from(path).into();
-                        }
-                        return SharedString::from(url.to_string()).into();
-                    }
-                    Arc::<Path>::from(cwd.join(url)).into()
-                })
-                .collect(),
+            images,
             selected: 0,
-            preview: false,
+            preview,
             press: None,
             drag: 0.,
             moved: false,
             width: Default::default(),
-            preview_width: Default::default(),
         }
     }
 
-    pub(crate) fn is_preview_open(&self) -> bool {
-        self.preview
+    pub(crate) fn is_preview_open(&self, cx: &gpui::App) -> bool {
+        self.preview.read(cx).open
     }
 
-    fn finish(&mut self, width: f32, open: bool, window: &mut Window, cx: &mut Context<Self>) {
+    fn finish(&mut self, open: bool, window: &mut Window, cx: &mut Context<Self>) {
         if self.press.take().is_none() {
             return;
         }
-        let threshold = (width * 0.15).clamp(24., 80.);
+        let threshold = (self.width.get() * 0.15).clamp(24., 80.);
         if self.drag < -threshold {
             self.selected = (self.selected + 1).min(self.images.len() - 1);
         } else if self.drag > threshold {
             self.selected = self.selected.saturating_sub(1);
         } else if !self.moved && open {
-            self.previous_focus = window.focused(cx);
-            self.preview = true;
-            window.focus(&self.focus, cx);
+            let selected = self.selected;
+            self.preview
+                .update(cx, |preview, cx| preview.show(selected, window, cx));
         }
         self.drag = 0.;
         self.moved = false;
         cx.notify();
     }
+}
 
-    fn close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.preview = false;
-        if let Some(focus) = self.previous_focus.take() {
-            window.focus(&focus, cx);
-        }
-        self.press = None;
-        self.drag = 0.;
-        cx.notify();
-    }
-
-    fn slider(&self, height: Pixels, preview: bool, cx: &mut Context<Self>) -> AnyElement {
-        let width = if preview {
-            self.preview_width.clone()
-        } else {
-            self.width.clone()
-        };
-        let measured = width.clone();
-        let released = width.clone();
+impl Render for Gallery {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let measured = self.width.clone();
         let theme = Theme::of(cx).clone();
         div()
             .w_full()
@@ -111,20 +104,10 @@ impl Gallery {
             .gap(px(6.))
             .child(
                 div()
-                    .id(if preview {
-                        "sent-image-preview"
-                    } else {
-                        "sent-image"
-                    })
-                    .debug_selector(move || {
-                        if preview {
-                            "sent-image-preview".into()
-                        } else {
-                            "sent-image".into()
-                        }
-                    })
+                    .id("sent-image")
+                    .debug_selector(|| "sent-image".into())
                     .w_full()
-                    .h(height)
+                    .h(px(240.))
                     .relative()
                     .overflow_hidden()
                     .rounded(px(8.))
@@ -150,16 +133,14 @@ impl Gallery {
                     }))
                     .on_mouse_up(
                         MouseButton::Left,
-                        cx.listener(move |this, _, window, cx| {
-                            this.finish(released.get(), !preview, window, cx);
+                        cx.listener(|this, _, window, cx| {
+                            this.finish(true, window, cx);
                             cx.stop_propagation();
                         }),
                     )
                     .on_mouse_up_out(
                         MouseButton::Left,
-                        cx.listener(move |this, _, window, cx| {
-                            this.finish(width.get(), false, window, cx);
-                        }),
+                        cx.listener(|this, _, window, cx| this.finish(false, window, cx)),
                     )
                     .children(
                         self.images
@@ -201,13 +182,8 @@ impl Gallery {
                         .justify_center()
                         .children((0..self.images.len()).map(|index| {
                             div()
-                                .id((if preview { "preview-dot" } else { "image-dot" }, index))
-                                .debug_selector(move || {
-                                    format!(
-                                        "{}-dot-{index}",
-                                        if preview { "preview" } else { "image" }
-                                    )
-                                })
+                                .id(("image-dot", index))
+                                .debug_selector(move || format!("image-dot-{index}"))
                                 .size(px(24.))
                                 .flex()
                                 .items_center()
@@ -232,52 +208,7 @@ impl Gallery {
                         })),
                 )
             })
-            .into_any_element()
-    }
-}
-
-impl Render for Gallery {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let viewport = window.viewport_size();
-        let modal = self.preview.then(|| {
-            let theme = Theme::of(cx).clone();
-            let this = cx.entity().downgrade();
-            let card = crate::view::component::image_preview::frame(
-                &theme,
-                "sent-image-close",
-                self.slider(viewport.height * 0.75, true, cx),
-                cx.listener(|this, _, window, cx| this.close(window, cx)),
-            )
-            .track_focus(&self.focus)
-            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
-                match event.keystroke.key.as_str() {
-                    "escape" => this.close(window, cx),
-                    "left" => {
-                        this.selected = this.selected.saturating_sub(1);
-                        cx.notify();
-                    }
-                    "right" => {
-                        this.selected = (this.selected + 1).min(this.images.len() - 1);
-                        cx.notify();
-                    }
-                    _ => return,
-                }
-                cx.stop_propagation();
-            }))
-            .w(viewport.width * 0.8);
-            popover::modal(
-                "sent-image-dialog",
-                viewport,
-                card.into_any_element(),
-                move |_, window, cx| {
-                    let _ = this.update(cx, |this, cx| this.close(window, cx));
-                },
-            )
-        });
-        div()
-            .w_full()
-            .child(self.slider(px(240.), false, cx))
-            .children(modal)
+            .child(self.preview.clone())
     }
 }
 

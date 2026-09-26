@@ -64,10 +64,10 @@ fn pending_image_only_message_has_a_gallery_and_retains_preview(cx: &mut gpui::T
     assert!(image.size.height > px(0.));
     visual.simulate_click(image.center(), gpui::Modifiers::default());
     visual.run_until_parked();
-    assert!(visual.debug_bounds("sent-image-preview").is_some());
+    assert!(visual.debug_bounds("image-preview").is_some());
     visual.update(|window, _| window.refresh());
     visual.run_until_parked();
-    assert!(visual.debug_bounds("sent-image-preview").is_some());
+    assert!(visual.debug_bounds("image-preview").is_some());
 }
 
 /// A pane draws the queue of the session it is on and no other.

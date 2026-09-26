@@ -15,8 +15,8 @@ use artifact::session::chat::{ChatItem, ToolStatus};
 use bezel::{
     agent::orbs::{OrbSize, OrbState, engine::Frame, orb_element},
     gpui::{
-        AnyElement, Bounds, ClipboardItem, Context, Empty, Pixels, SharedString, Task, Window,
-        canvas, div, prelude::*, px,
+        AnyElement, Bounds, ClipboardItem, Context, CursorStyle, Empty, HitboxBehavior, Pixels,
+        SharedString, Task, Window, canvas, div, prelude::*, px,
     },
     motion::Painter,
     theme::{TextStyle, Theme, Typeset, ink},
@@ -93,6 +93,8 @@ const ORB_STILL: f32 = 0.6;
 pub struct State {
     focus: RefCell<HashMap<usize, bezel::gpui::FocusHandle>>,
     galleries: RefCell<HashMap<usize, bezel::gpui::Entity<gallery::Gallery>>>,
+    /// The preview agent messages open their images in, made on first use.
+    preview: RefCell<Option<bezel::gpui::Entity<super::image_preview::Preview>>>,
     list: bezel::ui::list::VariableList<usize>,
     focused_turn: Cell<Option<(usize, usize)>>,
     rail_selection: Rc<Cell<Option<RailSelection>>>,
@@ -173,6 +175,25 @@ impl State {
 
     /// Answer the pointer over item `ix`. A press starts a selection there and
     /// drops whatever another item held; a move drags its head.
+    /// Show `images` in the session's preview, opened on the one at `selected`.
+    pub fn open_preview(
+        &self,
+        images: Vec<bezel::gpui::ImageSource>,
+        selected: usize,
+        window: &mut Window,
+        cx: &mut bezel::gpui::App,
+    ) {
+        let preview = self
+            .preview
+            .borrow_mut()
+            .get_or_insert_with(|| cx.new(|cx| super::image_preview::Preview::new(Vec::new(), cx)))
+            .clone();
+        preview.update(cx, |preview, cx| {
+            preview.images = images;
+            preview.show(selected, window, cx);
+        });
+    }
+
     pub fn point(&mut self, ix: usize, pointer: Pointer) {
         match pointer {
             Pointer::Down(cursor) => {
@@ -279,6 +300,41 @@ fn prose(
         },
     );
     let cwd = chat.cwd.clone();
+    // Agent images, as (block, url) in the order they appear.
+    let pictures: Rc<Vec<(usize, String)>> =
+        Rc::new(if matches!(chat.items.get(ix), Some(ChatItem::User(_))) {
+            Vec::new()
+        } else {
+            doc.blocks
+                .iter()
+                .enumerate()
+                .filter_map(|(block, it)| match &it.kind {
+                    markdown::BlockKind::Image { url, .. } if !url.is_empty() => {
+                        Some((block, url.clone()))
+                    }
+                    _ => None,
+                })
+                .collect()
+        });
+    let hover = (!pictures.is_empty()).then(|| {
+        let (pictures, layouts) = (pictures.clone(), layouts.clone());
+        canvas(
+            move |_, window, _| {
+                pictures
+                    .iter()
+                    .filter_map(|(block, _)| layouts.picture_bounds(*block))
+                    .map(|bounds| window.insert_hitbox(bounds, HitboxBehavior::Normal))
+                    .collect::<Vec<_>>()
+            },
+            |_, hitboxes, window, _| {
+                for hitbox in &hitboxes {
+                    window.set_cursor_style(CursorStyle::PointingHand, hitbox);
+                }
+            },
+        )
+        .absolute()
+        .size_0()
+    });
     let focus = chat
         .transcript
         .focus
@@ -291,6 +347,29 @@ fn prose(
             move |workspace, event: &bezel::gpui::MouseUpEvent, window, cx| {
                 if event.button != bezel::gpui::MouseButton::Left {
                     return;
+                }
+                if let Some(at) = pictures.iter().position(|(block, _)| {
+                    layouts
+                        .picture_bounds(*block)
+                        .is_some_and(|bounds| bounds.contains(&event.position))
+                }) {
+                    let clicked = workspace
+                        .session(id)
+                        .and_then(|chat| chat.transcript.selection(ix))
+                        .is_none_or(|selection| selection.is_collapsed());
+                    if clicked {
+                        workspace
+                            .with_session(id, cx, |chat| chat.transcript.point(ix, Pointer::Up));
+                        let images = pictures
+                            .iter()
+                            .map(|(_, url)| gallery::source(url, &cwd))
+                            .collect();
+                        if let Some(chat) = workspace.session(id) {
+                            chat.transcript.open_preview(images, at, window, cx);
+                        }
+                        cx.stop_propagation();
+                        return;
+                    }
                 }
                 let Some(cursor) = layouts.hit(event.position) else {
                     return;
@@ -349,6 +428,7 @@ fn prose(
             },
         ))
         .child(body)
+        .children(hover)
         .into_any_element()
 }
 
@@ -470,7 +550,7 @@ pub fn render(
                         .galleries
                         .borrow_mut()
                         .retain(|ix, gallery| {
-                            turns.contains(ix) || gallery.read(cx).is_preview_open()
+                            turns.contains(ix) || gallery.read(cx).is_preview_open(cx)
                         });
                 }
             });
@@ -523,6 +603,7 @@ pub fn render(
                 .into_any_element()
         }))
         .child(transcript)
+        .children(chat.transcript.preview.borrow().clone())
         .into_any_element()
 }
 
