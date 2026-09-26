@@ -2222,7 +2222,13 @@ impl Cydonia {
             .size_full()
             .relative()
             .child(
-                scroll::pane("board", Axes::Horizontal)
+                // Clipped rather than scrolled: the wheel handler below is the
+                // only writer of `across`. A scrolling pane runs its own axis
+                // lock on the events that handler lets through, and the two
+                // locks disagreeing moves the board by both.
+                div()
+                    .id("board")
+                    .overflow_x_hidden()
                     .size_full()
                     .flex()
                     .flex_row()
@@ -3243,7 +3249,8 @@ impl Cydonia {
                     .child(
                         scrollbars::Overlay::new(bar_id, &scroll, bezel::gpui::Axis::Vertical)
                             .end_inset(px(BOARD_INSET))
-                            .channel(LANE_CHANNEL)
+                            // Centres bezel's 4px thumb in the lane's channel.
+                            .margin((LANE_CHANNEL - px(4.)) * 0.5)
                             .when(
                                 self.drawer_for(project, board_at, on, cx)
                                     .is_some_and(|drawer| drawer.resize_grab.is_some()),

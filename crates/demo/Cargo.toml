@@ -23,4 +23,4 @@ web-sys = { version = "0.3", features = ["Document", "Element", "Window"] }
 
 [build-dependencies]
 syntax.workspace = true
-syntax-std = { version = "0.1.21", package = "bezel-syntax-std" }
+syntax-std = { version = "0.2.0", package = "bezel-syntax-std" }

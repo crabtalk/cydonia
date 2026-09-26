@@ -70,7 +70,7 @@ desktop = [
 developer = []
 
 [dev-dependencies]
-syntax-std = { version = "0.1.21", package = "bezel-syntax-std" }
+syntax-std = { version = "0.2.0", package = "bezel-syntax-std" }
 gpui = { version = "0.3.11", package = "bezel-gpui", features = ["test-support"] }
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
