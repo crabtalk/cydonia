@@ -3,10 +3,11 @@
 import entries from '../../../changelog.json';
 export { media } from './media.js';
 
-/** Newest first. The release that is out is the one at the top. */
-export const releases = entries;
+/** Newest first, leaving out entries marked `nightly`: a version still being
+    built, whose release does not exist yet. */
+export const releases = entries.filter((entry) => !entry.nightly);
 
-export const latest = entries[0];
+export const latest = releases[0];
 
 /** Only the groups a release actually filled, in the order notes read them. */
 export const groups = (release) =>

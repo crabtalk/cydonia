@@ -1,3 +1,5 @@
+import { latest } from './changelog.js';
+
 export const repo = 'https://github.com/crabtalk/cydonia';
 
 /** The people behind cydonia. Their site, not their GitHub org: the org is
@@ -45,5 +47,5 @@ export const dmgFor = (version) =>
 /** The tag page for a version — the assets, the notes GitHub keeps, the diff. */
 export const releaseFor = (version) => `${repo}/releases/tag/v${version}`;
 
-/** The one the buttons point at. Injected by Vite from Cargo.toml — see vite.config.js. */
-export const dmg = dmgFor(__CYDONIA_VERSION__);
+/** The one the buttons point at: the newest release that is out. */
+export const dmg = dmgFor(latest.version);

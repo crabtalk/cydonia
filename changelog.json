@@ -1,6 +1,7 @@
 [
   {
     "version": "0.1.17",
+    "nightly": true,
     "date": "2026-09-26",
     "summary": "Boards, sessions and articles are read and written through one project backend, so a project can live somewhere other than disk, and Cydonia runs in the browser on one held in memory.",
     "media": {

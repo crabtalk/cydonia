@@ -16,7 +16,8 @@ if (!version) throw new Error('no package version in ../Cargo.toml');
 // The changelog leads with the release that is out. Bumping the crate without
 // writing the entry would ship a page offering a dmg it never names, so the
 // build refuses rather than deploying the mismatch.
-const [newest] = JSON.parse(readFileSync(at('../changelog.json'), 'utf8'));
+const entries = JSON.parse(readFileSync(at('../changelog.json'), 'utf8'));
+const [newest] = entries;
 if (newest?.version !== version) {
 	throw new Error(
 		`changelog.json leads with ${newest?.version}, Cargo.toml is ${version} — add the entry`
@@ -31,7 +32,7 @@ const release = {
 	async configResolved(config) {
 		// SvelteKit also starts an SSR build; only the client build needs to
 		// write the static asset. Dev restarts regenerate it on release edits.
-		if (!config.build.ssr && !config.isPreview) await generateOg(newest);
+		if (!config.build.ssr && !config.isPreview) await generateOg(entries.find((entry) => !entry.nightly));
 	},
 	configureServer(server) {
 		const watched = [resolve(at('../Cargo.toml')), resolve(at('../changelog.json'))];
