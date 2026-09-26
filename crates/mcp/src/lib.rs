@@ -11,6 +11,7 @@
 //! registry of what is open, and a tool reaches a project the app never opened
 //! the same way it reaches one it did.
 
+#[cfg(feature = "http")]
 pub mod http;
 pub mod proto;
 pub mod rail;

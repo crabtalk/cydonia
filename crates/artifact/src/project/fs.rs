@@ -162,7 +162,7 @@ impl Project {
             title: properties.title,
             archived: properties.archived,
             touched: article::touched(content),
-            cover: article::cover::of(content).and_then(|path| Url::from_file_path(path).ok()),
+            cover: cover_url(content),
         }
     }
 
@@ -485,6 +485,18 @@ pub fn ours(dir: &Path, path: &Path) -> bool {
         return false;
     };
     matches!(tail, "" | "-wal" | "-journal")
+}
+
+/// The cover beside a document, as the `file://` it is. wasm32 has no file
+/// URLs, and no cover.
+#[cfg(not(target_family = "wasm"))]
+fn cover_url(content: &Path) -> Option<Url> {
+    article::cover::of(content).and_then(|path| Url::from_file_path(path).ok())
+}
+
+#[cfg(target_family = "wasm")]
+fn cover_url(_: &Path) -> Option<Url> {
+    None
 }
 
 /// What a file held, as the version a save is checked against: a hash of the

@@ -10,7 +10,7 @@ use bezel::{
     theme::{self, Tint, appearance},
     ui::{self, input},
 };
-use cydonia::{
+use gui::{
     agent, memory,
     model::{fonts, language, media, migrate, notify, settings, state, update, welcome, workspace},
     view::{article, hotkey, keymap, menubar, root},
@@ -53,7 +53,7 @@ fn main() -> Result<()> {
     });
     app.run(move |cx: &mut App| {
         // Before any window or notification: it is the name and identity the
-        // system presents this app under — see [`cydonia::model::notify`].
+        // system presents this app under — see [`gui::model::notify`].
         cx.set_app_identity(BUNDLE_ID, "Cydonia");
         notify::on_response(cx);
         if let Err(err) = ui::register_fonts(cx) {
@@ -84,16 +84,16 @@ fn main() -> Result<()> {
         // what this list holds, and a picker that offered only what had already
         // been downloaded could not be used to ask for anything else. Naming a
         // language that is not cached is what fetches it — see
-        // [`cydonia::model::language::ensure`].
+        // [`gui::model::language::ensure`].
         markdown::set_highlighter(cx, language::highlight, language::offerable());
         memory::init(settings.cover_memory * 1_000_000, cx);
         // Every chord in the app, bezel's included — see
-        // [`cydonia::view::keymap`]. One call rather than an `init` per
+        // [`gui::view::keymap`]. One call rather than an `init` per
         // surface, because the reader can move some of them and moving one
         // means putting the whole keymap back together.
         keymap::bind_all(&settings.shortcuts, cx);
         // And the one key the app does not hold itself, which is nothing at
-        // all until somebody asks for one — see [`cydonia::view::hotkey`].
+        // all until somebody asks for one — see [`gui::view::hotkey`].
         hotkey::apply(settings.shortcuts.activate(), cx);
         // Where a pasted screenshot's bytes go, which is the app's to say.
         media::init(cx);
