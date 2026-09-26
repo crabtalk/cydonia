@@ -287,7 +287,7 @@ impl Changes {
 }
 
 impl Changes {
-    pub fn status_bar(&mut self, files_open: bool, cx: &mut Context<Self>) -> AnyElement {
+    pub fn status_bar(&mut self, files: Option<bool>, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let path = match (&self.repository, &self.selected) {
             (Some(repo), Some(file)) => repo.root.join(&file.path),
@@ -320,7 +320,7 @@ impl Changes {
                     )),
                 )
             })
-            .child(super::status::files_toggle(files_open, &theme))
+            .children(files.map(|open| super::status::files_toggle(open, &theme)))
             .into_any_element()
     }
 }

@@ -392,6 +392,9 @@ pub struct Features {
     pub sessions: bool,
     pub boards: bool,
     pub tables: bool,
+    /// `[features.panel]`: the right panel's tabs. A table, so it follows
+    /// every bare key above.
+    pub panel: PanelTabs,
 }
 
 impl Default for Features {
@@ -400,6 +403,25 @@ impl Default for Features {
             sessions: true,
             boards: true,
             tables: false,
+            panel: PanelTabs::default(),
+        }
+    }
+}
+
+/// Which of the right panel's switchable tabs may be opened. The terminal is
+/// not one of them: it is always there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PanelTabs {
+    pub review: bool,
+    pub files: bool,
+}
+
+impl Default for PanelTabs {
+    fn default() -> Self {
+        Self {
+            review: true,
+            files: true,
         }
     }
 }
@@ -411,6 +433,8 @@ pub enum Feature {
     Sessions,
     Boards,
     Tables,
+    Review,
+    Files,
 }
 
 impl Feature {
@@ -418,13 +442,23 @@ impl Feature {
     /// one that decides whether anything runs on this machine.
     pub const ALL: [Self; 3] = [Self::Sessions, Self::Boards, Self::Tables];
 
-    /// The key it is written under, inside `[features]`.
+    /// The right panel's tabs, listed as a group of their own.
+    pub const PANEL: [Self; 2] = [Self::Review, Self::Files];
+
+    /// The key it is written under, inside `[features]` or, for the panel's
+    /// tabs, `[features.panel]` — see [`Feature::in_panel`].
     fn key(self) -> &'static str {
         match self {
             Self::Sessions => "sessions",
             Self::Boards => "boards",
             Self::Tables => "tables",
+            Self::Review => "review",
+            Self::Files => "files",
         }
+    }
+
+    fn in_panel(self) -> bool {
+        Self::PANEL.contains(&self)
     }
 
     pub fn on(self, features: &Features) -> bool {
@@ -432,6 +466,8 @@ impl Feature {
             Self::Sessions => features.sessions,
             Self::Boards => features.boards,
             Self::Tables => features.tables,
+            Self::Review => features.panel.review,
+            Self::Files => features.panel.files,
         }
     }
 
@@ -440,6 +476,8 @@ impl Feature {
             Self::Sessions => features.sessions = on,
             Self::Boards => features.boards = on,
             Self::Tables => features.tables = on,
+            Self::Review => features.panel.review = on,
+            Self::Files => features.panel.files = on,
         }
     }
 }
@@ -715,7 +753,21 @@ fn write_appearance(doc: &mut toml_edit::DocumentMut, appearance: &Appearance) -
 /// Switch a feature on or off in the file.
 pub fn set_feature(feature: Feature, on: bool) -> Result<()> {
     edit(|doc| {
-        table(doc, "features")?[feature.key()] = toml_edit::value(on);
+        let features = table(doc, "features")?;
+        let held = match feature.in_panel() {
+            true => {
+                let Some(panel) = features["panel"]
+                    .or_insert(toml_edit::table())
+                    .as_table_mut()
+                else {
+                    anyhow::bail!("`features.panel` in settings.toml is not a table");
+                };
+                panel.set_implicit(false);
+                panel
+            }
+            false => features,
+        };
+        held[feature.key()] = toml_edit::value(on);
         Ok(true)
     })
 }

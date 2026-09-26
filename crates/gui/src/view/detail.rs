@@ -604,11 +604,13 @@ impl Cydonia {
                 live.and_then(|chat| chat.usage),
             ));
         }
+        let tabs = workspace.settings.features.panel;
         for (leaf, point) in self.leaves.iter().zip(pointed) {
             let (session, draft, placeholder, commands, streaming, activity, current, sw, usage) =
                 point;
             leaf.composer.update(cx, |composer, cx| {
                 composer.set_tools(!arranged, cx);
+                composer.set_panel_tabs(tabs, cx);
                 composer.set_session(session, &draft, cx);
                 composer.set_placeholder(&placeholder, cx);
                 composer.set_commands(&commands, cx);

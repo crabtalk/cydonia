@@ -498,7 +498,7 @@ impl FileView {
 
     pub fn status_bar(
         &mut self,
-        files_open: bool,
+        files: Option<bool>,
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
@@ -556,7 +556,7 @@ impl FileView {
                         .child(name),
                 )
             })
-            .child(super::status::files_toggle(files_open, &theme))
+            .children(files.map(|open| super::status::files_toggle(open, &theme)))
             .when(self.dirty(cx), |row| {
                 row.child(
                     div()

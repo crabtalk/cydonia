@@ -9,6 +9,7 @@ use crate::{
     model::{
         media::Attachment,
         session::{Command, Usage},
+        settings::PanelTabs,
     },
     view::root,
 };
@@ -155,6 +156,9 @@ pub struct Switch {
     pub options: Vec<SwitchOption>,
 }
 
+/// What a row of the tools menu sends when it is chosen.
+type Emit = fn() -> ComposerEvent;
+
 pub enum ComposerEvent {
     Draft(u64, String),
     /// The message, and the pictures going with it.
@@ -249,6 +253,8 @@ pub struct Composer {
     menu_pressed: bool,
     tools_menu: bool,
     tools_cursor: Cursor,
+    /// Which of the right panel's tabs the tools menu offers.
+    panel_tabs: PanelTabs,
     /// Where that menu is being worked: which of its rows is live, and which
     /// of them has its own panel down. One cursor for both devices, so a
     /// submenu can only ever hang off the row the pointer is on.
@@ -321,6 +327,7 @@ impl Composer {
             menu_pressed: false,
             tools_menu: false,
             tools_cursor: Cursor::default(),
+            panel_tabs: PanelTabs::default(),
             cursor: Cursor::default(),
             picking: None,
             picking_cursor: Cursor::default(),
@@ -401,6 +408,13 @@ impl Composer {
         );
         self.command = None;
         cx.notify();
+    }
+
+    pub fn set_panel_tabs(&mut self, tabs: PanelTabs, cx: &mut Context<Self>) {
+        if self.panel_tabs != tabs {
+            self.panel_tabs = tabs;
+            cx.notify();
+        }
     }
 
     pub fn set_tools(&mut self, tools: bool, cx: &mut Context<Self>) {
@@ -1236,17 +1250,34 @@ impl Composer {
                     .text_color(theme.text_muted),
             )
             .surface(theme, SURFACE);
-        let items = vec![
-            Item::action("Terminal")
-                .with_icon(icons::development::Terminal)
-                .with_shortcut(&root::ToggleTerminal, window),
-            Item::action("Review")
-                .with_icon(icons::development::GitCompare)
-                .with_shortcut(&root::OpenReview, window),
-            Item::action("Files")
-                .with_icon(icons::files::Folder)
-                .with_shortcut(&root::OpenFiles, window),
-        ];
+        let tabs = self.panel_tabs;
+        let (items, events): (Vec<Item>, Vec<Emit>) = [
+            Some((
+                Item::action("Terminal")
+                    .with_icon(icons::development::Terminal)
+                    .with_shortcut(&root::ToggleTerminal, window),
+                (|| ComposerEvent::Terminal) as Emit,
+            )),
+            tabs.review.then(|| {
+                (
+                    Item::action("Review")
+                        .with_icon(icons::development::GitCompare)
+                        .with_shortcut(&root::OpenReview, window),
+                    (|| ComposerEvent::Changes) as Emit,
+                )
+            }),
+            tabs.files.then(|| {
+                (
+                    Item::action("Files")
+                        .with_icon(icons::files::Folder)
+                        .with_shortcut(&root::OpenFiles, window),
+                    (|| ComposerEvent::Files) as Emit,
+                )
+            }),
+        ]
+        .into_iter()
+        .flatten()
+        .unzip();
         let rows = items.clone();
         let popup = self.tools_menu.then(|| {
             menu::card(
@@ -1263,11 +1294,10 @@ impl Composer {
                         }
                         Hit::Choose(path) => {
                             this.tools_menu = false;
-                            match path.as_slice() {
-                                [0] => cx.emit(ComposerEvent::Terminal),
-                                [1] => cx.emit(ComposerEvent::Changes),
-                                [2] => cx.emit(ComposerEvent::Files),
-                                _ => {}
+                            if let [ix] = path.as_slice()
+                                && let Some(event) = events.get(*ix)
+                            {
+                                cx.emit(event());
                             }
                         }
                         // A menu backed out of leaves the caret where it took
