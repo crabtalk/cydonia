@@ -156,7 +156,9 @@ impl Cydonia {
                     format!("Its {rows} rows are dropped; the database stays. {UNDONE}"),
                 )
             }
-            Row::Project(_) | Row::Archive(_) | Row::Spaces => (None, UNDONE.to_owned()),
+            Row::Project(_) | Row::Archive(_) | Row::Projects | Row::Spaces => {
+                (None, UNDONE.to_owned())
+            }
         }
     }
 

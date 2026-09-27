@@ -78,6 +78,8 @@ pub(crate) enum Row {
     /// The line the archived entries are folded under.
     Archive(usize),
     /// The line the spaces are listed under. Drawn only while there is one.
+    /// The heading over the projects.
+    Projects,
     Spaces,
     Session {
         project: usize,
@@ -103,7 +105,9 @@ pub(crate) enum Row {
 fn showing_of(row: Row) -> Option<Showing> {
     Some(match row {
         // A space arranges entries; it is not one a pane can be put on.
-        Row::Project(_) | Row::Archive(_) | Row::Space(_) | Row::Spaces => return None,
+        Row::Project(_) | Row::Archive(_) | Row::Space(_) | Row::Projects | Row::Spaces => {
+            return None;
+        }
         Row::Session { id, .. } => Showing::Session(id),
         Row::Board { ix, .. } => Showing::Board(ix),
         Row::Article { ix, .. } => Showing::Article(ix),
@@ -119,7 +123,7 @@ fn project_of(row: Row) -> Option<usize> {
         | Row::Board { project, .. }
         | Row::Article { project, .. }
         | Row::Table { project, .. } => Some(project),
-        Row::Space(_) | Row::Spaces => None,
+        Row::Space(_) | Row::Projects | Row::Spaces => None,
     }
 }
 
@@ -131,9 +135,12 @@ fn shown(row: Row, features: &Features) -> bool {
         Row::Session { .. } => features.sessions,
         Row::Board { .. } => features.boards,
         Row::Table { .. } => features.tables,
-        Row::Project(_) | Row::Archive(_) | Row::Article { .. } | Row::Space(_) | Row::Spaces => {
-            true
-        }
+        Row::Project(_)
+        | Row::Archive(_)
+        | Row::Article { .. }
+        | Row::Space(_)
+        | Row::Projects
+        | Row::Spaces => true,
     }
 }
 
@@ -216,6 +223,7 @@ fn key_of(entry: Row) -> String {
     match entry {
         Row::Project(ix) => format!("project-{ix}"),
         Row::Space(ix) => format!("space-{ix}"),
+        Row::Projects => "projects".to_owned(),
         Row::Spaces => "spaces".to_owned(),
         Row::Archive(ix) => format!("archive-{ix}"),
         Row::Session { project, id } => format!("session-{project}-{id}"),
@@ -379,7 +387,6 @@ impl Cydonia {
         // tooltips below are built inside closures that outlive this borrow.
         let shortcuts = &self.workspace.read(cx).settings.shortcuts;
         let settings_chord = keymap::label(Command::OpenSettings, shortcuts);
-        let open_chord = keymap::label(Command::OpenProject, shortcuts);
         let rows = self.rows(cx);
         let count = rows.len();
         div()
@@ -451,29 +458,7 @@ impl Cydonia {
                     .flex_row()
                     .items_center()
                     .justify_between()
-                    .children(self.settings_button(settings_chord, cx))
-                    .child(
-                        div().flex().flex_row().items_center().gap(px(2.)).child(
-                            theme
-                                .ghost("open-project")
-                                .px(px(8.))
-                                .py(px(6.))
-                                .tooltip(move |window, cx| match open_chord.clone() {
-                                    Some(chord) => {
-                                        Tooltip::with_keystroke("Open project", chord, window, cx)
-                                    }
-                                    None => Tooltip::text("Open project", window, cx),
-                                })
-                                .child(
-                                    icons::icon(icons::files::FolderPlus)
-                                        .size(px(13.))
-                                        .text_color(theme.text_faint),
-                                )
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.open_project_action(&OpenProject, window, cx);
-                                })),
-                        ),
-                    ),
+                    .children(self.settings_button(settings_chord, cx)),
             )
     }
 
@@ -988,7 +973,7 @@ impl Cydonia {
             // A space is not inside a project — it can hold panes from
             // several — so its row starts at the column's edge, where the
             // project headings are.
-            Row::Space(_) | Row::Spaces => return 0,
+            Row::Space(_) | Row::Projects | Row::Spaces => return 0,
             Row::Project(_) | Row::Archive(_) => return base,
             _ => {}
         }
@@ -1024,6 +1009,8 @@ impl Cydonia {
     /// none of them.
     pub(crate) fn rows(&self, cx: &Context<Self>) -> Vec<Row> {
         let mut rows = Vec::new();
+        // Whether or not any are open: it holds the way to open one.
+        rows.push(Row::Projects);
         for p in 0..self.workspace.read(cx).projects.len() {
             rows.push(Row::Project(p));
             if self.workspace.read(cx).projects[p].expanded {
@@ -1061,7 +1048,7 @@ impl Cydonia {
             Row::Table { project, ix } => self.open_table(project, ix, window, cx),
             Row::Space(ix) => self.open_space(ix, window, cx),
             // A heading over the spaces, and nothing to open.
-            Row::Spaces => {}
+            Row::Projects | Row::Spaces => {}
         }
     }
 
@@ -1134,11 +1121,15 @@ impl Cydonia {
                 }
             }
             Row::Space(ix) => self.space_row(ix, cx),
-            Row::Spaces => self.spaces_label(cx),
+            Row::Projects => self.projects_label(cx),
+            Row::Spaces => self.section_label("Spaces", cx),
         };
         let carried = self.drag_of_row(row, cx);
         let label = SharedString::from(self.label_of_row(row, cx));
-        let entry = !matches!(row, Row::Project(_) | Row::Archive(_) | Row::Spaces);
+        let entry = !matches!(
+            row,
+            Row::Project(_) | Row::Archive(_) | Row::Projects | Row::Spaces
+        );
         let archived = self.archived_of(row, cx);
         div()
             .id(SharedString::from(format!("sidebar-hover-{}", key_of(row))))
@@ -1194,7 +1185,7 @@ impl Cydonia {
         let workspace = self.workspace.read(cx);
         let named = || -> Option<String> {
             Some(match row {
-                Row::Project(_) | Row::Archive(_) | Row::Spaces => return None,
+                Row::Project(_) | Row::Archive(_) | Row::Projects | Row::Spaces => return None,
                 Row::Space(ix) => workspace.spaces.get(ix)?.label().to_owned(),
                 Row::Session { project, id } => {
                     workspace.projects.get(project)?.session(id)?.label()
@@ -1367,7 +1358,45 @@ impl Cydonia {
     /// not inside a project, so what follows the last project would otherwise
     /// read as more of it. Nothing folds here — each space carries its own
     /// fold, and a second one over the group would be two ways to hide a row.
-    fn spaces_label(&self, cx: &mut Context<Self>) -> AnyElement {
+    /// The heading over the projects, and the way to open another.
+    fn projects_label(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        let chord = keymap::label(
+            Command::OpenProject,
+            &self.workspace.read(cx).settings.shortcuts,
+        );
+        div()
+            .h(px(ROW_PILL))
+            .mx(px(root::SIDEBAR_GUTTER))
+            .pl(px(root::SIDEBAR_GUTTER))
+            .flex()
+            .flex_row()
+            .items_center()
+            .justify_between()
+            .text_style(TextStyle::Callout)
+            .text_color(theme.text_faint)
+            .child("Projects")
+            .child(
+                theme
+                    .ghost("open-project")
+                    .p(px(4.))
+                    .tooltip(move |window, cx| match chord.clone() {
+                        Some(chord) => Tooltip::with_keystroke("Open project", chord, window, cx),
+                        None => Tooltip::text("Open project", window, cx),
+                    })
+                    .child(
+                        icons::icon(icons::math::Plus)
+                            .size(px(13.))
+                            .text_color(theme.text_faint),
+                    )
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.open_project_action(&OpenProject, window, cx);
+                    })),
+            )
+            .into_any_element()
+    }
+
+    fn section_label(&self, label: &'static str, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         // Not [`row`]: that carries the pointer and the hover wash, which say
         // a press does something. Nothing answers one here.
@@ -1380,7 +1409,7 @@ impl Cydonia {
             .items_center()
             .text_style(TextStyle::Callout)
             .text_color(theme.text_faint)
-            .child("Spaces")
+            .child(label)
             .into_any_element()
     }
 
@@ -1928,7 +1957,9 @@ impl Cydonia {
                 .get(project)
                 .and_then(|open| open.tables.get(ix))
                 .is_some_and(|table| table.archived),
-            Row::Space(_) | Row::Project(_) | Row::Archive(_) | Row::Spaces => false,
+            Row::Space(_) | Row::Project(_) | Row::Archive(_) | Row::Projects | Row::Spaces => {
+                false
+            }
         }
     }
 
@@ -2138,7 +2169,7 @@ impl Cydonia {
             Row::Article { project, ix } => workspace.delete_article(project, ix, cx),
             Row::Table { project, ix } => workspace.delete_table(project, ix, cx),
             Row::Space(ix) => workspace.delete_space(ix, cx),
-            Row::Project(_) | Row::Archive(_) | Row::Spaces => {}
+            Row::Project(_) | Row::Archive(_) | Row::Projects | Row::Spaces => {}
         });
         if let Some(project) = landing_project
             && let Some(landing) = self
@@ -2192,6 +2223,7 @@ impl Cydonia {
             | Row::Board { .. }
             | Row::Project(_)
             | Row::Archive(_)
+            | Row::Projects
             | Row::Spaces => None,
         };
         if let Some(what) = what {
@@ -2290,7 +2322,7 @@ impl Cydonia {
                     workspace.archive_table(&key, archived, cx);
                 }
             }
-            Row::Project(_) | Row::Archive(_) | Row::Spaces => {}
+            Row::Project(_) | Row::Archive(_) | Row::Projects | Row::Spaces => {}
         });
         if let Some(project) = landing {
             self.open_top_entry(project, window, cx);

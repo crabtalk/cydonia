@@ -31,7 +31,15 @@ use std::{collections::HashMap, ops::Range, path::PathBuf, sync::mpsc, time::Dur
 
 actions!(
     cydonia_search,
-    [ToggleSearch, DismissSearch, SelectNext, SelectPrev, OpenHit]
+    [
+        ToggleSearch,
+        DismissSearch,
+        SelectNext,
+        SelectPrev,
+        OpenHit,
+        NextFilter,
+        PrevFilter
+    ]
 );
 
 const CONTEXT: &str = "CydoniaSearch";
@@ -57,6 +65,8 @@ pub fn bindings() -> Vec<KeyBinding> {
         KeyBinding::new("up", SelectPrev, ctx),
         KeyBinding::new("ctrl-p", SelectPrev, ctx),
         KeyBinding::new("enter", OpenHit, ctx),
+        KeyBinding::new("tab", NextFilter, ctx),
+        KeyBinding::new("shift-tab", PrevFilter, ctx),
     ]
 }
 
@@ -86,6 +96,10 @@ pub(crate) struct Search {
     hits: Vec<Hit>,
     /// Whether a search for the field's query is still running.
     searching: bool,
+    /// The one kind listed, or every kind.
+    filter: Option<Kind>,
+    /// Rows listed at most, once filtered.
+    limit: usize,
     selected: usize,
     scroll: ScrollHandle,
     task: Option<Task<()>>,
@@ -110,10 +124,24 @@ impl Search {
             field,
             hits: Vec::new(),
             searching: false,
+            filter: None,
+            limit: RECENT,
             selected: 0,
             scroll: ScrollHandle::new(),
             task: None,
         }
+    }
+
+    /// The hits the filter leaves, in order.
+    fn shown(&self) -> Vec<&Hit> {
+        self.hits
+            .iter()
+            .filter(|hit| {
+                self.filter
+                    .is_none_or(|kind| kind_of(hit.row) == Some(kind))
+            })
+            .take(self.limit)
+            .collect()
     }
 
     fn query(&self, cx: &App) -> Option<Query> {
@@ -153,6 +181,7 @@ impl Cydonia {
             self.search.task = None;
             self.search.searching = false;
             self.search.hits = self.recent_hits(cx);
+            self.search.limit = RECENT;
             self.search.selected = 0;
             cx.notify();
             return;
@@ -175,6 +204,7 @@ impl Cydonia {
                 .await;
             let _ = this.update(cx, |this, cx| {
                 this.search.hits = this.ranked_hits(found, cx);
+                this.search.limit = SHOWN;
                 this.search.searching = false;
                 this.search.selected = 0;
                 cx.notify();
@@ -185,9 +215,8 @@ impl Cydonia {
 
     /// What was touched last, across every open project.
     fn recent_hits(&self, cx: &App) -> Vec<Hit> {
-        let mut rows = self.recent_rows(cx);
-        rows.truncate(RECENT);
-        rows.into_iter()
+        self.recent_rows(cx)
+            .into_iter()
             .map(|row| Hit { row, snippet: None })
             .collect()
     }
@@ -237,7 +266,6 @@ impl Cydonia {
             })
             .collect();
         hits.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)));
-        hits.truncate(SHOWN);
         hits.into_iter().map(|(.., hit)| hit).collect()
     }
 
@@ -250,7 +278,7 @@ impl Cydonia {
     }
 
     fn step_hit(&mut self, by: isize, cx: &mut Context<Self>) {
-        let len = self.search.hits.len();
+        let len = self.search.shown().len();
         if len == 0 {
             return;
         }
@@ -266,7 +294,7 @@ impl Cydonia {
 
     /// Open a hit, and mark the query in it where it was found in the body.
     fn open_hit(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(hit) = self.search.hits.get(ix).cloned() else {
+        let Some(hit) = self.search.shown().get(ix).copied().cloned() else {
             return;
         };
         let query = self.search.field.read(cx).content().clone();
@@ -315,12 +343,12 @@ impl Cydonia {
         let empty = self.search.query(cx).is_none();
         let rows: Vec<AnyElement> = self
             .search
-            .hits
-            .iter()
+            .shown()
+            .into_iter()
             .enumerate()
             .map(|(ix, hit)| self.hit_row(ix, hit, cx))
             .collect();
-        let note = match (self.search.hits.is_empty(), self.search.searching, empty) {
+        let note = match (rows.is_empty(), self.search.searching, empty) {
             (false, ..) => None,
             (true, true, _) => Some("Searching…"),
             (true, false, true) => Some("Nothing yet"),
@@ -346,7 +374,7 @@ impl Cydonia {
                     div()
                         .id("search-palette")
                         .w(px(560.))
-                        .h(px(440.))
+                        .max_h(px(440.))
                         .flex()
                         .flex_col()
                         .rounded(px(Theme::panel_radius()))
@@ -359,6 +387,8 @@ impl Cydonia {
                         .on_action(cx.listener(Self::select_next))
                         .on_action(cx.listener(Self::select_prev))
                         .on_action(cx.listener(Self::open_selected))
+                        .on_action(cx.listener(Self::next_filter))
+                        .on_action(cx.listener(Self::prev_filter))
                         .child(
                             div()
                                 .flex_none()
@@ -406,10 +436,109 @@ impl Cydonia {
                                         .text_color(theme.text_faint)
                                         .child(note)
                                 })),
-                        ),
+                        )
+                        .child(self.palette_footer(cx)),
                 )
                 .into_any_element(),
         )
+    }
+
+    fn next_filter(&mut self, _: &NextFilter, _: &mut Window, cx: &mut Context<Self>) {
+        self.step_filter(1, cx);
+    }
+
+    fn prev_filter(&mut self, _: &PrevFilter, _: &mut Window, cx: &mut Context<Self>) {
+        self.step_filter(-1, cx);
+    }
+
+    fn step_filter(&mut self, by: isize, cx: &mut Context<Self>) {
+        let at = FILTERS
+            .iter()
+            .position(|(kind, _)| *kind == self.search.filter)
+            .unwrap_or(0) as isize;
+        let at = (at + by).rem_euclid(FILTERS.len() as isize) as usize;
+        self.set_filter(FILTERS[at].0, cx);
+    }
+
+    fn set_filter(&mut self, filter: Option<Kind>, cx: &mut Context<Self>) {
+        self.search.filter = filter;
+        self.search.selected = 0;
+        self.search.scroll.scroll_to_item(0);
+        cx.notify();
+    }
+
+    /// The foot of the palette: the kinds to narrow to, and the keys.
+    fn palette_footer(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        let hint = |keys: &'static str, what: &'static str| {
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(4.))
+                .child(popover::kbd_hint(&theme, keys))
+                .child(what)
+        };
+        div()
+            .flex_none()
+            .flex()
+            .flex_row()
+            .items_center()
+            .justify_between()
+            .px(px(10.))
+            .py(px(6.))
+            .border_t_1()
+            .border_color(theme.border)
+            .text_style(TextStyle::Caption)
+            .text_color(theme.text_faint)
+            .child(self.filter_chips(cx))
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(10.))
+                    .child(hint("⇥", "Filter"))
+                    .child(hint("↵", "Open")),
+            )
+            .into_any_element()
+    }
+
+    /// The kinds to narrow to.
+    fn filter_chips(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        div()
+            .flex()
+            .flex_row()
+            .gap(px(4.))
+            .children(FILTERS.iter().enumerate().map(|(ix, (kind, label))| {
+                let on = *kind == self.search.filter;
+                let kind = *kind;
+                div()
+                    .id(("search-filter", ix))
+                    .px(px(8.))
+                    .py(px(2.))
+                    .rounded_full()
+                    .border_1()
+                    .cursor_pointer()
+                    .text_style(TextStyle::Caption)
+                    .when(on, |chip| {
+                        chip.bg(theme.element_active)
+                            .border_color(theme.border)
+                            .text_color(theme.text)
+                    })
+                    .when(!on, |chip| {
+                        chip.border_color(gpui::transparent_black())
+                            .text_color(theme.text_muted)
+                            .hover(|chip| chip.bg(theme.element_hover))
+                    })
+                    .child(*label)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.set_filter(kind, cx);
+                    }))
+            }))
+            .into_any_element()
     }
 
     fn hit_row(&self, ix: usize, hit: &Hit, cx: &mut Context<Self>) -> AnyElement {
@@ -555,6 +684,23 @@ fn search_all(roots: &[PathBuf], query: &Query) -> Vec<Found> {
         }));
     }
     found
+}
+
+/// The filters in the order the chips show and `tab` steps them.
+const FILTERS: [(Option<Kind>, &str); 4] = [
+    (None, "All"),
+    (Some(Kind::Session), "Sessions"),
+    (Some(Kind::Board), "Boards"),
+    (Some(Kind::Article), "Articles"),
+];
+
+fn kind_of(row: Row) -> Option<Kind> {
+    match row {
+        Row::Session { .. } => Some(Kind::Session),
+        Row::Board { .. } => Some(Kind::Board),
+        Row::Article { .. } => Some(Kind::Article),
+        _ => None,
+    }
 }
 
 /// Which of two matches in one entry is shown: the title, then the earliest
