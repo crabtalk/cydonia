@@ -1646,6 +1646,7 @@ impl Render for Cydonia {
             // Over every column and every floating control: nothing behind it
             // is answerable while it is asking.
             .children(self.confirm_delete(cx))
+            .children(self.search_palette(cx))
             .children(self.settings_sheet(cx))
             .children(self.desktop_only_notice(cx))
             .children(self.new_board_dialog(cx));

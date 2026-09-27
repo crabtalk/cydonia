@@ -157,7 +157,7 @@ impl Command {
             Self::PrevEntry => "Previous Entry",
             Self::PlainText => "Plain Text",
             Self::FindCard => "Find",
-            Self::Search => "Search Projects",
+            Self::Search => "Search",
         }
     }
 
@@ -212,7 +212,7 @@ impl Command {
             Self::OpenReview => "secondary-shift-g",
             Self::PlainText => "secondary-e",
             Self::FindCard => "secondary-f",
-            Self::Search => "secondary-shift-s",
+            Self::Search => "secondary-k",
         })
     }
 

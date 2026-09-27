@@ -169,6 +169,9 @@ impl Cydonia {
         Some(
             div()
                 .id("delete-scrim")
+                // Whatever is under the scrim takes no pointer, the wheel
+                // included.
+                .occlude()
                 .absolute()
                 .inset_0()
                 .flex()
