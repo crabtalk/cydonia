@@ -1176,11 +1176,22 @@ impl Cydonia {
             .ok()
             .flatten()
         };
-        self.workspace
+        let find = self.transcript_query(entry, cx);
+        let transcript = self
+            .workspace
             .update(cx, |workspace, cx| match workspace.session(id) {
-                Some(chat) => transcript::render(chat, pane_width, queued, window, cx),
+                Some(chat) => transcript::render(chat, find, pane_width, queued, window, cx),
                 None => div().flex_1().into_any_element(),
-            })
+            });
+        div()
+            .relative()
+            .flex_1()
+            .min_h_0()
+            .flex()
+            .flex_col()
+            .child(transcript)
+            .children(self.text_find_bar(entry, cx))
+            .into_any_element()
     }
 
     /// No agent to say anything to: what is missing, and the way to put it

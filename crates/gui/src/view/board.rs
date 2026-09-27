@@ -61,7 +61,7 @@ const KEY_CONTEXT: &str = "CydoniaCard";
 
 /// The find field's own, so `escape` puts the bar away and stays whatever it is
 /// everywhere else.
-const FIND_CONTEXT: &str = "CydoniaBoardFind";
+pub(crate) const FIND_CONTEXT: &str = "CydoniaBoardFind";
 const DRAWER_CONTEXT: &str = "CydoniaCardPreview";
 
 const COLUMN_WIDTH: f32 = 272.;
@@ -1422,6 +1422,11 @@ impl Cydonia {
             return;
         }
         self.leaf_mut().finding = true;
+        let placeholder = match self.leaf().pane {
+            Pane::Board => "find a card…",
+            _ => "find…",
+        };
+        field.update(cx, |field, cx| field.set_placeholder(placeholder, cx));
         window.focus(&field.read(cx).focus_handle(cx), cx);
         cx.notify();
     }

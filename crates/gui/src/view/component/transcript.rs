@@ -8,9 +8,12 @@
 
 use crate::{
     model::{session::ChatSession, workspace::Workspace},
-    view::root,
+    view::{find, root},
 };
-use artifact::session::chat::{ChatItem, ToolStatus};
+use artifact::{
+    search::Query,
+    session::chat::{ChatItem, ToolStatus},
+};
 
 use bezel::{
     agent::orbs::{OrbSize, OrbState, engine::Frame, orb_element},
@@ -28,7 +31,7 @@ use bezel::{
 };
 use cacp::schema::ToolKind;
 use markdown::{
-    BlockLayouts, Selection,
+    BlockLayouts, Doc, Selection,
     selectable::{self, Pointer},
 };
 mod follow;
@@ -136,6 +139,10 @@ pub struct State {
     /// one between them would have both painting the geometry of whichever
     /// was built last.
     pub(crate) mark: Rc<RefCell<Frame>>,
+    /// What the pane's find bar looks for, handed over by each [`render`].
+    find: RefCell<Option<Query>>,
+    /// The find hit the reader is on: its item, and where in it.
+    find_current: Option<(usize, Selection)>,
 }
 
 impl State {
@@ -155,6 +162,19 @@ impl State {
         self.list
             .state
             .set_follow_mode(bezel::gpui::FollowMode::Tail);
+    }
+
+    /// Mark `hit` as the one the reader is on, and scroll its turn into
+    /// view.
+    pub(crate) fn show_find(&mut self, items: &[ChatItem], hit: Option<(usize, Selection)>) {
+        self.find_current = hit;
+        if let Some((item, _)) = hit
+            && let Some(turn) = turns(items)
+                .iter()
+                .position(|turn| turn.range.contains(&item))
+        {
+            self.list.scroll_to(turn);
+        }
     }
 
     /// What `ix` has selected, if it is the item holding the selection.
@@ -268,6 +288,33 @@ fn turns(items: &[ChatItem]) -> Vec<Turn> {
         .collect()
 }
 
+/// The document an item is drawn as, for the items drawn as prose.
+fn document(item: &ChatItem) -> Option<Doc> {
+    match item {
+        ChatItem::User(text) => Some(gallery::document(text).0),
+        ChatItem::Agent(text) | ChatItem::Notice { text, .. } => Some(markdown::parse(text)),
+        _ => None,
+    }
+}
+
+/// Every hit of `query` in the transcript's prose, by item, in order. An
+/// item's source is checked before it is parsed.
+pub(crate) fn hits(items: &[ChatItem], query: &Query) -> Vec<(usize, Selection)> {
+    items
+        .iter()
+        .enumerate()
+        .filter(|(_, item)| {
+            artifact::search::searchable(item).is_some_and(|text| query.is_match(text.as_bytes()))
+        })
+        .filter_map(|(ix, item)| Some((ix, document(item)?)))
+        .flat_map(|(ix, doc)| {
+            find::hits(&doc, query)
+                .into_iter()
+                .map(move |hit| (ix, hit))
+        })
+        .collect()
+}
+
 /// User messages, agent responses, and session notices share selectable prose.
 ///
 /// The session id rides in the closure rather than the item: a pointer event
@@ -287,12 +334,27 @@ fn prose(
         markdown::parse(text)
     };
     let layouts = chat.transcript.layouts(ix);
-    let body = selectable::render(
+    let washes = match chat.transcript.find.borrow().as_ref() {
+        Some(query) => {
+            let current = chat
+                .transcript
+                .find_current
+                .filter(|(item, _)| *item == ix)
+                .map(|(_, hit)| hit);
+            find::annotations(&find::hits(&doc, query), current)
+        }
+        None => Vec::new(),
+    };
+    let body = selectable::render_with(
         ("transcript-prose", ix),
         &doc,
         &layouts,
         chat.transcript.selection(ix),
         chat.transcript.dragging_in(ix),
+        markdown::Editing {
+            annotations: &washes,
+            ..Default::default()
+        },
         window,
         cx,
         move |workspace, pointer, cx| {
@@ -452,12 +514,14 @@ fn tool_icon(kind: ToolKind) -> &'static [u8] {
 /// expanding a work section or a tool's output writes back through `cx`.
 pub fn render(
     chat: &ChatSession,
+    find: Option<Query>,
     pane_width: f32,
     queued: impl Fn(&mut Window, &mut bezel::gpui::App) -> Option<AnyElement> + 'static,
     _window: &mut Window,
     cx: &mut Context<Workspace>,
 ) -> AnyElement {
     let id = chat.id;
+    chat.transcript.find.replace(find);
     let turns = turns(&chat.items);
     let list = chat.transcript.list.clone();
     let mut keys: Vec<_> = turns.iter().map(|turn| turn.range.start).collect();

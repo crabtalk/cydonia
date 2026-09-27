@@ -491,6 +491,18 @@ impl Workspace {
         }
     }
 
+    /// The session one pane is showing, the way [`Self::board_of`] answers
+    /// for a board.
+    pub fn session_id_of(&self, member: Option<&Member>) -> Option<u64> {
+        let Some(member) = member else {
+            return self.active_id();
+        };
+        match self.showing_of(member)? {
+            (_, Showing::Session(id)) => Some(id),
+            _ => None,
+        }
+    }
+
     /// The article one pane is showing, the way [`Self::board_of`] answers for
     /// a board.
     pub fn article_of(&self, member: Option<&Member>) -> Option<&Article> {

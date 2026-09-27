@@ -16,7 +16,14 @@ struct ChatView {
 impl Render for ChatView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let body = self.workspace.update(cx, |workspace, cx| {
-            super::render(workspace.session(1).unwrap(), 800., |_, _| None, window, cx)
+            super::render(
+                workspace.session(1).unwrap(),
+                None,
+                800.,
+                |_, _| None,
+                window,
+                cx,
+            )
         });
         div().w(px(800.)).h(px(500.)).flex().flex_col().child(body)
     }

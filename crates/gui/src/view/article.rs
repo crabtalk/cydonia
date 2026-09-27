@@ -399,6 +399,13 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
+        let editor = self
+            .workspace
+            .read(cx)
+            .article_in(project, at)?
+            .editor
+            .clone()?;
+        self.paint_article_find(&editor, on, cx);
         let article = self.workspace.read(cx).article_in(project, at)?;
         let field = article.field.clone()?;
         let editor = article.editor.clone()?;
@@ -508,7 +515,8 @@ impl Cydonia {
                             "article-bar",
                             &article.scroll,
                             bezel::gpui::Axis::Vertical,
-                        )),
+                        ))
+                        .children(self.text_find_bar(on, cx)),
                 )
                 // Last, and floated over the document from where the
                 // selection ends — the bar is chrome the page runs under.

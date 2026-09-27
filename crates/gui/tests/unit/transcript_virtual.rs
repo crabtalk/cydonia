@@ -15,6 +15,7 @@ impl Render for ChatView {
         let body = self.workspace.update(cx, |workspace, cx| {
             super::render(
                 workspace.session(1).unwrap(),
+                None,
                 self.width,
                 |_, _| Some(div().h(px(30.)).child("Queued message").into_any_element()),
                 window,

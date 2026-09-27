@@ -153,7 +153,7 @@ impl Command {
             Self::NextEntry => "Next Entry",
             Self::PrevEntry => "Previous Entry",
             Self::PlainText => "Plain Text",
-            Self::FindCard => "Find Card",
+            Self::FindCard => "Find",
         }
     }
 
@@ -394,6 +394,7 @@ pub fn bind_all(shortcuts: &Shortcuts, cx: &mut App) {
     // The app's own, every one of them scoped to a surface.
     cx.bind_keys(article::bindings());
     cx.bind_keys(board::bindings());
+    cx.bind_keys(super::find::bindings());
     cx.bind_keys(composer::bindings());
     cx.bind_keys(create::bindings());
     cx.bind_keys(info::bindings());

@@ -218,7 +218,7 @@ fn menus(cx: &App) -> Vec<Menu> {
             // a chord before the focused surface is offered it — see
             // [`crate::view::keymap::Command::PlainText`].
             MenuItem::action("Plain Text", TogglePlainText),
-            MenuItem::action("Find Card", crate::view::board::FindCard),
+            MenuItem::action("Find", crate::view::board::FindCard),
             MenuItem::separator(),
             MenuItem::action("Enter Full Screen", ToggleFullScreen),
         ]),
@@ -387,9 +387,10 @@ impl Cydonia {
             .when(showing == Some(Pane::Article), |root| {
                 root.on_action(cx.listener(Self::toggle_plain_text))
             })
-            .when(showing == Some(Pane::Board), |root| {
-                root.on_action(cx.listener(Self::find_card))
-            })
+            .when(
+                matches!(showing, Some(Pane::Board | Pane::Article | Pane::Chat)),
+                |root| root.on_action(cx.listener(Self::find_card)),
+            )
             .when(entries, |root| {
                 root.on_action(cx.listener(Self::next_entry))
                     .on_action(cx.listener(Self::prev_entry))

@@ -623,8 +623,11 @@ impl Cydonia {
         // repaints the field alone, and the lanes would keep every card until
         // something else asked for a frame.
         let find = board::find_field(cx);
-        cx.subscribe(&find, |_, _, _: &FieldEvent, cx| cx.notify())
-            .detach();
+        cx.subscribe(&find, |this, field, event: &FieldEvent, cx| match event {
+            FieldEvent::Changed(_) => this.find_changed(&field, cx),
+            FieldEvent::Moved => {}
+        })
+        .detach();
         (composer, board::field(cx), table::field(cx), find)
     }
 

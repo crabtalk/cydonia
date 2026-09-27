@@ -90,6 +90,9 @@ pub struct Leaf {
     /// see [`crate::view::root::Cydonia::dismiss_find`].
     pub(crate) find_field: Entity<TextField>,
     pub(crate) finding: bool,
+    /// Which find hit an article or a transcript is on, counted from the
+    /// first — see [`crate::view::find`].
+    pub(crate) find_at: usize,
     /// Where the card now in the air would land. Written by the lanes and
     /// cards the pointer crosses and read by the one that draws the mark —
     /// see [`board::Landing`].
@@ -127,6 +130,7 @@ impl Leaf {
             card_field,
             find_field,
             finding: false,
+            find_at: 0,
             landing: None,
             group_landing: None,
             cell: None,
