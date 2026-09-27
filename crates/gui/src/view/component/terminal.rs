@@ -3,9 +3,9 @@
 use crate::{model::typography, view::keymap};
 use bezel::{
     gpui::{
-        self, App, ClipboardEntry, ClipboardItem, Context, Entity, EventEmitter, ExternalPaths,
-        FocusHandle, Focusable, KeyBinding, Render, Subscription, Task, Window, div, prelude::*,
-        px,
+        self, App, ClipboardEntry, ClipboardItem, Context, Edges, Entity, EventEmitter,
+        ExternalPaths, FocusHandle, Focusable, KeyBinding, Render, Subscription, Task, Window, div,
+        prelude::*, px,
     },
     theme::{TextStyle, Theme, Typeset},
     ui::{icons, input, tooltip::Tooltip},
@@ -16,12 +16,13 @@ use std::{
     io::{Read, Write},
     path::Path,
     sync::mpsc as channel,
+    time::Duration,
 };
 use terminal::{
     emulator::{Emulator, HOLD_TIMEOUT, KeyboardMode, SelectionType},
     view::{
-        self, GridGeometry, GridSnapshot, Images, KeyEvent, MouseAction, MouseButton,
-        SELECTION_DRAG_THRESHOLD, TerminalElement,
+        self, Batched, GridGeometry, GridSnapshot, Images, KeyEvent, MouseAction, MouseButton,
+        OUTPUT_BATCH_MS, OutputBatch, SELECTION_DRAG_THRESHOLD, TerminalElement,
     },
 };
 
@@ -116,6 +117,14 @@ impl Drop for Shell {
 }
 
 impl Shell {
+    /// Unit tests get no shell: its reader thread would wake the pump from
+    /// outside gpui's test scheduler, which fails the test as nondeterministic.
+    #[cfg(test)]
+    fn open(_: &Path) -> anyhow::Result<(Self, mpsc::Receiver<Vec<u8>>)> {
+        anyhow::bail!("no shell under test")
+    }
+
+    #[cfg(not(test))]
     fn open(cwd: &Path) -> anyhow::Result<(Self, mpsc::Receiver<Vec<u8>>)> {
         let shell = std::env::var_os("SHELL").filter(|s| !s.is_empty());
         // `$SHELL` is unset on Windows unless something like Git Bash put it
@@ -271,6 +280,10 @@ pub struct Terminal {
     status: Option<String>,
     /// Pending release of a render hold, armed while one is on.
     hold: Option<Task<()>>,
+    /// PTY output on its way to the emulator.
+    batch: OutputBatch,
+    /// The batch window's timer, running while the batch is open.
+    flush: Option<Task<()>>,
     _pump: Option<Task<()>>,
 }
 
@@ -288,6 +301,8 @@ impl Terminal {
             scroll_remainder: 0.,
             status: None,
             hold: None,
+            batch: OutputBatch::default(),
+            flush: None,
             _pump: None,
         };
         match Shell::open(cwd) {
@@ -295,37 +310,15 @@ impl Terminal {
                 this.shell = Some(shell);
                 this._pump = Some(cx.spawn(async move |this, cx| {
                     while let Some(bytes) = output.next().await {
-                        if this
-                            .update(cx, |this, cx| {
-                                let reply = this.emulator.feed(&bytes);
-                                this.write(reply);
-                                this.arm_hold_release(cx);
-                                // What the shell reports through `OSC 7` or
-                                // `OSC 9;9` first: PowerShell's `cd` does not
-                                // move its process directory.
-                                if let Some(directory) = this
-                                    .emulator
-                                    .directory()
-                                    .map(Path::to_path_buf)
-                                    .or_else(|| {
-                                        this.shell
-                                            .as_ref()
-                                            .and_then(|shell| shell.pid)
-                                            .and_then(process_directory)
-                                    })
-                                    && directory != this.directory
-                                {
-                                    this.directory = directory;
-                                    cx.emit(DirectoryChanged);
-                                }
-                                cx.notify();
-                            })
-                            .is_err()
-                        {
+                        if this.update(cx, |this, cx| this.output(bytes, cx)).is_err() {
                             return;
                         }
                     }
                     let _ = this.update(cx, |this, cx| {
+                        this.flush = None;
+                        if let Some(bytes) = this.batch.tick() {
+                            this.feed(&bytes, cx);
+                        }
                         this.shell = None;
                         cx.emit(Exited);
                     });
@@ -334,6 +327,59 @@ impl Terminal {
             Err(error) => this.status = Some(format!("Could not start terminal: {error}")),
         }
         this
+    }
+
+    /// Hand one PTY read to the batch, feeding what it gives back.
+    fn output(&mut self, bytes: Vec<u8>, cx: &mut Context<Self>) {
+        match self.batch.push(bytes) {
+            Batched::Open(bytes) => {
+                self.feed(&bytes, cx);
+                self.schedule_flush(cx);
+            }
+            Batched::Full(bytes) => self.feed(&bytes, cx),
+            Batched::Held => {}
+        }
+    }
+
+    /// End the batch window: feed what it held and run another window, or
+    /// close the batch when it held nothing.
+    fn schedule_flush(&mut self, cx: &mut Context<Self>) {
+        self.flush = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(OUTPUT_BATCH_MS))
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.flush = None;
+                if let Some(bytes) = this.batch.tick() {
+                    this.feed(&bytes, cx);
+                    this.schedule_flush(cx);
+                }
+            });
+        }));
+    }
+
+    fn feed(&mut self, bytes: &[u8], cx: &mut Context<Self>) {
+        let reply = self.emulator.feed(bytes);
+        self.write(reply);
+        self.arm_hold_release(cx);
+        // What the shell reports through `OSC 7` or `OSC 9;9` first:
+        // PowerShell's `cd` does not move its process directory.
+        if let Some(directory) = self
+            .emulator
+            .directory()
+            .map(Path::to_path_buf)
+            .or_else(|| {
+                self.shell
+                    .as_ref()
+                    .and_then(|shell| shell.pid)
+                    .and_then(process_directory)
+            })
+            && directory != self.directory
+        {
+            self.directory = directory;
+            cx.emit(DirectoryChanged);
+        }
+        cx.notify();
     }
 
     fn write(&self, bytes: Vec<u8>) {
@@ -536,7 +582,8 @@ impl Render for Terminal {
             },
             self.focus.is_focused(window),
         )
-        .with_text_size(typography::terminal_size(cx));
+        .with_text_size(typography::terminal_size(cx))
+        .with_content_inset(Edges::all(px(12.0)));
         div()
             .size_full()
             .flex()
