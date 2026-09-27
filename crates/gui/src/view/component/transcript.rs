@@ -168,11 +168,12 @@ impl State {
     /// view.
     pub(crate) fn show_find(&mut self, items: &[ChatItem], hit: Option<(usize, Selection)>) {
         self.find_current = hit;
-        if let Some((item, _)) = hit
-            && let Some(turn) = turns(items)
-                .iter()
-                .position(|turn| turn.range.contains(&item))
-        {
+        let Some((item, _)) = hit else { return };
+        let turns = turns(items);
+        // A pane opened this frame has no rows yet, and the first paint's sync
+        // would drop a scroll aimed past them.
+        self.list.sync(keys(&turns));
+        if let Some(turn) = turns.iter().position(|turn| turn.range.contains(&item)) {
             self.list.scroll_to(turn);
         }
     }
@@ -279,6 +280,13 @@ fn item_text(item: &ChatItem) -> Option<&str> {
 /// A question and the answer it drew.
 struct Turn {
     range: Range<usize>,
+}
+
+/// The list's row keys: each turn by its first item, then the tail row.
+fn keys(turns: &[Turn]) -> Vec<usize> {
+    let mut keys: Vec<_> = turns.iter().map(|turn| turn.range.start).collect();
+    keys.push(usize::MAX);
+    keys
 }
 
 fn turns(items: &[ChatItem]) -> Vec<Turn> {
@@ -524,8 +532,7 @@ pub fn render(
     chat.transcript.find.replace(find);
     let turns = turns(&chat.items);
     let list = chat.transcript.list.clone();
-    let mut keys: Vec<_> = turns.iter().map(|turn| turn.range.start).collect();
-    keys.push(usize::MAX);
+    let keys = keys(&turns);
     list.sync(keys.clone());
     for ix in list
         .visible_range()

@@ -54,6 +54,7 @@ desktop = [
     "artifact/sqlite",
     "dep:rusqlite",
     "bezel/platform",
+    "dep:gpui_platform",
     "cacp/client",
     "cacp-agents/install",
     "dep:global-hotkey",
@@ -76,6 +77,9 @@ gpui = { version = "0.3.11", package = "bezel-gpui", features = ["test-support"]
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 # Headless UI tests do not require the Metal compiler toolchain.
 gpui_platform = { version = "0.3.11", package = "bezel-gpui-platform", features = ["runtime_shaders"] }
+
+[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
+gpui_platform = { version = "0.3.13", package = "bezel-gpui-platform", features = ["wayland", "x11"], optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 libc = "0.2"
