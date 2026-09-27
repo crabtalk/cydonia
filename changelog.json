@@ -1,5 +1,24 @@
 [
   {
+    "version": "0.1.18",
+    "date": "2026-09-27",
+    "summary": "A ⌘K search palette finds articles, boards and sessions across every open project, with a find bar inside articles and transcripts and link previews in articles.",
+    "new": [
+      "Search articles, boards and sessions across every open project from a ⌘K palette, with filters and a button to open a project",
+      "Find text in an article or a transcript with a find bar",
+      "Show a link's title, description, picture and icon in bookmarks, inline mentions and a mention's hover card, fetched from the page",
+      "Preview X posts with their author, text and picture",
+      "Pick a quote's kind from a Quote submenu in the slash menu",
+      "Zoom into images in a transcript, the user's and the agent's alike",
+      "Search sessions and articles from agents through session_search and article_search"
+    ],
+    "changed": [
+      "Fold the sidebar's Projects and Spaces sections, with one highlight that follows focus",
+      "Feed terminal output to the window in batches",
+      "Build on bezel 0.2.2"
+    ]
+  },
+  {
     "version": "0.1.17",
     "date": "2026-09-26",
     "summary": "Boards, sessions and articles are read and written through one project backend, so a project can live somewhere other than disk, and Cydonia runs in the browser on one held in memory.",
