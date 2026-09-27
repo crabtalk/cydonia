@@ -461,6 +461,11 @@ impl Feature {
         }
     }
 
+    /// Whether this build carries it: Linux builds have no browser.
+    pub fn available(self) -> bool {
+        !(cfg!(target_os = "linux") && self == Self::Browser)
+    }
+
     fn in_panel(self) -> bool {
         Self::PANEL.contains(&self)
     }

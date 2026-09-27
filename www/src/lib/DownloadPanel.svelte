@@ -111,6 +111,9 @@
 		{#if platform !== 'macOS'}
 			<p class="notice">{platform} support is new and may have bugs. See <a href="https://github.com/crabtalk/cydonia/issues/53">issue #53</a>.</p>
 		{/if}
+		{#if platform === 'Linux'}
+			<p class="notice">The Linux build has no browser tabs.</p>
+		{/if}
 	</div>
 	<details>
 		<summary>Build from source</summary>

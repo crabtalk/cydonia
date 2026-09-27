@@ -92,13 +92,15 @@ impl SettingsWindow {
                     .gap(px(super::LABEL_GAP))
                     .child(theme.field_label("Right panel"))
                     .child(
-                        theme
-                            .group_box()
-                            .children(Feature::PANEL.into_iter().enumerate().map(
-                                |(ix, feature)| {
+                        theme.group_box().children(
+                            Feature::PANEL
+                                .into_iter()
+                                .filter(|feature| feature.available())
+                                .enumerate()
+                                .map(|(ix, feature)| {
                                     self.feature_row(ix, Feature::ALL.len(), feature, cx)
-                                },
-                            )),
+                                }),
+                        ),
                     ),
             )
             .into_any_element()

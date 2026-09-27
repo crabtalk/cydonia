@@ -336,6 +336,7 @@ impl Cydonia {
                 .id("search-pill")
                 .debug_selector(|| "search-pill".into())
                 .absolute()
+                .occlude()
                 .top(px(12.))
                 .right(px(16.))
                 .w(px(240.))

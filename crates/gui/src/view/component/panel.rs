@@ -2,9 +2,11 @@
 
 mod persistence;
 
+#[cfg(not(target_os = "linux"))]
+use super::browser::Browser;
 #[cfg(feature = "desktop")]
 use super::terminal::{DirectoryChanged, Exited, Terminal};
-use super::{browser::Browser, changes::Changes, file::FileView, files::Files};
+use super::{changes::Changes, file::FileView, files::Files};
 use crate::model::settings::PanelTabs;
 use crate::view::leaf::Pane;
 use crate::view::root::{Cydonia, ToggleChanges};
@@ -55,15 +57,25 @@ impl gpui::EventEmitter<OpenFeatures> for Panel {}
 enum Launch {
     Review,
     Terminal,
+    #[cfg(not(target_os = "linux"))]
     Browser,
     Files,
 }
 
 impl Launch {
+    /// `None` where the build carries no browser.
+    fn browser() -> Option<Self> {
+        #[cfg(not(target_os = "linux"))]
+        return Some(Self::Browser);
+        #[cfg(target_os = "linux")]
+        None
+    }
+
     fn label(self) -> &'static str {
         match self {
             Self::Review => "Review",
             Self::Terminal => "Terminal",
+            #[cfg(not(target_os = "linux"))]
             Self::Browser => "Browser",
             Self::Files => "Files",
         }
@@ -73,6 +85,7 @@ impl Launch {
         match self {
             Self::Review => icons::development::GitCompare,
             Self::Terminal => icons::development::Terminal,
+            #[cfg(not(target_os = "linux"))]
             Self::Browser => icons::navigation::Globe,
             Self::Files => icons::files::Folder,
         }
@@ -84,6 +97,7 @@ enum Content {
     #[cfg(feature = "desktop")]
     Terminal(Entity<Terminal>),
     File(Entity<FileView>),
+    #[cfg(not(target_os = "linux"))]
     Browser(Entity<Browser>),
 }
 struct Tab {
@@ -156,6 +170,7 @@ impl Panel {
                 self.remove(id, cx);
             }
         }
+        #[cfg(not(target_os = "linux"))]
         if !tabs.browser {
             let browsers: Vec<usize> = self
                 .ordered()
@@ -177,16 +192,15 @@ impl Panel {
         self.tabs.files.then_some(self.files_open)
     }
 
-    fn launchers(&self, cx: &gpui::App) -> Vec<Launch> {
-        let browser = self.tabs.browser && super::browser::supported(cx);
+    fn launchers(&self) -> Vec<Launch> {
         [
-            (self.tabs.review, Launch::Review),
-            (true, Launch::Terminal),
-            (browser, Launch::Browser),
-            (self.tabs.files, Launch::Files),
+            (self.tabs.review, Some(Launch::Review)),
+            (true, Some(Launch::Terminal)),
+            (self.tabs.browser, Launch::browser()),
+            (self.tabs.files, Some(Launch::Files)),
         ]
         .into_iter()
-        .filter_map(|(on, launch)| on.then_some(launch))
+        .filter_map(|(on, launch)| launch.filter(|_| on))
         .collect()
     }
 
@@ -195,7 +209,7 @@ impl Panel {
         let off: Vec<&str> = [
             (self.tabs.review, "Review"),
             (self.tabs.files, "Files"),
-            (self.tabs.browser, "Browser"),
+            (self.tabs.browser || cfg!(target_os = "linux"), "Browser"),
         ]
         .into_iter()
         .filter_map(|(on, name)| (!on).then_some(name))
@@ -296,6 +310,7 @@ impl Panel {
                 #[cfg(feature = "desktop")]
                 Content::Terminal(terminal) => window.focus(&terminal.focus_handle(cx), cx),
                 Content::File(file) => window.focus(&file.focus_handle(cx), cx),
+                #[cfg(not(target_os = "linux"))]
                 Content::Browser(browser) => window.focus(&browser.focus_handle(cx), cx),
                 Content::Review(_) => window.focus(&self.focus, cx),
             }
@@ -359,6 +374,7 @@ impl Panel {
         self.push(Content::File(file), vec![watch, forward], cx);
     }
 
+    #[cfg(not(target_os = "linux"))]
     fn browser(
         &mut self,
         id: u64,
@@ -374,6 +390,7 @@ impl Panel {
         browser
     }
 
+    #[cfg(not(target_os = "linux"))]
     fn new_browser(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.tabs.browser {
             return;
@@ -403,10 +420,12 @@ impl Panel {
         if !self.strip.close(&id) {
             return;
         }
+        let _tab = self.contents.remove(&id);
+        #[cfg(not(target_os = "linux"))]
         if let Some(Tab {
             content: Content::Browser(browser),
             ..
-        }) = self.contents.remove(&id)
+        }) = _tab
         {
             super::browser::forget(browser.read(cx).id, cx);
         }
@@ -436,6 +455,7 @@ impl Panel {
         match launch {
             Launch::Review => self.review(cx),
             Launch::Terminal => self.terminal(window, cx),
+            #[cfg(not(target_os = "linux"))]
             Launch::Browser => self.new_browser(window, cx),
             Launch::Files => self.files(window, cx),
         }
@@ -450,6 +470,7 @@ impl Panel {
                 match launch {
                     Launch::Review => item.with_shortcut(&crate::view::root::OpenReview, window),
                     Launch::Terminal => item.with_shortcut_in(&NewTerminal, "SessionPanel", window),
+                    #[cfg(not(target_os = "linux"))]
                     Launch::Browser => item,
                     Launch::Files => item.with_shortcut(&crate::view::root::OpenFiles, window),
                 }
@@ -467,7 +488,7 @@ impl Render for Panel {
         }
         let theme = Theme::of(cx).clone();
         let right = chrome::has(CaptionSide::Right, window, cx);
-        let launchers = self.launchers(cx);
+        let launchers = self.launchers();
         let items = Self::items(&launchers, window);
         let rows = items.clone();
         let chosen = launchers.clone();
@@ -531,6 +552,7 @@ impl Render for Panel {
                         )
                         .into_any_element()
                 }
+                #[cfg(not(target_os = "linux"))]
                 Content::Browser(_) => super::status::bar(&theme)
                     .children(
                         self.files_state()
@@ -557,6 +579,7 @@ impl Render for Panel {
                 #[cfg(feature = "desktop")]
                 Content::Terminal(terminal) => terminal.clone().into_any_element(),
                 Content::File(file) => file.clone().into_any_element(),
+                #[cfg(not(target_os = "linux"))]
                 Content::Browser(browser) => browser.clone().into_any_element(),
             })
             .unwrap_or_else(|| {
@@ -662,6 +685,7 @@ impl Render for Panel {
                                 #[cfg(feature = "desktop")]
                                 Content::Terminal(_) => icons::development::Terminal,
                                 Content::File(_) => icons::files::File,
+                                #[cfg(not(target_os = "linux"))]
                                 Content::Browser(_) => icons::navigation::Globe,
                             };
                             // The path is the tooltip and the last component is
@@ -682,6 +706,7 @@ impl Render for Panel {
                                         false,
                                     )
                                 }
+                                #[cfg(not(target_os = "linux"))]
                                 Content::Browser(browser) => {
                                     let browser = browser.read(cx);
                                     (browser.title().to_owned(), browser.url().to_owned(), false)

@@ -1,5 +1,14 @@
 [
   {
+    "version": "0.1.20",
+    "date": "2026-09-28",
+    "nightly": true,
+    "summary": "The browser is left out of the Linux build.",
+    "changed": [
+      "Leave browser tabs out of the Linux build, where pages never showed"
+    ]
+  },
+  {
     "version": "0.1.19",
     "date": "2026-09-27",
     "summary": "Browse the web in tabs in the right panel, kept across restarts and switchable in Settings, and the Linux build starts again.",

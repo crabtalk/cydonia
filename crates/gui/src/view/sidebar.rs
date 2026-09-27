@@ -2126,7 +2126,13 @@ impl Cydonia {
         // the window is showing. A row's menu names an entry that may not be
         // it, so these are the band's alone — on the wrong row they would act
         // on whatever else was open.
-        if matches!(entry, Row::Article { .. }) && !matches!(at, Menu::Entry(_)) {
+        // A tab's menu has them only while its tab is the one focused.
+        let page = match &at {
+            Menu::Entry(_) => false,
+            Menu::Tab(tab) => self.leaf().entry.as_ref() == Some(tab),
+            _ => true,
+        };
+        if matches!(entry, Row::Article { .. }) && page {
             let plain_chord = keymap::label(
                 Command::PlainText,
                 &self.workspace.read(cx).settings.shortcuts,
@@ -2218,6 +2224,9 @@ impl Cydonia {
             Item::action("Delete").with_icon(icons::files::Trash),
             move |this, _, cx| this.ask_delete(entry, cx),
         ));
+        if let Menu::Tab(tab) = &at {
+            rows.insert(0, Self::close_tab_row(tab));
+        }
         let id = SharedString::from("header-menu-card");
         // A right press carries a point, and the card stands at it. From a
         // button — the `···`, the pin — there is none, and the card drops

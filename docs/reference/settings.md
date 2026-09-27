@@ -62,6 +62,11 @@ fix, so hand-edited sizes are clamped before layout sees them.
 sessions = false
 boards = true
 tables = false
+
+[features.panel]
+review = true
+files = true
+browser = true   # no effect on Linux
 ```
 
 See [Features](../general/features.md).

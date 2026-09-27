@@ -25,7 +25,11 @@ use bezel::{
     },
     theme::Theme,
     ui::{
-        icons, menu::Item, popover, tabs, titlebar::CaptionSide, tooltip::Tooltip, widgets::Content,
+        icons,
+        menu::Item,
+        popover, tabs,
+        titlebar::CaptionSide,
+        widgets::{Buttons as _, Content},
     },
 };
 
@@ -551,7 +555,7 @@ impl Cydonia {
                 tabs::bar(SharedString::from(format!("pane-strip-{key}"))).children(
                     stack
                         .iter()
-                        .map(|tab| self.pane_tab(pane, tab, tab == front, theme, cx)),
+                        .map(|tab| self.pane_tab(pane, tab, tab == front, theme, window, cx)),
                 ),
                 window,
                 cx,
@@ -589,12 +593,13 @@ impl Cydonia {
             .into_any_element()
     }
 
-    /// One tab: what it is on, and the `×` that takes it out.
+    /// One tab: what it is on, and the `···` holding its entry's menu and the
+    /// close.
     ///
     /// Every tab carries the close, the pane's first included. There is no
     /// separate control for closing the pane, because there is no separate
-    /// thing to close: a pane is its strip, and the last `×` takes the pane
-    /// with the tab. The focus mark is on the tab rather than on the pane,
+    /// thing to close: a pane is its strip, and closing the last tab takes the
+    /// pane with it. The focus mark is on the tab rather than on the pane,
     /// since the panes are one plane divided and take no fill of their own.
     fn pane_tab(
         &self,
@@ -602,6 +607,7 @@ impl Cydonia {
         tab: &Member,
         front: bool,
         theme: &Theme,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let toolbar = self
@@ -656,18 +662,79 @@ impl Cydonia {
                 let label = title.clone();
                 cx.new(|_| Carried(label))
             })
-            .child(
-                tabs::close(theme, key, tabs::Close::OnHover)
-                    .tooltip(move |window, cx| Tooltip::text("Close tab", window, cx))
-                    .on_click(cx.listener({
-                        let shut = tab.clone();
-                        move |this, _, window, cx| {
-                            cx.stop_propagation();
-                            this.close_pane(&shut, window, cx);
-                        }
-                    })),
-            )
+            .child(self.tab_menu_button(tab, key, toolbar, theme, window, cx))
             .into_any_element()
+    }
+
+    /// The tab's `···`, drawn to the metric of bezel's tab close and shown
+    /// while the tab is hovered or its menu is open.
+    fn tab_menu_button(
+        &self,
+        tab: &Member,
+        key: SharedString,
+        toolbar: Option<crate::view::header::Toolbar>,
+        theme: &Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let menu = Menu::Tab(tab.clone());
+        let open = self.menu.as_ref() == Some(&menu);
+        // bezel's `tabs::tab` names its hover group `tab-{key}`.
+        let group = SharedString::from(format!("tab-{key}"));
+        let button = theme
+            .ghost(SharedString::from(format!("tab-menu-{key}")))
+            .flex_none()
+            .relative()
+            .p(px(2.))
+            .child(
+                icons::icon(icons::layout::Ellipsis)
+                    .size(px(11.))
+                    .text_color(theme.text_muted),
+            )
+            .when(!open, |el| {
+                el.invisible().group_hover(group, |el| el.visible())
+            })
+            .on_click(cx.listener({
+                let menu = menu.clone();
+                move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.toggle_menu(menu.clone(), cx);
+                }
+            }));
+        let card = match toolbar.and_then(|toolbar| toolbar.entry) {
+            Some(entry) => self.entry_menu(menu.clone(), entry.row, entry.archived, window, cx),
+            None => self.close_only_menu(tab, window, cx),
+        };
+        self.menu_press(button, menu, cx)
+            .children(card)
+            .into_any_element()
+    }
+
+    /// A tab whose entry has no menu of its own still closes from its `···`.
+    fn close_only_menu(
+        &self,
+        tab: &Member,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        if self.menu.as_ref() != Some(&Menu::Tab(tab.clone())) {
+            return None;
+        }
+        let id = SharedString::from("header-menu-card");
+        Some(popover::anchored_menu_below_end(
+            id.clone(),
+            self.menu_card(id, vec![Self::close_tab_row(tab)], window, cx),
+            None,
+        ))
+    }
+
+    /// Close tab, for a tab's `···`.
+    pub(crate) fn close_tab_row(tab: &Member) -> (Item, menu::Act) {
+        let shut = tab.clone();
+        menu::row(
+            Item::action("Close tab").with_icon(icons::notifications::X),
+            move |this, window, cx| this.close_pane(&shut, window, cx),
+        )
     }
 
     /// What the `···` on a pane's bar offers: what can be done to the *pane*.
