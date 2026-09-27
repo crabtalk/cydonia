@@ -102,7 +102,11 @@ impl Cydonia {
     fn text_query(&self, on: Option<&Member>, cx: &App) -> Option<Query> {
         let leaf = self.leaf_of(on);
         if leaf.finding {
-            Query::literal(leaf.find_field.read(cx).content())
+            let text = leaf.find_field.read(cx).content();
+            match leaf.find_pattern {
+                true => Query::pattern(text).ok().flatten(),
+                false => Query::literal(text),
+            }
         } else {
             self.applied_query().cloned()
         }
@@ -179,6 +183,23 @@ impl Cydonia {
         };
         let on = self.leaves[leaf].entry.clone();
         self.leaves[leaf].find_at = 0;
+        self.reveal_find(on.as_ref(), cx);
+        cx.notify();
+    }
+
+    /// Whether the bar is up in pattern mode over a field that does not parse.
+    fn bad_pattern(&self, on: Option<&Member>, cx: &App) -> bool {
+        let leaf = self.leaf_of(on);
+        leaf.finding
+            && leaf.find_pattern
+            && Query::pattern(leaf.find_field.read(cx).content()).is_err()
+    }
+
+    fn toggle_find_pattern(&mut self, cx: &mut Context<Self>) {
+        let on = self.leaf().entry.clone();
+        let leaf = self.leaf_mut();
+        leaf.find_pattern = !leaf.find_pattern;
+        leaf.find_at = 0;
         self.reveal_find(on.as_ref(), cx);
         cx.notify();
     }
@@ -288,6 +309,8 @@ impl Cydonia {
                     .count();
                 format!("{count} cards").into()
             })
+        } else if self.bad_pattern(on, cx) {
+            Some("bad pattern".into())
         } else {
             self.found(on, cx)
                 .map(|found| match current(leaf.find_at, found.len()) {
@@ -357,6 +380,28 @@ impl Cydonia {
                         .text_xs()
                         .text_color(theme.text_faint)
                         .child(count)
+                }))
+                .children((leaf.finding && !board).then(|| {
+                    let on = leaf.find_pattern;
+                    theme
+                        .ghost("find-pattern")
+                        .flex_none()
+                        .p(px(4.))
+                        .rounded_full()
+                        .when(on, |el| el.bg(theme.element_active))
+                        .child(
+                            icons::icon(icons::text::Regex)
+                                .size(px(12.))
+                                .text_color(match on {
+                                    true => theme.text,
+                                    false => theme.text_faint,
+                                }),
+                        )
+                        .tooltip(|window, cx| Tooltip::text("Match a pattern", window, cx))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            cx.stop_propagation();
+                            this.toggle_find_pattern(cx);
+                        }))
                 }))
                 .children((!board).then(|| {
                     step(
