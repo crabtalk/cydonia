@@ -57,6 +57,10 @@ pub fn forget(id: u64, cx: &mut App) {
 /// The title or location changed.
 pub struct Changed;
 
+/// The page asked for a new window — a `target="_blank"` link or
+/// `window.open` — on this URL.
+pub struct OpenTab(pub String);
+
 pub struct Browser {
     pub id: u64,
     /// Built on first render: a page needs a window.
@@ -70,6 +74,7 @@ pub struct Browser {
 }
 
 impl EventEmitter<Changed> for Browser {}
+impl EventEmitter<OpenTab> for Browser {}
 
 impl Browser {
     pub fn new(id: u64, url: String, title: String, cx: &mut Context<Self>) -> Self {
@@ -149,6 +154,10 @@ impl Browser {
             }
             WebViewEvent::Title(title) => self.title = title.clone(),
             WebViewEvent::Load(_) => {}
+            WebViewEvent::NewWindow(url) => {
+                cx.emit(OpenTab(url.clone()));
+                return;
+            }
         }
         cx.emit(Changed);
         cx.notify();

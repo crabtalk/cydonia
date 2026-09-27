@@ -386,7 +386,11 @@ impl Panel {
         let changed = cx.subscribe(&browser, |_, _, _: &super::browser::Changed, cx| {
             cx.notify()
         });
-        self.push(Content::Browser(browser.clone()), vec![changed], cx);
+        let open = cx.subscribe(&browser, |this, _, event: &super::browser::OpenTab, cx| {
+            let id = super::browser::new_id();
+            this.browser(id, event.0.clone(), String::new(), cx);
+        });
+        self.push(Content::Browser(browser.clone()), vec![changed, open], cx);
         browser
     }
 
