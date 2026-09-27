@@ -223,8 +223,9 @@ pub fn run(sources: &[&(dyn Searchable + Sync)], query: &Query, found: &Sender<M
 /// Search a project off its `.cydonia/`. An item's raw file is checked for
 /// the query before it is parsed, so a file holding no match costs one read.
 ///
-/// Reads only: nothing a read of the project would write back is written.
-pub fn disk(project: &fs::Project, query: &Query, found: &Sender<Match>) {
+/// Only items of the given kinds are read. Reads only: nothing a read of the
+/// project would write back is written.
+pub fn disk(project: &fs::Project, kinds: &[Kind], query: &Query, found: &Sender<Match>) {
     // Sessions are JSON, so the query is looked for as JSON writes it.
     let escaped = serde_json::to_string(query.text()).unwrap_or_default();
     let in_json = literal(&escaped[1..escaped.len() - 1]);
@@ -247,6 +248,7 @@ pub fn disk(project: &fs::Project, query: &Query, found: &Sender<Match>) {
             .into_iter()
             .map(|(id, path)| (Kind::Board, id, path)),
     );
+    files.retain(|(kind, ..)| kinds.contains(kind));
     parallel(&files, |(kind, id, path)| {
         let Ok(bytes) = std::fs::read(path) else {
             return true;

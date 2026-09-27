@@ -358,3 +358,31 @@ fn highlights_are_listed_outside_code() {
     ));
     assert!(none.ends_with("has no highlights"), "{none}");
 }
+
+#[test]
+fn a_search_answers_the_article_and_line() {
+    let scratch = Scratch::new("article-search");
+    let server = scratch.server();
+    said(server.call(
+        "article_add",
+        json!({ "title": "Pump notes", "text": "# Notes\n\nThe PUMP feeds \"chunks\".\nnothing" }),
+        Some(scratch.path()),
+    ));
+
+    let hits = said(server.call(
+        "article_search",
+        json!({ "query": "pump" }),
+        Some(scratch.path()),
+    ));
+    assert_eq!(
+        hits,
+        "#1 Pump notes title — Pump notes\n#1 Pump notes line 3 — The PUMP feeds \"chunks\"."
+    );
+
+    let quoted = said(server.call(
+        "article_search",
+        json!({ "query": "\"chunks\"" }),
+        Some(scratch.path()),
+    ));
+    assert!(quoted.contains("line 3"), "{quoted}");
+}

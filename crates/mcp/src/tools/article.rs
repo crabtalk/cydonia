@@ -14,15 +14,20 @@
 
 use crate::{
     tool::{Answer, Arg, Args, Outcome, Tool, Trouble},
-    tools::{PROJECT, fields, many, on_the_rail, root},
+    tools::{PROJECT, fields, many, on_the_rail, root, session},
 };
 use artifact::{
     article::{self, properties::Properties},
     project::{Project as _, fs},
+    search::{self, Block, Kind, Query},
     stamp,
 };
 use serde_json::{Value, json};
-use std::path::{Path, PathBuf};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    sync::mpsc,
+};
 
 const ARTICLE: Arg = Arg {
     name: "article",
@@ -93,7 +98,15 @@ const REPLACE_ALL: Arg = Arg {
     about: "Replace every non-overlapping occurrence. Defaults to false, requiring exactly one match.",
 };
 
-pub static TOOLS: [Tool; 11] = [
+const QUERY: Arg = Arg {
+    name: "query",
+    about: "The text to find, matched case-insensitively.",
+};
+
+/// Hits a search answers with, at most.
+const HITS: usize = 20;
+
+pub static TOOLS: [Tool; 12] = [
     Tool {
         name: "article_list",
         description: "List the project's articles, most recently written first.",
@@ -109,6 +122,14 @@ pub static TOOLS: [Tool; 11] = [
         writes: false,
         deletes: false,
         call: read,
+    },
+    Tool {
+        name: "article_search",
+        description: "Find text in the project's articles, archived ones included: their titles and their markdown. Answers each match with the article's reference (#12), title, line number and the line it matched.",
+        schema: |bound| fields(bound, &[PROJECT, QUERY]),
+        writes: false,
+        deletes: false,
+        call: search,
     },
     Tool {
         name: "article_highlights",
@@ -237,6 +258,73 @@ fn list(args: Args<'_>) -> Outcome {
         })
         .collect::<Vec<_>>();
     Ok(Answer::said(listing(&held)).with(json!({ "articles": data })))
+}
+
+fn search(args: Args<'_>) -> Outcome {
+    let project = root(&args)?;
+    let query = Query::literal(args.text(QUERY)?)
+        .ok_or_else(|| Trouble::Refused("query is empty".to_owned()))?;
+    let (tx, rx) = mpsc::channel();
+    search::disk(&fs::Project::new(project), &[Kind::Article], &query, &tx);
+    drop(tx);
+    let held: HashMap<String, Held> = articles(project)
+        .into_iter()
+        .map(|article| (article.id.clone(), article))
+        .collect();
+    // The title first, then the lines in order: one hit per line.
+    let mut found: Vec<(u64, usize, &Held, String)> = rx
+        .into_iter()
+        .filter_map(|hit| {
+            let article = held.get(&hit.item.id)?;
+            let line = match hit.block {
+                Block::Title => 0,
+                Block::Line(ix) => ix + 1,
+                _ => return None,
+            };
+            Some((article.number.unwrap_or(u64::MAX), line, article, hit.line))
+        })
+        .collect();
+    found.sort_by_key(|(number, line, ..)| (*number, *line));
+    found.dedup_by_key(|(number, line, ..)| (*number, *line));
+    if found.is_empty() {
+        return Ok(
+            Answer::said(format!("nothing matches {}", query.text())).with(json!({ "hits": [] }))
+        );
+    }
+    let more = found.len() > HITS;
+    found.truncate(HITS);
+    let hits: Vec<Value> = found
+        .iter()
+        .map(|(_, line, article, text)| {
+            json!({
+                "article": artifact::entry::label(article.number, article.label()),
+                "id": article.id,
+                "line": (*line > 0).then_some(*line),
+                "text": session::snippet(text),
+            })
+        })
+        .collect();
+    let mut text = found
+        .iter()
+        .map(|(_, line, article, text)| {
+            let at = match line {
+                0 => "title".to_owned(),
+                line => format!("line {line}"),
+            };
+            format!(
+                "{} {at} — {}",
+                artifact::entry::label(article.number, article.label()),
+                session::snippet(text)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    if more {
+        text.push_str(&format!(
+            "\n… more than {HITS} lines match; narrow the query"
+        ));
+    }
+    Ok(Answer::said(text).with(json!({ "hits": hits, "more": more })))
 }
 
 fn read(args: Args<'_>) -> Outcome {

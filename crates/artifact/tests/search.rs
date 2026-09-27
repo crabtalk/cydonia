@@ -84,7 +84,14 @@ fn disk_finds_articles_boards_and_sessions_without_writing() {
     let before: Board = store.board(&board.id).unwrap();
 
     let query = Query::literal("\"quoted\"").unwrap();
-    let hits = collect(|tx| search::disk(&store, &query, tx));
+    let hits = collect(|tx| {
+        search::disk(
+            &store,
+            &[Kind::Article, Kind::Board, Kind::Session],
+            &query,
+            tx,
+        )
+    });
     let mut kinds: Vec<Kind> = hits.iter().map(|hit| hit.item.kind).collect();
     kinds.sort_by_key(|kind| kind.key());
     assert_eq!(kinds, [Kind::Article, Kind::Board, Kind::Session]);

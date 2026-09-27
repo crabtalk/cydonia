@@ -8,13 +8,14 @@ use crate::{
 use artifact::{
     project::{Project as _, fs},
     reference::{self, Reference, Target, Turns},
+    search::{self, Block, Kind, Query},
     session::{
         chat::{self, ChatItem, ToolStatus},
         record::Record,
     },
 };
 use serde_json::json;
-use std::path::Path;
+use std::{collections::BTreeMap, path::Path, sync::mpsc};
 
 const SESSION: Arg = Arg {
     name: "session",
@@ -389,29 +390,57 @@ fn range(text: &str) -> Result<Turns, Trouble> {
 // ── searching ────────────────────────────────────────────────────
 
 fn search(args: Args<'_>) -> Outcome {
-    let query = args.text(QUERY)?.trim();
-    if query.is_empty() {
-        return Err(Trouble::Refused("query is empty".to_owned()));
-    }
-    let pattern = literal(query);
-    let searched: Box<dyn Iterator<Item = (u64, Record)>> = match args.maybe(SEARCHED) {
+    let query = Query::literal(args.text(QUERY)?)
+        .ok_or_else(|| Trouble::Refused("query is empty".to_owned()))?;
+    let (tx, rx) = mpsc::channel();
+    let store = match args.maybe(SEARCHED) {
         Some(named) => {
             let found = found(&args, named)?;
-            Box::new(std::iter::once((found.number, found.record)))
+            search::one(&found.record, &query, &tx);
+            drop(tx);
+            Searched::One(Box::new(found))
         }
-        None => Box::new(grepped(root(&args)?, &in_json(query))),
+        None => {
+            let store = fs::Project::new(root(&args)?);
+            search::disk(&store, &[Kind::Session], &query, &tx);
+            drop(tx);
+            Searched::All(store)
+        }
     };
+    // The first line matched in each turn, per session.
+    let mut lines: BTreeMap<String, BTreeMap<usize, String>> = BTreeMap::new();
+    for hit in rx {
+        let Block::Chat(at) = hit.block else {
+            continue;
+        };
+        lines
+            .entry(hit.item.id)
+            .or_default()
+            .entry(at)
+            .or_insert(hit.line);
+    }
+    let mut sessions: Vec<(u64, Record, BTreeMap<usize, String>)> = match store {
+        Searched::One(found) => lines
+            .remove(&found.record.id)
+            .map(|at| (found.number, found.record, at))
+            .into_iter()
+            .collect(),
+        Searched::All(store) => lines
+            .into_iter()
+            .filter_map(|(id, at)| {
+                let number = store.number("session", &id).ok()?;
+                let record = store.session(&id)?;
+                Some((number, record, at))
+            })
+            .collect(),
+    };
+    sessions.sort_by_key(|(number, ..)| *number);
     let mut hits = Vec::new();
     let mut more = false;
-    'sessions: for (number, record) in searched {
+    'sessions: for (number, record, at) in sessions {
         let title = record.name.as_deref().unwrap_or(&record.title);
-        for (at, turn) in chat::turns(&record.items).into_iter().enumerate() {
-            let Some(line) = record.items[turn]
-                .iter()
-                .filter_map(|item| searchable(item))
-                .flat_map(str::lines)
-                .find(|line| pattern.is_match(line.as_bytes()))
-            else {
+        for (turn, items) in chat::turns(&record.items).into_iter().enumerate() {
+            let Some(line) = at.range(items).next().map(|(_, line)| line) else {
                 continue;
             };
             if hits.len() == HITS {
@@ -419,14 +448,16 @@ fn search(args: Args<'_>) -> Outcome {
                 break 'sessions;
             }
             hits.push(json!({
-                "reference": format!("#{number}:{}", at + 1),
+                "reference": format!("#{number}:{}", turn + 1),
                 "title": title,
                 "line": snippet(line),
             }));
         }
     }
     if hits.is_empty() {
-        return Ok(Answer::said(format!("nothing matches {query}")).with(json!({ "hits": [] })));
+        return Ok(
+            Answer::said(format!("nothing matches {}", query.text())).with(json!({ "hits": [] }))
+        );
     }
     let mut text = hits
         .iter()
@@ -448,64 +479,13 @@ fn search(args: Args<'_>) -> Outcome {
     Ok(Answer::said(text).with(json!({ "hits": hits, "more": more })))
 }
 
-/// `text` as a case-insensitive literal.
-fn literal(text: &str) -> regex::bytes::Regex {
-    regex::bytes::RegexBuilder::new(&regex::escape(text))
-        .case_insensitive(true)
-        .build()
-        .expect("an escaped literal is a valid pattern")
+/// What a search looked through: one named session, or the whole project.
+enum Searched {
+    One(Box<Found>),
+    All(fs::Project),
 }
 
-/// `query` as it appears inside a session file: written the way serde_json
-/// writes a string, with quotes, backslashes and control characters escaped
-/// and everything else as is.
-fn in_json(query: &str) -> regex::bytes::Regex {
-    let escaped = serde_json::to_string(query).unwrap_or_default();
-    literal(&escaped[1..escaped.len() - 1])
-}
-
-/// Every session in the project whose file holds `pattern` anywhere, archived
-/// ones included, in entry order. A file is parsed only when its raw bytes
-/// match, and only as the iterator reaches it.
-fn grepped(
-    project: &Path,
-    pattern: &regex::bytes::Regex,
-) -> impl Iterator<Item = (u64, Record)> + use<> {
-    let store = fs::Project::new(project);
-    let mut matched: Vec<(u64, String, Vec<u8>)> = store
-        .session_files()
-        .into_iter()
-        .filter_map(|(id, path)| {
-            let bytes = std::fs::read(&path).ok()?;
-            if !pattern.is_match(&bytes) {
-                return None;
-            }
-            let number = store.number("session", &id).ok()?;
-            Some((number, id, bytes))
-        })
-        .collect();
-    matched.sort_by_key(|(number, ..)| *number);
-    matched.into_iter().filter_map(|(number, id, bytes)| {
-        let mut record: Record = serde_json::from_slice(&bytes).ok()?;
-        if record.id.is_empty() {
-            record.id = id;
-        }
-        Some((number, record))
-    })
-}
-
-/// The text of an item a search looks through: what was said, and what each
-/// tool call was.
-fn searchable(item: &ChatItem) -> Option<&str> {
-    match item {
-        ChatItem::User(text) | ChatItem::Agent(text) => Some(text),
-        ChatItem::Tool { label, .. } => Some(label),
-        ChatItem::Notice { text, .. } => Some(text),
-        ChatItem::Thinking { .. } | ChatItem::Process { .. } => None,
-    }
-}
-
-fn snippet(line: &str) -> String {
+pub(crate) fn snippet(line: &str) -> String {
     let line = line.trim();
     match line.char_indices().nth(SNIPPET) {
         Some((cut, _)) => format!("{}…", &line[..cut]),
