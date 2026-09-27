@@ -842,6 +842,14 @@ impl Cydonia {
             });
         }
         self.sync_composer(cx);
+        // The press already put the focus on something inside this pane — a
+        // transcript's text, a field — before bubbling here. Moving it to the
+        // composer would take ⌘C away from the run just selected.
+        let here = self.leaf().focus.clone();
+        if here.contains_focused(window, cx) && !here.is_focused(window) {
+            cx.notify();
+            return;
+        }
         // The caret follows the pane into whatever it can be typed into: a
         // session's composer, a document's editor, an open card or cell. A
         // board or a table with nothing open takes none, and neither does a
@@ -882,7 +890,6 @@ impl Cydonia {
         // The pane's own handle, not the window's: the root's is tracked on a
         // sibling of the panes, so landing there puts the focus outside the
         // pane and the chords the pane claims stop being reached.
-        let here = self.leaf().focus.clone();
         window.focus(caret.as_ref().unwrap_or(&here), cx);
         cx.notify();
     }
