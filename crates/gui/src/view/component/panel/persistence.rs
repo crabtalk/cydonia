@@ -13,6 +13,11 @@ enum SavedTab {
         path: PathBuf,
         draft: Option<(String, String)>,
     },
+    Browser {
+        id: u64,
+        url: String,
+        title: String,
+    },
 }
 
 #[derive(Clone, Default, Serialize, Deserialize)]
@@ -76,6 +81,14 @@ impl Panel {
                     Content::Terminal(terminal) => {
                         SavedTab::Terminal(terminal.read(cx).directory.clone())
                     }
+                    Content::Browser(browser) => {
+                        let browser = browser.read(cx);
+                        SavedTab::Browser {
+                            id: browser.id,
+                            url: browser.url().to_owned(),
+                            title: browser.title.clone(),
+                        }
+                    }
                     Content::File(file) => {
                         let file = file.read(cx);
                         SavedTab::File {
@@ -108,6 +121,9 @@ impl Panel {
                         cwd.clone()
                     };
                     self.terminal(window, cx);
+                }
+                SavedTab::Browser { id, url, title } => {
+                    self.browser(id, url, title, cx);
                 }
                 SavedTab::File { path, draft } => {
                     self.open_file(path, cx);

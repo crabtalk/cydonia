@@ -1,10 +1,10 @@
-//! A session's persistent Review, terminal, and file tabs.
+//! A session's persistent Review, terminal, file, and browser tabs.
 
 mod persistence;
 
 #[cfg(feature = "desktop")]
 use super::terminal::{DirectoryChanged, Exited, Terminal};
-use super::{changes::Changes, file::FileView, files::Files};
+use super::{browser::Browser, changes::Changes, file::FileView, files::Files};
 use crate::model::settings::PanelTabs;
 use crate::view::leaf::Pane;
 use crate::view::root::{Cydonia, ToggleChanges};
@@ -52,6 +52,7 @@ impl gpui::EventEmitter<OpenFeatures> for Panel {}
 enum Launch {
     Review,
     Terminal,
+    Browser,
     Files,
 }
 
@@ -60,6 +61,7 @@ impl Launch {
         match self {
             Self::Review => "Review",
             Self::Terminal => "Terminal",
+            Self::Browser => "Browser",
             Self::Files => "Files",
         }
     }
@@ -68,6 +70,7 @@ impl Launch {
         match self {
             Self::Review => icons::development::GitCompare,
             Self::Terminal => icons::development::Terminal,
+            Self::Browser => icons::navigation::Globe,
             Self::Files => icons::files::Folder,
         }
     }
@@ -78,6 +81,7 @@ enum Content {
     #[cfg(feature = "desktop")]
     Terminal(Entity<Terminal>),
     File(Entity<FileView>),
+    Browser(Entity<Browser>),
 }
 struct Tab {
     content: Content,
@@ -164,6 +168,7 @@ impl Panel {
         [
             (self.tabs.review, Launch::Review),
             (true, Launch::Terminal),
+            (true, Launch::Browser),
             (self.tabs.files, Launch::Files),
         ]
         .into_iter()
@@ -268,6 +273,7 @@ impl Panel {
                 #[cfg(feature = "desktop")]
                 Content::Terminal(terminal) => window.focus(&terminal.focus_handle(cx), cx),
                 Content::File(file) => window.focus(&file.focus_handle(cx), cx),
+                Content::Browser(browser) => window.focus(&browser.focus_handle(cx), cx),
                 Content::Review(_) => window.focus(&self.focus, cx),
             }
         } else {
@@ -330,6 +336,28 @@ impl Panel {
         self.push(Content::File(file), vec![watch, forward], cx);
     }
 
+    fn browser(
+        &mut self,
+        id: u64,
+        url: String,
+        title: String,
+        cx: &mut Context<Self>,
+    ) -> Entity<Browser> {
+        let browser = cx.new(|cx| Browser::new(id, url, title, cx));
+        let changed = cx.subscribe(&browser, |_, _, _: &super::browser::Changed, cx| {
+            cx.notify()
+        });
+        self.push(Content::Browser(browser.clone()), vec![changed], cx);
+        browser
+    }
+
+    fn new_browser(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let id = super::browser::new_id();
+        let browser = self.browser(id, super::browser::HOME.into(), String::new(), cx);
+        let address = browser.read(cx).address_focus(cx);
+        window.focus(&address, cx);
+    }
+
     /// Step to the tab `step` along, wrapping at the ends — the row is a ring,
     /// the way a browser's is.
     ///
@@ -349,7 +377,13 @@ impl Panel {
         if !self.strip.close(&id) {
             return;
         }
-        self.contents.remove(&id);
+        if let Some(Tab {
+            content: Content::Browser(browser),
+            ..
+        }) = self.contents.remove(&id)
+        {
+            super::browser::forget(browser.read(cx).id, cx);
+        }
         if self.closing == Some(id) {
             self.closing = None;
         }
@@ -376,6 +410,7 @@ impl Panel {
         match launch {
             Launch::Review => self.review(cx),
             Launch::Terminal => self.terminal(window, cx),
+            Launch::Browser => self.new_browser(window, cx),
             Launch::Files => self.files(window, cx),
         }
         cx.notify();
@@ -389,6 +424,7 @@ impl Panel {
                 match launch {
                     Launch::Review => item.with_shortcut(&crate::view::root::OpenReview, window),
                     Launch::Terminal => item.with_shortcut_in(&NewTerminal, "SessionPanel", window),
+                    Launch::Browser => item,
                     Launch::Files => item.with_shortcut(&crate::view::root::OpenFiles, window),
                 }
             })
@@ -469,6 +505,12 @@ impl Render for Panel {
                         )
                         .into_any_element()
                 }
+                Content::Browser(_) => super::status::bar(&theme)
+                    .children(
+                        self.files_state()
+                            .map(|open| super::status::files_toggle(open, &theme)),
+                    )
+                    .into_any_element(),
             })
             .unwrap_or_else(|| {
                 super::status::bar(&theme)
@@ -489,6 +531,7 @@ impl Render for Panel {
                 #[cfg(feature = "desktop")]
                 Content::Terminal(terminal) => terminal.clone().into_any_element(),
                 Content::File(file) => file.clone().into_any_element(),
+                Content::Browser(browser) => browser.clone().into_any_element(),
             })
             .unwrap_or_else(|| {
                 div()
@@ -593,6 +636,7 @@ impl Render for Panel {
                                 #[cfg(feature = "desktop")]
                                 Content::Terminal(_) => icons::development::Terminal,
                                 Content::File(_) => icons::files::File,
+                                Content::Browser(_) => icons::navigation::Globe,
                             };
                             // The path is the tooltip and the last component is
                             // the name: several tabs can be named the same.
@@ -611,6 +655,10 @@ impl Render for Panel {
                                         path.display().to_string(),
                                         false,
                                     )
+                                }
+                                Content::Browser(browser) => {
+                                    let browser = browser.read(cx);
+                                    (browser.title().to_owned(), browser.url().to_owned(), false)
                                 }
                                 Content::File(file) => {
                                     let file = file.read(cx);
