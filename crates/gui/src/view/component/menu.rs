@@ -184,10 +184,15 @@ impl Cydonia {
                     // Resolve space during render, never in a hover style:
                     // GPUI can resolve hover differently in prepaint and paint.
                     match &menu {
-                        Menu::Add(_) | Menu::Entry(_) => el
+                        Menu::Entry(_) => el
                             .when(self.sidebar_hovered.as_ref() != Some(&menu), |el| {
                                 el.hidden()
                             }),
+                        // The project's head reports its hover as its `···`.
+                        Menu::Add(ix) => el.when(
+                            self.sidebar_hovered.as_ref() != Some(&Menu::Project(*ix)),
+                            |el| el.hidden(),
+                        ),
                         Menu::Pane(pane) | Menu::PaneAdd(pane) => {
                             el.when(self.pane_hovered.as_ref() != Some(pane), |el| el.hidden())
                         }
