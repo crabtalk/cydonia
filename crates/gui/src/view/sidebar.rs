@@ -1580,7 +1580,7 @@ impl Cydonia {
             .child(
                 div()
                     .flex_none()
-                    .text_style(TextStyle::Body)
+                    .text_style(TextStyle::Callout)
                     .child(heading.label()),
             )
             .child(

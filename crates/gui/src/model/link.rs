@@ -88,8 +88,8 @@ fn fetch(url: &Url) -> Option<Preview> {
         .user_agent("Mozilla/5.0 (compatible; Cydonia link preview)")
         .build()
         .new_agent();
-    if let Some(post) = post(url) {
-        return oembed(&agent, post);
+    if let Some(id) = post(url) {
+        return x(&agent, url, id);
     }
     let mut response = agent
         .get(url.as_str())
@@ -194,36 +194,81 @@ pub fn parse(html: &str, base: &Url) -> Preview {
     }
 }
 
-/// `url` as an X post: `x.com/<user>/status/<id>`, on any of X's hosts.
-fn post(url: &Url) -> Option<&Url> {
+/// The id of the post `url` names: `x.com/<user>/status/<id>`, on any of X's
+/// hosts.
+fn post(url: &Url) -> Option<&str> {
     let host = url
         .host_str()?
         .trim_start_matches("www.")
         .trim_start_matches("mobile.");
+    if !matches!(host, "x.com" | "twitter.com") {
+        return None;
+    }
     let mut segments = url.path_segments()?;
-    let is_post = matches!(host, "x.com" | "twitter.com")
-        && segments.next().is_some_and(|user| !user.is_empty())
-        && segments.next() == Some("status")
-        && segments
-            .next()
-            .is_some_and(|id| id.bytes().all(|b| b.is_ascii_digit()));
-    is_post.then_some(url)
+    segments.next().filter(|user| !user.is_empty())?;
+    segments.next().filter(|status| *status == "status")?;
+    segments
+        .next()
+        .filter(|id| !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()))
 }
 
-/// An X post through X's oEmbed endpoint: its pages carry no Open Graph data
-/// for a client that is not a known crawler.
-fn oembed(agent: &ureq::Agent, url: &Url) -> Option<Preview> {
-    let body = agent
-        .get("https://publish.x.com/oembed")
-        .query("url", url.as_str())
-        .query("omit_script", "1")
-        .query("dnt", "true")
-        .call()
-        .ok()?
-        .body_mut()
-        .read_to_string()
-        .ok()?;
-    Some(tweet(&serde_json::from_str(&body).ok()?))
+/// An X post: its pages carry no Open Graph data for a client that is not a
+/// known crawler. The words come from oEmbed, X's documented endpoint; the
+/// picture from the syndication endpoint behind X's embeds, which is
+/// undocumented and also answers for posts oEmbed refuses.
+fn x(agent: &ureq::Agent, url: &Url, id: &str) -> Option<Preview> {
+    let oembed = get_json(agent.get("https://publish.x.com/oembed").query_pairs([
+        ("url", url.as_str()),
+        ("omit_script", "1"),
+        ("dnt", "true"),
+    ]))
+    .map(|body| tweet(&body));
+    let syndicated = get_json(
+        agent
+            .get("https://cdn.syndication.twimg.com/tweet-result")
+            .query_pairs([("id", id), ("token", &token(id))]),
+    )
+    .map(|body| syndication(&body));
+    match (oembed, syndicated) {
+        (Some(words), Some(picture)) => Some(Preview {
+            image: picture.image,
+            ..words
+        }),
+        (words, picture) => words.or(picture),
+    }
+}
+
+fn get_json(
+    request: ureq::RequestBuilder<ureq::typestate::WithoutBody>,
+) -> Option<serde_json::Value> {
+    let body = request.call().ok()?.body_mut().read_to_string().ok()?;
+    serde_json::from_str(&body).ok()
+}
+
+/// The token the syndication endpoint is asked with: `(id / 1e15) * π` in
+/// base 36, without its zeros or its point.
+fn token(id: &str) -> String {
+    const DIGITS: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyz";
+    let value = id.parse::<f64>().unwrap_or(0.0) / 1e15 * std::f64::consts::PI;
+    let (mut whole, mut fraction) = (value.trunc() as u64, value.fract());
+    let mut out = Vec::new();
+    loop {
+        out.push(DIGITS[(whole % 36) as usize]);
+        whole /= 36;
+        if whole == 0 {
+            break;
+        }
+    }
+    out.reverse();
+    for _ in 0..11 {
+        fraction *= 36.0;
+        out.push(DIGITS[fraction.trunc() as usize]);
+        fraction = fraction.fract();
+    }
+    out.into_iter()
+        .filter(|digit| *digit != b'0')
+        .map(char::from)
+        .collect()
 }
 
 /// The preview an X oEmbed response describes.
@@ -231,25 +276,66 @@ pub fn tweet(body: &serde_json::Value) -> Preview {
     let field = |key: &str| body.get(key).and_then(|value| value.as_str());
     let handle = field("author_url")
         .and_then(|author| author.trim_end_matches('/').rsplit('/').next())
-        .filter(|handle| !handle.is_empty())
-        .map(|handle| format!("@{handle}"));
-    let title = match (field("author_name"), &handle) {
-        (Some(name), Some(handle)) => Some(format!("{name} ({handle})")),
-        (Some(name), None) => Some(name.to_string()),
-        (None, handle) => handle.clone(),
-    };
+        .filter(|handle| !handle.is_empty());
     let text = field("html").and_then(|html| {
         let start = find(html, "<p")?;
         let open = start + html[start..].find('>')? + 1;
         let end = open + find(&html[open..], "</p")?;
-        let text = decode(&strip(&html[open..end]));
-        let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
-        (!text.is_empty()).then_some(text)
+        Some(decode(&strip(&html[open..end])))
+    });
+    post_preview(field("author_name"), handle, text.as_deref(), None)
+}
+
+/// The preview an X syndication response describes.
+pub fn syndication(body: &serde_json::Value) -> Preview {
+    let text = |value: &serde_json::Value| value.as_str().map(str::to_string);
+    let user = &body["user"];
+    let image = body["photos"][0]["url"]
+        .as_str()
+        .or_else(|| body["mediaDetails"][0]["media_url_https"].as_str())
+        .or_else(|| body["video"]["poster"].as_str())
+        .map(str::to_string)
+        .or_else(|| {
+            let avatar = user["profile_image_url_https"].as_str()?;
+            Some(avatar.replace("_normal.", "_400x400."))
+        });
+    post_preview(
+        user["name"].as_str(),
+        user["screen_name"].as_str(),
+        text(&body["text"]).as_deref(),
+        image,
+    )
+}
+
+/// A post's card: its author as the title, its words without the media links
+/// X appends, and the handle in the footer.
+fn post_preview(
+    name: Option<&str>,
+    handle: Option<&str>,
+    text: Option<&str>,
+    image: Option<String>,
+) -> Preview {
+    let handle = handle.map(|handle| format!("@{handle}"));
+    let title = match (name, &handle) {
+        (Some(name), Some(handle)) => Some(format!("{name} ({handle})")),
+        (Some(name), None) => Some(name.to_string()),
+        (None, handle) => handle.clone(),
+    };
+    let text = text.map(|text| {
+        let mut words: Vec<&str> = text.split_whitespace().collect();
+        while words.last().is_some_and(|word| {
+            ["pic.twitter.com/", "pic.x.com/", "https://t.co/"]
+                .iter()
+                .any(|link| word.starts_with(link))
+        }) {
+            words.pop();
+        }
+        words.join(" ")
     });
     Preview {
         title: title.map(Into::into),
-        description: text.map(Into::into),
-        image: None,
+        description: text.filter(|text| !text.is_empty()).map(Into::into),
+        image: image.map(Into::into),
         icon: Some("https://abs.twimg.com/favicons/twitter.3.ico".into()),
         label: handle.map(Into::into),
     }
