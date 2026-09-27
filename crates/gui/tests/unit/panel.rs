@@ -311,7 +311,7 @@ fn terminal_menu_and_new_tab_use_cmd_t(cx: &mut gpui::TestAppContext) {
     let window = cx.add_window(|_, cx| Panel::new(std::env::temp_dir(), cx));
     window
         .update(cx, |panel, window, cx| {
-            let items = Panel::items(&panel.launchers(), window);
+            let items = Panel::items(&panel.launchers(cx), window);
             let Item::Action { keystroke, .. } = &items[1] else {
                 panic!("terminal action")
             };
@@ -375,6 +375,7 @@ fn switched_off_tabs_leave_the_launchers_and_close(cx: &mut gpui::TestAppContext
                 PanelTabs {
                     review: true,
                     files: false,
+                    browser: true,
                 },
                 cx,
             );
@@ -382,8 +383,8 @@ fn switched_off_tabs_leave_the_launchers_and_close(cx: &mut gpui::TestAppContext
             assert_eq!(panel.files_state(), None);
             panel.choose(Launch::Files, window, cx);
             assert!(!panel.files_open);
-            let labels: Vec<_> = panel.launchers().iter().map(|l| l.label()).collect();
-            assert_eq!(labels, ["Review", "Terminal"]);
+            let labels: Vec<_> = panel.launchers(cx).iter().map(|l| l.label()).collect();
+            assert_eq!(labels, ["Review", "Terminal", "Browser"]);
             assert_eq!(
                 panel.switched_off().as_deref(),
                 Some("Files is off in Settings")
