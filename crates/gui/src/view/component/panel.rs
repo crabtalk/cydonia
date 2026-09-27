@@ -41,6 +41,9 @@ gpui::actions!(
 
 struct FilesResize;
 
+/// A panel tab carried along its own strip.
+struct TabDrag(usize);
+
 /// The launch view's link to the settings that switch its tabs back on.
 pub struct OpenFeatures;
 
@@ -696,7 +699,8 @@ impl Render for Panel {
                                     )
                                 }
                             };
-                            let mut label = tabs::Label::new(name).with_icon(icon);
+                            let name = gpui::SharedString::from(name);
+                            let mut label = tabs::Label::new(name.clone()).with_icon(icon);
                             // Unsaved work is the mark rather than a bullet in
                             // the name: the name truncates and the mark does
                             // not.
@@ -715,6 +719,23 @@ impl Render for Panel {
                                     this.strip.activate(&id);
                                     this.focus(window, cx);
                                     cx.notify();
+                                }))
+                                .on_drag(TabDrag(id), {
+                                    let name = name.clone();
+                                    move |_, _, _, cx| {
+                                        cx.new(|_| crate::view::sidebar::Carried(name.clone()))
+                                    }
+                                })
+                                .drag_over::<TabDrag>(|style, _, _, cx| {
+                                    style.bg(Theme::of(cx).element_active)
+                                })
+                                .on_drop(cx.listener(move |this, drag: &TabDrag, _, cx| {
+                                    if let (Some(from), Some(to)) =
+                                        (this.strip.index_of(&drag.0), this.strip.index_of(&id))
+                                    {
+                                        this.strip.reorder(from, to);
+                                        cx.notify();
+                                    }
                                 }))
                                 .child(tabs::close(&theme, key, tabs::Close::OnHover).on_click(
                                     cx.listener(move |this, _, window, cx| {
