@@ -536,6 +536,8 @@ pub struct Cydonia {
     /// What the name field is attached to, and the field itself.
     pub(crate) renaming: Option<Renaming>,
     pub(crate) name_field: Entity<TextField>,
+    /// The sidebar's search across projects — see [`crate::view::search`].
+    pub(crate) search: crate::view::search::Search,
     meter: Entity<Stats>,
     meter_at: Floating,
     /// The rail's scroll. A step taken from the keyboard has to bring its
@@ -1032,6 +1034,7 @@ impl Cydonia {
             menu_pressed: false,
             renaming: None,
             name_field,
+            search: crate::view::search::Search::new(cx),
             rail: UniformListScrollHandle::new(),
             focus: cx.focus_handle(),
         };

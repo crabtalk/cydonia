@@ -219,6 +219,7 @@ fn menus(cx: &App) -> Vec<Menu> {
             // [`crate::view::keymap::Command::PlainText`].
             MenuItem::action("Plain Text", TogglePlainText),
             MenuItem::action("Find", crate::view::board::FindCard),
+            MenuItem::action("Search Projects", crate::view::search::ToggleSearch),
             MenuItem::separator(),
             MenuItem::action("Enter Full Screen", ToggleFullScreen),
         ]),
@@ -346,6 +347,7 @@ impl Cydonia {
         let entries = showing.is_some();
 
         root.on_action(cx.listener(Self::toggle_sidebar_action))
+            .on_action(cx.listener(Self::toggle_search))
             .on_action(cx.listener(Self::open_project_action))
             .on_action(cx.listener(Self::open_settings_action))
             .when(project, |root| {

@@ -21,7 +21,7 @@ use crate::{
         root::{self, CommitName, Cydonia, DismissName, NewSession, OpenProject},
     },
 };
-use artifact::space::Member;
+use artifact::{search::Kind, space::Member};
 use bezel::ui::scroll as scrollbars;
 #[cfg(feature = "desktop")]
 use bezel::ui::widgets::Content;
@@ -403,6 +403,7 @@ impl Cydonia {
                     .children(self.app_menu(window, cx))
                     .child(self.fold_toggle(cx)),
             )
+            .children(self.search_bar(cx))
             .child(
                 div()
                     .relative()
@@ -1022,6 +1023,9 @@ impl Cydonia {
     /// thousand articles costs a thousand `Row`s here and reads a title for
     /// none of them.
     pub(crate) fn rows(&self, cx: &Context<Self>) -> Vec<Row> {
+        if let Some(hits) = self.search.hits.clone() {
+            return self.search_rows(&hits, cx);
+        }
         let mut rows = Vec::new();
         for p in 0..self.workspace.read(cx).projects.len() {
             rows.push(Row::Project(p));
@@ -1031,6 +1035,46 @@ impl Cydonia {
         }
         // After the projects, because a space is not inside one.
         rows.extend(self.space_rows(cx));
+        rows
+    }
+
+    /// What a search leaves listed: each project holding a hit, and under it
+    /// every entry that does, archived or not and folded or not.
+    fn search_rows(&self, hits: &crate::view::search::Hits, cx: &App) -> Vec<Row> {
+        let workspace = self.workspace.read(cx);
+        let features = &workspace.settings.features;
+        let mut rows = Vec::new();
+        for (p, open) in workspace.projects.iter().enumerate() {
+            let Some(found) = hits.get(&open.path) else {
+                continue;
+            };
+            let hit = |kind: Kind, id: &str| found.contains(&(kind, id.to_owned()));
+            let entries: Vec<Row> = self
+                .ranked(p, cx)
+                .into_iter()
+                .map(|entry| entry.row)
+                .filter(|row| shown(*row, features))
+                .filter(|row| match *row {
+                    Row::Session { id, .. } => open
+                        .session(id)
+                        .and_then(|chat| chat.record.as_deref())
+                        .is_some_and(|record| hit(Kind::Session, record)),
+                    Row::Board { ix, .. } => open
+                        .boards
+                        .get(ix)
+                        .is_some_and(|board| hit(Kind::Board, &board.id)),
+                    Row::Article { ix, .. } => open
+                        .articles
+                        .get(ix)
+                        .is_some_and(|article| hit(Kind::Article, &article.id)),
+                    _ => false,
+                })
+                .collect();
+            if !entries.is_empty() {
+                rows.push(Row::Project(p));
+                rows.extend(entries);
+            }
+        }
         rows
     }
 
@@ -1048,6 +1092,12 @@ impl Cydonia {
             Row::Space(ix) => self.open_space(ix, window, cx),
             // A heading over the spaces, and nothing to open.
             Row::Spaces => {}
+        }
+        if matches!(
+            row,
+            Row::Session { .. } | Row::Board { .. } | Row::Article { .. }
+        ) {
+            self.carry_search(cx);
         }
     }
 
@@ -1126,8 +1176,19 @@ impl Cydonia {
         let label = SharedString::from(self.label_of_row(row, cx));
         let entry = !matches!(row, Row::Project(_) | Row::Archive(_) | Row::Spaces);
         let archived = self.archived_of(row, cx);
+        let searching = self.search.hits.is_some();
         div()
             .id(SharedString::from(format!("sidebar-hover-{}", key_of(row))))
+            // After the row's own click has opened it, so the find bar is the
+            // one in the pane that now shows it.
+            .when(entry && searching, |el| {
+                el.on_mouse_up(
+                    MouseButton::Left,
+                    cx.listener(|_, _, window, cx| {
+                        cx.defer_in(window, |this, _, cx| this.carry_search(cx));
+                    }),
+                )
+            })
             .when(entry, |el| {
                 el.on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
                     this.sidebar_hover(Menu::Entry(row), *hovered, cx);

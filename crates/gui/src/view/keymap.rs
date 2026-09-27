@@ -66,6 +66,7 @@ pub enum Command {
     PrevEntry,
     PlainText,
     FindCard,
+    Search,
 }
 
 /// Which menu a command is reached by, so the section is read in the order the
@@ -91,7 +92,7 @@ impl Menu {
 }
 
 impl Command {
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 18] = [
         Self::OpenSettings,
         Self::NewSession,
         Self::NewSessionNext,
@@ -109,6 +110,7 @@ impl Command {
         Self::PrevEntry,
         Self::PlainText,
         Self::FindCard,
+        Self::Search,
     ];
 
     /// The key it is written under, inside `[shortcuts]`.
@@ -131,6 +133,7 @@ impl Command {
             Self::PrevEntry => "prev_entry",
             Self::PlainText => "plain_text",
             Self::FindCard => "find_card",
+            Self::Search => "search",
         }
     }
 
@@ -154,6 +157,7 @@ impl Command {
             Self::PrevEntry => "Previous Entry",
             Self::PlainText => "Plain Text",
             Self::FindCard => "Find",
+            Self::Search => "Search Projects",
         }
     }
 
@@ -175,7 +179,8 @@ impl Command {
             | Self::NextEntry
             | Self::PrevEntry
             | Self::PlainText
-            | Self::FindCard => Menu::View,
+            | Self::FindCard
+            | Self::Search => Menu::View,
         }
     }
 
@@ -207,6 +212,7 @@ impl Command {
             Self::OpenReview => "secondary-shift-g",
             Self::PlainText => "secondary-e",
             Self::FindCard => "secondary-f",
+            Self::Search => "secondary-shift-s",
         })
     }
 
@@ -236,6 +242,7 @@ impl Command {
             // filter — see [`bind_all`]. Scoped rather than left app-wide
             // because commands are bound last and would take the chord from
             // it.
+            Self::Search => KeyBinding::new(chord, super::search::ToggleSearch, context),
             Self::FindCard => KeyBinding::new(
                 chord,
                 board::FindCard,
@@ -395,6 +402,7 @@ pub fn bind_all(shortcuts: &Shortcuts, cx: &mut App) {
     cx.bind_keys(article::bindings());
     cx.bind_keys(board::bindings());
     cx.bind_keys(super::find::bindings());
+    cx.bind_keys(super::search::bindings());
     cx.bind_keys(composer::bindings());
     cx.bind_keys(create::bindings());
     cx.bind_keys(info::bindings());
