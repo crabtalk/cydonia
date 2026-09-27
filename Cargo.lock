@@ -2179,6 +2179,7 @@ dependencies = [
  "anyhow",
  "cacp",
  "notify",
+ "regex",
  "rusqlite",
  "serde",
  "serde_json",

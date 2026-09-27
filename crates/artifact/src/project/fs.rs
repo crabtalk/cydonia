@@ -150,6 +150,44 @@ impl Project {
             .collect()
     }
 
+    /// Every article's `content.md` in this project by the article's id,
+    /// unread.
+    pub fn article_files(&self) -> Vec<(String, PathBuf)> {
+        let Ok(entries) = std::fs::read_dir(article::dir(&self.root)) else {
+            return Vec::new();
+        };
+        entries
+            .flatten()
+            .map(|entry| article::content(&entry.path()))
+            .filter(|content| content.is_file())
+            .map(|content| (article::id_of(&content), content))
+            .collect()
+    }
+
+    /// Every board file in this project by the board's id, unread.
+    pub fn board_files(&self) -> Vec<(String, PathBuf)> {
+        let Ok(entries) = std::fs::read_dir(self.boards_dir()) else {
+            return Vec::new();
+        };
+        entries
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().is_some_and(|ext| ext == "toml"))
+            .map(|path| (stem(&path), path))
+            .collect()
+    }
+
+    /// One board file as it is on disk: ids it lacks are not minted and
+    /// nothing is written back.
+    pub fn read_board_file(&self, path: &Path) -> Option<Board> {
+        self.read_board(path)
+    }
+
+    /// The article whose `content.md` this is.
+    pub fn describe_article(&self, content: &Path) -> Option<Article> {
+        content.is_file().then(|| self.describe(content))
+    }
+
     /// The `content.md` of an article that is here.
     fn article_file(&self, id: &str) -> Result<PathBuf> {
         let content = article::content(&article::dir(&self.root).join(component(id)?));
