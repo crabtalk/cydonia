@@ -203,9 +203,9 @@ pub(crate) enum Renaming {
     Column(String, String),
 }
 
-/// A heading over a section: smaller and heavier than a row and in the faintest
-/// ink, set on the row's foot so the room a row leaves falls above it. Not
-/// [`row`]: that carries the pointer and the hover wash.
+/// A heading over a section: a row's size in the faintest ink, set on the
+/// row's foot so the room a row leaves falls above it. Not [`row`]: that
+/// carries the pointer and the hover wash.
 fn section_label(label: &'static str, theme: &Theme) -> Div {
     div()
         .h(px(ROW_PILL))
@@ -215,8 +215,7 @@ fn section_label(label: &'static str, theme: &Theme) -> Div {
         .flex()
         .flex_row()
         .items_end()
-        .text_style(TextStyle::Subheadline)
-        .font_weight(FontWeight::SEMIBOLD)
+        .text_style(TextStyle::Body)
         .text_color(theme.text_faint)
         .child(label)
 }
@@ -682,14 +681,9 @@ impl Cydonia {
             .into_any_element()
     }
 
-    /// A project's or a space's heading. Its mark folds it; a press on the
-    /// rest folds a project and opens a space, which is the one thing the two
-    /// do differently.
-    ///
-    /// Never lit the way an entry is: the lit row is the entry in the focused
-    /// pane — see [`Self::light_of`] — and a space's heading takes that only
-    /// while the space is open and folded, so the entry it would light is
-    /// hidden under it.
+    /// A project's or a space's heading: a press folds it. A space opens from
+    /// the entries under it, and its heading is never lit — the lit row is the
+    /// entry in the focused pane, see [`Self::light_of`].
     ///
     /// `pinned` is the copy [`Cydonia::pinned_head`] holds at the top of the
     /// list. It gives up the pill for the column's full width, and takes the
@@ -720,7 +714,7 @@ impl Cydonia {
                         space.label().to_owned(),
                         workspace.space_folded(&space.id),
                         (
-                            icons::layout::LayoutDashboard.into(),
+                            icons::layout::LayoutFreeform.into(),
                             icons::layout::LayoutDashboard.into(),
                         ),
                         Some(space.id.clone()),
@@ -728,9 +722,6 @@ impl Cydonia {
                     None => return Empty.into_any_element(),
                 },
             };
-        // The space the window is arranged by.
-        let here = matches!(group, Group::Space(ix) if workspace.space == Some(ix));
-        let selected = !pinned && here && folded;
         let key = key_of(Row::Group(group));
         let carried = SharedString::from(name.clone());
         let (menu, add) = match group {
@@ -752,15 +743,11 @@ impl Cydonia {
                 .flex_1()
                 .min_w_0()
                 .truncate()
-                .text_style(TextStyle::Body)
-                .line_height(px(18.))
+                .text_style(TextStyle::Callout)
                 .font_weight(FontWeight::MEDIUM)
+                .line_height(px(18.))
                 .child(name)
                 .into_any_element(),
-        };
-        let mark = match here {
-            true => theme.accent,
-            false => theme.text_muted,
         };
         let head = div()
             .id(SharedString::from(format!("group-{key}")))
@@ -789,15 +776,16 @@ impl Cydonia {
                     .h(px(ROW_PILL))
                     .rounded(px(Theme::control_radius()))
             })
-            .when(selected, |el| el.bg(theme.element_active))
             .flex()
             .flex_row()
             .items_center()
             .gap(px(6.))
             .cursor_pointer()
-            // A group, so a step above the entries under it.
-            .text_color(theme.text)
-            .font_weight(FontWeight::MEDIUM)
+            // On the head, not the label: a name's colour is fixed when its
+            // text is laid out, and only this div is stateful enough to carry
+            // the hover that far.
+            .text_color(theme.text_faint)
+            .hover(|el| el.text_color(theme.text))
             .child(
                 theme
                     .ghost(SharedString::from(format!("group-fold-{key}")))
@@ -809,13 +797,8 @@ impl Cydonia {
                             true => marks.1,
                         })
                         .size(px(14.))
-                        .text_color(mark)
-                        .group_hover("group-head", move |el| {
-                            el.text_color(match here {
-                                true => mark,
-                                false => theme.text,
-                            })
-                        }),
+                        .text_color(theme.text_faint)
+                        .group_hover("group-head", |el| el.text_color(theme.text)),
                     )
                     .on_click(cx.listener(move |this, _, _, cx| {
                         cx.stop_propagation();
@@ -860,13 +843,10 @@ impl Cydonia {
             // goes back to the heading it is standing in for, rather than
             // folding away what you are reading. Its own mark still folds —
             // that press stops before it reaches here.
-            .on_click(
-                cx.listener(move |this, _, window, cx| match (pinned, group) {
-                    (true, _) => this.scroll_to_group(group, cx),
-                    (false, Group::Project(_)) => this.fold_group(group, cx),
-                    (false, Group::Space(ix)) => this.open_space(ix, window, cx),
-                }),
-            )
+            .on_click(cx.listener(move |this, _, _, cx| match pinned {
+                true => this.scroll_to_group(group, cx),
+                false => this.fold_group(group, cx),
+            }))
             // Carried by its heading, and dropped on the heading of its own
             // kind it is to sit in front of.
             .on_drag(GroupDrag(group), move |_, _, _, cx| {
