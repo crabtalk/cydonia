@@ -2224,9 +2224,6 @@ impl Cydonia {
             Item::action("Delete").with_icon(icons::files::Trash),
             move |this, _, cx| this.ask_delete(entry, cx),
         ));
-        if let Menu::Tab(tab) = &at {
-            rows.insert(0, Self::close_tab_row(tab));
-        }
         let id = SharedString::from("header-menu-card");
         // A right press carries a point, and the card stands at it. From a
         // button — the `···`, the pin — there is none, and the card drops
