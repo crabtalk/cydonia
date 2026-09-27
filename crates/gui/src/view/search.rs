@@ -319,7 +319,7 @@ impl Cydonia {
             .child(
                 icons::icon(icons::text::Search)
                     .size(px(14.))
-                    .text_color(theme.text_faint),
+                    .text_color(theme.text_muted),
             )
             .child(
                 div()

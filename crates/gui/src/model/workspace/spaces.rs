@@ -59,6 +59,20 @@ impl Workspace {
         spaces
     }
 
+    /// Whether a section of the sidebar has its rows hidden, by name.
+    pub fn section_folded(&self, name: &str) -> bool {
+        self.folded_sections.contains(name)
+    }
+
+    /// Hide a section's rows in the sidebar, or show them again.
+    pub fn toggle_section(&mut self, name: &str, cx: &mut Context<Self>) {
+        if !self.folded_sections.remove(name) {
+            self.folded_sections.insert(name.to_owned());
+        }
+        self.save();
+        cx.notify();
+    }
+
     /// Whether a space's members are hidden in the sidebar.
     pub fn space_folded(&self, id: &str) -> bool {
         self.folded_spaces.contains(id)

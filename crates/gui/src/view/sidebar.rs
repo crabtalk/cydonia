@@ -106,6 +106,23 @@ pub(crate) enum Heading {
     Spaces,
 }
 
+impl Heading {
+    /// What the heading is called, on screen and in `state.toml`.
+    fn label(self) -> &'static str {
+        match self {
+            Self::Projects => "Projects",
+            Self::Spaces => "Spaces",
+        }
+    }
+
+    fn key(self) -> &'static str {
+        match self {
+            Self::Projects => "projects",
+            Self::Spaces => "spaces",
+        }
+    }
+}
+
 /// What entries are listed under: a project holds its own, a space the ones it
 /// arranges. One heading, one fold and one drag for both — see
 /// [`Cydonia::group_head`].
@@ -201,23 +218,6 @@ pub(crate) enum Renaming {
     /// own header instead, which works because only one thing is ever being
     /// named.
     Column(String, String),
-}
-
-/// A heading over a section: a row's size in the faintest ink, set on the
-/// row's foot so the room a row leaves falls above it. Not [`row`]: that
-/// carries the pointer and the hover wash.
-fn section_label(label: &'static str, theme: &Theme) -> Div {
-    div()
-        .h(px(ROW_PILL))
-        .mx(px(root::SIDEBAR_GUTTER))
-        .px(px(root::SIDEBAR_GUTTER))
-        .pb(px(4.))
-        .flex()
-        .flex_row()
-        .items_end()
-        .text_style(TextStyle::Body)
-        .text_color(theme.text_faint)
-        .child(label)
 }
 
 /// What an entry's row is written in: the one on screen at full strength, one
@@ -328,6 +328,20 @@ pub(crate) fn row(
     indent: u8,
     theme: &Theme,
 ) -> Stateful<Div> {
+    row_frame(id, group, indent)
+        .when(selected, |el| el.bg(theme.element_active))
+        // Only off the open row: the hover wash is the weaker rung, and
+        // painting it over the selection would dim what the pointer is on.
+        .when(!selected, |el| el.hover(|el| el.bg(theme.element_hover)))
+}
+
+/// A row's place in the column with none of its washes: what a line that is
+/// never selected and takes no hover wash — a section's heading — stands in.
+pub(crate) fn row_frame(
+    id: impl Into<gpui::ElementId>,
+    group: &'static str,
+    indent: u8,
+) -> Stateful<Div> {
     div()
         .id(id)
         .group(group)
@@ -348,10 +362,6 @@ pub(crate) fn row(
         .gap(px(ROW_GAP))
         .rounded(px(Theme::control_radius()))
         .cursor_pointer()
-        .when(selected, |el| el.bg(theme.element_active))
-        // Only off the open row: the hover wash is the weaker rung, and
-        // painting it over the selection would dim what the pointer is on.
-        .when(!selected, |el| el.hover(|el| el.bg(theme.element_hover)))
 }
 
 /// One entry of a project, with what the list can be ordered by.
@@ -784,7 +794,7 @@ impl Cydonia {
             // On the head, not the label: a name's colour is fixed when its
             // text is laid out, and only this div is stateful enough to carry
             // the hover that far.
-            .text_color(theme.text_faint)
+            .text_color(theme.text_muted)
             .hover(|el| el.text_color(theme.text))
             .child(
                 theme
@@ -797,7 +807,7 @@ impl Cydonia {
                             true => marks.1,
                         })
                         .size(px(14.))
-                        .text_color(theme.text_faint)
+                        .text_color(theme.text_muted)
                         .group_hover("group-head", |el| el.text_color(theme.text)),
                     )
                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -1139,6 +1149,9 @@ impl Cydonia {
         let mut rows = Vec::new();
         for (heading, groups) in sections {
             rows.push(Row::Heading(heading));
+            if workspace.section_folded(heading.key()) {
+                continue;
+            }
             for group in groups {
                 rows.push(Row::Group(group));
                 if !self.folded(group, cx) {
@@ -1247,10 +1260,7 @@ impl Cydonia {
                     None => Empty.into_any_element(),
                 }
             }
-            Row::Heading(Heading::Projects) => self.projects_label(cx),
-            Row::Heading(Heading::Spaces) => {
-                section_label("Spaces", &Theme::of(cx).clone()).into_any_element()
-            }
+            Row::Heading(heading) => self.heading_row(heading, cx),
         };
         let carried = self.drag_of_row(row, cx);
         let label = SharedString::from(self.label_of_row(row, cx));
@@ -1499,44 +1509,62 @@ impl Cydonia {
         .into_any_element()
     }
 
-    /// The line the spaces are listed under.
-    ///
-    /// It says what the rows below it are, which the rows cannot: a space is
-    /// not inside a project, so what follows the last project would otherwise
-    /// read as more of it. Nothing folds here — each space carries its own
-    /// fold, and a second one over the group would be two ways to hide a row.
-    /// The heading over the projects, and the way to open another — shown
-    /// while the pointer is on the heading.
-    fn projects_label(&self, cx: &mut Context<Self>) -> AnyElement {
+    /// A section's heading: a press folds the section, and the chevron beside
+    /// the label, shown while the pointer is on the heading, says which way it
+    /// stands. The projects' also holds the way to
+    /// open another, shown while the pointer is on the heading.
+    fn heading_row(&self, heading: Heading, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
-        let chord = keymap::label(
-            Command::OpenProject,
-            &self.workspace.read(cx).settings.shortcuts,
-        );
-        section_label("Projects", &theme)
-            .id("projects-heading")
-            .group("projects-heading")
-            .pr(px(4.))
-            .justify_between()
+        let folded = self.workspace.read(cx).section_folded(heading.key());
+        let group: &'static str = match heading {
+            Heading::Projects => "projects-heading",
+            Heading::Spaces => "spaces-heading",
+        };
+        let open = matches!(heading, Heading::Projects).then(|| {
+            let chord = keymap::label(
+                Command::OpenProject,
+                &self.workspace.read(cx).settings.shortcuts,
+            );
+            // The square every `···` and `+` in this column is, in the
+            // heading's ink.
+            theme
+                .tinted_icon_button(icons::math::Plus, theme.text_faint)
+                .id("open-project")
+                .flex_none()
+                .invisible()
+                .group_hover(group, |el| el.visible())
+                .tooltip(move |window, cx| match chord.clone() {
+                    Some(chord) => Tooltip::with_keystroke("Open project", chord, window, cx),
+                    None => Tooltip::text("Open project", window, cx),
+                })
+                .on_click(cx.listener(|this, _, window, cx| {
+                    cx.stop_propagation();
+                    this.open_project_action(&OpenProject, window, cx);
+                }))
+        });
+        // A row's frame without its washes, the label ahead of its chevron.
+        row_frame(group, group, 0)
+            .text_color(theme.text_faint)
             .child(
-                theme
-                    .ghost("open-project")
-                    .p(px(3.))
-                    .opacity(0.)
-                    .group_hover("projects-heading", |el| el.opacity(1.))
-                    .tooltip(move |window, cx| match chord.clone() {
-                        Some(chord) => Tooltip::with_keystroke("Open project", chord, window, cx),
-                        None => Tooltip::text("Open project", window, cx),
-                    })
-                    .child(
-                        icons::icon(icons::math::Plus)
-                            .size(px(12.))
-                            .text_color(theme.text_faint),
-                    )
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.open_project_action(&OpenProject, window, cx);
-                    })),
+                div()
+                    .flex_none()
+                    .text_style(TextStyle::Body)
+                    .child(heading.label()),
             )
+            .child(
+                div()
+                    .flex_none()
+                    .invisible()
+                    .group_hover(group, |el| el.visible())
+                    .child(theme.disclosure(!folded).text_color(theme.text_faint)),
+            )
+            .child(div().flex_1())
+            .children(open)
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.workspace.update(cx, |workspace, cx| {
+                    workspace.toggle_section(heading.key(), cx)
+                });
+            }))
             .into_any_element()
     }
 
