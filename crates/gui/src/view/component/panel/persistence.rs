@@ -123,7 +123,9 @@ impl Panel {
                     self.terminal(window, cx);
                 }
                 SavedTab::Browser { id, url, title } => {
-                    self.browser(id, url, title, cx);
+                    if self.tabs.browser {
+                        self.browser(id, url, title, cx);
+                    }
                 }
                 SavedTab::File { path, draft } => {
                     self.open_file(path, cx);

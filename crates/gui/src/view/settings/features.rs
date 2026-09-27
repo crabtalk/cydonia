@@ -59,6 +59,12 @@ fn copy(
             "The project's file tree beside the right panel's tabs.",
             None,
         ),
+        Feature::Browser => (
+            icons::navigation::Globe,
+            "Browser",
+            "Web pages as tabs in the right panel.",
+            None,
+        ),
     }
 }
 

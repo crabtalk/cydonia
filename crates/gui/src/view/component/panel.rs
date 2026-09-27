@@ -153,6 +153,16 @@ impl Panel {
                 self.remove(id, cx);
             }
         }
+        if !tabs.browser {
+            let browsers: Vec<usize> = self
+                .ordered()
+                .filter(|(_, tab)| matches!(tab.content, Content::Browser(_)))
+                .map(|(id, _)| id)
+                .collect();
+            for id in browsers {
+                self.remove(id, cx);
+            }
+        }
         if !tabs.files {
             self.files_open = false;
         }
@@ -168,7 +178,7 @@ impl Panel {
         [
             (self.tabs.review, Launch::Review),
             (true, Launch::Terminal),
-            (true, Launch::Browser),
+            (self.tabs.browser, Launch::Browser),
             (self.tabs.files, Launch::Files),
         ]
         .into_iter()
@@ -178,12 +188,21 @@ impl Panel {
 
     /// The launch view's line naming what the settings have switched off.
     fn switched_off(&self) -> Option<String> {
-        match (self.tabs.review, self.tabs.files) {
-            (true, true) => None,
-            (false, false) => Some("Review and Files are off in Settings".into()),
-            (false, true) => Some("Review is off in Settings".into()),
-            (true, false) => Some("Files is off in Settings".into()),
-        }
+        let off: Vec<&str> = [
+            (self.tabs.review, "Review"),
+            (self.tabs.files, "Files"),
+            (self.tabs.browser, "Browser"),
+        ]
+        .into_iter()
+        .filter_map(|(on, name)| (!on).then_some(name))
+        .collect();
+        let names = match off.as_slice() {
+            [] => return None,
+            [one] => one.to_string(),
+            [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+        };
+        let verb = if off.len() == 1 { "is" } else { "are" };
+        Some(format!("{names} {verb} off in Settings"))
     }
 
     fn push(
@@ -352,6 +371,9 @@ impl Panel {
     }
 
     fn new_browser(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.tabs.browser {
+            return;
+        }
         let id = super::browser::new_id();
         let browser = self.browser(id, super::browser::HOME.into(), String::new(), cx);
         let address = browser.read(cx).address_focus(cx);

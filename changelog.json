@@ -12,6 +12,7 @@
   {
     "version": "0.1.18",
     "date": "2026-09-27",
+    "nightly": true,
     "summary": "A ⌘K search palette finds articles, boards and sessions across every open project, with a find bar inside articles and transcripts and link previews in articles.",
     "media": {
       "poster": "pics/cydonia/v0.1.18.jpg",
