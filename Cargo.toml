@@ -55,3 +55,19 @@ lto = "fat"
 codegen-units = 1
 strip = "symbols"
 
+
+[patch.crates-io]
+bezel = { path = "../bezel/crates/bezel" }
+bezel-agent = { path = "../bezel/crates/agent" }
+bezel-theme = { path = "../bezel/crates/theme" }
+bezel-motion = { path = "../bezel/crates/motion" }
+bezel-ui = { path = "../bezel/crates/ui" }
+bezel-icons = { path = "../bezel/crates/icons" }
+bezel-markdown = { path = "../bezel/crates/markdown" }
+bezel-blocks = { path = "../bezel/crates/blocks" }
+bezel-editor = { path = "../bezel/crates/editor" }
+bezel-syntax = { path = "../bezel/crates/syntax" }
+bezel-syntax-std = { path = "../bezel/crates/syntax-std" }
+bezel-terminal = { path = "../bezel/crates/terminal" }
+bezel-canvas = { path = "../bezel/crates/canvas" }
+bezel-browser = { path = "../bezel/crates/browser" }
