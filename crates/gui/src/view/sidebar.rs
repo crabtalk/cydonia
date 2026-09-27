@@ -732,6 +732,7 @@ impl Cydonia {
                     None => return Empty.into_any_element(),
                 },
             };
+        let folded = folded && self.applied_query().is_none();
         let key = key_of(Row::Group(group));
         let carried = SharedString::from(name.clone());
         let (menu, add) = match group {
@@ -1067,6 +1068,9 @@ impl Cydonia {
 
     /// Fold a group's rows away, or bring them back.
     pub(crate) fn fold_group(&mut self, group: Group, cx: &mut Context<Self>) {
+        if self.applied_query().is_some() {
+            return;
+        }
         self.commit(cx);
         match group {
             Group::Project(ix) => self
@@ -1109,7 +1113,7 @@ impl Cydonia {
             let member = self.member_of_row(row, cx)?;
             let at = workspace.space_holding(&member)?;
             let space = workspace.spaces.get(at)?;
-            (!workspace.space_folded(&space.id)).then_some(())
+            (self.applied_query().is_some() || !workspace.space_folded(&space.id)).then_some(())
         };
         // One step under the space holding it, and one only: a row listed
         // there is not also under its project's heading, so the project's own
@@ -1147,6 +1151,33 @@ impl Cydonia {
             sections.push((Heading::Spaces, spaces.collect()));
         }
         let mut rows = Vec::new();
+        if let Some(matches) = self.applied_rows(cx) {
+            for (heading, groups) in sections {
+                let start = rows.len();
+                rows.push(Row::Heading(heading));
+                for group in groups {
+                    let members = match group {
+                        Group::Project(ix) => self.ungrouped(
+                            self.ranked(ix, cx).into_iter().map(|e| e.row).collect(),
+                            cx,
+                        ),
+                        Group::Space(_) => self.members(group, cx),
+                    };
+                    let members: Vec<_> = members
+                        .into_iter()
+                        .filter(|row| matches.contains(row))
+                        .collect();
+                    if !members.is_empty() {
+                        rows.push(Row::Group(group));
+                        rows.extend(members);
+                    }
+                }
+                if rows.len() == start + 1 {
+                    rows.pop();
+                }
+            }
+            return rows;
+        }
         for (heading, groups) in sections {
             rows.push(Row::Heading(heading));
             if workspace.section_folded(heading.key()) {
@@ -1515,7 +1546,8 @@ impl Cydonia {
     /// open another, shown while the pointer is on the heading.
     fn heading_row(&self, heading: Heading, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
-        let folded = self.workspace.read(cx).section_folded(heading.key());
+        let folded =
+            self.applied_query().is_none() && self.workspace.read(cx).section_folded(heading.key());
         let group: &'static str = match heading {
             Heading::Projects => "projects-heading",
             Heading::Spaces => "spaces-heading",
@@ -1561,6 +1593,9 @@ impl Cydonia {
             .child(div().flex_1())
             .children(open)
             .on_click(cx.listener(move |this, _, _, cx| {
+                if this.applied_query().is_some() {
+                    return;
+                }
                 this.workspace.update(cx, |workspace, cx| {
                     workspace.toggle_section(heading.key(), cx)
                 });

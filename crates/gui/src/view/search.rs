@@ -1,5 +1,6 @@
 //! The search palette: every open project's articles, boards and sessions,
-//! raised from the sidebar's Search row.
+//! raised from the sidebar's Search row. Command-Enter applies its draft to
+//! the workspace until the sidebar's clear button is pressed.
 //!
 //! An empty query lists what was touched last. A query is searched off disk on
 //! a background thread — see [`artifact::search::disk`] — so an entry's hits
@@ -26,6 +27,7 @@ use bezel::{
         icons::{self, Icon},
         input::{FieldEvent, TextField},
         popover,
+        widgets::Buttons as _,
     },
 };
 use std::{collections::HashMap, ops::Range, path::PathBuf, sync::mpsc, time::Duration};
@@ -34,6 +36,7 @@ actions!(
     cydonia_search,
     [
         ToggleSearch,
+        ApplySearch,
         DismissSearch,
         SelectNext,
         SelectPrev,
@@ -66,6 +69,7 @@ pub fn bindings() -> Vec<KeyBinding> {
         KeyBinding::new("up", SelectPrev, ctx),
         KeyBinding::new("ctrl-p", SelectPrev, ctx),
         KeyBinding::new("enter", OpenHit, ctx),
+        KeyBinding::new("secondary-enter", ApplySearch, ctx),
         KeyBinding::new("tab", NextFilter, ctx),
         KeyBinding::new("shift-tab", PrevFilter, ctx),
     ]
@@ -81,6 +85,7 @@ pub(crate) struct Hit {
 }
 
 /// An entry's best match as the search found it.
+#[derive(Clone)]
 struct Found {
     root: PathBuf,
     kind: Kind,
@@ -89,7 +94,16 @@ struct Found {
     snippet: Option<(String, Range<usize>)>,
 }
 
+struct Applied {
+    query: Query,
+    filter: Option<Kind>,
+    found: Vec<Found>,
+    ready: bool,
+}
+
 pub(crate) struct Search {
+    applied: Option<Applied>,
+    applied_task: Option<Task<()>>,
     open: bool,
     field: Entity<TextField>,
     /// What the last finished listing found. Kept on screen while the next
@@ -121,6 +135,8 @@ impl Search {
         })
         .detach();
         Self {
+            applied: None,
+            applied_task: None,
             open: false,
             field,
             hits: Vec::new(),
@@ -162,9 +178,88 @@ impl Cydonia {
             return;
         }
         self.search.open = true;
-        self.search.field.update(cx, |field, cx| field.clear(cx));
+        let query = self
+            .search
+            .applied
+            .as_ref()
+            .map(|a| a.query.text().to_owned());
+        self.search.filter = self.search.applied.as_ref().and_then(|a| a.filter);
+        self.search.field.update(cx, |field, cx| {
+            field.set_content(query.unwrap_or_default(), cx);
+        });
         self.refresh_search(cx);
         window.focus(&self.search.field.read(cx).focus_handle(cx), cx);
+        cx.notify();
+    }
+
+    fn apply_search(&mut self, _: &ApplySearch, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(query) = self.search.query(cx) else {
+            return;
+        };
+        self.search.applied = Some(Applied {
+            query,
+            filter: self.search.filter,
+            found: Vec::new(),
+            ready: false,
+        });
+        for leaf in &mut self.leaves {
+            leaf.finding = false;
+            leaf.find_at = 0;
+        }
+        self.refresh_applied_search(cx);
+        self.dismiss_search(&DismissSearch, window, cx);
+    }
+
+    pub(crate) fn refresh_applied_search(&mut self, cx: &mut Context<Self>) {
+        let Some(applied) = self.search.applied.as_mut() else {
+            return;
+        };
+        let query = applied.query.clone();
+        let roots = self
+            .workspace
+            .read(cx)
+            .projects
+            .iter()
+            .map(|p| p.path.clone())
+            .collect::<Vec<_>>();
+        self.search.applied_task = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(SETTLE).await;
+            let found = cx
+                .background_executor()
+                .spawn(async move { search_all(&roots, &query) })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                if let Some(applied) = this.search.applied.as_mut() {
+                    applied.found = found;
+                    applied.ready = true;
+                }
+                cx.notify();
+            });
+        }));
+    }
+
+    pub(crate) fn applied_query(&self) -> Option<&Query> {
+        self.search.applied.as_ref().map(|a| &a.query)
+    }
+
+    pub(crate) fn applied_rows(&self, cx: &App) -> Option<Vec<Row>> {
+        let applied = self.search.applied.as_ref()?;
+        Some(
+            self.ranked_hits(applied.found.clone(), cx)
+                .into_iter()
+                .filter(|hit| {
+                    applied
+                        .filter
+                        .is_none_or(|kind| kind_of(hit.row) == Some(kind))
+                })
+                .map(|hit| hit.row)
+                .collect(),
+        )
+    }
+
+    pub(crate) fn clear_applied_search(&mut self, cx: &mut Context<Self>) {
+        self.search.applied = None;
+        self.search.applied_task = None;
         cx.notify();
     }
 
@@ -313,6 +408,71 @@ impl Cydonia {
     pub(crate) fn search_row(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let chord = keymap::label(Command::Search, &self.workspace.read(cx).settings.shortcuts);
+        if let Some(applied) = &self.search.applied {
+            let label = match applied.filter {
+                Some(kind) => format!(
+                    "{} · {}",
+                    applied.query.text(),
+                    FILTERS.iter().find(|(k, _)| *k == Some(kind)).unwrap().1
+                ),
+                None => applied.query.text().to_owned(),
+            };
+            let count = self.applied_rows(cx).map_or(0, |rows| rows.len());
+            return sidebar::row("applied-search", "applied-search", false, 0, &theme)
+                .flex_none()
+                .min_w_0()
+                .mb(px(4.))
+                .child(
+                    icons::icon(icons::text::Search)
+                        .size(px(14.))
+                        .text_color(theme.text_muted),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .text_style(TextStyle::Body)
+                        .text_color(theme.text)
+                        .child(label),
+                )
+                .child(
+                    div()
+                        .flex_none()
+                        .text_style(TextStyle::Caption)
+                        .text_color(theme.text_muted)
+                        .child(if !applied.ready {
+                            "…".to_owned()
+                        } else {
+                            count.to_string()
+                        }),
+                )
+                .child(
+                    theme
+                        .ghost("clear-workspace-search")
+                        .debug_selector(|| "clear-workspace-search".into())
+                        .flex_none()
+                        .size(px(24.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(
+                            icons::icon(icons::notifications::X)
+                                .size(px(14.))
+                                .text_color(theme.text_muted),
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            cx.stop_propagation();
+                            this.clear_applied_search(cx);
+                        })),
+                )
+                .on_click(
+                    cx.listener(|this, _, window, cx| {
+                        this.toggle_search(&ToggleSearch, window, cx)
+                    }),
+                )
+                .into_any_element();
+        }
         sidebar::row("search-row", "search-row", false, 0, &theme)
             .flex_none()
             .mb(px(4.))
@@ -388,6 +548,7 @@ impl Cydonia {
                         .on_action(cx.listener(Self::select_next))
                         .on_action(cx.listener(Self::select_prev))
                         .on_action(cx.listener(Self::open_selected))
+                        .on_action(cx.listener(Self::apply_search))
                         .on_action(cx.listener(Self::next_filter))
                         .on_action(cx.listener(Self::prev_filter))
                         .child(
@@ -439,7 +600,27 @@ impl Cydonia {
                                         .child(note)
                                 })),
                         )
-                        .child(self.palette_footer(cx)),
+                        .child(self.palette_footer(cx))
+                        .child(
+                            div()
+                                .id("apply-workspace-search")
+                                .px(px(14.))
+                                .py(px(8.))
+                                .border_t_1()
+                                .border_color(theme.border)
+                                .text_style(TextStyle::Subheadline)
+                                .text_color(if empty { theme.text_faint } else { theme.text })
+                                .when(!empty, |el| {
+                                    el.cursor_pointer().hover(|el| el.bg(theme.element_hover))
+                                })
+                                .child(keymap::platform(
+                                    "Apply to workspace  ⌘↵",
+                                    "Apply to workspace  Ctrl+Enter",
+                                ))
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.apply_search(&ApplySearch, window, cx)
+                                })),
+                        ),
                 )
                 .into_any_element(),
         )

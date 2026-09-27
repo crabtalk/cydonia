@@ -22,7 +22,7 @@ use bezel::{
         self, AnyElement, App, Context, Entity, KeyBinding, SharedString, Window, actions, div,
         prelude::*, px,
     },
-    theme::Theme,
+    theme::{TextStyle, Theme, Typeset as _},
     ui::{icons, input::TextField, tooltip::Tooltip, widgets::Buttons as _},
 };
 use editor::{Anchor, AnchorId};
@@ -101,9 +101,11 @@ impl Cydonia {
     /// The query a pane finds by, while its bar is up and holds one.
     fn text_query(&self, on: Option<&Member>, cx: &App) -> Option<Query> {
         let leaf = self.leaf_of(on);
-        leaf.finding
-            .then(|| Query::literal(leaf.find_field.read(cx).content()))
-            .flatten()
+        if leaf.finding {
+            Query::literal(leaf.find_field.read(cx).content())
+        } else {
+            self.applied_query().cloned()
+        }
     }
 
     fn found(&self, on: Option<&Member>, cx: &App) -> Option<Found> {
@@ -203,6 +205,22 @@ impl Cydonia {
         cx.notify();
     }
 
+    /// Opening a filtered entry starts at its first match, not its saved viewport.
+    pub(crate) fn reveal_applied_match(&mut self, cx: &mut Context<Self>) {
+        if self.applied_query().is_none() {
+            return;
+        }
+        self.leaf_mut().finding = false;
+        self.leaf_mut().find_at = 0;
+        let on = self.leaf().entry.clone();
+        if self.leaf().pane == Pane::Board {
+            self.reveal_board_match(on.as_ref(), cx);
+        } else {
+            self.reveal_find(on.as_ref(), cx);
+        }
+        cx.notify();
+    }
+
     /// Bring the current hit into view and mark it.
     fn reveal_find(&mut self, on: Option<&Member>, cx: &mut Context<Self>) {
         let at = self.leaf_of(on).find_at;
@@ -244,22 +262,39 @@ impl Cydonia {
 
     /// The bar over an article or a transcript: the field, how many hits and
     /// which, and the ways between them.
-    pub(crate) fn text_find_bar(
+    pub(crate) fn search_pill(
         &self,
         on: Option<&Member>,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let leaf = self.leaf_of(on);
-        if !leaf.finding {
+        if !leaf.finding && self.applied_query().is_none() {
             return None;
         }
         let theme = Theme::of(cx).clone();
-        let count: Option<SharedString> =
+        let board = on.map_or(leaf.pane == Pane::Board, |member| {
+            member.kind == Kind::Board
+        });
+        let count: Option<SharedString> = if board {
+            let query = self.board_query(on, cx);
+            self.workspace.read(cx).board_of(on).map(|board| {
+                let count = board
+                    .columns
+                    .iter()
+                    .flat_map(|column| &column.cards)
+                    .filter(|card| {
+                        board::card_matches(card, board.handle_of(card).as_deref(), &query)
+                    })
+                    .count();
+                format!("{count} cards").into()
+            })
+        } else {
             self.found(on, cx)
                 .map(|found| match current(leaf.find_at, found.len()) {
                     Some(at) => format!("{} of {}", at + 1, found.len()).into(),
                     None => "no results".into(),
-                });
+                })
+        };
         let step =
             |id: &'static str, icon, tip: &'static str, by: isize, cx: &mut Context<Self>| {
                 theme
@@ -275,10 +310,14 @@ impl Cydonia {
             };
         Some(
             div()
+                .id("search-pill")
+                .debug_selector(|| "search-pill".into())
                 .absolute()
                 .top(px(12.))
                 .right(px(16.))
-                .w(px(320.))
+                .w(px(240.))
+                .h(px(26.))
+                .text_style(TextStyle::Body)
                 .flex()
                 .flex_row()
                 .items_center()
@@ -299,7 +338,19 @@ impl Cydonia {
                         .size(px(14.))
                         .text_color(theme.text_faint),
                 )
-                .child(div().flex_1().min_w_0().child(leaf.find_field.clone()))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .when(leaf.finding, |el| el.child(leaf.find_field.clone()))
+                        .when(!leaf.finding, |el| {
+                            el.truncate().child(
+                                self.applied_query()
+                                    .map(|q| q.text().to_owned())
+                                    .unwrap_or_default(),
+                            )
+                        }),
+                )
                 .children(count.map(|count| {
                     div()
                         .flex_none()
@@ -307,25 +358,26 @@ impl Cydonia {
                         .text_color(theme.text_faint)
                         .child(count)
                 }))
-                .child(step(
-                    "find-prev",
-                    icons::arrows::ChevronUp,
-                    "Previous match",
-                    -1,
-                    cx,
-                ))
-                .child(step(
-                    "find-next",
-                    icons::arrows::ChevronDown,
-                    "Next match",
-                    1,
-                    cx,
-                ))
-                .child(
+                .children((!board).then(|| {
+                    step(
+                        "find-prev",
+                        icons::arrows::ChevronUp,
+                        "Previous match",
+                        -1,
+                        cx,
+                    )
+                }))
+                .children(
+                    (!board).then(|| {
+                        step("find-next", icons::arrows::ChevronDown, "Next match", 1, cx)
+                    }),
+                )
+                .child({
                     theme
                         .ghost("find-close")
+                        .debug_selector(|| "find-close".into())
+                        .flex_none()
                         .p(px(4.))
-                        .rounded_full()
                         .child(
                             icons::icon(icons::notifications::X)
                                 .size(px(12.))
@@ -335,13 +387,18 @@ impl Cydonia {
                         .on_click(cx.listener(|this, _, window, cx| {
                             cx.stop_propagation();
                             this.dismiss_text_find(window, cx);
-                        })),
-                )
+                        }))
+                })
                 .into_any_element(),
         )
     }
 
     fn dismiss_text_find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.leaf().finding && self.applied_query().is_some() {
+            self.clear_applied_search(cx);
+            window.focus(&self.leaf().focus, cx);
+            return;
+        }
         let on = self.leaf().entry.clone();
         self.clear_text_find(on.as_ref(), cx);
         self.dismiss_find(&DismissFind, window, cx);

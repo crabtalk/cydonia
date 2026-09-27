@@ -224,6 +224,7 @@ impl Cydonia {
             (_, _, Some(editor)) => window.focus(&editor.focus_handle(cx), cx),
             _ => {}
         }
+        self.reveal_applied_match(cx);
         cx.notify();
     }
 
@@ -516,7 +517,7 @@ impl Cydonia {
                             &article.scroll,
                             bezel::gpui::Axis::Vertical,
                         ))
-                        .children(self.text_find_bar(on, cx)),
+                        .children(self.search_pill(on, cx)),
                 )
                 // Last, and floated over the document from where the
                 // selection ends — the bar is chrome the page runs under.

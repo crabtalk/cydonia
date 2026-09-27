@@ -377,6 +377,7 @@ impl Cydonia {
         self.sync_leaves(window, cx);
         self.focused = usize::MAX;
         self.focus_pane(tab, window, cx);
+        self.reveal_applied_match(cx);
         cx.notify();
     }
 

@@ -939,6 +939,7 @@ impl Cydonia {
         // ended; the composer's placeholder, commands and busy state are all
         // read back from it rather than pushed by whoever caused the change.
         cx.observe_in(&workspace, window, |this, _, window, cx| {
+            this.refresh_applied_search(cx);
             let previous = this.leaf().composer.read(cx).session();
             this.sync_composer(cx);
             let current = this.leaf().composer.read(cx).session();
@@ -1309,6 +1310,7 @@ impl Cydonia {
         self.workspace
             .update(cx, |workspace, cx| workspace.select_session(id, cx));
         self.sync_composer(cx);
+        self.reveal_applied_match(cx);
         if self
             .workspace
             .read(cx)

@@ -143,6 +143,7 @@ pub fn bindings() -> Vec<KeyBinding> {
 pub fn find_field(cx: &mut App) -> Entity<TextField> {
     cx.new(|cx| {
         TextField::new(cx)
+            .with_frame(false)
             .with_key_context(FIND_CONTEXT)
             .with_placeholder("find a card…")
     })
@@ -150,7 +151,7 @@ pub fn find_field(cx: &mut App) -> Entity<TextField> {
 
 /// Does this card answer the query? Matched against what a card is named by:
 /// its handle, which is how `DEV-38` gets referred to in prose, and its text.
-fn card_matches(card: &Card, handle: Option<&str>, query: &str) -> bool {
+pub(crate) fn card_matches(card: &Card, handle: Option<&str>, query: &str) -> bool {
     let query = query.trim().to_lowercase();
     if query.is_empty() {
         return true;
@@ -226,12 +227,17 @@ struct Tally {
 fn card_body(
     doc: &markdown::Doc,
     base: Option<&std::path::Path>,
+    query: Option<&artifact::search::Query>,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
+    let washes = query
+        .map(|query| crate::view::find::annotations(&crate::view::find::hits(doc, query), None))
+        .unwrap_or_default();
     markdown::render_with(
         doc,
         markdown::Editing {
+            annotations: &washes,
             base,
             // A picture in a lane this narrow is a picture. Its alt text spelled
             // out underneath would be most of the card.
@@ -249,6 +255,7 @@ fn card_body(
 fn card_preview(
     doc: &markdown::Doc,
     base: Option<&std::path::Path>,
+    query: Option<&artifact::search::Query>,
     shortened: bool,
     overflow: Entity<bool>,
     window: &mut Window,
@@ -260,7 +267,7 @@ fn card_preview(
         .child(
             div()
                 .relative()
-                .child(card_body(doc, base, window, cx))
+                .child(card_body(doc, base, query, window, cx))
                 .child(
                     gpui::canvas(
                         move |bounds, _, cx| {
@@ -747,6 +754,7 @@ impl Render for HeldCard {
             .child(card_body(
                 &markdown::parse(&self.text),
                 self.base.as_deref(),
+                None,
                 window,
                 cx,
             ))
@@ -844,6 +852,7 @@ impl Cydonia {
         self.workspace
             .update(cx, |workspace, cx| workspace.open_board(project, ix, cx));
         self.leaf_mut().pane = Pane::Board;
+        self.reveal_applied_match(cx);
         cx.notify();
     }
 
@@ -1379,12 +1388,44 @@ impl Cydonia {
     /// What the board is narrowed by right now, and the empty string when it is
     /// not narrowed at all. Empty while the bar is down whatever the field
     /// still holds, so a query never outlives the thing on screen saying so.
-    fn board_query(&self, on: Option<&Member>, cx: &App) -> String {
+    pub(crate) fn board_query(&self, on: Option<&Member>, cx: &App) -> String {
         let leaf = self.leaf_of(on);
         match leaf.finding {
             true => leaf.find_field.read(cx).content().to_string(),
-            false => String::new(),
+            false => self
+                .applied_query()
+                .map(|q| q.text().to_owned())
+                .unwrap_or_default(),
         }
+    }
+
+    pub(crate) fn reveal_board_match(&self, on: Option<&Member>, cx: &App) {
+        let Some(query) = self.applied_query() else {
+            return;
+        };
+        let Some(board) = self.workspace.read(cx).board_of(on) else {
+            return;
+        };
+        let Some((ix, column)) = board.columns.iter().enumerate().find(|(_, column)| {
+            column
+                .cards
+                .iter()
+                .any(|card| card_matches(card, board.handle_of(card).as_deref(), query.text()))
+        }) else {
+            return;
+        };
+        let scroll = self.boards.of(&board.id);
+        scroll
+            .across
+            .set_offset(gpui::point(px(-(ix as f32) * COLUMN_WIDTH), px(0.)));
+        scroll
+            .down
+            .set_offset(gpui::point(px(0.), px(-(ix as f32) * LIST_HEADING_HEIGHT)));
+        scroll
+            .lanes
+            .of(&column.id)
+            .0
+            .set_offset(gpui::point(px(0.), px(0.)));
     }
 
     /// A lane's name, how many cards it holds, and the ids of the ones the query
@@ -1439,60 +1480,11 @@ impl Cydonia {
         cx.notify();
     }
 
-    /// The bar at the board's top right. Up exactly while the query is —
-    /// [`Leaf::finding`] carries no second state for a bar the reader may put
-    /// away: a filter with nothing on screen to explain it is a board that has
-    /// quietly lost cards.
     fn find_bar(&self, on: Option<&Member>, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if !self.leaf_of(on).finding || cx.has_active_drag() {
+        if cx.has_active_drag() {
             return None;
         }
-        let theme = Theme::of(cx).clone();
-        Some(
-            div()
-                .absolute()
-                .top(px(BOARD_INSET))
-                .right(px(BOARD_INSET))
-                .w(px(COLUMN_WIDTH))
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(px(6.))
-                .px(px(8.))
-                .py(px(2.))
-                .rounded_full()
-                .border_1()
-                .border_color(theme.border)
-                .bg(theme.surface_raised)
-                .child(
-                    icons::icon(icons::text::Search)
-                        .size(px(14.))
-                        .text_color(theme.text_faint),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .child(self.leaf_of(on).find_field.clone()),
-                )
-                .child(
-                    theme
-                        .ghost("board-find-close")
-                        .p(px(4.))
-                        .rounded_full()
-                        .child(
-                            icons::icon(icons::notifications::X)
-                                .size(px(12.))
-                                .text_color(theme.text_faint),
-                        )
-                        .tooltip(|window, cx| Tooltip::text("Stop finding", window, cx))
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            cx.stop_propagation();
-                            this.dismiss_find(&DismissFind, window, cx);
-                        })),
-                )
-                .into_any_element(),
-        )
+        self.search_pill(on, cx)
     }
 
     // ── chrome ───────────────────────────────────────────────────
@@ -2944,6 +2936,9 @@ impl Cydonia {
         else {
             return div().into_any_element();
         };
+        let matched = self
+            .applied_query()
+            .is_some_and(|query| card_matches(card, handle.as_deref(), query.text()));
         let text = card.text.clone();
         let status = card.status;
         let on_board = self
@@ -3060,7 +3055,7 @@ impl Cydonia {
             .gap(px(8.))
             .border_b_1()
             .border_color(theme.border.opacity(0.3))
-            .when(selected, |el| el.bg(theme.accent.opacity(0.08)))
+            .when(selected || matched, |el| el.bg(theme.accent.opacity(0.08)))
             .cursor_pointer()
             .hover(|el| {
                 el.bg(if selected {
@@ -3690,6 +3685,9 @@ impl Cydonia {
         else {
             return div().into_any_element();
         };
+        let matched = self
+            .applied_query()
+            .is_some_and(|query| card_matches(card, handle.as_deref(), query.text()));
         let text = card.text.clone();
         let status = card.status;
         let on_board = self
@@ -3795,7 +3793,7 @@ impl Cydonia {
             .p(px(10.))
             .rounded(px(Theme::control_radius()))
             .border_1()
-            .border_color(if selected {
+            .border_color(if selected || matched {
                 theme.accent
             } else {
                 gpui::hsla(0., 0., 0., 0.)
@@ -3815,7 +3813,15 @@ impl Cydonia {
                     .child(div().flex_1().min_w_0().child({
                         let (doc, shortened) = self.card_docs.preview(&text);
                         let base = self.card_base(project, cx);
-                        card_preview(&doc, base.as_deref(), shortened, overflow, window, cx)
+                        card_preview(
+                            &doc,
+                            base.as_deref(),
+                            self.applied_query(),
+                            shortened,
+                            overflow,
+                            window,
+                            cx,
+                        )
                     }))
                     // What is done *to* the card. The row underneath carries
                     // the run; where the card sits is the drag.

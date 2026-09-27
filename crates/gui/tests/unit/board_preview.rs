@@ -48,6 +48,7 @@ impl Render for Preview {
         div().w(px(240.)).child(card_preview(
             &self.doc,
             None,
+            None,
             false,
             self.overflow.clone(),
             window,

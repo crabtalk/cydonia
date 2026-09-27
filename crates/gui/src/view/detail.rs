@@ -1190,7 +1190,7 @@ impl Cydonia {
             .flex()
             .flex_col()
             .child(transcript)
-            .children(self.text_find_bar(entry, cx))
+            .children(self.search_pill(entry, cx))
             .into_any_element()
     }
 
