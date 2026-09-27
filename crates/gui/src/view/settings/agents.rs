@@ -69,10 +69,12 @@ fn source_url(agent: &registry::Agent, version: &str) -> Option<String> {
 impl SettingsWindow {
     /// Fetch the catalog and each agent's local state, off the UI thread.
     pub(super) fn load(&mut self, cx: &mut Context<Self>) {
+        let configured = self.workspace.read(cx).settings.agents.clone();
         cx.spawn(async move |this, cx| {
+            let held = configured.clone();
             let listings = cx
                 .background_executor()
-                .spawn(async move { agent::listings() })
+                .spawn(async move { agent::listings(&held) })
                 .await;
             let missing = listings.iter().any(|listing| listing.icon.is_none());
             let ok = this
@@ -90,7 +92,7 @@ impl SettingsWindow {
                 .background_executor()
                 .spawn(async move {
                     agent::prefetch_icons();
-                    agent::listings()
+                    agent::listings(&configured)
                 })
                 .await;
             let _ = this.update(cx, |this, cx| {
