@@ -9,7 +9,7 @@ use bezel::{
         Subscription, Window, actions, div, prelude::*, px,
     },
     motion::{Fade, Painter},
-    theme::Theme,
+    theme::{TextStyle, Theme, Typeset},
     ui::{
         icons,
         input::TextField,
@@ -30,6 +30,12 @@ pub const HOME: &str = "https://duckduckgo.com";
 
 pub fn bindings() -> Vec<KeyBinding> {
     vec![KeyBinding::new("enter", Go, Some(ADDRESS_CONTEXT))]
+}
+
+/// Whether pages can be shown here. bezel-browser builds pages under X11
+/// only, so a gpui window on Wayland shows none.
+pub fn supported(cx: &App) -> bool {
+    !(cfg!(target_os = "linux") && cx.compositor_name() == "Wayland")
 }
 
 /// Every live page, by tab id.
@@ -190,6 +196,20 @@ impl Focusable for Browser {
 
 impl Render for Browser {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if !supported(cx) {
+            let theme = Theme::of(cx);
+            return div()
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .p(px(24.))
+                .track_focus(&self.focus)
+                .text_style(TextStyle::Caption)
+                .text_color(theme.text_muted)
+                .child("The browser needs X11. This session runs on Wayland.")
+                .into_any_element();
+        }
         let page = self.page(window, cx);
         let theme = Theme::of(cx).clone();
         let loading = page.read(cx).is_loading();
@@ -247,5 +267,6 @@ impl Render for Browser {
                     ),
             )
             .child(div().flex_1().min_h_0().child(page))
+            .into_any_element()
     }
 }

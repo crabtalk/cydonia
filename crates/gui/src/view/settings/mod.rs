@@ -227,7 +227,6 @@ pub fn open(
                 title: Some("Settings".into()),
                 appears_transparent: true,
                 traffic_light_position: Some(point(px(TRAFFIC_LIGHT_X), px(TRAFFIC_LIGHT_Y))),
-                ..Default::default()
             }),
             // Opaque on purpose — see the module note. The root paints the
             // page's own background, so where the window frames itself the

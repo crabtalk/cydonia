@@ -337,7 +337,6 @@ pub fn open(settings: Settings, state: State, cx: &mut App) -> Result<WindowHand
                 title: Some("Cydonia".into()),
                 appears_transparent: true,
                 traffic_light_position: Some(point(px(TRAFFIC_LIGHT_X), px(TRAFFIC_LIGHT_Y))),
-                ..Default::default()
             }),
             // Glass needs a blurred window background to blur into. A window
             // that frames itself opens transparent, or its frame band is

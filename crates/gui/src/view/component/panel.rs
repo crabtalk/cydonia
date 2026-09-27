@@ -174,11 +174,12 @@ impl Panel {
         self.tabs.files.then_some(self.files_open)
     }
 
-    fn launchers(&self) -> Vec<Launch> {
+    fn launchers(&self, cx: &gpui::App) -> Vec<Launch> {
+        let browser = self.tabs.browser && super::browser::supported(cx);
         [
             (self.tabs.review, Launch::Review),
             (true, Launch::Terminal),
-            (self.tabs.browser, Launch::Browser),
+            (browser, Launch::Browser),
             (self.tabs.files, Launch::Files),
         ]
         .into_iter()
@@ -463,7 +464,7 @@ impl Render for Panel {
         }
         let theme = Theme::of(cx).clone();
         let right = chrome::has(CaptionSide::Right, window, cx);
-        let launchers = self.launchers();
+        let launchers = self.launchers(cx);
         let items = Self::items(&launchers, window);
         let rows = items.clone();
         let chosen = launchers.clone();
