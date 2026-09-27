@@ -17,8 +17,9 @@ use artifact::{
 };
 use bezel::{
     gpui::{
-        self, AnyElement, App, Context, Entity, Focusable as _, HighlightStyle, KeyBinding,
-        ScrollHandle, SharedString, StyledText, Task, Window, actions, div, prelude::*, px,
+        self, AnyElement, App, Context, Entity, Focusable as _, FontWeight, HighlightStyle,
+        KeyBinding, ScrollHandle, SharedString, StyledText, Task, Window, actions, div, prelude::*,
+        px,
     },
     theme::{TextStyle, Theme, Typeset as _},
     ui::{
@@ -323,7 +324,7 @@ impl Cydonia {
             .child(
                 div()
                     .flex_1()
-                    .text_style(TextStyle::Subheadline)
+                    .text_style(TextStyle::Body)
                     .text_color(theme.text_muted)
                     .child("Search"),
             )
@@ -413,7 +414,8 @@ impl Cydonia {
                                 .px(px(14.))
                                 .pt(px(8.))
                                 .pb(px(2.))
-                                .text_style(TextStyle::Caption)
+                                .text_style(TextStyle::Subheadline)
+                                .font_weight(FontWeight::SEMIBOLD)
                                 .text_color(theme.text_faint)
                                 .child("Recent")
                         }))
@@ -489,7 +491,7 @@ impl Cydonia {
             .py(px(6.))
             .border_t_1()
             .border_color(theme.border)
-            .text_style(TextStyle::Caption)
+            .text_style(TextStyle::Subheadline)
             .text_color(theme.text_faint)
             .child(self.filter_chips(cx))
             .child(
@@ -521,7 +523,7 @@ impl Cydonia {
                     .rounded_full()
                     .border_1()
                     .cursor_pointer()
-                    .text_style(TextStyle::Caption)
+                    .text_style(TextStyle::Subheadline)
                     .when(on, |chip| {
                         chip.bg(theme.element_active)
                             .border_color(theme.border)
@@ -607,14 +609,14 @@ impl Cydonia {
                                     .flex_1()
                                     .min_w_0()
                                     .truncate()
-                                    .text_style(TextStyle::Subheadline)
+                                    .text_style(TextStyle::Body)
                                     .text_color(theme.text)
                                     .child(title),
                             )
                             .children(project.map(|project| {
                                 div()
                                     .flex_none()
-                                    .text_style(TextStyle::Caption)
+                                    .text_style(TextStyle::Subheadline)
                                     .text_color(theme.text_faint)
                                     .child(project)
                             })),
@@ -622,7 +624,7 @@ impl Cydonia {
                     .children(snippet.map(|snippet| {
                         div()
                             .truncate()
-                            .text_style(TextStyle::Caption)
+                            .text_style(TextStyle::Subheadline)
                             .text_color(theme.text_muted)
                             .child(snippet)
                     })),

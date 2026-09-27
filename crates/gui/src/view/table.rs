@@ -577,14 +577,9 @@ impl Cydonia {
     ) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
         let workspace = self.workspace.read(cx);
-        let selected = !self.arranged(cx)
-            && self.showing(cx) == Some(Pane::Table)
-            && workspace.active == Some(project)
-            && workspace
-                .projects
-                .get(project)
-                .is_some_and(|open| open.table == Some(ix));
         let entry = Row::Table { project, ix };
+        let light = self.light_of(entry, cx);
+        let selected = light.selected();
         let table = workspace
             .projects
             .get(project)
@@ -596,7 +591,7 @@ impl Cydonia {
         // being claimed by two places at once.
         let renaming = matches!(&self.renaming, Some(Renaming::Table(at)) if Some(at) == key)
             && self.header_renaming(cx).is_none();
-        let tone = sidebar::tint(selected, archived, &theme);
+        let tone = light.tint(archived, &theme);
 
         sidebar::row(
             SharedString::from(format!("table-{project}-{ix}")),

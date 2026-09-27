@@ -482,15 +482,6 @@ pub struct Cydonia {
     /// What [`Cydonia::desktop_only`] was last asked about, while its notice
     /// is up.
     pub(crate) desktop_only: Option<&'static str>,
-    /// The spaces whose members are folded away, by space id.
-    ///
-    /// Collapsed rather than expanded, so a space is open until someone folds
-    /// it: an entry is listed under the space holding it and nowhere else, and
-    /// a fold remembered across launches would start the window with entries
-    /// hidden behind a row nobody chose to close.
-    ///
-    /// Runtime only, for the same reason.
-    pub(crate) collapsed_spaces: std::collections::HashSet<String>,
     /// Where a pane dropped on a pane's edge would land: the pane under the
     /// pointer, and which of its edges. Written by whichever pane the pointer
     /// is inside and read by the one that draws the mark, the way a card's
@@ -1016,7 +1007,6 @@ impl Cydonia {
             settings_window: None,
             #[cfg(not(feature = "desktop"))]
             settings_sheet: None,
-            collapsed_spaces: Default::default(),
             pane_landing: None,
             fronts: Default::default(),
             tab_history: Vec::new(),

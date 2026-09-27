@@ -59,6 +59,20 @@ impl Workspace {
         spaces
     }
 
+    /// Whether a space's members are hidden in the sidebar.
+    pub fn space_folded(&self, id: &str) -> bool {
+        self.folded_spaces.contains(id)
+    }
+
+    /// Hide a space's members in the sidebar, or show them again.
+    pub fn toggle_space(&mut self, id: &str, cx: &mut Context<Self>) {
+        if !self.folded_spaces.remove(id) {
+            self.folded_spaces.insert(id.to_owned());
+        }
+        self.save();
+        cx.notify();
+    }
+
     /// Carry a space to another place in the list. `space` follows the one
     /// it points at rather than the index it sits on, the way `active` does
     /// for projects — see [`Workspace::move_project`].

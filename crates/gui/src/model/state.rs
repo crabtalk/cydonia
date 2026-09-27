@@ -94,6 +94,9 @@ pub struct State {
     /// everything here — the same rule `order` above follows for entries.
     #[serde(default)]
     pub spaces: Vec<String>,
+    /// Spaces whose members the sidebar hides, by id.
+    #[serde(default)]
+    pub folded_spaces: Vec<String>,
     /// The main window's frame when it last moved, resized or closed. Nothing
     /// until it has done one of those.
     #[serde(default)]
@@ -153,6 +156,7 @@ pub fn restore() -> State {
         sort: stored.sort,
         space: stored.space,
         spaces: stored.spaces,
+        folded_spaces: stored.folded_spaces,
         window: stored.window,
     }
 }

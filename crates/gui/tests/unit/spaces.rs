@@ -1012,3 +1012,27 @@ fn a_stale_board_write_lands_on_the_other_writers_board(cx: &mut gpui::TestAppCo
         );
     });
 }
+
+/// A space folds the way a project does, and a fold written to `state.toml`
+/// is the fold the next launch starts with.
+#[gpui::test]
+fn a_space_fold_is_kept_like_a_project_fold(cx: &mut gpui::TestAppContext) {
+    let scratch = Scratch::new("fold-space");
+    let (workspace, a, b) = two_boards(&scratch, cx);
+
+    let id = workspace.update(cx, |workspace, cx| {
+        workspace.arrange(&a, &b, Side::Right, cx);
+        let id = workspace.spaces[0].id.clone();
+        assert!(!workspace.space_folded(&id), "open to start");
+        workspace.toggle_space(&id, cx);
+        assert!(workspace.space_folded(&id));
+        id
+    });
+
+    let state = state::State {
+        folded_spaces: vec![id.clone()],
+        ..Default::default()
+    };
+    let restored = cx.new(|cx| Workspace::new(Settings::default(), state, cx));
+    restored.update(cx, |workspace, _| assert!(workspace.space_folded(&id)));
+}

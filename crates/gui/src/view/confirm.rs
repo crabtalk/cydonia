@@ -1,7 +1,10 @@
 //! The question asked before a delete. Raised from the pane header's `···` and
 //! from a card's, so it lives beside neither.
 
-use crate::view::{root::Cydonia, sidebar::Row};
+use crate::view::{
+    root::Cydonia,
+    sidebar::{Group, Row},
+};
 use bezel::{
     gpui::{AnyElement, App, Context, div, prelude::*, px},
     theme::{TextStyle, Theme, Typeset},
@@ -104,7 +107,7 @@ impl Cydonia {
         match entry {
             // A space holds none of what it arranges, so nothing but the
             // arrangement itself goes.
-            Row::Space(ix) => workspace
+            Row::Group(Group::Space(ix)) => workspace
                 .spaces
                 .get(ix)
                 .map(|space| {
@@ -156,7 +159,7 @@ impl Cydonia {
                     format!("Its {rows} rows are dropped; the database stays. {UNDONE}"),
                 )
             }
-            Row::Project(_) | Row::Archive(_) | Row::Projects | Row::Spaces => {
+            Row::Group(Group::Project(_)) | Row::Archive(_) | Row::Heading(_) => {
                 (None, UNDONE.to_owned())
             }
         }

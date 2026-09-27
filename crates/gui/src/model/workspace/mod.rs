@@ -139,6 +139,8 @@ pub struct Workspace {
     /// from several — see [`spaces`].
     pub spaces: Vec<artifact::space::Space>,
     pub space: Option<usize>,
+    /// Spaces whose members the sidebar hides, by id.
+    folded_spaces: std::collections::HashSet<String>,
 }
 
 impl Workspace {
@@ -193,6 +195,7 @@ impl Workspace {
             window: state.window,
             spaces: Self::in_order(crate::model::spaces::all(), &state.spaces),
             space: None,
+            folded_spaces: state.folded_spaces.iter().cloned().collect(),
         };
         // The arrangement the window closed on, before any entry is opened:
         // `open_last_entry` is a project's answer and a space spans them.
@@ -243,6 +246,12 @@ impl Workspace {
             sort: self.sort.clone(),
             space: self.active_space().map(|space| space.id.clone()),
             spaces: self.spaces.iter().map(|space| space.id.clone()).collect(),
+            folded_spaces: self
+                .spaces
+                .iter()
+                .filter(|space| self.folded_spaces.contains(&space.id))
+                .map(|space| space.id.clone())
+                .collect(),
             window: self.window,
         });
     }

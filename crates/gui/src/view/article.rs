@@ -657,20 +657,15 @@ impl Cydonia {
     ) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
         let workspace = self.workspace.read(cx);
-        let selected = !self.arranged(cx)
-            && self.showing(cx) == Some(Pane::Article)
-            && workspace.active == Some(project)
-            && workspace
-                .projects
-                .get(project)
-                .is_some_and(|open| open.article == Some(ix));
         let entry = Row::Article { project, ix };
+        let light = self.light_of(entry, cx);
+        let selected = light.selected();
         let article = workspace
             .projects
             .get(project)
             .and_then(|open| open.articles.get(ix));
         let archived = article.is_some_and(|article| article.archived);
-        let tint = sidebar::tint(selected, archived, &theme);
+        let tint = light.tint(archived, &theme);
         let id = SharedString::from(format!("article-{project}-{ix}"));
 
         sidebar::row(
