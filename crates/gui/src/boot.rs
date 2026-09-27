@@ -43,6 +43,8 @@ pub fn init(settings: &Settings, cx: &mut App) {
     // language that is not cached is what fetches it — see
     // [`crate::model::language::ensure`].
     markdown::set_highlighter(cx, language::highlight, language::offerable());
+    #[cfg(feature = "desktop")]
+    crate::model::link::init(cx);
     memory::init(settings.cover_memory * 1_000_000, cx);
     // Every chord in the app, bezel's included — see
     // [`crate::view::keymap`]. One call rather than an `init` per

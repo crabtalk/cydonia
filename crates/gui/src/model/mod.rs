@@ -8,6 +8,8 @@ pub mod disk;
 pub mod file_url;
 pub mod git;
 pub mod language;
+#[cfg(feature = "desktop")]
+pub mod link;
 pub mod media;
 pub mod migrate;
 pub mod notify;
