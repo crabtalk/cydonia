@@ -2,7 +2,18 @@
   {
     "version": "0.1.19",
     "date": "2026-09-27",
-    "nightly": true,
+    "summary": "Browse the web in tabs in the right panel, kept across restarts and switchable in Settings, and the Linux build starts again.",
+    "media": {
+      "poster": "pics/cydonia/v0.1.19.jpg",
+      "src": "videos/cydonia/v0.1.19.mp4",
+      "alt": "…",
+      "w": 1280,
+      "h": 900
+    },
+    "new": [
+      "Browse the web in right panel tabs, with back, forward, reload and an address bar that searches when it is not given a URL; tabs come back after a restart",
+      "Switch browser tabs off in Settings → Features"
+    ],
     "fixed": [
       "Start the Linux build, which had no display backend",
       "Title the main and settings windows, which Linux taskbars listed as untitled",
@@ -12,7 +23,6 @@
   {
     "version": "0.1.18",
     "date": "2026-09-27",
-    "nightly": true,
     "summary": "A ⌘K search palette finds articles, boards and sessions across every open project, with a find bar inside articles and transcripts and link previews in articles.",
     "media": {
       "poster": "pics/cydonia/v0.1.18.jpg",
