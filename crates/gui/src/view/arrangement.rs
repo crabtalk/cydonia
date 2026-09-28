@@ -612,17 +612,57 @@ impl Cydonia {
         // is lit while a drag is aimed at it rather than at an edge.
         let aimed = self.pane_landing.as_ref() == Some(&(pane.clone(), Landing::Bar));
         let hovered = key.clone();
+        let owner = cx.entity().downgrade();
         crate::view::root::band()
             .id(SharedString::from(format!("pane-bar-{key}")))
             .group("pane-bar")
-            .on_hover(cx.listener(move |this, over: &bool, _, cx| {
-                match (*over, this.pane_hovered.as_ref() == Some(&hovered)) {
-                    (true, false) => this.pane_hovered = Some(hovered.clone()),
-                    (false, true) => this.pane_hovered = None,
-                    _ => return,
-                }
-                cx.notify();
-            }))
+            .relative()
+            .child(
+                bezel::gpui::canvas(
+                    |_, _, _| {},
+                    move |bounds, _, window, _| {
+                        let exited = owner.clone();
+                        let key = hovered.clone();
+                        window.on_mouse_event(
+                            move |_: &bezel::gpui::MouseExitEvent, phase, _, cx| {
+                                if phase != bezel::gpui::DispatchPhase::Capture {
+                                    return;
+                                }
+                                let _ = exited.update(cx, |this, cx| {
+                                    if this.pane_hovered.as_ref() == Some(&key) {
+                                        this.pane_hovered = None;
+                                        cx.notify();
+                                    }
+                                });
+                            },
+                        );
+                        let owner = owner.clone();
+                        let hovered = hovered.clone();
+                        // The scrollbar blocks hitbox hover beneath it, but is
+                        // still inside the bar. Track the bar's bounds instead.
+                        window.on_mouse_event(
+                            move |event: &bezel::gpui::MouseMoveEvent, phase, _, cx| {
+                                if phase != bezel::gpui::DispatchPhase::Capture {
+                                    return;
+                                }
+                                let _ = owner.update(cx, |this, cx| {
+                                    match (
+                                        bounds.contains(&event.position),
+                                        this.pane_hovered.as_ref() == Some(&hovered),
+                                    ) {
+                                        (true, false) => this.pane_hovered = Some(hovered.clone()),
+                                        (false, true) => this.pane_hovered = None,
+                                        _ => return,
+                                    }
+                                    cx.notify();
+                                });
+                            },
+                        );
+                    },
+                )
+                .absolute()
+                .size_full(),
+            )
             .w_full()
             .gap(px(2.))
             .pl(px(lead))
@@ -1413,3 +1453,7 @@ fn top_right(node: &Node<Member>) -> Option<Member> {
 #[cfg(test)]
 #[path = "../../tests/unit/pane_footer.rs"]
 mod pane_footer_tests;
+
+#[cfg(test)]
+#[path = "../../tests/unit/pane_hover.rs"]
+mod pane_hover_tests;

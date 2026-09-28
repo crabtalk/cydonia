@@ -6,6 +6,46 @@ use crate::model::{settings::Settings, state};
 use crate::view::leaf::Pane;
 use bezel::gpui;
 
+#[cfg(not(target_os = "linux"))]
+#[gpui::test]
+fn agent_browser_reveals_a_closed_panel_and_activates_its_tab(cx: &mut gpui::TestAppContext) {
+    let scratch = Scratch::new("agent-browser");
+    let path = scratch.project("one");
+    cx.update(|cx| Theme::install(bezel::theme::Appearance::Light, cx));
+    let window = cx.add_window(|window, cx| {
+        Cydonia::new(Settings::default(), state::State::default(), window, cx)
+    });
+    window
+        .update(cx, |root, _, cx| {
+            root.workspace.update(cx, |workspace, cx| {
+                workspace.open_project(path.clone(), cx);
+                workspace.settings.features.panel.browser = true;
+            });
+            root.set_changes_open(false, cx);
+            root.sync_changes(cx);
+            assert!(root.changes.is_none());
+            let panel = root.right_panel(path.clone(), cx);
+            panel.update(cx, |panel, cx| {
+                let first = panel.open_browser("about:blank".into(), cx).unwrap();
+                panel.open_browser("about:blank".into(), cx).unwrap();
+                panel.activate_browser(&first, cx);
+                assert!(
+                    panel
+                        .browsers()
+                        .iter()
+                        .any(|(browser, active)| browser == &first && *active)
+                );
+            });
+            root.reveal_browser_panel(&panel, cx);
+            root.sync_changes(cx);
+            assert!(root.changes_open);
+            assert_eq!(root.changes.as_ref(), Some(&panel));
+            assert_eq!(root.changes_shown.get(&path), Some(&true));
+            assert!(persistence::saved_panel(&path).unwrap().open);
+        })
+        .unwrap();
+}
+
 /// A scratch project, and a config directory beside it that the test's writes
 /// land in — see the same guard in `tests/unit/open_entries.rs`.
 struct Scratch(std::path::PathBuf);

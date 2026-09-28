@@ -10,7 +10,7 @@
 
 use super::{browser::Browser, panel::Panel};
 use crate::{model::settings::Browsing, view::root::Cydonia};
-use bezel::gpui::{AsyncApp, Context, Entity, WeakEntity};
+use bezel::gpui::{AnyWindowHandle, AsyncApp, Context, Entity, WeakEntity, Window};
 use browser::WebView;
 use futures::{StreamExt as _, channel::mpsc};
 use mcp::rail::{self, Act, Browse};
@@ -138,7 +138,8 @@ fn script(js: &str) -> String {
 impl Cydonia {
     /// Answer the browser tools, one call at a time. Called once, with the
     /// window.
-    pub(crate) fn take_browser(&self, cx: &mut Context<Self>) {
+    pub(crate) fn take_browser(&self, window: &Window, cx: &mut Context<Self>) {
+        let window = window.window_handle();
         let (asked, mut asks) = mpsc::unbounded();
         rail::install_browser(move |browse| {
             let _ = asked.unbounded_send(browse);
@@ -151,7 +152,7 @@ impl Cydonia {
                 reply,
             }) = asks.next().await
             {
-                let answer = serve(&this, &project, tab, act, cx).await;
+                let answer = serve(&this, window, &project, tab, act, cx).await;
                 let _ = reply.send(answer);
                 if this.upgrade().is_none() {
                     return;
@@ -173,12 +174,23 @@ impl Cydonia {
                 open.path == path || open.path.canonicalize().is_ok_and(|held| held == settled)
             })
             .map(|open| open.path.clone())?;
-        Some(self.right_panel(project, cx))
+        let cwd = if self
+            .workspace
+            .read(cx)
+            .active_project()
+            .is_some_and(|active| active.path == project)
+        {
+            self.shell_cwd(cx).unwrap_or(project)
+        } else {
+            project
+        };
+        Some(self.right_panel(cwd, cx))
     }
 }
 
 async fn serve(
     this: &WeakEntity<Cydonia>,
+    window: AnyWindowHandle,
     project: &Path,
     tab: Option<u64>,
     act: Act,
@@ -190,6 +202,14 @@ async fn serve(
         .flatten()
         .ok_or_else(|| format!("cydonia does not have {} open", project.display()))?;
     let browsing = cx.update(|cx| cx.try_global::<Browsing>().cloned().unwrap_or_default());
+    if let Act::Open(url) = &act {
+        refuse_blocked(&browsing, url)?;
+        window
+            .update(cx, |_, window, cx| {
+                panel.update(cx, |panel, cx| panel.restore_tabs(window, cx));
+            })
+            .map_err(|error| error.to_string())?;
+    }
     // The tab's address as the call arrives: a page an agent is refused is
     // judged by where it is, not by where the call says it is going.
     if !matches!(act, Act::Tabs) && (tab.is_some() || !matches!(act, Act::Open(_))) {
@@ -211,6 +231,9 @@ async fn serve(
                     .update(cx, |panel, cx| panel.open_browser(url, cx))
                     .ok_or("browser tabs are switched off in cydonia's settings")?,
             };
+            panel.update(cx, |panel, cx| panel.activate_browser(&browser, cx));
+            this.update(cx, |this, cx| this.reveal_browser_panel(&panel, cx))
+                .map_err(|error| error.to_string())?;
             let page = built(&browser, cx).await?;
             settle(&page, cx).await;
             read(&browser, &page, cx).await

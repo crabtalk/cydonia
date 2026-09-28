@@ -435,6 +435,17 @@ impl Panel {
         Some(self.browser(id, url, String::new(), cx))
     }
 
+    #[cfg(not(target_os = "linux"))]
+    pub(crate) fn activate_browser(&mut self, browser: &Entity<Browser>, cx: &mut Context<Self>) {
+        let id = self.ordered().find_map(|(id, tab)| {
+            matches!(&tab.content, Content::Browser(held) if held == browser).then_some(id)
+        });
+        if let Some(id) = id {
+            self.strip.activate(&id);
+            cx.notify();
+        }
+    }
+
     /// Step to the tab `step` along, wrapping at the ends — the row is a ring,
     /// the way a browser's is.
     ///
@@ -1012,6 +1023,18 @@ impl Render for Panel {
 }
 
 impl Cydonia {
+    #[cfg(not(target_os = "linux"))]
+    pub(crate) fn reveal_browser_panel(&mut self, panel: &Entity<Panel>, cx: &mut Context<Self>) {
+        let cwd = panel.read(cx).cwd.clone();
+        self.changes_shown.insert(cwd.clone(), true);
+        if self.shell_cwd(cx).as_ref() == Some(&cwd) {
+            self.changes_for = Some(cwd);
+            self.changes_open = true;
+            self.changes = Some(panel.clone());
+        }
+        self.save_panel_layout(cx);
+        cx.notify();
+    }
     pub(crate) fn open_session_file(
         &mut self,
         link: &super::transcript::links::OpenSessionFile,

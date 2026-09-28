@@ -141,7 +141,7 @@ impl Panel {
         }
     }
 
-    pub(super) fn restore_tabs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn restore_tabs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(saved) = self.restore_pending.take() else {
             return;
         };
