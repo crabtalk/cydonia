@@ -171,7 +171,9 @@ impl Browser {
                 }
             }
             WebViewEvent::Title(title) => self.title = title.clone(),
-            WebViewEvent::Load(_) => {}
+            WebViewEvent::Load(_)
+            | WebViewEvent::DownloadStarted { .. }
+            | WebViewEvent::DownloadFinished { .. } => {}
             WebViewEvent::NewWindow(url) => {
                 cx.emit(OpenTab(url.clone()));
                 return;
