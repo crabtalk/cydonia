@@ -8,11 +8,19 @@ use crate::{
         settings::{self, SettingsWindow, Switch},
     },
 };
+use ::browser::{DataStore, Usage};
 use bezel::{
-    gpui::{AnyElement, Context, div, prelude::*, px},
+    gpui::{AnyElement, Context, Task, div, prelude::*, px},
     theme::{TextStyle, Theme, Typeset},
     ui::widgets::{ButtonStyle, Buttons, Scaffolding},
 };
+
+#[derive(Default)]
+pub(super) struct BrowserData {
+    usage: Option<Option<Usage>>,
+    pub(super) result: Option<bool>,
+    request: Option<Task<()>>,
+}
 
 impl SettingsWindow {
     pub(super) fn browser_body(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -357,15 +365,28 @@ impl SettingsWindow {
         )
     }
 
-    /// Clears through the pages that are open: a store is reached through a
-    /// built page.
     fn clear_row(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
-        let live = browser::any_page(cx);
-        let note = match (self.browser_cleared, live) {
-            (true, _) => "Cleared.",
-            (false, true) => "Cookies, site storage and cache.",
-            (false, false) => "Open a browser tab to clear what it stores.",
+        let clearing = browser::clearing(cx);
+        let amount = match &self.browser_data.usage {
+            None => "Calculating…".to_owned(),
+            Some(None) => "Data amount unavailable".to_owned(),
+            Some(Some(usage)) => match usage.sites.len() {
+                0 => "No stored site data".to_owned(),
+                1 => "Data from 1 site".to_owned(),
+                count => format!("Data from {count} sites"),
+            },
+        };
+        let note = if clearing {
+            "Clearing browsing data…"
+        } else if self.browser_data.result == Some(false) {
+            "Could not clear browsing data. Try again."
+        } else if self.browser_data.result == Some(true) {
+            "Browsing data cleared. All browser tabs closed."
+        } else if !cfg!(target_os = "macos") {
+            "Clearing browsing data is unavailable on this platform."
+        } else {
+            "Cookies, site storage and cache. Closes all browser tabs and signs you out."
         };
         theme
             .card_row(false)
@@ -375,11 +396,16 @@ impl SettingsWindow {
                     .min_w_0()
                     .flex()
                     .flex_col()
-                    .child(theme.row_title("Clear browsing data"))
+                    .child(theme.row_title("Browsing data"))
                     .child(
                         div()
                             .mt(px(4.))
-                            .truncate()
+                            .text_style(TextStyle::Callout)
+                            .child(amount),
+                    )
+                    .child(
+                        div()
+                            .mt(px(4.))
                             .text_style(TextStyle::Subheadline)
                             .text_color(theme.text_muted)
                             .child(note),
@@ -387,18 +413,77 @@ impl SettingsWindow {
             )
             .child(
                 theme
-                    .button("Clear", ButtonStyle::Ghost, None)
+                    .button(
+                        if clearing {
+                            "Clearing…"
+                        } else {
+                            "Clear data"
+                        },
+                        ButtonStyle::Ghost,
+                        None,
+                    )
                     .id("browser-clear")
                     .flex_none()
-                    .when(!live, |button| button.opacity(0.5))
-                    .when(live, |button| {
-                        button.on_click(cx.listener(|this, _, _, cx| {
-                            this.browser_cleared = browser::clear_data(cx);
-                            cx.notify();
-                        }))
+                    .when(!clearing && cfg!(target_os = "macos"), |button| {
+                        button.on_click(cx.listener(|this, _, _, cx| this.clear_browsing_data(cx)))
+                    })
+                    .when(clearing || !cfg!(target_os = "macos"), |button| {
+                        button.opacity(0.5)
                     }),
             )
             .into_any_element()
+    }
+
+    pub(super) fn load_browser_usage(&mut self, cx: &mut Context<Self>) {
+        if browser::clearing(cx) {
+            return;
+        }
+        self.browser_data.usage = None;
+        let usage = DataStore::new().usage(cx);
+        self.browser_data.request = Some(cx.spawn(async move |this, cx| {
+            let usage = usage.await;
+            let _ = this.update(cx, |this, cx| {
+                this.browser_data.usage = Some(usage);
+                cx.notify();
+            });
+        }));
+    }
+
+    fn clear_browsing_data(&mut self, cx: &mut Context<Self>) {
+        if browser::clearing(cx) {
+            return;
+        }
+        self.browser_data.request = None;
+        self.browser_data.result = None;
+        browser::set_clearing(true, cx);
+        let this = cx.entity().downgrade();
+        cx.defer(move |cx| {
+            if crate::view::component::panel::close_all_browsers(cx).is_err() {
+                browser::set_clearing(false, cx);
+                let _ = this.update(cx, |this, cx| {
+                    this.browser_data.result = Some(false);
+                    this.load_browser_usage(cx);
+                    cx.notify();
+                });
+                return;
+            }
+            // Release closed entities before touching their store; finish even
+            // if Settings is closed while the operation is running.
+            cx.defer(move |cx| {
+                let store = DataStore::new().clear(cx);
+                cx.spawn(async move |cx| {
+                    let cleared = store.await;
+                    cx.update(|cx| browser::set_clearing(false, cx));
+                    let _ = this.update(cx, |this, cx| {
+                        this.browser_data.result = Some(cleared);
+                        this.load_browser_usage(cx);
+                        cx.notify();
+                    });
+                })
+                .detach();
+            });
+        });
+        cx.notify();
     }
 
     /// Take the typed address. A bare host is taken over https; an empty

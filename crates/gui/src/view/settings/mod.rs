@@ -88,9 +88,9 @@ impl Section {
         Self::Appearance,
         Self::Shortcuts,
         Self::Features,
+        Self::Browser,
         Self::Agents,
         Self::Mcp,
-        Self::Browser,
         Self::Performance,
         Self::Developer,
     ];
@@ -105,13 +105,29 @@ impl Section {
     /// switches need: the updater runs in a bundle and nowhere else, and
     /// `make bundle FEATURES=developer` is that bundle built at the profile
     /// that ships rather than at `debug`.
-    fn listed(self) -> bool {
+    ///
+    /// Browser is listed while browser tabs are on in Features.
+    fn listed(self, features: &crate::model::settings::Features) -> bool {
+        use crate::model::settings::Feature;
         match self {
             Self::Developer => cfg!(debug_assertions) || cfg!(feature = "developer"),
             Self::Browser => {
-                cfg!(feature = "desktop") && crate::model::settings::Feature::Browser.available()
+                cfg!(feature = "desktop")
+                    && Feature::Browser.available()
+                    && Feature::Browser.on(features)
             }
             _ => true,
+        }
+    }
+
+    /// The sidebar heading over the group this section is in. The first
+    /// group has none.
+    fn group(self) -> Option<&'static str> {
+        match self {
+            Self::General | Self::Appearance | Self::Shortcuts => None,
+            Self::Features | Self::Browser => Some("Workspace"),
+            Self::Agents | Self::Mcp => Some("Agents"),
+            Self::Performance | Self::Developer => Some("Advanced"),
         }
     }
 
@@ -203,10 +219,8 @@ pub struct SettingsWindow {
     interface_font: typography::FamilyPicker,
     article_font: typography::FamilyPicker,
     mono_font: typography::FamilyPicker,
-    /// Whether the browser section's last clear went through. Reset on
-    /// leaving the section.
     #[cfg(not(target_os = "linux"))]
-    browser_cleared: bool,
+    browser_data: browser::BrowserData,
     /// The field whose dialog is up — see [`SettingsWindow::field_dialog`].
     editing: Option<(Field, Entity<TextField>)>,
     /// The shortcut row taking keys, while one is — see
@@ -334,13 +348,17 @@ impl SettingsWindow {
             article_font,
             mono_font,
             #[cfg(not(target_os = "linux"))]
-            browser_cleared: false,
+            browser_data: Default::default(),
             editing: None,
             recording: None,
             #[cfg(feature = "desktop")]
             error: None,
         };
         this.load(cx);
+        #[cfg(not(target_os = "linux"))]
+        if section == Section::Browser {
+            this.load_browser_usage(cx);
+        }
         // The keymap is emptied while a chord is being recorded, so a
         // window shut in the middle of that has to put it back — see
         // [`shortcuts`].
@@ -616,8 +634,9 @@ impl SettingsWindow {
     fn show(&mut self, section: Section, cx: &mut Context<Self>) {
         self.section = section;
         #[cfg(not(target_os = "linux"))]
-        {
-            self.browser_cleared = false;
+        if section == Section::Browser {
+            self.browser_data.result = None;
+            self.load_browser_usage(cx);
         }
         match section {
             Section::Agents => self.load(cx),
@@ -635,6 +654,7 @@ impl SettingsWindow {
 
     fn sidebar(&self, cx: &Context<Self>) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
+        let features = &self.workspace.read(cx).settings.features;
         let painter = Painter::of(cx);
         div()
             .flex_none()
@@ -654,13 +674,31 @@ impl SettingsWindow {
                 true => HEADER_HEIGHT,
                 false => 12.,
             }))
-            .children(
-                Section::ALL
+            .children({
+                let listed: Vec<Section> = Section::ALL
                     .into_iter()
-                    .filter(|section| section.listed())
+                    .filter(|section| section.listed(features))
+                    .collect();
+                listed
+                    .iter()
                     .enumerate()
-                    .map(|(ix, section)| {
-                        theme
+                    .flat_map(|(ix, &section)| {
+                        // A heading where the group changes, over the first
+                        // section of it that is listed.
+                        let heading = section
+                            .group()
+                            .filter(|_| ix == 0 || listed[ix - 1].group() != section.group())
+                            .map(|label| {
+                                div()
+                                    .pt(px(14.))
+                                    .pb(px(4.))
+                                    .px(px(8.))
+                                    .text_style(TextStyle::Callout)
+                                    .text_color(theme.text_faint)
+                                    .child(label)
+                                    .into_any_element()
+                            });
+                        let row = theme
                             .nav_row(
                                 Some(section.glyph().into()),
                                 section.title(),
@@ -669,8 +707,11 @@ impl SettingsWindow {
                             )
                             .id(("section", ix))
                             .on_click(cx.listener(move |this, _, _, cx| this.show(section, cx)))
-                    }),
-            )
+                            .into_any_element();
+                        heading.into_iter().chain(std::iter::once(row))
+                    })
+                    .collect::<Vec<_>>()
+            })
     }
 }
 

@@ -387,6 +387,9 @@ impl Panel {
             cx.notify()
         });
         let open = cx.subscribe(&browser, |this, _, event: &super::browser::OpenTab, cx| {
+            if super::browser::clearing(cx) {
+                return;
+            }
             let id = super::browser::new_id();
             this.browser(id, event.0.clone(), String::new(), cx);
         });
@@ -396,7 +399,7 @@ impl Panel {
 
     #[cfg(not(target_os = "linux"))]
     fn new_browser(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.tabs.browser {
+        if !self.tabs.browser || super::browser::clearing(cx) {
             return;
         }
         let id = super::browser::new_id();
@@ -425,7 +428,7 @@ impl Panel {
         url: String,
         cx: &mut Context<Self>,
     ) -> Option<Entity<Browser>> {
-        if !self.tabs.browser {
+        if !self.tabs.browser || super::browser::clearing(cx) {
             return None;
         }
         let id = super::browser::new_id();
@@ -458,12 +461,27 @@ impl Panel {
             ..
         }) = _tab
         {
-            super::browser::forget(browser.read(cx).id, cx);
+            browser.update(cx, |browser, cx| browser.close(cx));
         }
         if self.closing == Some(id) {
             self.closing = None;
         }
         cx.notify();
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub(crate) fn close_browsers(&mut self, cx: &mut Context<Self>) {
+        if let Some(saved) = &mut self.restore_pending {
+            saved.remove_browsers();
+        }
+        let ids: Vec<_> = self
+            .ordered()
+            .filter(|(_, tab)| matches!(tab.content, Content::Browser(_)))
+            .map(|(id, _)| id)
+            .collect();
+        for id in ids {
+            self.remove(id, cx);
+        }
     }
 
     fn close(&mut self, id: usize, window: &mut Window, cx: &mut Context<Self>) {
@@ -508,6 +526,35 @@ impl Panel {
             })
             .collect()
     }
+}
+
+/// Close browser tabs in every window and saved project before clearing a store.
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn close_all_browsers(cx: &mut gpui::App) -> std::io::Result<()> {
+    persistence::remove_saved_browsers()?;
+    for handle in cx.windows() {
+        let Some(handle) = handle.downcast::<Cydonia>() else {
+            continue;
+        };
+        let _ = handle.update(cx, |root, _, cx| {
+            for panel in root.right_panels.values() {
+                panel.update(cx, |panel, cx| panel.close_browsers(cx));
+            }
+            root.save_panel_layout(cx);
+            cx.notify();
+        });
+    }
+    super::browser::forget_all(cx);
+    // A rendered frame retains native page surfaces until it is replaced.
+    for handle in cx.windows() {
+        if let Some(handle) = handle.downcast::<Cydonia>() {
+            let _ = cx.update_window(handle.into(), |_, window, cx| {
+                window.refresh();
+                window.draw(cx).clear(cx);
+            });
+        }
+    }
+    Ok(())
 }
 
 impl Render for Panel {

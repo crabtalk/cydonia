@@ -33,6 +33,42 @@ pub(super) struct SavedPanel {
     files_width: f32,
 }
 
+impl SavedPanel {
+    pub(super) fn remove_browsers(&mut self) {
+        let active = self.active;
+        let mut kept = 0;
+        let mut selected = None;
+        for (index, tab) in self.tabs.iter().enumerate() {
+            if !matches!(tab, SavedTab::Browser { .. }) {
+                if Some(index) == active {
+                    selected = Some(kept);
+                }
+                kept += 1;
+            }
+        }
+        self.tabs
+            .retain(|tab| !matches!(tab, SavedTab::Browser { .. }));
+        self.active = selected.or_else(|| (!self.tabs.is_empty()).then_some(0));
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(super) fn remove_saved_browsers() -> std::io::Result<()> {
+    let Some(path) = path() else {
+        return Ok(());
+    };
+    if !path.exists() {
+        return Ok(());
+    }
+    let mut saved: SavedPanels = serde_json::from_slice(&std::fs::read(&path)?)?;
+    for panel in saved.projects.values_mut() {
+        panel.remove_browsers();
+    }
+    let temporary = path.with_extension("json.tmp");
+    std::fs::write(&temporary, serde_json::to_vec(&saved)?)?;
+    std::fs::rename(temporary, path)
+}
+
 #[derive(Default, Serialize, Deserialize)]
 #[serde(default)]
 struct SavedPanels {
@@ -235,3 +271,7 @@ impl Cydonia {
 pub(super) fn saved_panel(cwd: &std::path::Path) -> Option<SavedPanel> {
     load().projects.get(cwd).cloned()
 }
+
+#[cfg(test)]
+#[path = "../../../../tests/unit/browser_data.rs"]
+mod browser_data_tests;

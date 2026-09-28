@@ -94,26 +94,21 @@ pub fn open_link(url: &str, window: &mut Window, cx: &mut App) {
     cx.open_url(url);
 }
 
-/// Whether any page is built, which is what [`clear_data`] clears through.
-pub fn any_page(cx: &App) -> bool {
-    cx.try_global::<Pages>()
-        .is_some_and(|pages| !pages.0.is_empty())
+#[derive(Default)]
+struct Clearing(bool);
+impl Global for Clearing {}
+
+pub(crate) fn clearing(cx: &App) -> bool {
+    cx.try_global::<Clearing>().is_some_and(|state| state.0)
 }
 
-/// Clear the cookies, storage and cache of every live page's store. `false`
-/// where no page could clear.
-pub fn clear_data(cx: &App) -> bool {
-    let Some(pages) = cx.try_global::<Pages>() else {
-        return false;
-    };
-    // Every page, not the first that answers: an in-memory page has a store
-    // of its own.
-    let cleared = pages
-        .0
-        .values()
-        .filter(|page| page.read(cx).clear_data())
-        .count();
-    cleared > 0
+pub(crate) fn set_clearing(value: bool, cx: &mut App) {
+    cx.default_global::<Clearing>().0 = value;
+    cx.refresh_windows();
+}
+
+pub(crate) fn forget_all(cx: &mut App) {
+    cx.default_global::<Pages>().0.clear();
 }
 
 /// The title or location changed.
@@ -178,6 +173,12 @@ impl Browser {
     /// The tab's page, once a render has built it.
     pub(crate) fn webview(&self) -> Option<Entity<WebView>> {
         self.page.clone()
+    }
+
+    pub(super) fn close(&mut self, cx: &mut Context<Self>) {
+        self._page = None;
+        self.page = None;
+        forget(self.id, cx);
     }
 
     /// Load `url`: in the page where it is built, else the page is built on it.
@@ -350,6 +351,9 @@ impl Focusable for Browser {
 
 impl Render for Browser {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if clearing(cx) {
+            return div().into_any_element();
+        }
         let page = self.page(window, cx);
         let theme = Theme::of(cx).clone();
         let loading = page.read(cx).is_loading();
