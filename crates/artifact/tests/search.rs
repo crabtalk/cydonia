@@ -52,7 +52,7 @@ fn a_pattern_matches_as_a_regex_ignoring_case() {
 fn a_pattern_skips_empty_matches() {
     let query = Query::pattern("x*").unwrap().unwrap();
     let ranges: Vec<_> = query.find("axxb").collect();
-    assert_eq!(ranges, [1..3]);
+    assert_eq!(ranges, vec![(1..3)]);
 }
 
 #[test]

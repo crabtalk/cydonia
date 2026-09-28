@@ -127,6 +127,7 @@ pub struct Workspace {
     agent_icons: HashMap<String, Icon>,
     /// Bumped by every [`Self::load_agent_icons`]; a retry loop holding an
     /// older value stops.
+    #[cfg(feature = "desktop")]
     icon_pass: u64,
     /// What each project was last showing, by project path — where a launch
     /// puts you back.
@@ -201,6 +202,7 @@ impl Workspace {
             meter: false,
             next_id: 0,
             agent_icons: HashMap::new(),
+            #[cfg(feature = "desktop")]
             icon_pass: 0,
             last: state.last,
             order: state.order,
