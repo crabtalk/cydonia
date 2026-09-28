@@ -42,6 +42,26 @@ fn a_blank_query_is_no_query() {
 }
 
 #[test]
+fn a_pattern_matches_as_a_regex_ignoring_case() {
+    let query = Query::pattern(r"P\w+P").unwrap().unwrap();
+    let ranges: Vec<_> = query.find("the pump, a pulp").collect();
+    assert_eq!(ranges, [4..8, 12..16]);
+}
+
+#[test]
+fn a_pattern_skips_empty_matches() {
+    let query = Query::pattern("x*").unwrap().unwrap();
+    let ranges: Vec<_> = query.find("axxb").collect();
+    assert_eq!(ranges, vec![(1..3)]);
+}
+
+#[test]
+fn a_broken_pattern_is_an_error_and_a_blank_one_none() {
+    assert!(Query::pattern("(").is_err());
+    assert!(Query::pattern(" ").unwrap().is_none());
+}
+
+#[test]
 fn matches_carry_block_range_and_line_ignoring_case_and_thinking() {
     let query = Query::literal("PUMP").unwrap();
     let record = record();

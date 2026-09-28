@@ -1,8 +1,42 @@
 [
   {
+    "version": "0.1.20",
+    "date": "2026-09-28",
+    "nightly": true,
+    "summary": "Agents can drive the browser tabs in the right panel, links that open a new window open a tab, and the Linux build leaves the browser out.",
+    "media": {
+      "poster": "pics/cydonia/v0.1.20.jpg",
+      "src": "videos/cydonia/v0.1.20.mp4",
+      "alt": "…",
+      "w": 1280,
+      "h": 900
+    },
+    "new": [
+      "Let agents open, read, click, type and scroll in a project's browser tabs over MCP, offered only while browser tabs are on",
+      "Open links that ask for a new window in a new browser tab"
+    ],
+    "changed": [
+      "Leave browser tabs out of the Linux build, where pages never showed"
+    ],
+    "fixed": [
+      "Copy a transcript selection with ⌘C inside a space"
+    ]
+  },
+  {
     "version": "0.1.19",
     "date": "2026-09-27",
-    "nightly": true,
+    "summary": "Browse the web in tabs in the right panel, kept across restarts and switchable in Settings, and the Linux build starts again.",
+    "media": {
+      "poster": "pics/cydonia/v0.1.19.jpg",
+      "src": "videos/cydonia/v0.1.19.mp4",
+      "alt": "…",
+      "w": 1280,
+      "h": 900
+    },
+    "new": [
+      "Browse the web in right panel tabs, with back, forward, reload and an address bar that searches when it is not given a URL; tabs come back after a restart",
+      "Switch browser tabs off in Settings → Features"
+    ],
     "fixed": [
       "Start the Linux build, which had no display backend",
       "Title the main and settings windows, which Linux taskbars listed as untitled",
@@ -12,7 +46,6 @@
   {
     "version": "0.1.18",
     "date": "2026-09-27",
-    "nightly": true,
     "summary": "A ⌘K search palette finds articles, boards and sessions across every open project, with a find bar inside articles and transcripts and link previews in articles.",
     "media": {
       "poster": "pics/cydonia/v0.1.18.jpg",

@@ -50,6 +50,29 @@ pub fn set_delete(on: bool) {
     delete().store(on, Ordering::Relaxed);
 }
 
+/// Whether the browser tools and their resource are offered.
+static BROWSER: OnceLock<Arc<AtomicBool>> = OnceLock::new();
+
+fn browser() -> &'static Arc<AtomicBool> {
+    BROWSER.get_or_init(|| Arc::new(AtomicBool::new(false)))
+}
+
+/// Offer the browser tools, or withhold them. Never on where the build has no
+/// browser.
+pub fn set_browser(on: bool) {
+    browser().store(on && cfg!(not(target_os = "linux")), Ordering::Relaxed);
+}
+
+/// The resources of surfaces switched off, for the catalog a session is sent.
+pub fn hidden_resources() -> Vec<&'static str> {
+    match browser().load(Ordering::Relaxed) {
+        true => Vec::new(),
+        false => vec![BROWSER_RESOURCE],
+    }
+}
+
+const BROWSER_RESOURCE: &str = "browser";
+
 /// Open the door, or close it. Idempotent, because the switches that reach it
 /// move for their own reasons and most moves are not about this.
 ///
@@ -102,6 +125,7 @@ fn server() -> Server {
         .mount(&tools::project::TOOLS)
         .mount(&tools::session::TOOLS)
         .mount(&tools::workspace::TOOLS)
+        .mount_switched(&tools::browser::TOOLS, BROWSER_RESOURCE, browser().clone())
         .writable(write().clone())
         .deletes(delete().clone())
 }

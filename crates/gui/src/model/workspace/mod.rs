@@ -38,6 +38,14 @@ use std::{
     path::{Path, PathBuf},
 };
 
+/// The wait before the first retry of agent icons; each retry doubles it.
+#[cfg(feature = "desktop")]
+const ICON_RETRY_FIRST: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// How many times icons are retried after the first pass.
+#[cfg(feature = "desktop")]
+const ICON_RETRIES: u32 = 6;
+
 // The rest of `impl Workspace`, split by what each part touches rather than
 // left as one 1500-line block. Every one of them continues this module's
 // scope — see the note at the head of each.
@@ -115,8 +123,12 @@ pub struct Workspace {
     /// you left on is not a preference worth restoring.
     pub meter: bool,
     /// The registry's mark for each configured agent, by name. Empty until the
-    /// catalog lands, and stays empty offline.
+    /// catalog lands; filled in by retries after an offline launch.
     agent_icons: HashMap<String, Icon>,
+    /// Bumped by every [`Self::load_agent_icons`]; a retry loop holding an
+    /// older value stops.
+    #[cfg(feature = "desktop")]
+    icon_pass: u64,
     /// What each project was last showing, by project path — where a launch
     /// puts you back.
     last: BTreeMap<PathBuf, state::Entry>,
@@ -190,6 +202,8 @@ impl Workspace {
             meter: false,
             next_id: 0,
             agent_icons: HashMap::new(),
+            #[cfg(feature = "desktop")]
+            icon_pass: 0,
             last: state.last,
             order: state.order,
             pinned: state.pinned,
@@ -325,15 +339,43 @@ impl Workspace {
         #[cfg(feature = "desktop")]
         let configured = self.settings.agents.clone();
         #[cfg(feature = "desktop")]
+        let pass = {
+            self.icon_pass += 1;
+            self.icon_pass
+        };
+        // Retried with backoff while any configured agent is without a mark.
+        // An entry the registry does not publish never gets one, so the
+        // retries are capped rather than run until every entry has one.
+        #[cfg(feature = "desktop")]
         cx.spawn(async move |this, cx| {
-            let icons = cx
-                .background_executor()
-                .spawn(async move { agent::icons(&configured) })
-                .await;
-            let _ = this.update(cx, |workspace, cx| {
-                workspace.agent_icons = icons;
-                cx.notify();
-            });
+            let mut delay = ICON_RETRY_FIRST;
+            for attempt in 0..=ICON_RETRIES {
+                if attempt > 0 {
+                    cx.background_executor().timer(delay).await;
+                    delay *= 2;
+                }
+                let held = configured.clone();
+                let icons = cx
+                    .background_executor()
+                    .spawn(async move { agent::icons(&held) })
+                    .await;
+                let complete = icons.len() == configured.len();
+                let current = this
+                    .update(cx, |workspace, cx| {
+                        if workspace.icon_pass != pass {
+                            return false;
+                        }
+                        // Merged: a pass that failed where an earlier one did
+                        // not must not take a mark back off the screen.
+                        workspace.agent_icons.extend(icons);
+                        cx.notify();
+                        true
+                    })
+                    .unwrap_or(false);
+                if !current || complete {
+                    return;
+                }
+            }
         })
         .detach();
     }
@@ -385,6 +427,7 @@ impl Workspace {
             self.settings = settings;
             rail::set_agents(self.rail_agents());
             self.readopt_agents();
+            self.load_agent_icons(cx);
         }
         cx.notify();
     }
@@ -468,6 +511,8 @@ impl Workspace {
         agent::serve::serve(self.settings.mcp.serve && self.settings.features.sessions);
         #[cfg(feature = "desktop")]
         agent::serve::set_write(self.settings.mcp.write);
+        #[cfg(feature = "desktop")]
+        agent::serve::set_browser(self.settings.features.panel.browser);
         #[cfg(feature = "desktop")]
         agent::serve::set_delete(self.settings.mcp.delete);
     }

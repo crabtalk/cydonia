@@ -31,7 +31,9 @@ fn mcp_sessions_receive_the_catalog_alongside_unchanged_user_content() {
     assert_eq!(resource.uri, "cydonia://session/context");
     assert_eq!(resource.mime_type.as_deref(), Some("text/plain"));
     assert!(text(&blocks[1]).contains("/projects/example"));
-    assert!(text(&blocks[1]).contains(&prompts::resources::catalog()));
+    assert!(text(&blocks[1]).contains(&prompts::resources::catalog(
+        &cydonia_gui::agent::serve::hidden_resources()
+    )));
     assert!(text(&blocks[1]).contains("cydonia://resources/markdown"));
     assert!(!text(&blocks[1]).contains("![Architecture overview|480]"));
     assert_eq!(text(&blocks[0]), "Write an article");
@@ -60,5 +62,7 @@ fn text_only_agents_keep_user_blocks_first() {
     let blocks = context::prompt(Path::new("/project"), true, false, user.clone());
     assert_eq!(&blocks[..user.len()], user.as_slice());
     assert!(matches!(&blocks[2], ContentBlock::Text(_)));
-    assert!(text(&blocks[2]).contains(&prompts::resources::catalog()));
+    assert!(text(&blocks[2]).contains(&prompts::resources::catalog(
+        &cydonia_gui::agent::serve::hidden_resources()
+    )));
 }

@@ -2,9 +2,11 @@
 
 mod persistence;
 
+#[cfg(not(target_os = "linux"))]
+use super::browser::Browser;
 #[cfg(feature = "desktop")]
 use super::terminal::{DirectoryChanged, Exited, Terminal};
-use super::{browser::Browser, changes::Changes, file::FileView, files::Files};
+use super::{changes::Changes, file::FileView, files::Files};
 use crate::model::settings::PanelTabs;
 use crate::view::leaf::Pane;
 use crate::view::root::{Cydonia, ToggleChanges};
@@ -41,6 +43,9 @@ gpui::actions!(
 
 struct FilesResize;
 
+/// A panel tab carried along its own strip.
+struct TabDrag(usize);
+
 /// The launch view's link to the settings that switch its tabs back on.
 pub struct OpenFeatures;
 
@@ -52,15 +57,25 @@ impl gpui::EventEmitter<OpenFeatures> for Panel {}
 enum Launch {
     Review,
     Terminal,
+    #[cfg(not(target_os = "linux"))]
     Browser,
     Files,
 }
 
 impl Launch {
+    /// `None` where the build carries no browser.
+    fn browser() -> Option<Self> {
+        #[cfg(not(target_os = "linux"))]
+        return Some(Self::Browser);
+        #[cfg(target_os = "linux")]
+        None
+    }
+
     fn label(self) -> &'static str {
         match self {
             Self::Review => "Review",
             Self::Terminal => "Terminal",
+            #[cfg(not(target_os = "linux"))]
             Self::Browser => "Browser",
             Self::Files => "Files",
         }
@@ -70,6 +85,7 @@ impl Launch {
         match self {
             Self::Review => icons::development::GitCompare,
             Self::Terminal => icons::development::Terminal,
+            #[cfg(not(target_os = "linux"))]
             Self::Browser => icons::navigation::Globe,
             Self::Files => icons::files::Folder,
         }
@@ -81,6 +97,7 @@ enum Content {
     #[cfg(feature = "desktop")]
     Terminal(Entity<Terminal>),
     File(Entity<FileView>),
+    #[cfg(not(target_os = "linux"))]
     Browser(Entity<Browser>),
 }
 struct Tab {
@@ -153,6 +170,7 @@ impl Panel {
                 self.remove(id, cx);
             }
         }
+        #[cfg(not(target_os = "linux"))]
         if !tabs.browser {
             let browsers: Vec<usize> = self
                 .ordered()
@@ -174,16 +192,15 @@ impl Panel {
         self.tabs.files.then_some(self.files_open)
     }
 
-    fn launchers(&self, cx: &gpui::App) -> Vec<Launch> {
-        let browser = self.tabs.browser && super::browser::supported(cx);
+    fn launchers(&self) -> Vec<Launch> {
         [
-            (self.tabs.review, Launch::Review),
-            (true, Launch::Terminal),
-            (browser, Launch::Browser),
-            (self.tabs.files, Launch::Files),
+            (self.tabs.review, Some(Launch::Review)),
+            (true, Some(Launch::Terminal)),
+            (self.tabs.browser, Launch::browser()),
+            (self.tabs.files, Some(Launch::Files)),
         ]
         .into_iter()
-        .filter_map(|(on, launch)| on.then_some(launch))
+        .filter_map(|(on, launch)| launch.filter(|_| on))
         .collect()
     }
 
@@ -192,7 +209,7 @@ impl Panel {
         let off: Vec<&str> = [
             (self.tabs.review, "Review"),
             (self.tabs.files, "Files"),
-            (self.tabs.browser, "Browser"),
+            (self.tabs.browser || cfg!(target_os = "linux"), "Browser"),
         ]
         .into_iter()
         .filter_map(|(on, name)| (!on).then_some(name))
@@ -293,6 +310,7 @@ impl Panel {
                 #[cfg(feature = "desktop")]
                 Content::Terminal(terminal) => window.focus(&terminal.focus_handle(cx), cx),
                 Content::File(file) => window.focus(&file.focus_handle(cx), cx),
+                #[cfg(not(target_os = "linux"))]
                 Content::Browser(browser) => window.focus(&browser.focus_handle(cx), cx),
                 Content::Review(_) => window.focus(&self.focus, cx),
             }
@@ -356,6 +374,7 @@ impl Panel {
         self.push(Content::File(file), vec![watch, forward], cx);
     }
 
+    #[cfg(not(target_os = "linux"))]
     fn browser(
         &mut self,
         id: u64,
@@ -367,10 +386,15 @@ impl Panel {
         let changed = cx.subscribe(&browser, |_, _, _: &super::browser::Changed, cx| {
             cx.notify()
         });
-        self.push(Content::Browser(browser.clone()), vec![changed], cx);
+        let open = cx.subscribe(&browser, |this, _, event: &super::browser::OpenTab, cx| {
+            let id = super::browser::new_id();
+            this.browser(id, event.0.clone(), String::new(), cx);
+        });
+        self.push(Content::Browser(browser.clone()), vec![changed, open], cx);
         browser
     }
 
+    #[cfg(not(target_os = "linux"))]
     fn new_browser(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.tabs.browser {
             return;
@@ -379,6 +403,33 @@ impl Panel {
         let browser = self.browser(id, super::browser::HOME.into(), String::new(), cx);
         let address = browser.read(cx).address_focus(cx);
         window.focus(&address, cx);
+    }
+
+    /// The browser tabs, in strip order, each with whether it is in front.
+    #[cfg(not(target_os = "linux"))]
+    pub(crate) fn browsers(&self) -> Vec<(Entity<Browser>, bool)> {
+        let front = self.strip.active().copied();
+        self.ordered()
+            .filter_map(|(id, tab)| match &tab.content {
+                Content::Browser(browser) => Some((browser.clone(), front == Some(id))),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Open a browser tab on `url`, in front — for an agent. `None` where the
+    /// settings switch browser tabs off.
+    #[cfg(not(target_os = "linux"))]
+    pub(crate) fn open_browser(
+        &mut self,
+        url: String,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<Browser>> {
+        if !self.tabs.browser {
+            return None;
+        }
+        let id = super::browser::new_id();
+        Some(self.browser(id, url, String::new(), cx))
     }
 
     /// Step to the tab `step` along, wrapping at the ends — the row is a ring,
@@ -400,10 +451,12 @@ impl Panel {
         if !self.strip.close(&id) {
             return;
         }
+        let _tab = self.contents.remove(&id);
+        #[cfg(not(target_os = "linux"))]
         if let Some(Tab {
             content: Content::Browser(browser),
             ..
-        }) = self.contents.remove(&id)
+        }) = _tab
         {
             super::browser::forget(browser.read(cx).id, cx);
         }
@@ -433,6 +486,7 @@ impl Panel {
         match launch {
             Launch::Review => self.review(cx),
             Launch::Terminal => self.terminal(window, cx),
+            #[cfg(not(target_os = "linux"))]
             Launch::Browser => self.new_browser(window, cx),
             Launch::Files => self.files(window, cx),
         }
@@ -447,6 +501,7 @@ impl Panel {
                 match launch {
                     Launch::Review => item.with_shortcut(&crate::view::root::OpenReview, window),
                     Launch::Terminal => item.with_shortcut_in(&NewTerminal, "SessionPanel", window),
+                    #[cfg(not(target_os = "linux"))]
                     Launch::Browser => item,
                     Launch::Files => item.with_shortcut(&crate::view::root::OpenFiles, window),
                 }
@@ -464,7 +519,7 @@ impl Render for Panel {
         }
         let theme = Theme::of(cx).clone();
         let right = chrome::has(CaptionSide::Right, window, cx);
-        let launchers = self.launchers(cx);
+        let launchers = self.launchers();
         let items = Self::items(&launchers, window);
         let rows = items.clone();
         let chosen = launchers.clone();
@@ -528,6 +583,7 @@ impl Render for Panel {
                         )
                         .into_any_element()
                 }
+                #[cfg(not(target_os = "linux"))]
                 Content::Browser(_) => super::status::bar(&theme)
                     .children(
                         self.files_state()
@@ -554,6 +610,7 @@ impl Render for Panel {
                 #[cfg(feature = "desktop")]
                 Content::Terminal(terminal) => terminal.clone().into_any_element(),
                 Content::File(file) => file.clone().into_any_element(),
+                #[cfg(not(target_os = "linux"))]
                 Content::Browser(browser) => browser.clone().into_any_element(),
             })
             .unwrap_or_else(|| {
@@ -659,6 +716,7 @@ impl Render for Panel {
                                 #[cfg(feature = "desktop")]
                                 Content::Terminal(_) => icons::development::Terminal,
                                 Content::File(_) => icons::files::File,
+                                #[cfg(not(target_os = "linux"))]
                                 Content::Browser(_) => icons::navigation::Globe,
                             };
                             // The path is the tooltip and the last component is
@@ -679,6 +737,7 @@ impl Render for Panel {
                                         false,
                                     )
                                 }
+                                #[cfg(not(target_os = "linux"))]
                                 Content::Browser(browser) => {
                                     let browser = browser.read(cx);
                                     (browser.title().to_owned(), browser.url().to_owned(), false)
@@ -696,7 +755,8 @@ impl Render for Panel {
                                     )
                                 }
                             };
-                            let mut label = tabs::Label::new(name).with_icon(icon);
+                            let name = gpui::SharedString::from(name);
+                            let mut label = tabs::Label::new(name.clone()).with_icon(icon);
                             // Unsaved work is the mark rather than a bullet in
                             // the name: the name truncates and the mark does
                             // not.
@@ -715,6 +775,34 @@ impl Render for Panel {
                                     this.strip.activate(&id);
                                     this.focus(window, cx);
                                     cx.notify();
+                                }))
+                                .on_drag(TabDrag(id), {
+                                    let name = name.clone();
+                                    move |_, _, _, cx| {
+                                        cx.new(|_| crate::view::sidebar::Carried(name.clone()))
+                                    }
+                                })
+                                .drag_over::<TabDrag>({
+                                    let order = self.strip.tabs().to_vec();
+                                    move |style, drag, _, cx| {
+                                        let at = |id| order.iter().position(|held| *held == id);
+                                        match (at(drag.0), at(id)) {
+                                            (Some(from), Some(to)) => {
+                                                crate::view::arrangement::tab_drop_mark(
+                                                    style, from, to, cx,
+                                                )
+                                            }
+                                            _ => style,
+                                        }
+                                    }
+                                })
+                                .on_drop(cx.listener(move |this, drag: &TabDrag, _, cx| {
+                                    if let (Some(from), Some(to)) =
+                                        (this.strip.index_of(&drag.0), this.strip.index_of(&id))
+                                    {
+                                        this.strip.reorder(from, to);
+                                        cx.notify();
+                                    }
                                 }))
                                 .child(tabs::close(&theme, key, tabs::Close::OnHover).on_click(
                                     cx.listener(move |this, _, window, cx| {
@@ -1018,32 +1106,38 @@ impl Cydonia {
                     |(_, tab)| matches!(&tab.content, Content::File(file) if file.read(cx).dirty(cx)),
                 )
         });
-        self.changes = here.filter(|_| self.changes_open).map(|cwd| {
-            self.right_panels
-                .entry(cwd.clone())
-                .or_insert_with(|| {
-                    let panel = cx.new(|cx| {
-                        let mut panel = Panel::new(cwd.clone(), cx);
-                        panel.restore_pending = persistence::saved_panel(&cwd);
-                        panel.project_root = cwd.canonicalize().unwrap_or(cwd);
-                        panel
-                    });
-                    cx.subscribe(&panel, |this, _, event: &DesktopOnly, cx| {
-                        this.desktop_only(event.0, cx)
-                    })
-                    .detach();
-                    cx.subscribe(&panel, |this, _, _: &OpenFeatures, cx| {
-                        this.open_settings(crate::view::section::Section::Features, cx)
-                    })
-                    .detach();
-                    panel
-                })
-                .clone()
-        });
+        self.changes = here
+            .filter(|_| self.changes_open)
+            .map(|cwd| self.right_panel(cwd, cx));
         let tabs = self.workspace.read(cx).settings.features.panel;
         if let Some(panel) = &self.changes {
             panel.update(cx, |panel, cx| panel.set_tabs(tabs, cx));
         }
+    }
+
+    /// The right panel for `cwd`, made the first time it is asked for.
+    pub(crate) fn right_panel(&mut self, cwd: PathBuf, cx: &mut Context<Self>) -> Entity<Panel> {
+        if let Some(panel) = self.right_panels.get(&cwd) {
+            return panel.clone();
+        }
+        let panel = cx.new(|cx| {
+            let mut panel = Panel::new(cwd.clone(), cx);
+            panel.restore_pending = persistence::saved_panel(&cwd);
+            panel.project_root = cwd.canonicalize().unwrap_or(cwd.clone());
+            panel
+        });
+        cx.subscribe(&panel, |this, _, event: &DesktopOnly, cx| {
+            this.desktop_only(event.0, cx)
+        })
+        .detach();
+        cx.subscribe(&panel, |this, _, _: &OpenFeatures, cx| {
+            this.open_settings(crate::view::section::Section::Features, cx)
+        })
+        .detach();
+        let tabs = self.workspace.read(cx).settings.features.panel;
+        panel.update(cx, |panel, cx| panel.set_tabs(tabs, cx));
+        self.right_panels.insert(cwd, panel.clone());
+        panel
     }
 
     /// Every directory the window can still reach a panel through: the open

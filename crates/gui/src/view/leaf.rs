@@ -93,6 +93,9 @@ pub struct Leaf {
     /// Which find hit an article or a transcript is on, counted from the
     /// first — see [`crate::view::find`].
     pub(crate) find_at: usize,
+    /// Whether an article's or a transcript's find reads its field as a
+    /// regular expression.
+    pub(crate) find_pattern: bool,
     /// Where the card now in the air would land. Written by the lanes and
     /// cards the pointer crosses and read by the one that draws the mark —
     /// see [`board::Landing`].
@@ -131,6 +134,7 @@ impl Leaf {
             find_field,
             finding: false,
             find_at: 0,
+            find_pattern: false,
             landing: None,
             group_landing: None,
             cell: None,

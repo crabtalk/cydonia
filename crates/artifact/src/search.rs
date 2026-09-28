@@ -16,7 +16,8 @@ use crate::{
 use regex::bytes::{Regex, RegexBuilder};
 use std::{ops::Range, sync::mpsc::Sender};
 
-/// What a search looks for: a literal, case-insensitive.
+/// What a search looks for: a literal or a regular expression,
+/// case-insensitive either way.
 #[derive(Clone)]
 pub struct Query {
     text: String,
@@ -36,6 +37,20 @@ impl Query {
         })
     }
 
+    /// `text` as a regular expression. `Ok(None)` for a query that is blank
+    /// once trimmed.
+    pub fn pattern(text: &str) -> Result<Option<Self>, regex::Error> {
+        let text = text.trim();
+        if text.is_empty() {
+            return Ok(None);
+        }
+        let pattern = RegexBuilder::new(text).case_insensitive(true).build()?;
+        Ok(Some(Self {
+            text: text.to_owned(),
+            pattern,
+        }))
+    }
+
     pub fn text(&self) -> &str {
         &self.text
     }
@@ -45,9 +60,12 @@ impl Query {
         self.pattern.is_match(bytes)
     }
 
-    /// Every match in `text`, as byte ranges into it.
+    /// Every non-empty match in `text`, as byte ranges into it.
     pub fn find<'a>(&'a self, text: &'a str) -> impl Iterator<Item = Range<usize>> + 'a {
-        self.pattern.find_iter(text.as_bytes()).map(|m| m.range())
+        self.pattern
+            .find_iter(text.as_bytes())
+            .map(|m| m.range())
+            .filter(|range| !range.is_empty())
     }
 }
 

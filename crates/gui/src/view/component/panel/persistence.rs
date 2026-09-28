@@ -81,6 +81,7 @@ impl Panel {
                     Content::Terminal(terminal) => {
                         SavedTab::Terminal(terminal.read(cx).directory.clone())
                     }
+                    #[cfg(not(target_os = "linux"))]
                     Content::Browser(browser) => {
                         let browser = browser.read(cx);
                         SavedTab::Browser {
@@ -122,11 +123,14 @@ impl Panel {
                     };
                     self.terminal(window, cx);
                 }
+                #[cfg(not(target_os = "linux"))]
                 SavedTab::Browser { id, url, title } => {
                     if self.tabs.browser {
                         self.browser(id, url, title, cx);
                     }
                 }
+                #[cfg(target_os = "linux")]
+                SavedTab::Browser { .. } => {}
                 SavedTab::File { path, draft } => {
                     self.open_file(path, cx);
                     if let Some(draft) = draft

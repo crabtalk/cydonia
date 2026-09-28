@@ -4,39 +4,39 @@ use std::path::Path;
 #[test]
 fn all_delivery_modes_include_the_shared_workspace_instructions() {
     for available in [false, true] {
-        let session = prompts::session_context(Path::new("/projects/my project"), available);
+        let session = prompts::session_context(Path::new("/projects/my project"), available, &[]);
         assert!(session.contains(prompts::workspace()));
         assert!(session.contains("/projects/my project"));
         for bound in [false, true] {
-            assert!(prompts::tool_context(bound).contains(prompts::workspace()));
+            assert!(prompts::tool_context(bound, &[]).contains(prompts::workspace()));
         }
     }
 }
 
 #[test]
 fn catalog_delivery_never_embeds_full_resource_content() {
-    let session = prompts::session_context(Path::new("/project"), true);
-    let tools = prompts::tool_context(true);
-    assert!(session.contains(&prompts::resource_catalog()));
-    assert!(tools.contains(&prompts::resource_catalog()));
-    let unavailable = prompts::session_context(Path::new("/project"), false);
+    let session = prompts::session_context(Path::new("/project"), true, &[]);
+    let tools = prompts::tool_context(true, &[]);
+    assert!(session.contains(&prompts::resource_catalog(&[])));
+    assert!(tools.contains(&prompts::resource_catalog(&[])));
+    let unavailable = prompts::session_context(Path::new("/project"), false, &[]);
     for skill in resources::list() {
         assert!(!session.contains(skill.content));
         assert!(!tools.contains(skill.content));
         assert!(!unavailable.contains(skill.content));
     }
-    assert!(!unavailable.contains(&prompts::resource_catalog()));
+    assert!(!unavailable.contains(&prompts::resource_catalog(&[])));
     assert!(unavailable.contains("MCP connection is unavailable"));
 }
 
 #[test]
 fn tool_context_distinguishes_project_binding() {
-    let bound = prompts::tool_context(true);
+    let bound = prompts::tool_context(true, &[]);
     assert!(bound.contains("project bound to this connection"));
     // A bound caller is told it can still name another project, which is the
     // half of the binding a session would otherwise never try.
     assert!(bound.contains("unless a call names"));
-    assert!(prompts::tool_context(false).contains("project's directory path"));
+    assert!(prompts::tool_context(false, &[]).contains("project's directory path"));
 }
 
 /// Every caller that can reach the board tools is told to tag what it is
@@ -47,9 +47,9 @@ fn tool_context_distinguishes_project_binding() {
 #[test]
 fn callers_with_tools_are_told_to_tag_and_untag_cards() {
     for context in [
-        prompts::session_context(Path::new("/project"), true),
-        prompts::tool_context(true),
-        prompts::tool_context(false),
+        prompts::session_context(Path::new("/project"), true, &[]),
+        prompts::tool_context(true, &[]),
+        prompts::tool_context(false, &[]),
     ] {
         assert!(context.contains("board_set_card_status"), "{context}");
         assert!(
@@ -66,6 +66,14 @@ fn callers_with_tools_are_told_to_tag_and_untag_cards() {
         );
     }
     // Nothing is said to a caller with no tools to say it about.
-    let unavailable = prompts::session_context(Path::new("/project"), false);
+    let unavailable = prompts::session_context(Path::new("/project"), false, &[]);
     assert!(!unavailable.contains("board_set_card_status"));
+}
+
+#[test]
+fn hidden_resources_leave_the_catalog() {
+    let catalog = prompts::resource_catalog(&["browser"]);
+    assert!(!catalog.contains("cydonia://resources/browser"));
+    assert!(catalog.contains("cydonia://resources/markdown"));
+    assert!(prompts::resource_catalog(&[]).contains("cydonia://resources/browser"));
 }

@@ -9,7 +9,7 @@ use bezel::{
         Subscription, Window, actions, div, prelude::*, px,
     },
     motion::{Fade, Painter},
-    theme::{TextStyle, Theme, Typeset},
+    theme::Theme,
     ui::{
         icons,
         input::TextField,
@@ -30,12 +30,6 @@ pub const HOME: &str = "https://duckduckgo.com";
 
 pub fn bindings() -> Vec<KeyBinding> {
     vec![KeyBinding::new("enter", Go, Some(ADDRESS_CONTEXT))]
-}
-
-/// Whether pages can be shown here. bezel-browser builds pages under X11
-/// only, so a gpui window on Wayland shows none.
-pub fn supported(cx: &App) -> bool {
-    !(cfg!(target_os = "linux") && cx.compositor_name() == "Wayland")
 }
 
 /// Every live page, by tab id.
@@ -63,6 +57,10 @@ pub fn forget(id: u64, cx: &mut App) {
 /// The title or location changed.
 pub struct Changed;
 
+/// The page asked for a new window — a `target="_blank"` link or
+/// `window.open` — on this URL.
+pub struct OpenTab(pub String);
+
 pub struct Browser {
     pub id: u64,
     /// Built on first render: a page needs a window.
@@ -76,6 +74,7 @@ pub struct Browser {
 }
 
 impl EventEmitter<Changed> for Browser {}
+impl EventEmitter<OpenTab> for Browser {}
 
 impl Browser {
     pub fn new(id: u64, url: String, title: String, cx: &mut Context<Self>) -> Self {
@@ -107,6 +106,24 @@ impl Browser {
         } else {
             &self.title
         }
+    }
+
+    /// The tab's page, once a render has built it.
+    pub(crate) fn webview(&self) -> Option<Entity<WebView>> {
+        self.page.clone()
+    }
+
+    /// Load `url`: in the page where it is built, else the page is built on it.
+    pub(crate) fn navigate(&mut self, url: String, cx: &mut Context<Self>) {
+        match &self.page {
+            Some(page) => page.update(cx, |page, _| page.load(url)),
+            None => {
+                self.address
+                    .update(cx, |field, cx| field.set_content(url.clone(), cx));
+                self.url = url;
+            }
+        }
+        cx.notify();
     }
 
     pub fn address_focus(&self, cx: &App) -> FocusHandle {
@@ -155,6 +172,10 @@ impl Browser {
             }
             WebViewEvent::Title(title) => self.title = title.clone(),
             WebViewEvent::Load(_) => {}
+            WebViewEvent::NewWindow(url) => {
+                cx.emit(OpenTab(url.clone()));
+                return;
+            }
         }
         cx.emit(Changed);
         cx.notify();
@@ -196,20 +217,6 @@ impl Focusable for Browser {
 
 impl Render for Browser {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if !supported(cx) {
-            let theme = Theme::of(cx);
-            return div()
-                .size_full()
-                .flex()
-                .items_center()
-                .justify_center()
-                .p(px(24.))
-                .track_focus(&self.focus)
-                .text_style(TextStyle::Caption)
-                .text_color(theme.text_muted)
-                .child("The browser needs X11. This session runs on Wayland.")
-                .into_any_element();
-        }
         let page = self.page(window, cx);
         let theme = Theme::of(cx).clone();
         let loading = page.read(cx).is_loading();

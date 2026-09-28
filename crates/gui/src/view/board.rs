@@ -100,10 +100,6 @@ fn visible_list_rows(top: Pixels, height: Pixels, count: usize) -> std::ops::Ran
 
 const LIST_HANDLE_WIDTH: f32 = 64.;
 
-/// What the list leaves clear at its foot for the pill floating there — see
-/// [`Cydonia::view_pill`].
-const PILL_CLEARANCE: f32 = 32.;
-
 /// How much of a card is shown before it is cut off. A card is a card: what
 /// does not fit in this much of a lane is read by opening it.
 const CARD_MAX_HEIGHT: f32 = 140.;
@@ -858,7 +854,7 @@ impl Cydonia {
 
     /// Lay a board out the other way — the pill at its foot. The board the pane
     /// is showing rather than the one in front: a space can have two on screen.
-    fn set_board_view(&mut self, id: &str, view: View, cx: &mut Context<Self>) {
+    pub(crate) fn set_board_view(&mut self, id: &str, view: View, cx: &mut Context<Self>) {
         self.workspace
             .update(cx, |workspace, cx| workspace.set_board_view(id, view, cx));
         cx.notify();
@@ -2129,7 +2125,6 @@ impl Cydonia {
                 .size_full()
             }))
             .child(body)
-            .children(self.view_pill(&id, view, cx))
             .children(self.find_bar(on, cx))
             .children(self.card_drawer(project, board_at, on, window, cx))
             .children(
@@ -2179,63 +2174,6 @@ impl Cydonia {
                     }),
             )
             .into_any_element()
-    }
-
-    /// The pill at the foot of a board: which way it is laid out, and the press
-    /// that lays it out the other way.
-    ///
-    /// In the pane rather than in the band, because a pane of a space has no
-    /// band — see [`crate::view::arrangement`]. `../desktop` floats its controls
-    /// at the same edge.
-    ///
-    /// Nothing at all while a card is in the air: the pill stands over the
-    /// corner the card would be dropped in, and a drop it swallowed would be a
-    /// card put back where it came from.
-    fn view_pill(&self, id: &str, view: View, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if cx.has_active_drag() {
-            return None;
-        }
-        let theme = Theme::of(cx).clone();
-        let mut pill = div()
-            .absolute()
-            .right(px(BOARD_INSET))
-            .bottom(px(BOARD_INSET))
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(2.))
-            .p(px(2.))
-            .rounded_full()
-            .border_1()
-            .border_color(theme.border)
-            .bg(theme.surface_raised);
-        for (at, glyph, label) in [
-            (View::Lanes, icons::development::SquareKanban, "Lanes"),
-            (View::List, icons::layout::LayoutList, "List"),
-        ] {
-            let held = id.to_owned();
-            let on = at == view;
-            pill = pill.child(
-                theme
-                    .ghost(SharedString::from(format!("board-view-{}", at.key())))
-                    .p(px(5.))
-                    .rounded_full()
-                    .when(on, |el| el.bg(theme.element_active))
-                    .child(icons::icon(glyph).size(px(14.)).text_color(match on {
-                        true => theme.text,
-                        false => theme.text_faint,
-                    }))
-                    .tooltip(move |window, cx| Tooltip::text(label, window, cx))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        // The pill floats over the board, so the card or row
-                        // under it answers for the same press — see the run on
-                        // a card, which is held off its own card this way.
-                        cx.stop_propagation();
-                        this.set_board_view(&held, at, cx);
-                    })),
-            );
-        }
-        Some(pill.into_any_element())
     }
 
     /// The lanes across. A board opens with none, so the lane that makes one is
@@ -2477,11 +2415,7 @@ impl Cydonia {
                     .size_full()
                     .flex()
                     .flex_col()
-                    // Room at the foot for the pill, which floats over the full
-                    // width of the last row — see [`Self::view_pill`]. The lanes
-                    // need none: what the pill covers there is the empty half of
-                    // `Add a column`.
-                    .pb(px(BOARD_INSET + PILL_CLEARANCE)
+                    .pb(px(BOARD_INSET)
                         + self
                             .drawer_for(project, board_at, on, cx)
                             .map(|drawer| drawer.bounds.get().size.height)

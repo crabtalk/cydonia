@@ -18,7 +18,6 @@ artifact.workspace = true
 anyhow.workspace = true
 base64.workspace = true
 bezel.workspace = true
-browser.workspace = true
 cacp.workspace = true
 cacp-agents.workspace = true
 chrono.workspace = true
@@ -45,6 +44,8 @@ ureq = { workspace = true, optional = true }
 url.workspace = true
 web-time.workspace = true
 
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+browser.workspace = true
 
 [features]
 default = ["desktop"]

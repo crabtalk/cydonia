@@ -73,7 +73,9 @@ pub struct Settings {
     /// A table, so it belongs below the bare keys and above `[[agents]]`.
     #[serde(default)]
     pub trusted_agents: BTreeMap<String, String>,
-    #[serde(default)]
+    /// Never written empty: `toml` serialises an empty list as `agents = []`,
+    /// which [`put_agent`] cannot add a table to.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub agents: Vec<Agent>,
 }
 
@@ -459,6 +461,11 @@ impl Feature {
             Self::Files => "files",
             Self::Browser => "browser",
         }
+    }
+
+    /// Whether this build carries it: Linux builds have no browser.
+    pub fn available(self) -> bool {
+        !(cfg!(target_os = "linux") && self == Self::Browser)
     }
 
     fn in_panel(self) -> bool {
@@ -872,12 +879,20 @@ pub fn trust_agent(id: &str, mark: &str) -> Result<()> {
 
 pub fn put_agent(agent: &Agent, supersedes: Option<&str>) -> Result<()> {
     edit(|doc| {
+        // A freshly generated file serialises no agents as `agents = []`, which
+        // toml_edit will not convert to an array of tables.
+        if doc
+            .get("agents")
+            .and_then(|agents| agents.as_array())
+            .is_some_and(|array| array.is_empty())
+        {
+            doc.remove("agents");
+        }
         let agents = doc["agents"].or_insert(toml_edit::Item::ArrayOfTables(
             toml_edit::ArrayOfTables::new(),
         ));
-        // A freshly generated file serialises no agents as `agents = []`.
         if agents.is_array()
-            && let Ok(tables) = std::mem::take(agents).into_array_of_tables()
+            && let Ok(tables) = agents.clone().into_array_of_tables()
         {
             *agents = toml_edit::Item::ArrayOfTables(tables);
         }

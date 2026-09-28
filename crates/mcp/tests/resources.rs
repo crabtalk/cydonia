@@ -131,3 +131,23 @@ fn resources_do_not_require_a_skill_tool() {
             .is_err()
     );
 }
+
+#[test]
+fn a_switched_off_surface_hides_its_tools_and_resource() {
+    let on = Arc::new(AtomicBool::new(false));
+    let server =
+        Server::new().mount_switched(&cydonia_mcp::tools::browser::TOOLS, "browser", on.clone());
+    let names = |method: &str, key: &str| -> Vec<String> {
+        call(&server, method, json!({}), None).result.unwrap()[key]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item["name"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    assert!(!names("tools/list", "tools").contains(&"browser_read".to_owned()));
+    assert!(!names("resources/list", "resources").contains(&"browser".to_owned()));
+    on.store(true, std::sync::atomic::Ordering::Relaxed);
+    assert!(names("tools/list", "tools").contains(&"browser_read".to_owned()));
+    assert!(names("resources/list", "resources").contains(&"browser".to_owned()));
+}

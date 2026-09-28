@@ -342,6 +342,35 @@ impl<T: Clone + PartialEq> Node<T> {
         }
     }
 
+    /// Move `moving` to where `to` sits in the strip of the pane holding
+    /// both, the first place included. Answers whether the strip changed.
+    pub fn reorder(&mut self, moving: &T, to: &T) -> bool {
+        match self {
+            Self::Leaf { entry, tabs, .. } => {
+                let mut stack: Vec<T> = std::iter::once(entry.clone())
+                    .chain(tabs.iter().cloned())
+                    .collect();
+                let (Some(from), Some(at)) = (
+                    stack.iter().position(|held| held == moving),
+                    stack.iter().position(|held| held == to),
+                ) else {
+                    return false;
+                };
+                if from == at {
+                    return false;
+                }
+                let moved = stack.remove(from);
+                stack.insert(at, moved);
+                *entry = stack.remove(0);
+                *tabs = stack;
+                true
+            }
+            Self::Split { children, .. } => {
+                children.iter_mut().any(|child| child.reorder(moving, to))
+            }
+        }
+    }
+
     /// Put `arriving` beside the pane showing `target`, on the given side.
     /// Answers whether `target` was found.
     ///
@@ -740,6 +769,12 @@ impl Space {
     /// [`Node::relocate`].
     pub fn relocate(&mut self, entry: &Member, target: &Member, side: Side) -> bool {
         self.tree.relocate(entry, target, side)
+    }
+
+    /// Move a tab to where `to` sits in its pane's strip — see
+    /// [`Node::reorder`]. Tabs in different panes are left alone.
+    pub fn reorder(&mut self, moving: &Member, to: &Member) -> bool {
+        self.tree.reorder(moving, to)
     }
 
     /// Put an entry into the pane holding `target`, as a tab at the end of its

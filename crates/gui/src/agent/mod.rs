@@ -111,7 +111,9 @@ fn cached(dir: &Path, id: &str) -> Option<String> {
 /// is on this machine.
 pub struct Listing {
     pub agent: registry::Agent,
-    /// The version on disk, when it is installed.
+    /// The version on disk, when it is installed: `settings.toml` names it and
+    /// its install record is on disk. Files with no entry are not installed —
+    /// sessions spawn only what `settings.toml` names.
     pub installed: Option<String>,
     pub icon: Option<Icon>,
 }
@@ -120,7 +122,7 @@ pub struct Listing {
 /// but never on an icon: a mark is used only if it is already on disk, so the
 /// list arrives in one round trip rather than forty. [`prefetch_icons`] is
 /// what fills the gaps in.
-pub fn listings() -> Vec<Listing> {
+pub fn listings(configured: &[settings::Agent]) -> Vec<Listing> {
     let (Some(cache), Ok(data)) = (cache_dir(), settings::data_dir()) else {
         return Vec::new();
     };
@@ -132,7 +134,12 @@ pub fn listings() -> Vec<Listing> {
         .agents
         .into_iter()
         .map(|agent| {
-            let installed = Installed::find(&data, &agent.id).map(|found| found.version);
+            let installed = configured
+                .iter()
+                .any(|entry| entry.id.as_deref() == Some(agent.id.as_str()))
+                .then(|| Installed::find(&data, &agent.id))
+                .flatten()
+                .map(|found| found.version);
             let icon = cached(&dir, &agent.id).map(Icon::file);
             Listing {
                 agent,

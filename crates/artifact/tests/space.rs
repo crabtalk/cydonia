@@ -795,3 +795,25 @@ fn stacking_a_tab_onto_its_own_strip_is_a_no_op() {
 
     assert_eq!(tree.at_path(&[0]).expect("a pane").stack(), vec![1, 3, 4]);
 }
+
+#[test]
+fn a_tab_reorders_within_its_own_strip_only() {
+    let mut tree = Node::split(Axis::Horizontal, vec![Node::leaf(1), Node::leaf(5)]);
+    for tab in [2, 3, 4] {
+        tree.stack_onto(&1, &tab);
+    }
+    assert!(tree.reorder(&4, &2));
+    assert_eq!(stack_of(&tree, 1), vec![1, 4, 2, 3]);
+    // Into the first place, which is the pane's own entry.
+    assert!(tree.reorder(&3, &1));
+    assert_eq!(stack_of(&tree, 3), vec![3, 1, 4, 2]);
+    // Across panes, and onto itself, nothing moves.
+    assert!(!tree.reorder(&2, &5));
+    assert!(!tree.reorder(&2, &2));
+}
+
+fn stack_of(tree: &Node<u64>, entry: u64) -> Vec<u64> {
+    tree.at_path(&tree.path_to(&entry).unwrap())
+        .unwrap()
+        .stack()
+}

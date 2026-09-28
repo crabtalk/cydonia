@@ -30,5 +30,19 @@ one.
 
 Articles have no switch.
 
+## Right panel
+
+The right panel's tabs have switches of their own:
+
+```toml
+[features.panel]
+review = true    # the working tree's changes
+files = true     # the project's file tree
+browser = true   # web pages
+```
+
+The terminal is always there. Linux builds have no browser, and `browser` does
+nothing there.
+
 Turning a feature off hides it. Nothing on disk is deleted, and turning it back
 on shows what was there.

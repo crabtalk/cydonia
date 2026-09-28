@@ -41,6 +41,8 @@ pub(crate) enum Menu {
     /// several bars on screen at once, so `Header` alone would open every one
     /// of them together.
     Pane(gpui::SharedString),
+    /// A pane's tab, right-pressed, by the entry the tab is on.
+    Tab(artifact::space::Member),
     /// The `+` in one pane's bar, by the same key as [`Menu::Pane`].
     PaneAdd(gpui::SharedString),
     /// The `···` on a table's column heading.

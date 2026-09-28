@@ -401,6 +401,7 @@ pub fn bind_all(shortcuts: &Shortcuts, cx: &mut App) {
     // The app's own, every one of them scoped to a surface.
     cx.bind_keys(article::bindings());
     cx.bind_keys(board::bindings());
+    #[cfg(not(target_os = "linux"))]
     cx.bind_keys(super::component::browser::bindings());
     cx.bind_keys(super::find::bindings());
     cx.bind_keys(super::search::bindings());
