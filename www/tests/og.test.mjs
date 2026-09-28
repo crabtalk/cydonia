@@ -32,8 +32,9 @@ test('every card is served in its prerendered page with matching content hash', 
 test('released versions have distinct cards, routes and sitemap entries', async () => {
 	const sitemap = await readFile(new URL('../build/sitemap.xml', import.meta.url), 'utf8');
 	const index = await readFile(new URL('../build/changelog/index.html', import.meta.url), 'utf8');
-	for (const { version } of releases) {
+	for (const { version, summary } of releases) {
 		assert.ok(manifest[`releases/${version}`]);
+		assert.ok(manifest[`releases/${version}`].alt.includes(summary));
 		assert.ok(sitemap.includes(`https://cydonia.sh${releasePath(version)}`));
 		assert.ok(index.includes(`id="v${version}"`));
 	}

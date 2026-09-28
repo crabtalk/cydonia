@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# Convert and publish release media to crabtalk-cdn.
+# Usage: scripts/publish-media [--dry-run] <version>
+set -euo pipefail
+
+dry_run=
+if [[ ${1-} == --dry-run ]]; then
+    dry_run=1
+    shift
+fi
+if [[ $# != 1 || ${1-} == --help || ${1-} == -h ]]; then
+    echo "usage: scripts/publish-media [--dry-run] <version>"
+    [[ ${1-} == --help || ${1-} == -h ]] && exit 0
+    exit 1
+fi
+version="v${1#v}"
+[[ $version =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+    echo "publish-media: expected a version such as v0.1.21" >&2
+    exit 1
+}
+
+root=$(cd -- "$(dirname -- "$0")/.." && pwd)
+asset="$root/assets/$version"
+for extension in mov png; do
+    [[ -f "$asset.$extension" ]] || {
+        echo "publish-media: missing $asset.$extension" >&2
+        exit 1
+    }
+done
+for tool in ffmpeg ffprobe wrangler; do
+    command -v "$tool" >/dev/null || { echo "publish-media: $tool not on PATH" >&2; exit 1; }
+done
+
+run() {
+    if [[ -n $dry_run ]]; then
+        printf '%q ' "$@"
+        printf '\n'
+    else
+        "$@"
+    fi
+}
+
+run "$root/scripts/video" "$asset.mov" "$asset.mp4"
+run "$root/scripts/image" "$asset.png" "$asset.jpg"
+run wrangler r2 object put "crabtalk-cdn/videos/cydonia/$version.mp4" \
+    --remote --file "$asset.mp4" --content-type video/mp4
+run wrangler r2 object put "crabtalk-cdn/pics/cydonia/$version.jpg" \
+    --remote --file "$asset.jpg" --content-type image/jpeg
+printf 'https://cdn.crabtalk.ai/videos/cydonia/%s.mp4\n' "$version"
+printf 'https://cdn.crabtalk.ai/pics/cydonia/%s.jpg\n' "$version"

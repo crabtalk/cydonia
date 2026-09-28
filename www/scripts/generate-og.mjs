@@ -36,10 +36,12 @@ const escape = (text) => text.replace(/[&<>"']/g, (char) => ({
 	'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;'
 })[char]);
 
+const slogan = 'Where agents keep their work.';
+
 const mark = '<path d="M79 98 404 0 316 185Z"/><path d="M162 166 365 261 0 393Z"/>';
 
 /** Render the same brand family without depending on release screenshots. */
-export async function renderCard({ title, label, subtitle }, fontfile = undefined) {
+export async function renderCard({ title, label, subtitle = slogan, summary }, fontfile = undefined) {
 	fontfile ??= await inter();
 	const text = async (value, size, color = '#eaeaea', width = undefined) => sharp({
 		text: {
@@ -54,6 +56,14 @@ export async function renderCard({ title, label, subtitle }, fontfile = undefine
 		if ((await sharp(heading).metadata()).height <= 240) break;
 	}
 	if ((await sharp(heading).metadata()).height > 240) throw new Error(`OG title is too long: ${title}`);
+	let description;
+	if (summary) {
+		for (let size = 28; size >= 20; size -= 2) {
+			description = await text(summary, size, '#aaaaaa', 680);
+			if ((await sharp(description).metadata()).height <= 210) break;
+		}
+		if ((await sharp(description).metadata()).height > 210) throw new Error(`OG summary is too long: ${title}`);
+	}
 	const background = svg(`
 		<rect width="1200" height="630" fill="#272727"/>
 		<g transform="translate(64 52) scale(.08)" fill="#eaeaea">${mark}</g>
@@ -63,7 +73,9 @@ export async function renderCard({ title, label, subtitle }, fontfile = undefine
 		{ input: await text('Cydonia', 28), left: 112, top: 55 },
 		...(label ? [{ input: await text(label, 18, '#aaaaaa'), left: 64, top: 151 }] : []),
 		{ input: heading, left: 60, top: 204 },
-		{ input: await text(subtitle, 23, '#aaaaaa'), left: 64, top: 472 },
+		...(description
+			? [{ input: description, left: 64, top: 310 }]
+			: subtitle ? [{ input: await text(subtitle, 23, '#aaaaaa'), left: 64, top: 472 }] : []),
 		{ input: await text('cydonia.sh', 18, '#aaaaaa'), left: 64, top: 564 }
 	]).png().toBuffer();
 }
@@ -71,10 +83,10 @@ export async function renderCard({ title, label, subtitle }, fontfile = undefine
 export async function generateOg() {
 	const releases = published(JSON.parse(await readFile(at('../../changelog.json'), 'utf8')));
 	const cards = [
-		{ key: 'home', title: 'Where agents\nkeep their work.', label: '', subtitle: 'A desktop workspace for coding agents.' },
-		{ key: 'changelog', title: 'Changelog', label: 'Releases', subtitle: 'What’s new. What’s changed.' },
-		...releases.map(({ version }) => ({ key: `releases/${version}`, title: `v${version}`, label: 'Release notes', subtitle: 'Where agents keep their work.' })),
-		...slugs().map((slug) => ({ key: `docs/${slug}`, title: metadata(slug).title, label: 'Documentation', subtitle: 'A desktop workspace for coding agents.' }))
+		{ key: 'home', title: 'Where agents\nkeep their work.', label: '', subtitle: '' },
+		{ key: 'changelog', title: 'Changelog', label: 'Releases', subtitle: slogan },
+		...releases.map(({ version, summary }) => ({ summary, key: `releases/${version}`, title: `v${version}`, label: 'Release notes', subtitle: slogan })),
+		...slugs().map((slug) => ({ key: `docs/${slug}`, title: metadata(slug).title, label: 'Documentation', subtitle: slogan }))
 	];
 	const manifest = {};
 	const fontfile = await inter();
@@ -83,7 +95,7 @@ export async function generateOg() {
 		const path = `/og/${card.key}.${digest(output).slice(0, 16)}.png`;
 		await mkdir(dirname(at(`../static${path}`)), { recursive: true });
 		await writeFile(at(`../static${path}`), output);
-		manifest[card.key] = { path, alt: `Cydonia — ${card.title.replaceAll('\n', ' ')}. ${card.subtitle}` };
+		manifest[card.key] = { path, alt: `Cydonia — ${card.title.replaceAll('\n', ' ')}. ${card.summary ?? card.subtitle}` };
 		if (card.key === 'home') await writeFile(at('../static/og.png'), output);
 	}
 	await mkdir(at('../src/lib/generated'), { recursive: true });
