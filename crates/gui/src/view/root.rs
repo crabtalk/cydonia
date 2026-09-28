@@ -1057,7 +1057,7 @@ impl Cydonia {
         this.land(cx);
         this.sync_composer(cx);
         #[cfg(not(target_os = "linux"))]
-        this.take_browser(cx);
+        this.take_browser(window, cx);
         // Where the caret starts. The composer is drawn only over a chat it can
         // send to, and focus on an element no frame draws is focus nowhere.
         let composer = this

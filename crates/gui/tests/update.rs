@@ -58,7 +58,7 @@ fn the_release_is_where_the_site_says_it_is() {
 fn the_tarball_is_under_the_versions_tag() {
     assert_eq!(
         update::url("0.1.4"),
-        "https://github.com/crabtalk/cydonia/releases/download/v0.1.4/cydonia-linux-x86_64.tar.gz"
+        "https://github.com/crabtalk/cydonia/releases/download/v0.1.4/cydonia-linux-x86_64.tar.xz"
     );
 }
 

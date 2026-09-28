@@ -3,33 +3,53 @@
 //! A tab holds a tab id, not the page. Pages live in [`Pages`], app-wide, so a
 //! panel or window dropping does not drop them; only closing the tab does.
 
+use crate::{
+    model::settings::{Browsing, Links},
+    view::root::Cydonia,
+};
 use bezel::{
     gpui::{
-        self, App, Context, Entity, EventEmitter, FocusHandle, Focusable, Global, KeyBinding,
-        Subscription, Window, actions, div, prelude::*, px,
+        self, AnyElement, App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable,
+        Global, KeyBinding, MouseButton, MouseDownEvent, Pixels, Point, Subscription, Window,
+        actions, div, prelude::*, px,
     },
     motion::{Fade, Painter},
     theme::Theme,
     ui::{
         icons,
         input::TextField,
+        menu::{self, Hit, Item},
+        popover,
         tooltip::Tooltip,
         widgets::{ButtonStyle, Buttons as _},
     },
 };
-use browser::{WebView, WebViewEvent};
+use browser::{DataStore, WebView, WebViewEvent};
 use std::collections::HashMap;
 
-actions!(cydonia_browser, [Go]);
+actions!(cydonia_browser, [Go, Reload, HardReload]);
 
 /// Claimed on the address field, so `enter` loads what it holds.
 const ADDRESS_CONTEXT: &str = "CydoniaAddress";
 
-/// What a new tab opens on.
-pub const HOME: &str = "https://duckduckgo.com";
+/// Claimed on the whole tab, the address field included.
+const CONTEXT: &str = "CydoniaBrowser";
+
+/// What a new tab opens on: the home page in Settings.
+pub fn home(cx: &App) -> String {
+    cx.try_global::<Browsing>().map_or_else(
+        || Browsing::default().home,
+        |browsing| browsing.home.clone(),
+    )
+}
 
 pub fn bindings() -> Vec<KeyBinding> {
-    vec![KeyBinding::new("enter", Go, Some(ADDRESS_CONTEXT))]
+    vec![
+        KeyBinding::new("enter", Go, Some(ADDRESS_CONTEXT)),
+        KeyBinding::new("secondary-r", Reload, Some(CONTEXT)),
+        KeyBinding::new("f5", Reload, Some(CONTEXT)),
+        KeyBinding::new("secondary-shift-r", HardReload, Some(CONTEXT)),
+    ]
 }
 
 /// Every live page, by tab id.
@@ -54,6 +74,43 @@ pub fn forget(id: u64, cx: &mut App) {
     }
 }
 
+/// Opens a link clicked in an article or a transcript: an http(s) link in a
+/// panel tab where Settings says so and the window can take one, else in the
+/// system browser. Installed as markdown's link handler.
+pub fn open_link(url: &str, window: &mut Window, cx: &mut App) {
+    let panel = cx
+        .try_global::<Browsing>()
+        .is_some_and(|browsing| browsing.links == Links::Panel);
+    let web = url.starts_with("https://") || url.starts_with("http://");
+    if panel
+        && web
+        && let Some(Some(root)) = window.root::<Cydonia>()
+        && root.update(cx, |root, cx| {
+            root.open_in_panel(url.to_owned(), window, cx)
+        })
+    {
+        return;
+    }
+    cx.open_url(url);
+}
+
+#[derive(Default)]
+struct Clearing(bool);
+impl Global for Clearing {}
+
+pub(crate) fn clearing(cx: &App) -> bool {
+    cx.try_global::<Clearing>().is_some_and(|state| state.0)
+}
+
+pub(crate) fn set_clearing(value: bool, cx: &mut App) {
+    cx.default_global::<Clearing>().0 = value;
+    cx.refresh_windows();
+}
+
+pub(crate) fn forget_all(cx: &mut App) {
+    cx.default_global::<Pages>().0.clear();
+}
+
 /// The title or location changed.
 pub struct Changed;
 
@@ -70,6 +127,9 @@ pub struct Browser {
     pub(super) title: String,
     address: Entity<TextField>,
     focus: FocusHandle,
+    /// Where the reload button's menu was opened, while it is.
+    reload_menu: Option<Point<Pixels>>,
+    menu_cursor: menu::Cursor,
     _page: Option<Subscription>,
 }
 
@@ -91,6 +151,8 @@ impl Browser {
             title,
             address,
             focus: cx.focus_handle(),
+            reload_menu: None,
+            menu_cursor: menu::Cursor::default(),
             _page: None,
         }
     }
@@ -111,6 +173,12 @@ impl Browser {
     /// The tab's page, once a render has built it.
     pub(crate) fn webview(&self) -> Option<Entity<WebView>> {
         self.page.clone()
+    }
+
+    pub(super) fn close(&mut self, cx: &mut Context<Self>) {
+        self._page = None;
+        self.page = None;
+        forget(self.id, cx);
     }
 
     /// Load `url`: in the page where it is built, else the page is built on it.
@@ -139,7 +207,14 @@ impl Browser {
             .and_then(|pages| pages.0.get(&self.id).cloned());
         let page = existing.unwrap_or_else(|| {
             let url = self.url.clone();
-            let page = cx.new(|cx| WebView::new(url, window, cx));
+            let keep = cx
+                .try_global::<Browsing>()
+                .is_none_or(|browsing| browsing.keep_signed_in);
+            let store = match keep {
+                true => DataStore::new(),
+                false => DataStore::new().incognito(),
+            };
+            let page = cx.new(|cx| WebView::new(url, window, cx).with_data_store(store));
             cx.default_global::<Pages>().0.insert(self.id, page.clone());
             page
         });
@@ -171,7 +246,7 @@ impl Browser {
                 }
             }
             WebViewEvent::Title(title) => self.title = title.clone(),
-            WebViewEvent::Load(_) => {}
+            WebViewEvent::Load(_) | WebViewEvent::History { .. } => {}
             WebViewEvent::NewWindow(url) => {
                 cx.emit(OpenTab(url.clone()));
                 return;
@@ -181,12 +256,69 @@ impl Browser {
         cx.notify();
     }
 
+    fn reload(&mut self, _: &Reload, window: &mut Window, cx: &mut Context<Self>) {
+        let page = self.page(window, cx);
+        page.update(cx, |page, _| page.reload());
+    }
+
+    /// Reload with nothing taken from the cache.
+    fn hard_reload(&mut self, _: &HardReload, window: &mut Window, cx: &mut Context<Self>) {
+        let page = self.page(window, cx);
+        page.update(cx, |page, _| page.reload_bypassing_cache());
+    }
+
+    /// The reload button's right-press menu, at the press.
+    fn reload_menu(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let at = self.reload_menu?;
+        let theme = Theme::of(cx).clone();
+        let items = [
+            Item::action("Reload").with_shortcut_in(&Reload, CONTEXT, window),
+            Item::action("Hard Reload").with_shortcut_in(&HardReload, CONTEXT, window),
+        ];
+        let paths = items.to_vec();
+        let card = menu::card(
+            &theme,
+            "browser-reload-menu",
+            &items,
+            &self.menu_cursor,
+            window,
+            cx,
+            move |this, hit, window, cx| {
+                match hit {
+                    Hit::Point(path) => {
+                        this.menu_cursor.point_at(&paths, &path);
+                    }
+                    Hit::Choose(path) => {
+                        this.reload_menu = None;
+                        this.menu_cursor.clear();
+                        match path.first() {
+                            Some(0) => this.reload(&Reload, window, cx),
+                            Some(1) => this.hard_reload(&HardReload, window, cx),
+                            _ => {}
+                        }
+                    }
+                    Hit::Dismiss => {
+                        this.reload_menu = None;
+                        this.menu_cursor.clear();
+                    }
+                }
+                cx.notify();
+            },
+        );
+        Some(popover::menu_at(
+            "browser-reload-menu",
+            at,
+            card.into_any_element(),
+            None,
+        ))
+    }
+
     fn go(&mut self, _: &Go, window: &mut Window, cx: &mut Context<Self>) {
         let typed = self.address.read(cx).content().trim().to_owned();
         if typed.is_empty() {
             return;
         }
-        let url = address(&typed);
+        let url = address(&typed, cx);
         let page = self.page(window, cx);
         page.update(cx, |page, _| page.load(url));
         window.focus(&page.focus_handle(cx), cx);
@@ -194,15 +326,17 @@ impl Browser {
 }
 
 /// What the address field's text loads: a URL as typed, a bare host over
-/// https, anything else as a search.
-fn address(typed: &str) -> String {
+/// https, anything else as a search with the engine in Settings.
+fn address(typed: &str, cx: &App) -> String {
     if typed.contains("://") || typed.starts_with("about:") {
         typed.to_owned()
     } else if !typed.contains(char::is_whitespace) && typed.contains('.') {
         format!("https://{typed}")
     } else {
-        let query: String = url::form_urlencoded::byte_serialize(typed.as_bytes()).collect();
-        format!("{HOME}/?q={query}")
+        cx.try_global::<Browsing>()
+            .cloned()
+            .unwrap_or_default()
+            .search_url(typed)
     }
 }
 
@@ -217,6 +351,9 @@ impl Focusable for Browser {
 
 impl Render for Browser {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if clearing(cx) {
+            return div().into_any_element();
+        }
         let page = self.page(window, cx);
         let theme = Theme::of(cx).clone();
         let loading = page.read(cx).is_loading();
@@ -231,14 +368,28 @@ impl Render for Browser {
                 .flex_none()
                 .tooltip(move |window, cx| Tooltip::text(tip, window, cx))
         };
+        let (can_back, can_forward) = {
+            let page = page.read(cx);
+            (page.can_go_back(), page.can_go_forward())
+        };
+        // Nowhere to go: faint, no hover, no press.
+        let stuck = |icon: &'static [u8], id: &'static str| {
+            theme
+                .tinted_icon_button(icon, theme.text_faint)
+                .id(id)
+                .flex_none()
+                .into_any_element()
+        };
         let back = page.clone();
         let forward = page.clone();
-        let reload = page.clone();
         div()
             .size_full()
             .flex()
             .flex_col()
             .track_focus(&self.focus)
+            .key_context(CONTEXT)
+            .on_action(cx.listener(Self::reload))
+            .on_action(cx.listener(Self::hard_reload))
             .child(
                 div()
                     .flex()
@@ -249,21 +400,43 @@ impl Render for Browser {
                     .py(px(4.))
                     .border_b_1()
                     .border_color(theme.border)
-                    .child(
-                        nav(icons::arrows::ArrowLeft, "browser-back", "Back")
-                            .on_click(move |_, _, cx| back.update(cx, |page, _| page.back())),
-                    )
-                    .child(
-                        nav(icons::arrows::ArrowRight, "browser-forward", "Forward")
-                            .on_click(move |_, _, cx| forward.update(cx, |page, _| page.forward())),
-                    )
+                    .child(match can_back {
+                        true => nav(icons::arrows::ArrowLeft, "browser-back", "Back")
+                            .on_click(move |_, _, cx| back.update(cx, |page, _| page.back()))
+                            .into_any_element(),
+                        false => stuck(icons::arrows::ArrowLeft, "browser-back"),
+                    })
+                    .child(match can_forward {
+                        true => nav(icons::arrows::ArrowRight, "browser-forward", "Forward")
+                            .on_click(move |_, _, cx| forward.update(cx, |page, _| page.forward()))
+                            .into_any_element(),
+                        false => stuck(icons::arrows::ArrowRight, "browser-forward"),
+                    })
                     .child(
                         nav(
                             icons::arrows::RefreshCw,
                             "browser-reload",
-                            if loading { "Loading…" } else { "Reload" },
+                            if loading {
+                                "Loading…"
+                            } else {
+                                "Reload — ⇧-click or right-click for Hard Reload"
+                            },
                         )
-                        .on_click(move |_, _, cx| reload.update(cx, |page, _| page.reload())),
+                        .on_click(cx.listener(|this, click: &ClickEvent, window, cx| {
+                            match click.modifiers().shift {
+                                true => this.hard_reload(&HardReload, window, cx),
+                                false => this.reload(&Reload, window, cx),
+                            }
+                        }))
+                        .on_mouse_down(
+                            MouseButton::Right,
+                            cx.listener(|this, press: &MouseDownEvent, _, cx| {
+                                this.reload_menu = Some(press.position);
+                                this.menu_cursor.clear();
+                                cx.stop_propagation();
+                                cx.notify();
+                            }),
+                        ),
                     )
                     .child(
                         div()
@@ -271,9 +444,18 @@ impl Render for Browser {
                             .min_w_0()
                             .on_action(cx.listener(Self::go))
                             .child(self.address.clone()),
+                    )
+                    .child(
+                        nav(
+                            icons::arrows::ExternalLink,
+                            "browser-system",
+                            "Open in system browser",
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| cx.open_url(&this.url))),
                     ),
             )
             .child(div().flex_1().min_h_0().child(page))
+            .children(self.reload_menu(window, cx))
             .into_any_element()
     }
 }

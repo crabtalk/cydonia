@@ -151,3 +151,34 @@ fn a_switched_off_surface_hides_its_tools_and_resource() {
     assert!(names("tools/list", "tools").contains(&"browser_read".to_owned()));
     assert!(names("resources/list", "resources").contains(&"browser".to_owned()));
 }
+
+#[test]
+fn two_sets_on_one_resource_hide_it_only_when_both_are_off() {
+    let read = Arc::new(AtomicBool::new(true));
+    let act = Arc::new(AtomicBool::new(false));
+    let server = Server::new()
+        .mount_switched(
+            cydonia_mcp::tools::browser::looking(),
+            "browser",
+            read.clone(),
+        )
+        .mount_switched(
+            cydonia_mcp::tools::browser::acting(),
+            "browser",
+            act.clone(),
+        );
+    let names = |method: &str, key: &str| -> Vec<String> {
+        call(&server, method, json!({}), None).result.unwrap()[key]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item["name"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    let tools = names("tools/list", "tools");
+    assert!(tools.contains(&"browser_read".to_owned()));
+    assert!(!tools.contains(&"browser_click".to_owned()));
+    assert!(names("resources/list", "resources").contains(&"browser".to_owned()));
+    read.store(false, std::sync::atomic::Ordering::Relaxed);
+    assert!(!names("resources/list", "resources").contains(&"browser".to_owned()));
+}

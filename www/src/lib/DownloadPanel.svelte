@@ -13,7 +13,7 @@
 	const file = $derived(platform === 'macOS'
 		? `cydonia-${version}-arm64.dmg`
 		: platform === 'Linux'
-			? `cydonia-linux-${architecture}.tar.gz`
+			? `cydonia-linux-${architecture}.tar.xz`
 			: 'cydonia-windows-x86_64-setup.exe');
 	const href = $derived(platform === 'macOS' ? dmgFor(version) : latestAsset(file));
 	const command = $derived(platform === 'Windows' ? installWindows : install);

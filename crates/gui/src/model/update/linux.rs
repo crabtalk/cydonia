@@ -25,14 +25,14 @@ pub(super) const SUPPORTED: bool = cfg!(any(target_arch = "x86_64", target_arch 
 /// The tarball's name after the version. The release file itself carries no
 /// version, so the version is added for the copy kept on disk.
 pub(super) const SUFFIX: &str = if cfg!(target_arch = "aarch64") {
-    "-linux-aarch64.tar.gz"
+    "-linux-aarch64.tar.xz"
 } else {
-    "-linux-x86_64.tar.gz"
+    "-linux-x86_64.tar.xz"
 };
 
 /// The release file, as `make tarball` names it.
 pub(super) fn remote(_: &str) -> String {
-    format!("cydonia-linux-{ARCH}.tar.gz")
+    format!("cydonia-linux-{ARCH}.tar.xz")
 }
 
 /// The unpacked tarball this process runs from: `…/cydonia.app/bin/cydonia`,
@@ -62,7 +62,7 @@ pub(super) fn stage(version: &str, app: &Path) -> Result<PathBuf> {
         run(
             "tar",
             [
-                OsStr::new("-xzf"),
+                OsStr::new("-xJf"),
                 image.as_os_str(),
                 OsStr::new("-C"),
                 staging.as_os_str(),

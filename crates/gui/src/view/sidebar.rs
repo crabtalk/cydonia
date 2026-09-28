@@ -514,7 +514,7 @@ impl Cydonia {
                     .flex()
                     .flex_row()
                     .items_center()
-                    .justify_between()
+                    .justify_end()
                     .children(self.settings_button(settings_chord, cx)),
             )
     }

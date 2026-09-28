@@ -580,6 +580,72 @@ fn stacking_an_arranged_entry_moves_it(cx: &mut gpui::TestAppContext) {
     });
 }
 
+/// With no space open, a tab dropped on the one pane showing starts the space:
+/// one pane, holding both.
+#[gpui::test]
+fn stacking_onto_a_lone_pane_starts_a_space(cx: &mut gpui::TestAppContext) {
+    let scratch = Scratch::new("stack-lone");
+    cx.update(|cx| bezel::theme::Theme::install(bezel::theme::Appearance::Light, cx));
+    let workspace = cx.new(|cx| Workspace::new(Settings::default(), state::State::default(), cx));
+
+    workspace.update(cx, |workspace, cx| {
+        workspace.open_project(scratch.project("one"), cx);
+        for (name, key) in [("First", "ONE"), ("Second", "TWO")] {
+            workspace.new_board(0, name.into(), key, cx).ok();
+        }
+        let a = workspace.member_of(0, Showing::Board(0)).expect("a member");
+        let b = workspace.member_of(0, Showing::Board(1)).expect("a member");
+        assert!(workspace.active_space().is_none());
+
+        workspace.stack_pane(&a, &b, cx);
+
+        let space = workspace.active_space().expect("a space started");
+        assert_eq!(space.leaves(), 1, "one pane");
+        assert_eq!(workspace.stack_of(&a), vec![a.clone(), b.clone()]);
+
+        // Onto itself it is nothing, and starts nothing.
+        workspace.leave_space();
+        let spaces = workspace.spaces.len();
+        workspace.stack_pane(&a, &a, cx);
+        assert_eq!(workspace.spaces.len(), spaces);
+    });
+}
+
+/// A tab carried from one space onto a pane of another moves there: the space
+/// it left, down to one entry, goes.
+#[gpui::test]
+fn stacking_moves_an_entry_between_spaces(cx: &mut gpui::TestAppContext) {
+    let scratch = Scratch::new("stack-across");
+    cx.update(|cx| bezel::theme::Theme::install(bezel::theme::Appearance::Light, cx));
+    let workspace = cx.new(|cx| Workspace::new(Settings::default(), state::State::default(), cx));
+
+    workspace.update(cx, |workspace, cx| {
+        workspace.open_project(scratch.project("one"), cx);
+        for (name, key) in [
+            ("First", "ONE"),
+            ("Second", "TWO"),
+            ("Third", "THR"),
+            ("Fourth", "FOU"),
+        ] {
+            workspace.new_board(0, name.into(), key, cx).ok();
+        }
+        let a = workspace.member_of(0, Showing::Board(0)).expect("a member");
+        let b = workspace.member_of(0, Showing::Board(1)).expect("a member");
+        let c = workspace.member_of(0, Showing::Board(2)).expect("a member");
+        let d = workspace.member_of(0, Showing::Board(3)).expect("a member");
+        workspace.arrange(&a, &b, Side::Right, cx);
+        workspace.leave_space();
+        workspace.arrange(&c, &d, Side::Right, cx);
+        assert_eq!(workspace.spaces.len(), 2);
+
+        workspace.stack_pane(&c, &a, cx);
+
+        assert_eq!(workspace.spaces.len(), 1, "the space a left is gone");
+        assert_eq!(workspace.stack_of(&c), vec![c.clone(), a.clone()]);
+        assert!(!workspace.active_space().expect("open").contains(&b));
+    });
+}
+
 /// A pane put on an article opens it. An article the sidebar has only listed
 /// holds no editor, and a pane handed one draws the front door instead of the
 /// document — which is what a drop onto a pane's bar or its edge used to do.

@@ -31,8 +31,8 @@ export const cargo = 'cargo install cydonia';
     has them under the same name. */
 export const latestAsset = (name) => `${repo}/releases/latest/download/${name}`;
 export const builds = [
-	{ label: 'Linux x86_64', file: 'cydonia-linux-x86_64.tar.gz' },
-	{ label: 'Linux aarch64', file: 'cydonia-linux-aarch64.tar.gz' },
+	{ label: 'Linux x86_64', file: 'cydonia-linux-x86_64.tar.xz' },
+	{ label: 'Linux aarch64', file: 'cydonia-linux-aarch64.tar.xz' },
 	{ label: 'Windows x86_64', file: 'cydonia-windows-x86_64-setup.exe' }
 ];
 

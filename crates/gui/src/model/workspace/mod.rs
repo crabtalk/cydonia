@@ -226,6 +226,7 @@ impl Workspace {
         this.open_last_entry(cx);
         this.load_agent_icons(cx);
         this.refresh_door();
+        cx.set_global(this.settings.browser.clone());
         this.take_rail(cx);
         // Temporary dev hook: `CYDONIA_TEST_PROMPT` sends a prompt on launch
         // so a turn can be verified without a composer. Here rather than on
@@ -425,6 +426,7 @@ impl Workspace {
     pub fn reload_settings(&mut self, cx: &mut Context<Self>) {
         if let Ok(settings) = settings::load() {
             self.settings = settings;
+            cx.set_global(self.settings.browser.clone());
             rail::set_agents(self.rail_agents());
             self.readopt_agents();
             self.load_agent_icons(cx);
@@ -512,7 +514,10 @@ impl Workspace {
         #[cfg(feature = "desktop")]
         agent::serve::set_write(self.settings.mcp.write);
         #[cfg(feature = "desktop")]
-        agent::serve::set_browser(self.settings.features.panel.browser);
+        agent::serve::set_browser(
+            self.settings.features.panel.browser && self.settings.browser.agents_read,
+            self.settings.browser.agents_act,
+        );
         #[cfg(feature = "desktop")]
         agent::serve::set_delete(self.settings.mcp.delete);
     }
@@ -544,6 +549,81 @@ impl Workspace {
         }
         self.settings.mcp.delete = on;
         self.refresh_door();
+        cx.notify();
+    }
+
+    // ── browser ──────────────────────────────────────────────────
+
+    /// What a new browser tab opens on.
+    pub fn set_browser_home(&mut self, home: String, cx: &mut Context<Self>) {
+        if settings::set_browser("home", home.as_str()).is_err() {
+            return;
+        }
+        self.settings.browser.home = home;
+        cx.set_global(self.settings.browser.clone());
+        cx.notify();
+    }
+
+    /// Where a web link clicked in an article or a transcript opens.
+    pub fn set_browser_links(&mut self, links: settings::Links, cx: &mut Context<Self>) {
+        if settings::set_browser("links", links.key()).is_err() {
+            return;
+        }
+        self.settings.browser.links = links;
+        cx.set_global(self.settings.browser.clone());
+        cx.notify();
+    }
+
+    /// Offer agents the browser tools that read pages, or withhold them.
+    pub fn set_browser_agents_read(&mut self, on: bool, cx: &mut Context<Self>) {
+        if settings::set_browser("agents_read", on).is_err() {
+            return;
+        }
+        self.settings.browser.agents_read = on;
+        cx.set_global(self.settings.browser.clone());
+        self.refresh_door();
+        cx.notify();
+    }
+
+    /// Offer agents the browser tools that click and type, or withhold them.
+    pub fn set_browser_agents_act(&mut self, on: bool, cx: &mut Context<Self>) {
+        if settings::set_browser("agents_act", on).is_err() {
+            return;
+        }
+        self.settings.browser.agents_act = on;
+        cx.set_global(self.settings.browser.clone());
+        self.refresh_door();
+        cx.notify();
+    }
+
+    /// The hosts agents may not read or act on.
+    pub fn set_browser_agents_blocked(&mut self, hosts: Vec<String>, cx: &mut Context<Self>) {
+        let list: toml_edit::Array = hosts.iter().map(String::as_str).collect();
+        if settings::set_browser("agents_blocked", list).is_err() {
+            return;
+        }
+        self.settings.browser.agents_blocked = hosts;
+        cx.set_global(self.settings.browser.clone());
+        cx.notify();
+    }
+
+    /// Whether pages built from now on keep what they store across restarts.
+    pub fn set_browser_keep_signed_in(&mut self, on: bool, cx: &mut Context<Self>) {
+        if settings::set_browser("keep_signed_in", on).is_err() {
+            return;
+        }
+        self.settings.browser.keep_signed_in = on;
+        cx.set_global(self.settings.browser.clone());
+        cx.notify();
+    }
+
+    /// Where the address field's searches go, as a `%s` template.
+    pub fn set_browser_search(&mut self, search: String, cx: &mut Context<Self>) {
+        if settings::set_browser("search", search.as_str()).is_err() {
+            return;
+        }
+        self.settings.browser.search = search;
+        cx.set_global(self.settings.browser.clone());
         cx.notify();
     }
 

@@ -76,4 +76,6 @@ awk -v a="$(size "$src")" -v b="$(size "$out")" -v s="$src" -v o="$out" \
     -v ow="$ow" -v oh="$oh" -v tw="$tw" -v th="$th" \
     'BEGIN { printf "%s  %dx%d  %.2f MB  ->  %s  %dx%d  %.2f MB  (%.0f%% smaller)\n",
              s, ow, oh, a/1048576, o, tw, th, b/1048576, (1 - b/a) * 100 }'
-[[ -n $alpha ]] && echo "  flattened transparency onto ${bg} — pass --bg to change it"
+if [[ -n $alpha ]]; then
+    echo "  flattened transparency onto ${bg} — pass --bg to change it"
+fi

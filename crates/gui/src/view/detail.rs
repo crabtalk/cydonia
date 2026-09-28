@@ -905,7 +905,10 @@ pub(crate) fn footer(
                                 && (height.replace(bounds.size.height) - bounds.size.height).abs()
                                     > px(0.5)
                             {
-                                window.refresh();
+                                // Prepaint is mid-draw, where `refresh` is
+                                // dropped. The transcript reading this height
+                                // is drawn by the view this canvas is in.
+                                window.request_animation_frame();
                             }
                         },
                         |_, _, _, _| {},
@@ -1613,3 +1616,7 @@ impl Cydonia {
 #[cfg(test)]
 #[path = "../../tests/unit/queued_images.rs"]
 mod queued_image_tests;
+
+#[cfg(test)]
+#[path = "../../tests/unit/composer_footer.rs"]
+mod composer_footer_tests;

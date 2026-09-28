@@ -387,6 +387,9 @@ impl Panel {
             cx.notify()
         });
         let open = cx.subscribe(&browser, |this, _, event: &super::browser::OpenTab, cx| {
+            if super::browser::clearing(cx) {
+                return;
+            }
             let id = super::browser::new_id();
             this.browser(id, event.0.clone(), String::new(), cx);
         });
@@ -396,11 +399,11 @@ impl Panel {
 
     #[cfg(not(target_os = "linux"))]
     fn new_browser(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.tabs.browser {
+        if !self.tabs.browser || super::browser::clearing(cx) {
             return;
         }
         let id = super::browser::new_id();
-        let browser = self.browser(id, super::browser::HOME.into(), String::new(), cx);
+        let browser = self.browser(id, super::browser::home(cx), String::new(), cx);
         let address = browser.read(cx).address_focus(cx);
         window.focus(&address, cx);
     }
@@ -425,11 +428,22 @@ impl Panel {
         url: String,
         cx: &mut Context<Self>,
     ) -> Option<Entity<Browser>> {
-        if !self.tabs.browser {
+        if !self.tabs.browser || super::browser::clearing(cx) {
             return None;
         }
         let id = super::browser::new_id();
         Some(self.browser(id, url, String::new(), cx))
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub(crate) fn activate_browser(&mut self, browser: &Entity<Browser>, cx: &mut Context<Self>) {
+        let id = self.ordered().find_map(|(id, tab)| {
+            matches!(&tab.content, Content::Browser(held) if held == browser).then_some(id)
+        });
+        if let Some(id) = id {
+            self.strip.activate(&id);
+            cx.notify();
+        }
     }
 
     /// Step to the tab `step` along, wrapping at the ends — the row is a ring,
@@ -458,12 +472,27 @@ impl Panel {
             ..
         }) = _tab
         {
-            super::browser::forget(browser.read(cx).id, cx);
+            browser.update(cx, |browser, cx| browser.close(cx));
         }
         if self.closing == Some(id) {
             self.closing = None;
         }
         cx.notify();
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub(crate) fn close_browsers(&mut self, cx: &mut Context<Self>) {
+        if let Some(saved) = &mut self.restore_pending {
+            saved.remove_browsers();
+        }
+        let ids: Vec<_> = self
+            .ordered()
+            .filter(|(_, tab)| matches!(tab.content, Content::Browser(_)))
+            .map(|(id, _)| id)
+            .collect();
+        for id in ids {
+            self.remove(id, cx);
+        }
     }
 
     fn close(&mut self, id: usize, window: &mut Window, cx: &mut Context<Self>) {
@@ -508,6 +537,35 @@ impl Panel {
             })
             .collect()
     }
+}
+
+/// Close browser tabs in every window and saved project before clearing a store.
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn close_all_browsers(cx: &mut gpui::App) -> std::io::Result<()> {
+    persistence::remove_saved_browsers()?;
+    for handle in cx.windows() {
+        let Some(handle) = handle.downcast::<Cydonia>() else {
+            continue;
+        };
+        let _ = handle.update(cx, |root, _, cx| {
+            for panel in root.right_panels.values() {
+                panel.update(cx, |panel, cx| panel.close_browsers(cx));
+            }
+            root.save_panel_layout(cx);
+            cx.notify();
+        });
+    }
+    super::browser::forget_all(cx);
+    // A rendered frame retains native page surfaces until it is replaced.
+    for handle in cx.windows() {
+        if let Some(handle) = handle.downcast::<Cydonia>() {
+            let _ = cx.update_window(handle.into(), |_, window, cx| {
+                window.refresh();
+                window.draw(cx).clear(cx);
+            });
+        }
+    }
+    Ok(())
 }
 
 impl Render for Panel {
@@ -965,6 +1023,18 @@ impl Render for Panel {
 }
 
 impl Cydonia {
+    #[cfg(not(target_os = "linux"))]
+    pub(crate) fn reveal_browser_panel(&mut self, panel: &Entity<Panel>, cx: &mut Context<Self>) {
+        let cwd = panel.read(cx).cwd.clone();
+        self.changes_shown.insert(cwd.clone(), true);
+        if self.shell_cwd(cx).as_ref() == Some(&cwd) {
+            self.changes_for = Some(cwd);
+            self.changes_open = true;
+            self.changes = Some(panel.clone());
+        }
+        self.save_panel_layout(cx);
+        cx.notify();
+    }
     pub(crate) fn open_session_file(
         &mut self,
         link: &super::transcript::links::OpenSessionFile,
@@ -1113,6 +1183,32 @@ impl Cydonia {
         if let Some(panel) = &self.changes {
             panel.update(cx, |panel, cx| panel.set_tabs(tabs, cx));
         }
+    }
+
+    /// Open `url` in a browser tab in the panel for the directory in front,
+    /// putting the panel up. `false` where no tab could be opened: no
+    /// directory in front, or browser tabs switched off.
+    #[cfg(not(target_os = "linux"))]
+    pub(crate) fn open_in_panel(
+        &mut self,
+        url: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !self.workspace.read(cx).settings.features.panel.browser {
+            return false;
+        }
+        self.set_changes_open(true, cx);
+        self.sync_changes(cx);
+        let Some(panel) = self.changes.clone() else {
+            return false;
+        };
+        let opened = panel.update(cx, |panel, cx| {
+            panel.restore_tabs(window, cx);
+            panel.open_browser(url, cx).is_some()
+        });
+        cx.notify();
+        opened
     }
 
     /// The right panel for `cwd`, made the first time it is asked for.

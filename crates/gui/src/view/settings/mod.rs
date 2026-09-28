@@ -18,15 +18,15 @@ use crate::{model::workspace::Workspace, view::root::HEADER_HEIGHT};
 use bezel::ui::scroll as scrollbars;
 use bezel::{
     gpui::{
-        AnyElement, App, Context, ElementId, Entity, Render, SharedString, Window, div, prelude::*,
-        px,
+        AnyElement, App, Context, ElementId, Entity, Focusable as _, Render, SharedString, Window,
+        div, prelude::*, px,
     },
     motion::{Fade, Painter},
     theme::{TextStyle, Theme, Typeset},
     ui::{
         icons,
-        input::TextField,
-        widgets::{Content, Controls, Layout, Scaffolding},
+        input::{Shape, TextField},
+        widgets::{ButtonStyle, Buttons, Content, Controls, Layout, Scaffolding},
     },
 };
 #[cfg(feature = "desktop")]
@@ -36,7 +36,7 @@ use bezel::{
         WindowOptions, point, size,
     },
     theme::appearance,
-    ui::input::{FieldEvent, Shape},
+    ui::input::FieldEvent,
 };
 #[cfg(feature = "desktop")]
 use std::collections::{HashMap, HashSet};
@@ -46,6 +46,8 @@ mod agents;
 #[cfg(not(feature = "desktop"))]
 #[path = "agents_web.rs"]
 mod agents;
+#[cfg(not(target_os = "linux"))]
+mod browser;
 mod developer;
 mod features;
 mod general;
@@ -81,11 +83,12 @@ impl Section {
         matches!(self, Self::Agents)
     }
 
-    const ALL: [Self; 8] = [
+    const ALL: [Self; 9] = [
         Self::General,
         Self::Appearance,
         Self::Shortcuts,
         Self::Features,
+        Self::Browser,
         Self::Agents,
         Self::Mcp,
         Self::Performance,
@@ -102,8 +105,30 @@ impl Section {
     /// switches need: the updater runs in a bundle and nowhere else, and
     /// `make bundle FEATURES=developer` is that bundle built at the profile
     /// that ships rather than at `debug`.
-    fn listed(self) -> bool {
-        !matches!(self, Self::Developer) || cfg!(debug_assertions) || cfg!(feature = "developer")
+    ///
+    /// Browser is listed while browser tabs are on in Features.
+    fn listed(self, features: &crate::model::settings::Features) -> bool {
+        use crate::model::settings::Feature;
+        match self {
+            Self::Developer => cfg!(debug_assertions) || cfg!(feature = "developer"),
+            Self::Browser => {
+                cfg!(feature = "desktop")
+                    && Feature::Browser.available()
+                    && Feature::Browser.on(features)
+            }
+            _ => true,
+        }
+    }
+
+    /// The sidebar heading over the group this section is in. The first
+    /// group has none.
+    fn group(self) -> Option<&'static str> {
+        match self {
+            Self::General | Self::Appearance | Self::Shortcuts => None,
+            Self::Features | Self::Browser => Some("Workspace"),
+            Self::Agents | Self::Mcp => Some("Agents"),
+            Self::Performance | Self::Developer => Some("Advanced"),
+        }
     }
 
     fn title(self) -> &'static str {
@@ -114,6 +139,7 @@ impl Section {
             Self::Features => "Features",
             Self::Agents => "Agents",
             Self::Mcp => "MCP",
+            Self::Browser => "Browser",
             Self::Performance => "Performance",
             Self::Developer => "Developer",
         }
@@ -131,6 +157,7 @@ impl Section {
             Self::Mcp => {
                 Some("The tools cydonia offers the agents it runs, over a port on this machine.")
             }
+            Self::Browser => Some("The browser tabs in the right panel."),
             Self::Developer => Some("Switches for looking at what has not happened yet."),
             Self::General | Self::Appearance | Self::Agents | Self::Performance => None,
         }
@@ -145,6 +172,7 @@ impl Section {
             Self::Features => icons::account::SlidersHorizontal,
             Self::Agents => icons::development::Bot,
             Self::Mcp => icons::development::Plug,
+            Self::Browser => icons::navigation::Globe,
             Self::Performance => icons::devices::Cpu,
             Self::Developer => icons::development::Wrench,
         }
@@ -191,8 +219,10 @@ pub struct SettingsWindow {
     interface_font: typography::FamilyPicker,
     article_font: typography::FamilyPicker,
     mono_font: typography::FamilyPicker,
-    /// The cover ceiling's field, while its dialog is up.
-    editing: Option<Entity<TextField>>,
+    #[cfg(not(target_os = "linux"))]
+    browser_data: browser::BrowserData,
+    /// The field whose dialog is up — see [`SettingsWindow::field_dialog`].
+    editing: Option<(Field, Entity<TextField>)>,
     /// The shortcut row taking keys, while one is — see
     /// [`shortcuts::Recording`].
     recording: Option<shortcuts::Recording>,
@@ -317,12 +347,18 @@ impl SettingsWindow {
             interface_font,
             article_font,
             mono_font,
+            #[cfg(not(target_os = "linux"))]
+            browser_data: Default::default(),
             editing: None,
             recording: None,
             #[cfg(feature = "desktop")]
             error: None,
         };
         this.load(cx);
+        #[cfg(not(target_os = "linux"))]
+        if section == Section::Browser {
+            this.load_browser_usage(cx);
+        }
         // The keymap is emptied while a chord is being recorded, so a
         // window shut in the middle of that has to put it back — see
         // [`shortcuts`].
@@ -454,12 +490,154 @@ impl SettingsWindow {
     }
 }
 
+/// A value typed into a dialog rather than switched on its row.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Field {
+    CoverMemory,
+    #[cfg(not(target_os = "linux"))]
+    BrowserHome,
+    #[cfg(not(target_os = "linux"))]
+    BrowserBlocked,
+}
+
+impl Field {
+    fn title(self) -> &'static str {
+        match self {
+            Self::CoverMemory => "Cover memory",
+            #[cfg(not(target_os = "linux"))]
+            Self::BrowserHome => "Home page",
+            #[cfg(not(target_os = "linux"))]
+            Self::BrowserBlocked => "Sites agents may not use",
+        }
+    }
+
+    fn note(self) -> &'static str {
+        match self {
+            Self::CoverMemory => "In megabytes.",
+            #[cfg(not(target_os = "linux"))]
+            Self::BrowserHome => "The address a new browser tab opens on.",
+            #[cfg(not(target_os = "linux"))]
+            Self::BrowserBlocked => "Hosts, separated by commas. A host covers its subdomains.",
+        }
+    }
+}
+
+impl SettingsWindow {
+    /// Put `field` in a dialog, seeded with `current`.
+    pub(super) fn edit_field(
+        &mut self,
+        field: Field,
+        current: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let input = cx.new(|cx| {
+            let mut input = TextField::new(cx).with_shape(Shape::Line);
+            input.set_content(current, cx);
+            input
+        });
+        input.focus_handle(cx).focus(window, cx);
+        self.editing = Some((field, input));
+        cx.notify();
+    }
+
+    fn save_field(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((field, input)) = self.editing.take() else {
+            return;
+        };
+        let typed = input.read(cx).content().to_owned();
+        match field {
+            Field::CoverMemory => self.save_cover_memory(&typed, window, cx),
+            #[cfg(not(target_os = "linux"))]
+            Field::BrowserHome => self.save_browser_home(&typed, cx),
+            #[cfg(not(target_os = "linux"))]
+            Field::BrowserBlocked => self.save_browser_blocked(&typed, cx),
+        }
+        cx.notify();
+    }
+
+    /// The open field's dialog, over a scrim that takes the press that
+    /// dismisses it. Rendered by the window, so it sits above the scrolling
+    /// body.
+    fn field_dialog(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let (field, input) = self.editing.clone()?;
+        let theme = Theme::of(cx).clone();
+        Some(
+            div()
+                .id("field-scrim")
+                .absolute()
+                .inset_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .bg(theme.scrim())
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.editing = None;
+                    cx.notify();
+                }))
+                .child(
+                    div()
+                        .id("field-dialog")
+                        .w(px(performance::DIALOG_WIDTH))
+                        .flex()
+                        .flex_col()
+                        .gap(px(LABEL_GAP))
+                        .p(px(20.))
+                        .rounded(px(Theme::panel_radius()))
+                        .border_1()
+                        .border_color(theme.border)
+                        .bg(theme.surface)
+                        // The press that opens a field must not reach the scrim.
+                        .on_click(|_, _, cx| cx.stop_propagation())
+                        .child(theme.row_title(field.title()))
+                        .child(
+                            div()
+                                .text_style(TextStyle::Subheadline)
+                                .text_color(theme.text_muted)
+                                .child(field.note()),
+                        )
+                        .child(input)
+                        .child(
+                            div()
+                                .flex()
+                                .flex_row()
+                                .justify_end()
+                                .gap(px(8.))
+                                .child(
+                                    theme
+                                        .button("Cancel", ButtonStyle::Ghost, None)
+                                        .id("field-cancel")
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.editing = None;
+                                            cx.notify();
+                                        })),
+                                )
+                                .child(
+                                    theme
+                                        .button("Save", ButtonStyle::Prominent, None)
+                                        .id("field-save")
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.save_field(window, cx)
+                                        })),
+                                ),
+                        ),
+                )
+                .into_any_element(),
+        )
+    }
+}
+
 impl SettingsWindow {
     /// What is on this machine can change while the window sits open —
     /// another install, a directory removed by hand — so the section's list is
     /// re-read on the way in rather than trusted from whenever it was opened.
     fn show(&mut self, section: Section, cx: &mut Context<Self>) {
         self.section = section;
+        #[cfg(not(target_os = "linux"))]
+        if section == Section::Browser {
+            self.browser_data.result = None;
+            self.load_browser_usage(cx);
+        }
         match section {
             Section::Agents => self.load(cx),
             Section::General
@@ -467,6 +645,7 @@ impl SettingsWindow {
             | Section::Shortcuts
             | Section::Features
             | Section::Mcp
+            | Section::Browser
             | Section::Performance
             | Section::Developer => {}
         }
@@ -475,6 +654,7 @@ impl SettingsWindow {
 
     fn sidebar(&self, cx: &Context<Self>) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
+        let features = &self.workspace.read(cx).settings.features;
         let painter = Painter::of(cx);
         div()
             .flex_none()
@@ -494,13 +674,31 @@ impl SettingsWindow {
                 true => HEADER_HEIGHT,
                 false => 12.,
             }))
-            .children(
-                Section::ALL
+            .children({
+                let listed: Vec<Section> = Section::ALL
                     .into_iter()
-                    .filter(|section| section.listed())
+                    .filter(|section| section.listed(features))
+                    .collect();
+                listed
+                    .iter()
                     .enumerate()
-                    .map(|(ix, section)| {
-                        theme
+                    .flat_map(|(ix, &section)| {
+                        // A heading where the group changes, over the first
+                        // section of it that is listed.
+                        let heading = section
+                            .group()
+                            .filter(|_| ix == 0 || listed[ix - 1].group() != section.group())
+                            .map(|label| {
+                                div()
+                                    .pt(px(14.))
+                                    .pb(px(4.))
+                                    .px(px(8.))
+                                    .text_style(TextStyle::Callout)
+                                    .text_color(theme.text_faint)
+                                    .child(label)
+                                    .into_any_element()
+                            });
+                        let row = theme
                             .nav_row(
                                 Some(section.glyph().into()),
                                 section.title(),
@@ -509,8 +707,11 @@ impl SettingsWindow {
                             )
                             .id(("section", ix))
                             .on_click(cx.listener(move |this, _, _, cx| this.show(section, cx)))
-                    }),
-            )
+                            .into_any_element();
+                        heading.into_iter().chain(std::iter::once(row))
+                    })
+                    .collect::<Vec<_>>()
+            })
     }
 }
 
@@ -596,6 +797,10 @@ impl Render for SettingsWindow {
                                 Section::Features => self.features_body(cx),
                                 Section::Agents => self.agents_body(cx),
                                 Section::Mcp => self.mcp_body(cx),
+                                #[cfg(not(target_os = "linux"))]
+                                Section::Browser => self.browser_body(cx),
+                                #[cfg(target_os = "linux")]
+                                Section::Browser => div().into_any_element(),
                                 Section::Performance => self.performance_body(cx),
                                 Section::Developer => self.developer_body(cx),
                             }),
@@ -613,7 +818,7 @@ impl Render for SettingsWindow {
                     }),
             )
             .children(strip)
-            .children(self.cover_dialog(cx))
+            .children(self.field_dialog(cx))
             .children(self.trust_dialog(cx));
         #[cfg(feature = "desktop")]
         return bezel::ui::window::frame(root, window, cx);

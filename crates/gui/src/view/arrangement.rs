@@ -261,7 +261,10 @@ impl Cydonia {
                             .children(self.plan(Some(id), cx))
                             .children(self.permission(Some(id), cx))
                             .child(leaf.composer.clone()),
-                        None,
+                        self.workspace
+                            .read(cx)
+                            .session(id)
+                            .map(|chat| chat.transcript.footer_height.clone()),
                     )
                 }),
             _ => None,
@@ -420,17 +423,59 @@ impl Cydonia {
         cx.notify();
     }
 
-    /// The single pane, wrapped so an entry dropped on its edge makes the
-    /// space that puts the two side by side.
-    pub(crate) fn lone_pane(&self, body: AnyElement, cx: &mut Context<Self>) -> AnyElement {
-        let theme = Theme::of(cx).clone();
-        let Some(on) = self
-            .workspace
+    /// What the single pane is showing, as a member.
+    fn lone_member(&self, cx: &App) -> Option<Member> {
+        self.workspace
             .read(cx)
             .active
             .zip(self.showing(cx))
             .and_then(|(project, pane)| self.member_showing(project, pane, cx))
-        else {
+    }
+
+    /// A drag over the single pane's header, which sits above the pane: over
+    /// it, a release makes a tab. The entry showing is not a tab to add to
+    /// itself.
+    pub(crate) fn aim_header(&mut self, event: &DragMoveEvent<EntryDrag>, cx: &mut Context<Self>) {
+        let Some(on) = self.lone_member(cx) else {
+            return;
+        };
+        let own = matches!(event.drag(cx), EntryDrag::Member(moving) if *moving == on);
+        let over = !own && event.bounds.contains(&event.event.position);
+        let aimed = self.pane_landing.as_ref() == Some(&(on.clone(), Landing::Bar));
+        match (over, aimed) {
+            (true, false) => self.pane_landing = Some((on, Landing::Bar)),
+            (false, true) => self.pane_landing = None,
+            _ => return,
+        }
+        cx.notify();
+    }
+
+    /// Whether a drag is aimed at the single pane's header.
+    pub(crate) fn header_aimed(&self, cx: &App) -> bool {
+        self.lone_member(cx)
+            .is_some_and(|on| self.pane_landing.as_ref() == Some(&(on, Landing::Bar)))
+    }
+
+    /// A release over the single pane's header.
+    pub(crate) fn drop_on_header(
+        &mut self,
+        drag: &EntryDrag,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(on) = self.lone_member(cx)
+            && let Some(arriving) = self.dropped(drag, cx)
+        {
+            self.drop_entry(&arriving, &on, window, cx);
+        }
+    }
+
+    /// The single pane, wrapped so an entry dropped on its edge makes the
+    /// space that puts the two side by side, and one dropped on its header
+    /// makes them tabs.
+    pub(crate) fn lone_pane(&self, body: AnyElement, cx: &mut Context<Self>) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        let Some(on) = self.lone_member(cx) else {
             return body;
         };
         let landing = self
@@ -449,6 +494,10 @@ impl Cydonia {
             .on_drag_move(cx.listener({
                 let at = on.clone();
                 move |this, event: &DragMoveEvent<EntryDrag>, _, cx| {
+                    // Above the pane is the header, which aims for itself.
+                    if event.event.position.y < event.bounds.top() {
+                        return;
+                    }
                     this.aim_pane(&at, false, event.bounds, event.event.position, cx);
                 }
             }))
@@ -461,7 +510,12 @@ impl Cydonia {
                 }
             }))
             .child(body)
-            .children(landing.map(|at| landing_mark(at, &theme)))
+            // The header lights itself for a tab — see [`Self::header_aimed`].
+            .children(
+                landing
+                    .filter(|at| *at != Landing::Bar)
+                    .map(|at| landing_mark(at, &theme)),
+            )
             .into_any_element()
     }
 
@@ -558,17 +612,57 @@ impl Cydonia {
         // is lit while a drag is aimed at it rather than at an edge.
         let aimed = self.pane_landing.as_ref() == Some(&(pane.clone(), Landing::Bar));
         let hovered = key.clone();
+        let owner = cx.entity().downgrade();
         crate::view::root::band()
             .id(SharedString::from(format!("pane-bar-{key}")))
             .group("pane-bar")
-            .on_hover(cx.listener(move |this, over: &bool, _, cx| {
-                match (*over, this.pane_hovered.as_ref() == Some(&hovered)) {
-                    (true, false) => this.pane_hovered = Some(hovered.clone()),
-                    (false, true) => this.pane_hovered = None,
-                    _ => return,
-                }
-                cx.notify();
-            }))
+            .relative()
+            .child(
+                bezel::gpui::canvas(
+                    |_, _, _| {},
+                    move |bounds, _, window, _| {
+                        let exited = owner.clone();
+                        let key = hovered.clone();
+                        window.on_mouse_event(
+                            move |_: &bezel::gpui::MouseExitEvent, phase, _, cx| {
+                                if phase != bezel::gpui::DispatchPhase::Capture {
+                                    return;
+                                }
+                                let _ = exited.update(cx, |this, cx| {
+                                    if this.pane_hovered.as_ref() == Some(&key) {
+                                        this.pane_hovered = None;
+                                        cx.notify();
+                                    }
+                                });
+                            },
+                        );
+                        let owner = owner.clone();
+                        let hovered = hovered.clone();
+                        // The scrollbar blocks hitbox hover beneath it, but is
+                        // still inside the bar. Track the bar's bounds instead.
+                        window.on_mouse_event(
+                            move |event: &bezel::gpui::MouseMoveEvent, phase, _, cx| {
+                                if phase != bezel::gpui::DispatchPhase::Capture {
+                                    return;
+                                }
+                                let _ = owner.update(cx, |this, cx| {
+                                    match (
+                                        bounds.contains(&event.position),
+                                        this.pane_hovered.as_ref() == Some(&hovered),
+                                    ) {
+                                        (true, false) => this.pane_hovered = Some(hovered.clone()),
+                                        (false, true) => this.pane_hovered = None,
+                                        _ => return,
+                                    }
+                                    cx.notify();
+                                });
+                            },
+                        );
+                    },
+                )
+                .absolute()
+                .size_full(),
+            )
             .w_full()
             .gap(px(2.))
             .pl(px(lead))
@@ -1355,3 +1449,11 @@ fn top_right(node: &Node<Member>) -> Option<Member> {
         .and_then(top_right),
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/pane_footer.rs"]
+mod pane_footer_tests;
+
+#[cfg(test)]
+#[path = "../../tests/unit/pane_hover.rs"]
+mod pane_hover_tests;

@@ -11,19 +11,15 @@ use crate::{
     view::settings::{self, SettingsWindow, Switch},
 };
 use bezel::{
-    gpui::{AnyElement, Context, Focusable as _, Window, div, prelude::*, px},
+    gpui::{AnyElement, Context, Window, div, prelude::*, px},
     theme::{TextStyle, Theme, Typeset},
-    ui::{
-        input::{Shape, TextField},
-        widgets::{ButtonStyle, Buttons, Scaffolding},
-    },
+    ui::widgets::{Buttons, Scaffolding},
 };
 
 /// The least the ceiling may be set to: one cover, rounded up to whole
 /// megabytes. Below it the open article would be evicted as it is drawn.
 const FLOOR: u64 = cover::RASTER_BYTES / 1_000_000 + 1;
 
-/// How wide the ceiling's dialog sits.
 /// How wide a dialog the settings window stands over its body. Shared with
 /// [`super::agents`], so the two land on the same shape.
 pub(super) const DIALOG_WIDTH: f32 = 320.;
@@ -117,9 +113,9 @@ impl SettingsWindow {
                     .text_style(TextStyle::Callout)
                     .text_color(theme.text)
                     .child(format!("{mb} MB"))
-                    .on_click(
-                        cx.listener(|this, _, window, cx| this.edit_cover_memory(window, cx)),
-                    ),
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.edit_field(settings::Field::CoverMemory, mb.to_string(), window, cx)
+                    })),
             )
     }
 
@@ -190,101 +186,20 @@ impl SettingsWindow {
             )
     }
 
-    /// Put the ceiling in a field, seeded with what it is now.
-    fn edit_cover_memory(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let mb = self.workspace.read(cx).settings.cover_memory;
-        let field = cx.new(|cx| {
-            let mut field = TextField::new(cx).with_shape(Shape::Line);
-            field.set_content(mb.to_string(), cx);
-            field
-        });
-        field.focus_handle(cx).focus(window, cx);
-        self.editing = Some(field);
-        cx.notify();
-    }
-
     /// Take what was typed, if it is a number. Anything else leaves the
     /// ceiling where it was rather than guessing at what was meant.
-    fn save_cover_memory(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(field) = self.editing.take() else {
-            return;
-        };
-        if let Ok(mb) = field.read(cx).content().trim().parse::<u64>() {
+    pub(super) fn save_cover_memory(
+        &mut self,
+        typed: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Ok(mb) = typed.trim().parse::<u64>() {
             let mb = mb.max(FLOOR);
             self.workspace.update(cx, |workspace, cx| {
                 workspace.set_cover_memory(mb, window, cx)
             });
         }
-        cx.notify();
-    }
-
-    /// The ceiling's dialog, over a scrim that takes the press that dismisses
-    /// it. Rendered by the window, so it sits above the scrolling body.
-    pub(super) fn cover_dialog(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let field = self.editing.clone()?;
-        let theme = Theme::of(cx).clone();
-        Some(
-            div()
-                .id("cover-scrim")
-                .absolute()
-                .inset_0()
-                .flex()
-                .items_center()
-                .justify_center()
-                .bg(theme.scrim())
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.editing = None;
-                    cx.notify();
-                }))
-                .child(
-                    div()
-                        .id("cover-dialog")
-                        .w(px(DIALOG_WIDTH))
-                        .flex()
-                        .flex_col()
-                        .gap(px(settings::LABEL_GAP))
-                        .p(px(20.))
-                        .rounded(px(Theme::panel_radius()))
-                        .border_1()
-                        .border_color(theme.border)
-                        .bg(theme.surface)
-                        // The press that opens a field must not reach the scrim.
-                        .on_click(|_, _, cx| cx.stop_propagation())
-                        .child(theme.row_title("Cover memory"))
-                        .child(
-                            div()
-                                .text_style(TextStyle::Subheadline)
-                                .text_color(theme.text_muted)
-                                .child("In megabytes."),
-                        )
-                        .child(field)
-                        .child(
-                            div()
-                                .flex()
-                                .flex_row()
-                                .justify_end()
-                                .gap(px(8.))
-                                .child(
-                                    theme
-                                        .button("Cancel", ButtonStyle::Ghost, None)
-                                        .id("cover-cancel")
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.editing = None;
-                                            cx.notify();
-                                        })),
-                                )
-                                .child(
-                                    theme
-                                        .button("Save", ButtonStyle::Prominent, None)
-                                        .id("cover-save")
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.save_cover_memory(window, cx)
-                                        })),
-                                ),
-                        ),
-                )
-                .into_any_element(),
-        )
     }
 
     /// What is in memory, counted when the page is drawn. Read-only: this is

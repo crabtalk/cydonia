@@ -60,6 +60,9 @@ pub struct Settings {
     /// two that are already here and never above a bare key.
     #[serde(default)]
     pub mcp: Mcp,
+    /// `[browser]`: the in-app browser.
+    #[serde(default)]
+    pub browser: Browsing,
     /// Which agents the installer has been told to go ahead on, by registry
     /// id, against the source that was agreed to — see
     /// [`crate::agent::source_mark`].
@@ -380,6 +383,105 @@ impl Default for Mcp {
     }
 }
 
+/// The in-app browser's preferences. Installed as a global by the workspace, so
+/// a tab reads them without one.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Browsing {
+    /// What a new tab opens on.
+    pub home: String,
+    /// Where a search from the address field goes: `%s` is the query.
+    pub search: String,
+    /// Where an http(s) link clicked in an article or a transcript opens.
+    pub links: Links,
+    /// Whether agents are offered the browser tools that read pages.
+    pub agents_read: bool,
+    /// Whether agents are offered the browser tools that click and type.
+    /// Needs [`Self::agents_read`].
+    pub agents_act: bool,
+    /// Hosts agents may not read or act on, a subdomain included with its
+    /// host. Checked against the tab's address when a tool call arrives.
+    pub agents_blocked: Vec<String>,
+    /// Whether pages keep cookies and storage across restarts. Off builds
+    /// each page in memory. Read when a page is built.
+    pub keep_signed_in: bool,
+}
+
+/// Where a web link opens.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Links {
+    /// The system's default browser.
+    #[default]
+    System,
+    /// A browser tab in the right panel. The system browser where the build
+    /// has none or the tab is switched off.
+    Panel,
+}
+
+impl Links {
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::System => "system",
+            Self::Panel => "panel",
+        }
+    }
+}
+
+impl bezel::gpui::Global for Browsing {}
+
+/// The engines Settings offers, by name, as [`Browsing::search`] templates.
+pub const SEARCH_ENGINES: [(&str, &str); 4] = [
+    ("DuckDuckGo", "https://duckduckgo.com/?q=%s"),
+    ("Google", "https://www.google.com/search?q=%s"),
+    ("Bing", "https://www.bing.com/search?q=%s"),
+    ("Kagi", "https://kagi.com/search?q=%s"),
+];
+
+impl Default for Browsing {
+    fn default() -> Self {
+        Self {
+            home: "https://duckduckgo.com".to_owned(),
+            search: SEARCH_ENGINES[0].1.to_owned(),
+            links: Links::default(),
+            agents_read: true,
+            agents_act: true,
+            agents_blocked: Vec::new(),
+            keep_signed_in: true,
+        }
+    }
+}
+
+impl Browsing {
+    /// Whether `url`'s host is one [`Self::agents_blocked`] names.
+    pub fn blocks(&self, url: &str) -> bool {
+        let Some(host) = url::Url::parse(url)
+            .ok()
+            .and_then(|url| url.host_str().map(str::to_ascii_lowercase))
+        else {
+            return false;
+        };
+        self.agents_blocked.iter().any(|blocked| {
+            let blocked = blocked.trim().trim_start_matches("*.").to_ascii_lowercase();
+            !blocked.is_empty()
+                && (host == blocked
+                    || host
+                        .strip_suffix(blocked.as_str())
+                        .is_some_and(|rest| rest.ends_with('.')))
+        })
+    }
+
+    /// The address a search for `query` loads. A template without `%s` takes
+    /// the query on its end.
+    pub fn search_url(&self, query: &str) -> String {
+        let query: String = url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
+        match self.search.contains("%s") {
+            true => self.search.replace("%s", &query),
+            false => format!("{}{query}", self.search),
+        }
+    }
+}
+
 /// The surfaces a project can hold, minus articles — the one thing the app is
 /// for, and so not something to be able to switch off.
 ///
@@ -566,6 +668,7 @@ impl Default for Settings {
             shortcuts: Shortcuts::default(),
             features: Features::default(),
             mcp: Mcp::default(),
+            browser: Browsing::default(),
             // Nothing agreed to yet, which is what makes the first install of
             // each agent ask.
             trusted_agents: BTreeMap::new(),
@@ -820,6 +923,15 @@ pub fn set_emacs_shortcuts(on: bool) -> Result<()> {
 pub fn set_mcp(key: &str, on: bool) -> Result<()> {
     edit(|doc| {
         table(doc, "mcp")?[key] = toml_edit::value(on);
+        Ok(true)
+    })
+}
+
+/// Write one key of `[browser]`.
+pub fn set_browser(key: &str, value: impl Into<toml_edit::Value>) -> Result<()> {
+    let value = value.into();
+    edit(|doc| {
+        table(doc, "browser")?[key] = toml_edit::value(value);
         Ok(true)
     })
 }
