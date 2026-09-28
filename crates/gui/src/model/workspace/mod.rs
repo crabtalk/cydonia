@@ -514,7 +514,10 @@ impl Workspace {
         #[cfg(feature = "desktop")]
         agent::serve::set_write(self.settings.mcp.write);
         #[cfg(feature = "desktop")]
-        agent::serve::set_browser(self.settings.features.panel.browser);
+        agent::serve::set_browser(
+            self.settings.features.panel.browser && self.settings.browser.agents_read,
+            self.settings.browser.agents_act,
+        );
         #[cfg(feature = "desktop")]
         agent::serve::set_delete(self.settings.mcp.delete);
     }
@@ -567,6 +570,39 @@ impl Workspace {
             return;
         }
         self.settings.browser.links = links;
+        cx.set_global(self.settings.browser.clone());
+        cx.notify();
+    }
+
+    /// Offer agents the browser tools that read pages, or withhold them.
+    pub fn set_browser_agents_read(&mut self, on: bool, cx: &mut Context<Self>) {
+        if settings::set_browser("agents_read", on).is_err() {
+            return;
+        }
+        self.settings.browser.agents_read = on;
+        cx.set_global(self.settings.browser.clone());
+        self.refresh_door();
+        cx.notify();
+    }
+
+    /// Offer agents the browser tools that click and type, or withhold them.
+    pub fn set_browser_agents_act(&mut self, on: bool, cx: &mut Context<Self>) {
+        if settings::set_browser("agents_act", on).is_err() {
+            return;
+        }
+        self.settings.browser.agents_act = on;
+        cx.set_global(self.settings.browser.clone());
+        self.refresh_door();
+        cx.notify();
+    }
+
+    /// The hosts agents may not read or act on.
+    pub fn set_browser_agents_blocked(&mut self, hosts: Vec<String>, cx: &mut Context<Self>) {
+        let list: toml_edit::Array = hosts.iter().map(String::as_str).collect();
+        if settings::set_browser("agents_blocked", list).is_err() {
+            return;
+        }
+        self.settings.browser.agents_blocked = hosts;
         cx.set_global(self.settings.browser.clone());
         cx.notify();
     }

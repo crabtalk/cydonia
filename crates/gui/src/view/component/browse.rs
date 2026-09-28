@@ -9,7 +9,7 @@
 //! built the page: a tab whose panel is not on screen has none.
 
 use super::{browser::Browser, panel::Panel};
-use crate::view::root::Cydonia;
+use crate::{model::settings::Browsing, view::root::Cydonia};
 use bezel::gpui::{AsyncApp, Context, Entity, WeakEntity};
 use browser::WebView;
 use futures::{StreamExt as _, channel::mpsc};
@@ -189,9 +189,18 @@ async fn serve(
         .ok()
         .flatten()
         .ok_or_else(|| format!("cydonia does not have {} open", project.display()))?;
+    let browsing = cx.update(|cx| cx.try_global::<Browsing>().cloned().unwrap_or_default());
+    // The tab's address as the call arrives: a page an agent is refused is
+    // judged by where it is, not by where the call says it is going.
+    if !matches!(act, Act::Tabs) && (tab.is_some() || !matches!(act, Act::Open(_))) {
+        let browser = pick(&panel, tab, cx)?;
+        let url = browser.read_with(cx, |browser, _| browser.url().to_owned());
+        refuse_blocked(&browsing, &url)?;
+    }
     match act {
         Act::Tabs => panel.update(cx, |panel, cx| Ok(tabs(panel, cx))),
         Act::Open(url) => {
+            refuse_blocked(&browsing, &url)?;
             let browser = match tab {
                 Some(_) => {
                     let browser = pick(&panel, tab, cx)?;
@@ -233,6 +242,15 @@ async fn serve(
             let js = SCROLL.replace("$PAGES", &format!("{:.2}", pages.clamp(-20., 20.)));
             act_on(&panel, tab, &js, 0, cx).await
         }
+    }
+}
+
+fn refuse_blocked(browsing: &Browsing, url: &str) -> Result<(), String> {
+    match browsing.blocks(url) {
+        true => Err(format!(
+            "{url} is on a site the user has kept agents off in cydonia's settings"
+        )),
+        false => Ok(()),
     }
 }
 
@@ -334,6 +352,8 @@ async fn read(
 ) -> Result<String, String> {
     let id = browser.read_with(cx, |browser, _| browser.id);
     let page: Page = eval(page, &script(SNAPSHOT), cx).await?;
+    let browsing = cx.update(|cx| cx.try_global::<Browsing>().cloned().unwrap_or_default());
+    refuse_blocked(&browsing, &page.url)?;
     Ok(described(id, &page))
 }
 

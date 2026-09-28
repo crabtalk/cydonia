@@ -394,6 +394,14 @@ pub struct Browsing {
     pub search: String,
     /// Where an http(s) link clicked in an article or a transcript opens.
     pub links: Links,
+    /// Whether agents are offered the browser tools that read pages.
+    pub agents_read: bool,
+    /// Whether agents are offered the browser tools that click and type.
+    /// Needs [`Self::agents_read`].
+    pub agents_act: bool,
+    /// Hosts agents may not read or act on, a subdomain included with its
+    /// host. Checked against the tab's address when a tool call arrives.
+    pub agents_blocked: Vec<String>,
     /// Whether pages keep cookies and storage across restarts. Off builds
     /// each page in memory. Read when a page is built.
     pub keep_signed_in: bool,
@@ -436,12 +444,33 @@ impl Default for Browsing {
             home: "https://duckduckgo.com".to_owned(),
             search: SEARCH_ENGINES[0].1.to_owned(),
             links: Links::default(),
+            agents_read: true,
+            agents_act: true,
+            agents_blocked: Vec::new(),
             keep_signed_in: true,
         }
     }
 }
 
 impl Browsing {
+    /// Whether `url`'s host is one [`Self::agents_blocked`] names.
+    pub fn blocks(&self, url: &str) -> bool {
+        let Some(host) = url::Url::parse(url)
+            .ok()
+            .and_then(|url| url.host_str().map(str::to_ascii_lowercase))
+        else {
+            return false;
+        };
+        self.agents_blocked.iter().any(|blocked| {
+            let blocked = blocked.trim().trim_start_matches("*.").to_ascii_lowercase();
+            !blocked.is_empty()
+                && (host == blocked
+                    || host
+                        .strip_suffix(blocked.as_str())
+                        .is_some_and(|rest| rest.ends_with('.')))
+        })
+    }
+
     /// The address a search for `query` loads. A template without `%s` takes
     /// the query on its end.
     pub fn search_url(&self, query: &str) -> String {

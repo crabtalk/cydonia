@@ -478,6 +478,8 @@ pub(super) enum Field {
     CoverMemory,
     #[cfg(not(target_os = "linux"))]
     BrowserHome,
+    #[cfg(not(target_os = "linux"))]
+    BrowserBlocked,
 }
 
 impl Field {
@@ -486,6 +488,8 @@ impl Field {
             Self::CoverMemory => "Cover memory",
             #[cfg(not(target_os = "linux"))]
             Self::BrowserHome => "Home page",
+            #[cfg(not(target_os = "linux"))]
+            Self::BrowserBlocked => "Sites agents may not use",
         }
     }
 
@@ -494,6 +498,8 @@ impl Field {
             Self::CoverMemory => "In megabytes.",
             #[cfg(not(target_os = "linux"))]
             Self::BrowserHome => "The address a new browser tab opens on.",
+            #[cfg(not(target_os = "linux"))]
+            Self::BrowserBlocked => "Hosts, separated by commas. A host covers its subdomains.",
         }
     }
 }
@@ -526,6 +532,8 @@ impl SettingsWindow {
             Field::CoverMemory => self.save_cover_memory(&typed, window, cx),
             #[cfg(not(target_os = "linux"))]
             Field::BrowserHome => self.save_browser_home(&typed, cx),
+            #[cfg(not(target_os = "linux"))]
+            Field::BrowserBlocked => self.save_browser_blocked(&typed, cx),
         }
         cx.notify();
     }

@@ -40,6 +40,7 @@ const PAGES: Arg = Arg {
     about: "Screenfuls to scroll down; negative goes up. Defaults to one.",
 };
 
+/// [`looking`] then [`acting`].
 pub static TOOLS: [Tool; 6] = [
     Tool {
         name: "browser_tabs",
@@ -76,6 +77,20 @@ pub static TOOLS: [Tool; 6] = [
         call: read,
     },
     Tool {
+        name: "browser_scroll",
+        description: "Scroll a browser tab and read it back. A read already has the whole \
+            page's text; this is for pages that load more as they are scrolled.",
+        schema: |bound| {
+            let mut schema = with_tab(fields(bound, &[PROJECT]));
+            schema["properties"][PAGES.name] =
+                json!({ "type": "number", "description": PAGES.about });
+            schema
+        },
+        writes: false,
+        deletes: false,
+        call: scroll,
+    },
+    Tool {
         name: "browser_click",
         description: "Click an element by its number from the last read of the tab, and read \
             back the page it leaves.",
@@ -103,21 +118,18 @@ pub static TOOLS: [Tool; 6] = [
         deletes: false,
         call: type_text,
     },
-    Tool {
-        name: "browser_scroll",
-        description: "Scroll a browser tab and read it back. A read already has the whole \
-            page's text; this is for pages that load more as they are scrolled.",
-        schema: |bound| {
-            let mut schema = with_tab(fields(bound, &[PROJECT]));
-            schema["properties"][PAGES.name] =
-                json!({ "type": "number", "description": PAGES.about });
-            schema
-        },
-        writes: false,
-        deletes: false,
-        call: scroll,
-    },
 ];
+
+/// The tools that read pages and move between them: tabs, open, read,
+/// scroll.
+pub fn looking() -> &'static [Tool] {
+    &TOOLS[..4]
+}
+
+/// The tools that act on a page as the user would: click, type.
+pub fn acting() -> &'static [Tool] {
+    &TOOLS[4..]
+}
 
 fn with_tab(mut schema: Value) -> Value {
     schema["properties"][TAB.name] = json!({ "type": "integer", "description": TAB.about });

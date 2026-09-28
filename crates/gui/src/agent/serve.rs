@@ -50,17 +50,28 @@ pub fn set_delete(on: bool) {
     delete().store(on, Ordering::Relaxed);
 }
 
-/// Whether the browser tools and their resource are offered.
+/// Whether the browser tools that read pages, and the browser resource, are
+/// offered.
 static BROWSER: OnceLock<Arc<AtomicBool>> = OnceLock::new();
 
 fn browser() -> &'static Arc<AtomicBool> {
     BROWSER.get_or_init(|| Arc::new(AtomicBool::new(false)))
 }
 
-/// Offer the browser tools, or withhold them. Never on where the build has no
-/// browser.
-pub fn set_browser(on: bool) {
-    browser().store(on && cfg!(not(target_os = "linux")), Ordering::Relaxed);
+/// Whether the browser tools that click and type are offered.
+static BROWSER_ACT: OnceLock<Arc<AtomicBool>> = OnceLock::new();
+
+fn browser_act() -> &'static Arc<AtomicBool> {
+    BROWSER_ACT.get_or_init(|| Arc::new(AtomicBool::new(false)))
+}
+
+/// Offer the browser tools, or withhold them: `read` the ones that read
+/// pages, `act` the ones that click and type, which also need `read`. Never
+/// on where the build has no browser.
+pub fn set_browser(read: bool, act: bool) {
+    let read = read && cfg!(not(target_os = "linux"));
+    browser().store(read, Ordering::Relaxed);
+    browser_act().store(read && act, Ordering::Relaxed);
 }
 
 /// The resources of surfaces switched off, for the catalog a session is sent.
@@ -125,7 +136,16 @@ fn server() -> Server {
         .mount(&tools::project::TOOLS)
         .mount(&tools::session::TOOLS)
         .mount(&tools::workspace::TOOLS)
-        .mount_switched(&tools::browser::TOOLS, BROWSER_RESOURCE, browser().clone())
+        .mount_switched(
+            tools::browser::looking(),
+            BROWSER_RESOURCE,
+            browser().clone(),
+        )
+        .mount_switched(
+            tools::browser::acting(),
+            BROWSER_RESOURCE,
+            browser_act().clone(),
+        )
         .writable(write().clone())
         .deletes(delete().clone())
 }

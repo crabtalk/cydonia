@@ -116,13 +116,22 @@ impl Server {
         self
     }
 
-    /// The resources of switched-off tool sets.
+    /// The resources no switched-on tool set shares.
     pub fn hidden(&self) -> Vec<&'static str> {
-        self.switched
+        let mut hidden: Vec<&'static str> = self
+            .switched
             .iter()
-            .filter(|set| !set.on.load(Ordering::Relaxed))
             .map(|set| set.resource)
-            .collect()
+            .filter(|resource| {
+                !self
+                    .switched
+                    .iter()
+                    .any(|set| set.resource == *resource && set.on.load(Ordering::Relaxed))
+            })
+            .collect();
+        hidden.sort_unstable();
+        hidden.dedup();
+        hidden
     }
 
     /// Answer one request, or nothing where the wire expects nothing.

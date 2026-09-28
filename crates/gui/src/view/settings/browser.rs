@@ -31,6 +31,13 @@ impl SettingsWindow {
             .child(
                 theme
                     .group_box()
+                    .child(self.agents_read_row(cx))
+                    .child(self.agents_act_row(cx))
+                    .child(self.agents_blocked_row(cx)),
+            )
+            .child(
+                theme
+                    .group_box()
                     .child(self.keep_signed_in_row(cx))
                     .child(self.clear_row(cx)),
             )
@@ -214,6 +221,121 @@ impl SettingsWindow {
                     })),
             )
             .into_any_element()
+    }
+
+    fn agents_read_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let on = self.workspace.read(cx).settings.browser.agents_read;
+        self.switch_row(
+            Switch::new(
+                "browser-agents-read",
+                "Agents may read pages",
+                "Offers your agents the tools that open, read and scroll browser tabs.",
+                on,
+            )
+            .first(true)
+            .truncate(),
+            cx,
+            move |this, cx| {
+                this.workspace.update(cx, |workspace, cx| {
+                    workspace.set_browser_agents_read(!on, cx)
+                });
+            },
+        )
+    }
+
+    /// Read only while [`Self::agents_read_row`] is on.
+    fn agents_act_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let on = self.workspace.read(cx).settings.browser.agents_act;
+        self.switch_row(
+            Switch::new(
+                "browser-agents-act",
+                "Agents may click and type",
+                "Needs Read. Offers the tools that click and fill in fields on a page.",
+                on,
+            )
+            .truncate(),
+            cx,
+            move |this, cx| {
+                this.workspace.update(cx, |workspace, cx| {
+                    workspace.set_browser_agents_act(!on, cx)
+                });
+            },
+        )
+    }
+
+    fn agents_blocked_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        let blocked = self
+            .workspace
+            .read(cx)
+            .settings
+            .browser
+            .agents_blocked
+            .join(", ");
+        let current = blocked.clone();
+        theme
+            .card_row(false)
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .child(theme.row_title("Sites agents may not use"))
+                    .child(
+                        div()
+                            .mt(px(4.))
+                            .truncate()
+                            .text_style(TextStyle::Subheadline)
+                            .text_color(theme.text_muted)
+                            .child(match blocked.is_empty() {
+                                true => "None.".to_owned(),
+                                false => blocked,
+                            }),
+                    ),
+            )
+            .child(
+                theme
+                    .ghost("browser-blocked")
+                    .flex_none()
+                    .px(px(10.))
+                    .py(px(3.))
+                    .border_1()
+                    .border_color(theme.border)
+                    .bg(theme.input_bg)
+                    .text_style(TextStyle::Callout)
+                    .text_color(theme.text)
+                    .child("Change…")
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.edit_field(
+                            settings::Field::BrowserBlocked,
+                            current.clone(),
+                            window,
+                            cx,
+                        )
+                    })),
+            )
+            .into_any_element()
+    }
+
+    /// Take the typed hosts: split on commas and whitespace, a URL cut to its
+    /// host.
+    pub(super) fn save_browser_blocked(&mut self, typed: &str, cx: &mut Context<Self>) {
+        let mut hosts: Vec<String> = typed
+            .split(|c: char| c == ',' || c.is_whitespace())
+            .filter(|entry| !entry.is_empty())
+            .map(|entry| {
+                url::Url::parse(entry)
+                    .ok()
+                    .and_then(|url| url.host_str().map(str::to_owned))
+                    .unwrap_or_else(|| entry.to_owned())
+                    .to_ascii_lowercase()
+            })
+            .collect();
+        hosts.dedup();
+        self.workspace.update(cx, |workspace, cx| {
+            workspace.set_browser_agents_blocked(hosts, cx)
+        });
     }
 
     fn keep_signed_in_row(&self, cx: &mut Context<Self>) -> AnyElement {
