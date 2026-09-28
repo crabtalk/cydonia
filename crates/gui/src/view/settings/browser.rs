@@ -9,7 +9,7 @@ use crate::{
     },
 };
 use bezel::{
-    gpui::{AnyElement, Context, div, prelude::*, px},
+    gpui::{AnyElement, Context, PathPromptOptions, div, prelude::*, px},
     theme::{TextStyle, Theme, Typeset},
     ui::widgets::{ButtonStyle, Buttons, Scaffolding},
 };
@@ -41,6 +41,7 @@ impl SettingsWindow {
                     .child(self.keep_signed_in_row(cx))
                     .child(self.clear_row(cx)),
             )
+            .child(theme.group_box().child(self.downloads_row(cx)))
             .into_any_element()
     }
 
@@ -399,6 +400,79 @@ impl SettingsWindow {
                     }),
             )
             .into_any_element()
+    }
+
+    fn downloads_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        let folder = self.workspace.read(cx).settings.browser.downloads.clone();
+        let chosen = folder.is_some();
+        theme
+            .card_row(true)
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .child(theme.row_title("Download folder"))
+                    .child(
+                        div()
+                            .mt(px(4.))
+                            .truncate()
+                            .text_style(TextStyle::Subheadline)
+                            .text_color(theme.text_muted)
+                            .child(match folder {
+                                Some(folder) => folder.display().to_string(),
+                                None => "Your Downloads folder.".to_owned(),
+                            }),
+                    ),
+            )
+            .when(chosen, |row| {
+                row.child(
+                    theme
+                        .button("Reset", ButtonStyle::Ghost, None)
+                        .id("browser-downloads-reset")
+                        .flex_none()
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.workspace.update(cx, |workspace, cx| {
+                                workspace.set_browser_downloads(None, cx)
+                            });
+                        })),
+                )
+            })
+            .child(
+                theme
+                    .button("Choose…", ButtonStyle::Ghost, None)
+                    .id("browser-downloads")
+                    .flex_none()
+                    .on_click(cx.listener(|this, _, _, cx| this.choose_downloads(cx))),
+            )
+            .into_any_element()
+    }
+
+    /// Ask the system for a folder. Applies to pages built after it.
+    fn choose_downloads(&mut self, cx: &mut Context<Self>) {
+        let picked = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: None,
+        });
+        cx.spawn(async move |this, cx| {
+            let Ok(Ok(Some(paths))) = picked.await else {
+                return;
+            };
+            let Some(folder) = paths.into_iter().next() else {
+                return;
+            };
+            let _ = this.update(cx, |this, cx| {
+                this.workspace.update(cx, |workspace, cx| {
+                    workspace.set_browser_downloads(Some(folder), cx)
+                });
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// Take the typed address. A bare host is taken over https; an empty

@@ -22,7 +22,10 @@ use bezel::{
     },
 };
 use browser::{DataStore, WebView, WebViewEvent};
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
 
 actions!(cydonia_browser, [Go]);
 
@@ -121,7 +124,50 @@ pub struct Browser {
     pub(super) title: String,
     address: Entity<TextField>,
     focus: FocusHandle,
+    /// The tab's last download, shown in its toolbar.
+    download: Option<Download>,
     _page: Option<Subscription>,
+}
+
+struct Download {
+    path: PathBuf,
+    state: Fetch,
+}
+
+enum Fetch {
+    Running,
+    Saved,
+    Failed,
+}
+
+/// Where a download proposed at `proposed` is saved: under `folder` where one
+/// is set, else where proposed, numbered so it replaces no file.
+fn destination(folder: Option<&Path>, proposed: &Path) -> PathBuf {
+    let name = proposed
+        .file_name()
+        .map_or_else(|| "download".into(), |name| name.to_os_string());
+    let path = match folder {
+        Some(folder) => folder.join(&name),
+        None => proposed.to_path_buf(),
+    };
+    if !path.exists() {
+        return path;
+    }
+    let stem = path
+        .file_stem()
+        .map_or_else(String::new, |stem| stem.to_string_lossy().into_owned());
+    let extension = path
+        .extension()
+        .map(|extension| format!(".{}", extension.to_string_lossy()));
+    (1..)
+        .map(|n| {
+            path.with_file_name(format!(
+                "{stem} ({n}){}",
+                extension.as_deref().unwrap_or("")
+            ))
+        })
+        .find(|candidate| !candidate.exists())
+        .unwrap_or(path)
 }
 
 impl EventEmitter<Changed> for Browser {}
@@ -142,6 +188,7 @@ impl Browser {
             title,
             address,
             focus: cx.focus_handle(),
+            download: None,
             _page: None,
         }
     }
@@ -190,14 +237,20 @@ impl Browser {
             .and_then(|pages| pages.0.get(&self.id).cloned());
         let page = existing.unwrap_or_else(|| {
             let url = self.url.clone();
-            let keep = cx
-                .try_global::<Browsing>()
-                .is_none_or(|browsing| browsing.keep_signed_in);
+            let browsing = cx.try_global::<Browsing>().cloned().unwrap_or_default();
+            let keep = browsing.keep_signed_in;
+            let folder = browsing.downloads;
             let store = match keep {
                 true => DataStore::new(),
                 false => DataStore::new().incognito(),
             };
-            let page = cx.new(|cx| WebView::new(url, window, cx).with_data_store(store));
+            let page = cx.new(|cx| {
+                WebView::new(url, window, cx)
+                    .with_data_store(store)
+                    .with_downloads(move |_, proposed| {
+                        Some(destination(folder.as_deref(), proposed))
+                    })
+            });
             cx.default_global::<Pages>().0.insert(self.id, page.clone());
             page
         });
@@ -229,9 +282,26 @@ impl Browser {
                 }
             }
             WebViewEvent::Title(title) => self.title = title.clone(),
-            WebViewEvent::Load(_)
-            | WebViewEvent::DownloadStarted { .. }
-            | WebViewEvent::DownloadFinished { .. } => {}
+            WebViewEvent::Load(_) => {}
+            WebViewEvent::DownloadStarted { path, .. } => {
+                self.download = Some(Download {
+                    path: path.clone(),
+                    state: Fetch::Running,
+                });
+            }
+            WebViewEvent::DownloadFinished {
+                path, succeeded, ..
+            } => {
+                if let Some(download) = &mut self.download {
+                    if let Some(path) = path {
+                        download.path = path.clone();
+                    }
+                    download.state = match succeeded {
+                        true => Fetch::Saved,
+                        false => Fetch::Failed,
+                    };
+                }
+            }
             WebViewEvent::NewWindow(url) => {
                 cx.emit(OpenTab(url.clone()));
                 return;
@@ -334,6 +404,28 @@ impl Render for Browser {
                             .on_action(cx.listener(Self::go))
                             .child(self.address.clone()),
                     )
+                    .children(self.download.as_ref().map(|download| {
+                        let name = download
+                            .path
+                            .file_name()
+                            .map_or_else(String::new, |name| name.to_string_lossy().into_owned());
+                        let (label, tip) = match download.state {
+                            Fetch::Running => (format!("Downloading {name}…"), "Downloading"),
+                            Fetch::Saved => (name, "Show in folder"),
+                            Fetch::Failed => (format!("{name} failed"), "The download failed"),
+                        };
+                        let path = download.path.clone();
+                        let saved = matches!(download.state, Fetch::Saved);
+                        theme
+                            .button(label, ButtonStyle::Ghost, None)
+                            .id("browser-download")
+                            .flex_none()
+                            .max_w(px(160.))
+                            .tooltip(move |window, cx| Tooltip::text(tip, window, cx))
+                            .when(saved, |button| {
+                                button.on_click(move |_, _, cx| cx.reveal_path(&path))
+                            })
+                    }))
                     .child(
                         nav(
                             icons::arrows::ExternalLink,
