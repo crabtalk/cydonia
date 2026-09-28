@@ -261,7 +261,10 @@ impl Cydonia {
                             .children(self.plan(Some(id), cx))
                             .children(self.permission(Some(id), cx))
                             .child(leaf.composer.clone()),
-                        None,
+                        self.workspace
+                            .read(cx)
+                            .session(id)
+                            .map(|chat| chat.transcript.footer_height.clone()),
                     )
                 }),
             _ => None,
@@ -1406,3 +1409,7 @@ fn top_right(node: &Node<Member>) -> Option<Member> {
         .and_then(top_right),
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/pane_footer.rs"]
+mod pane_footer_tests;

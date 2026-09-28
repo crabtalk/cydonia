@@ -1616,3 +1616,7 @@ impl Cydonia {
 #[cfg(test)]
 #[path = "../../tests/unit/queued_images.rs"]
 mod queued_image_tests;
+
+#[cfg(test)]
+#[path = "../../tests/unit/composer_footer.rs"]
+mod composer_footer_tests;
