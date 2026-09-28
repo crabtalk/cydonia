@@ -21,6 +21,7 @@ use crate::{
         root::{self, CommitName, Cydonia, DismissName, NewSession, OpenProject},
     },
 };
+use artifact::board::View;
 use artifact::space::Member;
 use bezel::ui::scroll as scrollbars;
 #[cfg(feature = "desktop")]
@@ -37,7 +38,7 @@ use bezel::{
     ui::{
         icons::{self, Icon},
         input::Case,
-        menu::Item,
+        menu::{Item, Segment},
         popover,
         surface::Surfaced as _,
         titlebar::CaptionSide,
@@ -2224,6 +2225,29 @@ impl Cydonia {
             Item::action("Delete").with_icon(icons::files::Trash),
             move |this, _, cx| this.ask_delete(entry, cx),
         ));
+        if let Row::Board { project, ix } = entry
+            && !matches!(at, Menu::Entry(_))
+            && let Some((id, view)) = self
+                .workspace
+                .read(cx)
+                .board_in(project, ix)
+                .map(|board| (board.id.clone(), board.view))
+        {
+            let views = [View::Lanes, View::List];
+            let item = Item::segmented(
+                [
+                    Segment::new(icons::development::SquareKanban, "Lanes"),
+                    Segment::new(icons::layout::LayoutList, "List"),
+                ],
+                views.iter().position(|at| *at == view).unwrap_or_default(),
+            );
+            let act: menu::Act = Box::new(move |this, path, _, cx| {
+                if let Some(view) = path.first().and_then(|at| views.get(*at)) {
+                    this.set_board_view(&id, *view, cx);
+                }
+            });
+            rows.insert(0, (item, act));
+        }
         let id = SharedString::from("header-menu-card");
         // A right press carries a point, and the card stands at it. From a
         // button — the `···`, the pin — there is none, and the card drops
