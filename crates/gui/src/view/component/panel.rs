@@ -1115,6 +1115,32 @@ impl Cydonia {
         }
     }
 
+    /// Open `url` in a browser tab in the panel for the directory in front,
+    /// putting the panel up. `false` where no tab could be opened: no
+    /// directory in front, or browser tabs switched off.
+    #[cfg(not(target_os = "linux"))]
+    pub(crate) fn open_in_panel(
+        &mut self,
+        url: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !self.workspace.read(cx).settings.features.panel.browser {
+            return false;
+        }
+        self.set_changes_open(true, cx);
+        self.sync_changes(cx);
+        let Some(panel) = self.changes.clone() else {
+            return false;
+        };
+        let opened = panel.update(cx, |panel, cx| {
+            panel.restore_tabs(window, cx);
+            panel.open_browser(url, cx).is_some()
+        });
+        cx.notify();
+        opened
+    }
+
     /// The right panel for `cwd`, made the first time it is asked for.
     pub(crate) fn right_panel(&mut self, cwd: PathBuf, cx: &mut Context<Self>) -> Entity<Panel> {
         if let Some(panel) = self.right_panels.get(&cwd) {

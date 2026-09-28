@@ -561,6 +561,16 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Where a web link clicked in an article or a transcript opens.
+    pub fn set_browser_links(&mut self, links: settings::Links, cx: &mut Context<Self>) {
+        if settings::set_browser("links", links.key()).is_err() {
+            return;
+        }
+        self.settings.browser.links = links;
+        cx.set_global(self.settings.browser.clone());
+        cx.notify();
+    }
+
     /// Where the address field's searches go, as a `%s` template.
     pub fn set_browser_search(&mut self, search: String, cx: &mut Context<Self>) {
         if settings::set_browser("search", search.as_str()).is_err() {

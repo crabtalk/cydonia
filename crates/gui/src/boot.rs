@@ -45,6 +45,8 @@ pub fn init(settings: &Settings, cx: &mut App) {
     markdown::set_highlighter(cx, language::highlight, language::offerable());
     #[cfg(feature = "desktop")]
     crate::model::link::init(cx);
+    #[cfg(not(target_os = "linux"))]
+    markdown::set_link_handler(cx, crate::view::component::browser::open_link);
     memory::init(settings.cover_memory * 1_000_000, cx);
     // Every chord in the app, bezel's included — see
     // [`crate::view::keymap`]. One call rather than an `init` per

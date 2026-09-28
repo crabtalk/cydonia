@@ -392,6 +392,29 @@ pub struct Browsing {
     pub home: String,
     /// Where a search from the address field goes: `%s` is the query.
     pub search: String,
+    /// Where an http(s) link clicked in an article or a transcript opens.
+    pub links: Links,
+}
+
+/// Where a web link opens.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Links {
+    /// The system's default browser.
+    #[default]
+    System,
+    /// A browser tab in the right panel. The system browser where the build
+    /// has none or the tab is switched off.
+    Panel,
+}
+
+impl Links {
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::System => "system",
+            Self::Panel => "panel",
+        }
+    }
 }
 
 impl bezel::gpui::Global for Browsing {}
@@ -409,6 +432,7 @@ impl Default for Browsing {
         Self {
             home: "https://duckduckgo.com".to_owned(),
             search: SEARCH_ENGINES[0].1.to_owned(),
+            links: Links::default(),
         }
     }
 }

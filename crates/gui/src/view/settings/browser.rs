@@ -2,7 +2,7 @@
 //! `[browser]`.
 
 use crate::{
-    model::settings::SEARCH_ENGINES,
+    model::settings::{Links, SEARCH_ENGINES},
     view::settings::{self, SettingsWindow},
 };
 use bezel::{
@@ -21,8 +21,101 @@ impl SettingsWindow {
             .child(
                 theme
                     .group_box()
+                    .child(self.links_row(cx))
                     .child(self.engine_row(cx))
                     .child(self.home_row(cx)),
+            )
+            .into_any_element()
+    }
+
+    fn links_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        let links = self.workspace.read(cx).settings.browser.links;
+        const CHOICES: [(Links, &str); 2] = [
+            (Links::Panel, "Browser tab"),
+            (Links::System, "System browser"),
+        ];
+        theme
+            .card_row(true)
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .child(theme.row_title("Open web links in"))
+                    .child(
+                        div()
+                            .mt(px(4.))
+                            .truncate()
+                            .text_style(TextStyle::Subheadline)
+                            .text_color(theme.text_muted)
+                            .child("Links clicked in articles and sessions."),
+                    ),
+            )
+            .child(
+                self.segments(
+                    "browser-links",
+                    CHOICES
+                        .iter()
+                        .map(|(choice, label)| (*label, *choice == links))
+                        .collect(),
+                    cx,
+                    |this, ix, cx| {
+                        let links = CHOICES[ix].0;
+                        this.workspace
+                            .update(cx, |workspace, cx| workspace.set_browser_links(links, cx));
+                    },
+                ),
+            )
+            .into_any_element()
+    }
+
+    /// A segmented control: `(label, selected)` per segment, `pick` called
+    /// with the index pressed.
+    fn segments(
+        &self,
+        id: &'static str,
+        segments: Vec<(&'static str, bool)>,
+        cx: &mut Context<Self>,
+        pick: impl Fn(&mut Self, usize, &mut Context<Self>) + Clone + 'static,
+    ) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        div()
+            .flex_none()
+            .flex()
+            .flex_row()
+            .gap(px(2.))
+            .p(px(2.))
+            .rounded(px(Theme::button_radius()))
+            .border_1()
+            .border_color(theme.border)
+            .children(
+                segments
+                    .into_iter()
+                    .enumerate()
+                    .map(|(ix, (label, selected))| {
+                        let pick = pick.clone();
+                        div()
+                            .id((id, ix))
+                            .px(px(10.))
+                            .py(px(4.))
+                            .rounded(px(Theme::control_radius()))
+                            .text_style(TextStyle::Callout)
+                            .cursor_pointer()
+                            .when(selected, |el| {
+                                el.bg(theme.element_active).text_color(theme.text)
+                            })
+                            .when(!selected, |el| {
+                                el.text_color(theme.text_muted)
+                                    .hover(|el| el.bg(theme.element_hover))
+                            })
+                            .child(label)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                pick(this, ix, cx);
+                                cx.notify();
+                            }))
+                    }),
             )
             .into_any_element()
     }
@@ -37,7 +130,7 @@ impl SettingsWindow {
             .find(|(_, template)| *template == search)
             .map(|(name, _)| format!("Searches go to {name}."));
         theme
-            .card_row(true)
+            .card_row(false)
             .child(
                 div()
                     .flex_1()
@@ -55,44 +148,20 @@ impl SettingsWindow {
                     ),
             )
             .child(
-                div()
-                    .flex_none()
-                    .flex()
-                    .flex_row()
-                    .gap(px(2.))
-                    .p(px(2.))
-                    .rounded(px(Theme::button_radius()))
-                    .border_1()
-                    .border_color(theme.border)
-                    .children(
-                        SEARCH_ENGINES
-                            .iter()
-                            .enumerate()
-                            .map(|(ix, (name, template))| {
-                                let selected = *template == search;
-                                div()
-                                    .id(("search-engine", ix))
-                                    .px(px(10.))
-                                    .py(px(4.))
-                                    .rounded(px(Theme::control_radius()))
-                                    .text_style(TextStyle::Callout)
-                                    .cursor_pointer()
-                                    .when(selected, |el| {
-                                        el.bg(theme.element_active).text_color(theme.text)
-                                    })
-                                    .when(!selected, |el| {
-                                        el.text_color(theme.text_muted)
-                                            .hover(|el| el.bg(theme.element_hover))
-                                    })
-                                    .child(*name)
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.workspace.update(cx, |workspace, cx| {
-                                            workspace.set_browser_search((*template).to_owned(), cx)
-                                        });
-                                        cx.notify();
-                                    }))
-                            }),
-                    ),
+                self.segments(
+                    "search-engine",
+                    SEARCH_ENGINES
+                        .iter()
+                        .map(|(name, template)| (*name, *template == search))
+                        .collect(),
+                    cx,
+                    |this, ix, cx| {
+                        let template = SEARCH_ENGINES[ix].1.to_owned();
+                        this.workspace.update(cx, |workspace, cx| {
+                            workspace.set_browser_search(template, cx)
+                        });
+                    },
+                ),
             )
             .into_any_element()
     }
