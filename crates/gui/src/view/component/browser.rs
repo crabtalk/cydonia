@@ -245,7 +245,7 @@ impl Browser {
                 }
             }
             WebViewEvent::Title(title) => self.title = title.clone(),
-            WebViewEvent::Load(_) => {}
+            WebViewEvent::Load(_) | WebViewEvent::History { .. } => {}
             WebViewEvent::NewWindow(url) => {
                 cx.emit(OpenTab(url.clone()));
                 return;
@@ -364,6 +364,18 @@ impl Render for Browser {
                 .flex_none()
                 .tooltip(move |window, cx| Tooltip::text(tip, window, cx))
         };
+        let (can_back, can_forward) = {
+            let page = page.read(cx);
+            (page.can_go_back(), page.can_go_forward())
+        };
+        // Nowhere to go: faint, no hover, no press.
+        let stuck = |icon: &'static [u8], id: &'static str| {
+            theme
+                .tinted_icon_button(icon, theme.text_faint)
+                .id(id)
+                .flex_none()
+                .into_any_element()
+        };
         let back = page.clone();
         let forward = page.clone();
         div()
@@ -384,14 +396,18 @@ impl Render for Browser {
                     .py(px(4.))
                     .border_b_1()
                     .border_color(theme.border)
-                    .child(
-                        nav(icons::arrows::ArrowLeft, "browser-back", "Back")
-                            .on_click(move |_, _, cx| back.update(cx, |page, _| page.back())),
-                    )
-                    .child(
-                        nav(icons::arrows::ArrowRight, "browser-forward", "Forward")
-                            .on_click(move |_, _, cx| forward.update(cx, |page, _| page.forward())),
-                    )
+                    .child(match can_back {
+                        true => nav(icons::arrows::ArrowLeft, "browser-back", "Back")
+                            .on_click(move |_, _, cx| back.update(cx, |page, _| page.back()))
+                            .into_any_element(),
+                        false => stuck(icons::arrows::ArrowLeft, "browser-back"),
+                    })
+                    .child(match can_forward {
+                        true => nav(icons::arrows::ArrowRight, "browser-forward", "Forward")
+                            .on_click(move |_, _, cx| forward.update(cx, |page, _| page.forward()))
+                            .into_any_element(),
+                        false => stuck(icons::arrows::ArrowRight, "browser-forward"),
+                    })
                     .child(
                         nav(
                             icons::arrows::RefreshCw,
