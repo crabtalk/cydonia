@@ -184,22 +184,36 @@ impl Workspace {
         Some(at)
     }
 
-    /// Put an arriving entry into the pane holding `target`, as a tab —
-    /// a drop on a pane's bar rather than on its edge. There has to be a
-    /// space already: a pane with one entry has no bar to drop on.
     /// Move a tab to where `to` sits in the strip of the pane holding both.
     pub fn reorder_tab(&mut self, moving: &Member, to: &Member, cx: &mut Context<Self>) {
         self.edit_space(cx, |space| space.reorder(moving, to));
     }
 
+    /// Put an arriving entry into the pane holding `target`, as a tab — a
+    /// drop on a pane's bar rather than on its edge. With no space open, the
+    /// space starts as `target`'s pane, as in [`Self::arrange`].
     pub fn stack_pane(&mut self, target: &Member, arriving: &Member, cx: &mut Context<Self>) {
-        // An entry is in one space at a time, the same rule [`Self::arrange`]
-        // follows for the same reason.
-        let Some(keep) = self.active_space().map(|space| space.id.clone()) else {
+        if target == arriving {
             return;
+        }
+        let at = match self.space {
+            Some(at) if at < self.spaces.len() => at,
+            _ => {
+                let Some(space) = store::create("", target.clone()) else {
+                    return;
+                };
+                self.spaces.insert(0, space);
+                0
+            }
         };
+        // An entry is in one space at a time, the same rule [`Self::arrange`]
+        // follows for the same reason. By id, because an eviction can take a
+        // space with it.
+        let keep = self.spaces[at].id.clone();
+        self.evict_from_spaces(target, &keep, cx);
         self.evict_from_spaces(arriving, &keep, cx);
         self.space = self.spaces.iter().position(|space| space.id == keep);
+        self.save();
         self.edit_space(cx, |space| space.stack(target, arriving));
     }
 
