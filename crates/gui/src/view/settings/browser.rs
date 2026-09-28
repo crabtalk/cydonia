@@ -3,12 +3,15 @@
 
 use crate::{
     model::settings::{Links, SEARCH_ENGINES},
-    view::settings::{self, SettingsWindow},
+    view::{
+        component::browser,
+        settings::{self, SettingsWindow, Switch},
+    },
 };
 use bezel::{
     gpui::{AnyElement, Context, div, prelude::*, px},
     theme::{TextStyle, Theme, Typeset},
-    ui::widgets::{Buttons, Scaffolding},
+    ui::widgets::{ButtonStyle, Buttons, Scaffolding},
 };
 
 impl SettingsWindow {
@@ -24,6 +27,12 @@ impl SettingsWindow {
                     .child(self.links_row(cx))
                     .child(self.engine_row(cx))
                     .child(self.home_row(cx)),
+            )
+            .child(
+                theme
+                    .group_box()
+                    .child(self.keep_signed_in_row(cx))
+                    .child(self.clear_row(cx)),
             )
             .into_any_element()
     }
@@ -203,6 +212,69 @@ impl SettingsWindow {
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.edit_field(settings::Field::BrowserHome, current.clone(), window, cx)
                     })),
+            )
+            .into_any_element()
+    }
+
+    fn keep_signed_in_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let on = self.workspace.read(cx).settings.browser.keep_signed_in;
+        self.switch_row(
+            Switch::new(
+                "browser-keep",
+                "Keep signed in",
+                "Off opens new tabs with nothing saved, forgotten when they close.",
+                on,
+            )
+            .first(true),
+            cx,
+            move |this, cx| {
+                this.workspace.update(cx, |workspace, cx| {
+                    workspace.set_browser_keep_signed_in(!on, cx)
+                });
+            },
+        )
+    }
+
+    /// Clears through the pages that are open: a store is reached through a
+    /// built page.
+    fn clear_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        let live = browser::any_page(cx);
+        let note = match (self.browser_cleared, live) {
+            (true, _) => "Cleared.",
+            (false, true) => "Cookies, site storage and cache.",
+            (false, false) => "Open a browser tab to clear what it stores.",
+        };
+        theme
+            .card_row(false)
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .child(theme.row_title("Clear browsing data"))
+                    .child(
+                        div()
+                            .mt(px(4.))
+                            .truncate()
+                            .text_style(TextStyle::Subheadline)
+                            .text_color(theme.text_muted)
+                            .child(note),
+                    ),
+            )
+            .child(
+                theme
+                    .button("Clear", ButtonStyle::Ghost, None)
+                    .id("browser-clear")
+                    .flex_none()
+                    .when(!live, |button| button.opacity(0.5))
+                    .when(live, |button| {
+                        button.on_click(cx.listener(|this, _, _, cx| {
+                            this.browser_cleared = browser::clear_data(cx);
+                            cx.notify();
+                        }))
+                    }),
             )
             .into_any_element()
     }

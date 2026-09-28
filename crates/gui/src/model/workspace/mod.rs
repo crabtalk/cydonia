@@ -571,6 +571,16 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Whether pages built from now on keep what they store across restarts.
+    pub fn set_browser_keep_signed_in(&mut self, on: bool, cx: &mut Context<Self>) {
+        if settings::set_browser("keep_signed_in", on).is_err() {
+            return;
+        }
+        self.settings.browser.keep_signed_in = on;
+        cx.set_global(self.settings.browser.clone());
+        cx.notify();
+    }
+
     /// Where the address field's searches go, as a `%s` template.
     pub fn set_browser_search(&mut self, search: String, cx: &mut Context<Self>) {
         if settings::set_browser("search", search.as_str()).is_err() {

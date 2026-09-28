@@ -46,6 +46,7 @@ mod agents;
 #[cfg(not(feature = "desktop"))]
 #[path = "agents_web.rs"]
 mod agents;
+#[cfg(not(target_os = "linux"))]
 mod browser;
 mod developer;
 mod features;
@@ -202,6 +203,10 @@ pub struct SettingsWindow {
     interface_font: typography::FamilyPicker,
     article_font: typography::FamilyPicker,
     mono_font: typography::FamilyPicker,
+    /// Whether the browser section's last clear went through. Reset on
+    /// leaving the section.
+    #[cfg(not(target_os = "linux"))]
+    browser_cleared: bool,
     /// The field whose dialog is up — see [`SettingsWindow::field_dialog`].
     editing: Option<(Field, Entity<TextField>)>,
     /// The shortcut row taking keys, while one is — see
@@ -328,6 +333,8 @@ impl SettingsWindow {
             interface_font,
             article_font,
             mono_font,
+            #[cfg(not(target_os = "linux"))]
+            browser_cleared: false,
             editing: None,
             recording: None,
             #[cfg(feature = "desktop")]
@@ -469,6 +476,7 @@ impl SettingsWindow {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Field {
     CoverMemory,
+    #[cfg(not(target_os = "linux"))]
     BrowserHome,
 }
 
@@ -476,6 +484,7 @@ impl Field {
     fn title(self) -> &'static str {
         match self {
             Self::CoverMemory => "Cover memory",
+            #[cfg(not(target_os = "linux"))]
             Self::BrowserHome => "Home page",
         }
     }
@@ -483,6 +492,7 @@ impl Field {
     fn note(self) -> &'static str {
         match self {
             Self::CoverMemory => "In megabytes.",
+            #[cfg(not(target_os = "linux"))]
             Self::BrowserHome => "The address a new browser tab opens on.",
         }
     }
@@ -514,6 +524,7 @@ impl SettingsWindow {
         let typed = input.read(cx).content().to_owned();
         match field {
             Field::CoverMemory => self.save_cover_memory(&typed, window, cx),
+            #[cfg(not(target_os = "linux"))]
             Field::BrowserHome => self.save_browser_home(&typed, cx),
         }
         cx.notify();
@@ -596,6 +607,10 @@ impl SettingsWindow {
     /// re-read on the way in rather than trusted from whenever it was opened.
     fn show(&mut self, section: Section, cx: &mut Context<Self>) {
         self.section = section;
+        #[cfg(not(target_os = "linux"))]
+        {
+            self.browser_cleared = false;
+        }
         match section {
             Section::Agents => self.load(cx),
             Section::General
@@ -733,7 +748,10 @@ impl Render for SettingsWindow {
                                 Section::Features => self.features_body(cx),
                                 Section::Agents => self.agents_body(cx),
                                 Section::Mcp => self.mcp_body(cx),
+                                #[cfg(not(target_os = "linux"))]
                                 Section::Browser => self.browser_body(cx),
+                                #[cfg(target_os = "linux")]
+                                Section::Browser => div().into_any_element(),
                                 Section::Performance => self.performance_body(cx),
                                 Section::Developer => self.developer_body(cx),
                             }),

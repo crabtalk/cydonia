@@ -394,6 +394,9 @@ pub struct Browsing {
     pub search: String,
     /// Where an http(s) link clicked in an article or a transcript opens.
     pub links: Links,
+    /// Whether pages keep cookies and storage across restarts. Off builds
+    /// each page in memory. Read when a page is built.
+    pub keep_signed_in: bool,
 }
 
 /// Where a web link opens.
@@ -433,6 +436,7 @@ impl Default for Browsing {
             home: "https://duckduckgo.com".to_owned(),
             search: SEARCH_ENGINES[0].1.to_owned(),
             links: Links::default(),
+            keep_signed_in: true,
         }
     }
 }

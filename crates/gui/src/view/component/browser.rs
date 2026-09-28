@@ -21,7 +21,7 @@ use bezel::{
         widgets::{ButtonStyle, Buttons as _},
     },
 };
-use browser::{WebView, WebViewEvent};
+use browser::{DataStore, WebView, WebViewEvent};
 use std::collections::HashMap;
 
 actions!(cydonia_browser, [Go]);
@@ -81,6 +81,28 @@ pub fn open_link(url: &str, window: &mut Window, cx: &mut App) {
         return;
     }
     cx.open_url(url);
+}
+
+/// Whether any page is built, which is what [`clear_data`] clears through.
+pub fn any_page(cx: &App) -> bool {
+    cx.try_global::<Pages>()
+        .is_some_and(|pages| !pages.0.is_empty())
+}
+
+/// Clear the cookies, storage and cache of every live page's store. `false`
+/// where no page could clear.
+pub fn clear_data(cx: &App) -> bool {
+    let Some(pages) = cx.try_global::<Pages>() else {
+        return false;
+    };
+    // Every page, not the first that answers: an in-memory page has a store
+    // of its own.
+    let cleared = pages
+        .0
+        .values()
+        .filter(|page| page.read(cx).clear_data())
+        .count();
+    cleared > 0
 }
 
 /// The title or location changed.
@@ -168,7 +190,14 @@ impl Browser {
             .and_then(|pages| pages.0.get(&self.id).cloned());
         let page = existing.unwrap_or_else(|| {
             let url = self.url.clone();
-            let page = cx.new(|cx| WebView::new(url, window, cx));
+            let keep = cx
+                .try_global::<Browsing>()
+                .is_none_or(|browsing| browsing.keep_signed_in);
+            let store = match keep {
+                true => DataStore::new(),
+                false => DataStore::new().incognito(),
+            };
+            let page = cx.new(|cx| WebView::new(url, window, cx).with_data_store(store));
             cx.default_global::<Pages>().0.insert(self.id, page.clone());
             page
         });
