@@ -2,7 +2,6 @@
   {
     "version": "0.1.20",
     "date": "2026-09-28",
-    "nightly": true,
     "summary": "Agents can drive the browser tabs in the right panel, links that open a new window open a tab, and the Linux build leaves the browser out.",
     "media": {
       "poster": "pics/cydonia/v0.1.20.jpg",
