@@ -47,10 +47,10 @@ linux() {
     *) fail "no build for $(uname -m)" ;;
   esac
 
-  url="$repo/releases/latest/download/cydonia-linux-$arch.tar.gz"
+  url="$repo/releases/latest/download/cydonia-linux-$arch.tar.xz"
   echo "downloading $url"
-  curl -fL --progress-bar "$url" -o "$tmp/cydonia.tar.gz"
-  tar -xzf "$tmp/cydonia.tar.gz" -C "$tmp"
+  curl -fL --progress-bar "$url" -o "$tmp/cydonia.tar.xz"
+  tar -xJf "$tmp/cydonia.tar.xz" -C "$tmp"
 
   app="$HOME/.local/cydonia.app"
   rm -rf "$app"
