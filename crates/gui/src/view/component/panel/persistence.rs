@@ -33,6 +33,7 @@ pub(super) struct SavedPanel {
     files_width: f32,
 }
 
+#[cfg(not(target_os = "linux"))]
 impl SavedPanel {
     pub(super) fn remove_browsers(&mut self) {
         let active = self.active;
