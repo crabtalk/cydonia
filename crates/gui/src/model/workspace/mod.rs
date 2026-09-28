@@ -607,21 +607,6 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Where downloads from pages built from now on are saved; `None` is the
-    /// platform's Downloads folder.
-    pub fn set_browser_downloads(&mut self, folder: Option<PathBuf>, cx: &mut Context<Self>) {
-        let written = match &folder {
-            Some(folder) => settings::set_browser("downloads", folder.display().to_string()),
-            None => settings::remove_browser("downloads"),
-        };
-        if written.is_err() {
-            return;
-        }
-        self.settings.browser.downloads = folder;
-        cx.set_global(self.settings.browser.clone());
-        cx.notify();
-    }
-
     /// Whether pages built from now on keep what they store across restarts.
     pub fn set_browser_keep_signed_in(&mut self, on: bool, cx: &mut Context<Self>) {
         if settings::set_browser("keep_signed_in", on).is_err() {

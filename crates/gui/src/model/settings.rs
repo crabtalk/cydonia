@@ -405,10 +405,6 @@ pub struct Browsing {
     /// Whether pages keep cookies and storage across restarts. Off builds
     /// each page in memory. Read when a page is built.
     pub keep_signed_in: bool,
-    /// Where downloads are saved. `None` is the folder the platform proposes,
-    /// the user's Downloads. Read when a page is built.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub downloads: Option<PathBuf>,
 }
 
 /// Where a web link opens.
@@ -452,7 +448,6 @@ impl Default for Browsing {
             agents_act: true,
             agents_blocked: Vec::new(),
             keep_signed_in: true,
-            downloads: None,
         }
     }
 }
@@ -937,14 +932,6 @@ pub fn set_browser(key: &str, value: impl Into<toml_edit::Value>) -> Result<()> 
     let value = value.into();
     edit(|doc| {
         table(doc, "browser")?[key] = toml_edit::value(value);
-        Ok(true)
-    })
-}
-
-/// Take one key out of `[browser]`.
-pub fn remove_browser(key: &str) -> Result<()> {
-    edit(|doc| {
-        table(doc, "browser")?.remove(key);
         Ok(true)
     })
 }
