@@ -1056,6 +1056,8 @@ impl Cydonia {
         // of [`state::Entry`], and the pane the entry is read in is half of it.
         this.land(cx);
         this.sync_composer(cx);
+        #[cfg(not(target_os = "linux"))]
+        this.take_browser(cx);
         // Where the caret starts. The composer is drawn only over a chat it can
         // send to, and focus on an element no frame draws is focus nowhere.
         let composer = this

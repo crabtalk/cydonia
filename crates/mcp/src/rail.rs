@@ -163,3 +163,79 @@ pub(crate) fn ask(change: Change) -> Result<(), Trouble> {
 fn nobody() -> Trouble {
     Trouble::Refused("no cydonia window to open a project in".to_owned())
 }
+
+/// What a browser tool asks of a project's right-panel browser.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Act {
+    /// The project's browser tabs.
+    Tabs,
+    /// Load `url` in the tab named, or in a new one, and read it.
+    Open(String),
+    Read,
+    Click(usize),
+    Type {
+        element: usize,
+        text: String,
+        enter: bool,
+    },
+    /// Screenfuls down; negative goes up.
+    Scroll(f64),
+}
+
+/// One browser call, with where its answer goes.
+pub struct Browse {
+    pub project: PathBuf,
+    /// A tab id from [`Act::Tabs`]. `None` is the panel's front browser tab,
+    /// except for [`Act::Open`], where it is a new tab.
+    pub tab: Option<u64>,
+    pub act: Act,
+    /// The text the model reads, or why there is none.
+    pub reply: std::sync::mpsc::Sender<Result<String, String>>,
+}
+
+type Browser = Box<dyn Fn(Browse) + Send + Sync>;
+
+static BROWSER: RwLock<Option<Browser>> = RwLock::new(None);
+
+/// Hand the browser over. The app calls this once, at launch.
+pub fn install_browser(hand: impl Fn(Browse) + Send + Sync + 'static) {
+    if let Ok(mut held) = BROWSER.write() {
+        *held = Some(Box::new(hand));
+    }
+}
+
+/// How long a browser call waits for the window's answer.
+#[cfg(feature = "http")]
+const BROWSE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45);
+
+/// Ask the window's browser, and wait for its answer.
+///
+/// Blocks the calling thread. Never call it from the thread the window is
+/// drawn on: the answer is made there.
+#[cfg(feature = "http")]
+pub(crate) fn browse(project: PathBuf, tab: Option<u64>, act: Act) -> Result<String, Trouble> {
+    let (reply, answer) = std::sync::mpsc::channel();
+    {
+        let held = BROWSER.read().map_err(|_| no_browser())?;
+        let Some(hand) = held.as_ref() else {
+            return Err(no_browser());
+        };
+        hand(Browse {
+            project,
+            tab,
+            act,
+            reply,
+        });
+    }
+    match answer.recv_timeout(BROWSE_TIMEOUT) {
+        Ok(answer) => answer.map_err(Trouble::Refused),
+        Err(_) => Err(Trouble::Refused(
+            "the browser did not answer in time".to_owned(),
+        )),
+    }
+}
+
+#[cfg(feature = "http")]
+fn no_browser() -> Trouble {
+    Trouble::Refused("no cydonia window with a browser to work in".to_owned())
+}

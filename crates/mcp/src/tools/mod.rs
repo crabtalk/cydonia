@@ -15,6 +15,7 @@
 
 pub mod article;
 pub mod board;
+pub mod browser;
 pub mod project;
 pub mod session;
 pub mod workspace;

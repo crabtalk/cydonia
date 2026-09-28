@@ -2,6 +2,8 @@
 //! [`crate::view::root::Pane`]: these are not places you can be.
 
 #[cfg(not(target_os = "linux"))]
+pub mod browse;
+#[cfg(not(target_os = "linux"))]
 pub mod browser;
 pub mod changes;
 pub mod composer;

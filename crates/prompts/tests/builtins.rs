@@ -10,7 +10,7 @@ fn bundled_resources_are_sorted_and_resolve_without_a_checkout() {
                 .content,
             resource.content
         );
-        assert!(cydonia_prompts::resources::catalog().contains(resource.description));
+        assert!(cydonia_prompts::resources::catalog(&[]).contains(resource.description));
         assert!(resource.content.starts_with("---\n"));
     }
     assert!(cydonia_prompts::resources::read("../../SKILL.md").is_none());
@@ -20,5 +20,5 @@ fn bundled_resources_are_sorted_and_resolve_without_a_checkout() {
 fn catalog_defers_full_instructions() {
     let resource = cydonia_prompts::resources::read("markdown").unwrap();
     assert!(resource.content.contains("![Architecture overview|480]"));
-    assert!(!cydonia_prompts::resources::catalog().contains("![Architecture overview|480]"));
+    assert!(!cydonia_prompts::resources::catalog(&[]).contains("![Architecture overview|480]"));
 }

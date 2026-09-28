@@ -469,6 +469,8 @@ impl Workspace {
         #[cfg(feature = "desktop")]
         agent::serve::set_write(self.settings.mcp.write);
         #[cfg(feature = "desktop")]
+        agent::serve::set_browser(self.settings.features.panel.browser);
+        #[cfg(feature = "desktop")]
         agent::serve::set_delete(self.settings.mcp.delete);
     }
 

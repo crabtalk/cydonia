@@ -155,6 +155,11 @@ impl<'a> Args<'a> {
         }
     }
 
+    /// The argument as it arrived, whatever its type.
+    pub fn value(&self, arg: Arg) -> Option<&'a Value> {
+        self.arguments.get(arg.name)
+    }
+
     pub fn maybe(&self, arg: Arg) -> Option<&'a str> {
         self.arguments.get(arg.name).and_then(Value::as_str)
     }

@@ -3,9 +3,16 @@
     "version": "0.1.20",
     "date": "2026-09-28",
     "nightly": true,
-    "summary": "The browser is left out of the Linux build.",
+    "summary": "Agents can drive the browser tabs in the right panel, links that open a new window open a tab, and the Linux build leaves the browser out.",
+    "new": [
+      "Let agents open, read, click, type and scroll in a project's browser tabs over MCP, offered only while browser tabs are on",
+      "Open links that ask for a new window in a new browser tab"
+    ],
     "changed": [
       "Leave browser tabs out of the Linux build, where pages never showed"
+    ],
+    "fixed": [
+      "Copy a transcript selection with ⌘C inside a space"
     ]
   },
   {

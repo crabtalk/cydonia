@@ -405,6 +405,33 @@ impl Panel {
         window.focus(&address, cx);
     }
 
+    /// The browser tabs, in strip order, each with whether it is in front.
+    #[cfg(not(target_os = "linux"))]
+    pub(crate) fn browsers(&self) -> Vec<(Entity<Browser>, bool)> {
+        let front = self.strip.active().copied();
+        self.ordered()
+            .filter_map(|(id, tab)| match &tab.content {
+                Content::Browser(browser) => Some((browser.clone(), front == Some(id))),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Open a browser tab on `url`, in front — for an agent. `None` where the
+    /// settings switch browser tabs off.
+    #[cfg(not(target_os = "linux"))]
+    pub(crate) fn open_browser(
+        &mut self,
+        url: String,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<Browser>> {
+        if !self.tabs.browser {
+            return None;
+        }
+        let id = super::browser::new_id();
+        Some(self.browser(id, url, String::new(), cx))
+    }
+
     /// Step to the tab `step` along, wrapping at the ends — the row is a ring,
     /// the way a browser's is.
     ///
@@ -1068,32 +1095,38 @@ impl Cydonia {
                     |(_, tab)| matches!(&tab.content, Content::File(file) if file.read(cx).dirty(cx)),
                 )
         });
-        self.changes = here.filter(|_| self.changes_open).map(|cwd| {
-            self.right_panels
-                .entry(cwd.clone())
-                .or_insert_with(|| {
-                    let panel = cx.new(|cx| {
-                        let mut panel = Panel::new(cwd.clone(), cx);
-                        panel.restore_pending = persistence::saved_panel(&cwd);
-                        panel.project_root = cwd.canonicalize().unwrap_or(cwd);
-                        panel
-                    });
-                    cx.subscribe(&panel, |this, _, event: &DesktopOnly, cx| {
-                        this.desktop_only(event.0, cx)
-                    })
-                    .detach();
-                    cx.subscribe(&panel, |this, _, _: &OpenFeatures, cx| {
-                        this.open_settings(crate::view::section::Section::Features, cx)
-                    })
-                    .detach();
-                    panel
-                })
-                .clone()
-        });
+        self.changes = here
+            .filter(|_| self.changes_open)
+            .map(|cwd| self.right_panel(cwd, cx));
         let tabs = self.workspace.read(cx).settings.features.panel;
         if let Some(panel) = &self.changes {
             panel.update(cx, |panel, cx| panel.set_tabs(tabs, cx));
         }
+    }
+
+    /// The right panel for `cwd`, made the first time it is asked for.
+    pub(crate) fn right_panel(&mut self, cwd: PathBuf, cx: &mut Context<Self>) -> Entity<Panel> {
+        if let Some(panel) = self.right_panels.get(&cwd) {
+            return panel.clone();
+        }
+        let panel = cx.new(|cx| {
+            let mut panel = Panel::new(cwd.clone(), cx);
+            panel.restore_pending = persistence::saved_panel(&cwd);
+            panel.project_root = cwd.canonicalize().unwrap_or(cwd.clone());
+            panel
+        });
+        cx.subscribe(&panel, |this, _, event: &DesktopOnly, cx| {
+            this.desktop_only(event.0, cx)
+        })
+        .detach();
+        cx.subscribe(&panel, |this, _, _: &OpenFeatures, cx| {
+            this.open_settings(crate::view::section::Section::Features, cx)
+        })
+        .detach();
+        let tabs = self.workspace.read(cx).settings.features.panel;
+        panel.update(cx, |panel, cx| panel.set_tabs(tabs, cx));
+        self.right_panels.insert(cwd, panel.clone());
+        panel
     }
 
     /// Every directory the window can still reach a panel through: the open

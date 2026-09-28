@@ -26,9 +26,11 @@ pub fn read(name: &str) -> Option<&'static Resource> {
 }
 
 /// Names and descriptions only; full instructions are loaded on demand.
-pub fn catalog() -> String {
+/// Resources named in `hidden` are left out.
+pub fn catalog(hidden: &[&str]) -> String {
     BUILTINS
         .iter()
+        .filter(|resource| !hidden.contains(&resource.name))
         .map(|resource| {
             format!(
                 "- {} ({}): {}",

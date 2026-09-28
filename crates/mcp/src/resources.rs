@@ -3,7 +3,7 @@
 use crate::proto::Error;
 use serde_json::{Value, json};
 
-pub fn list(params: Option<&Value>) -> Result<Value, Error> {
+pub fn list(params: Option<&Value>, hidden: &[&str]) -> Result<Value, Error> {
     if params
         .and_then(|params| params.get("cursor"))
         .is_some_and(|cursor| !cursor.is_null())
@@ -13,7 +13,7 @@ pub fn list(params: Option<&Value>) -> Result<Value, Error> {
         ));
     }
     Ok(json!({
-        "resources": prompts::resources::list().iter().map(|resource| json!({
+        "resources": prompts::resources::list().iter().filter(|resource| !hidden.contains(&resource.name)).map(|resource| json!({
             "uri": resource.uri(),
             "name": resource.name,
             "description": resource.description,
@@ -23,13 +23,14 @@ pub fn list(params: Option<&Value>) -> Result<Value, Error> {
     }))
 }
 
-pub fn read(params: Option<&Value>) -> Result<Value, Error> {
+pub fn read(params: Option<&Value>, hidden: &[&str]) -> Result<Value, Error> {
     let uri = params
         .and_then(|params| params.get("uri"))
         .and_then(Value::as_str)
         .ok_or_else(|| Error::invalid_params("uri is required, as a string"))?;
     let resource = uri
         .strip_prefix("cydonia://resources/")
+        .filter(|name| !hidden.contains(name))
         .and_then(prompts::resources::read)
         .ok_or_else(|| {
             Error::new(

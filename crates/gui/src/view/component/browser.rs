@@ -108,6 +108,24 @@ impl Browser {
         }
     }
 
+    /// The tab's page, once a render has built it.
+    pub(crate) fn webview(&self) -> Option<Entity<WebView>> {
+        self.page.clone()
+    }
+
+    /// Load `url`: in the page where it is built, else the page is built on it.
+    pub(crate) fn navigate(&mut self, url: String, cx: &mut Context<Self>) {
+        match &self.page {
+            Some(page) => page.update(cx, |page, _| page.load(url)),
+            None => {
+                self.address
+                    .update(cx, |field, cx| field.set_content(url.clone(), cx));
+                self.url = url;
+            }
+        }
+        cx.notify();
+    }
+
     pub fn address_focus(&self, cx: &App) -> FocusHandle {
         self.address.focus_handle(cx)
     }

@@ -20,6 +20,9 @@ pub struct Server {
     /// one the agent must not be told about at all — a tool that is listed and
     /// refuses has already cost the turn its tokens.
     tools: Vec<&'static Tool>,
+    /// Tool sets behind a switch of their own, each with the resource that
+    /// documents them. Off, both are left out.
+    switched: Vec<Switched>,
     /// Whether the tools that take an entry off the disk are offered.
     deletes: Arc<AtomicBool>,
     /// Whether the tools that change a project are offered.
@@ -30,10 +33,17 @@ pub struct Server {
     writable: Arc<AtomicBool>,
 }
 
+struct Switched {
+    tools: &'static [Tool],
+    resource: &'static str,
+    on: Arc<AtomicBool>,
+}
+
 impl Default for Server {
     fn default() -> Self {
         Self {
             tools: Vec::new(),
+            switched: Vec::new(),
             writable: Arc::new(AtomicBool::new(true)),
             // Off, unlike writing: a caller with no switch of its own gets a
             // server that cannot empty a project.
@@ -68,11 +78,18 @@ impl Server {
     /// [`Server::tools`]. A deletion is gated twice over: writing off takes
     /// the delete tools with it, because a server that may not change a
     /// project certainly may not empty one.
-    fn offered(&self) -> impl Iterator<Item = &&'static Tool> {
+    fn offered(&self) -> impl Iterator<Item = &'static Tool> {
         let writable = self.writable.load(Ordering::Relaxed);
         let deletes = self.deletes.load(Ordering::Relaxed);
+        let switched = self
+            .switched
+            .iter()
+            .filter(|set| set.on.load(Ordering::Relaxed))
+            .flat_map(|set| set.tools.iter());
         self.tools
             .iter()
+            .copied()
+            .chain(switched)
             .filter(move |tool| writable || !tool.writes)
             .filter(move |tool| (writable && deletes) || !tool.deletes)
     }
@@ -81,6 +98,31 @@ impl Server {
     pub fn mount(mut self, tools: &'static [Tool]) -> Self {
         self.tools.extend(tools);
         self
+    }
+
+    /// Offer a set of tools, and the resource named `resource`, while `on`
+    /// holds. Read per call, like [`Self::writable`].
+    pub fn mount_switched(
+        mut self,
+        tools: &'static [Tool],
+        resource: &'static str,
+        on: Arc<AtomicBool>,
+    ) -> Self {
+        self.switched.push(Switched {
+            tools,
+            resource,
+            on,
+        });
+        self
+    }
+
+    /// The resources of switched-off tool sets.
+    pub fn hidden(&self) -> Vec<&'static str> {
+        self.switched
+            .iter()
+            .filter(|set| !set.on.load(Ordering::Relaxed))
+            .map(|set| set.resource)
+            .collect()
     }
 
     /// Answer one request, or nothing where the wire expects nothing.
@@ -109,11 +151,11 @@ impl Server {
             "initialize" => Response::ok(id, self.initialize(at)),
             "ping" => Response::ok(id, json!({})),
             "tools/list" => Response::ok(id, self.list(at.is_some())),
-            "resources/list" => match resources::list(request.params.as_ref()) {
+            "resources/list" => match resources::list(request.params.as_ref(), &self.hidden()) {
                 Ok(result) => Response::ok(id, result),
                 Err(error) => Response::fail(id, error),
             },
-            "resources/read" => match resources::read(request.params.as_ref()) {
+            "resources/read" => match resources::read(request.params.as_ref(), &self.hidden()) {
                 Ok(result) => Response::ok(id, result),
                 Err(error) => Response::fail(id, error),
             },
@@ -146,6 +188,15 @@ impl Server {
         // Withheld rather than absent, which is worth saying: the model asked
         // for something that exists and is switched off, and a flat "no such
         // tool" would have it hunting for the right name.
+        if self
+            .switched
+            .iter()
+            .any(|set| set.tools.iter().any(|tool| tool.name == name))
+        {
+            return Err(Trouble::Refused(format!(
+                "{name} is switched off in cydonia's settings"
+            )));
+        }
         if let Some(tool) = self.tools.iter().find(|tool| tool.name == name) {
             // Which switch is holding it: a delete tool refused for the wrong
             // reason would have somebody turning on the wrong one.
@@ -159,7 +210,7 @@ impl Server {
     }
 
     fn initialize(&self, at: Option<&Path>) -> Value {
-        let instructions = prompts::tool_context(at.is_some());
+        let instructions = prompts::tool_context(at.is_some(), &self.hidden());
         let capabilities = json!({ "tools": { "listChanged": false }, "resources": {} });
         json!({
             "protocolVersion": proto::VERSION,
