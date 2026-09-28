@@ -782,8 +782,19 @@ impl Render for Panel {
                                         cx.new(|_| crate::view::sidebar::Carried(name.clone()))
                                     }
                                 })
-                                .drag_over::<TabDrag>(|style, _, _, cx| {
-                                    style.bg(Theme::of(cx).element_active)
+                                .drag_over::<TabDrag>({
+                                    let order = self.strip.tabs().to_vec();
+                                    move |style, drag, _, cx| {
+                                        let at = |id| order.iter().position(|held| *held == id);
+                                        match (at(drag.0), at(id)) {
+                                            (Some(from), Some(to)) => {
+                                                crate::view::arrangement::tab_drop_mark(
+                                                    style, from, to, cx,
+                                                )
+                                            }
+                                            _ => style,
+                                        }
+                                    }
                                 })
                                 .on_drop(cx.listener(move |this, drag: &TabDrag, _, cx| {
                                     if let (Some(from), Some(to)) =

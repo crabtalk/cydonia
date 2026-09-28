@@ -306,7 +306,19 @@ impl Cydonia {
             .on_drag_move(cx.listener({
                 let on = held.clone();
                 move |this, event: &DragMoveEvent<EntryDrag>, _, cx| {
+                    // A tab of this pane's own strip is reordering, not
+                    // joining: the bar is not a landing for it.
+                    let own = match event.drag(cx) {
+                        EntryDrag::Member(moving) => {
+                            this.workspace.read(cx).stack_of(&on).contains(moving)
+                        }
+                        _ => false,
+                    };
                     this.aim_pane(&on, true, event.bounds, event.event.position, cx);
+                    if own && this.pane_landing == Some((on.clone(), Landing::Bar)) {
+                        this.pane_landing = None;
+                        cx.notify();
+                    }
                 }
             }))
             .on_drop(cx.listener({
@@ -351,6 +363,33 @@ impl Cydonia {
             .or_else(|| stack.first())
             .unwrap_or(pane)
             .clone()
+    }
+
+    /// Move `moving` to `to`'s place in their pane's strip. `false`, and
+    /// nothing moves, where the two are not in one strip.
+    ///
+    /// [`Cydonia::fronts`] is keyed by the strip's first entry, so a move that
+    /// changes the first carries the pane's front over to the new key.
+    fn reorder_tab(&mut self, moving: &Member, to: &Member, cx: &mut Context<Self>) -> bool {
+        let stack = self.workspace.read(cx).stack_of(to);
+        if moving == to || !stack.contains(moving) {
+            return false;
+        }
+        self.workspace
+            .update(cx, |workspace, cx| workspace.reorder_tab(moving, to, cx));
+        let (Some(was), Some(now)) = (
+            stack.first().cloned(),
+            self.workspace.read(cx).stack_of(to).first().cloned(),
+        ) else {
+            return true;
+        };
+        if was != now
+            && let Some(front) = self.fronts.remove(&key_of(&was))
+        {
+            self.fronts.insert(key_of(&now), front);
+        }
+        cx.notify();
+        true
     }
 
     /// Note a tab as the one most recently brought to the front, which is
@@ -658,6 +697,31 @@ impl Cydonia {
                 let label = title.clone();
                 cx.new(|_| Carried(label))
             })
+            // Let go over another tab of the same strip, it takes that tab's
+            // place. From anywhere else the drop falls through to the bar.
+            .drag_over::<EntryDrag>({
+                let (stack, to) = (self.workspace.read(cx).stack_of(tab), tab.clone());
+                move |style, drag, _, cx| match drag {
+                    EntryDrag::Member(moving) => match (
+                        stack.iter().position(|held| held == moving),
+                        stack.iter().position(|held| *held == to),
+                    ) {
+                        (Some(from), Some(at)) => tab_drop_mark(style, from, at, cx),
+                        _ => style,
+                    },
+                    _ => style,
+                }
+            })
+            .on_drop(cx.listener({
+                let to = tab.clone();
+                move |this, drag: &EntryDrag, _, cx| {
+                    if let EntryDrag::Member(moving) = drag
+                        && this.reorder_tab(moving, &to, cx)
+                    {
+                        cx.stop_propagation();
+                    }
+                }
+            }))
             // The entry's own menu, the one its band's `···` opens, where the
             // press lands.
             .on_mouse_down(
@@ -1202,6 +1266,29 @@ impl Cydonia {
             }
         });
     }
+}
+
+/// Where a tab dragged along its own strip lands: a line on the edge of the
+/// tab whose place it takes — the trailing edge when it moves right, the
+/// leading edge when it moves left. A shadow, so the tab's layout does not move.
+// TODO: bezel DEV-77's `tabs::drop_mark` replaces this.
+pub(crate) fn tab_drop_mark(
+    style: bezel::gpui::StyleRefinement,
+    from: usize,
+    to: usize,
+    cx: &App,
+) -> bezel::gpui::StyleRefinement {
+    if from == to {
+        return style;
+    }
+    let x = if from < to { px(2.) } else { px(-2.) };
+    style.shadow(vec![bezel::gpui::BoxShadow {
+        color: Theme::of(cx).accent.opacity(0.6),
+        offset: bezel::gpui::point(x, px(0.)),
+        blur_radius: px(0.),
+        spread_radius: px(0.),
+        inset: false,
+    }])
 }
 
 /// The half of the pane a release would give the arrival.
