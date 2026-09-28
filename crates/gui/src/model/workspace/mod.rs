@@ -226,6 +226,7 @@ impl Workspace {
         this.open_last_entry(cx);
         this.load_agent_icons(cx);
         this.refresh_door();
+        cx.set_global(this.settings.browser.clone());
         this.take_rail(cx);
         // Temporary dev hook: `CYDONIA_TEST_PROMPT` sends a prompt on launch
         // so a turn can be verified without a composer. Here rather than on
@@ -425,6 +426,7 @@ impl Workspace {
     pub fn reload_settings(&mut self, cx: &mut Context<Self>) {
         if let Ok(settings) = settings::load() {
             self.settings = settings;
+            cx.set_global(self.settings.browser.clone());
             rail::set_agents(self.rail_agents());
             self.readopt_agents();
             self.load_agent_icons(cx);
@@ -544,6 +546,28 @@ impl Workspace {
         }
         self.settings.mcp.delete = on;
         self.refresh_door();
+        cx.notify();
+    }
+
+    // ── browser ──────────────────────────────────────────────────
+
+    /// What a new browser tab opens on.
+    pub fn set_browser_home(&mut self, home: String, cx: &mut Context<Self>) {
+        if settings::set_browser("home", home.as_str()).is_err() {
+            return;
+        }
+        self.settings.browser.home = home;
+        cx.set_global(self.settings.browser.clone());
+        cx.notify();
+    }
+
+    /// Where the address field's searches go, as a `%s` template.
+    pub fn set_browser_search(&mut self, search: String, cx: &mut Context<Self>) {
+        if settings::set_browser("search", search.as_str()).is_err() {
+            return;
+        }
+        self.settings.browser.search = search;
+        cx.set_global(self.settings.browser.clone());
         cx.notify();
     }
 

@@ -3,6 +3,7 @@
 //! A tab holds a tab id, not the page. Pages live in [`Pages`], app-wide, so a
 //! panel or window dropping does not drop them; only closing the tab does.
 
+use crate::model::settings::Browsing;
 use bezel::{
     gpui::{
         self, App, Context, Entity, EventEmitter, FocusHandle, Focusable, Global, KeyBinding,
@@ -25,8 +26,13 @@ actions!(cydonia_browser, [Go]);
 /// Claimed on the address field, so `enter` loads what it holds.
 const ADDRESS_CONTEXT: &str = "CydoniaAddress";
 
-/// What a new tab opens on.
-pub const HOME: &str = "https://duckduckgo.com";
+/// What a new tab opens on: the home page in Settings.
+pub fn home(cx: &App) -> String {
+    cx.try_global::<Browsing>().map_or_else(
+        || Browsing::default().home,
+        |browsing| browsing.home.clone(),
+    )
+}
 
 pub fn bindings() -> Vec<KeyBinding> {
     vec![KeyBinding::new("enter", Go, Some(ADDRESS_CONTEXT))]
@@ -188,7 +194,7 @@ impl Browser {
         if typed.is_empty() {
             return;
         }
-        let url = address(&typed);
+        let url = address(&typed, cx);
         let page = self.page(window, cx);
         page.update(cx, |page, _| page.load(url));
         window.focus(&page.focus_handle(cx), cx);
@@ -196,15 +202,17 @@ impl Browser {
 }
 
 /// What the address field's text loads: a URL as typed, a bare host over
-/// https, anything else as a search.
-fn address(typed: &str) -> String {
+/// https, anything else as a search with the engine in Settings.
+fn address(typed: &str, cx: &App) -> String {
     if typed.contains("://") || typed.starts_with("about:") {
         typed.to_owned()
     } else if !typed.contains(char::is_whitespace) && typed.contains('.') {
         format!("https://{typed}")
     } else {
-        let query: String = url::form_urlencoded::byte_serialize(typed.as_bytes()).collect();
-        format!("{HOME}/?q={query}")
+        cx.try_global::<Browsing>()
+            .cloned()
+            .unwrap_or_default()
+            .search_url(typed)
     }
 }
 

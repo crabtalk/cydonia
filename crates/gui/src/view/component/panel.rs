@@ -400,7 +400,7 @@ impl Panel {
             return;
         }
         let id = super::browser::new_id();
-        let browser = self.browser(id, super::browser::HOME.into(), String::new(), cx);
+        let browser = self.browser(id, super::browser::home(cx), String::new(), cx);
         let address = browser.read(cx).address_focus(cx);
         window.focus(&address, cx);
     }

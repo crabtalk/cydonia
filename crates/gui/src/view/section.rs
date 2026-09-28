@@ -16,6 +16,7 @@ pub enum Section {
     // After Agents, because tools come after the things that use them — the
     // same reading that puts Features before it.
     Mcp,
+    Browser,
     Performance,
     // Last, and in a debug build alone — see [`Section::listed`].
     Developer,
