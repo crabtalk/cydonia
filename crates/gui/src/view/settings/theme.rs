@@ -5,12 +5,10 @@ use crate::{
     view::settings::{self, SettingsWindow, Switch},
 };
 use artifact::board::View;
+use bezel::theme::AppExt as _;
 use bezel::{
     gpui::{AnyElement, Context, DragMoveEvent, Empty, div, prelude::*, px},
-    theme::{
-        TextStyle, Theme, Tint, Typeset,
-        appearance::{self, AppearanceMode},
-    },
+    theme::{TextStyle, Theme, Tint, Typeset, appearance::AppearanceMode},
     ui::widgets::{self, Controls, Scaffolding, SliderDrag},
 };
 
@@ -55,7 +53,7 @@ impl SettingsWindow {
     /// One card row: what the setting is on the left, the control on the right.
     pub(super) fn theme_row(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
-        let current = appearance::mode(cx);
+        let current = cx.appearance_mode();
         theme
             .card_row(true)
             .child(

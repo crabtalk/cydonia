@@ -8,7 +8,6 @@
 //! Everything [`crate::model::state`] persists lives here and nowhere else, which is
 //! why [`Workspace::save`] can take no arguments.
 
-#[cfg(feature = "desktop")]
 use crate::{agent, model::update};
 use crate::{
     data::{ColType, Column, Data, Edit, Page, Table},
@@ -24,14 +23,19 @@ use crate::{
     },
 };
 use artifact::board::Board;
+#[cfg(feature = "desktop")]
+use bezel::theme::AppExt as _;
+use bezel::ui::AppExt as _;
 use bezel::{
     gpui::{App, ClipboardItem, Context, EntityId, EventEmitter, Window},
     theme::{self, Brand, Tint, Vibrancy, appearance::AppearanceMode},
-    ui::{icons::Icon, input},
+    ui::icons::Icon,
 };
 use cacp::schema::SessionConfigOptionValue;
+use editor::AppExt as _;
 use editor::Mode;
 use futures::{StreamExt as _, channel::mpsc};
+use markdown::AppExt as _;
 use mcp::rail::{self, Change};
 use std::{
     collections::{BTreeMap, HashMap},
@@ -172,15 +176,12 @@ impl Workspace {
         let active = (!projects.is_empty()).then_some(state.active);
         let restore: Vec<usize> = (0..projects.len()).collect();
         let look = settings.appearance.clone();
-        bezel::ui::scroll::set_visibility(look.scrollbars.into(), cx);
-        editor::set_text_size(
-            cx,
-            editor::TextSize {
-                step: 1.,
-                min: settings::CONTENT_TEXT_SIZE.0,
-                max: settings::CONTENT_TEXT_SIZE.1,
-            },
-        );
+        cx.set_scrollbar_visibility(look.scrollbars.into());
+        cx.set_editor_text_size(editor::TextSize {
+            step: 1.,
+            min: settings::CONTENT_TEXT_SIZE.0,
+            max: settings::CONTENT_TEXT_SIZE.1,
+        });
         crate::model::typography::set_terminal_size(look.mono_font_size, cx);
         crate::model::typography::set_file_size(look.mono_font_size, cx);
         let mut this = Self {
@@ -453,7 +454,7 @@ impl Workspace {
     /// `settings.toml` is what makes it survive a relaunch.
     pub fn set_appearance(&mut self, mode: AppearanceMode, cx: &mut Context<Self>) {
         self.appearance = mode;
-        bezel::theme::appearance::set_mode(mode, cx);
+        cx.set_appearance_mode(mode);
         self.save_appearance();
         cx.notify();
     }
@@ -701,21 +702,21 @@ impl Workspace {
     /// The caret is bezel's, so the setting is: nothing here reads it back.
     pub fn set_cursor_blink(&mut self, blink: bool, cx: &mut Context<Self>) {
         self.cursor_blink = blink;
-        input::set_caret_blink(blink, cx);
+        cx.set_caret_blink(blink);
         self.save_appearance();
         cx.notify();
     }
 
     pub fn set_caret_shape(&mut self, shape: settings::CaretShape, cx: &mut Context<Self>) {
         self.settings.appearance.caret_shape = shape;
-        input::set_caret_shape(shape.into(), cx);
+        cx.set_caret_shape(shape.into());
         self.save_appearance();
         cx.notify();
     }
 
     pub fn set_text_size(&mut self, points: f32, cx: &mut Context<Self>) {
         self.text_size = points;
-        theme::set_base_text_size(points, cx);
+        cx.set_base_text_size(points);
         if self.article_font_size.is_none() {
             self.apply_article_font_size(cx);
         }
@@ -794,7 +795,7 @@ impl Workspace {
         } else {
             look.scrollbars = value;
         }
-        bezel::ui::scroll::set_visibility(look.scrollbars.into(), cx);
+        cx.set_scrollbar_visibility(look.scrollbars.into());
         self.save_appearance();
         cx.refresh_windows();
         cx.notify();
@@ -912,13 +913,7 @@ pub fn named<'a>(
 /// because the window reads its background appearance while it is being opened,
 /// which is before there is a workspace to ask.
 pub fn apply_tint(tint: Tint, cx: &mut App) {
-    theme::set_brand(
-        Brand {
-            tint,
-            ..theme::brand(cx)
-        },
-        cx,
-    );
+    cx.set_brand(Brand { tint, ..cx.brand() });
 }
 
 /// What the switch asks of the window.
@@ -948,19 +943,16 @@ pub fn glass(opaque: Option<bool>) -> bool {
 /// ladder are. There is nowhere narrower to put it — a fence is painted by
 /// `markdown::render`, which takes no per-surface layout.
 pub fn apply_wrap_code(wrap: bool, cx: &mut App) {
-    markdown::set_layout(cx, markdown::Layout { wrap_code: wrap });
+    cx.set_markdown_layout(markdown::Layout { wrap_code: wrap });
 }
 
 /// Hand the answer to bezel, which reapplies it on every light/dark switch
 /// from then on — including the one the OS makes at sunset, which reaches
 /// nothing of ours.
 pub fn apply_transparency(opaque: Option<bool>, cx: &mut App) {
-    theme::set_brand(
-        Brand {
-            vibrancy: vibrancy(opaque),
-            glass: glass(opaque),
-            ..theme::brand(cx)
-        },
-        cx,
-    );
+    cx.set_brand(Brand {
+        vibrancy: vibrancy(opaque),
+        glass: glass(opaque),
+        ..cx.brand()
+    });
 }

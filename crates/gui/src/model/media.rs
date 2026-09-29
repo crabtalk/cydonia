@@ -3,7 +3,7 @@
 //!
 //! A document holds a URL, and bytes off the clipboard have no address
 //! anywhere — so somewhere has to be picked before an image block can exist,
-//! which is what `editor::set_image_store` asks the app. The answer is the
+//! which is what `editor::AppExt::set_image_store` asks the app. The answer is the
 //! open article's own `assets/`, the same directory agents are told to write
 //! into, so what the app pastes and what an agent generates land together and
 //! a picture is named for its bytes wherever it came from. A session's
@@ -17,6 +17,7 @@
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use bezel::gpui::{App, Entity, Image, hash};
+use editor::AppExt as _;
 use editor::{Editor, ImageStore, Source};
 use image::{ImageFormat, imageops::FilterType};
 use markdown::BlockKind;
@@ -48,13 +49,10 @@ pub enum Attachment {
 /// `accepts` is left at the editor's own guess from the extension — cydonia
 /// decodes nothing the default would turn away.
 pub fn init(cx: &mut App) {
-    editor::set_image_store(
-        cx,
-        ImageStore {
-            keep,
-            ..ImageStore::default()
-        },
-    );
+    cx.set_image_store(ImageStore {
+        keep,
+        ..ImageStore::default()
+    });
 }
 
 /// Write `bytes` into `dir` under a name taken from their hash, so the same

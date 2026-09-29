@@ -1,5 +1,6 @@
 //! The virtual list's thumb: when it shows, when it fades, and what holds it up.
 
+use bezel::ui::AppExt as _;
 use bezel::{
     gpui::{self, Context, Render, Window, div, point, prelude::*, px},
     theme::{Appearance, Theme},
@@ -45,7 +46,7 @@ fn idle(cx: &mut gpui::VisualTestContext) {
 fn the_thumb_fades_out_and_hover_or_a_drag_holds_it_up(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         Theme::install(Appearance::Dark, cx);
-        scroll::set_visibility(Visibility::Scrolling, cx);
+        cx.set_scrollbar_visibility(Visibility::Scrolling);
     });
     let list = VariableList::default();
     list.sync((0..30).collect());
@@ -123,14 +124,14 @@ fn the_thumb_fades_out_and_hover_or_a_drag_holds_it_up(cx: &mut gpui::TestAppCon
         "released away from the strip, it fades"
     );
 
-    visual.update(|_, cx| scroll::set_visibility(Visibility::Always, cx));
+    visual.update(|_, cx| cx.set_scrollbar_visibility(Visibility::Always));
     frame(&mut visual);
     idle(&mut visual);
     assert!(
         thumb(&mut visual).is_some(),
         "always outlasts the idle window"
     );
-    visual.update(|_, cx| scroll::set_visibility(Visibility::Never, cx));
+    visual.update(|_, cx| cx.set_scrollbar_visibility(Visibility::Never));
     frame(&mut visual);
     assert!(thumb(&mut visual).is_none());
 }

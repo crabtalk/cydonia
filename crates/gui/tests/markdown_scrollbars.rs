@@ -1,12 +1,14 @@
 use bezel::theme;
+use bezel::ui::AppExt as _;
 use cydonia_gui::model::settings::Scrollbars as Visibility;
 use gpui::{
     Context, Modifiers, MouseButton, Render, TestAppContext, VisualTestContext, Window, div,
     prelude::*, px, size,
 };
-use markdown::{BlockLayouts, Cursor, Doc, Editing, Layout, Part, parse, render_with, set_layout};
+use markdown::AppExt as _;
+use markdown::{BlockLayouts, Cursor, Doc, Editing, Layout, Part, parse, render_with};
 fn set_visibility(value: Visibility, cx: &mut gpui::App) {
-    bezel::ui::scroll::set_visibility(value.into(), cx);
+    cx.set_scrollbar_visibility(value.into());
 }
 
 struct Page {
@@ -30,7 +32,7 @@ impl Render for Page {
 fn open(source: &str, cx: &mut TestAppContext) -> (gpui::Entity<Page>, VisualTestContext) {
     cx.update(|cx| {
         theme::Theme::install(theme::Appearance::Dark, cx);
-        set_layout(cx, Layout { wrap_code: false });
+        cx.set_markdown_layout(Layout { wrap_code: false });
         set_visibility(Visibility::Always, cx);
     });
     let window = cx.add_window(|_, _| Page {
@@ -106,7 +108,7 @@ fn short_or_wrapped_code_has_no_horizontal_bar(cx: &mut TestAppContext) {
     let (page, mut cx) = open("```\nshort\n```", cx);
     assert!(cx.debug_bounds("md-code-scroll-0-track").is_none());
     cx.update(|_, cx| {
-        set_layout(cx, Layout { wrap_code: true });
+        cx.set_markdown_layout(Layout { wrap_code: true });
         page.update(cx, |page, cx| {
             page.doc = parse(&format!("```\n{}\n```", "long_code_identifier ".repeat(30)));
             cx.notify();

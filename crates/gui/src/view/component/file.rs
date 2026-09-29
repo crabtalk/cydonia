@@ -9,6 +9,7 @@ use bezel::{
     ui::input::{Edit, FieldEvent, Shape, TextField},
     ui::widgets::{ButtonStyle, Buttons as _, Controls as _},
 };
+use markdown::AppExt as _;
 #[cfg(feature = "desktop")]
 use std::io::{Read, Write};
 use std::{
@@ -830,20 +831,14 @@ impl Render for FileView {
                         let Some(selection) = this.preview_selection else {
                             return;
                         };
-                        let doc = markdown::parse_with(
-                            this.field.read(cx).content(),
-                            &markdown::Marks::of(cx),
-                        );
+                        let doc = markdown::parse_with(this.field.read(cx).content(), &cx.marks());
                         let text = markdown::selectable::copied(&doc, selection);
                         if !text.is_empty() {
                             cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
                         }
                     }))
                     .on_action(cx.listener(|this, _: &bezel::ui::input::SelectAll, _, cx| {
-                        let doc = markdown::parse_with(
-                            this.field.read(cx).content(),
-                            &markdown::Marks::of(cx),
-                        );
+                        let doc = markdown::parse_with(this.field.read(cx).content(), &cx.marks());
                         this.preview_selection = Some(markdown::Selection::all(&doc));
                         cx.notify();
                     }))
@@ -930,16 +925,13 @@ impl Render for FileView {
                             .overflow_y_scroll()
                             .p(px(16.))
                             .child(markdown::render::render_with(
-                                &markdown::parse_with(
-                                    self.field.read(cx).content(),
-                                    &markdown::Marks::of(cx),
-                                ),
+                                &markdown::parse_with(self.field.read(cx).content(), &cx.marks()),
                                 markdown::render::Editing {
                                     selection: self.preview_selection,
                                     layouts: Some(&self.preview_layouts),
                                     caret_on: false,
                                     typography: Some(
-                                        markdown::Typography::of(cx)
+                                        cx.typography()
                                             .scaled(size / bezel::theme::base_text_size()),
                                     ),
                                     ..Default::default()

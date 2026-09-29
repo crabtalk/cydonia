@@ -37,7 +37,7 @@ use bezel::{
     },
 };
 use editor::{Editor, EditorEvent};
-use markdown::Typography;
+use markdown::AppExt as _;
 use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
@@ -239,7 +239,7 @@ fn card_body(
             // out underneath would be most of the card.
             caption: markdown::Caption::Hidden,
             copy: markdown::CopyButton::Hidden,
-            typography: Some(Typography::of(cx).scaled(CARD_TEXT_SCALE)),
+            typography: Some(cx.typography().scaled(CARD_TEXT_SCALE)),
             ..Default::default()
         },
         window,

@@ -26,7 +26,7 @@ use bezel::{
     ui::input::{Shape, TextField},
 };
 use editor::{Editor, Mode};
-use markdown::Typography;
+use markdown::AppExt as _;
 use std::path::{Path, PathBuf};
 
 /// What articles were called before they were named for their age, and what an
@@ -184,7 +184,7 @@ impl Article {
         }
         // The document's own heading type, so the title is set the way the page
         // would set its own first heading.
-        let h1 = Typography::of(cx).h1;
+        let h1 = cx.typography().h1;
         let title = self.title.clone();
         let field = cx.new(|cx| {
             let mut field = TextField::new(cx)

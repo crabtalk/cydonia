@@ -7,7 +7,7 @@
 //!
 //! The chosen families live in a process-wide static rather than a gpui global
 //! because bezel takes the palette builder as a bare `fn(Appearance) -> Theme`
-//! ([`theme::set_palette`]) and hands it no context to read one from.
+//! ([`bezel::theme::AppExt::set_palette`]) and hands it no context to read one from.
 
 use bezel::{
     gpui::{App, Pixels, SharedString, font, px},
@@ -48,7 +48,7 @@ pub fn families() -> Families {
     held()
 }
 
-/// The palette builder to register with [`bezel::theme::set_palette`] before
+/// The palette builder to register with [`bezel::theme::AppExt::set_palette`] before
 /// `appearance::init`. Registered rather than installed once: bezel rebuilds
 /// the palette from scratch on every light/dark switch, and a family written
 /// straight onto the theme would last until sunset.

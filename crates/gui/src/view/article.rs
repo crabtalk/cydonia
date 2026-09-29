@@ -25,7 +25,9 @@ use bezel::{
         widgets::{ButtonStyle, Buttons as _, Status as _},
     },
 };
+use editor::AppExt as _;
 use editor::Mode;
+use markdown::AppExt as _;
 use markdown::HighlightColor;
 use std::{
     path::{Path, PathBuf},
@@ -146,15 +148,15 @@ fn source_offset(editor: &editor::Editor, cx: &App) -> f32 {
     if editor.mode() != Mode::Source {
         return 0.;
     }
-    let style = markdown::SourceStyle::of(cx);
+    let style = cx.source_style();
     let base = bezel::theme::base_text_size();
-    let limits = editor::TextSize::of(cx);
-    let size = ((editor.text_size().unwrap_or(base) + editor::text_size_adjustment(cx))
+    let limits = cx.editor_text_size();
+    let size = ((editor.text_size().unwrap_or(base) + cx.editor_text_size_adjustment())
         .clamp(limits.min, limits.max)
         * 10.)
         .round()
         / 10.;
-    let code_size = markdown::Typography::of(cx).scaled(size / base).code.size();
+    let code_size = cx.typography().scaled(size / base).code.size();
     let digits = editor
         .source()
         .split('\n')
@@ -608,7 +610,7 @@ impl Cydonia {
             .child(
                 div().w_full().flex().justify_center().child(
                     column(wide)
-                        .pl(px(COLUMN_INSET + editor::Layout::of(cx).text_inset))
+                        .pl(px(COLUMN_INSET + cx.editor_layout().text_inset))
                         .pr(px(COLUMN_INSET))
                         .pt(px(20.))
                         .child(field),
