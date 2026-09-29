@@ -34,6 +34,11 @@ pub struct Settings {
     /// picked — see [`crate::model::update`].
     #[serde(default = "auto_update")]
     pub auto_update: bool,
+    /// The application a markdown preview's pictures open in, picked from its
+    /// `Open with` button. Unset is the system's default for the file. Bare,
+    /// so it belongs above `features` for the reason above.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_app: Option<PathBuf>,
     /// Whether a turn finishing while the app is in the background is worth
     /// telling the system about. Bare, beside `auto_update`, for the reason
     /// above — and because the two are the same kind of thing: what the app
@@ -714,6 +719,7 @@ impl Default for Settings {
             cover_memory: cover_memory(),
             watch_bounce: watch_bounce(),
             auto_update: auto_update(),
+            image_app: None,
             notify_turns: notify_turns(),
             appearance: Appearance::default(),
             shortcuts: Shortcuts::default(),
@@ -1012,6 +1018,14 @@ pub fn set_cover_memory(mb: u64) -> Result<()> {
 pub fn set_watch_bounce(ms: u64) -> Result<()> {
     edit(|doc| {
         doc["watch_bounce"] = toml_edit::value(ms as i64);
+        Ok(true)
+    })
+}
+
+/// Remember the application pictures open in.
+pub fn set_image_app(app: &std::path::Path) -> Result<()> {
+    edit(|doc| {
+        doc["image_app"] = toml_edit::value(app.to_string_lossy().as_ref());
         Ok(true)
     })
 }

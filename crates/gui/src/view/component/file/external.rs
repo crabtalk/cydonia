@@ -45,6 +45,35 @@ function run(argv) {
 }
 "#;
 
+/// Every application registered to open the file, the system's default first.
+#[cfg(target_os = "macos")]
+const IMAGE_APPLICATIONS: &str = r#"
+ObjC.import('AppKit');
+function run(argv) {
+    const workspace = $.NSWorkspace.sharedWorkspace;
+    const file = $.NSURL.fileURLWithPath(argv[0]);
+    const apps = [];
+    const seen = new Set();
+    function add(url) {
+        if (!url || url.isNil()) return;
+        const path = ObjC.unwrap(url.path);
+        if (seen.has(path)) return;
+        seen.add(path);
+        let icon = '';
+        try {
+            const image = workspace.iconForFile(path);
+            const bitmap = $.NSBitmapImageRep.imageRepWithData(image.TIFFRepresentation);
+            icon = ObjC.unwrap(bitmap.representationUsingTypeProperties($.NSBitmapImageFileTypePNG, $({})).base64EncodedStringWithOptions(0));
+        } catch (_) {}
+        apps.push({name: ObjC.unwrap(url.lastPathComponent.stringByDeletingPathExtension), path: path, icon: icon});
+    }
+    add(workspace.URLForApplicationToOpenURL(file));
+    const urls = workspace.URLsForApplicationsToOpenURL(file);
+    for (let i = 0; i < urls.count; i++) add(urls.objectAtIndex(i));
+    return JSON.stringify(apps);
+}
+"#;
+
 #[derive(Clone, serde::Deserialize)]
 pub(super) struct Application {
     name: String,
@@ -62,7 +91,15 @@ pub(super) struct Application {
 }
 
 impl Application {
-    fn target(&self) -> Target {
+    pub(super) fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub(super) fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub(super) fn target(&self) -> Target {
         match self.kind.as_str() {
             "default" => Target::Default,
             "terminal" => Target::Terminal,
@@ -70,7 +107,7 @@ impl Application {
         }
     }
 
-    fn icon(&self) -> gpui::AnyElement {
+    pub(super) fn icon(&self) -> gpui::AnyElement {
         if let Some(image) = &self.image {
             gpui::img(image.clone()).size(px(18.)).into_any_element()
         } else {
@@ -194,15 +231,48 @@ fn applications(file: &Path) -> Result<Vec<Application>> {
             app.name.to_lowercase(),
         )
     });
-    for app in &mut apps {
+    decode_icons(&mut apps);
+    apps.dedup_by(|a, b| a.path == b.path);
+    Ok(apps)
+}
+
+#[cfg(target_os = "macos")]
+fn decode_icons(apps: &mut [Application]) {
+    for app in apps {
         app.image = STANDARD
             .decode(std::mem::take(&mut app.icon))
             .ok()
             .filter(|bytes| !bytes.is_empty())
             .map(|bytes| Arc::new(gpui::Image::from_bytes(gpui::ImageFormat::Png, bytes)));
     }
-    apps.dedup_by(|a, b| a.path == b.path);
+}
+
+/// The applications that open a picture like `file`, the system's default
+/// first. `file` need not exist: only its extension is read.
+#[cfg(target_os = "macos")]
+pub(super) fn image_applications(file: &Path) -> Result<Vec<Application>> {
+    let json = output(
+        Command::new("/usr/bin/osascript")
+            .args(["-l", "JavaScript", "-e", IMAGE_APPLICATIONS])
+            .arg(file)
+            .output()
+            .context("Could not find applications")?,
+    )?;
+    let mut apps: Vec<Application> = serde_json::from_str(&json)?;
+    apps.retain(|app| !app.name.eq_ignore_ascii_case("cydonia"));
+    decode_icons(&mut apps);
     Ok(apps)
+}
+
+/// Off macOS nothing lists what opens a picture: the desktop's default only.
+#[cfg(not(target_os = "macos"))]
+pub(super) fn image_applications(_: &Path) -> Result<Vec<Application>> {
+    Ok(vec![Application {
+        name: "Default app".to_owned(),
+        path: PathBuf::new(),
+        kind: "default".to_owned(),
+        image: None,
+    }])
 }
 
 /// Editors found on `PATH`, then the desktop's default for the file. No

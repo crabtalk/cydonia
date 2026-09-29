@@ -27,6 +27,7 @@ pub fn init(settings: &Settings, cx: &mut App) {
         body: look.article_font.clone().map(Into::into),
         mono: look.mono_font.clone().map(Into::into),
     });
+    crate::view::component::file::pictures::init(settings.image_app.clone());
     fonts::init_selection(look.selection.map(|selection| selection.color()));
     fonts::init_caret(look.caret.map(|caret| caret.color()));
     cx.set_palette(fonts::palette);

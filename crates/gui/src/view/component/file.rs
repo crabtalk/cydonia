@@ -21,6 +21,7 @@ use std::{
 
 const LIMIT: u64 = 256 * 1024;
 pub(crate) mod external;
+pub(crate) mod pictures;
 /// How long a keystroke waits before the file is parsed again. Every edit
 /// re-parses the whole file — the field holds text, not a syntax tree — so a
 /// run of typing coalesces into one parse instead of one per character.
@@ -134,6 +135,7 @@ pub struct FileView {
     pub error: Option<String>,
     opening_external: bool,
     external_menu: external::Menu,
+    pictures: pictures::Pictures,
     external_error: Option<String>,
     changed: bool,
     preview: bool,
@@ -234,6 +236,7 @@ impl FileView {
             error: None,
             opening_external: false,
             external_menu: external::Menu::default(),
+            pictures: pictures::Pictures::default(),
             external_error: None,
             changed: false,
             preview: true,
@@ -797,6 +800,13 @@ impl Render for FileView {
             .path
             .extension()
             .is_some_and(|ext| ext == "md" || ext == "markdown");
+        let preview_doc = (markdown && self.preview && self.ready)
+            .then(|| markdown::parse_with(self.field.read(cx).content(), &cx.marks()));
+        if let Some(doc) = &preview_doc {
+            self.list_picture_apps(doc, cx);
+        }
+        let overlay = preview_doc.is_some().then(|| self.picture_overlay(cx));
+        let base = self.path.parent().map(Path::to_path_buf);
         let notice = self.error.clone().or_else(|| self.changed.then(|| "File changed on disk. Reload discards your edits; overwrite saves your version.".into()));
         let external_notice = self.external_error.clone().map(|error| {
             div()
@@ -925,8 +935,10 @@ impl Render for FileView {
                             .overflow_y_scroll()
                             .p(px(16.))
                             .child(markdown::render::render_with(
-                                &markdown::parse_with(self.field.read(cx).content(), &cx.marks()),
+                                &preview_doc.unwrap_or_default(),
                                 markdown::render::Editing {
+                                    base: base.as_deref(),
+                                    image_overlay: overlay,
                                     selection: self.preview_selection,
                                     layouts: Some(&self.preview_layouts),
                                     caret_on: false,
