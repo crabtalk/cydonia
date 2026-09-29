@@ -474,18 +474,13 @@ impl SettingsWindow {
             .as_ref()
             .filter(|held| **held != listing.agent.version)
             .map(|_| listing.agent.version.clone());
-        let outdated = update.is_some();
         let source = source_url(&listing.agent, &version);
-        // The row is the group the removal reads: at rest an outdated row
-        // shows one glyph, and the pointer brings the other back.
-        let group = SharedString::from(format!("agent-row-{ix}"));
         theme
             .card_row(first)
             // The row fills its box. Inside a `flex_col` group that is what
             // stretch does anyway, but a virtual list measures each row on its
             // own and would hand back a row as wide as its name.
             .w_full()
-            .group(group.clone())
             .child(
                 div()
                     .flex_none()
@@ -526,14 +521,35 @@ impl SettingsWindow {
             .child(
                 div()
                     .flex_none()
-                    .w_16()
+                    .min_w_16()
                     .flex()
                     .justify_end()
-                    .child(match source {
+                    .child(match (update, source) {
+                        // An outdated tag is the update: accent, an arrow, and
+                        // a press installs what the registry pins.
+                        (Some(to), _) => theme
+                            .badge(format!("v{version}"))
+                            .id(("update", ix))
+                            .flex()
+                            .items_center()
+                            .gap(px(2.))
+                            .border_color(theme.accent)
+                            .text_color(theme.accent)
+                            .cursor_pointer()
+                            .child(
+                                icons::icon(icons::arrows::ArrowUp)
+                                    .size(px(10.))
+                                    .text_color(theme.accent),
+                            )
+                            .tooltip(move |window, cx| {
+                                Tooltip::text(format!("Update to v{to}"), window, cx)
+                            })
+                            .on_click(cx.listener(move |this, _, _, cx| this.install(ix, cx)))
+                            .into_any_element(),
                         // The tag is the link: one press from the row to the
                         // release it names, and the row keeps one link rather
                         // than a line of them.
-                        Some(url) => theme
+                        (None, Some(url)) => theme
                             .badge(format!("v{version}"))
                             .id(("version", ix))
                             .cursor_pointer()
@@ -544,18 +560,14 @@ impl SettingsWindow {
                             })
                             .on_click(move |_, _, cx| cx.open_url(&url))
                             .into_any_element(),
-                        None => theme.badge(format!("v{version}")).into_any_element(),
+                        (None, None) => theme.badge(format!("v{version}")).into_any_element(),
                     }),
             )
             .child(
                 div()
                     .flex_none()
-                    // Wide enough for the two glyphs an outdated row carries,
-                    // on every row: a column that grew only where there is an
-                    // update would step in and out down the list.
-                    .w(px(64.))
+                    .min_w(px(Theme::BUTTON_HEIGHT))
                     .flex()
-                    .gap(px(4.))
                     .items_center()
                     // A button fills the slot and ends where the card does, so
                     // it hangs off the right. The spinner is a few pixels wide
@@ -578,53 +590,16 @@ impl SettingsWindow {
                                 cx,
                             ))
                             .into_any_element(),
-                        // One glyph at rest. An outdated row shows the update,
-                        // and the removal waits for the pointer: a row that is
-                        // behind is one to catch up, not one to take off, and
-                        // two glyphs side by side read as a choice about which.
-                        //
-                        // Revealed rather than dropped — removing an agent the
-                        // registry has moved on from is a reasonable thing to
-                        // want, and hiding it outright would mean fetching an
-                        // update first to reach it.
-                        (false, Some(_), _) => div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap(px(4.))
-                            .children(update.map(|to| {
-                                theme
-                                    .icon_button(
-                                        icons::arrows::RefreshCw,
-                                        ButtonStyle::Ghost,
-                                        Some(Fade::new(painter, format!("update-{ix}"))),
-                                    )
-                                    .id(("update", ix))
-                                    .flex_none()
-                                    .tooltip(move |window, cx| {
-                                        Tooltip::text(format!("Update to v{to}"), window, cx)
-                                    })
-                                    .on_click(
-                                        cx.listener(move |this, _, _, cx| this.install(ix, cx)),
-                                    )
-                            }))
-                            .child(
-                                theme
-                                    .icon_button(
-                                        icons::files::Trash,
-                                        ButtonStyle::Ghost,
-                                        Some(Fade::new(painter, format!("remove-{ix}"))),
-                                    )
-                                    .id(("remove", ix))
-                                    .flex_none()
-                                    .when(outdated, |el| {
-                                        el.invisible().group_hover(group.clone(), |el| el.visible())
-                                    })
-                                    .tooltip(|window, cx| Tooltip::text("Remove", window, cx))
-                                    .on_click(
-                                        cx.listener(move |this, _, _, cx| this.remove(ix, cx)),
-                                    ),
+                        (false, Some(_), _) => theme
+                            .icon_button(
+                                icons::files::Trash,
+                                ButtonStyle::Ghost,
+                                Some(Fade::new(painter, format!("remove-{ix}"))),
                             )
+                            .id(("remove", ix))
+                            .flex_none()
+                            .tooltip(|window, cx| Tooltip::text("Remove", window, cx))
+                            .on_click(cx.listener(move |this, _, _, cx| this.remove(ix, cx)))
                             .into_any_element(),
                         (false, None, true) => theme
                             .icon_button(
