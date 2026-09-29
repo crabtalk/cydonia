@@ -37,17 +37,17 @@ fn applying_search_keeps_palette_edits_as_a_draft(cx: &mut gpui::TestAppContext)
             this.search
                 .field
                 .update(cx, |field, cx| field.set_content("retry", cx));
-            this.search.filter = Some(Kind::Article);
+            this.search.filter = Some(Filter::Kind(Kind::Article));
             this.apply_search(&ApplySearch, window, cx);
             assert!(!this.search.open);
             assert_eq!(this.applied_query().unwrap().text(), "retry");
             this.toggle_search(&ToggleSearch, window, cx);
             assert_eq!(this.search.field.read(cx).content().as_ref(), "retry");
-            assert_eq!(this.search.filter, Some(Kind::Article));
+            assert_eq!(this.search.filter, Some(Filter::Kind(Kind::Article)));
             this.search
                 .field
                 .update(cx, |field, cx| field.set_content("timeout", cx));
-            this.search.filter = Some(Kind::Board);
+            this.search.filter = Some(Filter::Kind(Kind::Board));
             this.dismiss_search(&DismissSearch, window, cx);
             assert_eq!(this.applied_query().unwrap().text(), "retry");
             assert_eq!(
@@ -246,4 +246,58 @@ fn a_word_or_a_bare_modifier_is_not_a_chord() {
     assert_eq!(menubar::query_keys("find"), None);
     assert_eq!(menubar::query_keys("ctrl"), None);
     assert_eq!(menubar::query_keys("ctrl shift"), None);
+}
+
+#[gpui::test]
+fn commands_run_last_lead_and_a_prefix_lists_commands_alone(cx: &mut gpui::TestAppContext) {
+    use crate::model::{settings::Settings, state::State};
+    use bezel::theme::Appearance;
+    cx.update(|cx| Theme::install(Appearance::Dark, cx));
+    let command = |name: &str| menubar::Command {
+        name: name.to_owned().into(),
+        menu: "File".into(),
+        action: Box::new(ToggleSearch),
+        shortcut: None,
+        keys: None,
+    };
+    let state = State {
+        commands: vec!["File › Close".into(), "File › Gone".into()],
+        ..State::default()
+    };
+    let window = cx.add_window(|window, cx| Cydonia::new(Settings::default(), state, window, cx));
+    window
+        .update(cx, |this, window, cx| {
+            this.toggle_search(&ToggleSearch, window, cx);
+            this.search.commands = vec![command("Open"), command("Close"), command("Save")];
+            let names = |this: &Cydonia, cx: &App| -> Vec<String> {
+                this.search
+                    .shown(cx)
+                    .iter()
+                    .filter_map(|pick| match pick {
+                        Pick::Command(command) => Some(command.name.to_string()),
+                        Pick::Hit(_) => None,
+                    })
+                    .collect()
+            };
+            this.match_commands(cx);
+            assert_eq!(names(this, cx), ["Close"]);
+            this.search
+                .field
+                .update(cx, |field, cx| field.set_content(">", cx));
+            this.match_commands(cx);
+            assert!(this.search.query(cx).is_none());
+            assert_eq!(names(this, cx), ["Close", "Open", "Save"]);
+            assert!(
+                this.search
+                    .shown(cx)
+                    .iter()
+                    .all(|pick| matches!(pick, Pick::Command(_)))
+            );
+            this.search
+                .field
+                .update(cx, |field, cx| field.set_content("> sa", cx));
+            this.match_commands(cx);
+            assert_eq!(names(this, cx), ["Save"]);
+        })
+        .unwrap();
 }

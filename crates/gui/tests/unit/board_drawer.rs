@@ -843,7 +843,7 @@ fn list_cards_drop_into_a_collapsed_group_without_unfolding(cx: &mut TestAppCont
         settle(&mut cx);
         cx.simulate_mouse_move(destination, Some(MouseButton::Left), Modifiers::default());
         settle(&mut cx);
-        assert!(cx.update(|_, cx| root.read(cx).aimed_at(&target, None, cx)));
+        assert!(cx.update(|_, cx| root.read(cx).aimed_into(&target, None, cx)));
         let indicator = cx
             .debug_bounds("list-collapsed-drop-target")
             .expect("visible drop target");
@@ -855,7 +855,7 @@ fn list_cards_drop_into_a_collapsed_group_without_unfolding(cx: &mut TestAppCont
             let column = workspace.projects[0].boards[0].column(&target).unwrap();
             assert!(column.collapsed);
             assert_eq!(column.cards.len(), if populated { 2 } else { 1 });
-            assert_eq!(column.cards.last().unwrap().id, cards[0]);
+            assert_eq!(column.cards[0].id, cards[0]);
         });
     }
 }

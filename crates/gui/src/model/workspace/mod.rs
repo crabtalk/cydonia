@@ -90,6 +90,9 @@ pub struct Resident {
     pub items: usize,
 }
 
+/// Commands the palette remembers running.
+const RECENT_COMMANDS: usize = 20;
+
 pub struct Workspace {
     pub settings: Settings,
     pub projects: Vec<Project>,
@@ -159,6 +162,8 @@ pub struct Workspace {
     folded_spaces: std::collections::HashSet<String>,
     /// The sidebar's sections whose rows are hidden, by name.
     folded_sections: std::collections::HashSet<String>,
+    /// The palette's commands last run, most recent first.
+    recent_commands: Vec<String>,
 }
 
 impl Workspace {
@@ -214,6 +219,7 @@ impl Workspace {
             space: None,
             folded_spaces: state.folded_spaces.iter().cloned().collect(),
             folded_sections: state.folded_sections.iter().cloned().collect(),
+            recent_commands: state.commands,
         };
         // The arrangement the window closed on, before any entry is opened:
         // `open_last_entry` is a project's answer and a space spans them.
@@ -277,7 +283,21 @@ impl Workspace {
                 folded
             },
             window: self.window,
+            commands: self.recent_commands.clone(),
         });
+    }
+
+    /// The palette's commands last run, most recent first.
+    pub fn recent_commands(&self) -> &[String] {
+        &self.recent_commands
+    }
+
+    /// Put a command run from the palette at the head of the recent ones.
+    pub fn ran_command(&mut self, key: String) {
+        self.recent_commands.retain(|held| *held != key);
+        self.recent_commands.insert(0, key);
+        self.recent_commands.truncate(RECENT_COMMANDS);
+        self.save();
     }
 
     /// Write down where the main window stands, if it has moved.

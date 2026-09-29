@@ -105,6 +105,10 @@ pub struct State {
     /// until it has done one of those.
     #[serde(default)]
     pub window: Option<Frame>,
+    /// The palette's commands last run, most recent first, each as its menu
+    /// path and name — see [`crate::view::menubar::Command::key`].
+    #[serde(default)]
+    pub commands: Vec<String>,
 }
 
 /// Where the main window stands, in the platform's logical pixels. For a
@@ -163,6 +167,7 @@ pub fn restore() -> State {
         folded_spaces: stored.folded_spaces,
         folded_sections: stored.folded_sections,
         window: stored.window,
+        commands: stored.commands,
     }
 }
 

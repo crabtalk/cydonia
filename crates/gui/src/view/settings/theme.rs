@@ -211,8 +211,8 @@ impl SettingsWindow {
                         self.switch_row(
                             Switch::new(
                                 "indent-project-rows",
-                                "Indent project rows",
-                                "Inset items below each project heading by one icon width.",
+                                "Indent sidebar rows",
+                                "Inset items below each project and space heading by one icon width.",
                                 on,
                             )
                             .first(true),

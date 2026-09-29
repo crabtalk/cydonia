@@ -172,7 +172,7 @@ pub struct Appearance {
     /// moment it is made — see [`artifact::board::Board::view`] — so this seeds
     /// one and never steers it afterwards.
     pub board_view: artifact::board::View,
-    /// Indent sidebar items beneath project headings by one icon width.
+    /// Indent sidebar items beneath project and space headings by one icon width.
     pub indent_project_rows: bool,
     /// The settings window's section sidebar is as wide as its widest row
     /// rather than a fixed width.
@@ -335,7 +335,7 @@ impl Default for Appearance {
             hue: 0.,
             chroma: 0.,
             wide_pages: false,
-            board_view: artifact::board::View::Lanes,
+            board_view: artifact::board::View::List,
             indent_project_rows: true,
             settings_sidebar_fits: false,
             scrollbars: Scrollbars::default(),

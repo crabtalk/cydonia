@@ -386,6 +386,13 @@ pub(crate) struct Command {
     pub keys: Option<Vec<String>>,
 }
 
+impl Command {
+    /// What names it across launches: its menu path and its name.
+    pub fn key(&self) -> String {
+        format!("{} › {}", self.menu, self.name)
+    }
+}
+
 /// Every item of the tree the focused surface can run, in menu order.
 pub(crate) fn commands(window: &Window, cx: &App) -> Vec<Command> {
     fn walk(menu: OwnedMenu, path: &str, window: &Window, cx: &App, out: &mut Vec<Command>) {

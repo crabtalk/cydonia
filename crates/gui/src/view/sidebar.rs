@@ -1092,35 +1092,19 @@ impl Cydonia {
         }
     }
 
-    /// How far in a row is drawn: one step for a project's entries when that
-    /// is switched on, and one more for a row an open space holds.
+    /// How far in a row is drawn: one step for a project's or an open
+    /// space's rows when that is switched on.
     ///
-    /// The indent is the whole of what says a row belongs to the space above
+    /// The indent is the whole of what says a row belongs to the heading above
     /// it. Nothing else is drawn on it — a rule beside it or a wash behind it
     /// is a second way of saying what the offset already says.
     pub(crate) fn indent_of(&self, row: Row, cx: &App) -> u8 {
-        let workspace = self.workspace.read(cx);
-        let base = u8::from(workspace.indent_project_rows);
         match row {
             // A space is not inside a project — it can hold panes from
             // several — so its row starts at the column's edge, where the
             // project headings are.
-            Row::Group(Group::Space(_)) | Row::Heading(_) => return 0,
-            Row::Group(Group::Project(_)) | Row::Archive(_) => return base,
-            _ => {}
-        }
-        let held = || -> Option<()> {
-            let member = self.member_of_row(row, cx)?;
-            let at = workspace.space_holding(&member)?;
-            let space = workspace.spaces.get(at)?;
-            (self.applied_query().is_some() || !workspace.space_folded(&space.id)).then_some(())
-        };
-        // One step under the space holding it, and one only: a row listed
-        // there is not also under its project's heading, so the project's own
-        // indent is not another step to add to this one.
-        match held().is_some() {
-            true => 1,
-            false => base,
+            Row::Group(Group::Space(_)) | Row::Heading(_) => 0,
+            _ => u8::from(self.workspace.read(cx).indent_project_rows),
         }
     }
 
