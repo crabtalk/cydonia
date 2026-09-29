@@ -57,11 +57,6 @@ mod shortcuts;
 mod theme;
 mod typography;
 
-/// The section sidebar. The reference's 18rem is read against a 120rem panel;
-/// against this window it would take a third of the width, so it matches the
-/// main window's sidebar instead.
-const SIDEBAR_WIDTH: f32 = 200.;
-
 /// The gap between a group and the label of the next one, and between a label
 /// and the box under it.
 pub(super) const GROUP_GAP: f32 = 20.;
@@ -70,6 +65,14 @@ pub(super) const LABEL_GAP: f32 = 8.;
 /// The reading column's cap, `--container-content`. The body is centred in
 /// whatever the window gives it, up to this.
 const CONTENT_MAX_WIDTH: f32 = 860.;
+
+/// The reading column's width in its own window, which is never narrower than
+/// the sidebar and this column together.
+const CONTENT_WIDTH: f32 = 640.;
+
+/// The settings window's opening size. Its width is also its minimum.
+#[cfg(feature = "desktop")]
+const WINDOW_SIZE: (f32, f32) = (900., 620.);
 
 pub use super::section::Section;
 
@@ -249,10 +252,12 @@ pub fn open(
     {
         return Some(handle);
     }
-    let bounds = Bounds::centered(None, size(px(900.), px(620.)), cx);
+    let (width, height) = WINDOW_SIZE;
+    let bounds = Bounds::centered(None, size(px(width), px(height)), cx);
     cx.open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
+            window_min_size: Some(size(px(width), px(400.))),
             titlebar: Some(TitlebarOptions {
                 title: Some("Settings".into()),
                 appears_transparent: true,
@@ -656,9 +661,9 @@ impl SettingsWindow {
         let theme = Theme::of(cx).clone();
         let features = &self.workspace.read(cx).settings.features;
         let painter = Painter::of(cx);
+        // As wide as its widest row.
         div()
             .flex_none()
-            .w(px(SIDEBAR_WIDTH))
             .h_full()
             .bg(theme.surface)
             .border_r_1()
@@ -765,8 +770,12 @@ impl Render for SettingsWindow {
                     .items_center()
                     .child(
                         div()
-                            .w_full()
-                            .max_w(px(CONTENT_MAX_WIDTH))
+                            .when(cfg!(feature = "desktop"), |el| {
+                                el.flex_none().w(px(CONTENT_WIDTH))
+                            })
+                            .when(!cfg!(feature = "desktop"), |el| {
+                                el.w_full().max_w(px(CONTENT_MAX_WIDTH))
+                            })
                             .when(owns_scroll, |el| el.flex_1().min_h_0())
                             .flex()
                             .flex_col()
