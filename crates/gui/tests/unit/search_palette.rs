@@ -225,3 +225,25 @@ fn applied_board_search_has_visible_working_exit_controls(cx: &mut gpui::TestApp
         assert!(cx.debug_bounds("search-pill").is_none());
     }
 }
+
+#[test]
+fn a_query_reads_as_a_chord_however_it_is_written() {
+    let bound = menubar::chord_keys(
+        &gpui::Modifiers {
+            control: true,
+            shift: true,
+            ..Default::default()
+        },
+        "f",
+    );
+    for query in ["ctrl+shift+f", "Shift Ctrl F", "control-shift-f", "⌃⇧F"] {
+        assert_eq!(menubar::query_keys(query), Some(bound.clone()), "{query}");
+    }
+}
+
+#[test]
+fn a_word_or_a_bare_modifier_is_not_a_chord() {
+    assert_eq!(menubar::query_keys("find"), None);
+    assert_eq!(menubar::query_keys("ctrl"), None);
+    assert_eq!(menubar::query_keys("ctrl shift"), None);
+}

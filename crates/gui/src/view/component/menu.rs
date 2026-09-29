@@ -59,8 +59,6 @@ pub(crate) enum Menu {
     Turn,
     /// The `···` on a card, by card id.
     Card(String),
-    /// The menu bar's tree, off macOS — see [`crate::view::menubar::button`].
-    App,
 }
 
 /// One row of a menu, and what picking it does.
