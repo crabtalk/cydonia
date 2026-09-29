@@ -16,9 +16,9 @@
 //! opens. One window and one document in front of it, so one target.
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use bezel::gpui::{App, Entity, Image, hash};
+use bezel::gpui::{App, ClipboardEntry, ClipboardItem, Entity, Image, WeakEntity, hash};
 use editor::AppExt as _;
-use editor::{Editor, ImageStore, Source};
+use editor::{Editor, ImageStore, Mode, PasteContent, PasteContext, Source};
 use image::{ImageFormat, imageops::FilterType};
 use markdown::BlockKind;
 use std::{
@@ -53,6 +53,115 @@ pub fn init(cx: &mut App) {
         keep,
         ..ImageStore::default()
     });
+    cx.set_paste_handler(paste);
+}
+
+/// A picture pasted into source mode, kept the way a rich paste keeps it and
+/// written in as an image line at the caret. In rich text, an image's web
+/// address goes in as a picture and is fetched into the same place — see
+/// [`fetch_into`]. Anything else is left to the editor.
+fn paste(
+    item: &ClipboardItem,
+    editor: &Entity<Editor>,
+    at: PasteContext<'_>,
+    cx: &mut App,
+) -> Option<PasteContent> {
+    if at.mode != Mode::Source {
+        let url = item.text()?.trim().to_owned();
+        if at.in_fence || !markdown::is_url(&url) || !markdown::is_image(&url) {
+            return None;
+        }
+        let base = at.base?.to_path_buf();
+        fetch_into(url.clone(), base, editor.downgrade(), cx);
+        return Some(PasteContent::Markdown(format!("![]({url})")));
+    }
+    let store = cx.image_store();
+    let urls: Vec<String> = item.entries().iter().find_map(|entry| {
+        let urls: Vec<String> = match entry {
+            ClipboardEntry::Image(image) => (store.keep)(Source::Bytes(image), editor, at.base, cx)
+                .into_iter()
+                .collect(),
+            ClipboardEntry::ExternalPaths(paths) => paths
+                .paths()
+                .iter()
+                .filter(|path| (store.accepts)(path))
+                .filter_map(|path| (store.keep)(Source::File(path), editor, at.base, cx))
+                .collect(),
+            ClipboardEntry::String(_) => Vec::new(),
+        };
+        (!urls.is_empty()).then_some(urls)
+    })?;
+    let lines: Vec<String> = urls.iter().map(|url| format!("![]({url})")).collect();
+    Some(PasteContent::Literal(lines.join("\n")))
+}
+
+/// The most a picture fetched off the web may weigh.
+const FETCH_LIMIT: u64 = 25 * 1024 * 1024;
+
+/// Fetch the picture at `url` into the assets beside `base`, then point every
+/// image block in `editor` still showing `url` at the copy. A fetch that fails
+/// leaves the web address where it is.
+fn fetch_into(url: String, base: PathBuf, editor: WeakEntity<Editor>, cx: &mut App) {
+    cx.spawn(async move |cx| {
+        let fetched = cx
+            .background_executor()
+            .spawn({
+                let url = url.clone();
+                async move {
+                    let path = url.split(['?', '#']).next().unwrap_or(&url);
+                    let extension = extension(Path::new(path))?;
+                    let agent = ureq::Agent::config_builder()
+                        .timeout_global(Some(std::time::Duration::from_secs(30)))
+                        .build()
+                        .new_agent();
+                    let bytes = agent
+                        .get(&url)
+                        .call()
+                        .ok()?
+                        .body_mut()
+                        .with_config()
+                        .limit(FETCH_LIMIT)
+                        .read_to_vec()
+                        .ok()?;
+                    image::guess_format(&bytes).ok()?;
+                    let dir = artifact::article::assets(&artifact::article::content(&base));
+                    let file = store(&dir, &bytes, &extension)?;
+                    let file = file.strip_prefix(&base).unwrap_or(&file).to_owned();
+                    Some(file.to_string_lossy().into_owned())
+                }
+            })
+            .await;
+        let Some(local) = fetched else {
+            return;
+        };
+        let _ = editor.update(cx, |editor, cx| {
+            let found: Vec<(usize, BlockKind)> = editor
+                .doc()
+                .blocks
+                .iter()
+                .enumerate()
+                .filter_map(|(ix, block)| match &block.kind {
+                    BlockKind::Image {
+                        url: held,
+                        alt,
+                        width,
+                    } if *held == url => Some((
+                        ix,
+                        BlockKind::Image {
+                            url: local.clone(),
+                            alt: alt.clone(),
+                            width: *width,
+                        },
+                    )),
+                    _ => None,
+                })
+                .collect();
+            for (ix, kind) in found {
+                editor.set_block(ix, kind, cx);
+            }
+        });
+    })
+    .detach();
 }
 
 /// Write `bytes` into `dir` under a name taken from their hash, so the same
