@@ -106,6 +106,10 @@ pub const CONTENT_TEXT_SIZE: (f32, f32) = (8., 40.);
 /// Monospace text, where nothing else has been said — the terminal's size.
 pub const MONO_TEXT_SIZE: f32 = 13.;
 
+/// The range [`Appearance::vibrancy`] is held to: how opaque the tint over
+/// the frosted window may be.
+pub const VIBRANCY: (f32, f32) = (0.5, 0.95);
+
 pub fn clamp_content_text_size(points: f32) -> f32 {
     if points.is_finite() {
         points.clamp(CONTENT_TEXT_SIZE.0, CONTENT_TEXT_SIZE.1)
@@ -164,6 +168,9 @@ pub struct Appearance {
     /// chroma is the shipped neutral, whatever the hue says.
     pub hue: f32,
     pub chroma: f32,
+    /// How opaque the tint over the frosted window is — bezel's
+    /// `Brand::vibrancy_alpha`. Clamped to [`VIBRANCY`] on the way in.
+    pub vibrancy: f32,
     /// How wide a page with nothing of its own to say is set. A page that
     /// *has* been decided about carries the decision in its own
     /// `properties.toml` and ignores this.
@@ -411,6 +418,7 @@ impl Default for Appearance {
             article_font: None,
             mono_font: None,
             hue: 0.,
+            vibrancy: bezel::theme::Theme::VIBRANCY_ALPHA,
             chroma: 0.,
             wide_pages: false,
             board_view: artifact::board::View::List,
@@ -440,6 +448,10 @@ impl Appearance {
             self.text_size.clamp(TEXT_SIZE.0, TEXT_SIZE.1)
         } else {
             Self::default().text_size
+        };
+        self.vibrancy = match self.vibrancy.is_finite() {
+            true => self.vibrancy.clamp(VIBRANCY.0, VIBRANCY.1),
+            false => Self::default().vibrancy,
         };
         self.article_font_size = self.article_font_size.map(clamp_content_text_size);
         self.mono_font_size = clamp_content_text_size(self.mono_font_size);
@@ -1109,6 +1121,7 @@ fn write_appearance(doc: &mut toml_edit::DocumentMut, appearance: &Appearance) -
         }
     }
     held["hue"] = toml_edit::value(f64::from(appearance.hue));
+    held["vibrancy"] = toml_edit::value(f64::from(appearance.vibrancy));
     held["chroma"] = toml_edit::value(f64::from(appearance.chroma));
     held["wide_pages"] = toml_edit::value(appearance.wide_pages);
     held["board_view"] = toml_edit::value(appearance.board_view.key());

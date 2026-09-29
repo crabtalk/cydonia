@@ -324,6 +324,7 @@ impl Workspace {
             article_font: self.fonts.body.as_ref().map(ToString::to_string),
             mono_font: self.fonts.mono.as_ref().map(ToString::to_string),
             hue: self.tint.hue,
+            vibrancy: self.settings.appearance.vibrancy,
             chroma: self.tint.chroma,
             wide_pages: self.wide_pages,
             board_view: self.board_view,
@@ -482,9 +483,17 @@ impl Workspace {
 
     /// The same window's other choice — see [`vibrancy`] and [`glass`] for
     /// what each state asks of the theme.
+    pub fn set_vibrancy(&mut self, alpha: f32, cx: &mut Context<Self>) {
+        let (min, max) = settings::VIBRANCY;
+        self.settings.appearance.vibrancy = alpha.clamp(min, max);
+        apply_transparency(self.opaque, self.settings.appearance.vibrancy, cx);
+        self.save_appearance();
+        cx.notify();
+    }
+
     pub fn set_opaque(&mut self, opaque: bool, cx: &mut Context<Self>) {
         self.opaque = Some(opaque);
-        apply_transparency(self.opaque, cx);
+        apply_transparency(self.opaque, self.settings.appearance.vibrancy, cx);
         self.save_appearance();
         cx.notify();
     }
@@ -965,9 +974,10 @@ pub fn apply_tint(tint: Tint, cx: &mut App) {
 ///
 /// Never [`Vibrancy::On`]: bezel's light palette carries no frosted tokens.
 /// [`Vibrancy::Auto`] is frost in dark and opaque in light; [`Vibrancy::Off`]
-/// is opaque in both.
+/// is opaque in both. Off macOS the window is always opaque.
 pub fn vibrancy(opaque: Option<bool>) -> Vibrancy {
     match opaque {
+        _ if !cfg!(target_os = "macos") => Vibrancy::Off,
         Some(true) => Vibrancy::Off,
         None | Some(false) => Vibrancy::Auto,
     }
@@ -994,8 +1004,9 @@ pub fn apply_wrap_code(wrap: bool, cx: &mut App) {
 /// Hand the answer to bezel, which reapplies it on every light/dark switch
 /// from then on — including the one the OS makes at sunset, which reaches
 /// nothing of ours.
-pub fn apply_transparency(opaque: Option<bool>, cx: &mut App) {
+pub fn apply_transparency(opaque: Option<bool>, vibrancy_alpha: f32, cx: &mut App) {
     cx.set_brand(Brand {
+        vibrancy_alpha,
         vibrancy: vibrancy(opaque),
         glass: glass(opaque),
         ..cx.brand()

@@ -121,7 +121,10 @@ impl SettingsWindow {
             .child(
                 theme
                     .group_box()
-                    .child(self.transparency_row(cx))
+                    .when(cfg!(target_os = "macos"), |group| {
+                        group.child(self.transparency_row(cx))
+                    })
+                    .children(self.vibrancy_row(cx))
                     .child(self.hue_row(cx))
                     .child(self.intensity_row(cx)),
             )
@@ -290,26 +293,43 @@ impl SettingsWindow {
         )
     }
 
-    /// How the caret behaves — the editor's and every field's alike.
+    /// The Editor section. The Cursor group's rows reach every text field, not
+    /// the editor alone.
     pub(super) fn editor_body(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
+        let group = |label: &'static str, rows: Vec<AnyElement>| {
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(settings::LABEL_GAP))
+                .child(theme.field_label(label))
+                .child(theme.group_box().children(rows))
+        };
         div()
             .flex()
             .flex_col()
-            .child(
-                theme
-                    .group_box()
-                    .child(self.cursor_row(cx))
-                    .child(self.caret_shape_row(cx))
-                    .child(self.caret_row(cx))
-                    .child(self.pages_row(cx))
-                    .child(self.wrap_row(cx))
-                    .child(self.source_paste_row(cx))
-                    .child(self.keep_pasted_row(cx))
-                    .child(self.highlight_row(cx))
-                    .child(self.selection_row(cx))
-                    .child(self.find_row(cx)),
-            )
+            .gap(px(settings::GROUP_GAP))
+            .child(group(
+                "Cursor",
+                vec![
+                    self.cursor_row(cx),
+                    self.caret_shape_row(cx),
+                    self.caret_row(cx),
+                ],
+            ))
+            .child(group("Layout", vec![self.pages_row(cx), self.wrap_row(cx)]))
+            .child(group(
+                "Colours",
+                vec![
+                    self.highlight_row(cx),
+                    self.selection_row(cx),
+                    self.find_row(cx),
+                ],
+            ))
+            .child(group(
+                "Pasting",
+                vec![self.source_paste_row(cx), self.keep_pasted_row(cx)],
+            ))
             .into_any_element()
     }
 
@@ -346,7 +366,8 @@ impl SettingsWindow {
                 "Paste pictures in plain text",
                 "A pasted picture, file or picture link goes in as an image line. Off pastes text.",
                 on,
-            ),
+            )
+            .first(true),
             cx,
             move |this, cx| {
                 this.workspace.update(cx, |workspace, cx| {
@@ -382,6 +403,7 @@ impl SettingsWindow {
         let current = self.workspace.read(cx).settings.appearance.highlight;
         let selected = Highlight::ALL.iter().position(|held| *held == current);
         self.color_row(
+            true,
             "highlight-color",
             "Highlight colour",
             markdown::highlight_solid(current.color(), &theme),
@@ -528,6 +550,7 @@ impl SettingsWindow {
             current.and_then(|current| paints.iter().position(|paint| *paint == current));
         let shown = current.map_or(system, |paint| paint.solid(&theme));
         self.color_row(
+            false,
             id,
             title,
             shown,
@@ -551,6 +574,7 @@ impl SettingsWindow {
     #[allow(clippy::too_many_arguments)]
     fn color_row(
         &self,
+        first: bool,
         id: &'static str,
         title: &'static str,
         shown: bezel::gpui::Hsla,
@@ -608,7 +632,7 @@ impl SettingsWindow {
             )
         });
         theme
-            .card_row(false)
+            .card_row(first)
             .child(div().flex_1().min_w_0().child(theme.row_title(title)))
             .child(well.children(card))
             .into_any_element()
@@ -628,7 +652,8 @@ impl SettingsWindow {
                 "Full width pages",
                 "Set articles across the pane rather than in a reading column.",
                 on,
-            ),
+            )
+            .first(true),
             cx,
             move |this, cx| {
                 this.workspace
@@ -686,7 +711,9 @@ impl SettingsWindow {
     /// when the intensity comes back up.
     pub(super) fn hue_row(&self, cx: &mut Context<Self>) -> AnyElement {
         let tint = self.workspace.read(cx).tint;
+        // First in its group where the transparency switch is not shown.
         self.tint_row(
+            !cfg!(target_os = "macos"),
             "hue",
             "Hue",
             "Which hue the greys are mixed from.",
@@ -699,9 +726,33 @@ impl SettingsWindow {
         )
     }
 
+    /// How much the frost shows through. Nothing where the window is not
+    /// frosted — opaque, or an appearance the palette does not frost.
+    fn vibrancy_row(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        use crate::model::settings::VIBRANCY;
+        if !Theme::of(cx).vibrancy {
+            return None;
+        }
+        let (min, max) = VIBRANCY;
+        let alpha = self.workspace.read(cx).settings.appearance.vibrancy;
+        // Right is more see-through, so the slider runs against the alpha.
+        Some(self.tint_row(
+            false,
+            "vibrancy",
+            "Transparency",
+            "How much of what is behind the window shows through.",
+            (max - alpha) / (max - min),
+            move |workspace, fraction, cx| {
+                workspace.set_vibrancy(max - fraction * (max - min), cx);
+            },
+            cx,
+        ))
+    }
+
     pub(super) fn intensity_row(&self, cx: &mut Context<Self>) -> AnyElement {
         let tint = self.workspace.read(cx).tint;
         self.tint_row(
+            false,
             "intensity",
             "Intensity",
             "How much of that hue they carry. None is the shipped neutral.",
@@ -714,8 +765,10 @@ impl SettingsWindow {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn tint_row(
         &self,
+        first: bool,
         id: &'static str,
         title: &'static str,
         note: &'static str,
@@ -725,7 +778,7 @@ impl SettingsWindow {
     ) -> AnyElement {
         let theme = Theme::of(cx).clone();
         theme
-            .card_row(false)
+            .card_row(first)
             .child(
                 div()
                     .flex_1()

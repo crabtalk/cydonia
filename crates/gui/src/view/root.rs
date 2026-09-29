@@ -44,7 +44,7 @@ use bezel::{
         WindowOptions, actions, div, point, prelude::*, px, size,
     },
     motion::{Fade, Painter},
-    theme::{Material, TextStyle, Theme, Typeset, appearance},
+    theme::{TextStyle, Theme, Typeset, appearance},
     ui::{
         floating::Floating,
         icons,
@@ -105,12 +105,6 @@ const SIDEBAR_WIDTH_MAX: f32 = 420.;
 /// The sidebar's gutter: a row's outer margin, and the padding inside it.
 pub(crate) const SIDEBAR_GUTTER: f32 = 8.;
 
-/// How thick each column's material sits. Nothing paints beneath them, so these
-/// are absolute and independent: the sidebar is chrome and holds no long-form
-/// text, the panel is the column whose text has to win against the desktop.
-const SIDEBAR_MATERIAL: Material = Material::Thick;
-const CONTENT_MATERIAL: Material = Material::UltraThick;
-
 /// The header strip's height, measured off `../desktop`: between Cursor's 34
 /// and Notion's 36, and tall enough to hold the 14px traffic lights macOS 26
 /// draws without crowding them.
@@ -149,27 +143,18 @@ pub(crate) fn composer_width() -> f32 {
     COMPOSER_COLUMN - 2. * COMPOSER_MARGIN
 }
 
-/// The sidebar's fill. Opaque, it takes the chrome tone: the light palette's
-/// `surface` is the grey the content plane's white sits inside, and falling
-/// back to the panel would leave the two columns one flat sheet.
+/// The sidebar's fill: bezel's frost tint, or opaque the chrome tone — the
+/// light palette's `surface` is the grey the content plane's white sits inside.
 pub(crate) fn sidebar_bg(theme: &Theme) -> Hsla {
-    material(theme, SIDEBAR_MATERIAL).unwrap_or(theme.surface)
+    match theme.vibrancy {
+        true => theme.vibrancy_tint(),
+        false => theme.surface,
+    }
 }
 
-/// The content column's fill.
+/// The content column's fill: bezel's frost tint, or opaque `bg`.
 pub(crate) fn content_bg(theme: &Theme) -> Hsla {
-    material(theme, CONTENT_MATERIAL).unwrap_or(theme.bg)
-}
-
-/// A column's own tint at one thickness on the material ladder, or nothing
-/// where the window shows no desktop to sit over. The ladder's tone is a
-/// neutral scrim and carries no appearance — tinting it is what makes dark
-/// glass dark.
-fn material(theme: &Theme, thickness: Material) -> Option<Hsla> {
-    theme.vibrancy.then(|| Hsla {
-        a: thickness.opacity(),
-        ..theme.vibrancy_tint()
-    })
+    theme.window_bg()
 }
 
 /// macOS traffic light diameter — AppKit owns the buttons and reports their

@@ -34,7 +34,7 @@ pub fn init(settings: &Settings, cx: &mut App) {
     appearance::init(look.mode, cx);
     // Before the window is opened: it reads its background appearance
     // on the way up, and vibrancy is what decides that.
-    workspace::apply_transparency(look.opaque, cx);
+    workspace::apply_transparency(look.opaque, look.vibrancy, cx);
     workspace::apply_tint(Tint::new(look.hue, look.chroma), cx);
     cx.set_caret_blink(look.cursor_blink);
     cx.set_caret_shape(look.caret_shape.into());

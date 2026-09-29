@@ -453,18 +453,20 @@ impl Cydonia {
             .bg(root::sidebar_bg(&theme))
             .flex()
             .flex_col()
-            // The fold out at the trailing edge: the lights float in the
-            // leading half of the strip, which is what leaves nothing there to
-            // pad them clear of.
+            // The fold just past the lights, where the pane header puts it
+            // with the sidebar folded: it keeps its place across the toggle.
             .child(
                 root::band()
-                    .justify_end()
+                    .pl(px(match window.is_fullscreen() {
+                        true => root::HEADER_INSET,
+                        false => root::TOOLBAR_INSET,
+                    }))
                     .when(chrome::has(CaptionSide::Left, window, cx), |band| {
                         band.pl_0()
                     })
                     .children(chrome::caption(CaptionSide::Left, window, cx))
-                    .child(chrome::grip("sidebar-grip", &self.drag, window))
-                    .child(self.fold_toggle(cx)),
+                    .child(self.fold_toggle(cx))
+                    .child(chrome::grip("sidebar-grip", &self.drag, window)),
             )
             .child(self.search_row(cx))
             .child(
