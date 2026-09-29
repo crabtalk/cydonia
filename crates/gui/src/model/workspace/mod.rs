@@ -308,6 +308,7 @@ impl Workspace {
             wide_pages: self.wide_pages,
             board_view: self.board_view,
             indent_project_rows: self.indent_project_rows,
+            settings_sidebar_fits: self.settings.appearance.settings_sidebar_fits,
             scrollbars: self.settings.appearance.scrollbars,
             sidebar_scrollbars: self.settings.appearance.sidebar_scrollbars,
             wrap_code: self.wrap_code,
@@ -658,6 +659,24 @@ impl Workspace {
         cx.notify();
     }
 
+    pub fn set_keep_pasted_images(&mut self, on: bool, cx: &mut Context<Self>) {
+        if settings::set_keep_pasted_images(on).is_err() {
+            return;
+        }
+        self.settings.keep_pasted_images = on;
+        crate::model::media::set_pasting(self.settings.pasting(), cx);
+        cx.notify();
+    }
+
+    pub fn set_paste_images_in_source(&mut self, on: bool, cx: &mut Context<Self>) {
+        if settings::set_paste_images_in_source(on).is_err() {
+            return;
+        }
+        self.settings.paste_images_in_source = on;
+        crate::model::media::set_pasting(self.settings.pasting(), cx);
+        cx.notify();
+    }
+
     pub fn set_auto_update(&mut self, on: bool, cx: &mut Context<Self>) {
         if settings::set_auto_update(on).is_err() {
             return;
@@ -703,6 +722,12 @@ impl Workspace {
     pub fn set_cursor_blink(&mut self, blink: bool, cx: &mut Context<Self>) {
         self.cursor_blink = blink;
         cx.set_caret_blink(blink);
+        self.save_appearance();
+        cx.notify();
+    }
+
+    pub fn set_settings_sidebar_fits(&mut self, fits: bool, cx: &mut Context<Self>) {
+        self.settings.appearance.settings_sidebar_fits = fits;
         self.save_appearance();
         cx.notify();
     }

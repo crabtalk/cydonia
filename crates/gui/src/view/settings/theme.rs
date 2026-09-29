@@ -29,8 +29,8 @@ const MODES: [AppearanceMode; 3] = [
 ];
 
 impl SettingsWindow {
-    /// The whole page: the mode it paints in, then the colours it mixes, the
-    /// size it reads at, and how the caret behaves in what it writes.
+    /// The whole page: the mode it paints in, then the colours it mixes and the
+    /// size it reads at.
     /// Typography is a group here rather than a section of its own — a size is
     /// a question about appearance.
     pub(super) fn appearance_body(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -45,7 +45,6 @@ impl SettingsWindow {
             .child(self.families_group(cx))
             .child(self.sidebar_group(cx))
             .child(self.scrollbars_group(cx))
-            .child(self.editor_group(cx))
             .children(self.boards_group(cx))
             .into_any_element()
     }
@@ -197,30 +196,48 @@ impl SettingsWindow {
 
     fn sidebar_group(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
-        let on = self.workspace.read(cx).indent_project_rows;
+        let workspace = self.workspace.read(cx);
+        let on = workspace.indent_project_rows;
+        let fits = workspace.settings.appearance.settings_sidebar_fits;
         div()
             .flex()
             .flex_col()
             .gap(px(settings::LABEL_GAP))
             .child(theme.field_label("Sidebar"))
             .child(
-                theme.group_box().child(
-                    self.switch_row(
+                theme
+                    .group_box()
+                    .child(
+                        self.switch_row(
+                            Switch::new(
+                                "indent-project-rows",
+                                "Indent project rows",
+                                "Inset items below each project heading by one icon width.",
+                                on,
+                            )
+                            .first(true),
+                            cx,
+                            move |this, cx| {
+                                this.workspace.update(cx, |workspace, cx| {
+                                    workspace.set_indent_project_rows(!on, cx);
+                                });
+                            },
+                        ),
+                    )
+                    .child(self.switch_row(
                         Switch::new(
-                            "indent-project-rows",
-                            "Indent project rows",
-                            "Inset items below each project heading by one icon width.",
-                            on,
-                        )
-                        .first(true),
+                            "settings-sidebar-fits",
+                            "Fit settings sidebar",
+                            "Size this window's sidebar to its widest section.",
+                            fits,
+                        ),
                         cx,
                         move |this, cx| {
                             this.workspace.update(cx, |workspace, cx| {
-                                workspace.set_indent_project_rows(!on, cx);
+                                workspace.set_settings_sidebar_fits(!fits, cx);
                             });
                         },
-                    ),
-                ),
+                    )),
             )
             .into_any_element()
     }
@@ -272,13 +289,11 @@ impl SettingsWindow {
     }
 
     /// How the caret behaves — the editor's and every field's alike.
-    fn editor_group(&self, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn editor_body(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         div()
             .flex()
             .flex_col()
-            .gap(px(settings::LABEL_GAP))
-            .child(theme.field_label("Editor"))
             .child(
                 theme
                     .group_box()
@@ -287,6 +302,8 @@ impl SettingsWindow {
                     .child(self.caret_row(cx))
                     .child(self.pages_row(cx))
                     .child(self.wrap_row(cx))
+                    .child(self.source_paste_row(cx))
+                    .child(self.keep_pasted_row(cx))
                     .child(self.highlight_row(cx))
                     .child(self.selection_row(cx))
                     .child(self.find_row(cx)),
@@ -314,6 +331,44 @@ impl SettingsWindow {
             move |this, cx| {
                 this.workspace
                     .update(cx, |workspace, cx| workspace.set_wrap_code(!on, cx));
+            },
+        )
+    }
+
+    /// Whether plain-text mode takes a pasted picture as an image line.
+    fn source_paste_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let on = self.workspace.read(cx).settings.paste_images_in_source;
+        self.switch_row(
+            Switch::new(
+                "paste-images-in-source",
+                "Paste pictures in plain text",
+                "A pasted picture, file or picture link goes in as an image line. Off pastes text.",
+                on,
+            ),
+            cx,
+            move |this, cx| {
+                this.workspace.update(cx, |workspace, cx| {
+                    workspace.set_paste_images_in_source(!on, cx)
+                });
+            },
+        )
+    }
+
+    /// Whether a picture's pasted web address is downloaded into the article.
+    fn keep_pasted_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let on = self.workspace.read(cx).settings.keep_pasted_images;
+        self.switch_row(
+            Switch::new(
+                "keep-pasted-images",
+                "Save pasted pictures",
+                "Download a pasted picture link into the article. Off keeps the link.",
+                on,
+            ),
+            cx,
+            move |this, cx| {
+                this.workspace.update(cx, |workspace, cx| {
+                    workspace.set_keep_pasted_images(!on, cx)
+                });
             },
         )
     }

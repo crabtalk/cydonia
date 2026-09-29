@@ -6,6 +6,7 @@
 pub enum Section {
     General,
     Appearance,
+    Editor,
     // With Appearance, because the two answer the same question — how the app
     // meets you — and before the three that answer what it does.
     Shortcuts,

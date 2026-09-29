@@ -56,7 +56,7 @@ fn main() -> Result<()> {
         // all until somebody asks for one — see [`gui::view::hotkey`].
         hotkey::apply(settings.shortcuts.activate(), cx);
         // Where a pasted screenshot's bytes go, which is the app's to say.
-        media::init(cx);
+        media::init(settings.pasting(), cx);
         // Ahead of the menu bar, which asks whether this build has an updater
         // at all before it puts an item there for one.
         update::init(settings.auto_update, cx);

@@ -427,7 +427,18 @@ impl Cydonia {
         }
         let at = (self.search.selected as isize + by).rem_euclid(len as isize) as usize;
         self.search.selected = at;
-        self.search.scroll.scroll_to_item(at);
+        // The list's children count a heading before each section.
+        let commands = self
+            .search
+            .shown()
+            .iter()
+            .filter(|pick| matches!(pick, Pick::Command(_)))
+            .count();
+        let headings = match at < commands {
+            true => 1,
+            false => usize::from(commands > 0) + 1,
+        };
+        self.search.scroll.scroll_to_item(at + headings);
         cx.notify();
     }
 
@@ -557,16 +568,34 @@ impl Cydonia {
         }
         let theme = Theme::of(cx).clone();
         let empty = self.search.query(cx).is_none();
-        let rows: Vec<AnyElement> = self
-            .search
-            .shown()
-            .into_iter()
-            .enumerate()
-            .map(|(ix, pick)| match pick {
+        let heading = |title: &'static str| {
+            div()
+                .px(px(8.))
+                .pt(px(6.))
+                .pb(px(4.))
+                .text_style(TextStyle::Subheadline)
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(theme.text_faint)
+                .child(title)
+                .into_any_element()
+        };
+        let mut rows: Vec<AnyElement> = Vec::new();
+        let mut section = None;
+        for (ix, pick) in self.search.shown().into_iter().enumerate() {
+            let title = match (pick, empty) {
+                (Pick::Command(_), _) => "Commands",
+                (Pick::Hit(_), true) => "Recent",
+                (Pick::Hit(_), false) => "Entries",
+            };
+            if section != Some(title) {
+                section = Some(title);
+                rows.push(heading(title));
+            }
+            rows.push(match pick {
                 Pick::Command(command) => self.command_row(ix, command, cx),
                 Pick::Hit(hit) => self.hit_row(ix, hit, cx),
-            })
-            .collect();
+            });
+        }
         let note = match (rows.is_empty(), self.search.searching, empty) {
             (false, ..) => None,
             (true, true, _) => Some("Searching…"),
@@ -627,17 +656,6 @@ impl Cydonia {
                                 )
                                 .child(div().flex_1().min_w_0().child(self.search.field.clone())),
                         )
-                        .children(empty.then(|| {
-                            div()
-                                .flex_none()
-                                .px(px(14.))
-                                .pt(px(8.))
-                                .pb(px(2.))
-                                .text_style(TextStyle::Subheadline)
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(theme.text_faint)
-                                .child("Recent")
-                        }))
                         .child(
                             div()
                                 .id("search-hits")

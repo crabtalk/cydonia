@@ -44,6 +44,15 @@ pub struct Settings {
     /// [`crate::model::notify`].
     #[serde(default = "notify_turns")]
     pub notify_turns: bool,
+    /// Whether a picture's web address pasted into a document is downloaded
+    /// into the document's `assets/` and pointed at there. Bare, beside the
+    /// switches above.
+    #[serde(default = "keep_pasted_images")]
+    pub keep_pasted_images: bool,
+    /// Whether a picture pasted in source mode goes in as an image line. Bare,
+    /// beside the switches above.
+    #[serde(default = "paste_images_in_source")]
+    pub paste_images_in_source: bool,
     /// How the interface is painted. The first table, so the bare keys above
     /// keep belonging to the document rather than to it.
     #[serde(default)]
@@ -165,6 +174,9 @@ pub struct Appearance {
     pub board_view: artifact::board::View,
     /// Indent sidebar items beneath project headings by one icon width.
     pub indent_project_rows: bool,
+    /// The settings window's section sidebar is as wide as its widest row
+    /// rather than a fixed width.
+    pub settings_sidebar_fits: bool,
     pub scrollbars: Scrollbars,
     pub sidebar_scrollbars: Scrollbars,
     /// Whether a line too long for a code block wraps rather than scrolling
@@ -325,6 +337,7 @@ impl Default for Appearance {
             wide_pages: false,
             board_view: artifact::board::View::Lanes,
             indent_project_rows: true,
+            settings_sidebar_fits: false,
             scrollbars: Scrollbars::default(),
             sidebar_scrollbars: Scrollbars::Never,
             // Off, the way every code editor ships it: indentation is
@@ -688,6 +701,14 @@ fn notify_turns() -> bool {
     true
 }
 
+fn keep_pasted_images() -> bool {
+    true
+}
+
+fn paste_images_in_source() -> bool {
+    true
+}
+
 /// The launchers that resolve a package name on every run. An installed
 /// agent's command is a path to an unpacked executable, which resolves nothing.
 const RUNNERS: [&str; 3] = ["npx", "bunx", "pnpx"];
@@ -711,6 +732,16 @@ impl Agent {
     }
 }
 
+impl Settings {
+    /// What becomes of a pasted picture — see [`crate::model::media`].
+    pub fn pasting(&self) -> crate::model::media::Pasting {
+        crate::model::media::Pasting {
+            fetch: self.keep_pasted_images,
+            source: self.paste_images_in_source,
+        }
+    }
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -718,6 +749,8 @@ impl Default for Settings {
             watch_bounce: watch_bounce(),
             auto_update: auto_update(),
             notify_turns: notify_turns(),
+            keep_pasted_images: keep_pasted_images(),
+            paste_images_in_source: paste_images_in_source(),
             appearance: Appearance::default(),
             shortcuts: Shortcuts::default(),
             features: Features::default(),
@@ -1002,6 +1035,7 @@ fn write_appearance(doc: &mut toml_edit::DocumentMut, appearance: &Appearance) -
     held["wide_pages"] = toml_edit::value(appearance.wide_pages);
     held["board_view"] = toml_edit::value(appearance.board_view.key());
     held["indent_project_rows"] = toml_edit::value(appearance.indent_project_rows);
+    held["settings_sidebar_fits"] = toml_edit::value(appearance.settings_sidebar_fits);
     held["scrollbars"] = toml_edit::value(appearance.scrollbars.key());
     held["caret_shape"] = toml_edit::value(appearance.caret_shape.key());
     held["sidebar_scrollbars"] = toml_edit::value(appearance.sidebar_scrollbars.key());
@@ -1120,6 +1154,22 @@ pub fn set_auto_update(on: bool) -> Result<()> {
 pub fn set_notify_turns(on: bool) -> Result<()> {
     edit(|doc| {
         doc["notify_turns"] = toml_edit::value(on);
+        Ok(true)
+    })
+}
+
+/// Switch downloading pasted web pictures on or off in the file.
+pub fn set_keep_pasted_images(on: bool) -> Result<()> {
+    edit(|doc| {
+        doc["keep_pasted_images"] = toml_edit::value(on);
+        Ok(true)
+    })
+}
+
+/// Switch pasting pictures in source mode on or off in the file.
+pub fn set_paste_images_in_source(on: bool) -> Result<()> {
+    edit(|doc| {
+        doc["paste_images_in_source"] = toml_edit::value(on);
         Ok(true)
     })
 }

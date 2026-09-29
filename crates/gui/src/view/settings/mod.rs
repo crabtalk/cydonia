@@ -58,6 +58,9 @@ mod shortcuts;
 mod theme;
 mod typography;
 
+/// The section sidebar's width, whatever its rows hold.
+const SIDEBAR_WIDTH: f32 = 180.;
+
 /// The gap between a group and the label of the next one, and between a label
 /// and the box under it.
 pub(super) const GROUP_GAP: f32 = 20.;
@@ -87,9 +90,10 @@ impl Section {
         matches!(self, Self::Agents)
     }
 
-    const ALL: [Self; 9] = [
+    const ALL: [Self; 10] = [
         Self::General,
         Self::Appearance,
+        Self::Editor,
         Self::Shortcuts,
         Self::Features,
         Self::Browser,
@@ -128,7 +132,7 @@ impl Section {
     /// group has none.
     fn group(self) -> Option<&'static str> {
         match self {
-            Self::General | Self::Appearance | Self::Shortcuts => None,
+            Self::General | Self::Appearance | Self::Editor | Self::Shortcuts => None,
             Self::Features | Self::Browser => Some("Workspace"),
             Self::Agents | Self::Mcp => Some("Agents"),
             Self::Performance | Self::Developer => Some("Advanced"),
@@ -139,6 +143,7 @@ impl Section {
         match self {
             Self::General => "General",
             Self::Appearance => "Appearance",
+            Self::Editor => "Editor",
             Self::Shortcuts => "Shortcuts",
             Self::Features => "Features",
             Self::Agents => "Agents",
@@ -163,7 +168,9 @@ impl Section {
             }
             Self::Browser => Some("The browser tabs in the right panel."),
             Self::Developer => Some("Switches for looking at what has not happened yet."),
-            Self::General | Self::Appearance | Self::Agents | Self::Performance => None,
+            Self::General | Self::Appearance | Self::Editor | Self::Agents | Self::Performance => {
+                None
+            }
         }
     }
 
@@ -172,6 +179,7 @@ impl Section {
             // The gear macOS itself puts on General.
             Self::General => icons::account::Settings,
             Self::Appearance => icons::weather::Sun,
+            Self::Editor => icons::text::SquarePen,
             Self::Shortcuts => icons::development::Command,
             Self::Features => icons::account::SlidersHorizontal,
             Self::Agents => icons::development::Bot,
@@ -652,6 +660,7 @@ impl SettingsWindow {
             Section::Agents => self.load(cx),
             Section::General
             | Section::Appearance
+            | Section::Editor
             | Section::Shortcuts
             | Section::Features
             | Section::Mcp
@@ -664,11 +673,13 @@ impl SettingsWindow {
 
     fn sidebar(&self, cx: &Context<Self>) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
-        let features = &self.workspace.read(cx).settings.features;
+        let settings = &self.workspace.read(cx).settings;
+        let features = &settings.features;
+        let fits = settings.appearance.settings_sidebar_fits;
         let painter = Painter::of(cx);
-        // As wide as its widest row.
         div()
             .flex_none()
+            .when(!fits, |el| el.w(px(SIDEBAR_WIDTH)))
             .h_full()
             .bg(theme.surface)
             .border_r_1()
@@ -807,6 +818,7 @@ impl Render for SettingsWindow {
                             .child(match self.section {
                                 Section::General => self.general_body(cx),
                                 Section::Appearance => self.appearance_body(cx),
+                                Section::Editor => self.editor_body(cx),
                                 Section::Shortcuts => self.shortcuts_body(cx),
                                 Section::Features => self.features_body(cx),
                                 Section::Agents => self.agents_body(cx),

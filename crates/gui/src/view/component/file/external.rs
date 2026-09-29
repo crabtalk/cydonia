@@ -74,6 +74,17 @@ pub(crate) fn hide(opens: Opens, app: &Path, hidden: bool) {
 #[cfg(target_os = "macos")]
 const APPLICATIONS: &str = r#"
 ObjC.import('AppKit');
+// The icon drawn at the size it is shown, so AppKit picks the rep made for
+// that size rather than handing over its 1024px one.
+function drawn(image) {
+    const px = 36; // the largest shown, 18pt, at 2x
+    const rep = $.NSBitmapImageRep.alloc.initWithBitmapDataPlanesPixelsWidePixelsHighBitsPerSampleSamplesPerPixelHasAlphaIsPlanarColorSpaceNameBytesPerRowBitsPerPixel(null, px, px, 8, 4, true, false, $.NSDeviceRGBColorSpace, 0, 0);
+    $.NSGraphicsContext.saveGraphicsState;
+    $.NSGraphicsContext.setCurrentContext($.NSGraphicsContext.graphicsContextWithBitmapImageRep(rep));
+    image.drawInRectFromRectOperationFraction($.NSMakeRect(0, 0, px, px), $.NSZeroRect, $.NSCompositingOperationCopy, 1.0);
+    $.NSGraphicsContext.restoreGraphicsState;
+    return ObjC.unwrap(rep.representationUsingTypeProperties($.NSBitmapImageFileTypePNG, $({})).base64EncodedStringWithOptions(0));
+}
 function run(argv) {
     const workspace = $.NSWorkspace.sharedWorkspace;
     const urls = workspace.URLsForApplicationsToOpenURL($.NSURL.fileURLWithPath(argv[0]));
@@ -83,11 +94,7 @@ function run(argv) {
         if (!path || seen.has(path)) return;
         seen.add(path);
         let icon = '';
-        try {
-            const image = workspace.iconForFile(path);
-            const bitmap = $.NSBitmapImageRep.imageRepWithData(image.TIFFRepresentation);
-            icon = ObjC.unwrap(bitmap.representationUsingTypeProperties($.NSBitmapImageFileTypePNG, $({})).base64EncodedStringWithOptions(0));
-        } catch (_) {}
+        try { icon = drawn(workspace.iconForFile(path)); } catch (_) {}
         apps.push({name: name, path: path, kind: kind || '', system: !!system, icon: icon});
     }
     const system = workspace.URLForApplicationToOpenURL($.NSURL.fileURLWithPath(argv[0]));
@@ -119,6 +126,17 @@ function run(argv) {
 #[cfg(target_os = "macos")]
 const IMAGE_APPLICATIONS: &str = r#"
 ObjC.import('AppKit');
+// The icon drawn at the size it is shown, so AppKit picks the rep made for
+// that size rather than handing over its 1024px one.
+function drawn(image) {
+    const px = 36; // the largest shown, 18pt, at 2x
+    const rep = $.NSBitmapImageRep.alloc.initWithBitmapDataPlanesPixelsWidePixelsHighBitsPerSampleSamplesPerPixelHasAlphaIsPlanarColorSpaceNameBytesPerRowBitsPerPixel(null, px, px, 8, 4, true, false, $.NSDeviceRGBColorSpace, 0, 0);
+    $.NSGraphicsContext.saveGraphicsState;
+    $.NSGraphicsContext.setCurrentContext($.NSGraphicsContext.graphicsContextWithBitmapImageRep(rep));
+    image.drawInRectFromRectOperationFraction($.NSMakeRect(0, 0, px, px), $.NSZeroRect, $.NSCompositingOperationCopy, 1.0);
+    $.NSGraphicsContext.restoreGraphicsState;
+    return ObjC.unwrap(rep.representationUsingTypeProperties($.NSBitmapImageFileTypePNG, $({})).base64EncodedStringWithOptions(0));
+}
 function run(argv) {
     const workspace = $.NSWorkspace.sharedWorkspace;
     const file = $.NSURL.fileURLWithPath(argv[0]);
@@ -130,11 +148,7 @@ function run(argv) {
         if (seen.has(path)) return;
         seen.add(path);
         let icon = '';
-        try {
-            const image = workspace.iconForFile(path);
-            const bitmap = $.NSBitmapImageRep.imageRepWithData(image.TIFFRepresentation);
-            icon = ObjC.unwrap(bitmap.representationUsingTypeProperties($.NSBitmapImageFileTypePNG, $({})).base64EncodedStringWithOptions(0));
-        } catch (_) {}
+        try { icon = drawn(workspace.iconForFile(path)); } catch (_) {}
         apps.push({name: ObjC.unwrap(url.lastPathComponent.stringByDeletingPathExtension), path: path, kind: kind || '', system: !!system, icon: icon});
     }
     add(workspace.URLForApplicationToOpenURL(file), true);
