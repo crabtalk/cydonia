@@ -173,6 +173,9 @@ pub struct Appearance {
     pub selection: Option<Highlight>,
     /// The wash find matches paint in. Unset keeps the accent.
     pub search: Option<Highlight>,
+    /// The caret's colour. Unset keeps the palette's.
+    pub caret: Option<Highlight>,
+    pub caret_shape: CaretShape,
 }
 
 /// A highlight colour, by the name [`markdown::HighlightColor`] stores.
@@ -219,6 +222,46 @@ impl Highlight {
 
     pub fn key(self) -> &'static str {
         self.color().name()
+    }
+}
+
+/// The caret's shape in text: fields, the editor and code alike.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CaretShape {
+    #[default]
+    Bar,
+    Block,
+    Underline,
+}
+
+impl From<CaretShape> for bezel::ui::input::CaretShape {
+    fn from(value: CaretShape) -> Self {
+        match value {
+            CaretShape::Bar => Self::Bar,
+            CaretShape::Block => Self::Block,
+            CaretShape::Underline => Self::Underline,
+        }
+    }
+}
+
+impl CaretShape {
+    pub const ALL: [Self; 3] = [Self::Bar, Self::Block, Self::Underline];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Bar => "Bar",
+            Self::Block => "Block",
+            Self::Underline => "Underline",
+        }
+    }
+
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Bar => "bar",
+            Self::Block => "block",
+            Self::Underline => "underline",
+        }
     }
 }
 
@@ -290,6 +333,8 @@ impl Default for Appearance {
             highlight: Highlight::default(),
             selection: None,
             search: None,
+            caret: None,
+            caret_shape: CaretShape::default(),
         }
     }
 }
@@ -866,12 +911,14 @@ fn write_appearance(doc: &mut toml_edit::DocumentMut, appearance: &Appearance) -
     held["board_view"] = toml_edit::value(appearance.board_view.key());
     held["indent_project_rows"] = toml_edit::value(appearance.indent_project_rows);
     held["scrollbars"] = toml_edit::value(appearance.scrollbars.key());
+    held["caret_shape"] = toml_edit::value(appearance.caret_shape.key());
     held["sidebar_scrollbars"] = toml_edit::value(appearance.sidebar_scrollbars.key());
     held["wrap_code"] = toml_edit::value(appearance.wrap_code);
     held["highlight"] = toml_edit::value(appearance.highlight.key());
     for (key, color) in [
         ("selection", appearance.selection),
         ("search", appearance.search),
+        ("caret", appearance.caret),
     ] {
         match color {
             Some(color) => held[key] = toml_edit::value(color.key()),

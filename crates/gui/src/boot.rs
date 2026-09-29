@@ -25,6 +25,7 @@ pub fn init(settings: &Settings, cx: &mut App) {
         mono: look.mono_font.clone().map(Into::into),
     });
     fonts::init_selection(look.selection.map(|selection| selection.color()));
+    fonts::init_caret(look.caret.map(|caret| caret.color()));
     theme::set_palette(fonts::palette, cx);
     appearance::init(look.mode, cx);
     // Before the window is opened: it reads its background appearance
@@ -32,6 +33,7 @@ pub fn init(settings: &Settings, cx: &mut App) {
     workspace::apply_transparency(look.opaque, cx);
     workspace::apply_tint(Tint::new(look.hue, look.chroma), cx);
     input::set_caret_blink(look.cursor_blink, cx);
+    input::set_caret_shape(look.caret_shape.into(), cx);
     theme::set_base_text_size(look.text_size, cx);
     workspace::apply_wrap_code(look.wrap_code, cx);
     markdown::set_source_style(cx, article::source_style);

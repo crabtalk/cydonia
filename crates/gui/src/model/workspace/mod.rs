@@ -313,6 +313,8 @@ impl Workspace {
             highlight: self.settings.appearance.highlight,
             selection: self.settings.appearance.selection,
             search: self.settings.appearance.search,
+            caret: self.settings.appearance.caret,
+            caret_shape: self.settings.appearance.caret_shape,
         });
     }
 
@@ -704,6 +706,13 @@ impl Workspace {
         cx.notify();
     }
 
+    pub fn set_caret_shape(&mut self, shape: settings::CaretShape, cx: &mut Context<Self>) {
+        self.settings.appearance.caret_shape = shape;
+        input::set_caret_shape(shape.into(), cx);
+        self.save_appearance();
+        cx.notify();
+    }
+
     pub fn set_text_size(&mut self, points: f32, cx: &mut Context<Self>) {
         self.text_size = points;
         theme::set_base_text_size(points, cx);
@@ -808,6 +817,13 @@ impl Workspace {
     pub fn set_selection(&mut self, value: Option<settings::Highlight>, cx: &mut Context<Self>) {
         self.settings.appearance.selection = value;
         crate::model::fonts::set_selection(value.map(settings::Highlight::color), cx);
+        self.save_appearance();
+        cx.notify();
+    }
+
+    pub fn set_caret(&mut self, value: Option<settings::Highlight>, cx: &mut Context<Self>) {
+        self.settings.appearance.caret = value;
+        crate::model::fonts::set_caret(value.map(settings::Highlight::color), cx);
         self.save_appearance();
         cx.notify();
     }

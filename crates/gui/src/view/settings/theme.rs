@@ -285,6 +285,8 @@ impl SettingsWindow {
                 theme
                     .group_box()
                     .child(self.cursor_row(cx))
+                    .child(self.caret_shape_row(cx))
+                    .child(self.caret_row(cx))
                     .child(self.pages_row(cx))
                     .child(self.wrap_row(cx))
                     .child(self.highlight_row(cx))
@@ -372,6 +374,62 @@ impl SettingsWindow {
             system,
             cx,
             |workspace, value, cx| workspace.set_selection(value, cx),
+        )
+    }
+
+    fn caret_shape_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        use crate::model::settings::CaretShape;
+        let theme = Theme::of(cx).clone();
+        let current = self.workspace.read(cx).settings.appearance.caret_shape;
+        theme
+            .card_row(false)
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .child(theme.row_title("Cursor shape")),
+            )
+            .child(
+                div()
+                    .flex()
+                    .gap(px(2.))
+                    .children(CaretShape::ALL.into_iter().enumerate().map(|(ix, value)| {
+                        div()
+                            .id(("caret-shape", ix))
+                            .px(px(8.))
+                            .py(px(4.))
+                            .rounded(px(Theme::control_radius()))
+                            .text_style(TextStyle::Callout)
+                            .cursor_pointer()
+                            .when(current == value, |el| el.bg(theme.element_active))
+                            .when(current != value, |el| {
+                                el.text_color(theme.text_muted)
+                                    .hover(|el| el.bg(theme.element_hover))
+                            })
+                            .child(value.label())
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.workspace.update(cx, |workspace, cx| {
+                                    workspace.set_caret_shape(value, cx)
+                                });
+                                cx.notify();
+                            }))
+                    })),
+            )
+            .into_any_element()
+    }
+
+    /// The caret's colour, or the palette's own.
+    fn caret_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        let current = self.workspace.read(cx).settings.appearance.caret;
+        let system = Theme::for_appearance(theme.appearance).caret;
+        self.wash_row(
+            "caret-color",
+            "Cursor colour",
+            current,
+            system,
+            cx,
+            |workspace, value, cx| workspace.set_caret(value, cx),
         )
     }
 

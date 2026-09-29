@@ -32,6 +32,9 @@ static FAMILIES: RwLock<Option<Families>> = RwLock::new(None);
 /// reason: [`palette`] has no context to read it from.
 static SELECTION: RwLock<Option<markdown::HighlightColor>> = RwLock::new(None);
 
+/// The caret colour the reader picked, held the same way.
+static CARET: RwLock<Option<markdown::HighlightColor>> = RwLock::new(None);
+
 fn held() -> Families {
     FAMILIES
         .read()
@@ -65,6 +68,9 @@ pub fn palette(appearance: Appearance) -> Theme {
     if let Some(color) = SELECTION.read().ok().and_then(|held| *held) {
         theme.selection = markdown::default_highlight(color, &theme);
     }
+    if let Some(color) = CARET.read().ok().and_then(|held| *held) {
+        theme.caret = markdown::highlight_solid(color, &theme);
+    }
     theme
 }
 
@@ -96,6 +102,20 @@ pub fn init_selection(color: Option<markdown::HighlightColor>) {
 /// Record the selection wash and rebuild the palette under it.
 pub fn set_selection(color: Option<markdown::HighlightColor>, cx: &mut App) {
     init_selection(color);
+    let appearance = Theme::of(cx).appearance;
+    Theme::install(appearance, cx);
+}
+
+/// Record the caret colour without repainting — for startup.
+pub fn init_caret(color: Option<markdown::HighlightColor>) {
+    if let Ok(mut held) = CARET.write() {
+        *held = color;
+    }
+}
+
+/// Record the caret colour and rebuild the palette under it.
+pub fn set_caret(color: Option<markdown::HighlightColor>, cx: &mut App) {
+    init_caret(color);
     let appearance = Theme::of(cx).appearance;
     Theme::install(appearance, cx);
 }
