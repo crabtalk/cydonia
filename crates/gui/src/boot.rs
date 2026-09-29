@@ -24,6 +24,7 @@ pub fn init(settings: &Settings, cx: &mut App) {
         body: look.article_font.clone().map(Into::into),
         mono: look.mono_font.clone().map(Into::into),
     });
+    fonts::init_selection(look.selection.map(|selection| selection.color()));
     theme::set_palette(fonts::palette, cx);
     appearance::init(look.mode, cx);
     // Before the window is opened: it reads its background appearance
@@ -37,6 +38,8 @@ pub fn init(settings: &Settings, cx: &mut App) {
     markdown::set_marks(cx, article::marks());
     article::set_highlight(look.highlight.color());
     markdown::set_mark_paint(cx, article::mark_paint);
+    article::set_search(look.search.map(|search| search.color()));
+    markdown::set_find_paint(cx, article::find_paint);
     // The whole catalogue, not the cached subset: the fence picker lists
     // what this list holds, and a picker that offered only what had already
     // been downloaded could not be used to ask for anything else. Naming a

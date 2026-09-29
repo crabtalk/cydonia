@@ -287,7 +287,9 @@ impl SettingsWindow {
                     .child(self.cursor_row(cx))
                     .child(self.pages_row(cx))
                     .child(self.wrap_row(cx))
-                    .child(self.highlight_row(cx)),
+                    .child(self.highlight_row(cx))
+                    .child(self.selection_row(cx))
+                    .child(self.find_row(cx)),
             )
             .into_any_element()
     }
@@ -351,6 +353,85 @@ impl SettingsWindow {
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.workspace
                                     .update(cx, |workspace, cx| workspace.set_highlight(value, cx));
+                                cx.notify();
+                            }))
+                    })),
+            )
+            .into_any_element()
+    }
+
+    /// The colour selected text is washed in, or the palette's own.
+    fn selection_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        let current = self.workspace.read(cx).settings.appearance.selection;
+        let system = Theme::for_appearance(theme.appearance).selection;
+        self.wash_row(
+            "selection-color",
+            "Selection colour",
+            current,
+            system,
+            cx,
+            |workspace, value, cx| workspace.set_selection(value, cx),
+        )
+    }
+
+    /// The colour find matches are washed in, or the accent.
+    fn find_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        let current = self.workspace.read(cx).settings.appearance.search;
+        let system = markdown::default_find(&theme).1;
+        self.wash_row(
+            "search-color",
+            "Search results colour",
+            current,
+            system,
+            cx,
+            |workspace, value, cx| workspace.set_search(value, cx),
+        )
+    }
+
+    /// A swatch row over the highlight colours, led by the default's own.
+    fn wash_row(
+        &self,
+        id: &'static str,
+        title: &'static str,
+        current: Option<crate::model::settings::Highlight>,
+        system: bezel::gpui::Hsla,
+        cx: &mut Context<Self>,
+        set: fn(&mut Workspace, Option<crate::model::settings::Highlight>, &mut Context<Workspace>),
+    ) -> AnyElement {
+        use crate::model::settings::Highlight;
+        let theme = Theme::of(cx).clone();
+        let choices = std::iter::once(None).chain(Highlight::ALL.into_iter().map(Some));
+        theme
+            .card_row(false)
+            .child(div().flex_1().min_w_0().child(theme.row_title(title)))
+            .child(
+                div()
+                    .flex()
+                    .gap(px(6.))
+                    .children(choices.enumerate().map(|(ix, value)| {
+                        div()
+                            .id((id, ix))
+                            .size(px(18.))
+                            .rounded_full()
+                            .cursor_pointer()
+                            .bg(match value {
+                                Some(value) => markdown::highlight_solid(value.color(), &theme),
+                                None => system,
+                            })
+                            .border_2()
+                            .border_color(match current == value {
+                                true => theme.accent,
+                                false => bezel::gpui::transparent_black(),
+                            })
+                            .tooltip(move |window, cx| {
+                                let label = value.map_or("Default", Highlight::label);
+                                bezel::ui::tooltip::Tooltip::text(label, window, cx)
+                            })
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.workspace
+                                    .update(cx, |workspace, cx| set(workspace, value, cx));
                                 cx.notify();
                             }))
                     })),

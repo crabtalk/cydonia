@@ -169,6 +169,10 @@ pub struct Appearance {
     pub wrap_code: bool,
     /// The wash `==text==` paints in.
     pub highlight: Highlight,
+    /// The wash selected text paints in. Unset keeps the palette's.
+    pub selection: Option<Highlight>,
+    /// The wash find matches paint in. Unset keeps the accent.
+    pub search: Option<Highlight>,
 }
 
 /// A highlight colour, by the name [`markdown::HighlightColor`] stores.
@@ -284,6 +288,8 @@ impl Default for Appearance {
             // edge — that is the cost, and the switch is the way back.
             wrap_code: false,
             highlight: Highlight::default(),
+            selection: None,
+            search: None,
         }
     }
 }
@@ -863,6 +869,17 @@ fn write_appearance(doc: &mut toml_edit::DocumentMut, appearance: &Appearance) -
     held["sidebar_scrollbars"] = toml_edit::value(appearance.sidebar_scrollbars.key());
     held["wrap_code"] = toml_edit::value(appearance.wrap_code);
     held["highlight"] = toml_edit::value(appearance.highlight.key());
+    for (key, color) in [
+        ("selection", appearance.selection),
+        ("search", appearance.search),
+    ] {
+        match color {
+            Some(color) => held[key] = toml_edit::value(color.key()),
+            None => {
+                held.remove(key);
+            }
+        }
+    }
     Ok(())
 }
 

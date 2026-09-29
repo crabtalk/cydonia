@@ -28,6 +28,10 @@ pub struct Families {
 
 static FAMILIES: RwLock<Option<Families>> = RwLock::new(None);
 
+/// The selection wash the reader picked, held beside the families for the same
+/// reason: [`palette`] has no context to read it from.
+static SELECTION: RwLock<Option<markdown::HighlightColor>> = RwLock::new(None);
+
 fn held() -> Families {
     FAMILIES
         .read()
@@ -58,6 +62,9 @@ pub fn palette(appearance: Appearance) -> Theme {
     if let Some(mono) = families.mono {
         theme.font_mono = mono;
     }
+    if let Some(color) = SELECTION.read().ok().and_then(|held| *held) {
+        theme.selection = markdown::default_highlight(color, &theme);
+    }
     theme
 }
 
@@ -75,6 +82,20 @@ pub fn init(families: Families) {
 /// the resolved appearance has not moved — and it never has here.
 pub fn set(families: Families, cx: &mut App) {
     init(families);
+    let appearance = Theme::of(cx).appearance;
+    Theme::install(appearance, cx);
+}
+
+/// Record the selection wash without repainting — for startup.
+pub fn init_selection(color: Option<markdown::HighlightColor>) {
+    if let Ok(mut held) = SELECTION.write() {
+        *held = color;
+    }
+}
+
+/// Record the selection wash and rebuild the palette under it.
+pub fn set_selection(color: Option<markdown::HighlightColor>, cx: &mut App) {
+    init_selection(color);
     let appearance = Theme::of(cx).appearance;
     Theme::install(appearance, cx);
 }

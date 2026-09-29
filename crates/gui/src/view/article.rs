@@ -117,6 +117,31 @@ pub fn mark_paint(name: &str, theme: &Theme) -> Option<markdown::MarkPaint> {
     })
 }
 
+/// The find wash's colour, as an index into [`HighlightColor::ALL`] plus one;
+/// zero keeps [`markdown::default_find`].
+static SEARCH: AtomicUsize = AtomicUsize::new(0);
+
+pub fn set_search(color: Option<HighlightColor>) {
+    let ix = color
+        .and_then(|color| HighlightColor::ALL.iter().position(|held| *held == color))
+        .map_or(0, |ix| ix + 1);
+    SEARCH.store(ix, Ordering::Relaxed);
+}
+
+/// How find matches paint: the colour [`set_search`] chose, the current match
+/// a step stronger than the rest.
+pub fn find_paint(theme: &Theme) -> (bezel::gpui::Hsla, bezel::gpui::Hsla) {
+    let Some(color) = SEARCH
+        .load(Ordering::Relaxed)
+        .checked_sub(1)
+        .and_then(|ix| HighlightColor::ALL.get(ix))
+    else {
+        return markdown::default_find(theme);
+    };
+    let wash = markdown::default_highlight(*color, theme);
+    (wash, wash.opacity((wash.a + 0.25).min(1.)))
+}
+
 fn source_offset(editor: &editor::Editor, cx: &App) -> f32 {
     if editor.mode() != Mode::Source {
         return 0.;

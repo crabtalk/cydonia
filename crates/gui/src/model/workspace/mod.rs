@@ -311,6 +311,8 @@ impl Workspace {
             sidebar_scrollbars: self.settings.appearance.sidebar_scrollbars,
             wrap_code: self.wrap_code,
             highlight: self.settings.appearance.highlight,
+            selection: self.settings.appearance.selection,
+            search: self.settings.appearance.search,
         });
     }
 
@@ -798,6 +800,21 @@ impl Workspace {
     pub fn set_highlight(&mut self, value: settings::Highlight, cx: &mut Context<Self>) {
         self.settings.appearance.highlight = value;
         crate::view::article::set_highlight(value.color());
+        self.save_appearance();
+        cx.refresh_windows();
+        cx.notify();
+    }
+
+    pub fn set_selection(&mut self, value: Option<settings::Highlight>, cx: &mut Context<Self>) {
+        self.settings.appearance.selection = value;
+        crate::model::fonts::set_selection(value.map(settings::Highlight::color), cx);
+        self.save_appearance();
+        cx.notify();
+    }
+
+    pub fn set_search(&mut self, value: Option<settings::Highlight>, cx: &mut Context<Self>) {
+        self.settings.appearance.search = value;
+        crate::view::article::set_search(value.map(settings::Highlight::color));
         self.save_appearance();
         cx.refresh_windows();
         cx.notify();
