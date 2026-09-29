@@ -1,11 +1,13 @@
 //! The appearance section: which of the three modes the app paints in.
 
+use crate::model::settings::Paint;
 use crate::{
     model::workspace::Workspace,
     view::settings::{self, SettingsWindow, Switch},
 };
 use artifact::board::View;
 use bezel::theme::AppExt as _;
+use bezel::ui::{AppExt as _, color::Swatch};
 use bezel::{
     gpui::{AnyElement, Context, DragMoveEvent, Empty, div, prelude::*, px},
     theme::{TextStyle, Theme, Tint, Typeset, appearance::AppearanceMode},
@@ -378,41 +380,22 @@ impl SettingsWindow {
         use crate::model::settings::Highlight;
         let theme = Theme::of(cx).clone();
         let current = self.workspace.read(cx).settings.appearance.highlight;
-        theme
-            .card_row(false)
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .child(theme.row_title("Highlight colour")),
-            )
-            .child(
-                div()
-                    .flex()
-                    .gap(px(6.))
-                    .children(Highlight::ALL.into_iter().enumerate().map(|(ix, value)| {
-                        div()
-                            .id(("highlight-color", ix))
-                            .size(px(18.))
-                            .rounded_full()
-                            .cursor_pointer()
-                            .bg(markdown::highlight_solid(value.color(), &theme))
-                            .border_2()
-                            .border_color(match current == value {
-                                true => theme.accent,
-                                false => bezel::gpui::transparent_black(),
-                            })
-                            .tooltip(move |window, cx| {
-                                bezel::ui::tooltip::Tooltip::text(value.label(), window, cx)
-                            })
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.workspace
-                                    .update(cx, |workspace, cx| workspace.set_highlight(value, cx));
-                                cx.notify();
-                            }))
-                    })),
-            )
-            .into_any_element()
+        let selected = Highlight::ALL.iter().position(|held| *held == current);
+        self.color_row(
+            "highlight-color",
+            "Highlight colour",
+            markdown::highlight_solid(current.color(), &theme),
+            highlight_swatches(),
+            selected,
+            None,
+            cx,
+            |this, ix, cx| {
+                if let Some(value) = ix.map(|ix| Highlight::ALL[ix]) {
+                    this.workspace
+                        .update(cx, |workspace, cx| workspace.set_highlight(value, cx));
+                }
+            },
+        )
     }
 
     /// The colour selected text is washed in, or the palette's own.
@@ -432,8 +415,56 @@ impl SettingsWindow {
 
     fn caret_shape_row(&self, cx: &mut Context<Self>) -> AnyElement {
         use crate::model::settings::CaretShape;
+        use bezel::ui::popover;
+        const ID: &str = "caret-shape";
         let theme = Theme::of(cx).clone();
-        let current = self.workspace.read(cx).settings.appearance.caret_shape;
+        let appearance = &self.workspace.read(cx).settings.appearance;
+        let current = appearance.caret_shape;
+        let caret = appearance
+            .caret
+            .map_or(theme.caret, |paint| paint.solid(&theme));
+        let trigger = popover::menu_trigger_matching(
+            theme
+                .select_trigger_with(
+                    Some(div().text_color(caret).child(current.glyph())),
+                    current.label(),
+                )
+                .gap(px(8.))
+                .id(ID)
+                .relative(),
+            |this: &mut Self| &mut this.picker,
+            |open| *open == ID,
+            |_| ID,
+            cx,
+        );
+        let card = (self.picker.get() == Some(&ID)).then(|| {
+            let rows = CaretShape::ALL.into_iter().enumerate().map(|(ix, shape)| {
+                popover::menu_row(&theme, shape == current, None)
+                    .id((ID, ix))
+                    .cursor_pointer()
+                    .hover(|row| row.bg(theme.element_hover))
+                    .child(div().text_color(caret).child(shape.glyph()))
+                    .child(shape.label())
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.workspace
+                            .update(cx, |workspace, cx| workspace.set_caret_shape(shape, cx));
+                        popover::close_popup(this, cx, |this: &mut Self| &mut this.picker);
+                    }))
+            });
+            popover::anchored_menu_below_end(
+                "caret-shape-menu",
+                popover::dismiss_on_out(
+                    popover::popover_card(&theme)
+                        .flex()
+                        .flex_col()
+                        .children(rows),
+                    |this: &mut Self| &mut this.picker,
+                    cx,
+                )
+                .into_any_element(),
+                self.picker.closing_since(),
+            )
+        });
         theme
             .card_row(false)
             .child(
@@ -442,32 +473,7 @@ impl SettingsWindow {
                     .min_w_0()
                     .child(theme.row_title("Cursor shape")),
             )
-            .child(
-                div()
-                    .flex()
-                    .gap(px(2.))
-                    .children(CaretShape::ALL.into_iter().enumerate().map(|(ix, value)| {
-                        div()
-                            .id(("caret-shape", ix))
-                            .px(px(8.))
-                            .py(px(4.))
-                            .rounded(px(Theme::control_radius()))
-                            .text_style(TextStyle::Callout)
-                            .cursor_pointer()
-                            .when(current == value, |el| el.bg(theme.element_active))
-                            .when(current != value, |el| {
-                                el.text_color(theme.text_muted)
-                                    .hover(|el| el.bg(theme.element_hover))
-                            })
-                            .child(value.label())
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.workspace.update(cx, |workspace, cx| {
-                                    workspace.set_caret_shape(value, cx)
-                                });
-                                cx.notify();
-                            }))
-                    })),
-            )
+            .child(trigger.children(card))
             .into_any_element()
     }
 
@@ -501,52 +507,110 @@ impl SettingsWindow {
         )
     }
 
-    /// A swatch row over the highlight colours, led by the default's own.
+    /// bezel's preset colours in rows of six, and Default under them. A
+    /// colour written by hand that is not among them rings nothing.
     fn wash_row(
         &self,
         id: &'static str,
         title: &'static str,
-        current: Option<crate::model::settings::Highlight>,
+        current: Option<Paint>,
         system: bezel::gpui::Hsla,
         cx: &mut Context<Self>,
-        set: fn(&mut Workspace, Option<crate::model::settings::Highlight>, &mut Context<Workspace>),
+        set: fn(&mut Workspace, Option<Paint>, &mut Context<Workspace>),
     ) -> AnyElement {
-        use crate::model::settings::Highlight;
         let theme = Theme::of(cx).clone();
-        let choices = std::iter::once(None).chain(Highlight::ALL.into_iter().map(Some));
+        let swatches: Vec<Swatch> = cx.color_swatches().iter().cloned().collect();
+        let paints: Vec<Paint> = swatches
+            .iter()
+            .map(|swatch| Paint::from_hsla(swatch.resolve(&theme)))
+            .collect();
+        let selected =
+            current.and_then(|current| paints.iter().position(|paint| *paint == current));
+        let shown = current.map_or(system, |paint| paint.solid(&theme));
+        self.color_row(
+            id,
+            title,
+            shown,
+            swatches,
+            selected,
+            Some(Reset {
+                on: current.is_none(),
+            }),
+            cx,
+            move |this, ix, cx| {
+                let value = ix.map(|ix| paints[ix]);
+                this.workspace
+                    .update(cx, |workspace, cx| set(workspace, value, cx));
+            },
+        )
+    }
+
+    /// A row showing one colour, which opens `swatches` under it to pick
+    /// another. `pick` hears a swatch's index, or `None` for the Default item
+    /// when there is one.
+    #[allow(clippy::too_many_arguments)]
+    fn color_row(
+        &self,
+        id: &'static str,
+        title: &'static str,
+        shown: bezel::gpui::Hsla,
+        swatches: Vec<Swatch>,
+        selected: Option<usize>,
+        default: Option<Reset>,
+        cx: &mut Context<Self>,
+        pick: impl Fn(&mut Self, Option<usize>, &mut Context<Self>) + 'static,
+    ) -> AnyElement {
+        use bezel::ui::popover;
+        let theme = Theme::of(cx).clone();
+        let well = popover::menu_trigger_matching(
+            theme.color_well(shown).id(id).relative(),
+            |this: &mut Self| &mut this.picker,
+            move |open| *open == id,
+            move |_| id,
+            cx,
+        );
+        let pick = std::rc::Rc::new(pick);
+        let card = (self.picker.get() == Some(&id)).then(|| {
+            let columns = default.is_some().then_some(SWATCH_COLUMNS);
+            let picker = theme.swatch_picker((id, 0usize), &swatches, selected, columns, {
+                let pick = pick.clone();
+                cx.listener(move |this, ix: &usize, _, cx| {
+                    pick(this, Some(*ix), cx);
+                    popover::close_popup(this, cx, |this: &mut Self| &mut this.picker);
+                })
+            });
+            let reset = default.map(|Reset { on }| {
+                let pick = pick.clone();
+                popover::menu_row(&theme, on, None)
+                    .id((id, 1usize))
+                    .mt(px(4.))
+                    .cursor_pointer()
+                    .hover(|row| row.bg(theme.element_hover))
+                    .child("Default")
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        pick(this, None, cx);
+                        popover::close_popup(this, cx, |this: &mut Self| &mut this.picker);
+                    }))
+            });
+            popover::anchored_menu_below_end(
+                bezel::gpui::SharedString::from(format!("{id}-swatches")),
+                popover::dismiss_on_out(
+                    popover::popover_card(&theme)
+                        .flex()
+                        .flex_col()
+                        .child(picker)
+                        .children(reset),
+                    |this: &mut Self| &mut this.picker,
+                    cx,
+                )
+                .into_any_element(),
+                self.picker.closing_since(),
+            )
+        });
         theme
             .card_row(false)
             .child(div().flex_1().min_w_0().child(theme.row_title(title)))
-            .child(
-                div()
-                    .flex()
-                    .gap(px(6.))
-                    .children(choices.enumerate().map(|(ix, value)| {
-                        div()
-                            .id((id, ix))
-                            .size(px(18.))
-                            .rounded_full()
-                            .cursor_pointer()
-                            .bg(match value {
-                                Some(value) => markdown::highlight_solid(value.color(), &theme),
-                                None => system,
-                            })
-                            .border_2()
-                            .border_color(match current == value {
-                                true => theme.accent,
-                                false => bezel::gpui::transparent_black(),
-                            })
-                            .tooltip(move |window, cx| {
-                                let label = value.map_or("Default", Highlight::label);
-                                bezel::ui::tooltip::Tooltip::text(label, window, cx)
-                            })
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.workspace
-                                    .update(cx, |workspace, cx| set(workspace, value, cx));
-                                cx.notify();
-                            }))
-                    })),
-            )
+            .child(well.children(card))
             .into_any_element()
     }
 
@@ -697,4 +761,31 @@ impl SettingsWindow {
             )
             .into_any_element()
     }
+}
+
+/// The highlight colours as swatches, each with its light and dark value.
+fn highlight_swatches() -> Vec<Swatch> {
+    use crate::model::settings::Highlight;
+    use bezel::theme::Appearance;
+    let light = Theme::for_appearance(Appearance::Light);
+    let dark = Theme::for_appearance(Appearance::Dark);
+    Highlight::ALL
+        .into_iter()
+        .map(|named| {
+            Swatch::new(
+                named.label(),
+                markdown::highlight_solid(named.color(), &light),
+                markdown::highlight_solid(named.color(), &dark),
+            )
+        })
+        .collect()
+}
+
+/// Swatches a row of the colour popover holds.
+const SWATCH_COLUMNS: usize = 6;
+
+/// The popover's Default item, and whether it is the colour in use.
+#[derive(Clone, Copy)]
+struct Reset {
+    on: bool,
 }

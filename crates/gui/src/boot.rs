@@ -28,8 +28,8 @@ pub fn init(settings: &Settings, cx: &mut App) {
         mono: look.mono_font.clone().map(Into::into),
     });
     crate::view::component::file::external::init(settings.open_with.clone());
-    fonts::init_selection(look.selection.map(|selection| selection.color()));
-    fonts::init_caret(look.caret.map(|caret| caret.color()));
+    fonts::init_selection(look.selection);
+    fonts::init_caret(look.caret);
     cx.set_palette(fonts::palette);
     appearance::init(look.mode, cx);
     // Before the window is opened: it reads its background appearance
@@ -44,7 +44,7 @@ pub fn init(settings: &Settings, cx: &mut App) {
     cx.set_marks(article::marks());
     article::set_highlight(look.highlight.color());
     cx.set_mark_paint(article::mark_paint);
-    article::set_search(look.search.map(|search| search.color()));
+    article::set_search(look.search);
     cx.set_find_paint(article::find_paint);
     // The whole catalogue, not the cached subset: the fence picker lists
     // what this list holds, and a picker that offered only what had already

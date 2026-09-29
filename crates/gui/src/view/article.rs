@@ -119,28 +119,23 @@ pub fn mark_paint(name: &str, theme: &Theme) -> Option<markdown::MarkPaint> {
     })
 }
 
-/// The find wash's colour, as an index into [`HighlightColor::ALL`] plus one;
-/// zero keeps [`markdown::default_find`].
-static SEARCH: AtomicUsize = AtomicUsize::new(0);
+/// The find wash's colour; unset keeps [`markdown::default_find`].
+static SEARCH: std::sync::RwLock<Option<crate::model::settings::Paint>> =
+    std::sync::RwLock::new(None);
 
-pub fn set_search(color: Option<HighlightColor>) {
-    let ix = color
-        .and_then(|color| HighlightColor::ALL.iter().position(|held| *held == color))
-        .map_or(0, |ix| ix + 1);
-    SEARCH.store(ix, Ordering::Relaxed);
+pub fn set_search(color: Option<crate::model::settings::Paint>) {
+    if let Ok(mut held) = SEARCH.write() {
+        *held = color;
+    }
 }
 
 /// How find matches paint: the colour [`set_search`] chose, the current match
 /// a step stronger than the rest.
 pub fn find_paint(theme: &Theme) -> (bezel::gpui::Hsla, bezel::gpui::Hsla) {
-    let Some(color) = SEARCH
-        .load(Ordering::Relaxed)
-        .checked_sub(1)
-        .and_then(|ix| HighlightColor::ALL.get(ix))
-    else {
+    let Some(color) = SEARCH.read().ok().and_then(|held| *held) else {
         return markdown::default_find(theme);
     };
-    let wash = markdown::default_highlight(*color, theme);
+    let wash = color.wash(theme);
     (wash, wash.opacity((wash.a + 0.25).min(1.)))
 }
 

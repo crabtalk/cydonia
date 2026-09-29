@@ -240,6 +240,8 @@ pub struct SettingsWindow {
     /// The shortcut row taking keys, while one is — see
     /// [`shortcuts::Recording`].
     recording: Option<shortcuts::Recording>,
+    /// The row whose picker is open, by its id.
+    picker: bezel::ui::popover::Popup<&'static str>,
     #[cfg(feature = "desktop")]
     error: Option<SharedString>,
 }
@@ -369,6 +371,7 @@ impl SettingsWindow {
             browser_data: Default::default(),
             editing: None,
             recording: None,
+            picker: Default::default(),
             #[cfg(feature = "desktop")]
             error: None,
         };

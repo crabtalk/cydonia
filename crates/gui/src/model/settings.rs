@@ -185,11 +185,11 @@ pub struct Appearance {
     /// The wash `==text==` paints in.
     pub highlight: Highlight,
     /// The wash selected text paints in. Unset keeps the palette's.
-    pub selection: Option<Highlight>,
+    pub selection: Option<Paint>,
     /// The wash find matches paint in. Unset keeps the accent.
-    pub search: Option<Highlight>,
+    pub search: Option<Paint>,
     /// The caret's colour. Unset keeps the palette's.
-    pub caret: Option<Highlight>,
+    pub caret: Option<Paint>,
     pub caret_shape: CaretShape,
 }
 
@@ -240,6 +240,75 @@ impl Highlight {
     }
 }
 
+/// A colour picked in settings: a highlight colour, which follows the
+/// appearance, or one sRGB value for both. Stored as the highlight's name or
+/// as `#rrggbb`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Paint {
+    Named(Highlight),
+    Custom(u32),
+}
+
+impl Paint {
+    pub fn from_hsla(color: bezel::gpui::Hsla) -> Self {
+        let rgba = color.to_rgb();
+        let channel = |value: f32| (value.clamp(0., 1.) * 255.).round() as u32;
+        Self::Custom(channel(rgba.r) << 16 | channel(rgba.g) << 8 | channel(rgba.b))
+    }
+
+    /// The colour at full strength.
+    pub fn solid(self, theme: &bezel::theme::Theme) -> bezel::gpui::Hsla {
+        match self {
+            Self::Named(named) => markdown::highlight_solid(named.color(), theme),
+            Self::Custom(rgb) => bezel::gpui::rgb(rgb).into(),
+        }
+    }
+
+    /// The colour as a wash behind text, as translucent as a highlight's.
+    pub fn wash(self, theme: &bezel::theme::Theme) -> bezel::gpui::Hsla {
+        match self {
+            Self::Named(named) => markdown::default_highlight(named.color(), theme),
+            Self::Custom(_) => {
+                let alpha = markdown::default_highlight(markdown::HighlightColor::Yellow, theme).a;
+                self.solid(theme).opacity(alpha)
+            }
+        }
+    }
+
+    pub fn key(self) -> String {
+        match self {
+            Self::Named(named) => named.key().to_owned(),
+            Self::Custom(rgb) => format!("#{rgb:06x}"),
+        }
+    }
+
+    pub fn parse(key: &str) -> Option<Self> {
+        if let Some(hex) = key.strip_prefix('#') {
+            return (hex.len() == 6)
+                .then(|| u32::from_str_radix(hex, 16).ok())
+                .flatten()
+                .map(Self::Custom);
+        }
+        Highlight::ALL
+            .into_iter()
+            .find(|named| named.key() == key)
+            .map(Self::Named)
+    }
+}
+
+impl Serialize for Paint {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.key())
+    }
+}
+
+impl<'de> Deserialize<'de> for Paint {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let key = String::deserialize(deserializer)?;
+        Self::parse(&key).ok_or_else(|| serde::de::Error::custom(format!("not a colour: {key}")))
+    }
+}
+
 /// The caret's shape in text: fields, the editor and code alike.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -262,6 +331,15 @@ impl From<CaretShape> for bezel::ui::input::CaretShape {
 
 impl CaretShape {
     pub const ALL: [Self; 3] = [Self::Bar, Self::Block, Self::Underline];
+
+    /// A character drawn in the shape.
+    pub fn glyph(self) -> &'static str {
+        match self {
+            Self::Bar => "▏",
+            Self::Block => "█",
+            Self::Underline => "▁",
+        }
+    }
 
     pub fn label(self) -> &'static str {
         match self {
