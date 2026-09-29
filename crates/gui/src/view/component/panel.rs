@@ -7,14 +7,14 @@ use super::browser::Browser;
 #[cfg(feature = "desktop")]
 use super::terminal::{DirectoryChanged, Exited, Terminal};
 use super::{changes::Changes, file::FileView, files::Files};
-use crate::model::settings::PanelTabs;
+use crate::model::{settings::PanelTabs, workspace::Workspace};
 use crate::view::leaf::Pane;
 use crate::view::root::{Cydonia, ToggleChanges};
 use crate::view::{chrome, desktop::DesktopOnly};
 use bezel::{
     gpui::{
         self, AnyElement, Axis, Context, DragMoveEvent, Empty, Entity, Focusable, Render,
-        Subscription, Window, div, prelude::*, px,
+        Subscription, WeakEntity, Window, div, prelude::*, px,
     },
     motion::{Fade, Painter},
     theme::{TextStyle, Theme, Typeset},
@@ -128,6 +128,8 @@ pub struct Panel {
     drag: titlebar::DragState,
     /// Which switchable tabs the settings allow, pushed in by the root.
     tabs: PanelTabs,
+    /// Whose settings the panel's files read.
+    workspace: WeakEntity<Workspace>,
 }
 
 impl Panel {
@@ -150,6 +152,7 @@ impl Panel {
             restore_pending: None,
             drag: Default::default(),
             tabs: PanelTabs::default(),
+            workspace: WeakEntity::new_invalid(),
         }
     }
 
@@ -363,7 +366,7 @@ impl Panel {
             return;
         }
         let file = cx.new(|cx| {
-            let mut file = FileView::new(path, cx);
+            let mut file = FileView::new(path, self.workspace.clone(), cx);
             file.root = self.project_root.clone();
             file
         });
@@ -1220,6 +1223,7 @@ impl Cydonia {
             let mut panel = Panel::new(cwd.clone(), cx);
             panel.restore_pending = persistence::saved_panel(&cwd);
             panel.project_root = cwd.canonicalize().unwrap_or(cwd.clone());
+            panel.workspace = self.workspace.downgrade();
             panel
         });
         cx.subscribe(&panel, |this, _, event: &DesktopOnly, cx| {

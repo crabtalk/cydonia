@@ -34,16 +34,6 @@ pub struct Settings {
     /// picked — see [`crate::model::update`].
     #[serde(default = "auto_update")]
     pub auto_update: bool,
-    /// The application a markdown preview's pictures open in, picked from its
-    /// `Open with` button. Unset is the system's default for the file. Bare,
-    /// so it belongs above `features` for the reason above.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub image_app: Option<PathBuf>,
-    /// The application the file view's `Open with` button opens a file in.
-    /// Unset is the system's default for the file. Bare, so it belongs above
-    /// `features` for the reason above.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub file_app: Option<PathBuf>,
     /// Whether a turn finishing while the app is in the background is worth
     /// telling the system about. Bare, beside `auto_update`, for the reason
     /// above — and because the two are the same kind of thing: what the app
@@ -73,6 +63,9 @@ pub struct Settings {
     /// `[browser]`: the in-app browser.
     #[serde(default)]
     pub browser: Browsing,
+    /// `[open_with]`: what files and pictures open in outside the app.
+    #[serde(default)]
+    pub open_with: OpenWith,
     /// Which agents the installer has been told to go ahead on, by registry
     /// id, against the source that was agreed to — see
     /// [`crate::agent::source_mark`].
@@ -724,14 +717,13 @@ impl Default for Settings {
             cover_memory: cover_memory(),
             watch_bounce: watch_bounce(),
             auto_update: auto_update(),
-            image_app: None,
-            file_app: None,
             notify_turns: notify_turns(),
             appearance: Appearance::default(),
             shortcuts: Shortcuts::default(),
             features: Features::default(),
             mcp: Mcp::default(),
             browser: Browsing::default(),
+            open_with: OpenWith::default(),
             // Nothing agreed to yet, which is what makes the first install of
             // each agent ask.
             trusted_agents: BTreeMap::new(),
@@ -863,6 +855,94 @@ fn table<'a>(doc: &'a mut toml_edit::DocumentMut, name: &str) -> Result<&'a mut 
     };
     held.set_implicit(false);
     Ok(held)
+}
+
+/// `[open_with]`: one [`Opener`] for the file view's Open button, one for a
+/// preview picture's.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct OpenWith {
+    pub files: Opener,
+    pub pictures: Opener,
+}
+
+/// Which of [`OpenWith`]'s openers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Opens {
+    Files,
+    Pictures,
+}
+
+impl Opens {
+    pub const ALL: [Self; 2] = [Self::Files, Self::Pictures];
+
+    fn key(self) -> &'static str {
+        match self {
+            Self::Files => "files",
+            Self::Pictures => "pictures",
+        }
+    }
+}
+
+impl OpenWith {
+    pub fn get(&self, opens: Opens) -> &Opener {
+        match opens {
+            Opens::Files => &self.files,
+            Opens::Pictures => &self.pictures,
+        }
+    }
+
+    pub fn get_mut(&mut self, opens: Opens) -> &mut Opener {
+        match opens {
+            Opens::Files => &mut self.files,
+            Opens::Pictures => &mut self.pictures,
+        }
+    }
+}
+
+/// An application by its path: the one the main button opens in (unset is
+/// the system's default), and the ones left out of the `▾` menu.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Opener {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub app: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub hidden: Vec<PathBuf>,
+}
+
+impl Opener {
+    /// Whether `app` is left out of the menu. The default never is.
+    pub fn hides(&self, app: &std::path::Path) -> bool {
+        self.app.as_deref() != Some(app) && self.hidden.iter().any(|hidden| hidden == app)
+    }
+}
+
+/// Write one of `[open_with]`'s tables whole.
+pub fn set_opener(opens: Opens, opener: &Opener) -> Result<()> {
+    edit(|doc| {
+        let open_with = table(doc, "open_with")?;
+        let item = open_with[opens.key()].or_insert(toml_edit::table());
+        let Some(held) = item.as_table_mut() else {
+            anyhow::bail!(
+                "`open_with.{}` in settings.toml is not a table",
+                opens.key()
+            );
+        };
+        held.set_implicit(false);
+        match &opener.app {
+            Some(app) => held["app"] = toml_edit::value(app.to_string_lossy().as_ref()),
+            None => {
+                held.remove("app");
+            }
+        }
+        let mut hidden = toml_edit::Array::new();
+        for app in &opener.hidden {
+            hidden.push(app.to_string_lossy().as_ref());
+        }
+        held["hidden"] = toml_edit::value(hidden);
+        Ok(true)
+    })
 }
 
 /// Write the whole of `[appearance]`.
@@ -1024,27 +1104,6 @@ pub fn set_cover_memory(mb: u64) -> Result<()> {
 pub fn set_watch_bounce(ms: u64) -> Result<()> {
     edit(|doc| {
         doc["watch_bounce"] = toml_edit::value(ms as i64);
-        Ok(true)
-    })
-}
-
-/// Remember the application pictures open in.
-pub fn set_image_app(app: &std::path::Path) -> Result<()> {
-    edit(|doc| {
-        doc["image_app"] = toml_edit::value(app.to_string_lossy().as_ref());
-        Ok(true)
-    })
-}
-
-/// Remember the application files open in; `None` is the system's default.
-pub fn set_file_app(app: Option<&std::path::Path>) -> Result<()> {
-    edit(|doc| {
-        match app {
-            Some(app) => doc["file_app"] = toml_edit::value(app.to_string_lossy().as_ref()),
-            None => {
-                doc.remove("file_app");
-            }
-        }
         Ok(true)
     })
 }

@@ -1,20 +1,17 @@
-//! The pictures in a markdown preview, each opened in another application from
-//! a button over it: the remembered application, or a pick from the ones that
-//! open its kind.
+//! The pictures in a rendered document — a markdown file's preview or an
+//! article — each opened in another application from a button over it: the
+//! remembered application, or a pick from the ones that open its kind.
 //!
-//! A picture on the web is fetched into the project's `.cydonia/assets/` and
-//! opened from there; the file keeps pointing at the web. A picture on disk is
-//! watched once it is handed over, and repainted when the other application
-//! saves it.
+//! A picture on the web is fetched into [`Assets`] and opened from there; the
+//! document keeps pointing at the web. A picture on disk is watched once it is
+//! handed over, and repainted when the other application saves it.
 
-use super::{
-    FileView,
-    external::{self, Application, Target},
-};
+use super::external::{self, Application, Target};
+use crate::model::{settings::Opens, watch, workspace::Workspace};
 use anyhow::Context as _;
 use artifact::project::fs::Project;
 use bezel::{
-    gpui::{self, AnyElement, App, Context, Task, WeakEntity, prelude::*, px},
+    gpui::{self, AnyElement, App, Context, Entity, Task, WeakEntity, prelude::*, px},
     theme::{ControlSize, Theme},
     ui::{popover, widgets::Buttons as _},
 };
@@ -22,40 +19,44 @@ use std::{
     collections::HashMap,
     path::{Path, PathBuf},
     rc::Rc,
-    sync::RwLock,
     time::{Duration, SystemTime},
 };
 
 /// The most a picture fetched off the web may weigh.
 const FETCH_LIMIT: u64 = 25 * 1024 * 1024;
 
-/// How often a handed-over picture is checked for a save.
-const POLL: Duration = Duration::from_secs(1);
-
-/// `settings.image_app`, held for the overlay, which is built without the
-/// workspace in reach.
-static APP: RwLock<Option<PathBuf>> = RwLock::new(None);
-
-/// Seed the remembered application from the settings, at startup.
-pub(crate) fn init(app: Option<PathBuf>) {
-    if let Ok(mut held) = APP.write() {
-        *held = app;
-    }
+/// Where a picture fetched off the web is kept.
+#[derive(Clone, PartialEq)]
+pub(crate) enum Assets {
+    /// The project's `.cydonia/assets/`, by the project's root.
+    Project(PathBuf),
+    /// A directory of its own, such as an article's `assets/`.
+    Dir(PathBuf),
 }
 
-fn remembered() -> Option<PathBuf> {
-    APP.read().ok().and_then(|held| held.clone())
-}
-
+/// Each picture on disk as gpui's asset cache last decoded it, by path. App
+/// wide, like that cache: a document drawn after a save finds the picture
+/// cached as it was before it.
 #[derive(Default)]
-pub(super) struct Pictures {
+struct Loaded(HashMap<PathBuf, Option<Stamp>>);
+
+impl gpui::Global for Loaded {}
+
+pub(crate) struct Pictures {
+    /// The directory a relative picture path is joined onto.
+    base: PathBuf,
+    assets: Assets,
+    /// What went wrong opening the last picture, for the host to show.
+    pub(crate) error: Option<String>,
     /// What opens a picture, by its lowercase extension. `None` while the
     /// list is being made.
     apps: HashMap<String, Option<Rc<Vec<Application>>>>,
     /// The picture whose list of applications is open, by block.
-    menu: Option<usize>,
-    /// Pictures handed to another application, polled for a save.
-    watching: HashMap<PathBuf, Task<()>>,
+    menu: popover::Popup<usize>,
+    /// Every picture on disk the document has drawn, polled for a save, and
+    /// its file as the poll last saw it.
+    watching: HashMap<PathBuf, Option<Stamp>>,
+    _poll: Task<()>,
 }
 
 /// A picture's kind, off the extension of its URL's path.
@@ -64,101 +65,157 @@ fn kind(url: &str) -> Option<String> {
     Some(Path::new(path).extension()?.to_str()?.to_ascii_lowercase())
 }
 
-impl FileView {
-    /// Start listing the applications for every kind of picture in `doc` not
-    /// listed yet.
-    pub(super) fn list_picture_apps(&mut self, doc: &markdown::Doc, cx: &mut Context<Self>) {
-        for block in &doc.blocks {
-            let markdown::BlockKind::Image { url, .. } = &block.kind else {
-                continue;
-            };
-            let Some(kind) = kind(url) else {
-                continue;
-            };
-            if self.pictures.apps.contains_key(&kind) {
-                continue;
-            }
-            self.pictures.apps.insert(kind.clone(), None);
-            cx.spawn(async move |this, cx| {
-                let listed = cx
-                    .background_executor()
-                    .spawn({
-                        let kind = kind.clone();
-                        async move {
-                            // The system answers by the extension, for a file
-                            // that is there.
-                            let probe =
-                                std::env::temp_dir().join(format!("cydonia-picture.{kind}"));
-                            std::fs::write(&probe, [])?;
-                            external::image_applications(&probe)
-                        }
+impl Pictures {
+    /// Pictures are checked for a save every `workspace`'s watch delay.
+    pub(crate) fn new(
+        base: PathBuf,
+        assets: Assets,
+        workspace: WeakEntity<Workspace>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let poll = cx.spawn(async move |this, cx| {
+            loop {
+                // Read per pass: moving the setting takes effect on the next.
+                let every = workspace
+                    .read_with(cx, |workspace, _| {
+                        watch::bounce(workspace.settings.watch_bounce)
                     })
-                    .await;
-                let _ = this.update(cx, |this, cx| {
-                    let apps = listed.unwrap_or_default();
-                    this.pictures.apps.insert(kind, Some(Rc::new(apps)));
-                    cx.notify();
-                });
-            })
-            .detach();
+                    .unwrap_or_else(|_| watch::bounce(watch::BOUNCE));
+                cx.background_executor().timer(every).await;
+                if this.update(cx, |this, cx| this.poll(cx)).is_err() {
+                    break;
+                }
+            }
+        });
+        Self {
+            base,
+            assets,
+            error: None,
+            apps: HashMap::new(),
+            menu: popover::Popup::default(),
+            watching: HashMap::new(),
+            _poll: poll,
         }
     }
 
-    /// The button over each picture, for [`markdown::render::Editing::image_overlay`].
-    pub(super) fn picture_overlay(&self, cx: &mut Context<Self>) -> markdown::ImageOverlay {
-        let view = cx.entity().downgrade();
-        let apps = self.pictures.apps.clone();
-        let menu = self.pictures.menu;
-        let chosen = remembered();
+    /// Reload each watched picture whose file changed and has since held
+    /// still for a poll — a save can take several writes.
+    fn poll(&mut self, cx: &mut Context<Self>) {
+        let mut changed = false;
+        for (path, last) in &mut self.watching {
+            let now = stamp(path);
+            if now != *last {
+                *last = now;
+                continue;
+            }
+            let loaded = &mut cx.default_global::<Loaded>().0;
+            if loaded.get(path) == Some(&now) {
+                continue;
+            }
+            loaded.insert(path.clone(), now);
+            let source = gpui::ImageSource::from(path.clone());
+            source.remove_asset(cx);
+            // Started now rather than at the next frame; the picture keeps
+            // its old image until this lands.
+            if let gpui::ImageSource::Resource(resource) = &source {
+                cx.fetch_asset::<gpui::ImgResourceLoader>(resource);
+            }
+            changed = true;
+        }
+        if changed {
+            cx.notify();
+        }
+    }
+
+    /// Start watching the picture at `url` if it is on disk.
+    fn watch(&mut self, url: &str, cx: &mut App) {
+        if url.contains("://") {
+            return;
+        }
+        let path = self.base.join(url);
+        if self.watching.contains_key(&path) {
+            return;
+        }
+        let now = stamp(&path);
+        cx.default_global::<Loaded>()
+            .0
+            .entry(path.clone())
+            .or_insert(now);
+        self.watching.insert(path, now);
+    }
+
+    /// Point relative paths at `base` and fetches at `assets`.
+    pub(crate) fn place(&mut self, base: PathBuf, assets: Assets) {
+        self.base = base;
+        self.assets = assets;
+    }
+
+    /// The button over each picture, for an editor's or a preview's
+    /// `image_overlay`. Built once: it reads `this` each time it is drawn,
+    /// and lists what opens a kind of picture the first time one is drawn.
+    pub(crate) fn overlay(this: &Entity<Self>) -> markdown::ImageOverlay {
+        let view = this.downgrade();
         Rc::new(move |ix, url, _, cx| {
-            let apps = apps.get(&kind(url)?)?.clone()?;
-            let app = chosen
-                .as_ref()
-                .and_then(|chosen| apps.iter().find(|app| app.path() == chosen))
-                .or(apps.first())?
-                .clone();
-            Some(button(
-                ix,
-                url,
-                app,
-                apps,
-                menu == Some(ix),
-                view.clone(),
-                cx,
-            ))
+            let pictures = view.upgrade()?;
+            if !url.contains("://")
+                && !pictures
+                    .read(cx)
+                    .watching
+                    .contains_key(&pictures.read(cx).base.join(url))
+            {
+                pictures.update(cx, |this, cx| this.watch(url, cx));
+            }
+            let kind = kind(url)?;
+            if !pictures.read(cx).apps.contains_key(&kind) {
+                pictures.update(cx, |this, cx| this.list(kind.clone(), cx));
+            }
+            let apps = pictures.read(cx).apps.get(&kind)?.clone()?;
+            pictures.update(cx, |this, cx| this.button(ix, url, apps, cx))
         })
+    }
+
+    /// List what opens pictures of `kind`.
+    fn list(&mut self, kind: String, cx: &mut Context<Self>) {
+        self.apps.insert(kind.clone(), None);
+        cx.spawn(async move |this, cx| {
+            let listed = cx
+                .background_executor()
+                .spawn({
+                    let kind = kind.clone();
+                    async move { external::listed_for(&kind, true) }
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                let apps = listed.unwrap_or_default();
+                this.apps.insert(kind, Some(Rc::new(apps)));
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// Open the picture at `url` in `target`, fetching it first when it is on
     /// the web.
     fn open_picture(&mut self, url: &str, target: Target, cx: &mut Context<Self>) {
-        self.pictures.menu = None;
         let url = url.to_owned();
-        let base = self
-            .path
-            .parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_default();
-        let project = Project::new(&self.root);
+        let base = self.base.clone();
+        let assets = self.assets.clone();
         cx.spawn(async move |this, cx| {
             let opened = cx
                 .background_executor()
                 .spawn(async move {
                     let file = match url.contains("://") {
-                        true => fetch(&url, &project)?,
+                        true => fetch(&url, &assets)?,
                         false => base.join(&url),
                     };
                     external::open(&file, &target)?;
-                    anyhow::Ok((file, !url.contains("://")))
+                    anyhow::Ok(file)
                 })
                 .await;
             let _ = this.update(cx, |this, cx| {
                 match opened {
-                    Ok((file, true)) => this.watch_picture(file, cx),
                     Ok(_) => {}
-                    Err(error) => {
-                        this.external_error = Some(format!("Open with failed: {error:#}"))
-                    }
+                    Err(error) => this.error = Some(format!("Open with failed: {error:#}")),
                 }
                 cx.notify();
             });
@@ -166,44 +223,26 @@ impl FileView {
         .detach();
         cx.notify();
     }
+}
 
-    /// Repaint `file` each time it is saved from now on.
-    fn watch_picture(&mut self, file: PathBuf, cx: &mut Context<Self>) {
-        if self.pictures.watching.contains_key(&file) {
-            return;
+/// What a save changes: when the file was written, and how long it is.
+type Stamp = (SystemTime, u64);
+
+fn stamp(path: &Path) -> Option<Stamp> {
+    let meta = std::fs::metadata(path).ok()?;
+    Some((meta.modified().ok()?, meta.len()))
+}
+
+/// Fetch the picture at `url` into `assets`, named for its bytes.
+fn fetch(url: &str, assets: &Assets) -> anyhow::Result<PathBuf> {
+    let dir = match assets {
+        Assets::Project(root) => {
+            let project = Project::new(root);
+            project.init()?;
+            project.assets()
         }
-        let path = file.clone();
-        let task = cx.spawn(async move |this, cx| {
-            let mut seen = modified(&path);
-            loop {
-                cx.background_executor().timer(POLL).await;
-                let now = modified(&path);
-                if now == seen {
-                    continue;
-                }
-                seen = now;
-                let alive = this.update(cx, |_, cx| {
-                    gpui::ImageSource::from(path.clone()).remove_asset(cx);
-                    cx.notify();
-                });
-                if alive.is_err() {
-                    break;
-                }
-            }
-        });
-        self.pictures.watching.insert(file, task);
-    }
-}
-
-fn modified(path: &Path) -> Option<SystemTime> {
-    std::fs::metadata(path)
-        .and_then(|meta| meta.modified())
-        .ok()
-}
-
-/// Fetch the picture at `url` into the project's assets, named for its bytes.
-fn fetch(url: &str, project: &Project) -> anyhow::Result<PathBuf> {
-    project.init()?;
+        Assets::Dir(dir) => dir.clone(),
+    };
     let agent = ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(30)))
         .build()
@@ -217,78 +256,92 @@ fn fetch(url: &str, project: &Project) -> anyhow::Result<PathBuf> {
         .read_to_vec()?;
     let format = image::guess_format(&bytes).context("Not a picture")?;
     let extension = format.extensions_str().first().copied().unwrap_or("png");
-    crate::model::media::store(&project.assets(), &bytes, extension)
-        .context("Could not save the picture")
+    crate::model::media::store(&dir, &bytes, extension).context("Could not save the picture")
 }
 
-/// `[icon] App ▾`: the press opens the picture in the app, the chevron lists
-/// the others.
-fn button(
-    ix: usize,
-    url: &str,
-    app: Application,
-    apps: Rc<Vec<Application>>,
-    open: bool,
-    view: WeakEntity<FileView>,
-    cx: &App,
-) -> AnyElement {
-    let theme = Theme::of(cx).clone();
-    let url: Rc<str> = url.into();
-    let mut split = theme.split_button(
-        ("picture-open", ix),
-        ("picture-apps", ix),
-        app.icon(px(16.)),
-        app.name().to_owned(),
-        ControlSize::Regular,
-    );
-    split.main = split.main.on_click({
-        let (view, url, target) = (view.clone(), url.clone(), app.target());
-        move |_, _, cx| {
-            cx.stop_propagation();
-            let _ = view.update(cx, |this, cx| this.open_picture(&url, target.clone(), cx));
-        }
-    });
-    split.more = split.more.on_click({
-        let view = view.clone();
-        move |_, _, cx| {
-            cx.stop_propagation();
-            let _ = view.update(cx, |this, cx| {
-                this.pictures.menu = (this.pictures.menu != Some(ix)).then_some(ix);
-                cx.notify();
-            });
-        }
-    });
-    let list = open.then(|| {
-        let mut card = popover::popover_card(&theme)
-            .min_w(px(200.))
-            .on_mouse_down_out({
-                let view = view.clone();
-                move |_, _, cx| {
-                    let _ = view.update(cx, |this, cx| {
-                        this.pictures.menu = None;
-                        cx.notify();
-                    });
-                }
-            });
-        for (row, pick) in apps.iter().enumerate() {
-            let pick = pick.clone();
-            let (view, url) = (view.clone(), url.clone());
-            card = card.child(
-                popover::menu_row(&theme, false, None)
-                    .id(("picture-app", row))
-                    .hover(|el| el.bg(theme.element_hover))
-                    .child(pick.icon(px(18.)))
-                    .child(pick.name().to_owned())
-                    .on_click(move |_, _, cx| {
-                        cx.stop_propagation();
-                        init(Some(pick.path().to_owned()));
-                        let _ = crate::model::settings::set_image_app(pick.path());
-                        let _ =
-                            view.update(cx, |this, cx| this.open_picture(&url, pick.target(), cx));
-                    }),
-            );
-        }
-        popover::anchored_menu_below_end("picture-apps-menu", card.into_any_element(), None)
-    });
-    split.build(list).into_any_element()
+/// The picture button's menu.
+fn menu(pictures: &mut Pictures) -> &mut popover::Popup<usize> {
+    &mut pictures.menu
 }
+
+impl Pictures {
+    /// `[icon] App ▾`: the press opens the picture in the app, the chevron
+    /// lists the others and the folder.
+    fn button(
+        &mut self,
+        ix: usize,
+        url: &str,
+        apps: Rc<Vec<Application>>,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let theme = Theme::of(cx).clone();
+        let opener = external::opener(Opens::Pictures);
+        let app = external::current(&apps, &opener)?.clone();
+        let url: Rc<str> = url.into();
+        let mut split = theme.split_button(
+            ("picture-open", ix),
+            ("picture-apps", ix),
+            app.icon(px(16.)),
+            app.name().to_owned(),
+            ControlSize::Regular,
+        );
+        split.main = split.main.on_click(cx.listener({
+            let (url, target) = (url.clone(), app.target());
+            move |this, _, _, cx| {
+                cx.stop_propagation();
+                this.open_picture(&url, target.clone(), cx);
+            }
+        }));
+        if external::alone(&apps, &opener) {
+            return Some(split.build_alone().into_any_element());
+        }
+        split.more = popover::menu_trigger_matching(
+            split.more,
+            menu,
+            move |open| *open == ix,
+            move |_| ix,
+            cx,
+        );
+        let list = (self.menu.as_open() == Some(&ix)).then(|| {
+            let mut card =
+                popover::dismiss_on_out(popover::popover_card(&theme).min_w(px(200.)), menu, cx);
+            let view = cx.entity().downgrade();
+            if external::LISTS {
+                for (row, pick) in apps.iter().enumerate() {
+                    if opener.hides(pick.path()) {
+                        continue;
+                    }
+                    let (view, url, chosen) = (view.clone(), url.clone(), pick.clone());
+                    card = card.child(external::app_row(
+                        &theme,
+                        ("picture-app", row),
+                        pick,
+                        move |_, cx| {
+                            external::choose(Opens::Pictures, Some(chosen.path().to_owned()));
+                            let _ = view.update(cx, |this, cx| {
+                                popover::close_popup(this, cx, menu);
+                                this.open_picture(&url, chosen.target(), cx)
+                            });
+                        },
+                    ));
+                }
+            } else {
+                card = card.child(
+                    external::reveal_row(&theme, ("picture-reveal", ix)).on_click(cx.listener(
+                        move |this, _, _, cx| {
+                            cx.stop_propagation();
+                            popover::close_popup(this, cx, menu);
+                            this.open_picture(&url, Target::Folder, cx);
+                        },
+                    )),
+                );
+            }
+            popover::anchored_menu_below_end("picture-apps-menu", card.into_any_element(), None)
+        });
+        Some(split.build(list).into_any_element())
+    }
+}
+
+#[cfg(test)]
+#[path = "../../../../tests/unit/pictures.rs"]
+mod tests;

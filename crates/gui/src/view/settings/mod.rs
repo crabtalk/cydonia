@@ -46,6 +46,7 @@ mod agents;
 #[cfg(not(feature = "desktop"))]
 #[path = "agents_web.rs"]
 mod agents;
+mod apps;
 #[cfg(not(target_os = "linux"))]
 mod browser;
 mod developer;
@@ -222,6 +223,8 @@ pub struct SettingsWindow {
     interface_font: typography::FamilyPicker,
     article_font: typography::FamilyPicker,
     mono_font: typography::FamilyPicker,
+    /// The applications `Open with` offers, listed off the main thread once.
+    apps: apps::Listed,
     #[cfg(not(target_os = "linux"))]
     browser_data: browser::BrowserData,
     /// The field whose dialog is up — see [`SettingsWindow::field_dialog`].
@@ -327,6 +330,7 @@ impl SettingsWindow {
             typography::FamilyPicker::new(typography::Face::Interface, fonts.sans, cx);
         let article_font = typography::FamilyPicker::new(typography::Face::Article, fonts.body, cx);
         let mono_font = typography::FamilyPicker::new(typography::Face::Mono, fonts.mono, cx);
+        Self::list_apps(cx);
         let mut this = SettingsWindow {
             drag: Default::default(),
             workspace,
@@ -352,6 +356,7 @@ impl SettingsWindow {
             interface_font,
             article_font,
             mono_font,
+            apps: Default::default(),
             #[cfg(not(target_os = "linux"))]
             browser_data: Default::default(),
             editing: None,

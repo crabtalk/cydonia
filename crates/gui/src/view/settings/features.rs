@@ -2,10 +2,12 @@
 //! this install shows.
 //!
 //! Sessions and boards default to on; tables are opt-in. The right panel's
-//! Review and Files tabs are a group of their own, both on by default.
+//! Review and Files tabs are a group of their own, both on by default. With
+//! Files on, the apps its files and pictures open in follow.
 
 use crate::{
     model::settings::Feature,
+    view::component::file::external,
     view::settings::{SettingsWindow, Switch},
 };
 use bezel::{
@@ -102,6 +104,11 @@ impl SettingsWindow {
                                 }),
                         ),
                     ),
+            )
+            .when(
+                // Only macOS lists the applications to choose among.
+                external::LISTS && Feature::Files.on(&self.workspace.read(cx).settings.features),
+                |body| body.child(self.apps_group(cx)),
             )
             .into_any_element()
     }

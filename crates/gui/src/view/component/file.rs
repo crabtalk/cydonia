@@ -1,9 +1,10 @@
 //! Small text-file buffers with explicit saves and external-change detection.
 
-use crate::model::typography;
+use crate::model::{typography, workspace::Workspace};
 use bezel::{
     gpui::{
-        self, Context, Entity, Focusable, Render, Subscription, Task, Window, div, prelude::*, px,
+        self, Context, Entity, Focusable, Render, Subscription, Task, WeakEntity, Window, div,
+        prelude::*, px,
     },
     theme::{ControlSize, Sizing as _, TextStyle, Theme, Typeset},
     ui::input::{Edit, FieldEvent, Shape, TextField},
@@ -135,7 +136,9 @@ pub struct FileView {
     pub error: Option<String>,
     opening_external: bool,
     external_menu: external::Menu,
-    pictures: pictures::Pictures,
+    pictures: Entity<pictures::Pictures>,
+    /// The button over the preview's pictures, built once.
+    picture_overlay: markdown::ImageOverlay,
     external_error: Option<String>,
     changed: bool,
     preview: bool,
@@ -158,7 +161,7 @@ pub struct FileView {
 }
 
 impl FileView {
-    pub fn new(path: PathBuf, cx: &mut Context<Self>) -> Self {
+    pub fn new(path: PathBuf, workspace: WeakEntity<Workspace>, cx: &mut Context<Self>) -> Self {
         let field = cx.new(|cx| {
             TextField::new(cx)
                 .with_frame(false)
@@ -224,8 +227,25 @@ impl FileView {
                     .await;
             }
         });
+        let root = path.parent().unwrap_or(Path::new("/")).to_path_buf();
+        let pictures = cx.new(|cx| {
+            pictures::Pictures::new(
+                root.clone(),
+                pictures::Assets::Project(root.clone()),
+                workspace,
+                cx,
+            )
+        });
+        cx.observe(&pictures, |this: &mut Self, pictures, cx| {
+            if let Some(error) = pictures.update(cx, |pictures, _| pictures.error.take()) {
+                this.external_error = Some(error);
+            }
+            cx.notify();
+        })
+        .detach();
+        let picture_overlay = pictures::Pictures::overlay(&pictures);
         Self {
-            root: path.parent().unwrap_or(Path::new("/")).to_path_buf(),
+            root,
             focus: cx.focus_handle(),
             language: crate::model::language::of(&path),
             path,
@@ -236,7 +256,8 @@ impl FileView {
             error: None,
             opening_external: false,
             external_menu: external::Menu::default(),
-            pictures: pictures::Pictures::default(),
+            pictures,
+            picture_overlay,
             external_error: None,
             changed: false,
             preview: true,
@@ -802,10 +823,19 @@ impl Render for FileView {
             .is_some_and(|ext| ext == "md" || ext == "markdown");
         let preview_doc = (markdown && self.preview && self.ready)
             .then(|| markdown::parse_with(self.field.read(cx).content(), &cx.marks()));
-        if let Some(doc) = &preview_doc {
-            self.list_picture_apps(doc, cx);
+        if preview_doc.is_some() {
+            // The root is set after the view is made, and the base is the
+            // file's folder.
+            let base = self
+                .path
+                .parent()
+                .map(Path::to_path_buf)
+                .unwrap_or_default();
+            let assets = pictures::Assets::Project(self.root.clone());
+            self.pictures
+                .update(cx, |pictures, _| pictures.place(base, assets));
         }
-        let overlay = preview_doc.is_some().then(|| self.picture_overlay(cx));
+        let overlay = preview_doc.is_some().then(|| self.picture_overlay.clone());
         let base = self.path.parent().map(Path::to_path_buf);
         let notice = self.error.clone().or_else(|| self.changed.then(|| "File changed on disk. Reload discards your edits; overwrite saves your version.".into()));
         let external_notice = self.external_error.clone().map(|error| {
