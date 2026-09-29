@@ -39,6 +39,11 @@ pub struct Settings {
     /// so it belongs above `features` for the reason above.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image_app: Option<PathBuf>,
+    /// The application the file view's `Open with` button opens a file in.
+    /// Unset is the system's default for the file. Bare, so it belongs above
+    /// `features` for the reason above.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_app: Option<PathBuf>,
     /// Whether a turn finishing while the app is in the background is worth
     /// telling the system about. Bare, beside `auto_update`, for the reason
     /// above — and because the two are the same kind of thing: what the app
@@ -720,6 +725,7 @@ impl Default for Settings {
             watch_bounce: watch_bounce(),
             auto_update: auto_update(),
             image_app: None,
+            file_app: None,
             notify_turns: notify_turns(),
             appearance: Appearance::default(),
             shortcuts: Shortcuts::default(),
@@ -1026,6 +1032,19 @@ pub fn set_watch_bounce(ms: u64) -> Result<()> {
 pub fn set_image_app(app: &std::path::Path) -> Result<()> {
     edit(|doc| {
         doc["image_app"] = toml_edit::value(app.to_string_lossy().as_ref());
+        Ok(true)
+    })
+}
+
+/// Remember the application files open in; `None` is the system's default.
+pub fn set_file_app(app: Option<&std::path::Path>) -> Result<()> {
+    edit(|doc| {
+        match app {
+            Some(app) => doc["file_app"] = toml_edit::value(app.to_string_lossy().as_ref()),
+            None => {
+                doc.remove("file_app");
+            }
+        }
         Ok(true)
     })
 }

@@ -14,9 +14,9 @@ use super::{
 use anyhow::Context as _;
 use artifact::project::fs::Project;
 use bezel::{
-    gpui::{self, AnyElement, App, Context, Task, WeakEntity, div, prelude::*, px},
-    theme::{TextStyle, Theme, Typeset as _},
-    ui::{icons, popover},
+    gpui::{self, AnyElement, App, Context, Task, WeakEntity, prelude::*, px},
+    theme::{ControlSize, Theme},
+    ui::{popover, widgets::Buttons as _},
 };
 use std::{
     collections::HashMap,
@@ -234,50 +234,30 @@ fn button(
 ) -> AnyElement {
     let theme = Theme::of(cx).clone();
     let url: Rc<str> = url.into();
-    let main = div()
-        .id(("picture-open", ix))
-        .flex()
-        .items_center()
-        .gap(px(6.))
-        .pl(px(6.))
-        .pr(px(8.))
-        .py(px(3.))
-        .cursor_pointer()
-        .hover(|el| el.bg(theme.element_hover))
-        .child(app.icon())
-        .child(app.name().to_owned())
-        .on_click({
-            let (view, url, target) = (view.clone(), url.clone(), app.target());
-            move |_, _, cx| {
-                cx.stop_propagation();
-                let _ = view.update(cx, |this, cx| this.open_picture(&url, target.clone(), cx));
-            }
-        });
-    let more = div()
-        .id(("picture-apps", ix))
-        .flex()
-        .items_center()
-        .px(px(5.))
-        .self_stretch()
-        .cursor_pointer()
-        .border_l_1()
-        .border_color(theme.border)
-        .hover(|el| el.bg(theme.element_hover))
-        .child(
-            icons::icon(icons::arrows::ChevronDown)
-                .size(px(12.))
-                .text_color(theme.text_muted),
-        )
-        .on_click({
-            let view = view.clone();
-            move |_, _, cx| {
-                cx.stop_propagation();
-                let _ = view.update(cx, |this, cx| {
-                    this.pictures.menu = (this.pictures.menu != Some(ix)).then_some(ix);
-                    cx.notify();
-                });
-            }
-        });
+    let mut split = theme.split_button(
+        ("picture-open", ix),
+        ("picture-apps", ix),
+        app.icon(px(16.)),
+        app.name().to_owned(),
+        ControlSize::Regular,
+    );
+    split.main = split.main.on_click({
+        let (view, url, target) = (view.clone(), url.clone(), app.target());
+        move |_, _, cx| {
+            cx.stop_propagation();
+            let _ = view.update(cx, |this, cx| this.open_picture(&url, target.clone(), cx));
+        }
+    });
+    split.more = split.more.on_click({
+        let view = view.clone();
+        move |_, _, cx| {
+            cx.stop_propagation();
+            let _ = view.update(cx, |this, cx| {
+                this.pictures.menu = (this.pictures.menu != Some(ix)).then_some(ix);
+                cx.notify();
+            });
+        }
+    });
     let list = open.then(|| {
         let mut card = popover::popover_card(&theme)
             .min_w(px(200.))
@@ -297,7 +277,7 @@ fn button(
                 popover::menu_row(&theme, false, None)
                     .id(("picture-app", row))
                     .hover(|el| el.bg(theme.element_hover))
-                    .child(pick.icon())
+                    .child(pick.icon(px(18.)))
                     .child(pick.name().to_owned())
                     .on_click(move |_, _, cx| {
                         cx.stop_propagation();
@@ -310,19 +290,5 @@ fn button(
         }
         popover::anchored_menu_below_end("picture-apps-menu", card.into_any_element(), None)
     });
-    div()
-        .relative()
-        .flex()
-        .items_stretch()
-        .rounded(px(Theme::control_radius()))
-        .overflow_hidden()
-        .border_1()
-        .border_color(theme.border)
-        .bg(theme.surface_raised)
-        .text_style(TextStyle::Callout)
-        .text_color(theme.text)
-        .child(main)
-        .child(more)
-        .children(list)
-        .into_any_element()
+    split.build(list).into_any_element()
 }

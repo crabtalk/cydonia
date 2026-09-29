@@ -2,8 +2,29 @@ use super::*;
 use anyhow::{Context as _, Result, bail};
 #[cfg(target_os = "macos")]
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use bezel::ui::{icons, popover, tooltip::Tooltip};
-use std::{process::Command, sync::Arc};
+use bezel::{
+    theme::ControlSize,
+    ui::{icons, popover, tooltip::Tooltip},
+};
+use std::{
+    process::Command,
+    sync::{Arc, RwLock},
+};
+
+/// `settings.file_app`, held for the button, which is built without the
+/// workspace in reach.
+static APP: RwLock<Option<PathBuf>> = RwLock::new(None);
+
+/// Seed the remembered application from the settings, at startup.
+pub(crate) fn init(app: Option<PathBuf>) {
+    if let Ok(mut held) = APP.write() {
+        *held = app;
+    }
+}
+
+fn remembered() -> Option<PathBuf> {
+    APP.read().ok().and_then(|held| held.clone())
+}
 
 #[cfg(target_os = "macos")]
 const APPLICATIONS: &str = r#"
@@ -107,12 +128,12 @@ impl Application {
         }
     }
 
-    pub(super) fn icon(&self) -> gpui::AnyElement {
+    pub(super) fn icon(&self, size: gpui::Pixels) -> gpui::AnyElement {
         if let Some(image) = &self.image {
-            gpui::img(image.clone()).size(px(18.)).into_any_element()
+            gpui::img(image.clone()).size(size).into_any_element()
         } else {
             icons::icon(icons::files::File)
-                .size(px(18.))
+                .size(size)
                 .into_any_element()
         }
     }
@@ -388,10 +409,13 @@ impl FileView {
                     popover::menu_row(&theme, false, None)
                         .id(("external-app", index))
                         .hover(|row| row.bg(theme.element_hover))
-                        .child(app.icon())
+                        .child(app.icon(px(18.)))
                         .child(app.name.clone())
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.external_menu.open = false;
+                            let app_path = (app.kind != "default").then(|| app.path.clone());
+                            init(app_path.clone());
+                            let _ = crate::model::settings::set_file_app(app_path.as_deref());
                             this.open_external(app.target(), cx);
                             cx.notify();
                         })),
@@ -413,41 +437,58 @@ impl FileView {
             );
             popover::anchored_menu_above_end("file-open-menu", card.into_any_element(), None)
         });
-        div()
-            .relative()
-            .flex_none()
-            .flex()
-            .items_center()
-            .child(
-                div()
-                    .id("file-open-with")
-                    .debug_selector(|| "file-open-with".into())
-                    .w(px(20.))
-                    .h(px(22.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded(px(6.))
-                    .cursor_pointer()
-                    .hover(|button| button.bg(theme.element_hover))
-                    .when(self.opening_external, |button| button.opacity(0.5))
-                    .tooltip(move |window, cx| Tooltip::text(tooltip, window, cx))
-                    .child(
-                        icons::icon(icons::glyph::Dock)
-                            .size(px(14.))
-                            .text_color(theme.text_muted),
-                    )
-                    .capture_any_mouse_down(cx.listener(|this, _, _, _| {
-                        this.external_menu.pressed = this.external_menu.open
-                    }))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.external_menu.open =
-                            !(std::mem::take(&mut this.external_menu.pressed)
-                                || this.external_menu.open);
-                        cx.notify();
-                    })),
+        let chosen = remembered();
+        let current = self
+            .external_menu
+            .apps
+            .iter()
+            .find(|app| match &chosen {
+                Some(chosen) => &app.path == chosen,
+                None => app.kind == "default",
+            })
+            .cloned();
+        let target = match (&current, chosen) {
+            (Some(app), _) => app.target(),
+            (None, Some(chosen)) => Target::Application(chosen),
+            (None, None) => Target::Default,
+        };
+        let (icon, name) = match &current {
+            Some(app) => (app.icon(px(12.)), app.name.clone()),
+            None => (
+                icons::icon(icons::glyph::Dock)
+                    .size(px(12.))
+                    .text_color(theme.text_muted)
+                    .into_any_element(),
+                "Default app".to_owned(),
+            ),
+        };
+        let mut button = theme.split_button(
+            "file-open",
+            "file-open-with",
+            icon,
+            name,
+            ControlSize::Small,
+        );
+        button.main = button
+            .main
+            .tooltip(move |window, cx| Tooltip::text(tooltip, window, cx))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.open_external(target.clone(), cx);
+            }));
+        button.more = button
+            .more
+            .debug_selector(|| "file-open-with".into())
+            .capture_any_mouse_down(
+                cx.listener(|this, _, _, _| this.external_menu.pressed = this.external_menu.open),
             )
-            .children(popup)
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.external_menu.open =
+                    !(std::mem::take(&mut this.external_menu.pressed) || this.external_menu.open);
+                cx.notify();
+            }));
+        button
+            .build(popup)
+            .when(self.opening_external, |button| button.opacity(0.5))
             .into_any_element()
     }
 }
