@@ -78,6 +78,22 @@ impl Workspace {
         self.folded_spaces.contains(id)
     }
 
+    /// The space's members in the order the sidebar lists them.
+    pub fn listed_members(&self, space: &artifact::space::Space) -> Vec<Member> {
+        let mut members = space.entries();
+        if let Some(order) = self.space_order.get(&space.id) {
+            members.sort_by_key(|member| order.iter().position(|at| at == member).map(|at| at + 1));
+        }
+        members
+    }
+
+    /// Write down the order the sidebar lists a space's members in.
+    pub fn set_space_order(&mut self, id: &str, order: Vec<Member>, cx: &mut Context<Self>) {
+        self.space_order.insert(id.to_owned(), order);
+        self.save();
+        cx.notify();
+    }
+
     /// Hide a space's members in the sidebar, or show them again.
     pub fn toggle_space(&mut self, id: &str, cx: &mut Context<Self>) {
         if !self.folded_spaces.remove(id) {

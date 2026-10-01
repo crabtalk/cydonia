@@ -43,9 +43,6 @@ gpui::actions!(
 
 struct FilesResize;
 
-/// A panel tab carried along its own strip.
-struct TabDrag(usize);
-
 /// The launch view's link to the settings that switch its tabs back on.
 pub struct OpenFeatures;
 
@@ -115,6 +112,7 @@ pub struct Panel {
     focus: gpui::FocusHandle,
     /// The row: which tabs are open, in what order, and which is in front.
     strip: tabs::Strip<usize>,
+    reorder: tabs::Reorder<usize>,
     /// What each of the strip's ids holds. Keyed rather than held in the strip
     /// so the order is arithmetic the strip can do without a window.
     contents: HashMap<usize, Tab>,
@@ -143,6 +141,7 @@ impl Panel {
             cwd,
             focus: cx.focus_handle(),
             strip: tabs::Strip::new(),
+            reorder: tabs::Reorder::new(Painter::of(cx)),
             contents: HashMap::new(),
             next_id: 0,
             menu: false,
@@ -769,112 +768,101 @@ impl Render for Panel {
                     .gap(px(6.))
                     // Always at the window's top right while it is up.
                     .when(right, |band| band.pr_0())
-                    .child(super::strip::strip(
-                        "panel-tabs",
-                        tabs::bar("panel-tabs").children(self.ordered().map(|(id, tab)| {
-                            let icon = match &tab.content {
-                                Content::Review(_) => icons::development::GitCompare,
-                                #[cfg(feature = "desktop")]
-                                Content::Terminal(_) => icons::development::Terminal,
-                                Content::File(_) => icons::files::File,
-                                #[cfg(not(target_os = "linux"))]
-                                Content::Browser(_) => icons::navigation::Globe,
-                            };
-                            // The path is the tooltip and the last component is
-                            // the name: several tabs can be named the same.
-                            let (name, path, dirty) = match &tab.content {
-                                Content::Review(_) => {
-                                    ("Review".to_string(), "Review".to_string(), false)
-                                }
-                                #[cfg(feature = "desktop")]
-                                Content::Terminal(terminal) => {
-                                    let path = &terminal.read(cx).directory;
-                                    (
-                                        path.file_name()
-                                            .unwrap_or(path.as_os_str())
-                                            .to_string_lossy()
-                                            .into_owned(),
-                                        path.display().to_string(),
-                                        false,
-                                    )
-                                }
-                                #[cfg(not(target_os = "linux"))]
-                                Content::Browser(browser) => {
-                                    let browser = browser.read(cx);
-                                    (browser.title().to_owned(), browser.url().to_owned(), false)
-                                }
-                                Content::File(file) => {
-                                    let file = file.read(cx);
-                                    (
-                                        file.path
-                                            .file_name()
-                                            .unwrap_or_default()
-                                            .to_string_lossy()
-                                            .into_owned(),
-                                        file.path.display().to_string(),
-                                        file.dirty(cx),
-                                    )
-                                }
-                            };
-                            let name = gpui::SharedString::from(name);
-                            let mut label = tabs::Label::new(name.clone()).with_icon(icon);
-                            // Unsaved work is the mark rather than a bullet in
-                            // the name: the name truncates and the mark does
-                            // not.
-                            if dirty {
-                                label = label
-                                    .mark(icons::Icon::glyph(icons::glyph::CircleSmall).solid());
-                            }
-                            let state = match self.strip.active() == Some(&id) {
-                                true => tabs::State::Focused,
-                                false => tabs::State::Resting,
-                            };
-                            let key = gpui::SharedString::from(format!("panel-{id}"));
-                            tabs::tab(&theme, key.clone(), label, state)
-                                .tooltip(move |window, cx| Tooltip::text(path.clone(), window, cx))
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.strip.activate(&id);
-                                    this.focus(window, cx);
-                                    cx.notify();
-                                }))
-                                .on_drag(TabDrag(id), {
-                                    let name = name.clone();
-                                    move |_, _, _, cx| {
-                                        cx.new(|_| crate::view::sidebar::Carried(name.clone()))
-                                    }
-                                })
-                                .drag_over::<TabDrag>({
-                                    let order = self.strip.tabs().to_vec();
-                                    move |style, drag, _, cx| {
-                                        let at = |id| order.iter().position(|held| *held == id);
-                                        match (at(drag.0), at(id)) {
-                                            (Some(from), Some(to)) => {
-                                                crate::view::arrangement::tab_drop_mark(
-                                                    style, from, to, cx,
-                                                )
-                                            }
-                                            _ => style,
+                    .child(
+                        self.reorder
+                            .bar(
+                                "panel-tabs",
+                                &self.strip,
+                                self.ordered().map(|(id, tab)| {
+                                    let icon = match &tab.content {
+                                        Content::Review(_) => icons::development::GitCompare,
+                                        #[cfg(feature = "desktop")]
+                                        Content::Terminal(_) => icons::development::Terminal,
+                                        Content::File(_) => icons::files::File,
+                                        #[cfg(not(target_os = "linux"))]
+                                        Content::Browser(_) => icons::navigation::Globe,
+                                    };
+                                    // The path is the tooltip and the last component is
+                                    // the name: several tabs can be named the same.
+                                    let (name, path, dirty) = match &tab.content {
+                                        Content::Review(_) => {
+                                            ("Review".to_string(), "Review".to_string(), false)
                                         }
+                                        #[cfg(feature = "desktop")]
+                                        Content::Terminal(terminal) => {
+                                            let path = &terminal.read(cx).directory;
+                                            (
+                                                path.file_name()
+                                                    .unwrap_or(path.as_os_str())
+                                                    .to_string_lossy()
+                                                    .into_owned(),
+                                                path.display().to_string(),
+                                                false,
+                                            )
+                                        }
+                                        #[cfg(not(target_os = "linux"))]
+                                        Content::Browser(browser) => {
+                                            let browser = browser.read(cx);
+                                            (
+                                                browser.title().to_owned(),
+                                                browser.url().to_owned(),
+                                                false,
+                                            )
+                                        }
+                                        Content::File(file) => {
+                                            let file = file.read(cx);
+                                            (
+                                                file.path
+                                                    .file_name()
+                                                    .unwrap_or_default()
+                                                    .to_string_lossy()
+                                                    .into_owned(),
+                                                file.path.display().to_string(),
+                                                file.dirty(cx),
+                                            )
+                                        }
+                                    };
+                                    let name = gpui::SharedString::from(name);
+                                    let mut label = tabs::Label::new(name.clone()).with_icon(icon);
+                                    // Unsaved work is the mark rather than a bullet in
+                                    // the name: the name truncates and the mark does
+                                    // not.
+                                    if dirty {
+                                        label = label.mark(
+                                            icons::Icon::glyph(icons::glyph::CircleSmall).solid(),
+                                        );
                                     }
-                                })
-                                .on_drop(cx.listener(move |this, drag: &TabDrag, _, cx| {
-                                    if let (Some(from), Some(to)) =
-                                        (this.strip.index_of(&drag.0), this.strip.index_of(&id))
-                                    {
-                                        this.strip.reorder(from, to);
-                                        cx.notify();
-                                    }
-                                }))
-                                .child(tabs::close(&theme, key, tabs::Close::OnHover).on_click(
-                                    cx.listener(move |this, _, window, cx| {
-                                        cx.stop_propagation();
-                                        this.close(id, window, cx);
-                                    }),
-                                ))
-                        })),
-                        window,
-                        cx,
-                    ))
+                                    let state = match self.strip.active() == Some(&id) {
+                                        true => tabs::State::Focused,
+                                        false => tabs::State::Resting,
+                                    };
+                                    let key = gpui::SharedString::from(format!("panel-{id}"));
+                                    let tab = tabs::tab(&theme, key.clone(), label, state)
+                                        .tooltip(move |window, cx| {
+                                            Tooltip::text(path.clone(), window, cx)
+                                        })
+                                        .on_click(cx.listener(move |this, _, window, cx| {
+                                            this.strip.activate(&id);
+                                            this.focus(window, cx);
+                                            cx.notify();
+                                        }))
+                                        .child(
+                                            tabs::close(&theme, key, tabs::Close::OnHover)
+                                                .on_click(cx.listener(
+                                                    move |this, _, window, cx| {
+                                                        cx.stop_propagation();
+                                                        this.close(id, window, cx);
+                                                    },
+                                                )),
+                                        );
+                                    (id, tab)
+                                }),
+                            )
+                            .on_reorder(cx.listener(|this, moved: &tabs::Move, _, cx| {
+                                this.strip.reorder(moved.from, moved.to);
+                                cx.notify();
+                            })),
+                    )
                     .child(
                         div()
                             .relative()

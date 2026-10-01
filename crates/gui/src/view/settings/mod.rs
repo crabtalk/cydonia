@@ -285,6 +285,7 @@ pub fn open(
             },
             app_id: Some("cydonia".into()),
             window_decorations: crate::view::chrome::decorations(),
+            app_owns_titlebar_drag: true,
             ..Default::default()
         },
         |window, cx| {

@@ -36,6 +36,7 @@ use bezel::{
     motion::{Fade, Painter},
     theme::{TextStyle, Theme, Typeset},
     ui::{
+        drag,
         icons::{self, Icon},
         input::Case,
         menu::{Item, Segment},
@@ -46,7 +47,7 @@ use bezel::{
         widgets::{ButtonStyle, Buttons, Layout},
     },
 };
-use std::{cell::RefCell, ops::Range, rc::Rc, time::Duration};
+use std::{cell::RefCell, collections::HashMap, ops::Range, rc::Rc, time::Duration};
 
 /// What the sidebar needs of a session to draw its row, read out of the model
 /// before the row is built: a turn in flight puts a thinking orb in the mark's
@@ -71,9 +72,9 @@ struct Working {
 }
 
 /// One line of the sidebar. An address, not content: the label behind it is
-/// read when the row is built, which [`uniform_list`] only does for the rows on
+/// read when the row is built, which the list only does for the rows on
 /// screen.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum Row {
     /// The heading over a section of the list.
     Heading(Heading),
@@ -100,7 +101,7 @@ pub(crate) enum Row {
 }
 
 /// The two sections of the list.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub(crate) enum Heading {
     Projects,
     /// Drawn only while there is a space.
@@ -127,7 +128,7 @@ impl Heading {
 /// What entries are listed under: a project holds its own, a space the ones it
 /// arranges. One heading, one fold and one drag for both — see
 /// [`Cydonia::group_head`].
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub(crate) enum Group {
     Project(usize),
     Space(usize),
@@ -231,49 +232,72 @@ pub(crate) fn tint(selected: bool, archived: bool, theme: &Theme) -> Hsla {
     }
 }
 
-/// A project or a space on its way to another place in its list. The index is
-/// safe to carry: nothing reorders the list while a drag is in flight. Its own
-/// drag rather than [`EntryDrag`]: a group is not something a pane can be put
-/// on. It lands only among its own kind.
-#[derive(Clone)]
-pub(crate) struct GroupDrag(Group);
-
-fn same_kind(a: Group, b: Group) -> bool {
-    matches!(
-        (a, b),
-        (Group::Project(_), Group::Project(_)) | (Group::Space(_), Group::Space(_))
-    )
+/// What the sidebar's list and the panes' strips carry, and what a pane takes
+/// a drop of: a sidebar row, or a tab off a pane's strip.
+#[derive(Clone, PartialEq)]
+pub(crate) enum Dragged {
+    Row(Row),
+    Tab(Member),
 }
 
-/// What rides under the cursor while an entry is being carried. Shared with
-/// the panes, so a tab dragged out of a strip looks like the same gesture the
-/// sidebar makes — see [`crate::view::arrangement`].
-pub(crate) struct Carried(pub SharedString);
-
-/// An entry carried out of the sidebar, named the way a space names its
-/// members — or, for a session with no file yet, named by the session it is.
-#[derive(Clone, Debug)]
-pub enum EntryDrag {
-    Member(artifact::space::Member),
-    /// A session that has had no turn. A space names its members by file and
-    /// this one has none, so it is carried by the id it holds in this process
-    /// and the file is minted where it lands.
-    Session {
-        project: usize,
-        id: u64,
-    },
+/// A row's kind and the section it is listed in.
+pub(crate) struct Place {
+    kind: SharedString,
+    section: Heading,
 }
 
-impl Render for Carried {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = Theme::of(cx).clone();
-        popover::popover_card(&theme)
-            .px(px(10.))
-            .py(px(4.))
-            .text_style(TextStyle::Callout)
-            .text_color(theme.text)
-            .child(self.0.clone())
+/// Whether `item` may land between the painted rows `after` and `before`.
+/// An entry lands beside one of its kind. A project's or a space's heading
+/// lands in front of one of its kind, or at the end of its section.
+fn lands(
+    places: &HashMap<Row, Place>,
+    item: &Dragged,
+    after: Option<&Dragged>,
+    before: Option<&Dragged>,
+) -> bool {
+    let place = |at: Option<&Dragged>| match at {
+        Some(Dragged::Row(row)) => places.get(row),
+        _ => None,
+    };
+    let Some(own) = place(Some(item)) else {
+        return false;
+    };
+    match item {
+        Dragged::Row(Row::Group(_)) => {
+            place(before).is_some_and(|place| place.kind == own.kind)
+                || (place(after).is_some_and(|place| place.section == own.section)
+                    && place(before).is_none_or(|place| place.section != own.section))
+        }
+        _ => [after, before]
+            .into_iter()
+            .any(|at| place(at).is_some_and(|place| place.kind == own.kind)),
     }
+}
+
+/// The rows a project's or a space's heading takes along: its group's, down
+/// to the next heading.
+fn carried_rows(rows: &[Row], item: &Dragged) -> Vec<Dragged> {
+    let Dragged::Row(row @ Row::Group(_)) = item else {
+        return Vec::new();
+    };
+    rows.iter()
+        .skip_while(|at| *at != row)
+        .skip(1)
+        .take_while(|at| !matches!(at, Row::Heading(_) | Row::Group(_)))
+        .map(|at| Dragged::Row(*at))
+        .collect()
+}
+
+/// What rides under the pointer while an item is carried to a pane.
+pub(crate) fn ghost(label: SharedString, theme: &Theme) -> AnyElement {
+    popover::popover_card(theme)
+        .px(px(10.))
+        .py(px(4.))
+        .text_style(TextStyle::Callout)
+        .text_color(theme.text)
+        .truncate()
+        .child(label)
+        .into_any_element()
 }
 
 /// An entry's own name in the element tree: two rows must never share one.
@@ -293,8 +317,7 @@ fn key_of(entry: Row) -> String {
 
 /// The wash a row paints, and — with the 1px either side of it that used to be
 /// the column's gap — the pitch the list lays every row out at. One height for
-/// headings and rows alike, because [`uniform_list`] measures a single row and
-/// gives every other one the same.
+/// headings and rows alike, because the list lays every row at one extent.
 const ROW_PILL: f32 = 30.;
 
 /// What a row puts between its mark, its name and the button at the end.
@@ -445,7 +468,6 @@ impl Cydonia {
         let shortcuts = &self.workspace.read(cx).settings.shortcuts;
         let settings_chord = keymap::label(Command::OpenSettings, shortcuts);
         let rows = self.rows(cx);
-        let count = rows.len();
         div()
             .flex_none()
             .w(px(self.sidebar_width))
@@ -474,20 +496,7 @@ impl Cydonia {
                     .relative()
                     .flex_1()
                     .min_h_0()
-                    .child(
-                        uniform_list(
-                            "project-list",
-                            count,
-                            cx.processor(move |this, range: Range<usize>, window, cx| {
-                                range
-                                    .map(|ix| this.sidebar_row(rows[ix], window, cx))
-                                    .collect()
-                            }),
-                        )
-                        .track_scroll(&self.rail)
-                        .with_decoration(PinnedHead(cx.entity()))
-                        .size_full(),
-                    )
+                    .child(self.sidebar_list(rows, cx))
                     .child(
                         scrollbars::Overlay::new(
                             "sidebar-bar",
@@ -635,6 +644,94 @@ impl Cydonia {
             .on_click(cx.listener(|this, _, _, cx| this.toggle_sidebar(cx)))
     }
 
+    /// The rows as one drag region over the list: an entry moves within the
+    /// region of its project it is in, a project's or a space's heading among
+    /// the headings of its kind, and either can be carried out onto a pane.
+    fn sidebar_list(&self, rows: Vec<Row>, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let places = Rc::new(self.row_places(&rows, cx));
+        let followers = Rc::new(rows.clone());
+        let count = rows.len();
+        let list = uniform_list(
+            "project-list",
+            count,
+            cx.processor(move |this, range: Range<usize>, window, cx| {
+                range
+                    .map(|ix| {
+                        let row = rows[ix];
+                        let el = this.sidebar_row(row, window, cx);
+                        match row {
+                            Row::Heading(_) | Row::Archive(_) => this
+                                .sidebar_sort
+                                .fixed(Dragged::Row(row), el)
+                                .into_any_element(),
+                            _ => {
+                                let item = Dragged::Row(row);
+                                // Raised the way a carried tab is, or only its
+                                // text would travel.
+                                let el = match this.sidebar_sort.carries(&item) {
+                                    true => el
+                                        .bg(Theme::of(cx).surface_raised)
+                                        .rounded(px(Theme::control_radius()))
+                                        .cursor_grabbing(),
+                                    false => el,
+                                };
+                                this.sidebar_sort.handle(item, el).into_any_element()
+                            }
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            }),
+        )
+        .track_scroll(&self.rail)
+        .with_decoration(PinnedHead(cx.entity()))
+        .size_full();
+        self.sidebar_sort
+            .region("sidebar-list", (), gpui::Axis::Vertical, list)
+            .track_scroll(&self.rail.0.borrow().base_handle)
+            .accepts(|item| matches!(item, Dragged::Row(_)))
+            .carries(move |item| carried_rows(&followers, item))
+            .lands(move |item, after, before| lands(&places, item, after, before))
+            .size_full()
+            .on_drop(cx.listener(|this, event: &drag::Drop<(), Dragged>, _, cx| {
+                this.sidebar_moved(event, cx)
+            }))
+    }
+
+    /// Where each row sits. Entries stay within the region of their project
+    /// they are listed in — the pins, the rest, the archive — and a space's
+    /// within that space.
+    fn row_places(&self, rows: &[Row], cx: &App) -> HashMap<Row, Place> {
+        let mut group = None;
+        let mut section = Heading::Projects;
+        rows.iter()
+            .map(|row| {
+                let kind = match row {
+                    Row::Heading(heading) => {
+                        section = *heading;
+                        "heading".into()
+                    }
+                    Row::Archive(_) => "archive".into(),
+                    Row::Group(Group::Project(_)) => "projects".into(),
+                    Row::Group(Group::Space(_)) => "spaces".into(),
+                    _ => match group {
+                        Some(Group::Space(ix)) => format!("space-{ix}").into(),
+                        _ => format!(
+                            "entries-{}-{}-{}",
+                            project_of(*row).unwrap_or_default(),
+                            self.pinned(*row, cx),
+                            self.archived_of(*row, cx),
+                        )
+                        .into(),
+                    },
+                };
+                if let Row::Group(at) = row {
+                    group = Some(*at);
+                }
+                (*row, Place { kind, section })
+            })
+            .collect()
+    }
+
     /// The heading held at the top of the list, and where to hold it.
     ///
     /// Measured in the list's own space — the decoration is laid out over the
@@ -736,7 +833,6 @@ impl Cydonia {
             };
         let folded = folded && self.applied_query().is_none();
         let key = key_of(Row::Group(group));
-        let carried = SharedString::from(name.clone());
         let (menu, add) = match group {
             Group::Project(ix) => (Menu::Project(ix), Some(Menu::Add(ix))),
             Group::Space(_) => (Menu::Entry(Row::Group(group)), None),
@@ -859,19 +955,6 @@ impl Cydonia {
             .on_click(cx.listener(move |this, _, _, cx| match pinned {
                 true => this.scroll_to_group(group, cx),
                 false => this.fold_group(group, cx),
-            }))
-            // Carried by its heading, and dropped on the heading of its own
-            // kind it is to sit in front of.
-            .on_drag(GroupDrag(group), move |_, _, _, cx| {
-                let carried = carried.clone();
-                cx.new(|_| Carried(carried))
-            })
-            .drag_over::<GroupDrag>(move |style, drag, _, cx| match same_kind(drag.0, group) {
-                true => style.bg(Theme::of(cx).element_active),
-                false => style,
-            })
-            .on_drop(cx.listener(move |this, drag: &GroupDrag, _, cx| {
-                this.move_group(drag.0, group, cx);
             }));
         // A project's menu opens on the press rather than the click, so the
         // note has to be here too — read stale, a right press would swallow.
@@ -1043,8 +1126,8 @@ impl Cydonia {
                 let Some(space) = workspace.spaces.get(ix) else {
                     return Vec::new();
                 };
-                space
-                    .entries()
+                workspace
+                    .listed_members(space)
                     .iter()
                     .filter(|member| workspace.space_holding(member) == Some(ix))
                     .filter_map(|member| self.row_of_member(member, cx))
@@ -1234,7 +1317,7 @@ impl Cydonia {
     /// One line, built when the list scrolls it into view. The box around it is
     /// what holds the pitch: the row inside paints the wash, and the pixel
     /// either side of it is the gap between two.
-    fn sidebar_row(&self, row: Row, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn sidebar_row(&self, row: Row, window: &mut Window, cx: &mut Context<Self>) -> Stateful<Div> {
         let workspace = self.workspace.read(cx);
         let inner = match row {
             Row::Group(group) => self.group_head(group, false, window, cx),
@@ -1279,8 +1362,6 @@ impl Cydonia {
             }
             Row::Heading(heading) => self.heading_row(heading, cx),
         };
-        let carried = self.drag_of_row(row, cx);
-        let label = SharedString::from(self.label_of_row(row, cx));
         let entry = !matches!(
             row,
             Row::Group(Group::Project(_)) | Row::Archive(_) | Row::Heading(_)
@@ -1309,38 +1390,18 @@ impl Cydonia {
                         .flatten(),
                 )
             })
-            // Carried onto a pane's edge to put it beside what is there — see
-            // [`crate::view::arrangement`].
-            .when_some(carried, |el, carried| {
-                el.on_drag(carried, move |_, _, _, cx| {
-                    let label = label.clone();
-                    cx.new(|_| Carried(label))
-                })
-            })
-            // And dropped on the row it is to take the place of, the way a
-            // project heading is.
-            .when(showing_of(row).is_some(), |el| {
-                el.drag_over::<EntryDrag>(move |style, _, _, cx| {
-                    style.bg(Theme::of(cx).element_active)
-                })
-                .on_drop(cx.listener(move |this, drag: &EntryDrag, _, cx| {
-                    if let Some(carried) = this.dropped(drag, cx) {
-                        this.reorder_entry(&carried, row, cx);
-                    }
-                }))
-            })
             .h(px(ROW_HEIGHT))
             .py(px(1.))
             .child(inner)
-            .into_any_element()
     }
 
     /// What the row is called, for the ghost that follows the pointer.
-    pub(crate) fn label_of_row(&self, row: Row, cx: &Context<Self>) -> String {
+    pub(crate) fn label_of_row(&self, row: Row, cx: &App) -> String {
         let workspace = self.workspace.read(cx);
         let named = || -> Option<String> {
             Some(match row {
-                Row::Group(Group::Project(_)) | Row::Archive(_) | Row::Heading(_) => return None,
+                Row::Group(Group::Project(ix)) => workspace.projects.get(ix)?.name(),
+                Row::Archive(_) | Row::Heading(_) => return None,
                 Row::Group(Group::Space(ix)) => workspace.spaces.get(ix)?.label().to_owned(),
                 Row::Session { project, id } => {
                     workspace.projects.get(project)?.session(id)?.label()
@@ -1399,8 +1460,74 @@ impl Cydonia {
         }
     }
 
-    /// Put the carried entry where `onto` is, and write the project's order
-    /// down.
+    /// A row let go in the list, between the painted rows `after` and
+    /// `before`.
+    fn sidebar_moved(&mut self, event: &drag::Drop<(), Dragged>, cx: &mut Context<Self>) {
+        let Dragged::Row(carried) = event.item else {
+            return;
+        };
+        let rows = self.rows(cx);
+        let at = |neighbour: &Option<Dragged>| match neighbour {
+            Some(Dragged::Row(row)) => rows.iter().position(|at| at == row),
+            _ => None,
+        };
+        let gap = at(&event.after)
+            .map(|ix| ix + 1)
+            .or_else(|| at(&event.before))
+            .unwrap_or(0);
+        let above = rows[..gap].iter().filter(|row| **row != carried);
+        match carried {
+            // Among the groups of its kind, by how many of them are above it.
+            Row::Group(Group::Project(from)) => {
+                let to = above
+                    .filter(|row| matches!(row, Row::Group(Group::Project(_))))
+                    .count();
+                self.move_project(from, to, cx);
+            }
+            Row::Group(Group::Space(from)) => {
+                let to = above
+                    .filter(|row| matches!(row, Row::Group(Group::Space(_))))
+                    .count();
+                self.move_space(from, to, cx);
+            }
+            _ => {
+                let places = self.row_places(&rows, cx);
+                let kind = |row: &Row| places.get(row).map(|place| place.kind.clone());
+                let own = kind(&carried);
+                let at = above.filter(|row| kind(row) == own).count();
+                let mut region: Vec<Row> = rows
+                    .iter()
+                    .copied()
+                    .filter(|row| *row != carried && kind(row) == own)
+                    .collect();
+                region.insert(at.min(region.len()), carried);
+                let at = rows.iter().position(|row| *row == carried).unwrap_or(0);
+                let group = rows[..at].iter().rev().find_map(|row| match *row {
+                    Row::Group(group) => Some(group),
+                    _ => None,
+                });
+                match group {
+                    // The sidebar's order alone: the space's panes stay put.
+                    Some(Group::Space(ix)) => {
+                        let members: Vec<Member> = region
+                            .iter()
+                            .filter_map(|row| self.member_of_row(*row, cx))
+                            .collect();
+                        self.workspace.update(cx, |workspace, cx| {
+                            if let Some(id) = workspace.spaces.get(ix).map(|space| space.id.clone())
+                            {
+                                workspace.set_space_order(&id, members, cx);
+                            }
+                        });
+                    }
+                    _ => self.reorder_entries(carried, region, cx),
+                }
+            }
+        }
+    }
+
+    /// Write the project's order down with `region` — the rows of one region
+    /// of it, in their new order — taking the places those rows held.
     ///
     /// The whole list is rewritten rather than the one row that moved: an
     /// order held as gaps between the rows that did move is one every later
@@ -1410,8 +1537,8 @@ impl Cydonia {
     /// their own order, and a row dragged between the two regions would be
     /// changing what it *is* rather than where it sits — that is what the
     /// button at the end of the row and the band's `···` are for.
-    fn reorder_entry(&mut self, carried: &Member, onto: Row, cx: &mut Context<Self>) {
-        let Some(project) = project_of(onto) else {
+    fn reorder_entries(&mut self, carried: Row, region: Vec<Row>, cx: &mut Context<Self>) {
+        let Some(project) = project_of(carried) else {
             return;
         };
         let rows: Vec<Row> = self
@@ -1419,20 +1546,18 @@ impl Cydonia {
             .into_iter()
             .map(|entry| entry.row)
             .collect();
-        let from = rows
+        let mut next = region.iter();
+        let moved: Vec<Row> = rows
             .iter()
-            .position(|row| self.member_of_row(*row, cx).as_ref() == Some(carried));
-        let to = rows.iter().position(|row| *row == onto);
-        let (Some(from), Some(to)) = (from, to) else {
-            return;
-        };
-        if from == to || self.pinned(rows[from], cx) != self.pinned(onto, cx) {
+            .map(|row| match region.contains(row) {
+                true => next.next().copied().unwrap_or(*row),
+                false => *row,
+            })
+            .collect();
+        if moved == rows {
             return;
         }
-        let among_pins = self.pinned(onto, cx);
-        let mut moved = rows;
-        let row = moved.remove(from);
-        moved.insert(to, row);
+        let among_pins = self.pinned(carried, cx);
         let workspace = self.workspace.read(cx);
         let entry_of = |row: &Row| workspace.entry_of(project, showing_of(*row)?);
         // Every entry, so that unpinning one later puts it back where it sat
@@ -1466,16 +1591,22 @@ impl Cydonia {
         self.workspace.read(cx).member_of(project_of(row)?, showing)
     }
 
-    /// What a drag off this row carries. A session with no file yet has no
-    /// name a space can hold, and is carried as itself — see [`EntryDrag`].
-    fn drag_of_row(&self, row: Row, cx: &App) -> Option<EntryDrag> {
-        match self.member_of_row(row, cx) {
-            Some(member) => Some(EntryDrag::Member(member)),
-            None => match row {
-                Row::Session { project, id } => Some(EntryDrag::Session { project, id }),
-                _ => None,
-            },
+    /// The member a row names once it lands in a pane. A session carried with
+    /// no file yet is given one here: a space names its members by file, so
+    /// there is nothing to put in one until this runs. Minting it at the drop
+    /// rather than at the drag keeps a gesture that went nowhere from leaving
+    /// a session behind on disk.
+    pub(crate) fn landed_row(&mut self, row: Row, cx: &mut Context<Self>) -> Option<Member> {
+        if let Some(member) = self.member_of_row(row, cx) {
+            return Some(member);
         }
+        let Row::Session { project, id } = row else {
+            return None;
+        };
+        self.workspace.update(cx, |workspace, cx| {
+            workspace.retain_session(id, cx)?;
+            workspace.member_of(project, Showing::Session(id))
+        })
     }
 
     /// What the sidebar needs of a session, read when its row comes on screen.
@@ -1613,15 +1744,6 @@ impl Cydonia {
         self.menu = None;
         self.workspace
             .update(cx, |workspace, cx| workspace.move_space(from, to, cx));
-    }
-
-    /// Carry a group in front of another of its kind.
-    fn move_group(&mut self, from: Group, to: Group, cx: &mut Context<Self>) {
-        match (from, to) {
-            (Group::Project(from), Group::Project(to)) => self.move_project(from, to, cx),
-            (Group::Space(from), Group::Space(to)) => self.move_space(from, to, cx),
-            _ => {}
-        }
     }
 
     /// What the `+` starts here. Session first: it is what the sidebar is for.

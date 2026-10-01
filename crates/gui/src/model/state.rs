@@ -97,6 +97,12 @@ pub struct State {
     /// Spaces whose members the sidebar hides, by id.
     #[serde(default)]
     pub folded_spaces: Vec<String>,
+    /// The order the sidebar lists each space's members in, by space id. The
+    /// sidebar's alone: the space's panes and tabs keep their own. A member
+    /// this does not name is listed above the ones it does, in the space's
+    /// order — the rule `order` follows for entries.
+    #[serde(default)]
+    pub space_order: BTreeMap<String, Vec<artifact::space::Member>>,
     /// The sidebar's sections whose rows are hidden, by name: `projects`,
     /// `spaces`.
     #[serde(default)]
@@ -165,6 +171,7 @@ pub fn restore() -> State {
         space: stored.space,
         spaces: stored.spaces,
         folded_spaces: stored.folded_spaces,
+        space_order: stored.space_order,
         folded_sections: stored.folded_sections,
         window: stored.window,
         commands: stored.commands,

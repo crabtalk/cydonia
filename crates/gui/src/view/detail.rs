@@ -683,12 +683,6 @@ impl Cydonia {
             },
         };
 
-        let body = match arranged {
-            true => body,
-            // One pane takes a drop on its edge too: that is where the first
-            // space comes from.
-            false => self.lone_pane(body, cx),
-        };
         let content = div()
             .flex_1()
             .min_h_0()
@@ -825,7 +819,12 @@ impl Cydonia {
                             cx.notify();
                         },
                     ))
-                    .child(main)
+                    // One pane takes a drop on its edge too: that is where
+                    // the first space comes from.
+                    .child(match arranged {
+                        true => main.into_any_element(),
+                        false => self.lone_pane(main.into_any_element(), cx),
+                    })
                     .children(changes.clone().filter(|_| beside).map(|panel| {
                         div()
                             .relative()

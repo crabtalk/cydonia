@@ -1,14 +1,14 @@
-//! The window's own caption buttons and drag handle, off macOS.
+//! The window's own caption buttons and drag handle.
 //!
-//! Every window opens with `appears_transparent`, and on Linux asks for
-//! client decorations, so off macOS nothing but these moves, minimises,
-//! maximises or closes it. Each lands in whichever band sits at that corner
-//! of the window, the way [`crate::view::root::TOOLBAR_INSET`] is taken by
-//! whichever sits under the traffic lights.
+//! Every window opens with `appears_transparent` and `app_owns_titlebar_drag`,
+//! and on Linux asks for client decorations, so nothing but a [`grip`] moves
+//! it. Off macOS the caption buttons are the only ones it has. Each lands in
+//! whichever band sits at that corner of the window, the way
+//! [`crate::view::root::TOOLBAR_INSET`] is taken by whichever sits under the
+//! traffic lights.
 //!
-//! On macOS both are inert: AppKit paints the lights and drags the window by
-//! the transparent titlebar. In a browser both are inert too: the page owns
-//! the frame the window sits in.
+//! On macOS AppKit paints the lights. In a browser both are inert: the page
+//! owns the frame the window sits in.
 
 use bezel::{
     gpui::{AnyElement, App, ElementId, Window, WindowDecorations, div, prelude::*},
@@ -16,6 +16,7 @@ use bezel::{
 };
 
 const NATIVE: bool = cfg!(any(target_os = "macos", target_family = "wasm"));
+const WEB: bool = cfg!(target_family = "wasm");
 
 /// The caption buttons for `side`, or nothing where [`has`] says none.
 pub fn caption(side: CaptionSide, window: &Window, cx: &App) -> Option<AnyElement> {
@@ -26,10 +27,10 @@ pub fn caption(side: CaptionSide, window: &Window, cx: &App) -> Option<AnyElemen
     })
 }
 
-/// The free stretch of a band. Off macOS it drags the window, zooms it on a
-/// double click and opens the window menu on a right press.
+/// The free stretch of a band. It drags the window, zooms it on a double
+/// click and, off macOS, opens the window menu on a right press.
 pub fn grip(id: impl Into<ElementId>, drag: &DragState, window: &Window) -> AnyElement {
-    match NATIVE {
+    match WEB {
         true => div().flex_1().min_w_0().into_any_element(),
         false => titlebar::grip(id, drag, window)
             .min_w_0()

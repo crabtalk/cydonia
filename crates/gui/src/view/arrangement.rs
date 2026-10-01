@@ -14,7 +14,7 @@ use crate::{
         },
         leaf::Pane,
         root::Cydonia,
-        sidebar::{Carried, EntryDrag},
+        sidebar::Dragged,
     },
 };
 use artifact::space::{Axis as Split, Member, Node, Side, Space};
@@ -23,9 +23,11 @@ use bezel::{
         AnyElement, App, Axis, Context, DragMoveEvent, Empty, MouseButton, SharedString, Window,
         div, prelude::*, px, relative,
     },
+    motion::Painter,
     theme::Theme,
     ui::{
-        icons, menu::Item, popover, tabs, titlebar::CaptionSide, tooltip::Tooltip, widgets::Content,
+        docking, icons, menu::Item, popover, tabs, titlebar::CaptionSide, tooltip::Tooltip,
+        widgets::Content,
     },
 };
 
@@ -38,17 +40,6 @@ use bezel::{
 pub struct SeamDrag {
     pub path: Vec<usize>,
     pub at: usize,
-}
-
-/// Where a release on a pane lands the entry being dragged.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Landing {
-    /// On an edge: the pane divides, and the arrival takes that side.
-    Edge(Side),
-    /// On the bar: the arrival joins the pane's strip as a tab, and no seam is
-    /// made. What the bar is *for* — a pane's whole body is four edges, so
-    /// without a target that is not one of them there is nowhere to aim.
-    Bar,
 }
 
 /// What a pane's `+` makes.
@@ -64,10 +55,6 @@ enum New {
 /// The least of a split a pane may be squeezed to. A pane thinner than this
 /// has nothing left to grab it by.
 const MIN_SHARE: f64 = 0.08;
-
-/// What an arrival takes of the pane it is dropped on: half, which is also
-/// what the split leaves the two of them at.
-const HALF: f32 = 0.5;
 
 /// What the pane's name is padded by, and what a bar that is not the window's
 /// leading one starts its name at: the fill that marks the focused pane needs
@@ -232,7 +219,6 @@ impl Cydonia {
         let front = self.front_of(entry, &stack);
         let showing = self.workspace.read(cx).showing_of(&front);
         let key = key_of(entry);
-        let held = entry.clone();
         let body = match showing {
             // The entry has gone since the space named it. The pane says so
             // rather than standing empty: a blank pane reads as a bug, and the
@@ -258,6 +244,15 @@ impl Cydonia {
                             .flex()
                             .flex_col()
                             .gap(px(8.))
+                            // The band occludes the pane, so the pane's own
+                            // press never sees one landing here.
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener({
+                                    let on = front.clone();
+                                    move |this, _, window, cx| this.focus_pane(&on, window, cx)
+                                }),
+                            )
                             .children(self.plan(Some(id), cx))
                             .children(self.permission(Some(id), cx))
                             .child(leaf.composer.clone()),
@@ -269,12 +264,7 @@ impl Cydonia {
                 }),
             _ => None,
         };
-        let landing = self
-            .pane_landing
-            .as_ref()
-            .filter(|(on, _)| on == entry)
-            .map(|(_, at)| *at);
-        div()
+        let pane = div()
             .id(SharedString::from(format!("pane-{key}")))
             // With the context but without this, a pane claims chords that
             // never reach it: an action runs through the focused element's
@@ -303,35 +293,6 @@ impl Cydonia {
             // rather than one plane divided. The focus is said on the pane's
             // name — see [`Self::pane_bar`].
             //
-            // Which edge the pointer is over decides what a release does, so
-            // it is tracked while the drag is in the air and drawn by the mark
-            // below.
-            .on_drag_move(cx.listener({
-                let on = held.clone();
-                move |this, event: &DragMoveEvent<EntryDrag>, _, cx| {
-                    // A tab of this pane's own strip is reordering, not
-                    // joining: the bar is not a landing for it.
-                    let own = match event.drag(cx) {
-                        EntryDrag::Member(moving) => {
-                            this.workspace.read(cx).stack_of(&on).contains(moving)
-                        }
-                        _ => false,
-                    };
-                    this.aim_pane(&on, true, event.bounds, event.event.position, cx);
-                    if own && this.pane_landing == Some((on.clone(), Landing::Bar)) {
-                        this.pane_landing = None;
-                        cx.notify();
-                    }
-                }
-            }))
-            .on_drop(cx.listener({
-                let on = held.clone();
-                move |this, drag: &EntryDrag, window, cx| {
-                    if let Some(arriving) = this.dropped(drag, cx) {
-                        this.drop_entry(&arriving, &on, window, cx);
-                    }
-                }
-            }))
             // Pressing anywhere in a pane is how the focus moves to it, the
             // same way a click into the sidebar selects a row.
             //
@@ -348,8 +309,10 @@ impl Cydonia {
             )
             .child(self.pane_bar(entry, &stack, &front, first, last, &theme, window, cx))
             .child(body)
-            .children(composer)
-            .children(landing.map(|at| landing_mark(at, &theme)))
+            .children(composer);
+        // By the tab in front: that is what a drop joins or divides.
+        self.dock
+            .pane(front, px(crate::view::root::HEADER_HEIGHT), pane)
             .into_any_element()
     }
 
@@ -386,10 +349,16 @@ impl Cydonia {
         ) else {
             return true;
         };
-        if was != now
-            && let Some(front) = self.fronts.remove(&key_of(&was))
-        {
-            self.fronts.insert(key_of(&now), front);
+        if was != now {
+            // A pane is named by its first tab: what is kept under that name
+            // follows the pane to its new one.
+            if let Some(front) = self.fronts.remove(&key_of(&was)) {
+                self.fronts.insert(key_of(&now), front);
+            }
+            let mut strips = self.strips.borrow_mut();
+            if let Some(strip) = strips.remove(&key_of(&was)) {
+                strips.insert(key_of(&now), strip);
+            }
         }
         cx.notify();
         true
@@ -432,110 +401,88 @@ impl Cydonia {
             .and_then(|(project, pane)| self.member_showing(project, pane, cx))
     }
 
-    /// A drag over the single pane's header, which sits above the pane: over
-    /// it, a release makes a tab. The entry showing is not a tab to add to
-    /// itself.
-    pub(crate) fn aim_header(&mut self, event: &DragMoveEvent<EntryDrag>, cx: &mut Context<Self>) {
-        let Some(on) = self.lone_member(cx) else {
-            return;
-        };
-        let own = matches!(event.drag(cx), EntryDrag::Member(moving) if *moving == on);
-        let over = !own && event.bounds.contains(&event.event.position);
-        let aimed = self.pane_landing.as_ref() == Some(&(on.clone(), Landing::Bar));
-        match (over, aimed) {
-            (true, false) => self.pane_landing = Some((on, Landing::Bar)),
-            (false, true) => self.pane_landing = None,
-            _ => return,
+    /// A pane's strip state, kept across frames by the pane's name.
+    fn strip_of(&self, key: &SharedString, cx: &Context<Self>) -> tabs::Reorder<Dragged> {
+        self.strips
+            .borrow_mut()
+            .entry(key.clone())
+            .or_insert_with(|| tabs::Reorder::new(Painter::of(cx)))
+            .clone()
+    }
+
+    /// The single entry's column, header included, as a pane a drop lands on:
+    /// over the header it makes the two tabs, and on an edge the space that
+    /// puts them side by side.
+    pub(crate) fn lone_pane(&self, column: AnyElement, cx: &App) -> AnyElement {
+        match self.lone_member(cx) {
+            Some(on) => self
+                .dock
+                .pane(on, px(crate::view::root::HEADER_HEIGHT), column)
+                .into_any_element(),
+            None => column,
         }
-        cx.notify();
     }
 
-    /// Whether a drag is aimed at the single pane's header.
-    pub(crate) fn header_aimed(&self, cx: &App) -> bool {
-        self.lone_member(cx)
-            .is_some_and(|on| self.pane_landing.as_ref() == Some(&(on, Landing::Bar)))
+    /// The member a carried item names, once it has landed.
+    fn dropped(&mut self, item: &Dragged, cx: &mut Context<Self>) -> Option<Member> {
+        match item {
+            Dragged::Tab(member) => Some(member.clone()),
+            Dragged::Row(row) => self.landed_row(*row, cx),
+        }
     }
 
-    /// A release over the single pane's header.
-    pub(crate) fn drop_on_header(
+    /// What a carried item is called, for the ghost that follows the pointer.
+    pub(crate) fn label_of_dragged(&self, item: &Dragged, cx: &App) -> String {
+        match item {
+            Dragged::Row(row) => self.label_of_row(*row, cx),
+            Dragged::Tab(member) => self
+                .workspace
+                .read(cx)
+                .showing_of(member)
+                .and_then(|(project, showing)| self.toolbar_of(project, showing, cx))
+                .map(|toolbar| toolbar.title)
+                .unwrap_or_default(),
+        }
+    }
+
+    /// A release on a pane: into its strip where it joins, beside it where
+    /// it lands on an edge. Answers the pane the arrival is now in front of.
+    pub(crate) fn dock_drop(
         &mut self,
-        drag: &EntryDrag,
+        event: &docking::Drop<Member, Dragged>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
-        if let Some(on) = self.lone_member(cx)
-            && let Some(arriving) = self.dropped(drag, cx)
+    ) -> Option<Member> {
+        let target = &event.pane;
+        let stack = self.workspace.read(cx).stack_of(target);
+        if let Dragged::Tab(tab) = &event.item
+            && stack.contains(tab)
+            && (event.zone == docking::Zone::Join || stack.len() == 1)
         {
-            self.drop_entry(&arriving, &on, window, cx);
+            return None;
         }
-    }
-
-    /// The single pane, wrapped so an entry dropped on its edge makes the
-    /// space that puts the two side by side, and one dropped on its header
-    /// makes them tabs.
-    pub(crate) fn lone_pane(&self, body: AnyElement, cx: &mut Context<Self>) -> AnyElement {
-        let theme = Theme::of(cx).clone();
-        let Some(on) = self.lone_member(cx) else {
-            return body;
-        };
-        let landing = self
-            .pane_landing
-            .as_ref()
-            .filter(|(at, _)| *at == on)
-            .map(|(_, at)| *at);
-        div()
-            .id("lone-pane")
-            .size_full()
-            .min_w_0()
-            .min_h_0()
-            .relative()
-            .flex()
-            .flex_col()
-            .on_drag_move(cx.listener({
-                let at = on.clone();
-                move |this, event: &DragMoveEvent<EntryDrag>, _, cx| {
-                    // Above the pane is the header, which aims for itself.
-                    if event.event.position.y < event.bounds.top() {
-                        return;
-                    }
-                    this.aim_pane(&at, false, event.bounds, event.event.position, cx);
-                }
-            }))
-            .on_drop(cx.listener({
-                let at = on.clone();
-                move |this, drag: &EntryDrag, window, cx| {
-                    if let Some(arriving) = this.dropped(drag, cx) {
-                        this.drop_entry(&arriving, &at, window, cx);
-                    }
-                }
-            }))
-            .child(body)
-            // The header lights itself for a tab — see [`Self::header_aimed`].
-            .children(
-                landing
-                    .filter(|at| *at != Landing::Bar)
-                    .map(|at| landing_mark(at, &theme)),
-            )
-            .into_any_element()
-    }
-
-    /// The member a drag names, once it has landed.
-    ///
-    /// A session carried with no file yet is given one here: a space names
-    /// its members by file, so there is nothing to put in one until this runs.
-    /// Minting it at the drop rather than at the drag keeps a gesture that
-    /// went nowhere from leaving a session behind on disk.
-    pub(crate) fn dropped(&mut self, drag: &EntryDrag, cx: &mut Context<Self>) -> Option<Member> {
-        match drag {
-            EntryDrag::Member(member) => Some(member.clone()),
-            EntryDrag::Session { project, id } => {
-                let (project, id) = (*project, *id);
-                self.workspace.update(cx, |workspace, cx| {
-                    workspace.retain_session(id, cx)?;
-                    workspace.member_of(project, Showing::Session(id))
-                })
+        let arriving = self.dropped(&event.item, cx)?;
+        if arriving == *target {
+            return None;
+        }
+        let side = match event.zone {
+            docking::Zone::Join => {
+                self.add_tab(target, arriving.clone(), window, cx);
+                return Some(arriving);
             }
-        }
+            docking::Zone::Left => Side::Left,
+            docking::Zone::Right => Side::Right,
+            docking::Zone::Top => Side::Above,
+            docking::Zone::Bottom => Side::Below,
+        };
+        self.workspace.update(cx, |workspace, cx| {
+            workspace.arrange(target, &arriving, side, cx)
+        });
+        self.sync_leaves(window, cx);
+        self.focused = usize::MAX;
+        self.focus_pane(&arriving, window, cx);
+        cx.notify();
+        Some(arriving)
     }
 
     /// The member that names what a single pane is on.
@@ -608,9 +555,6 @@ impl Cydonia {
             (true, false) => crate::view::root::TOOLBAR_INSET,
             (false, _) => TAB_INSET,
         };
-        // The bar is a drop target of its own — see [`Landing::Bar`] — so it
-        // is lit while a drag is aimed at it rather than at an edge.
-        let aimed = self.pane_landing.as_ref() == Some(&(pane.clone(), Landing::Bar));
         let hovered = key.clone();
         let owner = cx.entity().downgrade();
         crate::view::root::band()
@@ -667,7 +611,6 @@ impl Cydonia {
             .gap(px(2.))
             .pl(px(lead))
             .when(right, |el| el.pr_0())
-            .when(aimed, |el| el.bg(theme.element_hover))
             .children(
                 left.then(|| chrome::caption(CaptionSide::Left, window, cx))
                     .flatten(),
@@ -678,16 +621,32 @@ impl Cydonia {
             // The tabs in a strip of their own, which scrolls sideways once
             // they no longer fit: the bar's other children are the pane's
             // chrome and keep their places while it does.
-            .child(crate::view::component::strip::strip(
-                format!("pane-strip-{key}"),
-                tabs::bar(SharedString::from(format!("pane-strip-{key}"))).children(
-                    stack
-                        .iter()
-                        .map(|tab| self.pane_tab(pane, tab, tab == front, theme, window, cx)),
-                ),
-                window,
-                cx,
-            ))
+            .child({
+                let mut strip = tabs::Strip::new();
+                for tab in stack {
+                    strip.open(Dragged::Tab(tab.clone()));
+                }
+                strip.activate(&Dragged::Tab(front.clone()));
+                self.strip_of(&key, cx)
+                    .bar(
+                        SharedString::from(format!("pane-strip-{key}")),
+                        &strip,
+                        stack.iter().map(|tab| {
+                            let el = self.pane_tab(pane, tab, tab == front, theme, window, cx);
+                            (Dragged::Tab(tab.clone()), el)
+                        }),
+                    )
+                    .on_reorder(cx.listener({
+                        let stack = stack.to_vec();
+                        move |this, moved: &tabs::Move, _, cx| {
+                            if let (Some(moving), Some(to)) =
+                                (stack.get(moved.from), stack.get(moved.to))
+                            {
+                                this.reorder_tab(moving, to, cx);
+                            }
+                        }
+                    }))
+            })
             .children(self.pane_project(front, cx).map(|project| {
                 self.menu_button(
                     SharedString::from(format!("pane-add-{key}")),
@@ -737,7 +696,7 @@ impl Cydonia {
         theme: &Theme,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> AnyElement {
+    ) -> bezel::gpui::Stateful<bezel::gpui::Div> {
         let toolbar = self
             .workspace
             .read(cx)
@@ -782,39 +741,6 @@ impl Cydonia {
                 let (on, shown) = (pane.clone(), tab.clone());
                 move |this, _, window, cx| this.show_tab(&on, &shown, window, cx)
             }))
-            // Carried to another pane's bar to join its strip, or to an edge
-            // to be pulled out into a pane of its own. The same drag the
-            // sidebar makes, down to the ghost: where a tab came from is not
-            // something the pane it lands on has to know.
-            .on_drag(EntryDrag::Member(tab.clone()), move |_, _, _, cx| {
-                let label = title.clone();
-                cx.new(|_| Carried(label))
-            })
-            // Let go over another tab of the same strip, it takes that tab's
-            // place. From anywhere else the drop falls through to the bar.
-            .drag_over::<EntryDrag>({
-                let (stack, to) = (self.workspace.read(cx).stack_of(tab), tab.clone());
-                move |style, drag, _, cx| match drag {
-                    EntryDrag::Member(moving) => match (
-                        stack.iter().position(|held| held == moving),
-                        stack.iter().position(|held| *held == to),
-                    ) {
-                        (Some(from), Some(at)) => tab_drop_mark(style, from, at, cx),
-                        _ => style,
-                    },
-                    _ => style,
-                }
-            })
-            .on_drop(cx.listener({
-                let to = tab.clone();
-                move |this, drag: &EntryDrag, _, cx| {
-                    if let EntryDrag::Member(moving) = drag
-                        && this.reorder_tab(moving, &to, cx)
-                    {
-                        cx.stop_propagation();
-                    }
-                }
-            }))
             // The entry's own menu, the one its band's `···` opens, where the
             // press lands.
             .on_mouse_down(
@@ -846,7 +772,6 @@ impl Cydonia {
                         }
                     })),
             )
-            .into_any_element()
     }
 
     /// What the `···` on a pane's bar offers: what can be done to the *pane*.
@@ -1032,28 +957,6 @@ impl Cydonia {
         }
     }
 
-    /// Which edge of a pane a pointer at this fraction of it is nearest.
-    ///
-    /// The four answers tile the pane, so there is nowhere in it a release
-    /// means nothing — a target that lights up and then does nothing when let
-    /// go of is worse than no target at all.
-    pub(crate) fn side_at(across: f32, down: f32) -> Side {
-        [
-            (across, Side::Left),
-            (1. - across, Side::Right),
-            (down, Side::Above),
-            (1. - down, Side::Below),
-        ]
-        .into_iter()
-        .fold((f32::MAX, Side::Left), |(near, held), (at, side)| {
-            match at < near {
-                true => (at, side),
-                false => (near, held),
-            }
-        })
-        .1
-    }
-
     /// Step the focus to the pane next along the arrangement.
     ///
     /// The order is the order the panes are laid out — left to right, and each
@@ -1122,75 +1025,6 @@ impl Cydonia {
             self.focus_pane(&entry, window, cx);
         }
         cx.notify();
-    }
-
-    /// Note which edge of a pane the pointer is over, so the mark can say
-    /// where a release would put what is in the air.
-    /// `bar` says whether this pane has a strip to drop onto. The window
-    /// showing one entry has none — there is no space yet, so there is no
-    /// pane to join — and its top row is an edge like any other.
-    fn aim_pane(
-        &mut self,
-        entry: &Member,
-        bar: bool,
-        bounds: bezel::gpui::Bounds<bezel::gpui::Pixels>,
-        at: bezel::gpui::Point<bezel::gpui::Pixels>,
-        cx: &mut Context<Self>,
-    ) {
-        if !bounds.contains(&at) {
-            // Left this pane: whichever one the pointer is now inside says so
-            // for itself, and a release outside them all means nothing.
-            if self
-                .pane_landing
-                .as_ref()
-                .is_some_and(|(on, _)| on == entry)
-            {
-                self.pane_landing = None;
-                cx.notify();
-            }
-            return;
-        }
-        // The bar wins over the edges it overlaps. It is one row tall against
-        // a whole pane, so without this the top edge would swallow every drop
-        // aimed at a strip and the bar would be unreachable.
-        let landing = match bar && at.y - bounds.top() <= px(crate::view::root::HEADER_HEIGHT) {
-            true => Landing::Bar,
-            false => {
-                let across = f32::from(at.x - bounds.left()) / f32::from(bounds.size.width);
-                let down = f32::from(at.y - bounds.top()) / f32::from(bounds.size.height);
-                Landing::Edge(Self::side_at(across, down))
-            }
-        };
-        if self.pane_landing.as_ref() != Some(&(entry.clone(), landing)) {
-            self.pane_landing = Some((entry.clone(), landing));
-            cx.notify();
-        }
-    }
-
-    /// A release on a pane: beside it where the pointer was over an edge, and
-    /// on it where it was over the middle.
-    fn drop_entry(
-        &mut self,
-        arriving: &Member,
-        target: &Member,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some((_, landing)) = self.pane_landing.take() else {
-            return;
-        };
-        match landing {
-            Landing::Edge(side) => {
-                self.workspace.update(cx, |workspace, cx| {
-                    workspace.arrange(target, arriving, side, cx)
-                });
-                self.sync_leaves(window, cx);
-                self.focused = usize::MAX;
-                self.focus_pane(arriving, window, cx);
-                cx.notify();
-            }
-            Landing::Bar => self.add_tab(target, arriving.clone(), window, cx),
-        }
     }
 
     /// Put `arriving` in `pane`'s strip as its front tab, and focus it.
@@ -1359,48 +1193,6 @@ impl Cydonia {
             }
         });
     }
-}
-
-/// Where a tab dragged along its own strip lands: a line on the edge of the
-/// tab whose place it takes — the trailing edge when it moves right, the
-/// leading edge when it moves left. A shadow, so the tab's layout does not move.
-// TODO: bezel DEV-77's `tabs::drop_mark` replaces this.
-pub(crate) fn tab_drop_mark(
-    style: bezel::gpui::StyleRefinement,
-    from: usize,
-    to: usize,
-    cx: &App,
-) -> bezel::gpui::StyleRefinement {
-    if from == to {
-        return style;
-    }
-    let x = if from < to { px(2.) } else { px(-2.) };
-    style.shadow(vec![bezel::gpui::BoxShadow {
-        color: Theme::of(cx).accent.opacity(0.6),
-        offset: bezel::gpui::point(x, px(0.)),
-        blur_radius: px(0.),
-        spread_radius: px(0.),
-        inset: false,
-    }])
-}
-
-/// The half of the pane a release would give the arrival.
-fn landing_mark(landing: Landing, theme: &Theme) -> AnyElement {
-    let mark = div().absolute().bg(theme.text_muted.opacity(0.28));
-    match landing {
-        // The bar's own row rather than half the pane: what a drop there makes
-        // is a tab, and shading half the window would promise a seam.
-        Landing::Bar => mark
-            .top_0()
-            .left_0()
-            .right_0()
-            .h(px(crate::view::root::HEADER_HEIGHT)),
-        Landing::Edge(Side::Left) => mark.left_0().top_0().bottom_0().w(relative(HALF)),
-        Landing::Edge(Side::Right) => mark.right_0().top_0().bottom_0().w(relative(HALF)),
-        Landing::Edge(Side::Above) => mark.top_0().left_0().right_0().h(relative(HALF)),
-        Landing::Edge(Side::Below) => mark.bottom_0().left_0().right_0().h(relative(HALF)),
-    }
-    .into_any_element()
 }
 
 /// A member as something that can be an element id: which project, and which

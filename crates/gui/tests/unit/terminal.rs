@@ -80,12 +80,12 @@ fn tabs_keep_shells_and_close_on_exit(cx: &mut gpui::TestAppContext) {
             panel.add(window, cx);
             panel.add(window, cx);
             assert_eq!(panel.tabs.len(), 3);
-            assert_eq!(panel.active, 3);
+            assert_eq!(panel.active(), 3);
             assert_eq!(panel.tabs[0].terminal, first);
             panel.close(2, window, cx);
-            assert_eq!(panel.active, 3);
+            assert_eq!(panel.active(), 3);
             panel.close(3, window, cx);
-            assert_eq!(panel.active, 1);
+            assert_eq!(panel.active(), 1);
             assert!(panel.focus_handle(cx).is_focused(window));
             first.update(cx, |_, cx| cx.emit(Exited));
         })
@@ -112,7 +112,7 @@ fn background_exit_preserves_active_tab_and_focus(cx: &mut gpui::TestAppContext)
     window
         .update(cx, |panel, window, cx| {
             assert_eq!(panel.tabs.len(), 1);
-            assert_eq!(panel.active, 2);
+            assert_eq!(panel.active(), 2);
             assert!(panel.focus_handle(cx).is_focused(window));
             let elsewhere = cx.focus_handle();
             window.focus(&elsewhere, cx);
@@ -186,7 +186,7 @@ fn command_w_closes_bottom_tabs_and_emits_empty_for_the_last(cx: &mut gpui::Test
     window
         .update(&mut visual, |panel, window, cx| {
             assert_eq!(panel.tabs.len(), 1);
-            assert_eq!(panel.active, 1);
+            assert_eq!(panel.active(), 1);
             assert!(panel.focus_handle(cx).is_focused(window));
         })
         .unwrap();
