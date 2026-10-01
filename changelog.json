@@ -1,5 +1,32 @@
 [
   {
+    "version": "0.1.22",
+    "date": "2026-10-01",
+    "nightly": true,
+    "summary": "Commands in the search palette, an editor section and colour controls in Settings, and opening files and pictures in other apps.",
+    "new": [
+      "Run commands and see their shortcuts from the search palette, with recent commands, a Commands filter chip and a > prefix",
+      "Open files in a remembered app from a split button, with Finder and Terminal entries and open-with choices in Settings",
+      "Open preview pictures in another app, and see article pictures reload when they change on disk",
+      "Paste media in source mode, keeping pasted image links local",
+      "Set selection, search result and cursor colours from preset popovers, and pick the cursor shape",
+      "Adjust window transparency with a slider; frosted glass stays macOS only",
+      "Show traffic light window buttons off macOS",
+      "Update an agent from its version tag in Settings"
+    ],
+    "changed": [
+      "Gather editor settings into their own section and groups, with paste options and a switch for the settings sidebar width",
+      "Leave the in-window menu out off macOS now that commands live in the palette",
+      "Open boards as a list by default and indent spaces in the sidebar",
+      "Move tab strips, docking and the sidebar onto Bezel's drag module",
+      "Build on Bezel 0.2.5 from crates.io"
+    ],
+    "fixed": [
+      "Fix the settings window layout and show browsing data on a single line",
+      "Make the sidebar toggle in Settings work again"
+    ]
+  },
+  {
     "version": "0.1.21",
     "date": "2026-09-28",
     "summary": "Browser settings, clearer browsing-data controls, smoother session layouts, and smaller Linux downloads.",
