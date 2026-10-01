@@ -218,23 +218,28 @@ impl SettingsWindow {
         let theme = Theme::of(cx).clone();
         let painter = Painter::of(cx);
         let status = updater.read(cx).status().clone();
-        let (line, detail): (SharedString, Option<SharedString>) = match &status {
-            Status::Idle => ("Releases".into(), Some("Nothing asked for yet.".into())),
-            Status::Checking => ("Looking for a release…".into(), None),
+        // Every status has a detail line, so the row keeps one height as the
+        // status changes.
+        let running: SharedString = format!("This copy is {VERSION}.").into();
+        let (line, detail): (SharedString, SharedString) = match &status {
+            Status::Idle => ("Releases".into(), "Nothing asked for yet.".into()),
+            Status::Checking => ("Looking for a release…".into(), running),
             Status::Current => (
                 "cydonia is up to date".into(),
-                Some(format!("{VERSION} is the newest release there is.").into()),
+                format!("{VERSION} is the newest release there is.").into(),
             ),
             Status::Available(version) => (
                 format!("cydonia {version} is out").into(),
-                Some("This copy cannot swap itself for it — the site has the image.".into()),
+                "This copy cannot swap itself for it — the site has the image.".into(),
             ),
-            Status::Downloading(version) => (format!("Fetching cydonia {version}…").into(), None),
+            Status::Downloading(version) => {
+                (format!("Fetching cydonia {version}…").into(), running)
+            }
             Status::Ready { version, .. } => (
                 format!("cydonia {version} is ready").into(),
-                Some("It goes in as the app restarts.".into()),
+                "It goes in as the app restarts.".into(),
             ),
-            Status::Failed(err) => ("No release could be fetched".into(), Some(err.clone())),
+            Status::Failed(err) => ("No release could be fetched".into(), err.clone()),
         };
         let working = matches!(status, Status::Checking | Status::Downloading(_));
         let ready = matches!(status, Status::Ready { .. });
@@ -249,14 +254,14 @@ impl SettingsWindow {
                     .flex()
                     .flex_col()
                     .child(theme.row_title(line))
-                    .children(detail.map(|copy| {
+                    .child(
                         div()
                             .mt(px(4.))
                             .truncate()
                             .text_style(TextStyle::Subheadline)
                             .text_color(theme.text_muted)
-                            .child(copy)
-                    })),
+                            .child(detail),
+                    ),
             )
             .child(if working {
                 div()

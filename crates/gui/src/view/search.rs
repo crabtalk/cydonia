@@ -2,6 +2,10 @@
 //! raised from the sidebar's Search row. Command-Enter applies its draft to
 //! the workspace until the sidebar's clear button is pressed.
 //!
+//! A query also lists the menu bar's commands, matched by name or by the chord
+//! bound to them; an empty one lists the commands run last. A query starting
+//! with `>` lists commands alone.
+//!
 //! An empty query lists what was touched last. A query is searched off disk on
 //! a background thread — see [`artifact::search::disk`] — so an entry's hits
 //! are as of its last write. Opening a hit in an entry's body puts the query in
@@ -9,6 +13,7 @@
 
 use crate::view::{
     keymap::{self, Command},
+    menubar,
     root::Cydonia,
     sidebar::{self, Row},
 };
@@ -51,6 +56,12 @@ const CONTEXT: &str = "CydoniaSearch";
 /// Rows an empty query lists.
 const RECENT: usize = 12;
 
+/// Commands an empty query lists outside the Commands filter.
+const RECENT_COMMANDS: usize = 5;
+
+/// What a query starting with this lists: commands alone.
+const COMMAND_PREFIX: char = '>';
+
 /// Rows a query lists, at most.
 const SHOWN: usize = 50;
 
@@ -84,6 +95,20 @@ pub(crate) struct Hit {
     snippet: Option<(String, Range<usize>)>,
 }
 
+/// A row as the palette lists it: a command, then the entries.
+#[derive(Clone, Copy)]
+enum Pick<'a> {
+    Command(&'a menubar::Command),
+    Hit(&'a Hit),
+}
+
+/// What the palette is narrowed to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Filter {
+    Kind(Kind),
+    Commands,
+}
+
 /// An entry's best match as the search found it.
 #[derive(Clone)]
 struct Found {
@@ -106,13 +131,17 @@ pub(crate) struct Search {
     applied_task: Option<Task<()>>,
     open: bool,
     field: Entity<TextField>,
+    /// The commands the focused surface could run when the palette opened.
+    commands: Vec<menubar::Command>,
+    /// Which of [`Self::commands`] the field's query matches, in order.
+    matched: Vec<usize>,
     /// What the last finished listing found. Kept on screen while the next
     /// one runs, so typing does not empty the palette between keystrokes.
     hits: Vec<Hit>,
     /// Whether a search for the field's query is still running.
     searching: bool,
     /// The one kind listed, or every kind.
-    filter: Option<Kind>,
+    filter: Option<Filter>,
     /// Rows listed at most, once filtered.
     limit: usize,
     selected: usize,
@@ -126,7 +155,7 @@ impl Search {
             TextField::new(cx)
                 .with_frame(false)
                 .with_key_context(CONTEXT)
-                .with_placeholder("Search articles, boards and sessions…")
+                .with_placeholder("Search articles, boards, sessions and commands…")
         });
         cx.subscribe(&field, |this, _, event: &FieldEvent, cx| {
             if matches!(event, FieldEvent::Changed(_)) {
@@ -139,6 +168,8 @@ impl Search {
             applied_task: None,
             open: false,
             field,
+            commands: Vec::new(),
+            matched: Vec::new(),
             hits: Vec::new(),
             searching: false,
             filter: None,
@@ -149,20 +180,85 @@ impl Search {
         }
     }
 
-    /// The hits the filter leaves, in order.
-    fn shown(&self) -> Vec<&Hit> {
-        self.hits
+    /// The rows the filter leaves, in order: commands, then the entries.
+    fn shown(&self, cx: &App) -> Vec<Pick<'_>> {
+        let only_commands = self.only_commands(cx);
+        let commands = self
+            .matched
             .iter()
-            .filter(|hit| {
-                self.filter
-                    .is_none_or(|kind| kind_of(hit.row) == Some(kind))
+            .filter(|_| self.filter.is_none() || only_commands)
+            .map(|&ix| Pick::Command(&self.commands[ix]));
+        let hits = self
+            .hits
+            .iter()
+            .filter(|_| !only_commands)
+            .filter(|hit| match self.filter {
+                Some(Filter::Kind(kind)) => kind_of(hit.row) == Some(kind),
+                _ => true,
             })
             .take(self.limit)
-            .collect()
+            .map(Pick::Hit);
+        commands.chain(hits).collect()
     }
 
+    /// Whether the palette lists commands and nothing else: the Commands
+    /// filter, or a query starting with [`COMMAND_PREFIX`].
+    fn only_commands(&self, cx: &App) -> bool {
+        self.filter == Some(Filter::Commands)
+            || self
+                .field
+                .read(cx)
+                .content()
+                .trim_start()
+                .starts_with(COMMAND_PREFIX)
+    }
+
+    /// Match the commands against what the field holds, less the prefix. An
+    /// empty query lists the ones run last, and every other one after them
+    /// under the Commands filter.
+    fn match_commands(&mut self, recent: &[String], cx: &App) {
+        let only = self.only_commands(cx);
+        let content = self.field.read(cx).content();
+        let text = content
+            .trim()
+            .trim_start_matches(COMMAND_PREFIX)
+            .trim()
+            .to_lowercase();
+        if text.is_empty() {
+            let keys: Vec<String> = self.commands.iter().map(menubar::Command::key).collect();
+            let ran = recent
+                .iter()
+                .filter_map(|key| keys.iter().position(|held| held == key));
+            self.matched = match only {
+                true => {
+                    let ran: Vec<usize> = ran.collect();
+                    let rest = (0..self.commands.len()).filter(|ix| !ran.contains(ix));
+                    ran.iter().copied().chain(rest).collect()
+                }
+                false => ran.take(RECENT_COMMANDS).collect(),
+            };
+            return;
+        }
+        let keys = menubar::query_keys(&text);
+        self.matched = self
+            .commands
+            .iter()
+            .enumerate()
+            .filter(|(_, command)| {
+                command.name.to_lowercase().contains(&text)
+                    || keys.is_some() && command.keys == keys
+            })
+            .map(|(ix, _)| ix)
+            .collect();
+    }
+
+    /// What the entries are searched for. Nothing for a query of commands.
     fn query(&self, cx: &App) -> Option<Query> {
-        Query::literal(self.field.read(cx).content())
+        let content = self.field.read(cx).content();
+        match content.trim_start().starts_with(COMMAND_PREFIX) {
+            true => None,
+            false => Query::literal(content),
+        }
     }
 }
 
@@ -178,12 +274,20 @@ impl Cydonia {
             return;
         }
         self.search.open = true;
+        // Read before the field takes focus: what can run is what the
+        // surface under the palette could.
+        self.search.commands = menubar::commands(window, cx);
         let query = self
             .search
             .applied
             .as_ref()
             .map(|a| a.query.text().to_owned());
-        self.search.filter = self.search.applied.as_ref().and_then(|a| a.filter);
+        self.search.filter = self
+            .search
+            .applied
+            .as_ref()
+            .and_then(|a| a.filter)
+            .map(Filter::Kind);
         self.search.field.update(cx, |field, cx| {
             field.set_content(query.unwrap_or_default(), cx);
         });
@@ -198,7 +302,10 @@ impl Cydonia {
         };
         self.search.applied = Some(Applied {
             query,
-            filter: self.search.filter,
+            filter: match self.search.filter {
+                Some(Filter::Kind(kind)) => Some(kind),
+                _ => None,
+            },
             found: Vec::new(),
             ready: false,
         });
@@ -273,6 +380,7 @@ impl Cydonia {
     /// List again for what the field holds. A search still running is
     /// dropped with its task.
     fn refresh_search(&mut self, cx: &mut Context<Self>) {
+        self.match_commands(cx);
         let Some(query) = self.search.query(cx) else {
             self.search.task = None;
             self.search.searching = false;
@@ -307,6 +415,11 @@ impl Cydonia {
             });
         }));
         cx.notify();
+    }
+
+    fn match_commands(&mut self, cx: &mut Context<Self>) {
+        let recent = self.workspace.read(cx).recent_commands().to_vec();
+        self.search.match_commands(&recent, cx);
     }
 
     /// What was touched last, across every open project.
@@ -374,13 +487,24 @@ impl Cydonia {
     }
 
     fn step_hit(&mut self, by: isize, cx: &mut Context<Self>) {
-        let len = self.search.shown().len();
+        let len = self.search.shown(cx).len();
         if len == 0 {
             return;
         }
         let at = (self.search.selected as isize + by).rem_euclid(len as isize) as usize;
         self.search.selected = at;
-        self.search.scroll.scroll_to_item(at);
+        // The list's children count a heading before each section.
+        let commands = self
+            .search
+            .shown(cx)
+            .iter()
+            .filter(|pick| matches!(pick, Pick::Command(_)))
+            .count();
+        let headings = match at < commands {
+            true => 1,
+            false => usize::from(commands > 0) + 1,
+        };
+        self.search.scroll.scroll_to_item(at + headings);
         cx.notify();
     }
 
@@ -388,10 +512,21 @@ impl Cydonia {
         self.open_hit(self.search.selected, window, cx);
     }
 
-    /// Open a hit, and mark the query in it where it was found in the body.
+    /// Open a hit, and mark the query in it where it was found in the body. A
+    /// command runs on the surface the palette was raised over.
     fn open_hit(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(hit) = self.search.shown().get(ix).copied().cloned() else {
-            return;
+        let hit = match self.search.shown(cx).get(ix).copied() {
+            Some(Pick::Hit(hit)) => hit.clone(),
+            Some(Pick::Command(command)) => {
+                let action = command.action.boxed_clone();
+                let key = command.key();
+                self.workspace
+                    .update(cx, |workspace, _| workspace.ran_command(key));
+                self.dismiss_search(&DismissSearch, window, cx);
+                window.dispatch_action(action, cx);
+                return;
+            }
+            None => return,
         };
         let query = self.search.field.read(cx).content().clone();
         self.dismiss_search(&DismissSearch, window, cx);
@@ -413,12 +548,16 @@ impl Cydonia {
                 Some(kind) => format!(
                     "{} · {}",
                     applied.query.text(),
-                    FILTERS.iter().find(|(k, _)| *k == Some(kind)).unwrap().1
+                    FILTERS
+                        .iter()
+                        .find(|(k, _)| *k == Some(Filter::Kind(kind)))
+                        .unwrap()
+                        .1
                 ),
                 None => applied.query.text().to_owned(),
             };
             let count = self.applied_rows(cx).map_or(0, |rows| rows.len());
-            return sidebar::row("applied-search", "applied-search", false, 0, &theme)
+            return sidebar::row("applied-search", "applied-search", false, false, 0, &theme)
                 .flex_none()
                 .min_w_0()
                 .mb(px(4.))
@@ -473,7 +612,7 @@ impl Cydonia {
                 )
                 .into_any_element();
         }
-        sidebar::row("search-row", "search-row", false, 0, &theme)
+        sidebar::row("search-row", "search-row", false, false, 0, &theme)
             .flex_none()
             .mb(px(4.))
             .child(
@@ -502,13 +641,34 @@ impl Cydonia {
         }
         let theme = Theme::of(cx).clone();
         let empty = self.search.query(cx).is_none();
-        let rows: Vec<AnyElement> = self
-            .search
-            .shown()
-            .into_iter()
-            .enumerate()
-            .map(|(ix, hit)| self.hit_row(ix, hit, cx))
-            .collect();
+        let heading = |title: &'static str| {
+            div()
+                .px(px(8.))
+                .pt(px(6.))
+                .pb(px(4.))
+                .text_style(TextStyle::Subheadline)
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(theme.text_faint)
+                .child(title)
+                .into_any_element()
+        };
+        let mut rows: Vec<AnyElement> = Vec::new();
+        let mut section = None;
+        for (ix, pick) in self.search.shown(cx).into_iter().enumerate() {
+            let title = match (pick, empty) {
+                (Pick::Command(_), _) => "Commands",
+                (Pick::Hit(_), true) => "Recent",
+                (Pick::Hit(_), false) => "Entries",
+            };
+            if section != Some(title) {
+                section = Some(title);
+                rows.push(heading(title));
+            }
+            rows.push(match pick {
+                Pick::Command(command) => self.command_row(ix, command, cx),
+                Pick::Hit(hit) => self.hit_row(ix, hit, cx),
+            });
+        }
         let note = match (rows.is_empty(), self.search.searching, empty) {
             (false, ..) => None,
             (true, true, _) => Some("Searching…"),
@@ -569,17 +729,6 @@ impl Cydonia {
                                 )
                                 .child(div().flex_1().min_w_0().child(self.search.field.clone())),
                         )
-                        .children(empty.then(|| {
-                            div()
-                                .flex_none()
-                                .px(px(14.))
-                                .pt(px(8.))
-                                .pb(px(2.))
-                                .text_style(TextStyle::Subheadline)
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(theme.text_faint)
-                                .child("Recent")
-                        }))
                         .child(
                             div()
                                 .id("search-hits")
@@ -643,8 +792,9 @@ impl Cydonia {
         self.set_filter(FILTERS[at].0, cx);
     }
 
-    fn set_filter(&mut self, filter: Option<Kind>, cx: &mut Context<Self>) {
+    fn set_filter(&mut self, filter: Option<Filter>, cx: &mut Context<Self>) {
         self.search.filter = filter;
+        self.match_commands(cx);
         self.search.selected = 0;
         self.search.scroll.scroll_to_item(0);
         cx.notify();
@@ -720,6 +870,60 @@ impl Cydonia {
                         cx.stop_propagation();
                         this.set_filter(kind, cx);
                     }))
+            }))
+            .into_any_element()
+    }
+
+    fn command_row(
+        &self,
+        ix: usize,
+        command: &menubar::Command,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        let selected = ix == self.search.selected;
+        div()
+            .id(("search-hit", ix))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(10.))
+            .px(px(8.))
+            .py(px(6.))
+            .rounded(px(Theme::control_radius()))
+            .cursor_pointer()
+            .when(selected, |el| el.bg(theme.element_active))
+            .when(!selected, |el| el.hover(|el| el.bg(theme.element_hover)))
+            .child(
+                icons::icon(icons::development::SquareTerminal)
+                    .size(px(14.))
+                    .text_color(theme.text_muted),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .text_style(TextStyle::Body)
+                    .text_color(theme.text)
+                    .child(command.name.clone()),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .text_style(TextStyle::Subheadline)
+                    .text_color(theme.text_faint)
+                    .child(command.menu.clone()),
+            )
+            .children(
+                command
+                    .shortcut
+                    .clone()
+                    .map(|chord| popover::kbd_hint(&theme, chord)),
+            )
+            .on_click(cx.listener(move |this, _, window, cx| {
+                cx.stop_propagation();
+                this.open_hit(ix, window, cx);
             }))
             .into_any_element()
     }
@@ -870,11 +1074,12 @@ fn search_all(roots: &[PathBuf], query: &Query) -> Vec<Found> {
 }
 
 /// The filters in the order the chips show and `tab` steps them.
-const FILTERS: [(Option<Kind>, &str); 4] = [
+const FILTERS: [(Option<Filter>, &str); 5] = [
     (None, "All"),
-    (Some(Kind::Session), "Sessions"),
-    (Some(Kind::Board), "Boards"),
-    (Some(Kind::Article), "Articles"),
+    (Some(Filter::Commands), "Commands"),
+    (Some(Filter::Kind(Kind::Session)), "Sessions"),
+    (Some(Filter::Kind(Kind::Board)), "Boards"),
+    (Some(Filter::Kind(Kind::Article)), "Articles"),
 ];
 
 fn kind_of(row: Row) -> Option<Kind> {

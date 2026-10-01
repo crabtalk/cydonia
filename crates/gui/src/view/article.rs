@@ -25,7 +25,9 @@ use bezel::{
         widgets::{ButtonStyle, Buttons as _, Status as _},
     },
 };
+use editor::AppExt as _;
 use editor::Mode;
+use markdown::AppExt as _;
 use markdown::HighlightColor;
 use std::{
     path::{Path, PathBuf},
@@ -117,19 +119,39 @@ pub fn mark_paint(name: &str, theme: &Theme) -> Option<markdown::MarkPaint> {
     })
 }
 
+/// The find wash's colour; unset keeps [`markdown::default_find`].
+static SEARCH: std::sync::RwLock<Option<crate::model::settings::Paint>> =
+    std::sync::RwLock::new(None);
+
+pub fn set_search(color: Option<crate::model::settings::Paint>) {
+    if let Ok(mut held) = SEARCH.write() {
+        *held = color;
+    }
+}
+
+/// How find matches paint: the colour [`set_search`] chose, the current match
+/// a step stronger than the rest.
+pub fn find_paint(theme: &Theme) -> (bezel::gpui::Hsla, bezel::gpui::Hsla) {
+    let Some(color) = SEARCH.read().ok().and_then(|held| *held) else {
+        return markdown::default_find(theme);
+    };
+    let wash = color.wash(theme);
+    (wash, wash.opacity((wash.a + 0.25).min(1.)))
+}
+
 fn source_offset(editor: &editor::Editor, cx: &App) -> f32 {
     if editor.mode() != Mode::Source {
         return 0.;
     }
-    let style = markdown::SourceStyle::of(cx);
+    let style = cx.source_style();
     let base = bezel::theme::base_text_size();
-    let limits = editor::TextSize::of(cx);
-    let size = ((editor.text_size().unwrap_or(base) + editor::text_size_adjustment(cx))
+    let limits = cx.editor_text_size();
+    let size = ((editor.text_size().unwrap_or(base) + cx.editor_text_size_adjustment())
         .clamp(limits.min, limits.max)
         * 10.)
         .round()
         / 10.;
-    let code_size = markdown::Typography::of(cx).scaled(size / base).code.size();
+    let code_size = cx.typography().scaled(size / base).code.size();
     let digits = editor
         .source()
         .split('\n')
@@ -583,7 +605,7 @@ impl Cydonia {
             .child(
                 div().w_full().flex().justify_center().child(
                     column(wide)
-                        .pl(px(COLUMN_INSET + editor::Layout::of(cx).text_inset))
+                        .pl(px(COLUMN_INSET + cx.editor_layout().text_inset))
                         .pr(px(COLUMN_INSET))
                         .pt(px(20.))
                         .child(field),
@@ -653,6 +675,7 @@ impl Cydonia {
         project: usize,
         ix: usize,
         title: String,
+        lifted: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
@@ -673,6 +696,7 @@ impl Cydonia {
             id,
             "article-row",
             selected,
+            lifted,
             self.indent_of(entry, cx),
             &theme,
         )

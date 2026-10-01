@@ -1,6 +1,7 @@
 //! The menu bar: the tree, the commands only it names, and the wiring that
 //! decides which of them are live. macOS hangs the tree on the system bar; off
-//! macOS [`Cydonia::app_menu`] opens it from a button in the window.
+//! macOS it has no surface of its own, and the search palette lists its
+//! commands — see [`commands`].
 //!
 //! An item carries an action and a name, never a shortcut. `set_menus` reads
 //! the equivalent off the keymap, so [`crate::view::keymap`] stays the one
@@ -27,7 +28,6 @@ use crate::{
     model::settings,
     view::{
         article::TogglePlainText,
-        component::menu::{self as card, Menu as Open},
         keymap,
         leaf::Pane,
         root::{
@@ -39,14 +39,13 @@ use crate::{
 };
 use bezel::{
     gpui::{
-        self, AnyElement, App, Context, Div, KeyBinding, Menu, MenuItem, OsAction, OwnedMenu,
-        OwnedMenuItem, Window, actions, prelude::*,
+        self, App, Context, Div, KeyBinding, Menu, MenuItem, OsAction, OwnedMenu, OwnedMenuItem,
+        Window, actions, prelude::*,
     },
-    ui::{icons, input, menu::Item},
+    ui::input,
 };
 
-/// Whether the tree hangs on the system bar rather than behind
-/// [`Cydonia::app_menu`].
+/// Whether the tree hangs on the system bar.
 const NATIVE: bool = cfg!(target_os = "macos");
 
 actions!(
@@ -300,33 +299,6 @@ fn workspace(cx: &mut App, f: impl FnOnce(&mut Cydonia, &mut Window, &mut Contex
 }
 
 impl Cydonia {
-    /// The button that opens the tree off macOS, and its card while open.
-    /// `None` on macOS and in a browser.
-    pub(crate) fn app_menu(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        if NATIVE || cfg!(target_family = "wasm") {
-            return None;
-        }
-        let card = (self.menu == Some(Open::App))
-            .then(|| cx.get_menus())
-            .flatten()
-            .map(|menus| {
-                let rows = menus
-                    .into_iter()
-                    .map(|menu| submenu(menu, window, cx))
-                    .collect();
-                self.menu_card("app-menu-card", rows, window, cx)
-            });
-        Some(
-            self.menu_button("app-menu", None, icons::layout::Menu, Open::App, cx)
-                .children(card)
-                .into_any_element(),
-        )
-    }
-
     /// Hang the menu's commands on the root, each under the condition that
     /// makes it mean something — a board cannot be started in a window with no
     /// project open, so with none there is nothing here to handle `NewBoard`
@@ -402,37 +374,120 @@ impl Cydonia {
 
 /// One menu of the tree as a row that opens it. Each item dispatches its action
 /// to the window, greyed where nothing in the focused path would handle it.
-fn submenu(menu: OwnedMenu, window: &Window, cx: &App) -> (Item, card::Act) {
-    let (items, acts): (Vec<Item>, Vec<card::Act>) = menu
-        .items
-        .into_iter()
-        .filter_map(|item| match item {
-            OwnedMenuItem::Separator => Some((Item::Separator, inert())),
-            OwnedMenuItem::Submenu(menu) => Some(submenu(menu, window, cx)),
-            OwnedMenuItem::SystemMenu(_) => None,
-            OwnedMenuItem::Action { name, action, .. } => {
-                let item = Item::action(name).with_shortcut(&*action, window);
-                let item = match window.is_action_available(&*action, cx) {
-                    true => item,
-                    false => item.disabled(),
-                };
-                let act: card::Act = Box::new(move |_, _, window, cx| {
-                    window.dispatch_action(action.boxed_clone(), cx)
-                });
-                Some((item, act))
-            }
-        })
-        .unzip();
-    let act: card::Act = Box::new(move |this, path, window, cx| {
-        if let Some((&at, rest)) = path.split_first()
-            && let Some(act) = acts.get(at)
-        {
-            act(this, rest, window, cx);
-        }
-    });
-    (Item::submenu(menu.name, items), act)
+/// One item of the tree, flattened for the search palette.
+pub(crate) struct Command {
+    pub name: gpui::SharedString,
+    /// The menu it sits in, outermost first.
+    pub menu: gpui::SharedString,
+    pub action: Box<dyn gpui::Action>,
+    pub shortcut: Option<gpui::SharedString>,
+    /// The keys of its first chord, when it is bound to a single chord, as
+    /// [`chord_keys`] names them.
+    pub keys: Option<Vec<String>>,
 }
 
-fn inert() -> card::Act {
-    Box::new(|_, _, _, _| {})
+impl Command {
+    /// What names it across launches: its menu path and its name.
+    pub fn key(&self) -> String {
+        format!("{} › {}", self.menu, self.name)
+    }
+}
+
+/// Every item of the tree the focused surface can run, in menu order.
+pub(crate) fn commands(window: &Window, cx: &App) -> Vec<Command> {
+    fn walk(menu: OwnedMenu, path: &str, window: &Window, cx: &App, out: &mut Vec<Command>) {
+        let path = match path {
+            "" => menu.name.to_string(),
+            _ => format!("{path} › {}", menu.name),
+        };
+        for item in menu.items {
+            match item {
+                OwnedMenuItem::Submenu(menu) => walk(menu, &path, window, cx, out),
+                OwnedMenuItem::Action { name, action, .. } => {
+                    if !window.is_action_available(&*action, cx) {
+                        continue;
+                    }
+                    let binding = window.highest_precedence_binding_for_action(&*action);
+                    let keys = binding
+                        .as_ref()
+                        .filter(|binding| binding.keystrokes().len() == 1)
+                        .map(|binding| {
+                            let stroke = &binding.keystrokes()[0];
+                            chord_keys(stroke.modifiers(), stroke.key())
+                        });
+                    out.push(Command {
+                        name: name.into(),
+                        menu: path.clone().into(),
+                        shortcut: bezel::ui::keys::shortcut(&*action, window),
+                        action,
+                        keys,
+                    });
+                }
+                OwnedMenuItem::Separator | OwnedMenuItem::SystemMenu(_) => {}
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for menu in cx.get_menus().unwrap_or_default() {
+        walk(menu, "", window, cx, &mut out);
+    }
+    out
+}
+
+/// A chord as a sorted set of lowercase key names: `ctrl`, `alt`, `shift`,
+/// `cmd` for the platform key, `fn`, and the key itself.
+pub(crate) fn chord_keys(modifiers: &gpui::Modifiers, key: &str) -> Vec<String> {
+    let mut keys: Vec<String> = [
+        (modifiers.control, "ctrl"),
+        (modifiers.alt, "alt"),
+        (modifiers.shift, "shift"),
+        (modifiers.platform, "cmd"),
+        (modifiers.function, "fn"),
+    ]
+    .into_iter()
+    .filter(|(held, _)| *held)
+    .map(|(_, name)| name.to_owned())
+    .chain(std::iter::once(key.to_lowercase()))
+    .collect();
+    keys.sort();
+    keys
+}
+
+/// A query read as a chord, in [`chord_keys`]'s names, if it names at least a
+/// modifier and a key: `ctrl+shift+f`, `Ctrl Shift F`, `⌘⇧F`.
+pub(crate) fn query_keys(query: &str) -> Option<Vec<String>> {
+    let mut spaced = String::new();
+    for ch in query.chars() {
+        match ch {
+            '⌘' | '⌃' | '⌥' | '⇧' => {
+                spaced.push(' ');
+                spaced.push(ch);
+                spaced.push(' ');
+            }
+            '+' | '-' => spaced.push(' '),
+            _ => spaced.push(ch),
+        }
+    }
+    let mut keys: Vec<String> = spaced
+        .split_whitespace()
+        .map(|token| {
+            match token.to_lowercase().as_str() {
+                "⌃" | "control" => "ctrl",
+                "⌥" | "option" | "opt" => "alt",
+                "⇧" => "shift",
+                "⌘" | "command" | "super" | "meta" | "win" => "cmd",
+                "esc" => "escape",
+                "return" => "enter",
+                other => return other.to_owned(),
+            }
+            .to_owned()
+        })
+        .collect();
+    let modifier = |key: &String| matches!(key.as_str(), "ctrl" | "alt" | "shift" | "cmd" | "fn");
+    if keys.len() < 2 || !keys.iter().any(modifier) || keys.iter().all(modifier) {
+        return None;
+    }
+    keys.sort();
+    keys.dedup();
+    Some(keys)
 }

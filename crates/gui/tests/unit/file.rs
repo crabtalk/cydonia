@@ -51,7 +51,7 @@ fn text_loading_rejects_binary_invalid_utf8_and_large_files() {
 #[gpui::test]
 fn clean_buffers_reload_but_dirty_buffers_keep_local_edits(cx: &mut gpui::TestAppContext) {
     let file = Temp::new();
-    let view = cx.new(|cx| FileView::new(file.0.clone(), cx));
+    let view = cx.new(|cx| FileView::new(file.0.clone(), WeakEntity::new_invalid(), cx));
     view.update(cx, |view, cx| {
         view.receive(Ok("original\r\n".into()), cx);
         assert!(!view.dirty(cx));
@@ -69,7 +69,7 @@ fn clean_buffers_reload_but_dirty_buffers_keep_local_edits(cx: &mut gpui::TestAp
 #[gpui::test]
 fn saving_preserves_crlf_and_clears_dirty_state(cx: &mut gpui::TestAppContext) {
     let file = Temp::new();
-    let view = cx.new(|cx| FileView::new(file.0.clone(), cx));
+    let view = cx.new(|cx| FileView::new(file.0.clone(), WeakEntity::new_invalid(), cx));
     view.update(cx, |view, cx| {
         view.receive(Ok("original\r\n".into()), cx);
         assert!(!view.dirty(cx));
@@ -94,7 +94,7 @@ fn source_uses_full_viewport_and_scrolls_long_files(cx: &mut gpui::TestAppContex
     let source = (0..100).map(|n| format!("line {n}\n")).collect::<String>();
     std::fs::write(&file.0, &source).unwrap();
     let window = cx.add_window(|_, cx| {
-        let mut view = FileView::new(file.0.clone(), cx);
+        let mut view = FileView::new(file.0.clone(), WeakEntity::new_invalid(), cx);
         view.receive(Ok(source.clone()), cx);
         view
     });
@@ -130,7 +130,7 @@ fn source_files_are_coloured_and_recoloured(cx: &mut gpui::TestAppContext) {
     syntax_std::install();
     let file = Temp::named(".rs");
     std::fs::write(&file.0, "fn main() { let x = 1; }\n").unwrap();
-    let view = cx.new(|cx| FileView::new(file.0.clone(), cx));
+    let view = cx.new(|cx| FileView::new(file.0.clone(), WeakEntity::new_invalid(), cx));
     settle(cx);
     let spans = view.read_with(cx, |view, cx| view.field.read(cx).spans().to_vec());
     assert!(!spans.is_empty(), "a .rs file is coloured");
@@ -162,7 +162,7 @@ fn source_files_are_coloured_and_recoloured(cx: &mut gpui::TestAppContext) {
 fn files_of_no_known_language_are_left_plain(cx: &mut gpui::TestAppContext) {
     let file = Temp::new();
     std::fs::write(&file.0, "fn main() { let x = 1; }\n").unwrap();
-    let view = cx.new(|cx| FileView::new(file.0.clone(), cx));
+    let view = cx.new(|cx| FileView::new(file.0.clone(), WeakEntity::new_invalid(), cx));
     settle(cx);
     assert!(view.read_with(cx, |view, cx| view.field.read(cx).spans().is_empty()));
 }
@@ -172,7 +172,7 @@ fn files_of_no_known_language_are_left_plain(cx: &mut gpui::TestAppContext) {
 #[gpui::test]
 fn a_named_but_unpainted_language_reports_itself(cx: &mut gpui::TestAppContext) {
     let file = Temp::named(".svelte");
-    let view = cx.new(|cx| FileView::new(file.0.clone(), cx));
+    let view = cx.new(|cx| FileView::new(file.0.clone(), WeakEntity::new_invalid(), cx));
     settle(cx);
     assert_eq!(
         view.read_with(cx, |view, _| view.unpainted()),
@@ -187,12 +187,12 @@ fn a_painted_or_unknown_file_reports_nothing(cx: &mut gpui::TestAppContext) {
     crate::model::language::paintable();
     syntax_std::install();
     let painted = Temp::named(".rs");
-    let view = cx.new(|cx| FileView::new(painted.0.clone(), cx));
+    let view = cx.new(|cx| FileView::new(painted.0.clone(), WeakEntity::new_invalid(), cx));
     settle(cx);
     assert_eq!(view.read_with(cx, |view, _| view.unpainted()), None);
 
     let unknown = Temp::new();
-    let view = cx.new(|cx| FileView::new(unknown.0.clone(), cx));
+    let view = cx.new(|cx| FileView::new(unknown.0.clone(), WeakEntity::new_invalid(), cx));
     settle(cx);
     assert_eq!(view.read_with(cx, |view, _| view.unpainted()), None);
 }
@@ -211,7 +211,7 @@ fn settle(cx: &mut gpui::TestAppContext) {
 fn markdown_is_coloured_without_a_grammar(cx: &mut gpui::TestAppContext) {
     let file = Temp::named(".md");
     std::fs::write(&file.0, "# Title\n\nSome `code` and **bold**.\n").unwrap();
-    let view = cx.new(|cx| FileView::new(file.0.clone(), cx));
+    let view = cx.new(|cx| FileView::new(file.0.clone(), WeakEntity::new_invalid(), cx));
     settle(cx);
     assert!(
         !view
@@ -229,7 +229,7 @@ fn zoom_shortcuts_resize_source_and_work_in_preview(cx: &mut gpui::TestAppContex
     });
     let file = Temp::named(".md");
     let window = cx.add_window(|window, cx| {
-        let mut view = FileView::new(file.0.clone(), cx);
+        let mut view = FileView::new(file.0.clone(), WeakEntity::new_invalid(), cx);
         view.receive(Ok("original\r\n".into()), cx);
         view.preview = false;
         window.focus(&view.field.focus_handle(cx), cx);
@@ -287,7 +287,7 @@ fn copy_source_selection_takes_priority_over_transcript(cx: &mut gpui::TestAppCo
     let file = Temp::new();
     std::fs::write(&file.0, "copy this file").unwrap();
     let view = cx.new(|cx| {
-        let mut view = FileView::new(file.0.clone(), cx);
+        let mut view = FileView::new(file.0.clone(), WeakEntity::new_invalid(), cx);
         view.receive(Ok("copy this file".into()), cx);
         view
     });
@@ -319,7 +319,7 @@ fn markdown_preview_supports_drag_select_all_and_copy(cx: &mut gpui::TestAppCont
     let source = "# Title\n\nCopy **this** preview.\n";
     std::fs::write(&file.0, source).unwrap();
     let view = cx.new(|cx| {
-        let mut view = FileView::new(file.0.clone(), cx);
+        let mut view = FileView::new(file.0.clone(), WeakEntity::new_invalid(), cx);
         view.receive(Ok(source.into()), cx);
         view
     });
@@ -376,7 +376,7 @@ fn linked_line_is_revealed_after_loading_and_when_reusing_a_file(cx: &mut gpui::
     let source = (1..=100).map(|n| format!("line {n}\n")).collect::<String>();
     std::fs::write(&file.0, &source).unwrap();
     let window = cx.add_window(|_, cx| {
-        let mut view = FileView::new(file.0.clone(), cx);
+        let mut view = FileView::new(file.0.clone(), WeakEntity::new_invalid(), cx);
         view.go_to_line(60, cx);
         view.receive(Ok(source), cx);
         view
@@ -415,7 +415,8 @@ fn a_missing_grammar_asks_before_downloading_and_can_be_dismissed(cx: &mut gpui:
     cx.update(|cx| Theme::install(bezel::theme::Appearance::Light, cx));
     let file = Temp::named(".json");
     std::fs::write(&file.0, "{}").unwrap();
-    let window = cx.add_window(|_, cx| FileView::new(file.0.clone(), cx));
+    let window =
+        cx.add_window(|_, cx| FileView::new(file.0.clone(), WeakEntity::new_invalid(), cx));
     let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
     visual.run_until_parked();
     assert!(visual.debug_bounds("install-grammar").is_some());
@@ -437,7 +438,7 @@ fn a_missing_grammar_asks_before_downloading_and_can_be_dismissed(cx: &mut gpui:
 fn an_open_file_recolours_when_a_wasm_grammar_arrives(cx: &mut gpui::TestAppContext) {
     let file = Temp::named(".json");
     std::fs::write(&file.0, r#"{"name": "cydonia"}"#).unwrap();
-    let view = cx.new(|cx| FileView::new(file.0.clone(), cx));
+    let view = cx.new(|cx| FileView::new(file.0.clone(), WeakEntity::new_invalid(), cx));
     settle(cx);
     assert!(view.read_with(cx, |view, cx| view.field.read(cx).spans().is_empty()));
     let lang = Box::leak(Box::new(syntax::lang::Lang::new(
@@ -466,7 +467,8 @@ fn grammar_download_shows_progress_and_failures_offer_retry(cx: &mut gpui::TestA
     cx.update(|cx| Theme::install(bezel::theme::Appearance::Light, cx));
     let file = Temp::named(".json");
     std::fs::write(&file.0, "{}").unwrap();
-    let window = cx.add_window(|_, cx| FileView::new(file.0.clone(), cx));
+    let window =
+        cx.add_window(|_, cx| FileView::new(file.0.clone(), WeakEntity::new_invalid(), cx));
     let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
     visual.run_until_parked();
     window

@@ -24,14 +24,18 @@ use crate::{
     },
 };
 use artifact::board::Board;
+use bezel::theme::AppExt as _;
+use bezel::ui::AppExt as _;
 use bezel::{
     gpui::{App, ClipboardItem, Context, EntityId, EventEmitter, Window},
     theme::{self, Brand, Tint, Vibrancy, appearance::AppearanceMode},
-    ui::{icons::Icon, input},
+    ui::icons::Icon,
 };
 use cacp::schema::SessionConfigOptionValue;
+use editor::AppExt as _;
 use editor::Mode;
 use futures::{StreamExt as _, channel::mpsc};
+use markdown::AppExt as _;
 use mcp::rail::{self, Change};
 use std::{
     collections::{BTreeMap, HashMap},
@@ -85,6 +89,9 @@ pub struct Resident {
     /// Transcript entries across every one of them, read back whole at launch.
     pub items: usize,
 }
+
+/// Commands the palette remembers running.
+const RECENT_COMMANDS: usize = 20;
 
 pub struct Workspace {
     pub settings: Settings,
@@ -153,8 +160,12 @@ pub struct Workspace {
     pub space: Option<usize>,
     /// Spaces whose members the sidebar hides, by id.
     folded_spaces: std::collections::HashSet<String>,
+    /// The order the sidebar lists each space's members in, by space id.
+    space_order: std::collections::BTreeMap<String, Vec<artifact::space::Member>>,
     /// The sidebar's sections whose rows are hidden, by name.
     folded_sections: std::collections::HashSet<String>,
+    /// The palette's commands last run, most recent first.
+    recent_commands: Vec<String>,
 }
 
 impl Workspace {
@@ -172,15 +183,12 @@ impl Workspace {
         let active = (!projects.is_empty()).then_some(state.active);
         let restore: Vec<usize> = (0..projects.len()).collect();
         let look = settings.appearance.clone();
-        bezel::ui::scroll::set_visibility(look.scrollbars.into(), cx);
-        editor::set_text_size(
-            cx,
-            editor::TextSize {
-                step: 1.,
-                min: settings::CONTENT_TEXT_SIZE.0,
-                max: settings::CONTENT_TEXT_SIZE.1,
-            },
-        );
+        cx.set_scrollbar_visibility(look.scrollbars.into());
+        cx.set_editor_text_size(editor::TextSize {
+            step: 1.,
+            min: settings::CONTENT_TEXT_SIZE.0,
+            max: settings::CONTENT_TEXT_SIZE.1,
+        });
         crate::model::typography::set_terminal_size(look.mono_font_size, cx);
         crate::model::typography::set_file_size(look.mono_font_size, cx);
         let mut this = Self {
@@ -212,7 +220,9 @@ impl Workspace {
             spaces: Self::in_order(crate::model::spaces::all(), &state.spaces),
             space: None,
             folded_spaces: state.folded_spaces.iter().cloned().collect(),
+            space_order: state.space_order,
             folded_sections: state.folded_sections.iter().cloned().collect(),
+            recent_commands: state.commands,
         };
         // The arrangement the window closed on, before any entry is opened:
         // `open_last_entry` is a project's answer and a space spans them.
@@ -270,13 +280,33 @@ impl Workspace {
                 .filter(|space| self.folded_spaces.contains(&space.id))
                 .map(|space| space.id.clone())
                 .collect(),
+            space_order: self
+                .space_order
+                .iter()
+                .filter(|(id, _)| self.spaces.iter().any(|space| &space.id == *id))
+                .map(|(id, order)| (id.clone(), order.clone()))
+                .collect(),
             folded_sections: {
                 let mut folded: Vec<String> = self.folded_sections.iter().cloned().collect();
                 folded.sort();
                 folded
             },
             window: self.window,
+            commands: self.recent_commands.clone(),
         });
+    }
+
+    /// The palette's commands last run, most recent first.
+    pub fn recent_commands(&self) -> &[String] {
+        &self.recent_commands
+    }
+
+    /// Put a command run from the palette at the head of the recent ones.
+    pub fn ran_command(&mut self, key: String) {
+        self.recent_commands.retain(|held| *held != key);
+        self.recent_commands.insert(0, key);
+        self.recent_commands.truncate(RECENT_COMMANDS);
+        self.save();
     }
 
     /// Write down where the main window stands, if it has moved.
@@ -303,14 +333,21 @@ impl Workspace {
             article_font: self.fonts.body.as_ref().map(ToString::to_string),
             mono_font: self.fonts.mono.as_ref().map(ToString::to_string),
             hue: self.tint.hue,
+            vibrancy: self.settings.appearance.vibrancy,
             chroma: self.tint.chroma,
             wide_pages: self.wide_pages,
             board_view: self.board_view,
             indent_project_rows: self.indent_project_rows,
+            settings_sidebar_fits: self.settings.appearance.settings_sidebar_fits,
+            traffic_lights: self.settings.appearance.traffic_lights,
             scrollbars: self.settings.appearance.scrollbars,
             sidebar_scrollbars: self.settings.appearance.sidebar_scrollbars,
             wrap_code: self.wrap_code,
             highlight: self.settings.appearance.highlight,
+            selection: self.settings.appearance.selection,
+            search: self.settings.appearance.search,
+            caret: self.settings.appearance.caret,
+            caret_shape: self.settings.appearance.caret_shape,
         });
     }
 
@@ -449,16 +486,24 @@ impl Workspace {
     /// `settings.toml` is what makes it survive a relaunch.
     pub fn set_appearance(&mut self, mode: AppearanceMode, cx: &mut Context<Self>) {
         self.appearance = mode;
-        bezel::theme::appearance::set_mode(mode, cx);
+        cx.set_appearance_mode(mode);
         self.save_appearance();
         cx.notify();
     }
 
     /// The same window's other choice — see [`vibrancy`] and [`glass`] for
     /// what each state asks of the theme.
+    pub fn set_vibrancy(&mut self, alpha: f32, cx: &mut Context<Self>) {
+        let (min, max) = settings::VIBRANCY;
+        self.settings.appearance.vibrancy = alpha.clamp(min, max);
+        apply_transparency(self.opaque, self.settings.appearance.vibrancy, cx);
+        self.save_appearance();
+        cx.notify();
+    }
+
     pub fn set_opaque(&mut self, opaque: bool, cx: &mut Context<Self>) {
         self.opaque = Some(opaque);
-        apply_transparency(self.opaque, cx);
+        apply_transparency(self.opaque, self.settings.appearance.vibrancy, cx);
         self.save_appearance();
         cx.notify();
     }
@@ -653,6 +698,24 @@ impl Workspace {
         cx.notify();
     }
 
+    pub fn set_keep_pasted_images(&mut self, on: bool, cx: &mut Context<Self>) {
+        if settings::set_keep_pasted_images(on).is_err() {
+            return;
+        }
+        self.settings.keep_pasted_images = on;
+        crate::model::media::set_pasting(self.settings.pasting(), cx);
+        cx.notify();
+    }
+
+    pub fn set_paste_images_in_source(&mut self, on: bool, cx: &mut Context<Self>) {
+        if settings::set_paste_images_in_source(on).is_err() {
+            return;
+        }
+        self.settings.paste_images_in_source = on;
+        crate::model::media::set_pasting(self.settings.pasting(), cx);
+        cx.notify();
+    }
+
     pub fn set_auto_update(&mut self, on: bool, cx: &mut Context<Self>) {
         if settings::set_auto_update(on).is_err() {
             return;
@@ -697,14 +760,34 @@ impl Workspace {
     /// The caret is bezel's, so the setting is: nothing here reads it back.
     pub fn set_cursor_blink(&mut self, blink: bool, cx: &mut Context<Self>) {
         self.cursor_blink = blink;
-        input::set_caret_blink(blink, cx);
+        cx.set_caret_blink(blink);
+        self.save_appearance();
+        cx.notify();
+    }
+
+    pub fn set_traffic_lights(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.settings.appearance.traffic_lights = on;
+        apply_caption_style(on, cx);
+        self.save_appearance();
+        cx.notify();
+    }
+
+    pub fn set_settings_sidebar_fits(&mut self, fits: bool, cx: &mut Context<Self>) {
+        self.settings.appearance.settings_sidebar_fits = fits;
+        self.save_appearance();
+        cx.notify();
+    }
+
+    pub fn set_caret_shape(&mut self, shape: settings::CaretShape, cx: &mut Context<Self>) {
+        self.settings.appearance.caret_shape = shape;
+        cx.set_caret_shape(shape.into());
         self.save_appearance();
         cx.notify();
     }
 
     pub fn set_text_size(&mut self, points: f32, cx: &mut Context<Self>) {
         self.text_size = points;
-        theme::set_base_text_size(points, cx);
+        cx.set_base_text_size(points);
         if self.article_font_size.is_none() {
             self.apply_article_font_size(cx);
         }
@@ -783,7 +866,7 @@ impl Workspace {
         } else {
             look.scrollbars = value;
         }
-        bezel::ui::scroll::set_visibility(look.scrollbars.into(), cx);
+        cx.set_scrollbar_visibility(look.scrollbars.into());
         self.save_appearance();
         cx.refresh_windows();
         cx.notify();
@@ -798,6 +881,28 @@ impl Workspace {
     pub fn set_highlight(&mut self, value: settings::Highlight, cx: &mut Context<Self>) {
         self.settings.appearance.highlight = value;
         crate::view::article::set_highlight(value.color());
+        self.save_appearance();
+        cx.refresh_windows();
+        cx.notify();
+    }
+
+    pub fn set_selection(&mut self, value: Option<settings::Paint>, cx: &mut Context<Self>) {
+        self.settings.appearance.selection = value;
+        crate::model::fonts::set_selection(value, cx);
+        self.save_appearance();
+        cx.notify();
+    }
+
+    pub fn set_caret(&mut self, value: Option<settings::Paint>, cx: &mut Context<Self>) {
+        self.settings.appearance.caret = value;
+        crate::model::fonts::set_caret(value, cx);
+        self.save_appearance();
+        cx.notify();
+    }
+
+    pub fn set_search(&mut self, value: Option<settings::Paint>, cx: &mut Context<Self>) {
+        self.settings.appearance.search = value;
+        crate::view::article::set_search(value);
         self.save_appearance();
         cx.refresh_windows();
         cx.notify();
@@ -879,22 +984,17 @@ pub fn named<'a>(
 /// because the window reads its background appearance while it is being opened,
 /// which is before there is a workspace to ask.
 pub fn apply_tint(tint: Tint, cx: &mut App) {
-    theme::set_brand(
-        Brand {
-            tint,
-            ..theme::brand(cx)
-        },
-        cx,
-    );
+    cx.set_brand(Brand { tint, ..cx.brand() });
 }
 
 /// What the switch asks of the window.
 ///
 /// Never [`Vibrancy::On`]: bezel's light palette carries no frosted tokens.
 /// [`Vibrancy::Auto`] is frost in dark and opaque in light; [`Vibrancy::Off`]
-/// is opaque in both.
+/// is opaque in both. Off macOS the window is always opaque.
 pub fn vibrancy(opaque: Option<bool>) -> Vibrancy {
     match opaque {
+        _ if !cfg!(target_os = "macos") => Vibrancy::Off,
         Some(true) => Vibrancy::Off,
         None | Some(false) => Vibrancy::Auto,
     }
@@ -915,19 +1015,26 @@ pub fn glass(opaque: Option<bool>) -> bool {
 /// ladder are. There is nowhere narrower to put it — a fence is painted by
 /// `markdown::render`, which takes no per-surface layout.
 pub fn apply_wrap_code(wrap: bool, cx: &mut App) {
-    markdown::set_layout(cx, markdown::Layout { wrap_code: wrap });
+    cx.set_markdown_layout(markdown::Layout { wrap_code: wrap });
+}
+
+/// How bezel draws the window buttons off macOS.
+pub fn apply_caption_style(traffic_lights: bool, cx: &mut App) {
+    use bezel::ui::{AppExt as _, titlebar::CaptionStyle};
+    cx.set_caption_style(match traffic_lights {
+        true => CaptionStyle::Lights,
+        false => CaptionStyle::Rectangular,
+    });
 }
 
 /// Hand the answer to bezel, which reapplies it on every light/dark switch
 /// from then on — including the one the OS makes at sunset, which reaches
 /// nothing of ours.
-pub fn apply_transparency(opaque: Option<bool>, cx: &mut App) {
-    theme::set_brand(
-        Brand {
-            vibrancy: vibrancy(opaque),
-            glass: glass(opaque),
-            ..theme::brand(cx)
-        },
-        cx,
-    );
+pub fn apply_transparency(opaque: Option<bool>, vibrancy_alpha: f32, cx: &mut App) {
+    cx.set_brand(Brand {
+        vibrancy_alpha,
+        vibrancy: vibrancy(opaque),
+        glass: glass(opaque),
+        ..cx.brand()
+    });
 }

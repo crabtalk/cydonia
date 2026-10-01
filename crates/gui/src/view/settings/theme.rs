@@ -1,16 +1,16 @@
 //! The appearance section: which of the three modes the app paints in.
 
+use crate::model::settings::Paint;
 use crate::{
     model::workspace::Workspace,
     view::settings::{self, SettingsWindow, Switch},
 };
 use artifact::board::View;
+use bezel::theme::AppExt as _;
+use bezel::ui::{AppExt as _, color::Swatch};
 use bezel::{
     gpui::{AnyElement, Context, DragMoveEvent, Empty, div, prelude::*, px},
-    theme::{
-        TextStyle, Theme, Tint, Typeset,
-        appearance::{self, AppearanceMode},
-    },
+    theme::{TextStyle, Theme, Tint, Typeset, appearance::AppearanceMode},
     ui::widgets::{self, Controls, Scaffolding, SliderDrag},
 };
 
@@ -31,8 +31,8 @@ const MODES: [AppearanceMode; 3] = [
 ];
 
 impl SettingsWindow {
-    /// The whole page: the mode it paints in, then the colours it mixes, the
-    /// size it reads at, and how the caret behaves in what it writes.
+    /// The whole page: the mode it paints in, then the colours it mixes and the
+    /// size it reads at.
     /// Typography is a group here rather than a section of its own — a size is
     /// a question about appearance.
     pub(super) fn appearance_body(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -47,7 +47,6 @@ impl SettingsWindow {
             .child(self.families_group(cx))
             .child(self.sidebar_group(cx))
             .child(self.scrollbars_group(cx))
-            .child(self.editor_group(cx))
             .children(self.boards_group(cx))
             .into_any_element()
     }
@@ -55,7 +54,7 @@ impl SettingsWindow {
     /// One card row: what the setting is on the left, the control on the right.
     pub(super) fn theme_row(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
-        let current = appearance::mode(cx);
+        let current = cx.appearance_mode();
         theme
             .card_row(true)
             .child(
@@ -122,7 +121,10 @@ impl SettingsWindow {
             .child(
                 theme
                     .group_box()
-                    .child(self.transparency_row(cx))
+                    .when(cfg!(target_os = "macos"), |group| {
+                        group.child(self.transparency_row(cx))
+                    })
+                    .children(self.vibrancy_row(cx))
                     .child(self.hue_row(cx))
                     .child(self.intensity_row(cx)),
             )
@@ -199,30 +201,65 @@ impl SettingsWindow {
 
     fn sidebar_group(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
-        let on = self.workspace.read(cx).indent_project_rows;
+        let workspace = self.workspace.read(cx);
+        let on = workspace.indent_project_rows;
+        let fits = workspace.settings.appearance.settings_sidebar_fits;
+        let lights = workspace.settings.appearance.traffic_lights;
         div()
             .flex()
             .flex_col()
             .gap(px(settings::LABEL_GAP))
             .child(theme.field_label("Sidebar"))
             .child(
-                theme.group_box().child(
-                    self.switch_row(
+                theme
+                    .group_box()
+                    .child(
+                        self.switch_row(
+                            Switch::new(
+                                "indent-project-rows",
+                                "Indent sidebar rows",
+                                "Inset items below each project and space heading by one icon width.",
+                                on,
+                            )
+                            .first(true),
+                            cx,
+                            move |this, cx| {
+                                this.workspace.update(cx, |workspace, cx| {
+                                    workspace.set_indent_project_rows(!on, cx);
+                                });
+                            },
+                        ),
+                    )
+                    .child(self.switch_row(
                         Switch::new(
-                            "indent-project-rows",
-                            "Indent project rows",
-                            "Inset items below each project heading by one icon width.",
-                            on,
-                        )
-                        .first(true),
+                            "settings-sidebar-fits",
+                            "Fit settings sidebar",
+                            "Size this window's sidebar to its widest section.",
+                            fits,
+                        ),
                         cx,
                         move |this, cx| {
                             this.workspace.update(cx, |workspace, cx| {
-                                workspace.set_indent_project_rows(!on, cx);
+                                workspace.set_settings_sidebar_fits(!fits, cx);
                             });
                         },
-                    ),
-                ),
+                    ))
+                    .when(!cfg!(target_os = "macos"), |group| {
+                        group.child(self.switch_row(
+                            Switch::new(
+                                "traffic-lights",
+                                "Traffic light window buttons",
+                                "Close, minimise and maximise as coloured dots on the left.",
+                                lights,
+                            ),
+                            cx,
+                            move |this, cx| {
+                                this.workspace.update(cx, |workspace, cx| {
+                                    workspace.set_traffic_lights(!lights, cx);
+                                });
+                            },
+                        ))
+                    }),
             )
             .into_any_element()
     }
@@ -273,22 +310,43 @@ impl SettingsWindow {
         )
     }
 
-    /// How the caret behaves — the editor's and every field's alike.
-    fn editor_group(&self, cx: &mut Context<Self>) -> AnyElement {
+    /// The Editor section. The Cursor group's rows reach every text field, not
+    /// the editor alone.
+    pub(super) fn editor_body(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
+        let group = |label: &'static str, rows: Vec<AnyElement>| {
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(settings::LABEL_GAP))
+                .child(theme.field_label(label))
+                .child(theme.group_box().children(rows))
+        };
         div()
             .flex()
             .flex_col()
-            .gap(px(settings::LABEL_GAP))
-            .child(theme.field_label("Editor"))
-            .child(
-                theme
-                    .group_box()
-                    .child(self.cursor_row(cx))
-                    .child(self.pages_row(cx))
-                    .child(self.wrap_row(cx))
-                    .child(self.highlight_row(cx)),
-            )
+            .gap(px(settings::GROUP_GAP))
+            .child(group(
+                "Cursor",
+                vec![
+                    self.cursor_row(cx),
+                    self.caret_shape_row(cx),
+                    self.caret_row(cx),
+                ],
+            ))
+            .child(group("Layout", vec![self.pages_row(cx), self.wrap_row(cx)]))
+            .child(group(
+                "Colours",
+                vec![
+                    self.highlight_row(cx),
+                    self.selection_row(cx),
+                    self.find_row(cx),
+                ],
+            ))
+            .child(group(
+                "Pasting",
+                vec![self.source_paste_row(cx), self.keep_pasted_row(cx)],
+            ))
             .into_any_element()
     }
 
@@ -316,45 +374,284 @@ impl SettingsWindow {
         )
     }
 
+    /// Whether plain-text mode takes a pasted picture as an image line.
+    fn source_paste_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let on = self.workspace.read(cx).settings.paste_images_in_source;
+        self.switch_row(
+            Switch::new(
+                "paste-images-in-source",
+                "Paste pictures in plain text",
+                "A pasted picture, file or picture link goes in as an image line. Off pastes text.",
+                on,
+            )
+            .first(true),
+            cx,
+            move |this, cx| {
+                this.workspace.update(cx, |workspace, cx| {
+                    workspace.set_paste_images_in_source(!on, cx)
+                });
+            },
+        )
+    }
+
+    /// Whether a picture's pasted web address is downloaded into the article.
+    fn keep_pasted_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let on = self.workspace.read(cx).settings.keep_pasted_images;
+        self.switch_row(
+            Switch::new(
+                "keep-pasted-images",
+                "Save pasted pictures",
+                "Download a pasted picture link into the article. Off keeps the link.",
+                on,
+            ),
+            cx,
+            move |this, cx| {
+                this.workspace.update(cx, |workspace, cx| {
+                    workspace.set_keep_pasted_images(!on, cx)
+                });
+            },
+        )
+    }
+
     /// The colour `==text==` is washed in.
     pub(super) fn highlight_row(&self, cx: &mut Context<Self>) -> AnyElement {
         use crate::model::settings::Highlight;
         let theme = Theme::of(cx).clone();
         let current = self.workspace.read(cx).settings.appearance.highlight;
+        let selected = Highlight::ALL.iter().position(|held| *held == current);
+        self.color_row(
+            true,
+            "highlight-color",
+            "Highlight colour",
+            markdown::highlight_solid(current.color(), &theme),
+            highlight_swatches(),
+            selected,
+            None,
+            cx,
+            |this, ix, cx| {
+                if let Some(value) = ix.map(|ix| Highlight::ALL[ix]) {
+                    this.workspace
+                        .update(cx, |workspace, cx| workspace.set_highlight(value, cx));
+                }
+            },
+        )
+    }
+
+    /// The colour selected text is washed in, or the palette's own.
+    fn selection_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        let current = self.workspace.read(cx).settings.appearance.selection;
+        let system = Theme::for_appearance(theme.appearance).selection;
+        self.wash_row(
+            "selection-color",
+            "Selection colour",
+            current,
+            system,
+            cx,
+            |workspace, value, cx| workspace.set_selection(value, cx),
+        )
+    }
+
+    fn caret_shape_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        use crate::model::settings::CaretShape;
+        use bezel::ui::popover;
+        const ID: &str = "caret-shape";
+        let theme = Theme::of(cx).clone();
+        let appearance = &self.workspace.read(cx).settings.appearance;
+        let current = appearance.caret_shape;
+        let caret = appearance
+            .caret
+            .map_or(theme.caret, |paint| paint.solid(&theme));
+        let trigger = popover::menu_trigger_matching(
+            theme
+                .select_trigger_with(
+                    Some(div().text_color(caret).child(current.glyph())),
+                    current.label(),
+                )
+                .gap(px(8.))
+                .id(ID)
+                .relative(),
+            |this: &mut Self| &mut this.picker,
+            |open| *open == ID,
+            |_| ID,
+            cx,
+        );
+        let card = (self.picker.get() == Some(&ID)).then(|| {
+            let rows = CaretShape::ALL.into_iter().enumerate().map(|(ix, shape)| {
+                popover::menu_row(&theme, shape == current, None)
+                    .id((ID, ix))
+                    .cursor_pointer()
+                    .hover(|row| row.bg(theme.element_hover))
+                    .child(div().text_color(caret).child(shape.glyph()))
+                    .child(shape.label())
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.workspace
+                            .update(cx, |workspace, cx| workspace.set_caret_shape(shape, cx));
+                        popover::close_popup(this, cx, |this: &mut Self| &mut this.picker);
+                    }))
+            });
+            popover::anchored_menu_below_end(
+                "caret-shape-menu",
+                popover::dismiss_on_out(
+                    popover::popover_card(&theme)
+                        .flex()
+                        .flex_col()
+                        .children(rows),
+                    |this: &mut Self| &mut this.picker,
+                    cx,
+                )
+                .into_any_element(),
+                self.picker.closing_since(),
+            )
+        });
         theme
             .card_row(false)
             .child(
                 div()
                     .flex_1()
                     .min_w_0()
-                    .child(theme.row_title("Highlight colour")),
+                    .child(theme.row_title("Cursor shape")),
             )
-            .child(
-                div()
-                    .flex()
-                    .gap(px(6.))
-                    .children(Highlight::ALL.into_iter().enumerate().map(|(ix, value)| {
-                        div()
-                            .id(("highlight-color", ix))
-                            .size(px(18.))
-                            .rounded_full()
-                            .cursor_pointer()
-                            .bg(markdown::highlight_solid(value.color(), &theme))
-                            .border_2()
-                            .border_color(match current == value {
-                                true => theme.accent,
-                                false => bezel::gpui::transparent_black(),
-                            })
-                            .tooltip(move |window, cx| {
-                                bezel::ui::tooltip::Tooltip::text(value.label(), window, cx)
-                            })
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.workspace
-                                    .update(cx, |workspace, cx| workspace.set_highlight(value, cx));
-                                cx.notify();
-                            }))
-                    })),
+            .child(trigger.children(card))
+            .into_any_element()
+    }
+
+    /// The caret's colour, or the palette's own.
+    fn caret_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        let current = self.workspace.read(cx).settings.appearance.caret;
+        let system = Theme::for_appearance(theme.appearance).caret;
+        self.wash_row(
+            "caret-color",
+            "Cursor colour",
+            current,
+            system,
+            cx,
+            |workspace, value, cx| workspace.set_caret(value, cx),
+        )
+    }
+
+    /// The colour find matches are washed in, or the accent.
+    fn find_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        let current = self.workspace.read(cx).settings.appearance.search;
+        let system = markdown::default_find(&theme).1;
+        self.wash_row(
+            "search-color",
+            "Search results colour",
+            current,
+            system,
+            cx,
+            |workspace, value, cx| workspace.set_search(value, cx),
+        )
+    }
+
+    /// bezel's preset colours in rows of six, and Default under them. A
+    /// colour written by hand that is not among them rings nothing.
+    fn wash_row(
+        &self,
+        id: &'static str,
+        title: &'static str,
+        current: Option<Paint>,
+        system: bezel::gpui::Hsla,
+        cx: &mut Context<Self>,
+        set: fn(&mut Workspace, Option<Paint>, &mut Context<Workspace>),
+    ) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        let swatches: Vec<Swatch> = cx.color_swatches().iter().cloned().collect();
+        let paints: Vec<Paint> = swatches
+            .iter()
+            .map(|swatch| Paint::from_hsla(swatch.resolve(&theme)))
+            .collect();
+        let selected =
+            current.and_then(|current| paints.iter().position(|paint| *paint == current));
+        let shown = current.map_or(system, |paint| paint.solid(&theme));
+        self.color_row(
+            false,
+            id,
+            title,
+            shown,
+            swatches,
+            selected,
+            Some(Reset {
+                on: current.is_none(),
+            }),
+            cx,
+            move |this, ix, cx| {
+                let value = ix.map(|ix| paints[ix]);
+                this.workspace
+                    .update(cx, |workspace, cx| set(workspace, value, cx));
+            },
+        )
+    }
+
+    /// A row showing one colour, which opens `swatches` under it to pick
+    /// another. `pick` hears a swatch's index, or `None` for the Default item
+    /// when there is one.
+    #[allow(clippy::too_many_arguments)]
+    fn color_row(
+        &self,
+        first: bool,
+        id: &'static str,
+        title: &'static str,
+        shown: bezel::gpui::Hsla,
+        swatches: Vec<Swatch>,
+        selected: Option<usize>,
+        default: Option<Reset>,
+        cx: &mut Context<Self>,
+        pick: impl Fn(&mut Self, Option<usize>, &mut Context<Self>) + 'static,
+    ) -> AnyElement {
+        use bezel::ui::popover;
+        let theme = Theme::of(cx).clone();
+        let well = popover::menu_trigger_matching(
+            theme.color_well(shown).id(id).relative(),
+            |this: &mut Self| &mut this.picker,
+            move |open| *open == id,
+            move |_| id,
+            cx,
+        );
+        let pick = std::rc::Rc::new(pick);
+        let card = (self.picker.get() == Some(&id)).then(|| {
+            let columns = default.is_some().then_some(SWATCH_COLUMNS);
+            let picker = theme.swatch_picker((id, 0usize), &swatches, selected, columns, {
+                let pick = pick.clone();
+                cx.listener(move |this, ix: &usize, _, cx| {
+                    pick(this, Some(*ix), cx);
+                    popover::close_popup(this, cx, |this: &mut Self| &mut this.picker);
+                })
+            });
+            let reset = default.map(|Reset { on }| {
+                let pick = pick.clone();
+                popover::menu_row(&theme, on, None)
+                    .id((id, 1usize))
+                    .mt(px(4.))
+                    .cursor_pointer()
+                    .hover(|row| row.bg(theme.element_hover))
+                    .child("Default")
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        pick(this, None, cx);
+                        popover::close_popup(this, cx, |this: &mut Self| &mut this.picker);
+                    }))
+            });
+            popover::anchored_menu_below_end(
+                bezel::gpui::SharedString::from(format!("{id}-swatches")),
+                popover::dismiss_on_out(
+                    popover::popover_card(&theme)
+                        .flex()
+                        .flex_col()
+                        .child(picker)
+                        .children(reset),
+                    |this: &mut Self| &mut this.picker,
+                    cx,
+                )
+                .into_any_element(),
+                self.picker.closing_since(),
             )
+        });
+        theme
+            .card_row(first)
+            .child(div().flex_1().min_w_0().child(theme.row_title(title)))
+            .child(well.children(card))
             .into_any_element()
     }
 
@@ -372,7 +669,8 @@ impl SettingsWindow {
                 "Full width pages",
                 "Set articles across the pane rather than in a reading column.",
                 on,
-            ),
+            )
+            .first(true),
             cx,
             move |this, cx| {
                 this.workspace
@@ -430,7 +728,9 @@ impl SettingsWindow {
     /// when the intensity comes back up.
     pub(super) fn hue_row(&self, cx: &mut Context<Self>) -> AnyElement {
         let tint = self.workspace.read(cx).tint;
+        // First in its group where the transparency switch is not shown.
         self.tint_row(
+            !cfg!(target_os = "macos"),
             "hue",
             "Hue",
             "Which hue the greys are mixed from.",
@@ -443,9 +743,33 @@ impl SettingsWindow {
         )
     }
 
+    /// How much the frost shows through. Nothing where the window is not
+    /// frosted — opaque, or an appearance the palette does not frost.
+    fn vibrancy_row(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        use crate::model::settings::VIBRANCY;
+        if !Theme::of(cx).vibrancy {
+            return None;
+        }
+        let (min, max) = VIBRANCY;
+        let alpha = self.workspace.read(cx).settings.appearance.vibrancy;
+        // Right is more see-through, so the slider runs against the alpha.
+        Some(self.tint_row(
+            false,
+            "vibrancy",
+            "Transparency",
+            "How much of what is behind the window shows through.",
+            (max - alpha) / (max - min),
+            move |workspace, fraction, cx| {
+                workspace.set_vibrancy(max - fraction * (max - min), cx);
+            },
+            cx,
+        ))
+    }
+
     pub(super) fn intensity_row(&self, cx: &mut Context<Self>) -> AnyElement {
         let tint = self.workspace.read(cx).tint;
         self.tint_row(
+            false,
             "intensity",
             "Intensity",
             "How much of that hue they carry. None is the shipped neutral.",
@@ -458,8 +782,10 @@ impl SettingsWindow {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn tint_row(
         &self,
+        first: bool,
         id: &'static str,
         title: &'static str,
         note: &'static str,
@@ -469,7 +795,7 @@ impl SettingsWindow {
     ) -> AnyElement {
         let theme = Theme::of(cx).clone();
         theme
-            .card_row(false)
+            .card_row(first)
             .child(
                 div()
                     .flex_1()
@@ -505,4 +831,31 @@ impl SettingsWindow {
             )
             .into_any_element()
     }
+}
+
+/// The highlight colours as swatches, each with its light and dark value.
+fn highlight_swatches() -> Vec<Swatch> {
+    use crate::model::settings::Highlight;
+    use bezel::theme::Appearance;
+    let light = Theme::for_appearance(Appearance::Light);
+    let dark = Theme::for_appearance(Appearance::Dark);
+    Highlight::ALL
+        .into_iter()
+        .map(|named| {
+            Swatch::new(
+                named.label(),
+                markdown::highlight_solid(named.color(), &light),
+                markdown::highlight_solid(named.color(), &dark),
+            )
+        })
+        .collect()
+}
+
+/// Swatches a row of the colour popover holds.
+const SWATCH_COLUMNS: usize = 6;
+
+/// The popover's Default item, and whether it is the colour in use.
+#[derive(Clone, Copy)]
+struct Reset {
+    on: bool,
 }

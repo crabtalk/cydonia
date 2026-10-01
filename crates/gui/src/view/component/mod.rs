@@ -23,6 +23,4 @@ pub mod divider;
 
 pub mod status;
 
-pub mod strip;
-
 mod image_preview;

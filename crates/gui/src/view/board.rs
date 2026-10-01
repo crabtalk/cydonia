@@ -37,7 +37,7 @@ use bezel::{
     },
 };
 use editor::{Editor, EditorEvent};
-use markdown::Typography;
+use markdown::AppExt as _;
 use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
@@ -239,7 +239,7 @@ fn card_body(
             // out underneath would be most of the card.
             caption: markdown::Caption::Hidden,
             copy: markdown::CopyButton::Hidden,
-            typography: Some(Typography::of(cx).scaled(CARD_TEXT_SCALE)),
+            typography: Some(cx.typography().scaled(CARD_TEXT_SCALE)),
             ..Default::default()
         },
         window,
@@ -2640,22 +2640,42 @@ impl Cydonia {
             .on_drop(cx.listener(move |this, drag: &CardDrag, _, cx| {
                 this.drop_card(drag, (project, board_at), &taken, cx);
             }))
-            .child(self.list_group_header(
-                (project, board_at),
-                &id,
-                name,
-                Tally {
-                    held,
-                    shown: cards.len(),
-                },
-                at,
-                lanes,
-                folded,
-                &board_id,
-                on,
-                window,
-                cx,
-            ))
+            // Over the heading, the card goes in front of the group's first.
+            .child(
+                div()
+                    .flex_none()
+                    .on_drag_move(cx.listener({
+                        let (column, first) = (id.clone(), cards.first().cloned());
+                        move |this, event: &DragMoveEvent<CardDrag>, _, cx| {
+                            if !event.bounds.contains(&event.event.position) {
+                                return;
+                            }
+                            this.aim_card(
+                                Some(Landing {
+                                    column: column.clone(),
+                                    before: first.clone(),
+                                }),
+                                cx,
+                            );
+                        }
+                    }))
+                    .child(self.list_group_header(
+                        (project, board_at),
+                        &id,
+                        name,
+                        Tally {
+                            held,
+                            shown: cards.len(),
+                        },
+                        at,
+                        lanes,
+                        folded,
+                        &board_id,
+                        on,
+                        window,
+                        cx,
+                    )),
+            )
             .children(rows)
             // Nothing to write into a narrowed lane: a card that does not
             // answer the query would be filed and vanish in one gesture.
@@ -2727,7 +2747,7 @@ impl Cydonia {
             .items_center()
             .gap(px(6.))
             .text_style(TextStyle::Subheadline)
-            .when(folded && self.aimed_at(id, on, cx), |row| {
+            .when(folded && self.aimed_into(id, on, cx), |row| {
                 row.bg(theme.accent.opacity(0.08)).child(
                     div()
                         .debug_selector(|| "list-collapsed-drop-target".into())
@@ -3890,6 +3910,16 @@ impl Cydonia {
             )
             .children(behind.then(|| self.landing_mark(Mark::Below, cx)))
             .into_any_element()
+    }
+
+    /// Whether the card in the air would land anywhere in `column`.
+    fn aimed_into(&self, column: &str, on: Option<&Member>, cx: &App) -> bool {
+        cx.has_active_drag()
+            && self
+                .leaf_of(on)
+                .landing
+                .as_ref()
+                .is_some_and(|at| at.column == column)
     }
 
     /// Whether the card in the air would land at the end of this lane.

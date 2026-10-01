@@ -6,6 +6,7 @@
 //! repaint is asked for. A failed fetch is cached as an empty preview and not
 //! retried until the next launch.
 
+use markdown::AppExt as _;
 use std::{
     collections::HashMap,
     io::Read,
@@ -40,7 +41,7 @@ pub fn init(cx: &mut App) {
     if LANDED.set(send).is_err() {
         return;
     }
-    markdown::set_link_preview(cx, preview);
+    cx.set_link_preview(preview);
     cx.spawn(async move |cx| {
         while landed.next().await.is_some() {
             cx.update(|cx| cx.refresh_windows());

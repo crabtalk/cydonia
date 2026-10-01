@@ -12,13 +12,10 @@ use crate::view::{
     component::menu::Menu,
     leaf::Pane,
     root::{self, Cydonia, ToggleChanges},
-    sidebar::{EntryDrag, Renaming, Row},
+    sidebar::{Renaming, Row},
 };
 use bezel::{
-    gpui::{
-        AnyElement, App, Context, DragMoveEvent, FontWeight, SharedString, Window, div, prelude::*,
-        px,
-    },
+    gpui::{AnyElement, App, Context, FontWeight, SharedString, Window, div, prelude::*, px},
     motion::{Fade, Painter},
     theme::{TextStyle, Theme, Typeset},
     ui::{
@@ -185,17 +182,6 @@ impl Cydonia {
             .left_0()
             .right_0()
             .gap(px(8.))
-            .on_drag_move(
-                cx.listener(|this, event: &DragMoveEvent<EntryDrag>, _, cx| {
-                    this.aim_header(event, cx)
-                }),
-            )
-            .on_drop(cx.listener(|this, drag: &EntryDrag, window, cx| {
-                this.drop_on_header(drag, window, cx)
-            }))
-            .when(self.header_aimed(cx), |band| {
-                band.bg(theme.text_muted.opacity(0.28))
-            })
             // Past the lights, which are the window's and are drawn over
             // whatever is at its top left.
             .pl(px(if left { 0. } else { inset }))
@@ -208,11 +194,6 @@ impl Cydonia {
             // The fold belongs to whichever column runs along the window's
             // left edge, so with the sidebar gone it is this one's.
             .children((!self.sidebar_open).then(|| self.fold_toggle(cx).into_any_element()))
-            .children(
-                (!self.sidebar_open)
-                    .then(|| self.app_menu(window, cx))
-                    .flatten(),
-            )
             .children(toolbar.map(|toolbar| {
                 match renaming {
                     true => div().flex_1().min_w_0().child(self.name_field(cx)),

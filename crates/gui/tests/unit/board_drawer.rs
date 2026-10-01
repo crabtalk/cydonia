@@ -2,6 +2,7 @@ use super::*;
 use crate::model::{project::Project, settings::Settings, state};
 use artifact::project::{Project as _, fs};
 use bezel::gpui::{Modifiers, MouseButton, TestAppContext, VisualTestContext, point, size};
+use bezel::ui::AppExt as _;
 
 struct Scratch(std::path::PathBuf);
 impl Scratch {
@@ -338,7 +339,7 @@ fn a_removed_card_keeps_its_text_accessible(cx: &mut TestAppContext) {
 #[gpui::test]
 fn horizontal_scroll_keeps_offsets_and_lane_geometry_stable(cx: &mut TestAppContext) {
     let (_scratch, root, member, cards, mut cx) = open("horizontal", cx);
-    cx.update(|_, cx| markdown::set_layout(cx, markdown::Layout { wrap_code: false }));
+    cx.update(|_, cx| cx.set_markdown_layout(markdown::Layout { wrap_code: false }));
     cx.update(|window, cx| {
         root.update(cx, |root, cx| {
             root.close_card_preview(None, window, cx);
@@ -391,7 +392,7 @@ fn horizontal_scroll_keeps_offsets_and_lane_geometry_stable(cx: &mut TestAppCont
         root.update(cx, |root, cx| {
             root.open_card(None, member.clone(), cards[0].clone(), window, cx)
         });
-        scrollbars::set_visibility(scrollbars::Visibility::Always, cx);
+        cx.set_scrollbar_visibility(scrollbars::Visibility::Always);
     });
     settle(&mut cx);
     let before = scroll.offset();
@@ -842,7 +843,7 @@ fn list_cards_drop_into_a_collapsed_group_without_unfolding(cx: &mut TestAppCont
         settle(&mut cx);
         cx.simulate_mouse_move(destination, Some(MouseButton::Left), Modifiers::default());
         settle(&mut cx);
-        assert!(cx.update(|_, cx| root.read(cx).aimed_at(&target, None, cx)));
+        assert!(cx.update(|_, cx| root.read(cx).aimed_into(&target, None, cx)));
         let indicator = cx
             .debug_bounds("list-collapsed-drop-target")
             .expect("visible drop target");
@@ -854,7 +855,7 @@ fn list_cards_drop_into_a_collapsed_group_without_unfolding(cx: &mut TestAppCont
             let column = workspace.projects[0].boards[0].column(&target).unwrap();
             assert!(column.collapsed);
             assert_eq!(column.cards.len(), if populated { 2 } else { 1 });
-            assert_eq!(column.cards.last().unwrap().id, cards[0]);
+            assert_eq!(column.cards[0].id, cards[0]);
         });
     }
 }

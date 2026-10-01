@@ -154,8 +154,10 @@ fn a_fresh_file_holds_no_shortcuts_at_all() {
     assert_eq!(fresh.shortcuts.activate(), None);
     let body = toml::to_string_pretty(&fresh).expect("serialises");
     assert!(body.contains("[shortcuts]"), "{body}");
+    let written: toml::Table = toml::from_str(&body).expect("parses");
+    let shortcuts = written["shortcuts"].as_table().expect("a table");
     for command in Command::ALL {
-        assert!(!body.contains(command.key()), "{body}");
+        assert!(!shortcuts.contains_key(command.key()), "{body}");
     }
     // And it reads back as what it was.
     let read: Settings = toml::from_str(&body).expect("round trips");

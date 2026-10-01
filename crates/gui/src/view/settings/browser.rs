@@ -43,12 +43,10 @@ impl SettingsWindow {
                     .child(self.agents_act_row(cx))
                     .child(self.agents_blocked_row(cx)),
             )
-            .child(
-                theme
-                    .group_box()
-                    .child(self.keep_signed_in_row(cx))
-                    .child(self.clear_row(cx)),
-            )
+            .child(theme.group_box().child(self.keep_signed_in_row(cx)).when(
+                self.workspace.read(cx).settings.browser.keep_signed_in,
+                |group| group.child(self.clear_row(cx)),
+            ))
             .into_any_element()
     }
 
@@ -368,25 +366,25 @@ impl SettingsWindow {
     fn clear_row(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let clearing = browser::clearing(cx);
-        let amount = match &self.browser_data.usage {
-            None => "Calculating…".to_owned(),
-            Some(None) => "Data amount unavailable".to_owned(),
-            Some(Some(usage)) => match usage.sites.len() {
-                0 => "No stored site data".to_owned(),
-                1 => "Data from 1 site".to_owned(),
-                count => format!("Data from {count} sites"),
-            },
-        };
         let note = if clearing {
-            "Clearing browsing data…"
+            "Clearing browsing data…".to_owned()
         } else if self.browser_data.result == Some(false) {
-            "Could not clear browsing data. Try again."
+            "Could not clear browsing data. Try again.".to_owned()
         } else if self.browser_data.result == Some(true) {
-            "Browsing data cleared. All browser tabs closed."
+            "Browsing data cleared. All browser tabs closed.".to_owned()
         } else if !cfg!(target_os = "macos") {
-            "Clearing browsing data is unavailable on this platform."
+            "Clearing browsing data is unavailable on this platform.".to_owned()
         } else {
-            "Cookies, site storage and cache. Closes all browser tabs and signs you out."
+            let amount = match &self.browser_data.usage {
+                None => "Calculating…".to_owned(),
+                Some(None) => "Data amount unavailable.".to_owned(),
+                Some(Some(usage)) => match usage.sites.len() {
+                    0 => "No stored site data.".to_owned(),
+                    1 => "Data from 1 site.".to_owned(),
+                    count => format!("Data from {count} sites."),
+                },
+            };
+            format!("{amount} Clearing closes all browser tabs and signs you out.")
         };
         theme
             .card_row(false)
@@ -397,12 +395,6 @@ impl SettingsWindow {
                     .flex()
                     .flex_col()
                     .child(theme.row_title("Browsing data"))
-                    .child(
-                        div()
-                            .mt(px(4.))
-                            .text_style(TextStyle::Callout)
-                            .child(amount),
-                    )
                     .child(
                         div()
                             .mt(px(4.))

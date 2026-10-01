@@ -146,7 +146,7 @@ impl SettingsWindow {
                             .mt(px(4.))
                             .text_style(TextStyle::Subheadline)
                             .text_color(theme.text_muted)
-                            .child(format!("Re-read after {ms} ms of quiet.")),
+                            .child(format!("Changes on disk show after {ms} ms of quiet.")),
                     ),
             )
             .child(

@@ -7,7 +7,7 @@
 //!
 //! The chosen families live in a process-wide static rather than a gpui global
 //! because bezel takes the palette builder as a bare `fn(Appearance) -> Theme`
-//! ([`theme::set_palette`]) and hands it no context to read one from.
+//! ([`bezel::theme::AppExt::set_palette`]) and hands it no context to read one from.
 
 use bezel::{
     gpui::{App, Pixels, SharedString, font, px},
@@ -26,7 +26,16 @@ pub struct Families {
     pub mono: Option<SharedString>,
 }
 
+use crate::model::settings::Paint;
+
 static FAMILIES: RwLock<Option<Families>> = RwLock::new(None);
+
+/// The selection wash the reader picked, held beside the families for the same
+/// reason: [`palette`] has no context to read it from.
+static SELECTION: RwLock<Option<Paint>> = RwLock::new(None);
+
+/// The caret colour the reader picked, held the same way.
+static CARET: RwLock<Option<Paint>> = RwLock::new(None);
 
 fn held() -> Families {
     FAMILIES
@@ -41,7 +50,7 @@ pub fn families() -> Families {
     held()
 }
 
-/// The palette builder to register with [`bezel::theme::set_palette`] before
+/// The palette builder to register with [`bezel::theme::AppExt::set_palette`] before
 /// `appearance::init`. Registered rather than installed once: bezel rebuilds
 /// the palette from scratch on every light/dark switch, and a family written
 /// straight onto the theme would last until sunset.
@@ -57,6 +66,12 @@ pub fn palette(appearance: Appearance) -> Theme {
     }
     if let Some(mono) = families.mono {
         theme.font_mono = mono;
+    }
+    if let Some(color) = SELECTION.read().ok().and_then(|held| *held) {
+        theme.selection = color.wash(&theme);
+    }
+    if let Some(color) = CARET.read().ok().and_then(|held| *held) {
+        theme.caret = color.solid(&theme);
     }
     theme
 }
@@ -75,6 +90,34 @@ pub fn init(families: Families) {
 /// the resolved appearance has not moved — and it never has here.
 pub fn set(families: Families, cx: &mut App) {
     init(families);
+    let appearance = Theme::of(cx).appearance;
+    Theme::install(appearance, cx);
+}
+
+/// Record the selection wash without repainting — for startup.
+pub fn init_selection(color: Option<Paint>) {
+    if let Ok(mut held) = SELECTION.write() {
+        *held = color;
+    }
+}
+
+/// Record the selection wash and rebuild the palette under it.
+pub fn set_selection(color: Option<Paint>, cx: &mut App) {
+    init_selection(color);
+    let appearance = Theme::of(cx).appearance;
+    Theme::install(appearance, cx);
+}
+
+/// Record the caret colour without repainting — for startup.
+pub fn init_caret(color: Option<Paint>) {
+    if let Ok(mut held) = CARET.write() {
+        *held = color;
+    }
+}
+
+/// Record the caret colour and rebuild the palette under it.
+pub fn set_caret(color: Option<Paint>, cx: &mut App) {
+    init_caret(color);
     let appearance = Theme::of(cx).appearance;
     Theme::install(appearance, cx);
 }

@@ -572,6 +572,7 @@ impl Cydonia {
         project: usize,
         ix: usize,
         name: String,
+        lifted: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
@@ -597,6 +598,7 @@ impl Cydonia {
             SharedString::from(format!("table-{project}-{ix}")),
             "table-row",
             selected,
+            lifted,
             self.indent_of(entry, cx),
             &theme,
         )

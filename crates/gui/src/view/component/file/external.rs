@@ -1,28 +1,105 @@
 use super::*;
+use crate::model::settings::{self, OpenWith, Opener, Opens};
 use anyhow::{Context as _, Result, bail};
 #[cfg(target_os = "macos")]
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use bezel::ui::{icons, popover, tooltip::Tooltip};
-use std::{process::Command, sync::Arc};
+use bezel::gpui::{App, Div, ElementId, Stateful};
+use bezel::{
+    theme::ControlSize,
+    ui::{icons, popover, tooltip::Tooltip},
+};
+use std::{
+    process::Command,
+    sync::{Arc, RwLock},
+};
+
+/// `settings.open_with`, held for the buttons, which are built without the
+/// workspace in reach.
+static OPEN_WITH: RwLock<OpenWith> = RwLock::new(OpenWith {
+    files: Opener {
+        app: None,
+        hidden: Vec::new(),
+    },
+    pictures: Opener {
+        app: None,
+        hidden: Vec::new(),
+    },
+});
+
+/// Seed what files and pictures open in from the settings, at startup.
+pub(crate) fn init(open_with: OpenWith) {
+    if let Ok(mut held) = OPEN_WITH.write() {
+        *held = open_with;
+    }
+}
+
+/// What `opens` opens in now.
+pub(crate) fn opener(opens: Opens) -> Opener {
+    OPEN_WITH
+        .read()
+        .map(|held| held.get(opens).clone())
+        .unwrap_or_default()
+}
+
+/// Change what `opens` opens in, here and in `settings.toml`.
+pub(crate) fn change(opens: Opens, f: impl FnOnce(&mut Opener)) {
+    let Ok(mut held) = OPEN_WITH.write() else {
+        return;
+    };
+    let opener = held.get_mut(opens);
+    f(opener);
+    let _ = settings::set_opener(opens, opener);
+}
+
+/// Make `app` the default, shown in the menu again; `None` is the system's.
+pub(crate) fn choose(opens: Opens, app: Option<PathBuf>) {
+    change(opens, |opener| {
+        if let Some(app) = &app {
+            opener.hidden.retain(|hidden| hidden != app);
+        }
+        opener.app = app;
+    });
+}
+
+/// Leave `app` out of the menu, or put it back.
+pub(crate) fn hide(opens: Opens, app: &Path, hidden: bool) {
+    change(opens, |opener| {
+        opener.hidden.retain(|held| held != app);
+        if hidden {
+            opener.hidden.push(app.to_owned());
+        }
+    });
+}
 
 #[cfg(target_os = "macos")]
 const APPLICATIONS: &str = r#"
 ObjC.import('AppKit');
+// The icon drawn at the size it is shown, so AppKit picks the rep made for
+// that size rather than handing over its 1024px one.
+function drawn(image) {
+    const px = 36; // the largest shown, 18pt, at 2x
+    const rep = $.NSBitmapImageRep.alloc.initWithBitmapDataPlanesPixelsWidePixelsHighBitsPerSampleSamplesPerPixelHasAlphaIsPlanarColorSpaceNameBytesPerRowBitsPerPixel(null, px, px, 8, 4, true, false, $.NSDeviceRGBColorSpace, 0, 0);
+    $.NSGraphicsContext.saveGraphicsState;
+    $.NSGraphicsContext.setCurrentContext($.NSGraphicsContext.graphicsContextWithBitmapImageRep(rep));
+    image.drawInRectFromRectOperationFraction($.NSMakeRect(0, 0, px, px), $.NSZeroRect, $.NSCompositingOperationCopy, 1.0);
+    $.NSGraphicsContext.restoreGraphicsState;
+    return ObjC.unwrap(rep.representationUsingTypeProperties($.NSBitmapImageFileTypePNG, $({})).base64EncodedStringWithOptions(0));
+}
 function run(argv) {
     const workspace = $.NSWorkspace.sharedWorkspace;
     const urls = workspace.URLsForApplicationsToOpenURL($.NSURL.fileURLWithPath(argv[0]));
     const apps = [];
     const seen = new Set();
-    function add(path, name, kind) {
+    function add(path, name, kind, system) {
         if (!path || seen.has(path)) return;
         seen.add(path);
         let icon = '';
-        try {
-            const image = workspace.iconForFile(path);
-            const bitmap = $.NSBitmapImageRep.imageRepWithData(image.TIFFRepresentation);
-            icon = ObjC.unwrap(bitmap.representationUsingTypeProperties($.NSBitmapImageFileTypePNG, $({})).base64EncodedStringWithOptions(0));
-        } catch (_) {}
-        apps.push({name: name, path: path, kind: kind || '', icon: icon});
+        try { icon = drawn(workspace.iconForFile(path)); } catch (_) {}
+        apps.push({name: name, path: path, kind: kind || '', system: !!system, icon: icon});
+    }
+    const system = workspace.URLForApplicationToOpenURL($.NSURL.fileURLWithPath(argv[0]));
+    if (system && !system.isNil()) {
+        add(ObjC.unwrap(system.path), ObjC.unwrap(system.lastPathComponent.stringByDeletingPathExtension), '', true);
     }
     // Editors need not register for every source-file extension.
     const zed = workspace.URLForApplicationWithBundleIdentifier('dev.zed.Zed');
@@ -39,20 +116,61 @@ function run(argv) {
         const url = urls.objectAtIndex(i);
         add(ObjC.unwrap(url.path), ObjC.unwrap(url.lastPathComponent.stringByDeletingPathExtension));
     }
-    add('/System/Library/CoreServices/Finder.app', 'Default app', 'default');
+    add('/System/Library/CoreServices/Finder.app', 'Finder', 'folder');
     add('/System/Applications/Utilities/Terminal.app', 'Terminal', 'terminal');
     return JSON.stringify(apps);
 }
 "#;
 
+/// Every application registered to open the file, the system's default first.
+#[cfg(target_os = "macos")]
+const IMAGE_APPLICATIONS: &str = r#"
+ObjC.import('AppKit');
+// The icon drawn at the size it is shown, so AppKit picks the rep made for
+// that size rather than handing over its 1024px one.
+function drawn(image) {
+    const px = 36; // the largest shown, 18pt, at 2x
+    const rep = $.NSBitmapImageRep.alloc.initWithBitmapDataPlanesPixelsWidePixelsHighBitsPerSampleSamplesPerPixelHasAlphaIsPlanarColorSpaceNameBytesPerRowBitsPerPixel(null, px, px, 8, 4, true, false, $.NSDeviceRGBColorSpace, 0, 0);
+    $.NSGraphicsContext.saveGraphicsState;
+    $.NSGraphicsContext.setCurrentContext($.NSGraphicsContext.graphicsContextWithBitmapImageRep(rep));
+    image.drawInRectFromRectOperationFraction($.NSMakeRect(0, 0, px, px), $.NSZeroRect, $.NSCompositingOperationCopy, 1.0);
+    $.NSGraphicsContext.restoreGraphicsState;
+    return ObjC.unwrap(rep.representationUsingTypeProperties($.NSBitmapImageFileTypePNG, $({})).base64EncodedStringWithOptions(0));
+}
+function run(argv) {
+    const workspace = $.NSWorkspace.sharedWorkspace;
+    const file = $.NSURL.fileURLWithPath(argv[0]);
+    const apps = [];
+    const seen = new Set();
+    function add(url, system, kind) {
+        if (!url || url.isNil()) return;
+        const path = ObjC.unwrap(url.path);
+        if (seen.has(path)) return;
+        seen.add(path);
+        let icon = '';
+        try { icon = drawn(workspace.iconForFile(path)); } catch (_) {}
+        apps.push({name: ObjC.unwrap(url.lastPathComponent.stringByDeletingPathExtension), path: path, kind: kind || '', system: !!system, icon: icon});
+    }
+    add(workspace.URLForApplicationToOpenURL(file), true);
+    const urls = workspace.URLsForApplicationsToOpenURL(file);
+    for (let i = 0; i < urls.count; i++) add(urls.objectAtIndex(i));
+    add($.NSURL.fileURLWithPath('/System/Library/CoreServices/Finder.app'), false, 'folder');
+    add($.NSURL.fileURLWithPath('/System/Applications/Utilities/Terminal.app'), false, 'terminal');
+    return JSON.stringify(apps);
+}
+"#;
+
 #[derive(Clone, serde::Deserialize)]
-pub(super) struct Application {
+pub(crate) struct Application {
     name: String,
     path: PathBuf,
-    /// `default` or `terminal` for the entries that stand for a way of
-    /// opening rather than an application; empty for an application.
+    /// `default`, `folder` or `terminal` for the entries that stand for a way
+    /// of opening rather than an application; empty for an application.
     #[serde(default)]
     kind: String,
+    /// The one the system opens the file in when nobody picks.
+    #[serde(default)]
+    system: bool,
     /// Base64 PNG from the macOS lister, decoded into `image`.
     #[cfg(target_os = "macos")]
     #[serde(default)]
@@ -62,20 +180,35 @@ pub(super) struct Application {
 }
 
 impl Application {
-    fn target(&self) -> Target {
+    /// Whether it can be remembered as the default and hidden from a menu:
+    /// anything but the system default.
+    pub(crate) fn remembered(&self) -> bool {
+        self.kind != "default"
+    }
+
+    pub(crate) fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub(crate) fn target(&self) -> Target {
         match self.kind.as_str() {
             "default" => Target::Default,
+            "folder" => Target::Folder,
             "terminal" => Target::Terminal,
             _ => Target::Application(self.path.clone()),
         }
     }
 
-    fn icon(&self) -> gpui::AnyElement {
+    pub(crate) fn icon(&self, size: gpui::Pixels) -> gpui::AnyElement {
         if let Some(image) = &self.image {
-            gpui::img(image.clone()).size(px(18.)).into_any_element()
+            gpui::img(image.clone()).size(size).into_any_element()
         } else {
             icons::icon(icons::files::File)
-                .size(px(18.))
+                .size(size)
                 .into_any_element()
         }
     }
@@ -83,15 +216,14 @@ impl Application {
 
 #[derive(Default)]
 pub(super) struct Menu {
-    open: bool,
-    pressed: bool,
+    popup: popover::Popup<()>,
     loaded: bool,
     loading: bool,
     apps: Vec<Application>,
 }
 
 #[derive(Clone)]
-pub(super) enum Target {
+pub(crate) enum Target {
     Application(PathBuf),
     Default,
     Terminal,
@@ -142,9 +274,9 @@ fn open_command(file: &Path, target: &Target) -> Command {
             command
         }
         #[cfg(not(windows))]
-        Target::Folder => opener(folder),
-        Target::Default => opener(file),
-        Target::Terminal => opener(folder),
+        Target::Folder => system_open(folder),
+        Target::Default => system_open(file),
+        Target::Terminal => system_open(folder),
     };
     #[cfg(windows)]
     {
@@ -157,7 +289,7 @@ fn open_command(file: &Path, target: &Target) -> Command {
 
 /// The desktop's own way to open `path` with whatever it is associated with.
 #[cfg(not(target_os = "macos"))]
-fn opener(path: &Path) -> Command {
+fn system_open(path: &Path) -> Command {
     let mut command = Command::new(if cfg!(windows) {
         "explorer.exe"
     } else {
@@ -194,15 +326,49 @@ fn applications(file: &Path) -> Result<Vec<Application>> {
             app.name.to_lowercase(),
         )
     });
-    for app in &mut apps {
+    decode_icons(&mut apps);
+    apps.dedup_by(|a, b| a.path == b.path);
+    Ok(apps)
+}
+
+#[cfg(target_os = "macos")]
+fn decode_icons(apps: &mut [Application]) {
+    for app in apps {
         app.image = STANDARD
             .decode(std::mem::take(&mut app.icon))
             .ok()
             .filter(|bytes| !bytes.is_empty())
             .map(|bytes| Arc::new(gpui::Image::from_bytes(gpui::ImageFormat::Png, bytes)));
     }
-    apps.dedup_by(|a, b| a.path == b.path);
+}
+
+/// The applications that open a picture like `file`, the system's default
+/// first. `file` need not exist: only its extension is read.
+#[cfg(target_os = "macos")]
+pub(crate) fn image_applications(file: &Path) -> Result<Vec<Application>> {
+    let json = output(
+        Command::new("/usr/bin/osascript")
+            .args(["-l", "JavaScript", "-e", IMAGE_APPLICATIONS])
+            .arg(file)
+            .output()
+            .context("Could not find applications")?,
+    )?;
+    let mut apps: Vec<Application> = serde_json::from_str(&json)?;
+    apps.retain(|app| !app.name.eq_ignore_ascii_case("cydonia"));
+    decode_icons(&mut apps);
     Ok(apps)
+}
+
+/// Off macOS nothing lists what opens a picture: the desktop's default only.
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn image_applications(_: &Path) -> Result<Vec<Application>> {
+    Ok(vec![Application {
+        name: "Open".to_owned(),
+        path: PathBuf::new(),
+        kind: "default".to_owned(),
+        system: true,
+        image: None,
+    }])
 }
 
 /// Editors found on `PATH`, then the desktop's default for the file. No
@@ -230,6 +396,7 @@ fn applications(_: &Path) -> Result<Vec<Application>> {
     let application = |name: &str, path: PathBuf, kind: &str| Application {
         name: name.to_owned(),
         path,
+        system: kind == "default",
         kind: kind.to_owned(),
         image: None,
     };
@@ -239,6 +406,77 @@ fn applications(_: &Path) -> Result<Vec<Application>> {
         .collect();
     apps.push(application("Default app", PathBuf::new(), "default"));
     Ok(apps)
+}
+
+/// The file view's `Open with` menu.
+fn menu(view: &mut FileView) -> &mut popover::Popup<()> {
+    &mut view.external_menu.popup
+}
+
+/// Whether this platform lists the applications that open a file. Where it
+/// does not, a file opens in the system's default or is shown in its folder,
+/// and nothing is remembered or hidden.
+pub(crate) const LISTS: bool = cfg!(target_os = "macos");
+
+/// What showing a file in its folder is called here.
+pub(crate) const REVEAL: &str = if cfg!(target_os = "macos") {
+    "Show in Finder"
+} else if cfg!(windows) {
+    "Show in Explorer"
+} else {
+    "Open containing folder"
+};
+
+/// The menu row that shows a file in its folder.
+pub(crate) fn reveal_row(theme: &Theme, id: impl Into<ElementId>) -> Stateful<Div> {
+    popover::menu_row(theme, false, None)
+        .id(id)
+        .hover(|row| row.bg(theme.element_hover))
+        .child(REVEAL)
+}
+
+/// The application `opener` opens in among `apps`: the one picked, or else
+/// the system's. Where nothing is listed, always the system's.
+pub(crate) fn current<'a>(apps: &'a [Application], opener: &Opener) -> Option<&'a Application> {
+    match &opener.app {
+        Some(app) if LISTS => apps.iter().find(|listed| &listed.path == app),
+        _ => apps.iter().find(|listed| listed.system),
+    }
+}
+
+/// Whether `opener` lists a single application among `apps`, which leaves its
+/// `Open with` button nothing to pick.
+pub(crate) fn alone(apps: &[Application], opener: &Opener) -> bool {
+    LISTS && apps.iter().filter(|app| !opener.hides(&app.path)).count() <= 1
+}
+
+/// One application in an `Open with` menu: a press opens in it.
+pub(crate) fn app_row(
+    theme: &Theme,
+    id: impl Into<ElementId>,
+    app: &Application,
+    open: impl Fn(&mut Window, &mut App) + 'static,
+) -> Stateful<Div> {
+    popover::menu_row(theme, false, None)
+        .id(id)
+        .hover(|row| row.bg(theme.element_hover))
+        .child(app.icon(px(18.)))
+        .child(app.name.clone())
+        .on_click(move |_, window, cx| {
+            cx.stop_propagation();
+            open(window, cx);
+        })
+}
+
+/// The applications that open a file of kind `extension`, and those that open
+/// a picture of it, listed against an empty probe file named for it.
+pub(crate) fn listed_for(extension: &str, pictures: bool) -> Result<Vec<Application>> {
+    let probe = std::env::temp_dir().join(format!("cydonia-probe.{extension}"));
+    std::fs::write(&probe, [])?;
+    match pictures {
+        true => image_applications(&probe),
+        false => applications(&probe),
+    }
 }
 
 /// Show a path in the file manager: a directory opened, anything else selected in the
@@ -269,7 +507,9 @@ pub(super) fn open(file: &Path, target: &Target) -> Result<()> {
 
 impl FileView {
     pub(super) fn external_button(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
-        if !self.external_menu.loaded && !self.external_menu.loading {
+        // Only macOS lists what opens a file; elsewhere the menu is the
+        // folder alone.
+        if LISTS && !self.external_menu.loaded && !self.external_menu.loading {
             self.external_menu.loading = true;
             let path = self.path.clone();
             cx.spawn(async move |this, cx| {
@@ -302,82 +542,90 @@ impl FileView {
         } else {
             "Open externally"
         };
-        let popup = self.external_menu.open.then(|| {
-            let mut card = popover::popover_card(&theme)
-                .min_w(px(210.))
-                // Spent on the dismissal, reaching nothing behind the card —
-                // the rule [`popover::dismiss_on_out`] states.
-                .on_mouse_down_out(cx.listener(|this, _, _, cx| {
-                    this.external_menu.open = false;
-                    cx.notify();
-                    cx.stop_propagation();
-                }));
+        let popup = self.external_menu.popup.as_open().map(|_| {
+            let mut card =
+                popover::dismiss_on_out(popover::popover_card(&theme).min_w(px(210.)), menu, cx);
+            let opener = opener(Opens::Files);
+            let view = cx.entity().downgrade();
             for (index, app) in self.external_menu.apps.iter().enumerate() {
-                let app = app.clone();
-                card = card.child(
-                    popover::menu_row(&theme, false, None)
-                        .id(("external-app", index))
-                        .hover(|row| row.bg(theme.element_hover))
-                        .child(app.icon())
-                        .child(app.name.clone())
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.external_menu.open = false;
-                            this.open_external(app.target(), cx);
-                            cx.notify();
-                        })),
-                );
+                if opener.hides(&app.path) {
+                    continue;
+                }
+                let (view, pick) = (view.clone(), app.clone());
+                card = card.child(app_row(
+                    &theme,
+                    ("external-app", index),
+                    app,
+                    move |_, cx| {
+                        if pick.remembered() {
+                            choose(Opens::Files, Some(pick.path.clone()));
+                        }
+                        let _ = view.update(cx, |this, cx| {
+                            popover::close_popup(this, cx, menu);
+                            this.open_external(pick.target(), cx);
+                        });
+                    },
+                ));
             }
             if self.external_menu.loading {
                 card = card.child(div().p(px(8.)).child("Loading apps…"));
             }
-            card = card.child(popover::divider()).child(
-                popover::menu_row(&theme, false, None)
-                    .id("external-folder")
-                    .hover(|row| row.bg(theme.element_hover))
-                    .child("Open in folder")
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.external_menu.open = false;
+            // Where apps are listed, Finder is one of them.
+            if !LISTS {
+                card = card.child(reveal_row(&theme, "external-folder").on_click(cx.listener(
+                    move |this, _, _, cx| {
+                        popover::close_popup(this, cx, menu);
                         this.open_external(Target::Folder, cx);
-                        cx.notify();
-                    })),
-            );
+                    },
+                )));
+            }
             popover::anchored_menu_above_end("file-open-menu", card.into_any_element(), None)
         });
-        div()
-            .relative()
-            .flex_none()
-            .flex()
-            .items_center()
-            .child(
-                div()
-                    .id("file-open-with")
-                    .debug_selector(|| "file-open-with".into())
-                    .w(px(20.))
-                    .h(px(22.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded(px(6.))
-                    .cursor_pointer()
-                    .hover(|button| button.bg(theme.element_hover))
-                    .when(self.opening_external, |button| button.opacity(0.5))
-                    .tooltip(move |window, cx| Tooltip::text(tooltip, window, cx))
-                    .child(
-                        icons::icon(icons::glyph::Dock)
-                            .size(px(14.))
-                            .text_color(theme.text_muted),
-                    )
-                    .capture_any_mouse_down(cx.listener(|this, _, _, _| {
-                        this.external_menu.pressed = this.external_menu.open
-                    }))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.external_menu.open =
-                            !(std::mem::take(&mut this.external_menu.pressed)
-                                || this.external_menu.open);
-                        cx.notify();
-                    })),
-            )
-            .children(popup)
+        let opener = opener(Opens::Files);
+        let current = current(&self.external_menu.apps, &opener).cloned();
+        let target = match (&current, opener.app.clone()) {
+            (Some(app), _) => app.target(),
+            (None, Some(chosen)) if LISTS => Target::Application(chosen),
+            _ => Target::Default,
+        };
+        let (icon, name) = match &current {
+            Some(app) if LISTS => (app.icon(px(12.)), app.name.clone()),
+            _ => (
+                icons::icon(icons::glyph::Dock)
+                    .size(px(12.))
+                    .text_color(theme.text_muted)
+                    .into_any_element(),
+                "Open".to_owned(),
+            ),
+        };
+        let mut button = theme.split_button(
+            "file-open",
+            "file-open-with",
+            icon,
+            name,
+            ControlSize::Small,
+        );
+        button.main = button
+            .main
+            .tooltip(move |window, cx| Tooltip::text(tooltip, window, cx))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.open_external(target.clone(), cx);
+            }));
+        if self.external_menu.loaded && alone(&self.external_menu.apps, &opener) {
+            return button
+                .build_alone()
+                .when(self.opening_external, |button| button.opacity(0.5))
+                .into_any_element();
+        }
+        button.more = popover::menu_trigger(
+            button.more.debug_selector(|| "file-open-with".into()),
+            menu,
+            |_| (),
+            cx,
+        );
+        button
+            .build(popup)
+            .when(self.opening_external, |button| button.opacity(0.5))
             .into_any_element()
     }
 }

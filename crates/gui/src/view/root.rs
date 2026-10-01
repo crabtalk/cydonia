@@ -30,7 +30,7 @@ use crate::{
         leaf::{Leaf, Pane},
         menubar::CloseWindow,
         section::Section,
-        sidebar::{Renaming, Row},
+        sidebar::{Dragged, Renaming, Row},
         table,
     },
 };
@@ -44,16 +44,19 @@ use bezel::{
         WindowOptions, actions, div, point, prelude::*, px, size,
     },
     motion::{Fade, Painter},
-    theme::{Material, TextStyle, Theme, Typeset, appearance},
+    theme::{TextStyle, Theme, Typeset, appearance},
     ui::{
+        docking, drag,
         floating::Floating,
         icons,
         input::{FieldEvent, TextField},
         menu::Cursor,
         stats::Stats,
+        tabs,
         widgets::{ButtonStyle, Buttons, Content, SplitDrag},
     },
 };
+use std::cell::RefCell;
 
 actions!(
     cydonia,
@@ -105,12 +108,6 @@ const SIDEBAR_WIDTH_MAX: f32 = 420.;
 /// The sidebar's gutter: a row's outer margin, and the padding inside it.
 pub(crate) const SIDEBAR_GUTTER: f32 = 8.;
 
-/// How thick each column's material sits. Nothing paints beneath them, so these
-/// are absolute and independent: the sidebar is chrome and holds no long-form
-/// text, the panel is the column whose text has to win against the desktop.
-const SIDEBAR_MATERIAL: Material = Material::Thick;
-const CONTENT_MATERIAL: Material = Material::UltraThick;
-
 /// The header strip's height, measured off `../desktop`: between Cursor's 34
 /// and Notion's 36, and tall enough to hold the 14px traffic lights macOS 26
 /// draws without crowding them.
@@ -149,27 +146,18 @@ pub(crate) fn composer_width() -> f32 {
     COMPOSER_COLUMN - 2. * COMPOSER_MARGIN
 }
 
-/// The sidebar's fill. Opaque, it takes the chrome tone: the light palette's
-/// `surface` is the grey the content plane's white sits inside, and falling
-/// back to the panel would leave the two columns one flat sheet.
+/// The sidebar's fill: bezel's frost tint, or opaque the chrome tone — the
+/// light palette's `surface` is the grey the content plane's white sits inside.
 pub(crate) fn sidebar_bg(theme: &Theme) -> Hsla {
-    material(theme, SIDEBAR_MATERIAL).unwrap_or(theme.surface)
+    match theme.vibrancy {
+        true => theme.vibrancy_tint(),
+        false => theme.surface,
+    }
 }
 
-/// The content column's fill.
+/// The content column's fill: bezel's frost tint, or opaque `bg`.
 pub(crate) fn content_bg(theme: &Theme) -> Hsla {
-    material(theme, CONTENT_MATERIAL).unwrap_or(theme.bg)
-}
-
-/// A column's own tint at one thickness on the material ladder, or nothing
-/// where the window shows no desktop to sit over. The ladder's tone is a
-/// neutral scrim and carries no appearance — tinting it is what makes dark
-/// glass dark.
-fn material(theme: &Theme, thickness: Material) -> Option<Hsla> {
-    theme.vibrancy.then(|| Hsla {
-        a: thickness.opacity(),
-        ..theme.vibrancy_tint()
-    })
+    theme.window_bg()
 }
 
 /// macOS traffic light diameter — AppKit owns the buttons and reports their
@@ -348,6 +336,7 @@ pub fn open(settings: Settings, state: State, cx: &mut App) -> Result<WindowHand
             window_min_size: Some(size(px(600.), px(320.))),
             app_id: Some("cydonia".into()),
             window_decorations: super::chrome::decorations(),
+            app_owns_titlebar_drag: true,
             ..Default::default()
         },
         |window, cx| {
@@ -482,11 +471,13 @@ pub struct Cydonia {
     /// What [`Cydonia::desktop_only`] was last asked about, while its notice
     /// is up.
     pub(crate) desktop_only: Option<&'static str>,
-    /// Where a pane dropped on a pane's edge would land: the pane under the
-    /// pointer, and which of its edges. Written by whichever pane the pointer
-    /// is inside and read by the one that draws the mark, the way a card's
-    /// landing is — see [`board::Landing`].
-    pub(crate) pane_landing: Option<(Member, super::arrangement::Landing)>,
+    /// Where a sidebar row or a pane's tab lands on a pane. The panes are its
+    /// targets, by the member in front of each; the window is its surface.
+    pub(crate) dock: docking::Dock<Member, Dragged>,
+    /// The sidebar's list, carried along itself and out onto the panes.
+    pub(crate) sidebar_sort: drag::Domain<(), Dragged>,
+    /// Each pane's strip, by the pane's own name.
+    pub(crate) strips: RefCell<std::collections::HashMap<SharedString, tabs::Reorder<Dragged>>>,
     /// Which of each pane's tabs is in front, by the pane's own name — see
     /// [`Cydonia::front_of`]. Runtime only: where the panes are is the
     /// space's, and which tab you happen to be looking at is not.
@@ -1015,7 +1006,18 @@ impl Cydonia {
             settings_window: None,
             #[cfg(not(feature = "desktop"))]
             settings_sheet: None,
-            pane_landing: None,
+            dock: docking::Dock::new(Painter::of(cx), {
+                let this = cx.entity().downgrade();
+                move |item, _, cx| {
+                    let label = this
+                        .upgrade()
+                        .map(|this| this.read(cx).label_of_dragged(item, cx))
+                        .unwrap_or_default();
+                    super::sidebar::ghost(label.into(), Theme::of(cx))
+                }
+            }),
+            sidebar_sort: drag::Domain::new(Painter::of(cx)),
+            strips: RefCell::default(),
             fronts: Default::default(),
             tab_history: Vec::new(),
             confirming: None,
@@ -1651,6 +1653,14 @@ impl Render for Cydonia {
             .children(self.settings_sheet(cx))
             .children(self.desktop_only_notice(cx))
             .children(self.new_board_dialog(cx));
-        bezel::ui::window::frame(root, window, cx)
+        let surface = self.dock.surface("dock", root).on_drop({
+            let this = cx.entity().downgrade();
+            move |event, window, cx| {
+                this.update(cx, |this, cx| this.dock_drop(event, window, cx))
+                    .ok()
+                    .flatten()
+            }
+        });
+        bezel::ui::window::frame(surface, window, cx)
     }
 }

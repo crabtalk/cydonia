@@ -16,6 +16,7 @@ use crate::model::{
     store::{self, Store},
     workspace::Workspace,
 };
+use crate::view::component::file::pictures::{Assets, Pictures};
 use artifact::project::Project as _;
 use artifact::{
     article as layout,
@@ -26,7 +27,7 @@ use bezel::{
     ui::input::{Shape, TextField},
 };
 use editor::{Editor, Mode};
-use markdown::Typography;
+use markdown::AppExt as _;
 use std::path::{Path, PathBuf};
 
 /// What articles were called before they were named for their age, and what an
@@ -60,6 +61,9 @@ pub struct Article {
     /// The editing surface, once the article has been opened. Building one for
     /// every article of every project at launch is the alternative.
     pub editor: Option<Entity<Editor>>,
+    /// The `Open with` button over the editor's pictures, held for as long as
+    /// the editor is.
+    pictures: Option<Entity<Pictures>>,
     /// The pane's scroll box, shared with the editor so typing follows the
     /// caret down.
     pub scroll: ScrollHandle,
@@ -104,6 +108,7 @@ impl Article {
             store,
             field: None,
             editor: None,
+            pictures: None,
             scroll: ScrollHandle::new(),
             mode: Mode::default(),
             saved: String::new(),
@@ -126,6 +131,7 @@ impl Article {
         }
         self.field = None;
         self.editor = None;
+        self.pictures = None;
         self.saved = String::new();
         self.scroll = ScrollHandle::new();
     }
@@ -184,7 +190,7 @@ impl Article {
         }
         // The document's own heading type, so the title is set the way the page
         // would set its own first heading.
-        let h1 = Typography::of(cx).h1;
+        let h1 = cx.typography().h1;
         let title = self.title.clone();
         let field = cx.new(|cx| {
             let mut field = TextField::new(cx)
@@ -205,8 +211,19 @@ impl Article {
 
         self.saved = self.store.read_article(&self.id).unwrap_or_default();
         let scroll = self.scroll.clone();
+        let dir = self
+            .path
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_default();
+        let workspace = cx.entity().downgrade();
+        let pictures = cx.new(|cx| {
+            let assets = artifact::article::assets(&artifact::article::content(&dir));
+            Pictures::new(dir.clone(), Assets::Dir(assets), workspace, cx)
+        });
+        let overlay = Pictures::overlay(&pictures);
         let editor = cx.new(|cx| {
-            let editor = Editor::new(&self.saved, cx);
+            let editor = Editor::new(&self.saved, cx).with_image_overlay(overlay);
             let editor = match self.path.parent() {
                 Some(dir) => editor.with_base(dir),
                 None => editor,
@@ -240,8 +257,19 @@ impl Article {
         })
         .detach();
 
+        // A picture saved in another app, or its list of apps arriving,
+        // repaints the page.
+        cx.observe(&pictures, {
+            let editor = editor.downgrade();
+            move |_, _, cx| {
+                let _ = editor.update(cx, |_, cx| cx.notify());
+            }
+        })
+        .detach();
+
         self.field = Some(field);
         self.editor = Some(editor);
+        self.pictures = Some(pictures);
     }
 
     /// Best effort, like every other write here: a document that cannot be
@@ -346,6 +374,7 @@ impl Article {
             .unwrap_or_else(bezel::theme::base_text_size);
         self.field = None;
         self.editor = None;
+        self.pictures = None;
         self.open(text_size, cx);
         self.stale = false;
     }

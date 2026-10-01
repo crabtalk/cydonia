@@ -69,8 +69,7 @@ fn scrollbar_hover_keeps_pane_controls_and_geometry_stable(cx: &mut gpui::TestAp
     visual.run_until_parked();
     visual.update(|window, _| window.refresh());
     visual.run_until_parked();
-    let selector: &'static str =
-        Box::leak(format!("strip-bar-pane-strip-{key}-track").into_boxed_str());
+    let selector = "tab-scrollbar-track";
     let track = visual.debug_bounds(selector).expect("overflow scrollbar");
     visual.simulate_mouse_move(track.center(), None, gpui::Modifiers::default());
     for _ in 0..6 {

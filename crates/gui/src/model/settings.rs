@@ -44,6 +44,15 @@ pub struct Settings {
     /// [`crate::model::notify`].
     #[serde(default = "notify_turns")]
     pub notify_turns: bool,
+    /// Whether a picture's web address pasted into a document is downloaded
+    /// into the document's `assets/` and pointed at there. Bare, beside the
+    /// switches above.
+    #[serde(default = "keep_pasted_images")]
+    pub keep_pasted_images: bool,
+    /// Whether a picture pasted in source mode goes in as an image line. Bare,
+    /// beside the switches above.
+    #[serde(default = "paste_images_in_source")]
+    pub paste_images_in_source: bool,
     /// How the interface is painted. The first table, so the bare keys above
     /// keep belonging to the document rather than to it.
     #[serde(default)]
@@ -63,6 +72,9 @@ pub struct Settings {
     /// `[browser]`: the in-app browser.
     #[serde(default)]
     pub browser: Browsing,
+    /// `[open_with]`: what files and pictures open in outside the app.
+    #[serde(default)]
+    pub open_with: OpenWith,
     /// Which agents the installer has been told to go ahead on, by registry
     /// id, against the source that was agreed to — see
     /// [`crate::agent::source_mark`].
@@ -93,6 +105,10 @@ pub const CONTENT_TEXT_SIZE: (f32, f32) = (8., 40.);
 
 /// Monospace text, where nothing else has been said — the terminal's size.
 pub const MONO_TEXT_SIZE: f32 = 13.;
+
+/// The range [`Appearance::vibrancy`] is held to: how opaque the tint over
+/// the frosted window may be.
+pub const VIBRANCY: (f32, f32) = (0.5, 0.95);
 
 pub fn clamp_content_text_size(points: f32) -> f32 {
     if points.is_finite() {
@@ -152,6 +168,9 @@ pub struct Appearance {
     /// chroma is the shipped neutral, whatever the hue says.
     pub hue: f32,
     pub chroma: f32,
+    /// How opaque the tint over the frosted window is — bezel's
+    /// `Brand::vibrancy_alpha`. Clamped to [`VIBRANCY`] on the way in.
+    pub vibrancy: f32,
     /// How wide a page with nothing of its own to say is set. A page that
     /// *has* been decided about carries the decision in its own
     /// `properties.toml` and ignores this.
@@ -160,8 +179,13 @@ pub struct Appearance {
     /// moment it is made — see [`artifact::board::Board::view`] — so this seeds
     /// one and never steers it afterwards.
     pub board_view: artifact::board::View,
-    /// Indent sidebar items beneath project headings by one icon width.
+    /// Indent sidebar items beneath project and space headings by one icon width.
     pub indent_project_rows: bool,
+    /// The settings window's section sidebar is as wide as its widest row
+    /// rather than a fixed width.
+    pub settings_sidebar_fits: bool,
+    /// Off macOS, draw the window buttons as macOS traffic lights on the left.
+    pub traffic_lights: bool,
     pub scrollbars: Scrollbars,
     pub sidebar_scrollbars: Scrollbars,
     /// Whether a line too long for a code block wraps rather than scrolling
@@ -169,6 +193,13 @@ pub struct Appearance {
     pub wrap_code: bool,
     /// The wash `==text==` paints in.
     pub highlight: Highlight,
+    /// The wash selected text paints in. Unset keeps the palette's.
+    pub selection: Option<Paint>,
+    /// The wash find matches paint in. Unset keeps the accent.
+    pub search: Option<Paint>,
+    /// The caret's colour. Unset keeps the palette's.
+    pub caret: Option<Paint>,
+    pub caret_shape: CaretShape,
 }
 
 /// A highlight colour, by the name [`markdown::HighlightColor`] stores.
@@ -215,6 +246,124 @@ impl Highlight {
 
     pub fn key(self) -> &'static str {
         self.color().name()
+    }
+}
+
+/// A colour picked in settings: a highlight colour, which follows the
+/// appearance, or one sRGB value for both. Stored as the highlight's name or
+/// as `#rrggbb`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Paint {
+    Named(Highlight),
+    Custom(u32),
+}
+
+impl Paint {
+    pub fn from_hsla(color: bezel::gpui::Hsla) -> Self {
+        let rgba = color.to_rgb();
+        let channel = |value: f32| (value.clamp(0., 1.) * 255.).round() as u32;
+        Self::Custom(channel(rgba.r) << 16 | channel(rgba.g) << 8 | channel(rgba.b))
+    }
+
+    /// The colour at full strength.
+    pub fn solid(self, theme: &bezel::theme::Theme) -> bezel::gpui::Hsla {
+        match self {
+            Self::Named(named) => markdown::highlight_solid(named.color(), theme),
+            Self::Custom(rgb) => bezel::gpui::rgb(rgb).into(),
+        }
+    }
+
+    /// The colour as a wash behind text, as translucent as a highlight's.
+    pub fn wash(self, theme: &bezel::theme::Theme) -> bezel::gpui::Hsla {
+        match self {
+            Self::Named(named) => markdown::default_highlight(named.color(), theme),
+            Self::Custom(_) => {
+                let alpha = markdown::default_highlight(markdown::HighlightColor::Yellow, theme).a;
+                self.solid(theme).opacity(alpha)
+            }
+        }
+    }
+
+    pub fn key(self) -> String {
+        match self {
+            Self::Named(named) => named.key().to_owned(),
+            Self::Custom(rgb) => format!("#{rgb:06x}"),
+        }
+    }
+
+    pub fn parse(key: &str) -> Option<Self> {
+        if let Some(hex) = key.strip_prefix('#') {
+            return (hex.len() == 6)
+                .then(|| u32::from_str_radix(hex, 16).ok())
+                .flatten()
+                .map(Self::Custom);
+        }
+        Highlight::ALL
+            .into_iter()
+            .find(|named| named.key() == key)
+            .map(Self::Named)
+    }
+}
+
+impl Serialize for Paint {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.key())
+    }
+}
+
+impl<'de> Deserialize<'de> for Paint {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let key = String::deserialize(deserializer)?;
+        Self::parse(&key).ok_or_else(|| serde::de::Error::custom(format!("not a colour: {key}")))
+    }
+}
+
+/// The caret's shape in text: fields, the editor and code alike.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CaretShape {
+    #[default]
+    Bar,
+    Block,
+    Underline,
+}
+
+impl From<CaretShape> for bezel::ui::input::CaretShape {
+    fn from(value: CaretShape) -> Self {
+        match value {
+            CaretShape::Bar => Self::Bar,
+            CaretShape::Block => Self::Block,
+            CaretShape::Underline => Self::Underline,
+        }
+    }
+}
+
+impl CaretShape {
+    pub const ALL: [Self; 3] = [Self::Bar, Self::Block, Self::Underline];
+
+    /// A character drawn in the shape.
+    pub fn glyph(self) -> &'static str {
+        match self {
+            Self::Bar => "▏",
+            Self::Block => "█",
+            Self::Underline => "▁",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Bar => "Bar",
+            Self::Block => "Block",
+            Self::Underline => "Underline",
+        }
+    }
+
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Bar => "bar",
+            Self::Block => "block",
+            Self::Underline => "underline",
+        }
     }
 }
 
@@ -271,10 +420,13 @@ impl Default for Appearance {
             article_font: None,
             mono_font: None,
             hue: 0.,
+            vibrancy: bezel::theme::Theme::VIBRANCY_ALPHA,
             chroma: 0.,
             wide_pages: false,
-            board_view: artifact::board::View::Lanes,
+            board_view: artifact::board::View::List,
             indent_project_rows: true,
+            settings_sidebar_fits: false,
+            traffic_lights: false,
             scrollbars: Scrollbars::default(),
             sidebar_scrollbars: Scrollbars::Never,
             // Off, the way every code editor ships it: indentation is
@@ -284,6 +436,10 @@ impl Default for Appearance {
             // edge — that is the cost, and the switch is the way back.
             wrap_code: false,
             highlight: Highlight::default(),
+            selection: None,
+            search: None,
+            caret: None,
+            caret_shape: CaretShape::default(),
         }
     }
 }
@@ -295,6 +451,10 @@ impl Appearance {
             self.text_size.clamp(TEXT_SIZE.0, TEXT_SIZE.1)
         } else {
             Self::default().text_size
+        };
+        self.vibrancy = match self.vibrancy.is_finite() {
+            true => self.vibrancy.clamp(VIBRANCY.0, VIBRANCY.1),
+            false => Self::default().vibrancy,
         };
         self.article_font_size = self.article_font_size.map(clamp_content_text_size);
         self.mono_font_size = clamp_content_text_size(self.mono_font_size);
@@ -634,6 +794,14 @@ fn notify_turns() -> bool {
     true
 }
 
+fn keep_pasted_images() -> bool {
+    true
+}
+
+fn paste_images_in_source() -> bool {
+    true
+}
+
 /// The launchers that resolve a package name on every run. An installed
 /// agent's command is a path to an unpacked executable, which resolves nothing.
 const RUNNERS: [&str; 3] = ["npx", "bunx", "pnpx"];
@@ -657,6 +825,16 @@ impl Agent {
     }
 }
 
+impl Settings {
+    /// What becomes of a pasted picture — see [`crate::model::media`].
+    pub fn pasting(&self) -> crate::model::media::Pasting {
+        crate::model::media::Pasting {
+            fetch: self.keep_pasted_images,
+            source: self.paste_images_in_source,
+        }
+    }
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -664,11 +842,14 @@ impl Default for Settings {
             watch_bounce: watch_bounce(),
             auto_update: auto_update(),
             notify_turns: notify_turns(),
+            keep_pasted_images: keep_pasted_images(),
+            paste_images_in_source: paste_images_in_source(),
             appearance: Appearance::default(),
             shortcuts: Shortcuts::default(),
             features: Features::default(),
             mcp: Mcp::default(),
             browser: Browsing::default(),
+            open_with: OpenWith::default(),
             // Nothing agreed to yet, which is what makes the first install of
             // each agent ask.
             trusted_agents: BTreeMap::new(),
@@ -802,6 +983,94 @@ fn table<'a>(doc: &'a mut toml_edit::DocumentMut, name: &str) -> Result<&'a mut 
     Ok(held)
 }
 
+/// `[open_with]`: one [`Opener`] for the file view's Open button, one for a
+/// preview picture's.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct OpenWith {
+    pub files: Opener,
+    pub pictures: Opener,
+}
+
+/// Which of [`OpenWith`]'s openers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Opens {
+    Files,
+    Pictures,
+}
+
+impl Opens {
+    pub const ALL: [Self; 2] = [Self::Files, Self::Pictures];
+
+    fn key(self) -> &'static str {
+        match self {
+            Self::Files => "files",
+            Self::Pictures => "pictures",
+        }
+    }
+}
+
+impl OpenWith {
+    pub fn get(&self, opens: Opens) -> &Opener {
+        match opens {
+            Opens::Files => &self.files,
+            Opens::Pictures => &self.pictures,
+        }
+    }
+
+    pub fn get_mut(&mut self, opens: Opens) -> &mut Opener {
+        match opens {
+            Opens::Files => &mut self.files,
+            Opens::Pictures => &mut self.pictures,
+        }
+    }
+}
+
+/// An application by its path: the one the main button opens in (unset is
+/// the system's default), and the ones left out of the `▾` menu.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Opener {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub app: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub hidden: Vec<PathBuf>,
+}
+
+impl Opener {
+    /// Whether `app` is left out of the menu. The default never is.
+    pub fn hides(&self, app: &std::path::Path) -> bool {
+        self.app.as_deref() != Some(app) && self.hidden.iter().any(|hidden| hidden == app)
+    }
+}
+
+/// Write one of `[open_with]`'s tables whole.
+pub fn set_opener(opens: Opens, opener: &Opener) -> Result<()> {
+    edit(|doc| {
+        let open_with = table(doc, "open_with")?;
+        let item = open_with[opens.key()].or_insert(toml_edit::table());
+        let Some(held) = item.as_table_mut() else {
+            anyhow::bail!(
+                "`open_with.{}` in settings.toml is not a table",
+                opens.key()
+            );
+        };
+        held.set_implicit(false);
+        match &opener.app {
+            Some(app) => held["app"] = toml_edit::value(app.to_string_lossy().as_ref()),
+            None => {
+                held.remove("app");
+            }
+        }
+        let mut hidden = toml_edit::Array::new();
+        for app in &opener.hidden {
+            hidden.push(app.to_string_lossy().as_ref());
+        }
+        held["hidden"] = toml_edit::value(hidden);
+        Ok(true)
+    })
+}
+
 /// Write the whole of `[appearance]`.
 ///
 /// One call rather than a setter per key: the window holds these live and
@@ -855,14 +1124,30 @@ fn write_appearance(doc: &mut toml_edit::DocumentMut, appearance: &Appearance) -
         }
     }
     held["hue"] = toml_edit::value(f64::from(appearance.hue));
+    held["vibrancy"] = toml_edit::value(f64::from(appearance.vibrancy));
     held["chroma"] = toml_edit::value(f64::from(appearance.chroma));
     held["wide_pages"] = toml_edit::value(appearance.wide_pages);
     held["board_view"] = toml_edit::value(appearance.board_view.key());
     held["indent_project_rows"] = toml_edit::value(appearance.indent_project_rows);
+    held["traffic_lights"] = toml_edit::value(appearance.traffic_lights);
+    held["settings_sidebar_fits"] = toml_edit::value(appearance.settings_sidebar_fits);
     held["scrollbars"] = toml_edit::value(appearance.scrollbars.key());
+    held["caret_shape"] = toml_edit::value(appearance.caret_shape.key());
     held["sidebar_scrollbars"] = toml_edit::value(appearance.sidebar_scrollbars.key());
     held["wrap_code"] = toml_edit::value(appearance.wrap_code);
     held["highlight"] = toml_edit::value(appearance.highlight.key());
+    for (key, color) in [
+        ("selection", appearance.selection),
+        ("search", appearance.search),
+        ("caret", appearance.caret),
+    ] {
+        match color {
+            Some(color) => held[key] = toml_edit::value(color.key()),
+            None => {
+                held.remove(key);
+            }
+        }
+    }
     Ok(())
 }
 
@@ -964,6 +1249,22 @@ pub fn set_auto_update(on: bool) -> Result<()> {
 pub fn set_notify_turns(on: bool) -> Result<()> {
     edit(|doc| {
         doc["notify_turns"] = toml_edit::value(on);
+        Ok(true)
+    })
+}
+
+/// Switch downloading pasted web pictures on or off in the file.
+pub fn set_keep_pasted_images(on: bool) -> Result<()> {
+    edit(|doc| {
+        doc["keep_pasted_images"] = toml_edit::value(on);
+        Ok(true)
+    })
+}
+
+/// Switch pasting pictures in source mode on or off in the file.
+pub fn set_paste_images_in_source(on: bool) -> Result<()> {
+    edit(|doc| {
+        doc["paste_images_in_source"] = toml_edit::value(on);
         Ok(true)
     })
 }

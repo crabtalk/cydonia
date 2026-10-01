@@ -1,4 +1,5 @@
 use super::*;
+use bezel::gpui::WeakEntity;
 use std::os::unix::process::ExitStatusExt;
 
 #[test]
@@ -79,10 +80,65 @@ impl Render for ExternalBar {
 fn external_icon_toggles_the_app_menu_without_reopening(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| Theme::install(bezel::theme::Appearance::Light, cx));
     let file = cx.new(|cx| {
-        let mut file = FileView::new("/tmp/cydonia-menu-example.rs".into(), cx);
+        let mut file = FileView::new(
+            "/tmp/cydonia-menu-example.rs".into(),
+            WeakEntity::new_invalid(),
+            cx,
+        );
+        file.external_menu.loaded = true;
+        file.external_menu.apps = ["Zed", "TextEdit"]
+            .map(|name| Application {
+                kind: String::new(),
+                system: false,
+                icon: String::new(),
+                image: None,
+                name: name.into(),
+                path: format!("/Applications/{name}.app").into(),
+            })
+            .into();
+        file
+    });
+    let window = cx.add_window(|_, cx| {
+        let observe = cx.observe(&file, |_, _, cx| cx.notify());
+        ExternalBar {
+            file: file.clone(),
+            _observe: observe,
+        }
+    });
+    let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+    visual.run_until_parked();
+    for expected in [true, false, true, false] {
+        let point = visual.debug_bounds("file-open-with").unwrap().center();
+        visual.simulate_click(point, gpui::Modifiers::default());
+        // Past a closing menu's exit, which still counts as open to a press.
+        visual
+            .executor()
+            .advance_clock(std::time::Duration::from_secs(1));
+        visual.run_until_parked();
+        assert_eq!(
+            file.read_with(&visual, |file, _| file
+                .external_menu
+                .popup
+                .as_open()
+                .is_some()),
+            expected
+        );
+    }
+}
+
+#[gpui::test]
+fn a_single_app_leaves_nothing_to_pick(cx: &mut gpui::TestAppContext) {
+    cx.update(|cx| Theme::install(bezel::theme::Appearance::Light, cx));
+    let file = cx.new(|cx| {
+        let mut file = FileView::new(
+            "/tmp/cydonia-menu-single.rs".into(),
+            WeakEntity::new_invalid(),
+            cx,
+        );
         file.external_menu.loaded = true;
         file.external_menu.apps = vec![Application {
             kind: String::new(),
+            system: false,
             icon: String::new(),
             image: None,
             name: "Zed".into(),
@@ -99,13 +155,6 @@ fn external_icon_toggles_the_app_menu_without_reopening(cx: &mut gpui::TestAppCo
     });
     let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
     visual.run_until_parked();
-    for expected in [true, false, true, false] {
-        let point = visual.debug_bounds("file-open-with").unwrap().center();
-        visual.simulate_click(point, gpui::Modifiers::default());
-        visual.run_until_parked();
-        assert_eq!(
-            file.read_with(&visual, |file, _| file.external_menu.open),
-            expected
-        );
-    }
+
+    assert!(visual.debug_bounds("file-open-with").is_none());
 }

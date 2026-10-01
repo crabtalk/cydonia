@@ -7,8 +7,9 @@ use bezel::{
         ExternalPaths, FocusHandle, Focusable, KeyBinding, Render, Subscription, Task, Window, div,
         prelude::*, px,
     },
+    motion,
     theme::{TextStyle, Theme, Typeset},
-    ui::{icons, input, tooltip::Tooltip},
+    ui::{icons, input, tabs, tooltip::Tooltip},
 };
 use futures::{SinkExt, StreamExt, channel::mpsc};
 use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
@@ -783,8 +784,11 @@ pub struct TerminalPanel {
     /// open across everything the window moves to, so the directory it was
     /// first opened at is not where a shell started now belongs.
     next_cwd: Cwd,
+    /// What each of the strip's ids holds, in no order.
     tabs: Vec<Tab>,
-    active: usize,
+    /// The row: which tabs are open, in what order, and which is in front.
+    strip: tabs::Strip<usize>,
+    reorder: tabs::Reorder<usize>,
     next_id: usize,
 }
 
@@ -804,7 +808,8 @@ impl TerminalPanel {
             cwd: cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf()),
             next_cwd: Box::new(next_cwd),
             tabs: Vec::new(),
-            active: 0,
+            strip: tabs::Strip::new(),
+            reorder: tabs::Reorder::new(motion::Painter::of(cx)),
             next_id: 1,
         };
         panel.add(window, cx);
@@ -832,28 +837,18 @@ impl TerminalPanel {
             _exit: exit,
             _directory: directory,
         });
-        self.active = id;
+        self.strip.open(id);
         cx.notify();
     }
 
     /// Step to the tab `step` along, wrapping at the ends, with the focus — the
     /// panel's half of [`super::panel::NextTab`].
     fn cycle(&mut self, step: isize, window: &mut Window, cx: &mut Context<Self>) {
-        if self.tabs.len() < 2 {
+        if self.strip.len() < 2 {
             return;
         }
-        let at = self
-            .tabs
-            .iter()
-            .position(|tab| tab.id == self.active)
-            .unwrap_or(0);
-        let count = self.tabs.len() as isize;
-        let next = (at as isize + step).rem_euclid(count) as usize;
-        let Some(tab) = self.tabs.get(next) else {
-            return;
-        };
-        self.active = tab.id;
-        window.focus(&tab.terminal.focus_handle(cx), cx);
+        self.strip.cycle(step);
+        window.focus(&self.focus_handle(cx), cx);
         cx.notify();
     }
 
@@ -866,16 +861,17 @@ impl TerminalPanel {
             .focus_handle(cx)
             .is_focused(window);
         self.tabs.remove(index);
-        if self.tabs.is_empty() {
+        self.strip.close(&id);
+        if self.strip.is_empty() {
             cx.emit(Empty);
-        } else if self.active == id {
-            let next = &self.tabs[index.min(self.tabs.len() - 1)];
-            self.active = next.id;
-            if focused {
-                window.focus(&next.terminal.focus_handle(cx), cx);
-            }
+        } else if focused {
+            window.focus(&self.focus_handle(cx), cx);
         }
         cx.notify();
+    }
+
+    fn active(&self) -> usize {
+        self.strip.active().copied().unwrap_or_default()
     }
 }
 
@@ -883,7 +879,7 @@ impl Focusable for TerminalPanel {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         self.tabs
             .iter()
-            .find(|tab| tab.id == self.active)
+            .find(|tab| Some(&tab.id) == self.strip.active())
             .expect("terminal panel has an active tab")
             .terminal
             .focus_handle(cx)
@@ -905,11 +901,11 @@ impl Render for TerminalPanel {
             )
             .on_action(
                 cx.listener(|this, _: &crate::view::menubar::CloseWindow, window, cx| {
-                    this.close(this.active, window, cx);
+                    this.close(this.active(), window, cx);
                 }),
             )
             .on_action(cx.listener(|this, _: &super::panel::CloseTab, window, cx| {
-                this.close(this.active, window, cx);
+                this.close(this.active(), window, cx);
             }))
             .on_action(cx.listener(|this, _: &super::panel::NextTab, window, cx| {
                 this.cycle(1, window, cx);
@@ -929,75 +925,42 @@ impl Render for TerminalPanel {
                     .text_style(TextStyle::Body)
                     .text_color(theme.text_muted)
                     .child(
-                        div()
-                            .id("terminal-tabs")
-                            .min_w_0()
-                            .flex()
-                            .gap(px(4.))
-                            .overflow_x_scroll()
-                            .children(self.tabs.iter().map(|tab| {
-                                let id = tab.id;
-                                let directory = directory_label(&tab.terminal.read(cx).directory);
-                                div()
-                                    .id(("terminal-tab", id))
-                                    .flex_none()
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(10.))
-                                    .px(px(10.))
-                                    .w(px(156.))
-                                    .h(px(28.))
-                                    .rounded(px(10.))
-                                    .cursor_pointer()
-                                    .hover(|tab| tab.text_color(theme.text))
-                                    .when(self.active == id, |tab| {
-                                        tab.bg(theme.element_hover).text_color(theme.text)
-                                    })
-                                    .on_click(cx.listener(move |this, _, window, cx| {
-                                        this.active = id;
-                                        window.focus(&this.focus_handle(cx), cx);
-                                        cx.notify();
-                                    }))
-                                    .child(
-                                        icons::icon(icons::development::Terminal)
-                                            .size(px(14.))
-                                            .flex_none()
-                                            .text_color(if self.active == id {
-                                                theme.text
-                                            } else {
-                                                theme.text_muted
-                                            }),
-                                    )
-                                    .child(
-                                        div()
-                                            .flex_1()
-                                            .min_w_0()
-                                            .truncate()
-                                            .child(directory.clone()),
-                                    )
-                                    .child(
-                                        div()
-                                            .id(("terminal-close", id))
-                                            .size(px(18.))
-                                            .flex_none()
-                                            .rounded(px(4.))
-                                            .hover(|button| button.bg(theme.element_hover))
-                                            .flex()
-                                            .items_center()
-                                            .justify_center()
-                                            .tooltip(|window, cx| {
-                                                Tooltip::text("Close terminal", window, cx)
-                                            })
-                                            .on_click(cx.listener(move |this, _, window, cx| {
-                                                cx.stop_propagation();
-                                                this.close(id, window, cx);
-                                            }))
-                                            .child(
-                                                icons::icon(icons::notifications::X)
-                                                    .size(px(12.))
-                                                    .text_color(theme.text_muted),
-                                            ),
-                                    )
+                        self.reorder
+                            .bar(
+                                "terminal-tabs",
+                                &self.strip,
+                                self.strip.tabs().iter().filter_map(|&id| {
+                                    let tab = self.tabs.iter().find(|tab| tab.id == id)?;
+                                    let directory =
+                                        directory_label(&tab.terminal.read(cx).directory);
+                                    let label = tabs::Label::new(directory)
+                                        .with_icon(icons::development::Terminal);
+                                    let state = match self.strip.active() == Some(&id) {
+                                        true => tabs::State::Focused,
+                                        false => tabs::State::Resting,
+                                    };
+                                    let key = gpui::SharedString::from(format!("terminal-{id}"));
+                                    let tab = tabs::tab(&theme, key.clone(), label, state)
+                                        .on_click(cx.listener(move |this, _, window, cx| {
+                                            this.strip.activate(&id);
+                                            window.focus(&this.focus_handle(cx), cx);
+                                            cx.notify();
+                                        }))
+                                        .child(
+                                            tabs::close(&theme, key, tabs::Close::OnHover)
+                                                .on_click(cx.listener(
+                                                    move |this, _, window, cx| {
+                                                        cx.stop_propagation();
+                                                        this.close(id, window, cx);
+                                                    },
+                                                )),
+                                        );
+                                    Some((id, tab))
+                                }),
+                            )
+                            .on_reorder(cx.listener(|this, moved: &tabs::Move, _, cx| {
+                                this.strip.reorder(moved.from, moved.to);
+                                cx.notify();
                             })),
                     )
                     .child(
@@ -1049,14 +1012,14 @@ impl Render for TerminalPanel {
                 div().flex_1().min_h_0().children(
                     self.tabs
                         .iter()
-                        .find(|tab| tab.id == self.active)
+                        .find(|tab| Some(&tab.id) == self.strip.active())
                         .map(|tab| tab.terminal.clone()),
                 ),
             )
             .children(
                 self.tabs
                     .iter()
-                    .find(|tab| tab.id == self.active)
+                    .find(|tab| Some(&tab.id) == self.strip.active())
                     .map(|tab| super::status::terminal(&tab.terminal.read(cx).directory, &theme)),
             )
     }

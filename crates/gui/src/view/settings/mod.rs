@@ -46,6 +46,7 @@ mod agents;
 #[cfg(not(feature = "desktop"))]
 #[path = "agents_web.rs"]
 mod agents;
+mod apps;
 #[cfg(not(target_os = "linux"))]
 mod browser;
 mod developer;
@@ -57,10 +58,8 @@ mod shortcuts;
 mod theme;
 mod typography;
 
-/// The section sidebar. The reference's 18rem is read against a 120rem panel;
-/// against this window it would take a third of the width, so it matches the
-/// main window's sidebar instead.
-const SIDEBAR_WIDTH: f32 = 200.;
+/// The section sidebar's width, whatever its rows hold.
+const SIDEBAR_WIDTH: f32 = 180.;
 
 /// The gap between a group and the label of the next one, and between a label
 /// and the box under it.
@@ -70,6 +69,14 @@ pub(super) const LABEL_GAP: f32 = 8.;
 /// The reading column's cap, `--container-content`. The body is centred in
 /// whatever the window gives it, up to this.
 const CONTENT_MAX_WIDTH: f32 = 860.;
+
+/// The reading column's width in its own window, which is never narrower than
+/// the sidebar and this column together.
+const CONTENT_WIDTH: f32 = 640.;
+
+/// The settings window's opening size. Its width is also its minimum.
+#[cfg(feature = "desktop")]
+const WINDOW_SIZE: (f32, f32) = (900., 620.);
 
 pub use super::section::Section;
 
@@ -83,9 +90,10 @@ impl Section {
         matches!(self, Self::Agents)
     }
 
-    const ALL: [Self; 9] = [
+    const ALL: [Self; 10] = [
         Self::General,
         Self::Appearance,
+        Self::Editor,
         Self::Shortcuts,
         Self::Features,
         Self::Browser,
@@ -124,7 +132,7 @@ impl Section {
     /// group has none.
     fn group(self) -> Option<&'static str> {
         match self {
-            Self::General | Self::Appearance | Self::Shortcuts => None,
+            Self::General | Self::Appearance | Self::Editor | Self::Shortcuts => None,
             Self::Features | Self::Browser => Some("Workspace"),
             Self::Agents | Self::Mcp => Some("Agents"),
             Self::Performance | Self::Developer => Some("Advanced"),
@@ -135,6 +143,7 @@ impl Section {
         match self {
             Self::General => "General",
             Self::Appearance => "Appearance",
+            Self::Editor => "Editor",
             Self::Shortcuts => "Shortcuts",
             Self::Features => "Features",
             Self::Agents => "Agents",
@@ -159,7 +168,9 @@ impl Section {
             }
             Self::Browser => Some("The browser tabs in the right panel."),
             Self::Developer => Some("Switches for looking at what has not happened yet."),
-            Self::General | Self::Appearance | Self::Agents | Self::Performance => None,
+            Self::General | Self::Appearance | Self::Editor | Self::Agents | Self::Performance => {
+                None
+            }
         }
     }
 
@@ -168,6 +179,7 @@ impl Section {
             // The gear macOS itself puts on General.
             Self::General => icons::account::Settings,
             Self::Appearance => icons::weather::Sun,
+            Self::Editor => icons::text::SquarePen,
             Self::Shortcuts => icons::development::Command,
             Self::Features => icons::account::SlidersHorizontal,
             Self::Agents => icons::development::Bot,
@@ -219,6 +231,8 @@ pub struct SettingsWindow {
     interface_font: typography::FamilyPicker,
     article_font: typography::FamilyPicker,
     mono_font: typography::FamilyPicker,
+    /// The applications `Open with` offers, listed off the main thread once.
+    apps: apps::Listed,
     #[cfg(not(target_os = "linux"))]
     browser_data: browser::BrowserData,
     /// The field whose dialog is up — see [`SettingsWindow::field_dialog`].
@@ -226,6 +240,8 @@ pub struct SettingsWindow {
     /// The shortcut row taking keys, while one is — see
     /// [`shortcuts::Recording`].
     recording: Option<shortcuts::Recording>,
+    /// The row whose picker is open, by its id.
+    picker: bezel::ui::popover::Popup<&'static str>,
     #[cfg(feature = "desktop")]
     error: Option<SharedString>,
 }
@@ -249,10 +265,12 @@ pub fn open(
     {
         return Some(handle);
     }
-    let bounds = Bounds::centered(None, size(px(900.), px(620.)), cx);
+    let (width, height) = WINDOW_SIZE;
+    let bounds = Bounds::centered(None, size(px(width), px(height)), cx);
     cx.open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
+            window_min_size: Some(size(px(width), px(400.))),
             titlebar: Some(TitlebarOptions {
                 title: Some("Settings".into()),
                 appears_transparent: true,
@@ -267,6 +285,7 @@ pub fn open(
             },
             app_id: Some("cydonia".into()),
             window_decorations: crate::view::chrome::decorations(),
+            app_owns_titlebar_drag: true,
             ..Default::default()
         },
         |window, cx| {
@@ -322,6 +341,7 @@ impl SettingsWindow {
             typography::FamilyPicker::new(typography::Face::Interface, fonts.sans, cx);
         let article_font = typography::FamilyPicker::new(typography::Face::Article, fonts.body, cx);
         let mono_font = typography::FamilyPicker::new(typography::Face::Mono, fonts.mono, cx);
+        Self::list_apps(cx);
         let mut this = SettingsWindow {
             drag: Default::default(),
             workspace,
@@ -347,10 +367,12 @@ impl SettingsWindow {
             interface_font,
             article_font,
             mono_font,
+            apps: Default::default(),
             #[cfg(not(target_os = "linux"))]
             browser_data: Default::default(),
             editing: None,
             recording: None,
+            picker: Default::default(),
             #[cfg(feature = "desktop")]
             error: None,
         };
@@ -642,6 +664,7 @@ impl SettingsWindow {
             Section::Agents => self.load(cx),
             Section::General
             | Section::Appearance
+            | Section::Editor
             | Section::Shortcuts
             | Section::Features
             | Section::Mcp
@@ -654,11 +677,13 @@ impl SettingsWindow {
 
     fn sidebar(&self, cx: &Context<Self>) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
-        let features = &self.workspace.read(cx).settings.features;
+        let settings = &self.workspace.read(cx).settings;
+        let features = &settings.features;
+        let fits = settings.appearance.settings_sidebar_fits;
         let painter = Painter::of(cx);
         div()
             .flex_none()
-            .w(px(SIDEBAR_WIDTH))
+            .when(!fits, |el| el.w(px(SIDEBAR_WIDTH)))
             .h_full()
             .bg(theme.surface)
             .border_r_1()
@@ -765,8 +790,12 @@ impl Render for SettingsWindow {
                     .items_center()
                     .child(
                         div()
-                            .w_full()
-                            .max_w(px(CONTENT_MAX_WIDTH))
+                            .when(cfg!(feature = "desktop"), |el| {
+                                el.flex_none().w(px(CONTENT_WIDTH))
+                            })
+                            .when(!cfg!(feature = "desktop"), |el| {
+                                el.w_full().max_w(px(CONTENT_MAX_WIDTH))
+                            })
                             .when(owns_scroll, |el| el.flex_1().min_h_0())
                             .flex()
                             .flex_col()
@@ -793,6 +822,7 @@ impl Render for SettingsWindow {
                             .child(match self.section {
                                 Section::General => self.general_body(cx),
                                 Section::Appearance => self.appearance_body(cx),
+                                Section::Editor => self.editor_body(cx),
                                 Section::Shortcuts => self.shortcuts_body(cx),
                                 Section::Features => self.features_body(cx),
                                 Section::Agents => self.agents_body(cx),

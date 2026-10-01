@@ -7,6 +7,7 @@ use crate::model::{
     state,
 };
 use bezel::gpui::{self, Render};
+use bezel::ui::AppExt as _;
 
 struct ChatView {
     workspace: gpui::Entity<Workspace>,
@@ -43,7 +44,7 @@ fn thumb_painted(cx: &mut gpui::VisualTestContext) -> bool {
 fn a_settled_transcript_hides_its_thumb(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         Theme::install(bezel::theme::Appearance::Light, cx);
-        bezel::ui::scroll::set_visibility(bezel::ui::scroll::Visibility::Scrolling, cx);
+        cx.set_scrollbar_visibility(bezel::ui::scroll::Visibility::Scrolling);
     });
     let workspace = cx.new(|cx| Workspace::new(Settings::default(), state::State::default(), cx));
     workspace.update(cx, |workspace, _| {
