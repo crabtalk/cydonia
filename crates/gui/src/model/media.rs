@@ -16,7 +16,9 @@
 //! opens. One window and one document in front of it, so one target.
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use bezel::gpui::{App, ClipboardEntry, ClipboardItem, Entity, Image, WeakEntity, hash};
+#[cfg(feature = "desktop")]
+use bezel::gpui::WeakEntity;
+use bezel::gpui::{App, ClipboardEntry, ClipboardItem, Entity, Image, hash};
 use editor::AppExt as _;
 use editor::{Editor, ImageStore, Mode, PasteContent, PasteContext, Source};
 use image::{ImageFormat, imageops::FilterType};
@@ -97,6 +99,7 @@ fn paste(
         && markdown::is_image(&url)
         && (at.mode == Mode::Source || !at.in_fence)
     {
+        #[cfg(feature = "desktop")]
         if pasting.fetch
             && let Some(base) = at.base
         {
@@ -132,11 +135,13 @@ fn paste(
 }
 
 /// The most a picture fetched off the web may weigh.
+#[cfg(feature = "desktop")]
 const FETCH_LIMIT: u64 = 25 * 1024 * 1024;
 
 /// Fetch the picture at `url` into the assets beside `base`, then point every
 /// picture in `editor` still at `url` at the copy. A fetch that fails
 /// leaves the web address where it is.
+#[cfg(feature = "desktop")]
 fn fetch_into(url: String, base: PathBuf, editor: WeakEntity<Editor>, cx: &mut App) {
     cx.spawn(async move |cx| {
         let fetched = cx

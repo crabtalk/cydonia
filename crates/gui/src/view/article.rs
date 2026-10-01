@@ -675,6 +675,7 @@ impl Cydonia {
         project: usize,
         ix: usize,
         title: String,
+        lifted: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
@@ -695,6 +696,7 @@ impl Cydonia {
             id,
             "article-row",
             selected,
+            lifted,
             self.indent_of(entry, cx),
             &theme,
         )

@@ -349,14 +349,24 @@ pub(crate) fn row(
     id: impl Into<gpui::ElementId>,
     group: &'static str,
     selected: bool,
+    lifted: bool,
     indent: u8,
     theme: &Theme,
 ) -> Stateful<Div> {
     row_frame(id, group, indent)
-        .when(selected, |el| el.bg(theme.element_active))
+        .when(lifted, |el| lift(el, theme))
+        .when(!lifted && selected, |el| el.bg(theme.element_active))
         // Only off the open row: the hover wash is the weaker rung, and
         // painting it over the selection would dim what the pointer is on.
-        .when(!selected, |el| el.hover(|el| el.bg(theme.element_hover)))
+        .when(!lifted && !selected, |el| {
+            el.hover(|el| el.bg(theme.element_hover))
+        })
+}
+
+/// A row being carried in the list: raised the way a carried tab is, or only
+/// its text would travel.
+fn lift(el: Stateful<Div>, theme: &Theme) -> Stateful<Div> {
+    el.bg(theme.surface_raised).cursor_grabbing()
 }
 
 /// A row's place in the column with none of its washes: what a line that is
@@ -655,28 +665,25 @@ impl Cydonia {
             "project-list",
             count,
             cx.processor(move |this, range: Range<usize>, window, cx| {
+                let lifted: Vec<Dragged> = rows
+                    .iter()
+                    .map(|row| Dragged::Row(*row))
+                    .filter(|item| this.sidebar_sort.carries(item))
+                    .flat_map(|item| {
+                        let followers = carried_rows(&rows, &item);
+                        std::iter::once(item).chain(followers)
+                    })
+                    .collect();
                 range
                     .map(|ix| {
                         let row = rows[ix];
-                        let el = this.sidebar_row(row, window, cx);
+                        let item = Dragged::Row(row);
+                        let el = this.sidebar_row(row, lifted.contains(&item), window, cx);
                         match row {
-                            Row::Heading(_) | Row::Archive(_) => this
-                                .sidebar_sort
-                                .fixed(Dragged::Row(row), el)
-                                .into_any_element(),
-                            _ => {
-                                let item = Dragged::Row(row);
-                                // Raised the way a carried tab is, or only its
-                                // text would travel.
-                                let el = match this.sidebar_sort.carries(&item) {
-                                    true => el
-                                        .bg(Theme::of(cx).surface_raised)
-                                        .rounded(px(Theme::control_radius()))
-                                        .cursor_grabbing(),
-                                    false => el,
-                                };
-                                this.sidebar_sort.handle(item, el).into_any_element()
+                            Row::Heading(_) | Row::Archive(_) => {
+                                this.sidebar_sort.fixed(item, el).into_any_element()
                             }
+                            _ => this.sidebar_sort.handle(item, el).into_any_element(),
                         }
                     })
                     .collect::<Vec<_>>()
@@ -785,7 +792,7 @@ impl Cydonia {
                     .w_full()
                     .h(px(ROW_HEIGHT))
                     .overflow_hidden()
-                    .child(self.group_head(group, true, window, cx)),
+                    .child(self.group_head(group, true, false, window, cx)),
             )
             .into_any_element()
     }
@@ -802,6 +809,7 @@ impl Cydonia {
         &self,
         group: Group,
         pinned: bool,
+        lifted: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -885,6 +893,7 @@ impl Cydonia {
                     .h(px(ROW_PILL))
                     .rounded(px(Theme::control_radius()))
             })
+            .when(lifted, |el| lift(el, &theme))
             .flex()
             .flex_row()
             .items_center()
@@ -1317,13 +1326,19 @@ impl Cydonia {
     /// One line, built when the list scrolls it into view. The box around it is
     /// what holds the pitch: the row inside paints the wash, and the pixel
     /// either side of it is the gap between two.
-    fn sidebar_row(&self, row: Row, window: &mut Window, cx: &mut Context<Self>) -> Stateful<Div> {
+    fn sidebar_row(
+        &self,
+        row: Row,
+        lifted: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
         let workspace = self.workspace.read(cx);
         let inner = match row {
-            Row::Group(group) => self.group_head(group, false, window, cx),
+            Row::Group(group) => self.group_head(group, false, lifted, window, cx),
             Row::Archive(ix) => self.archive_divider(ix, cx),
             Row::Session { project, id } => match self.session_of(project, id, cx) {
-                Some(session) => self.session_row(session, window, cx),
+                Some(session) => self.session_row(session, lifted, window, cx),
                 None => Empty.into_any_element(),
             },
             Row::Board { project, ix } => {
@@ -1332,7 +1347,7 @@ impl Cydonia {
                     .get(project)
                     .and_then(|open| open.boards.get(ix).map(|board| board.label().to_owned()))
                 {
-                    Some(name) => self.board_row(project, ix, name, window, cx),
+                    Some(name) => self.board_row(project, ix, name, lifted, window, cx),
                     None => Empty.into_any_element(),
                 }
             }
@@ -1343,7 +1358,7 @@ impl Cydonia {
                         .map(|article| article.label().to_owned())
                 }) {
                     Some(title) => self
-                        .article_row(project, ix, title, window, cx)
+                        .article_row(project, ix, title, lifted, window, cx)
                         .into_any_element(),
                     None => Empty.into_any_element(),
                 }
@@ -1355,7 +1370,7 @@ impl Cydonia {
                     .and_then(|open| open.tables.get(ix).map(|table| table.name.clone()))
                 {
                     Some(name) => self
-                        .table_row(project, ix, name, window, cx)
+                        .table_row(project, ix, name, lifted, window, cx)
                         .into_any_element(),
                     None => Empty.into_any_element(),
                 }
@@ -1641,6 +1656,7 @@ impl Cydonia {
             ("archive", project),
             "archive-row",
             false,
+            false,
             u8::from(self.workspace.read(cx).indent_project_rows),
             &theme,
         )
@@ -1906,6 +1922,7 @@ impl Cydonia {
     fn session_row(
         &self,
         session: SessionRow,
+        lifted: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -1953,6 +1970,7 @@ impl Cydonia {
             ("session", id),
             "session-row",
             selected,
+            lifted,
             self.indent_of(entry, cx),
             &theme,
         )
@@ -1986,6 +2004,7 @@ impl Cydonia {
         project: usize,
         ix: usize,
         name: String,
+        lifted: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -2008,6 +2027,7 @@ impl Cydonia {
             SharedString::from(format!("board-{project}-{ix}")),
             "board-row",
             selected,
+            lifted,
             self.indent_of(entry, cx),
             &theme,
         )

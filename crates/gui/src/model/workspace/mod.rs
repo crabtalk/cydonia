@@ -8,6 +8,7 @@
 //! Everything [`crate::model::state`] persists lives here and nowhere else, which is
 //! why [`Workspace::save`] can take no arguments.
 
+#[cfg(feature = "desktop")]
 use crate::{agent, model::update};
 use crate::{
     data::{ColType, Column, Data, Edit, Page, Table},
@@ -23,7 +24,6 @@ use crate::{
     },
 };
 use artifact::board::Board;
-#[cfg(feature = "desktop")]
 use bezel::theme::AppExt as _;
 use bezel::ui::AppExt as _;
 use bezel::{

@@ -557,7 +557,7 @@ impl Cydonia {
                 None => applied.query.text().to_owned(),
             };
             let count = self.applied_rows(cx).map_or(0, |rows| rows.len());
-            return sidebar::row("applied-search", "applied-search", false, 0, &theme)
+            return sidebar::row("applied-search", "applied-search", false, false, 0, &theme)
                 .flex_none()
                 .min_w_0()
                 .mb(px(4.))
@@ -612,7 +612,7 @@ impl Cydonia {
                 )
                 .into_any_element();
         }
-        sidebar::row("search-row", "search-row", false, 0, &theme)
+        sidebar::row("search-row", "search-row", false, false, 0, &theme)
             .flex_none()
             .mb(px(4.))
             .child(

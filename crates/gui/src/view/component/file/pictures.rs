@@ -8,8 +8,6 @@
 
 use super::external::{self, Application, Target};
 use crate::model::{settings::Opens, watch, workspace::Workspace};
-use anyhow::Context as _;
-use artifact::project::fs::Project;
 use bezel::{
     gpui::{self, AnyElement, App, Context, Entity, Task, WeakEntity, prelude::*, px},
     theme::{ControlSize, Theme},
@@ -19,10 +17,11 @@ use std::{
     collections::HashMap,
     path::{Path, PathBuf},
     rc::Rc,
-    time::{Duration, SystemTime},
+    time::SystemTime,
 };
 
 /// The most a picture fetched off the web may weigh.
+#[cfg(feature = "desktop")]
 const FETCH_LIMIT: u64 = 25 * 1024 * 1024;
 
 /// Where a picture fetched off the web is kept.
@@ -234,7 +233,12 @@ fn stamp(path: &Path) -> Option<Stamp> {
 }
 
 /// Fetch the picture at `url` into `assets`, named for its bytes.
+#[cfg(feature = "desktop")]
 fn fetch(url: &str, assets: &Assets) -> anyhow::Result<PathBuf> {
+    use anyhow::Context as _;
+    use artifact::project::fs::Project;
+    use std::time::Duration;
+
     let dir = match assets {
         Assets::Project(root) => {
             let project = Project::new(root);
@@ -257,6 +261,11 @@ fn fetch(url: &str, assets: &Assets) -> anyhow::Result<PathBuf> {
     let format = image::guess_format(&bytes).context("Not a picture")?;
     let extension = format.extensions_str().first().copied().unwrap_or("png");
     crate::model::media::store(&dir, &bytes, extension).context("Could not save the picture")
+}
+
+#[cfg(not(feature = "desktop"))]
+fn fetch(_: &str, _: &Assets) -> anyhow::Result<PathBuf> {
+    anyhow::bail!("Pictures on the web cannot be fetched here")
 }
 
 /// The picture button's menu.

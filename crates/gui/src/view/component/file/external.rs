@@ -274,9 +274,9 @@ fn open_command(file: &Path, target: &Target) -> Command {
             command
         }
         #[cfg(not(windows))]
-        Target::Folder => opener(folder),
-        Target::Default => opener(file),
-        Target::Terminal => opener(folder),
+        Target::Folder => system_open(folder),
+        Target::Default => system_open(file),
+        Target::Terminal => system_open(folder),
     };
     #[cfg(windows)]
     {
@@ -289,7 +289,7 @@ fn open_command(file: &Path, target: &Target) -> Command {
 
 /// The desktop's own way to open `path` with whatever it is associated with.
 #[cfg(not(target_os = "macos"))]
-fn opener(path: &Path) -> Command {
+fn system_open(path: &Path) -> Command {
     let mut command = Command::new(if cfg!(windows) {
         "explorer.exe"
     } else {
