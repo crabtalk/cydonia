@@ -184,6 +184,8 @@ pub struct Appearance {
     /// The settings window's section sidebar is as wide as its widest row
     /// rather than a fixed width.
     pub settings_sidebar_fits: bool,
+    /// Off macOS, draw the window buttons as macOS traffic lights on the left.
+    pub traffic_lights: bool,
     pub scrollbars: Scrollbars,
     pub sidebar_scrollbars: Scrollbars,
     /// Whether a line too long for a code block wraps rather than scrolling
@@ -424,6 +426,7 @@ impl Default for Appearance {
             board_view: artifact::board::View::List,
             indent_project_rows: true,
             settings_sidebar_fits: false,
+            traffic_lights: false,
             scrollbars: Scrollbars::default(),
             sidebar_scrollbars: Scrollbars::Never,
             // Off, the way every code editor ships it: indentation is
@@ -1126,6 +1129,7 @@ fn write_appearance(doc: &mut toml_edit::DocumentMut, appearance: &Appearance) -
     held["wide_pages"] = toml_edit::value(appearance.wide_pages);
     held["board_view"] = toml_edit::value(appearance.board_view.key());
     held["indent_project_rows"] = toml_edit::value(appearance.indent_project_rows);
+    held["traffic_lights"] = toml_edit::value(appearance.traffic_lights);
     held["settings_sidebar_fits"] = toml_edit::value(appearance.settings_sidebar_fits);
     held["scrollbars"] = toml_edit::value(appearance.scrollbars.key());
     held["caret_shape"] = toml_edit::value(appearance.caret_shape.key());

@@ -12,7 +12,10 @@
 
 use bezel::{
     gpui::{AnyElement, App, ElementId, Window, WindowDecorations, div, prelude::*},
-    ui::titlebar::{self, CaptionSide, DragState},
+    ui::{
+        AppExt as _,
+        titlebar::{self, CaptionSide, DragState},
+    },
 };
 
 const NATIVE: bool = cfg!(any(target_os = "macos", target_family = "wasm"));
@@ -39,15 +42,19 @@ pub fn grip(id: impl Into<ElementId>, drag: &DragState, window: &Window) -> AnyE
 }
 
 /// Whether [`caption`] draws buttons on `side`: never on macOS, in a browser
-/// or in full screen, and on the side the desktop's button layout names. A
-/// platform with no layout puts them all on the right. A band that has them
+/// or in full screen. Traffic lights are always on the left; the rectangular
+/// buttons go on the side the desktop's layout names, or all on the right
+/// where there is no layout. A band that has them
 /// drops its inset on that side, so the buttons sit flush with the window's
 /// edge.
 pub fn has(side: CaptionSide, window: &Window, cx: &App) -> bool {
     if NATIVE || window.is_fullscreen() {
         return false;
     }
-    let layout = cx.button_layout();
+    let layout = Some(
+        cx.caption_style()
+            .button_layout(cx.button_layout(), window.window_controls()),
+    );
     match side {
         CaptionSide::Left => layout.is_some_and(|layout| layout.left[0].is_some()),
         CaptionSide::Right => layout.is_none_or(|layout| layout.right[0].is_some()),

@@ -339,6 +339,7 @@ impl Workspace {
             board_view: self.board_view,
             indent_project_rows: self.indent_project_rows,
             settings_sidebar_fits: self.settings.appearance.settings_sidebar_fits,
+            traffic_lights: self.settings.appearance.traffic_lights,
             scrollbars: self.settings.appearance.scrollbars,
             sidebar_scrollbars: self.settings.appearance.sidebar_scrollbars,
             wrap_code: self.wrap_code,
@@ -764,6 +765,13 @@ impl Workspace {
         cx.notify();
     }
 
+    pub fn set_traffic_lights(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.settings.appearance.traffic_lights = on;
+        apply_caption_style(on, cx);
+        self.save_appearance();
+        cx.notify();
+    }
+
     pub fn set_settings_sidebar_fits(&mut self, fits: bool, cx: &mut Context<Self>) {
         self.settings.appearance.settings_sidebar_fits = fits;
         self.save_appearance();
@@ -1008,6 +1016,15 @@ pub fn glass(opaque: Option<bool>) -> bool {
 /// `markdown::render`, which takes no per-surface layout.
 pub fn apply_wrap_code(wrap: bool, cx: &mut App) {
     cx.set_markdown_layout(markdown::Layout { wrap_code: wrap });
+}
+
+/// How bezel draws the window buttons off macOS.
+pub fn apply_caption_style(traffic_lights: bool, cx: &mut App) {
+    use bezel::ui::{AppExt as _, titlebar::CaptionStyle};
+    cx.set_caption_style(match traffic_lights {
+        true => CaptionStyle::Lights,
+        false => CaptionStyle::Rectangular,
+    });
 }
 
 /// Hand the answer to bezel, which reapplies it on every light/dark switch

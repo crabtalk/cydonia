@@ -204,6 +204,7 @@ impl SettingsWindow {
         let workspace = self.workspace.read(cx);
         let on = workspace.indent_project_rows;
         let fits = workspace.settings.appearance.settings_sidebar_fits;
+        let lights = workspace.settings.appearance.traffic_lights;
         div()
             .flex()
             .flex_col()
@@ -242,7 +243,23 @@ impl SettingsWindow {
                                 workspace.set_settings_sidebar_fits(!fits, cx);
                             });
                         },
-                    )),
+                    ))
+                    .when(!cfg!(target_os = "macos"), |group| {
+                        group.child(self.switch_row(
+                            Switch::new(
+                                "traffic-lights",
+                                "Traffic light window buttons",
+                                "Close, minimise and maximise as coloured dots on the left.",
+                                lights,
+                            ),
+                            cx,
+                            move |this, cx| {
+                                this.workspace.update(cx, |workspace, cx| {
+                                    workspace.set_traffic_lights(!lights, cx);
+                                });
+                            },
+                        ))
+                    }),
             )
             .into_any_element()
     }
