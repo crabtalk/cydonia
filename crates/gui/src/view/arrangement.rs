@@ -62,6 +62,9 @@ const MIN_SHARE: f64 = 0.08;
 /// into the seam.
 const TAB_INSET: f32 = 8.;
 
+/// Between the controls in a pane's bar.
+const BAR_GAP: f32 = 2.;
+
 impl Cydonia {
     /// The space the window is arranged by, taken whole: the tree is walked
     /// while the workspace is drawn from, so it is cloned out first.
@@ -608,7 +611,7 @@ impl Cydonia {
                 .size_full(),
             )
             .w_full()
-            .gap(px(2.))
+            .gap(px(BAR_GAP))
             .pl(px(lead))
             .when(right, |el| el.pr_0())
             .children(
@@ -616,8 +619,15 @@ impl Cydonia {
                     .flatten(),
             )
             // The fold belongs to whichever column runs along the window's left
-            // edge, so with the sidebar gone it is this pane's.
-            .children(fold.then(|| self.fold_toggle(cx).into_any_element()))
+            // edge, so with the sidebar gone it is this pane's. The tabs keep
+            // the inset off it that they keep off the sidebar's edge.
+            .children(fold.then(|| {
+                div()
+                    .flex_none()
+                    .mr(px(crate::view::root::HEADER_INSET - BAR_GAP))
+                    .child(self.fold_toggle(cx))
+                    .into_any_element()
+            }))
             // The tabs in a strip of their own, which scrolls sideways once
             // they no longer fit: the bar's other children are the pane's
             // chrome and keep their places while it does.
