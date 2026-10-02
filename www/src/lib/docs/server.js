@@ -81,6 +81,16 @@ function contents(acc) {
 	};
 }
 
+/** `<!-- include ../../crates/prompts/resources/markdown.md -->` on a line of
+    its own becomes that file, frontmatter dropped, in a fence — the text an
+    agent is handed, verbatim. The path is relative to the including page.
+    GitHub shows nothing for the comment. */
+const include = (content, slug) =>
+	content.replace(/^<!-- include (\S+) -->$/gm, (_, path) => {
+		const text = matter(readFileSync(resolve(dir, dirname(slug), path), 'utf8')).content;
+		return '````markdown\n' + text.trim() + '\n````';
+	});
+
 /** A page's frontmatter, rendered body and headings, or nothing where the slug
     names no file. */
 export async function read(slug) {
@@ -107,7 +117,7 @@ export async function read(slug) {
 			fallbackLanguage: 'text'
 		})
 		.use(rehypeStringify)
-		.process(content);
+		.process(include(content, slug));
 
 	return {
 		slug,

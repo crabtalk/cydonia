@@ -1,5 +1,17 @@
 [
   {
+    "version": "0.1.23",
+    "date": "2026-10-03",
+    "nightly": true,
+    "summary": "Article covers kept with their pictures, and docs for what agents are told.",
+    "new": [
+      "Read the instructions and resources Cydonia gives agents, word for word, in the docs"
+    ],
+    "changed": [
+      "Keep an article's cover in its assets folder beside its pictures; covers already filed beside the article still show"
+    ]
+  },
+  {
     "version": "0.1.22",
     "date": "2026-10-01",
     "summary": "Commands in the search palette, an editor section and colour controls in Settings, and opening files and pictures in other apps.",

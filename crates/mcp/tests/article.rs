@@ -166,10 +166,10 @@ fn nothing_written_yet_is_said_plainly() {
     assert_eq!(text, "this project has no articles");
 }
 
-/// The cover is filed in the article's own folder under the `cover-` name,
+/// The cover is filed in the article's `assets/` under the `cover-` name,
 /// which is what an agent could not work out for itself.
 #[test]
-fn a_cover_is_filed_beside_the_article_and_replaced_whole() {
+fn a_cover_is_filed_in_the_articles_assets_and_replaced_whole() {
     let scratch = Scratch::new("cover");
     let server = scratch.server();
     let made = server.call(
@@ -177,9 +177,9 @@ fn a_cover_is_filed_beside_the_article_and_replaced_whole() {
         json!({ "project": scratch.path(), "title": "Notes", "text": "# Notes" }),
         None,
     );
-    let folder = structured(made)["article_path"]
+    let folder = structured(made)["assets_path"]
         .as_str()
-        .expect("the article's own folder")
+        .expect("the article's own assets")
         .to_owned();
 
     let drawn = scratch.path().join("drawn.png");
@@ -256,9 +256,9 @@ fn an_article_is_put_away_and_then_deleted() {
         json!({ "project": scratch.path(), "title": "Notes", "text": "# Notes" }),
         None,
     );
-    let folder = structured(made)["article_path"]
+    let folder = structured(made)["assets_path"]
         .as_str()
-        .expect("the article's own folder")
+        .expect("the article's own assets")
         .to_owned();
 
     let text = said(server.call(

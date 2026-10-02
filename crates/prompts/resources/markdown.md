@@ -93,13 +93,14 @@ the Cydonia host. Do not claim to upload or copy an image through article tools.
 ### The cover
 
 The cover is the picture over the top of an article, and is not a body image:
-it is never written into the Markdown, and it does not live in `assets/`. It
-sits in the article's own folder, which `article_read` and `article_add` return
-as `article_path`, under a name starting `cover-`. One article has one cover.
+it is never written into the Markdown. It sits in the article's own `assets/`,
+which `article_read` and `article_add` return as `assets_path`, under a name
+starting `cover-`. One article has one cover. Do not give a body image a name
+starting `cover-`: it would be taken for the cover.
 
 Set it with `article_set_cover`, which takes the path of a picture on the
 Cydonia host and files it under the right name, removing whatever was there.
-Do not write a `cover-` file into the folder by hand — the name carries a stamp
+Do not write a `cover-` file into `assets/` by hand — the name carries a stamp
 that keeps a replaced cover from being served from cache.
 
 Draw or crop it **5:2** — 1500x600 is the size the app cuts its own at, and the

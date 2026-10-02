@@ -117,7 +117,7 @@ pub static TOOLS: [Tool; 12] = [
     },
     Tool {
         name: "article_read",
-        description: "Read one article's markdown. The result includes two directories on the Cydonia host: assets_path, this article's own media directory, where body images go; and article_path, the article's folder, which holds its cover and that media directory. Filesystem access is needed to place a file in either.",
+        description: "Read one article's markdown. The result includes two directories on the Cydonia host: assets_path, this article's own media directory, which holds its body images and its cover; and article_path, the article's folder. Filesystem access is needed to place a file in either.",
         schema: |bound| fields(bound, &[PROJECT, ARTICLE]),
         writes: false,
         deletes: false,
@@ -141,7 +141,7 @@ pub static TOOLS: [Tool; 12] = [
     },
     Tool {
         name: "article_add",
-        description: "Write a new article, and answer its id, assets_path, the article's own media directory where body images go, and article_path, the article's folder. This tool writes Markdown, not image bytes; a cover is set with article_set_cover rather than written into article_path.",
+        description: "Write a new article, and answer its id, assets_path, the article's own media directory where body images and its cover go, and article_path, the article's folder. This tool writes Markdown, not image bytes; a cover is set with article_set_cover rather than written into assets_path.",
         schema: |bound| fields(bound, &[PROJECT, TITLE, MARKDOWN]),
         writes: true,
         deletes: false,
@@ -491,7 +491,7 @@ fn add(args: Args<'_>) -> Outcome {
     )
 }
 
-/// The article's own directory: where its cover and its `assets/` go.
+/// The article's own directory, which holds its `content.md` and `assets/`.
 fn folder(content: &Path) -> Option<PathBuf> {
     content.parent().map(Path::to_path_buf)
 }
@@ -501,7 +501,7 @@ fn folder(content: &Path) -> Option<PathBuf> {
 /// The bytes are copied rather than moved: the source is the caller's, and a
 /// picture in the article's `assets/` is one it may well link to as well.
 /// What was there before goes, which is what keeps one article to one cover —
-/// `cover::of` reads the directory and a second file would shadow the first.
+/// `cover::of` reads the first one it finds and a second would shadow it.
 fn set_cover(args: Args<'_>) -> Outcome {
     let found = locate(root(&args)?, args.text(ARTICLE)?)?;
     let previous = article::cover::of(&found.content);
@@ -536,7 +536,8 @@ fn set_cover(args: Args<'_>) -> Outcome {
     if article::cover::is_cover(source) && source == to {
         return Ok(Answer::said(format!("{} keeps its cover", found.label())));
     }
-    std::fs::copy(source, &to)
+    std::fs::create_dir_all(assets_path(&found.content))
+        .and_then(|()| std::fs::copy(source, &to))
         .map_err(|e| Trouble::Refused(format!("the cover cannot be written — {e}")))?;
     if let Some(old) = previous.filter(|old| *old != to) {
         let _ = std::fs::remove_file(old);

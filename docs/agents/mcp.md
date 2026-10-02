@@ -48,8 +48,7 @@ Eight tools take a list where they take one thing, so a turn that touches severa
 - `session_read` answers turns of a session, the last 3 when none are named. Each tool call is one line unless `full` is asked for.
 - `session_search` finds text case-insensitively in one session or every session in a project, archived ones included, and answers each matching turn as a reference such as `#43:5`, at most 20.
 
-Agents are also offered a `markdown` resource describing the article syntax, so
-a well-behaved one writes what the editor renders.
+Agents are also offered `markdown` and `browser` resources. [What agents are told](./prompts.md) has their text, and the instructions that come with every prompt.
 
 ## Servers you add
 

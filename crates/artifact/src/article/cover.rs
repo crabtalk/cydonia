@@ -1,8 +1,9 @@
 //! Where an article's cover sits, and what it is called.
 //!
-//! In the article's own directory, beside `content.md` — not in the `assets/`
-//! inside it, which is where the pictures in a body go. One article has at
-//! most one, and moving the article carries it without rewriting anything.
+//! In the article's `assets/`, beside the pictures its body points at. One
+//! article has at most one, and moving the article carries it without
+//! rewriting anything. Covers filed by earlier releases sit in the article's own
+//! directory, beside `content.md`, and are still read from there.
 //!
 //! The name is `cover-<stem>.<ext>`. Only the [`MARK`] is read: whatever
 //! follows it is the writer's, and the app puts a number there so shuffling a
@@ -26,13 +27,18 @@ pub const RATIO: (u32, u32) = (5, 2);
 /// this on the way in.
 pub const WIDTH: u32 = 1500;
 
-/// The cover in this article's directory, where it has one.
+/// The article's cover, where it has one: in its `assets/`, or else in the
+/// article's own directory.
 ///
-/// Takes the path of the `content.md`. The first file the directory offers
+/// Takes the path of the `content.md`. The first file a directory offers
 /// under [`MARK`] wins — there is only ever one, and a directory holding two
 /// is a directory something else wrote into.
 pub fn of(content: &Path) -> Option<PathBuf> {
-    std::fs::read_dir(content.parent()?)
+    within(&super::assets(content)).or_else(|| within(content.parent()?))
+}
+
+fn within(dir: &Path) -> Option<PathBuf> {
+    std::fs::read_dir(dir)
         .ok()?
         .flatten()
         .map(|entry| entry.path())
@@ -46,7 +52,8 @@ pub fn is_cover(path: &Path) -> bool {
         .is_some_and(|name| name.starts_with(MARK))
 }
 
-/// Where a cover with this stem and extension goes, beside `content`.
+/// Where a cover with this stem and extension goes, in the `assets/` beside
+/// `content`. The directory may not exist yet; the writer makes it.
 pub fn path(content: &Path, stem: impl std::fmt::Display, ext: &str) -> PathBuf {
-    content.with_file_name(format!("{MARK}{stem}.{ext}"))
+    super::assets(content).join(format!("{MARK}{stem}.{ext}"))
 }

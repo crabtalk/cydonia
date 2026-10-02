@@ -169,6 +169,7 @@ fn a_cover_is_not_a_property_of_the_page() {
     let content = article::content(&dir);
     fs::write(&content, "").unwrap();
     let picture = article::cover::path(&content, 42, "png");
+    fs::create_dir_all(picture.parent().unwrap()).unwrap();
     fs::write(&picture, b"a picture").unwrap();
 
     article::properties::set_title(&content, "Roadmap");
@@ -178,5 +179,19 @@ fn a_cover_is_not_a_property_of_the_page() {
         !text.contains("cover"),
         "nothing about the cover is written per page: {text}"
     );
+    assert_eq!(article::cover::of(&content), Some(picture));
+}
+
+/// A cover filed beside `content.md` by an earlier release is still the cover.
+#[test]
+fn a_cover_beside_the_page_is_still_read() {
+    let scratch = Scratch::new("article-cover-legacy");
+    let dir = article::dir(scratch.path()).join("1757000000000");
+    fs::create_dir_all(&dir).unwrap();
+    let content = article::content(&dir);
+    fs::write(&content, "").unwrap();
+    let picture = dir.join("cover-7.png");
+    fs::write(&picture, b"a picture").unwrap();
+
     assert_eq!(article::cover::of(&content), Some(picture));
 }
