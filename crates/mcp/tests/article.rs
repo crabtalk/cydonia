@@ -256,9 +256,9 @@ fn an_article_is_put_away_and_then_deleted() {
         json!({ "project": scratch.path(), "title": "Notes", "text": "# Notes" }),
         None,
     );
-    let folder = structured(made)["assets_path"]
+    let folder = structured(made)["article_path"]
         .as_str()
-        .expect("the article's own assets")
+        .expect("the article's own folder")
         .to_owned();
 
     let text = said(server.call(

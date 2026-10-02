@@ -30,7 +30,7 @@ directory path."
         "Project tools take the project's directory path. Resources are independent of projects."
     };
     format!(
-        "{}\n\n{project}\n{}\n\n{}",
+        "{}\n\n{project}\n\n{}\n\n{}",
         workspace(),
         ARTIFACTS.trim(),
         resource_catalog(hidden)
