@@ -42,12 +42,13 @@ const ARTICLES: Arg = Arg {
     about: "The article, or several: each its project reference (#12), title, or storage id.",
 };
 
-/// The picture to stand over the article. A path on the Cydonia host, so a
-/// client without filesystem access there has nothing to name — see
+/// The picture to stand over the article. A path on the Cydonia host, relative
+/// to the project's directory, so a client without filesystem access there has
+/// nothing to name — see
 /// [`artifact::article::cover`] for where it lands.
 const COVER: Arg = Arg {
     name: "image",
-    about: "The picture, as an absolute path on the Cydonia host. Draw or crop it 5:2 — 1500x600 is the size the app cuts its own at, and a picture of another shape is not cropped to fit. Left out, the cover is taken off.",
+    about: "The picture, as a path relative to the project directory, such as one inside the article's assets_path. Draw or crop it 5:2 — 1500x600 is the size the app cuts its own at, and a picture of another shape is not cropped to fit. Left out, the cover is taken off.",
 };
 
 /// Which way the switch goes. Defaulted to putting away, because that is what
@@ -117,7 +118,7 @@ pub static TOOLS: [Tool; 12] = [
     },
     Tool {
         name: "article_read",
-        description: "Read one article's markdown. The result includes two directories on the Cydonia host: assets_path, this article's own media directory, which holds its body images and its cover; and article_path, the article's folder. Filesystem access is needed to place a file in either.",
+        description: "Read one article's markdown. The result includes two directories, relative to the project directory: assets_path, this article's own media directory, which holds its body images and its cover; and article_path, the article's folder. Filesystem access is needed to place a file in either.",
         schema: |bound| fields(bound, &[PROJECT, ARTICLE]),
         writes: false,
         deletes: false,
@@ -141,7 +142,7 @@ pub static TOOLS: [Tool; 12] = [
     },
     Tool {
         name: "article_add",
-        description: "Write a new article, and answer its id, assets_path, the article's own media directory where body images and its cover go, and article_path, the article's folder. This tool writes Markdown, not image bytes; a cover is set with article_set_cover rather than written into assets_path.",
+        description: "Write a new article, and answer its id, assets_path, the article's own media directory where body images and its cover go, and article_path, the article's folder, both relative to the project directory. This tool writes Markdown, not image bytes; a cover is set with article_set_cover rather than written into assets_path.",
         schema: |bound| fields(bound, &[PROJECT, TITLE, MARKDOWN]),
         writes: true,
         deletes: false,
@@ -337,9 +338,9 @@ fn read(args: Args<'_>) -> Outcome {
         "id": found.id,
         "number": found.number,
         "title": found.title,
-        "assets_path": assets_path(&found.content),
-        "article_path": folder(&found.content),
-        "cover_path": article::cover::of(&found.content),
+        "assets_path": within(project, &article::assets(&found.content)),
+        "article_path": within(project, found.content.parent().unwrap_or(project)),
+        "cover_path": article::cover::of(&found.content).map(|cover| within(project, &cover)),
     })))
 }
 
@@ -485,15 +486,15 @@ fn add(args: Args<'_>) -> Outcome {
             "id": id,
             "number": number,
             "title": title,
-            "assets_path": assets_path(&content),
-            "article_path": folder(&content),
+            "assets_path": within(project, &article::assets(&content)),
+            "article_path": within(project, content.parent().unwrap_or(project)),
         })),
     )
 }
 
-/// The article's own directory, which holds its `content.md` and `assets/`.
-fn folder(content: &Path) -> Option<PathBuf> {
-    content.parent().map(Path::to_path_buf)
+/// `path` as the caller names it: relative to the project's directory.
+fn within(project: &Path, path: &Path) -> PathBuf {
+    path.strip_prefix(project).unwrap_or(path).to_path_buf()
 }
 
 /// File a picture as the article's cover, or take the one it has off.
@@ -503,7 +504,8 @@ fn folder(content: &Path) -> Option<PathBuf> {
 /// What was there before goes, which is what keeps one article to one cover —
 /// `cover::of` reads the first one it finds and a second would shadow it.
 fn set_cover(args: Args<'_>) -> Outcome {
-    let found = locate(root(&args)?, args.text(ARTICLE)?)?;
+    let project = root(&args)?;
+    let found = locate(project, args.text(ARTICLE)?)?;
     let previous = article::cover::of(&found.content);
     let Some(source) = args.maybe(COVER) else {
         if let Some(old) = previous {
@@ -513,11 +515,11 @@ fn set_cover(args: Args<'_>) -> Outcome {
         }
         return Ok(Answer::said(format!("{} has no cover now", found.label())));
     };
-    let source = Path::new(source);
+    let source = project.join(source);
     if !source.is_file() {
         return Err(Trouble::Refused(format!(
             "no picture at {} on this host",
-            source.display()
+            within(project, &source).display()
         )));
     }
     let ext = source
@@ -527,30 +529,27 @@ fn set_cover(args: Args<'_>) -> Outcome {
         .ok_or_else(|| {
             Trouble::Refused(format!(
                 "{} has no extension to name its format by",
-                source.display()
+                within(project, &source).display()
             ))
         })?;
     // Named for when it was filed, so a second cover never lands on the name
     // the first is cached under.
     let to = article::cover::path(&found.content, stamp::now(), &ext);
-    if article::cover::is_cover(source) && source == to {
+    if article::cover::is_cover(&source) && source == to {
         return Ok(Answer::said(format!("{} keeps its cover", found.label())));
     }
-    std::fs::create_dir_all(assets_path(&found.content))
-        .and_then(|()| std::fs::copy(source, &to))
+    std::fs::create_dir_all(article::assets(&found.content))
+        .and_then(|()| std::fs::copy(&source, &to))
         .map_err(|e| Trouble::Refused(format!("the cover cannot be written — {e}")))?;
     if let Some(old) = previous.filter(|old| *old != to) {
         let _ = std::fs::remove_file(old);
     }
-    Ok(Answer::said(format!("{} is covered", found.label()))
-        .with(json!({ "cover_path": to, "article_path": folder(&found.content) })))
-}
-
-/// The article's own media directory, where an agent puts the pictures a body
-/// points at. Not made here: the tools write Markdown, and whatever files the
-/// picture makes it.
-fn assets_path(content: &Path) -> PathBuf {
-    article::assets(content)
+    Ok(
+        Answer::said(format!("{} is covered", found.label())).with(json!({
+            "cover_path": within(project, &to),
+            "article_path": within(project, found.content.parent().unwrap_or(project)),
+        })),
+    )
 }
 
 fn rewrite(args: Args<'_>) -> Outcome {
@@ -728,8 +727,8 @@ fn move_article(args: Args<'_>) -> Outcome {
             "id": id,
             "number": number,
             "title": held.title,
-            "assets_path": assets_path(&arrived),
-            "article_path": folder(&arrived),
+            "assets_path": within(to, &article::assets(&arrived)),
+            "article_path": within(to, arrived.parent().unwrap_or(to)),
         }));
     }
     Ok(

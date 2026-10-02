@@ -399,7 +399,7 @@ impl SettingsWindow {
             Switch::new(
                 "keep-pasted-images",
                 "Save pasted pictures",
-                "Download a picture link into the article when it is pasted. Off keeps the link. Opening a picture in another app always saves a copy.",
+                "Download a picture link into the article when it is pasted. Off keeps the link.",
                 on,
             ),
             cx,

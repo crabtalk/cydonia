@@ -18,13 +18,11 @@ fn article_results_expose_an_article_local_media_path_without_creating_it() {
         )
         .unwrap_or_else(|_| panic!("article creation failed"));
     let data = made.data.unwrap();
-    let expected = scratch
-        .path()
-        .join(".cydonia/articles")
+    let expected = std::path::Path::new(".cydonia/articles")
         .join(data["id"].as_str().unwrap())
         .join("assets");
     assert_eq!(data["assets_path"], json!(expected));
-    assert!(!expected.exists());
+    assert!(!scratch.path().join(&expected).exists());
     let read = server
         .call(
             "article_read",
@@ -34,7 +32,7 @@ fn article_results_expose_an_article_local_media_path_without_creating_it() {
         .unwrap_or_else(|_| panic!("article read failed"));
     assert_eq!(read.text, "Body");
     assert_eq!(read.data.unwrap()["assets_path"], json!(expected));
-    assert!(!expected.exists());
+    assert!(!scratch.path().join(&expected).exists());
 }
 
 /// What a new article costs: one call, and it is on disk under a title a
@@ -177,21 +175,22 @@ fn a_cover_is_filed_in_the_articles_assets_and_replaced_whole() {
         json!({ "project": scratch.path(), "title": "Notes", "text": "# Notes" }),
         None,
     );
-    let folder = structured(made)["assets_path"]
-        .as_str()
-        .expect("the article's own assets")
-        .to_owned();
+    let folder = scratch.path().join(
+        structured(made)["assets_path"]
+            .as_str()
+            .expect("the article's own assets"),
+    );
 
     let drawn = scratch.path().join("drawn.png");
     std::fs::write(&drawn, b"not really a png").unwrap();
     let text = said(server.call(
         "article_set_cover",
-        json!({ "project": scratch.path(), "article": "Notes", "image": drawn.to_str() }),
+        json!({ "project": scratch.path(), "article": "Notes", "image": "drawn.png" }),
         None,
     ));
     assert!(text.contains("covered"), "{text}");
 
-    let covers = |folder: &str| {
+    let covers = |folder: &std::path::Path| {
         std::fs::read_dir(folder)
             .unwrap()
             .flatten()
@@ -208,7 +207,7 @@ fn a_cover_is_filed_in_the_articles_assets_and_replaced_whole() {
     std::fs::write(&other, b"nor this").unwrap();
     said(server.call(
         "article_set_cover",
-        json!({ "project": scratch.path(), "article": "Notes", "image": other.to_str() }),
+        json!({ "project": scratch.path(), "article": "Notes", "image": "other.jpg" }),
         None,
     ));
     let second = covers(&folder);
@@ -238,7 +237,7 @@ fn a_cover_that_is_not_there_is_refused() {
         "article_set_cover",
         json!({
             "project": scratch.path(), "article": "Notes",
-            "image": scratch.path().join("nothing.png").to_str()
+            "image": "nothing.png"
         }),
         None,
     ));
@@ -256,10 +255,11 @@ fn an_article_is_put_away_and_then_deleted() {
         json!({ "project": scratch.path(), "title": "Notes", "text": "# Notes" }),
         None,
     );
-    let folder = structured(made)["article_path"]
-        .as_str()
-        .expect("the article's own folder")
-        .to_owned();
+    let folder = scratch.path().join(
+        structured(made)["article_path"]
+            .as_str()
+            .expect("the article's own folder"),
+    );
 
     let text = said(server.call(
         "article_archive",
@@ -267,10 +267,7 @@ fn an_article_is_put_away_and_then_deleted() {
         None,
     ));
     assert!(text.contains("put away"), "{text}");
-    assert!(
-        std::path::Path::new(&folder).is_dir(),
-        "archived is not gone"
-    );
+    assert!(folder.is_dir(), "archived is not gone");
     let listed = said(server.call("article_list", json!({ "project": scratch.path() }), None));
     assert!(listed.contains("archived"), "{listed}");
 

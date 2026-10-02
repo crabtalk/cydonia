@@ -7,7 +7,7 @@
 ## Files under .cydonia/
 
 - Use Cydonia tools for managed artifacts under .cydonia/.
-- Exception: agents with filesystem access may create an article's own assets/ directory and read or write media files there. Article read and creation results include assets_path, its absolute path on the Cydonia host.
+- Exception: agents with filesystem access may create an article's own assets/ directory and read or write media files there. Article read and creation results include assets_path, that directory relative to the project directory.
 - In assets/, use unique filenames and preserve existing files unless replacement or removal is requested.
 - This exception does not override read-only settings or filesystem permissions, and does not grant filesystem access to remote clients.
 

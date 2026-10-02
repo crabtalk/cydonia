@@ -8,7 +8,8 @@
       "Read the instructions and resources Cydonia gives agents, word for word, in the docs"
     ],
     "changed": [
-      "Keep an article's cover in its assets folder beside its pictures; covers already filed beside the article still show"
+      "Keep an article's cover in its assets folder beside its pictures; covers already filed beside the article still show",
+      "Give article paths in MCP results and the cover tool's picture relative to the project directory instead of absolute"
     ]
   },
   {

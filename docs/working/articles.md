@@ -26,11 +26,11 @@ code; use an image where a rendered diagram is needed.
 Put a displayed picture in its own paragraph, with blank lines around it:
 
 ```markdown
-![Architecture overview](/absolute/path/.cydonia/assets/overview.png)
+![Architecture overview](assets/overview.png)
 
-![Architecture overview|480](/absolute/path/.cydonia/assets/overview.png)
+![Architecture overview|480](assets/overview.png)
 
-![|320](/absolute/path/.cydonia/assets/overview.png)
+![|320](assets/overview.png)
 ```
 
 - Alt text is also the caption. Leave it empty for no caption.
@@ -40,7 +40,7 @@ Put a displayed picture in its own paragraph, with blank lines around it:
 - Use the width suffix — not `=480x`, `{width=480}` or HTML attributes. Height,
   crop, alignment and shape have no authored syntax.
 - A local destination is a path relative to the article's folder, such as
-  `assets/overview.png`, or an absolute path. Wrap a path containing spaces in
+  `assets/overview.png`. Wrap a path containing spaces in
   angle brackets: `![Overview|480](<assets/system overview.png>)`.
 - HTTP(S) URLs work where the image is reachable from the app.
 
