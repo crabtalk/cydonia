@@ -79,9 +79,7 @@
 		display: grid;
 		grid-template-columns: 204px minmax(0, 1fr) 200px;
 		gap: 40px;
-		max-width: 1400px;
-		margin: 0 auto;
-		padding: 0 14px;
+		padding: 0 24px;
 	}
 
 	/* A column the height of the window under the bar: the rule down its right
@@ -237,6 +235,12 @@
 		.nav:not(.open) .list,
 		.nav:not(.open) .foot {
 			display: none;
+		}
+	}
+
+	@media (max-width: 600px) {
+		.docs {
+			padding: 0 16px;
 		}
 	}
 </style>

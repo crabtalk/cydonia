@@ -84,7 +84,10 @@
 
 <style>
 	article {
+		width: 100%;
 		min-width: 0;
+		max-width: 880px;
+		margin: 0 auto;
 		padding: 28px 0 72px;
 	}
 

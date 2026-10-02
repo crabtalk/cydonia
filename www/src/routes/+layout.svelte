@@ -13,9 +13,8 @@
 	let { children } = $props();
 
 	// The docs stand a sidebar and a contents column beside the page, which
-	// needs more room than the marketing pages want. The bar and the foot
-	// follow that width so the wordmark stays over the sidebar; the band
-	// itself is full width either way.
+	// needs more room than the marketing pages want. The foot follows that
+	// width. The bar is 1400px, and the full window on the docs.
 	const docs = $derived(page.url.pathname.startsWith('/docs'));
 	const shell = $derived(docs ? '1400px' : '1080px');
 
@@ -42,7 +41,7 @@
 </script>
 
 <header>
-	<div class="bar" style:--shell={shell}>
+	<div class="bar" class:wide={docs}>
 		<a class="wordmark" href="{base}/">
 			<Logo size={18} />
 			Cydonia
@@ -142,9 +141,19 @@
 		display: flex;
 		align-items: center;
 		height: 100%;
-		max-width: var(--shell);
+		max-width: calc(1400px + 48px);
 		margin: 0 auto;
-		padding: 0 var(--gutter);
+		padding: 0 24px;
+	}
+
+	.bar.wide {
+		max-width: none;
+	}
+
+	@media (max-width: 600px) {
+		.bar {
+			padding: 0 16px;
+		}
 	}
 
 	.wordmark {
