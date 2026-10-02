@@ -329,6 +329,7 @@ pub fn open(settings: Settings, state: State, cx: &mut App) -> Result<WindowHand
                 Some(_) => bezel::gpui::WindowBackgroundAppearance::Transparent,
                 None => Theme::of(cx).window_background_appearance(),
             },
+            window_background_blur: Theme::of(cx).window_blur.into(),
             window_min_size: Some(size(px(600.), px(320.))),
             app_id: Some("cydonia".into()),
             window_decorations: super::chrome::decorations(),

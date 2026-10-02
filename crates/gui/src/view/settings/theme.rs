@@ -121,10 +121,8 @@ impl SettingsWindow {
             .child(
                 theme
                     .group_box()
-                    .when(cfg!(target_os = "macos"), |group| {
-                        group.child(self.transparency_row(cx))
-                    })
                     .children(self.vibrancy_row(cx))
+                    .children(self.blur_row(cx))
                     .child(self.hue_row(cx))
                     .child(self.intensity_row(cx)),
             )
@@ -679,30 +677,6 @@ impl SettingsWindow {
         )
     }
 
-    /// The app's own reduce-transparency switch, separate from the system one.
-    ///
-    /// Live in both appearances. The window's frost is dark's alone —
-    /// [`crate::model::workspace::vibrancy`] never returns `Vibrancy::On` —
-    /// but glass is [`crate::model::workspace::glass`]'s separate answer and
-    /// a light window carries it, so there is something here to turn off.
-    pub(super) fn transparency_row(&self, cx: &mut Context<Self>) -> AnyElement {
-        let on = self.workspace.read(cx).opaque.unwrap_or(false);
-        self.switch_row(
-            Switch::new(
-                "reduce-transparency",
-                "Reduce transparency",
-                "Replace translucent surfaces with opaque backgrounds.",
-                on,
-            )
-            .first(true),
-            cx,
-            move |this, cx| {
-                this.workspace
-                    .update(cx, |workspace, cx| workspace.set_opaque(!on, cx));
-            },
-        )
-    }
-
     /// Whether the caret blinks. bezel holds the caret, so the switch sets it
     /// there rather than keeping a second copy of the answer.
     pub(super) fn cursor_row(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -728,9 +702,9 @@ impl SettingsWindow {
     /// when the intensity comes back up.
     pub(super) fn hue_row(&self, cx: &mut Context<Self>) -> AnyElement {
         let tint = self.workspace.read(cx).tint;
-        // First in its group where the transparency switch is not shown.
+        // First in its group where the frost rows are not shown.
         self.tint_row(
-            !cfg!(target_os = "macos"),
+            !Theme::of(cx).vibrancy,
             "hue",
             "Hue",
             "Which hue the greys are mixed from.",
@@ -754,13 +728,35 @@ impl SettingsWindow {
         let alpha = self.workspace.read(cx).settings.appearance.vibrancy;
         // Right is more see-through, so the slider runs against the alpha.
         Some(self.tint_row(
-            false,
+            true,
             "vibrancy",
             "Transparency",
             "How much of what is behind the window shows through.",
             (max - alpha) / (max - min),
             move |workspace, fraction, cx| {
                 workspace.set_vibrancy(max - fraction * (max - min), cx);
+            },
+            cx,
+        ))
+    }
+
+    /// How far what is behind the window is blurred. Shown with
+    /// [`Self::vibrancy_row`].
+    fn blur_row(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        use crate::model::settings::BLUR;
+        if !Theme::of(cx).vibrancy {
+            return None;
+        }
+        let (min, max) = BLUR;
+        let blur = self.workspace.read(cx).settings.appearance.blur;
+        Some(self.tint_row(
+            false,
+            "blur",
+            "Blur",
+            "How much what is behind the window is blurred.",
+            (blur - min) / (max - min),
+            move |workspace, fraction, cx| {
+                workspace.set_blur(min + fraction * (max - min), cx);
             },
             cx,
         ))

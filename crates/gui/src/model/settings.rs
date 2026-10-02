@@ -110,6 +110,9 @@ pub const MONO_TEXT_SIZE: f32 = 13.;
 /// the frosted window may be.
 pub const VIBRANCY: (f32, f32) = (0.5, 0.95);
 
+/// The range [`Appearance::blur`] is held to, in native filter pixels.
+pub const BLUR: (f32, f32) = (0., 120.);
+
 pub fn clamp_content_text_size(points: f32) -> f32 {
     if points.is_finite() {
         points.clamp(CONTENT_TEXT_SIZE.0, CONTENT_TEXT_SIZE.1)
@@ -131,11 +134,6 @@ pub fn clamp_content_text_size(points: f32) -> f32 {
 pub struct Appearance {
     /// Light, dark, or whatever the OS is doing.
     pub mode: AppearanceMode,
-    /// Whether the window is held opaque, and nothing at all for the person
-    /// who has never said — the frost is then the appearance's own answer.
-    /// See [`bezel::theme::Vibrancy`].
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub opaque: Option<bool>,
     /// Whether the text caret blinks. Off holds it lit.
     pub cursor_blink: bool,
     /// The body size the type ladder is scaled against, in points. Clamped to
@@ -171,6 +169,9 @@ pub struct Appearance {
     /// How opaque the tint over the frosted window is — bezel's
     /// `Brand::vibrancy_alpha`. Clamped to [`VIBRANCY`] on the way in.
     pub vibrancy: f32,
+    /// How far the desktop behind the frosted window is blurred — bezel's
+    /// `Brand::window_blur`. Clamped to [`BLUR`] on the way in.
+    pub blur: f32,
     /// How wide a page with nothing of its own to say is set. A page that
     /// *has* been decided about carries the decision in its own
     /// `properties.toml` and ignores this.
@@ -411,7 +412,6 @@ impl Default for Appearance {
     fn default() -> Self {
         Self {
             mode: AppearanceMode::default(),
-            opaque: None,
             cursor_blink: true,
             text_size: TextStyle::Body.size(),
             article_font_size: None,
@@ -421,6 +421,7 @@ impl Default for Appearance {
             mono_font: None,
             hue: 0.,
             vibrancy: bezel::theme::Theme::VIBRANCY_ALPHA,
+            blur: bezel::theme::Theme::WINDOW_BLUR,
             chroma: 0.,
             wide_pages: false,
             board_view: artifact::board::View::List,
@@ -455,6 +456,10 @@ impl Appearance {
         self.vibrancy = match self.vibrancy.is_finite() {
             true => self.vibrancy.clamp(VIBRANCY.0, VIBRANCY.1),
             false => Self::default().vibrancy,
+        };
+        self.blur = match self.blur.is_finite() {
+            true => self.blur.clamp(BLUR.0, BLUR.1),
+            false => Self::default().blur,
         };
         self.article_font_size = self.article_font_size.map(clamp_content_text_size);
         self.mono_font_size = clamp_content_text_size(self.mono_font_size);
@@ -1090,14 +1095,6 @@ fn write_appearance(doc: &mut toml_edit::DocumentMut, appearance: &Appearance) -
         AppearanceMode::Light => "light",
         AppearanceMode::Dark => "dark",
     });
-    // Never said is the absence of the key, not a `false` that would hand
-    // this reader a frosted light mode they never asked for.
-    match appearance.opaque {
-        Some(opaque) => held["opaque"] = toml_edit::value(opaque),
-        None => {
-            held.remove("opaque");
-        }
-    }
     held["cursor_blink"] = toml_edit::value(appearance.cursor_blink);
     held["text_size"] = toml_edit::value(f64::from(appearance.text_size));
     match appearance.article_font_size {
@@ -1125,6 +1122,7 @@ fn write_appearance(doc: &mut toml_edit::DocumentMut, appearance: &Appearance) -
     }
     held["hue"] = toml_edit::value(f64::from(appearance.hue));
     held["vibrancy"] = toml_edit::value(f64::from(appearance.vibrancy));
+    held["blur"] = toml_edit::value(f64::from(appearance.blur));
     held["chroma"] = toml_edit::value(f64::from(appearance.chroma));
     held["wide_pages"] = toml_edit::value(appearance.wide_pages);
     held["board_view"] = toml_edit::value(appearance.board_view.key());

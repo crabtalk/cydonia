@@ -742,9 +742,10 @@ impl Render for SettingsWindow {
         use bezel::ui::titlebar::CaptionSide;
         let theme = Theme::of(cx).clone();
         let owns_scroll = self.section.owns_scroll();
-        // Off macOS the window's top edge is a strip of its own, over the
-        // sidebar's empty band and the page's top margin.
-        let strip = (!cfg!(target_os = "macos") && cfg!(feature = "desktop")).then(|| {
+        // The window's top edge is a strip of its own, over the sidebar's
+        // empty band and the page's top margin. The window owns its titlebar
+        // drag, so on macOS too nothing else moves it.
+        let strip = cfg!(feature = "desktop").then(|| {
             div()
                 .absolute()
                 .top_0()
