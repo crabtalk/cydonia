@@ -2,7 +2,6 @@
   {
     "version": "0.1.22",
     "date": "2026-10-01",
-    "nightly": true,
     "summary": "Commands in the search palette, an editor section and colour controls in Settings, and opening files and pictures in other apps.",
     "new": [
       "Run commands and see their shortcuts from the search palette, with recent commands, a Commands filter chip and a > prefix",
