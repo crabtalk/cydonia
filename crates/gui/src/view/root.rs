@@ -108,10 +108,9 @@ const SIDEBAR_WIDTH_MAX: f32 = 420.;
 /// The sidebar's gutter: a row's outer margin, and the padding inside it.
 pub(crate) const SIDEBAR_GUTTER: f32 = 8.;
 
-/// The header strip's height, measured off `../desktop`: between Cursor's 34
-/// and Notion's 36, and tall enough to hold the 14px traffic lights macOS 26
-/// draws without crowding them.
-pub(crate) const HEADER_HEIGHT: f32 = 36.;
+/// The header strip's height: the band AppKit's own traffic lights centre in,
+/// [`TRAFFIC_LIGHT_INSET`] above and below them.
+pub(crate) const HEADER_HEIGHT: f32 = 2. * TRAFFIC_LIGHT_INSET + TRAFFIC_LIGHT_SIZE;
 
 /// The pill at rest, and the agent mark beside it. Half of it is the stadium's
 /// radius.
@@ -164,12 +163,9 @@ pub(crate) fn content_bg(theme: &Theme) -> Hsla {
 /// frame, so nothing here can derive it. Measured on macOS 26.
 const TRAFFIC_LIGHT_SIZE: f32 = 14.;
 
-/// Where the traffic lights go, for `TitlebarOptions::traffic_light_position`:
-/// AppKit's own inset across, which is where every other window on the desktop
-/// shows them, and down by half the band the header reserves for them. macOS
-/// sizes the button container to `height + 2y`.
-pub const TRAFFIC_LIGHT_X: f32 = 12.;
-pub const TRAFFIC_LIGHT_Y: f32 = (HEADER_HEIGHT - TRAFFIC_LIGHT_SIZE) / 2.;
+/// Where AppKit puts the close button in a transparent, full-size-content
+/// titlebar, across and down alike. Measured on macOS 26.
+const TRAFFIC_LIGHT_INSET: f32 = 9.;
 
 /// Between the lights' centres, as AppKit lays them out. Measured on macOS 26.
 const TRAFFIC_LIGHT_SPACING: f32 = 23.;
@@ -181,7 +177,7 @@ pub(crate) const HEADER_INSET: f32 = 16.;
 /// How far the glyph of a control at the end of a row stands from its
 /// column's edge: the lights' own inset, mirrored. Measured to the glyph, not
 /// the button around it.
-pub(crate) const EDGE: f32 = TRAFFIC_LIGHT_X;
+pub(crate) const EDGE: f32 = TRAFFIC_LIGHT_INSET;
 
 /// What an icon button leaves on each side of its glyph.
 const BUTTON_SLACK: f32 = (Theme::BUTTON_HEIGHT - ICON_GLYPH) / 2.;
@@ -211,11 +207,11 @@ pub(crate) fn band() -> Div {
 }
 
 /// Where the toolbar's own controls start: clear of the three lights AppKit
-/// puts down from [`TRAFFIC_LIGHT_X`], plus the gutter that clears them and the
+/// puts down from [`TRAFFIC_LIGHT_INSET`], plus the gutter that clears them and the
 /// strip's own inset, so the first control stands off the lights by the same
 /// measure it keeps from every other edge.
 pub(crate) const TOOLBAR_INSET: f32 = if cfg!(target_os = "macos") {
-    TRAFFIC_LIGHT_X + 2. * TRAFFIC_LIGHT_SPACING + TRAFFIC_LIGHT_SIZE + 6. + HEADER_INSET
+    TRAFFIC_LIGHT_INSET + 2. * TRAFFIC_LIGHT_SPACING + TRAFFIC_LIGHT_SIZE + 6. + HEADER_INSET
 } else {
     HEADER_INSET
 };
@@ -324,7 +320,7 @@ pub fn open(settings: Settings, state: State, cx: &mut App) -> Result<WindowHand
             titlebar: Some(TitlebarOptions {
                 title: Some("Cydonia".into()),
                 appears_transparent: true,
-                traffic_light_position: Some(point(px(TRAFFIC_LIGHT_X), px(TRAFFIC_LIGHT_Y))),
+                traffic_light_position: None,
             }),
             // Glass needs a blurred window background to blur into. A window
             // that frames itself opens transparent, or its frame band is

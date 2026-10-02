@@ -9,11 +9,7 @@
 //! it — see [`embed`].
 
 #[cfg(feature = "desktop")]
-use crate::{
-    agent::Listing,
-    model::update,
-    view::root::{TRAFFIC_LIGHT_X, TRAFFIC_LIGHT_Y},
-};
+use crate::{agent::Listing, model::update};
 use crate::{model::workspace::Workspace, view::root::HEADER_HEIGHT};
 use bezel::ui::scroll as scrollbars;
 use bezel::{
@@ -33,7 +29,7 @@ use bezel::{
 use bezel::{
     gpui::{
         Bounds, TitlebarOptions, WindowBackgroundAppearance, WindowBounds, WindowHandle,
-        WindowOptions, point, size,
+        WindowOptions, size,
     },
     theme::appearance,
     ui::input::FieldEvent,
@@ -274,7 +270,7 @@ pub fn open(
             titlebar: Some(TitlebarOptions {
                 title: Some("Settings".into()),
                 appears_transparent: true,
-                traffic_light_position: Some(point(px(TRAFFIC_LIGHT_X), px(TRAFFIC_LIGHT_Y))),
+                traffic_light_position: None,
             }),
             // Opaque on purpose — see the module note. The root paints the
             // page's own background, so where the window frames itself the
