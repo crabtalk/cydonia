@@ -22,7 +22,9 @@ use crate::{
         article::{self, TogglePlainText},
         board,
         component::{composer, ribbon},
-        create, info, menubar,
+        create,
+        find::{FindNext, FindPrev},
+        info, menubar,
         root::{
             self, CloseProject, NewArticle, NewBoard, NewSession, NewSessionNext, NewTable,
             NextEntry, OpenFiles, OpenProject, OpenReview, OpenSettings, PrevEntry, ToggleChanges,
@@ -66,6 +68,8 @@ pub enum Command {
     PrevEntry,
     PlainText,
     FindCard,
+    FindNext,
+    FindPrev,
     Search,
 }
 
@@ -92,7 +96,7 @@ impl Menu {
 }
 
 impl Command {
-    pub const ALL: [Self; 18] = [
+    pub const ALL: [Self; 20] = [
         Self::OpenSettings,
         Self::NewSession,
         Self::NewSessionNext,
@@ -110,6 +114,8 @@ impl Command {
         Self::PrevEntry,
         Self::PlainText,
         Self::FindCard,
+        Self::FindNext,
+        Self::FindPrev,
         Self::Search,
     ];
 
@@ -133,6 +139,8 @@ impl Command {
             Self::PrevEntry => "prev_entry",
             Self::PlainText => "plain_text",
             Self::FindCard => "find_card",
+            Self::FindNext => "find_next",
+            Self::FindPrev => "find_prev",
             Self::Search => "search",
         }
     }
@@ -157,6 +165,8 @@ impl Command {
             Self::PrevEntry => "Previous Entry",
             Self::PlainText => "Plain Text",
             Self::FindCard => "Find",
+            Self::FindNext => "Find Next",
+            Self::FindPrev => "Find Previous",
             Self::Search => "Search",
         }
     }
@@ -180,6 +190,8 @@ impl Command {
             | Self::PrevEntry
             | Self::PlainText
             | Self::FindCard
+            | Self::FindNext
+            | Self::FindPrev
             | Self::Search => Menu::View,
         }
     }
@@ -209,9 +221,11 @@ impl Command {
             Self::ToggleTerminal => "secondary-j",
             Self::ToggleChanges => "secondary-l",
             Self::OpenFiles => "secondary-shift-f",
-            Self::OpenReview => "secondary-shift-g",
+            Self::OpenReview => "alt-secondary-g",
             Self::PlainText => "secondary-e",
             Self::FindCard => "secondary-f",
+            Self::FindNext => "secondary-g",
+            Self::FindPrev => "secondary-shift-g",
             Self::Search => "secondary-k",
         })
     }
@@ -238,6 +252,8 @@ impl Command {
             Self::NextEntry => KeyBinding::new(chord, NextEntry, context),
             Self::PrevEntry => KeyBinding::new(chord, PrevEntry, context),
             Self::PlainText => KeyBinding::new(chord, TogglePlainText, context),
+            Self::FindNext => KeyBinding::new(chord, FindNext, context),
+            Self::FindPrev => KeyBinding::new(chord, FindPrev, context),
             // Everywhere but the files panel, which holds ⌘F for its own
             // filter — see [`bind_all`]. Scoped rather than left app-wide
             // because commands are bound last and would take the chord from

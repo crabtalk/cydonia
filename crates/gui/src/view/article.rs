@@ -272,9 +272,7 @@ impl Cydonia {
     /// Swap the document for the markdown it spells, and back — the header
     /// menu's Plain text and its ⌘E.
     ///
-    /// The focus goes back to the document afterwards: the switch carries the
-    /// caret across, and a caret in a surface nobody is typing in is a caret
-    /// that has to be clicked back into.
+    /// The focus goes to the document afterwards, unless the find field has it.
     pub(crate) fn toggle_plain_text(
         &mut self,
         _: &TogglePlainText,
@@ -294,8 +292,15 @@ impl Cydonia {
         self.workspace.update(cx, |workspace, cx| {
             workspace.set_article_mode(&on, mode, cx)
         });
+        let finding = self.leaf().finding
+            && self
+                .leaf()
+                .find_field
+                .read(cx)
+                .focus_handle(cx)
+                .is_focused(window);
         let editor = self.pane_doc(cx).and_then(|article| article.editor.clone());
-        if let Some(editor) = editor {
+        if let Some(editor) = editor.filter(|_| !finding) {
             window.focus(&editor.focus_handle(cx), cx);
         }
         cx.notify();
