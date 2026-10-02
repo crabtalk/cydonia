@@ -1,6 +1,7 @@
 //! Root view: the window's grid, the state the chrome owns, and the frame
 //! the sidebar and the chat column are hung in.
 
+use crate::view::lights::{self, Lights};
 #[cfg(not(feature = "desktop"))]
 use crate::view::settings::{self, SettingsWindow};
 #[cfg(feature = "desktop")]
@@ -39,8 +40,8 @@ use artifact::space::Member;
 use bezel::{
     gpui::{
         self, AnyElement, App, Axis, Bounds, Context, Div, DragMoveEvent, Empty, Entity,
-        FocusHandle, Focusable, Hsla, KeyBinding, PathPromptOptions, Render, SharedString,
-        TitlebarOptions, UniformListScrollHandle, Window, WindowBounds, WindowHandle,
+        FocusHandle, Focusable, Hsla, KeyBinding, PathPromptOptions, Pixels, Point, Render,
+        SharedString, TitlebarOptions, UniformListScrollHandle, Window, WindowBounds, WindowHandle,
         WindowOptions, actions, div, point, prelude::*, px, size,
     },
     motion::{Fade, Painter},
@@ -108,10 +109,9 @@ const SIDEBAR_WIDTH_MAX: f32 = 420.;
 /// The sidebar's gutter: a row's outer margin, and the padding inside it.
 pub(crate) const SIDEBAR_GUTTER: f32 = 8.;
 
-/// The header strip's height, measured off `../desktop`: between Cursor's 34
-/// and Notion's 36, and tall enough to hold the 14px traffic lights macOS 26
-/// draws without crowding them.
-pub(crate) const HEADER_HEIGHT: f32 = 36.;
+/// The header strip's height, which the traffic lights centre in: macOS 26's
+/// 14px lights with [`TRAFFIC_LIGHT_INSET`] above and below them.
+pub(crate) const HEADER_HEIGHT: f32 = 32.;
 
 /// The pill at rest, and the agent mark beside it. Half of it is the stadium's
 /// radius.
@@ -160,28 +160,23 @@ pub(crate) fn content_bg(theme: &Theme) -> Hsla {
     theme.window_bg()
 }
 
-/// macOS traffic light diameter — AppKit owns the buttons and reports their
-/// frame, so nothing here can derive it. Measured on macOS 26.
-const TRAFFIC_LIGHT_SIZE: f32 = 14.;
+/// How far the close button stands in from the window's left edge: AppKit's
+/// own place for it in a transparent, full-size-content titlebar on macOS 26.
+pub(crate) const TRAFFIC_LIGHT_INSET: f32 = 9.;
 
-/// Where the traffic lights go, for `TitlebarOptions::traffic_light_position`:
-/// AppKit's own inset across, which is where every other window on the desktop
-/// shows them, and down by half the band the header reserves for them. macOS
-/// sizes the button container to `height + 2y`.
-pub const TRAFFIC_LIGHT_X: f32 = 12.;
-pub const TRAFFIC_LIGHT_Y: f32 = (HEADER_HEIGHT - TRAFFIC_LIGHT_SIZE) / 2.;
+/// The lights' origin, for `TitlebarOptions::traffic_light_position`, until
+/// [`lights::fit`] has measured them.
+pub(crate) fn traffic_lights() -> Point<Pixels> {
+    point(px(TRAFFIC_LIGHT_INSET), px(TRAFFIC_LIGHT_INSET))
+}
 
-/// Between the lights' centres, as AppKit lays them out. Measured on macOS 26.
-const TRAFFIC_LIGHT_SPACING: f32 = 23.;
-
-/// The gap the header keeps at the window's edges, and between the lights and
-/// the first control it puts past them.
+/// The gap the header keeps at the window's edges.
 pub(crate) const HEADER_INSET: f32 = 16.;
 
 /// How far the glyph of a control at the end of a row stands from its
 /// column's edge: the lights' own inset, mirrored. Measured to the glyph, not
 /// the button around it.
-pub(crate) const EDGE: f32 = TRAFFIC_LIGHT_X;
+pub(crate) const EDGE: f32 = TRAFFIC_LIGHT_INSET;
 
 /// What an icon button leaves on each side of its glyph.
 const BUTTON_SLACK: f32 = (Theme::BUTTON_HEIGHT - ICON_GLYPH) / 2.;
@@ -198,7 +193,7 @@ pub(crate) const BUTTON_EDGE: f32 = EDGE - BUTTON_SLACK;
 /// control stands in the next.
 ///
 /// The leading inset is the caller's only where the traffic lights take it —
-/// see [`TOOLBAR_INSET`].
+/// see [`toolbar_inset`].
 pub(crate) fn band() -> Div {
     div()
         .flex_none()
@@ -210,15 +205,20 @@ pub(crate) fn band() -> Div {
         .pr(px(BUTTON_EDGE))
 }
 
-/// Where the toolbar's own controls start: clear of the three lights AppKit
-/// puts down from [`TRAFFIC_LIGHT_X`], plus the gutter that clears them and the
-/// strip's own inset, so the first control stands off the lights by the same
-/// measure it keeps from every other edge.
-pub(crate) const TOOLBAR_INSET: f32 = if cfg!(target_os = "macos") {
-    TRAFFIC_LIGHT_X + 2. * TRAFFIC_LIGHT_SPACING + TRAFFIC_LIGHT_SIZE + 6. + HEADER_INSET
-} else {
-    HEADER_INSET
-};
+/// The gap between the green light and the glyph of the first control past
+/// it.
+const LIGHTS_GAP: f32 = 16.;
+
+/// Where the toolbar's own controls start at the window's left edge: the
+/// button whose glyph stands [`LIGHTS_GAP`] past the green light, or in full
+/// screen, where there are no lights, in line with the sidebar rows' icons.
+pub(crate) fn toolbar_inset(window: &Window, cx: &App) -> f32 {
+    match (window.is_fullscreen(), cfg!(target_os = "macos")) {
+        (true, _) => 2. * SIDEBAR_GUTTER - BUTTON_SLACK,
+        (false, true) => Lights::of(cx).end() + LIGHTS_GAP - BUTTON_SLACK,
+        (false, false) => HEADER_INSET,
+    }
+}
 
 /// The chords the window keeps whatever the reader says — the commands it also
 /// answers to are bound from [`crate::view::keymap`], which is where they can
@@ -324,7 +324,7 @@ pub fn open(settings: Settings, state: State, cx: &mut App) -> Result<WindowHand
             titlebar: Some(TitlebarOptions {
                 title: Some("Cydonia".into()),
                 appears_transparent: true,
-                traffic_light_position: Some(point(px(TRAFFIC_LIGHT_X), px(TRAFFIC_LIGHT_Y))),
+                traffic_light_position: Some(traffic_lights()),
             }),
             // Glass needs a blurred window background to blur into. A window
             // that frames itself opens transparent, or its frame band is
@@ -333,6 +333,7 @@ pub fn open(settings: Settings, state: State, cx: &mut App) -> Result<WindowHand
                 Some(_) => bezel::gpui::WindowBackgroundAppearance::Transparent,
                 None => Theme::of(cx).window_background_appearance(),
             },
+            window_background_blur: Theme::of(cx).window_blur.into(),
             window_min_size: Some(size(px(600.), px(320.))),
             app_id: Some("cydonia".into()),
             window_decorations: super::chrome::decorations(),
@@ -341,6 +342,7 @@ pub fn open(settings: Settings, state: State, cx: &mut App) -> Result<WindowHand
         },
         |window, cx| {
             appearance::observe_window(window, cx).detach();
+            lights::fit(window, cx);
             cx.new(|cx| {
                 let mut root = Cydonia::new(settings, state, window, cx);
                 root.restore_panel_layout();
@@ -476,6 +478,9 @@ pub struct Cydonia {
     pub(crate) dock: docking::Dock<Member, Dragged>,
     /// The sidebar's list, carried along itself and out onto the panes.
     pub(crate) sidebar_sort: drag::Domain<(), Dragged>,
+    /// Every board on screen: cards between lanes and boards, lanes and list
+    /// groups along their own board.
+    pub(crate) board_sort: drag::Domain<board::BoardRegion, board::BoardItem>,
     /// Each pane's strip, by the pane's own name.
     pub(crate) strips: RefCell<std::collections::HashMap<SharedString, tabs::Reorder<Dragged>>>,
     /// Which of each pane's tabs is in front, by the pane's own name — see
@@ -829,7 +834,7 @@ impl Cydonia {
                 Showing::Table(_) => Pane::Table,
             };
             self.workspace.update(cx, |workspace, cx| {
-                workspace.select_showing(project, showing, cx);
+                workspace.select_showing(project, showing.clone(), cx);
             });
         }
         self.sync_composer(cx);
@@ -857,10 +862,12 @@ impl Cydonia {
                 .session(id)
                 .is_some_and(ChatSession::resumable)
                 .then(|| self.composer_focus_handle(cx)),
-            Showing::Article(at) => self
+            Showing::Article(id) => self
                 .workspace
                 .read(cx)
-                .article_in(project, at)
+                .projects
+                .get(project)
+                .and_then(|open| open.articles.get(open.article_ix(&id)?))
                 .and_then(|article| article.editor.clone())
                 .map(|editor| editor.focus_handle(cx)),
             // A board or a table takes no caret of its own, but an open card
@@ -890,7 +897,7 @@ impl Cydonia {
     ///
     /// Drawing reads a pane's state through this rather than through
     /// [`Self::leaf`]: every pane drawn against the focused leaf shares one
-    /// scroll, one editor and one landing between them, so moving the focus
+    /// scroll and one editor between them, so moving the focus
     /// moves what the other panes are showing.
     pub(crate) fn leaf_of(&self, on: Option<&Member>) -> &Leaf {
         on.and_then(|on| {
@@ -1017,6 +1024,10 @@ impl Cydonia {
                 }
             }),
             sidebar_sort: drag::Domain::new(Painter::of(cx)),
+            board_sort: drag::Domain::with_ghost(Painter::of(cx), {
+                let this = cx.entity().downgrade();
+                move |item, window, cx| board::ghost(&this, item, window, cx)
+            }),
             strips: RefCell::default(),
             fronts: Default::default(),
             tab_history: Vec::new(),
@@ -1207,11 +1218,21 @@ impl Cydonia {
             return;
         };
         let showing = match pane {
-            Pane::Chat => open.active.map(|id| Row::Session { project, id }),
-            Pane::Board => open.board.map(|ix| Row::Board { project, ix }),
-            Pane::Article => open.article.map(|ix| Row::Article { project, ix }),
-            Pane::Table => open.table.map(|ix| Row::Table { project, ix }),
-        };
+            Pane::Chat => open.active.map(Showing::Session),
+            Pane::Board => open
+                .board
+                .and_then(|ix| Some(Showing::Board(open.boards.get(ix)?.id.clone()))),
+            Pane::Article => open
+                .article
+                .and_then(|ix| Some(Showing::Article(open.articles.get(ix)?.id.clone()))),
+            Pane::Table => open
+                .table
+                .and_then(|ix| Some(Showing::Table(open.tables.get(ix)?.key.clone()))),
+        }
+        .map(|showing| Row::Entry {
+            project: open.path.clone(),
+            showing,
+        });
         // The divider is a line, not a landing.
         let ring: Vec<Row> = self
             .entries(project, cx)
@@ -1219,11 +1240,11 @@ impl Cydonia {
             .filter(|row| !matches!(row, Row::Archive(_)))
             .collect();
         let at = showing.and_then(|row| ring.iter().position(|entry| *entry == row));
-        let Some(landing) = stepped(at, ring.len(), step).map(|ix| ring[ix]) else {
+        let Some(landing) = stepped(at, ring.len(), step).map(|ix| ring[ix].clone()) else {
             return;
         };
-        self.open_row(landing, window, cx);
-        self.reveal(landing, cx);
+        self.open_row(&landing, window, cx);
+        self.reveal(&landing, cx);
     }
 
     /// Step the focused pane to the next of its own tabs, wrapping at the

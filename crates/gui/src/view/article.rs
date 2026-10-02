@@ -2,7 +2,7 @@
 
 use crate::{
     memory,
-    model::{article, workspace::Showing},
+    model::article,
     view::{
         leaf::Pane,
         root::{Cydonia, NewArticle},
@@ -28,11 +28,7 @@ use bezel::{
 use editor::AppExt as _;
 use editor::Mode;
 use markdown::AppExt as _;
-use markdown::HighlightColor;
-use std::{
-    path::{Path, PathBuf},
-    sync::atomic::{AtomicUsize, Ordering},
-};
+use std::path::{Path, PathBuf};
 
 actions!(cydonia_article, [LeaveTitle, TogglePlainText]);
 
@@ -97,24 +93,24 @@ pub fn marks() -> markdown::Marks {
     markdown::Marks::new().with(editor::HIGHLIGHT_MARK, "==")
 }
 
-/// The colour [`mark_paint`] washes a highlight in, as an index into
-/// [`HighlightColor::ALL`]. Global because a painter is a bare `fn`.
-static HIGHLIGHT: AtomicUsize = AtomicUsize::new(0);
+/// The colour [`mark_paint`] washes a highlight in. Global because a painter
+/// is a bare `fn`.
+static HIGHLIGHT: std::sync::RwLock<crate::model::settings::Paint> = std::sync::RwLock::new(
+    crate::model::settings::Paint::Named(crate::model::settings::Highlight::Yellow),
+);
 
 /// Paint every highlight in `color` from the next frame on.
-pub fn set_highlight(color: HighlightColor) {
-    let ix = HighlightColor::ALL
-        .iter()
-        .position(|c| *c == color)
-        .unwrap_or(0);
-    HIGHLIGHT.store(ix, Ordering::Relaxed);
+pub fn set_highlight(color: crate::model::settings::Paint) {
+    if let Ok(mut held) = HIGHLIGHT.write() {
+        *held = color;
+    }
 }
 
 /// How [`marks`] paint: every highlight in the colour [`set_highlight`] chose.
 pub fn mark_paint(name: &str, theme: &Theme) -> Option<markdown::MarkPaint> {
-    let color = HighlightColor::ALL[HIGHLIGHT.load(Ordering::Relaxed)];
+    let color = HIGHLIGHT.read().ok().map(|held| *held)?;
     (name == editor::HIGHLIGHT_MARK).then(|| markdown::MarkPaint {
-        background: Some(markdown::default_highlight(color, theme)),
+        background: Some(color.wash(theme)),
         ..Default::default()
     })
 }
@@ -220,10 +216,7 @@ impl Cydonia {
         cx: &mut Context<Self>,
     ) {
         self.commit(cx);
-        let member = self
-            .workspace
-            .read(cx)
-            .member_of(project, Showing::Article(ix));
+        let member = self.workspace.read(cx).article_member(project, ix);
         if self.enter_member(member, window, cx) {
             return;
         }
@@ -275,9 +268,7 @@ impl Cydonia {
     /// Swap the document for the markdown it spells, and back — the header
     /// menu's Plain text and its ⌘E.
     ///
-    /// The focus goes back to the document afterwards: the switch carries the
-    /// caret across, and a caret in a surface nobody is typing in is a caret
-    /// that has to be clicked back into.
+    /// The focus goes to the document afterwards, unless the find field has it.
     pub(crate) fn toggle_plain_text(
         &mut self,
         _: &TogglePlainText,
@@ -297,8 +288,15 @@ impl Cydonia {
         self.workspace.update(cx, |workspace, cx| {
             workspace.set_article_mode(&on, mode, cx)
         });
+        let finding = self.leaf().finding
+            && self
+                .leaf()
+                .find_field
+                .read(cx)
+                .focus_handle(cx)
+                .is_focused(window);
         let editor = self.pane_doc(cx).and_then(|article| article.editor.clone());
-        if let Some(editor) = editor {
+        if let Some(editor) = editor.filter(|_| !finding) {
             window.focus(&editor.focus_handle(cx), cx);
         }
         cx.notify();
@@ -670,8 +668,10 @@ impl Cydonia {
     }
 
     /// One article in the sidebar, under the project that holds it.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn article_row(
         &self,
+        entry: &Row,
         project: usize,
         ix: usize,
         title: String,
@@ -681,7 +681,6 @@ impl Cydonia {
     ) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
         let workspace = self.workspace.read(cx);
-        let entry = Row::Article { project, ix };
         let light = self.light_of(entry, cx);
         let selected = light.selected();
         let article = workspace
@@ -690,7 +689,7 @@ impl Cydonia {
             .and_then(|open| open.articles.get(ix));
         let archived = article.is_some_and(|article| article.archived);
         let tint = light.tint(archived, &theme);
-        let id = SharedString::from(format!("article-{project}-{ix}"));
+        let id = SharedString::from(sidebar::key_of(entry));
 
         sidebar::row(
             id,
@@ -718,7 +717,7 @@ impl Cydonia {
                 .child(title),
         )
         .child(self.archive_button(
-            format!("article-archive-{ix}"),
+            format!("archive-{}", sidebar::key_of(entry)),
             "article-row",
             entry,
             archived,

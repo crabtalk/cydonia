@@ -11,11 +11,14 @@
 //! are as of its last write. Opening a hit in an entry's body puts the query in
 //! its pane's find bar — see [`crate::view::find`].
 
-use crate::view::{
-    keymap::{self, Command},
-    menubar,
-    root::Cydonia,
-    sidebar::{self, Row},
+use crate::{
+    model::workspace::Showing,
+    view::{
+        keymap::{self, Command},
+        menubar,
+        root::Cydonia,
+        sidebar::{self, Row},
+    },
 };
 use artifact::{
     project::fs,
@@ -193,7 +196,7 @@ impl Search {
             .iter()
             .filter(|_| !only_commands)
             .filter(|hit| match self.filter {
-                Some(Filter::Kind(kind)) => kind_of(hit.row) == Some(kind),
+                Some(Filter::Kind(kind)) => kind_of(&hit.row) == Some(kind),
                 _ => true,
             })
             .take(self.limit)
@@ -357,7 +360,7 @@ impl Cydonia {
                 .filter(|hit| {
                     applied
                         .filter
-                        .is_none_or(|kind| kind_of(hit.row) == Some(kind))
+                        .is_none_or(|kind| kind_of(&hit.row) == Some(kind))
                 })
                 .map(|hit| hit.row)
                 .collect(),
@@ -436,33 +439,30 @@ impl Cydonia {
         let mut hits: Vec<(bool, u128, Hit)> = found
             .into_iter()
             .filter_map(|found| {
-                let project = workspace
+                let open = workspace
                     .projects
                     .iter()
-                    .position(|open| open.path == found.root)?;
-                let open = &workspace.projects[project];
-                let (row, touched) = match found.kind {
+                    .find(|open| open.path == found.root)?;
+                let (showing, touched) = match found.kind {
                     Kind::Article => {
-                        let ix = open.articles.iter().position(|a| a.id == found.id)?;
-                        (Row::Article { project, ix }, open.articles[ix].touched)
+                        let ix = open.article_ix(&found.id)?;
+                        (Showing::Article(found.id), open.articles[ix].touched)
                     }
                     Kind::Board => {
-                        let ix = open.boards.iter().position(|b| b.id == found.id)?;
-                        (Row::Board { project, ix }, open.boards[ix].touched)
+                        let ix = open.board_ix(&found.id)?;
+                        (Showing::Board(found.id), open.boards[ix].touched)
                     }
                     Kind::Session => {
                         let chat = open
                             .sessions
                             .iter()
                             .find(|chat| chat.record.as_deref() == Some(found.id.as_str()))?;
-                        (
-                            Row::Session {
-                                project,
-                                id: chat.id,
-                            },
-                            chat.touched(),
-                        )
+                        (Showing::Session(chat.id), chat.touched())
                     }
+                };
+                let row = Row::Entry {
+                    project: open.path.clone(),
+                    showing,
                 };
                 Some((
                     found.in_title,
@@ -530,7 +530,7 @@ impl Cydonia {
         };
         let query = self.search.field.read(cx).content().clone();
         self.dismiss_search(&DismissSearch, window, cx);
-        self.open_row(hit.row, window, cx);
+        self.open_row(&hit.row, window, cx);
         if hit.snippet.is_some() {
             let field = self.leaf().find_field.clone();
             self.leaf_mut().finding = true;
@@ -930,23 +930,19 @@ impl Cydonia {
 
     fn hit_row(&self, ix: usize, hit: &Hit, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
-        let project = match hit.row {
-            Row::Session { project, .. }
-            | Row::Board { project, .. }
-            | Row::Article { project, .. } => self
-                .workspace
+        let project = self.located(&hit.row, cx).and_then(|(project, _)| {
+            self.workspace
                 .read(cx)
                 .projects
                 .get(project)
-                .map(|open| open.name()),
-            _ => None,
-        };
-        let icon: Icon = match hit.row {
-            Row::Session { .. } => icons::social::MessageCircle.into(),
-            Row::Board { .. } => icons::development::SquareKanban.into(),
+                .map(|open| open.name())
+        });
+        let icon: Icon = match kind_of(&hit.row) {
+            Some(Kind::Session) => icons::social::MessageCircle.into(),
+            Some(Kind::Board) => icons::development::SquareKanban.into(),
             _ => icons::files::FileText.into(),
         };
-        let title = self.label_of_row(hit.row, cx);
+        let title = self.label_of_row(&hit.row, cx);
         let selected = ix == self.search.selected;
         let snippet = hit.snippet.as_ref().map(|(line, at)| {
             let (text, at) = clipped(line, at.clone());
@@ -1082,11 +1078,14 @@ const FILTERS: [(Option<Filter>, &str); 5] = [
     (Some(Filter::Kind(Kind::Article)), "Articles"),
 ];
 
-fn kind_of(row: Row) -> Option<Kind> {
+fn kind_of(row: &Row) -> Option<Kind> {
     match row {
-        Row::Session { .. } => Some(Kind::Session),
-        Row::Board { .. } => Some(Kind::Board),
-        Row::Article { .. } => Some(Kind::Article),
+        Row::Entry { showing, .. } => match showing {
+            Showing::Session(_) => Some(Kind::Session),
+            Showing::Board(_) => Some(Kind::Board),
+            Showing::Article(_) => Some(Kind::Article),
+            Showing::Table(_) => None,
+        },
         _ => None,
     }
 }

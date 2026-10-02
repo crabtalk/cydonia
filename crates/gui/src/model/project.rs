@@ -11,7 +11,7 @@ use crate::{
         session::ChatSession,
         store::{self, Store},
         watch::Watch,
-        workspace::Workspace,
+        workspace::{Showing, Workspace},
     },
 };
 use artifact::board::Board;
@@ -294,6 +294,31 @@ impl Project {
 
     pub fn session_mut(&mut self, id: u64) -> Option<&mut ChatSession> {
         self.sessions.iter_mut().find(|chat| chat.id == id)
+    }
+
+    /// Where the entry `showing` names is listed among its kind.
+    pub fn ix_of(&self, showing: &Showing) -> Option<usize> {
+        match showing {
+            Showing::Session(id) => self.sessions.iter().position(|chat| chat.id == *id),
+            Showing::Board(id) => self.board_ix(id),
+            Showing::Article(id) => self.article_ix(id),
+            Showing::Table(key) => self.table_ix(key),
+        }
+    }
+
+    /// Where the board with `id` is listed.
+    pub fn board_ix(&self, id: &str) -> Option<usize> {
+        self.boards.iter().position(|board| board.id == id)
+    }
+
+    /// Where the article with `id` is listed.
+    pub fn article_ix(&self, id: &str) -> Option<usize> {
+        self.articles.iter().position(|article| article.id == id)
+    }
+
+    /// Where the table with `key` is listed.
+    pub fn table_ix(&self, key: &str) -> Option<usize> {
+        self.tables.iter().position(|table| table.key == key)
     }
 
     pub fn active_session(&self) -> Option<&ChatSession> {

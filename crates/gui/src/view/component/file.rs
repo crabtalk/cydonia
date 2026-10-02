@@ -7,7 +7,7 @@ use bezel::{
         prelude::*, px,
     },
     theme::{ControlSize, Sizing as _, TextStyle, Theme, Typeset},
-    ui::input::{Edit, FieldEvent, Shape, TextField},
+    ui::input::{Edit, FieldEvent, Granularity, Shape, TextField, drag_selection},
     ui::widgets::{ButtonStyle, Buttons as _, Controls as _},
 };
 use markdown::AppExt as _;
@@ -15,6 +15,7 @@ use markdown::AppExt as _;
 use std::io::{Read, Write};
 use std::{
     cell::Cell,
+    ops::Range,
     path::{Path, PathBuf},
     rc::Rc,
     time::Duration,
@@ -144,7 +145,9 @@ pub struct FileView {
     preview: bool,
     preview_selection: Option<markdown::Selection>,
     preview_layouts: markdown::BlockLayouts,
-    preview_dragging: bool,
+    /// The unit the press in the preview selected by and the span it took,
+    /// while the button is down.
+    preview_pressed: Option<(Granularity, Range<markdown::Cursor>)>,
     scroll: gpui::ScrollHandle,
     reveal: Rc<Cell<bool>>,
     target_line: Rc<Cell<Option<usize>>>,
@@ -181,7 +184,7 @@ impl FileView {
             // same path that keeps typing coloured.
             if matches!(event, FieldEvent::Changed(_)) {
                 this.preview_selection = None;
-                this.preview_dragging = false;
+                this.preview_pressed = None;
                 this.recolour(cx);
             }
             cx.notify();
@@ -263,7 +266,7 @@ impl FileView {
             preview: true,
             preview_selection: None,
             preview_layouts: markdown::BlockLayouts::default(),
-            preview_dragging: false,
+            preview_pressed: None,
             scroll: gpui::ScrollHandle::new(),
             reveal: Rc::new(Cell::new(false)),
             target_line: Rc::new(Cell::new(None)),
@@ -560,7 +563,7 @@ impl FileView {
                         .cursor_pointer()
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.preview = !this.preview;
-                            this.preview_dragging = false;
+                            this.preview_pressed = None;
                             if this.preview {
                                 window.focus(&this.focus, cx);
                             } else {
@@ -821,8 +824,12 @@ impl Render for FileView {
             .path
             .extension()
             .is_some_and(|ext| ext == "md" || ext == "markdown");
-        let preview_doc = (markdown && self.preview && self.ready)
-            .then(|| markdown::parse_with(self.field.read(cx).content(), &cx.marks()));
+        let preview_doc = (markdown && self.preview && self.ready).then(|| {
+            Rc::new(markdown::parse_with(
+                self.field.read(cx).content(),
+                &cx.marks(),
+            ))
+        });
         if preview_doc.is_some() {
             // The root is set after the view is made, and the base is the
             // file's folder.
@@ -836,6 +843,7 @@ impl Render for FileView {
                 .update(cx, |pictures, _| pictures.place(base, assets));
         }
         let overlay = preview_doc.is_some().then(|| self.picture_overlay.clone());
+        let doc = preview_doc.unwrap_or_default();
         let base = self.path.parent().map(Path::to_path_buf);
         let notice = self.error.clone().or_else(|| self.changed.then(|| "File changed on disk. Reload discards your edits; overwrite saves your version.".into()));
         let external_notice = self.external_error.clone().map(|error| {
@@ -930,42 +938,52 @@ impl Render for FileView {
                             .cursor(gpui::CursorStyle::IBeam)
                             .on_mouse_down(
                                 gpui::MouseButton::Left,
-                                cx.listener(|this, event: &gpui::MouseDownEvent, window, cx| {
-                                    window.focus(&this.focus, cx);
-                                    this.preview_selection = this
-                                        .preview_layouts
-                                        .hit(event.position)
-                                        .map(markdown::Selection::at);
-                                    this.preview_dragging = this.preview_selection.is_some();
-                                    cx.notify();
-                                }),
-                            )
-                            .on_mouse_move(cx.listener(
-                                |this, event: &gpui::MouseMoveEvent, _, cx| {
-                                    if this.preview_dragging
-                                        && let Some(cursor) =
-                                            this.preview_layouts.hit(event.position)
-                                        && let Some(selection) = this.preview_selection
-                                    {
-                                        this.preview_selection = Some(selection.extend_to(cursor));
+                                cx.listener({
+                                    let doc = doc.clone();
+                                    move |this, event: &gpui::MouseDownEvent, window, cx| {
+                                        window.focus(&this.focus, cx);
+                                        let unit = Granularity::of_clicks(event.click_count);
+                                        let span = this
+                                            .preview_layouts
+                                            .hit(event.position)
+                                            .map(|cursor| cursor.span(unit, &doc));
+                                        this.preview_selection = span.clone().map(|span| {
+                                            markdown::Selection::new(span.start, span.end)
+                                        });
+                                        this.preview_pressed = span.map(|span| (unit, span));
                                         cx.notify();
                                     }
-                                },
-                            ))
+                                }),
+                            )
+                            .on_mouse_move(cx.listener({
+                                let doc = doc.clone();
+                                move |this, event: &gpui::MouseMoveEvent, _, cx| {
+                                    if let Some((unit, pressed)) = this.preview_pressed.clone()
+                                        && let Some(cursor) =
+                                            this.preview_layouts.hit(event.position)
+                                    {
+                                        let (anchor, head) =
+                                            drag_selection(pressed, cursor.span(unit, &doc));
+                                        this.preview_selection =
+                                            Some(markdown::Selection::new(anchor, head));
+                                        cx.notify();
+                                    }
+                                }
+                            }))
                             .on_mouse_up(
                                 gpui::MouseButton::Left,
-                                cx.listener(|this, _, _, _| this.preview_dragging = false),
+                                cx.listener(|this, _, _, _| this.preview_pressed = None),
                             )
                             .on_mouse_up_out(
                                 gpui::MouseButton::Left,
-                                cx.listener(|this, _, _, _| this.preview_dragging = false),
+                                cx.listener(|this, _, _, _| this.preview_pressed = None),
                             )
                             .flex_1()
                             .min_h_0()
                             .overflow_y_scroll()
                             .p(px(16.))
                             .child(markdown::render::render_with(
-                                &preview_doc.unwrap_or_default(),
+                                &doc,
                                 markdown::render::Editing {
                                     base: base.as_deref(),
                                     image_overlay: overlay,

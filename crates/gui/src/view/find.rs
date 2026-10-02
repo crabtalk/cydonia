@@ -204,11 +204,11 @@ impl Cydonia {
         cx.notify();
     }
 
-    fn find_next(&mut self, _: &FindNext, _: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn find_next(&mut self, _: &FindNext, _: &mut Window, cx: &mut Context<Self>) {
         self.step_find(1, cx);
     }
 
-    fn find_prev(&mut self, _: &FindPrev, _: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn find_prev(&mut self, _: &FindPrev, _: &mut Window, cx: &mut Context<Self>) {
         self.step_find(-1, cx);
     }
 
@@ -352,8 +352,6 @@ impl Cydonia {
                 .border_1()
                 .border_color(theme.border)
                 .bg(theme.surface_raised)
-                .on_action(cx.listener(Self::find_next))
-                .on_action(cx.listener(Self::find_prev))
                 .on_action(cx.listener(|this, _: &DismissFind, window, cx| {
                     this.dismiss_text_find(window, cx);
                 }))

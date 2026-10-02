@@ -47,8 +47,8 @@ pub struct Settings {
     /// Whether a picture's web address pasted into a document is downloaded
     /// into the document's `assets/` and pointed at there. Bare, beside the
     /// switches above.
-    #[serde(default = "keep_pasted_images")]
-    pub keep_pasted_images: bool,
+    #[serde(default = "download_web_images")]
+    pub download_web_images: bool,
     /// Whether a picture pasted in source mode goes in as an image line. Bare,
     /// beside the switches above.
     #[serde(default = "paste_images_in_source")]
@@ -110,6 +110,9 @@ pub const MONO_TEXT_SIZE: f32 = 13.;
 /// the frosted window may be.
 pub const VIBRANCY: (f32, f32) = (0.5, 0.95);
 
+/// The range [`Appearance::blur`] is held to, in native filter pixels.
+pub const BLUR: (f32, f32) = (0., 120.);
+
 pub fn clamp_content_text_size(points: f32) -> f32 {
     if points.is_finite() {
         points.clamp(CONTENT_TEXT_SIZE.0, CONTENT_TEXT_SIZE.1)
@@ -131,11 +134,6 @@ pub fn clamp_content_text_size(points: f32) -> f32 {
 pub struct Appearance {
     /// Light, dark, or whatever the OS is doing.
     pub mode: AppearanceMode,
-    /// Whether the window is held opaque, and nothing at all for the person
-    /// who has never said — the frost is then the appearance's own answer.
-    /// See [`bezel::theme::Vibrancy`].
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub opaque: Option<bool>,
     /// Whether the text caret blinks. Off holds it lit.
     pub cursor_blink: bool,
     /// The body size the type ladder is scaled against, in points. Clamped to
@@ -171,6 +169,9 @@ pub struct Appearance {
     /// How opaque the tint over the frosted window is — bezel's
     /// `Brand::vibrancy_alpha`. Clamped to [`VIBRANCY`] on the way in.
     pub vibrancy: f32,
+    /// How far the desktop behind the frosted window is blurred — bezel's
+    /// `Brand::window_blur`. Clamped to [`BLUR`] on the way in.
+    pub blur: f32,
     /// How wide a page with nothing of its own to say is set. A page that
     /// *has* been decided about carries the decision in its own
     /// `properties.toml` and ignores this.
@@ -191,67 +192,85 @@ pub struct Appearance {
     /// Whether a line too long for a code block wraps rather than scrolling
     /// sideways inside it — `markdown::Layout::wrap_code`.
     pub wrap_code: bool,
-    /// The wash `==text==` paints in.
-    pub highlight: Highlight,
-    /// The wash selected text paints in. Unset keeps the palette's.
+    /// The wash `==text==` paints in. A value that is not a colour reads as
+    /// the default.
+    #[serde(deserialize_with = "highlight_or_default")]
+    pub highlight: Paint,
+    /// The wash selected text paints in. Unset, or not a colour, keeps the
+    /// palette's.
+    #[serde(deserialize_with = "paint_or_unset")]
     pub selection: Option<Paint>,
-    /// The wash find matches paint in. Unset keeps the accent.
+    /// The wash find matches paint in. Unset, or not a colour, keeps the
+    /// accent.
+    #[serde(deserialize_with = "paint_or_unset")]
     pub search: Option<Paint>,
-    /// The caret's colour. Unset keeps the palette's.
+    /// The caret's colour. Unset, or not a colour, keeps the palette's.
+    #[serde(deserialize_with = "paint_or_unset")]
     pub caret: Option<Paint>,
     pub caret_shape: CaretShape,
 }
 
-/// A highlight colour, by the name [`markdown::HighlightColor`] stores.
+/// A preset colour: one of bezel's [`bezel::ui::color::default_swatches`],
+/// in the same order, stored by its lowercase name.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Highlight {
+    Red,
+    Orange,
     #[default]
     Yellow,
     Green,
+    Mint,
+    Teal,
+    Cyan,
     Blue,
-    Pink,
+    Indigo,
     Purple,
+    Pink,
+    Brown,
 }
 
 impl Highlight {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 12] = [
+        Self::Red,
+        Self::Orange,
         Self::Yellow,
         Self::Green,
+        Self::Mint,
+        Self::Teal,
+        Self::Cyan,
         Self::Blue,
-        Self::Pink,
+        Self::Indigo,
         Self::Purple,
+        Self::Pink,
+        Self::Brown,
     ];
 
-    pub fn color(self) -> markdown::HighlightColor {
-        use markdown::HighlightColor;
-        match self {
-            Self::Yellow => HighlightColor::Yellow,
-            Self::Green => HighlightColor::Green,
-            Self::Blue => HighlightColor::Blue,
-            Self::Pink => HighlightColor::Pink,
-            Self::Purple => HighlightColor::Purple,
-        }
-    }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Yellow => "Yellow",
-            Self::Green => "Green",
-            Self::Blue => "Blue",
-            Self::Pink => "Pink",
-            Self::Purple => "Purple",
-        }
+    /// The colour for `theme`'s appearance.
+    pub fn solid(self, theme: &bezel::theme::Theme) -> bezel::gpui::Hsla {
+        bezel::ui::color::default_swatches()[self as usize].resolve(theme)
     }
 
     pub fn key(self) -> &'static str {
-        self.color().name()
+        match self {
+            Self::Red => "red",
+            Self::Orange => "orange",
+            Self::Yellow => "yellow",
+            Self::Green => "green",
+            Self::Mint => "mint",
+            Self::Teal => "teal",
+            Self::Cyan => "cyan",
+            Self::Blue => "blue",
+            Self::Indigo => "indigo",
+            Self::Purple => "purple",
+            Self::Pink => "pink",
+            Self::Brown => "brown",
+        }
     }
 }
 
-/// A colour picked in settings: a highlight colour, which follows the
-/// appearance, or one sRGB value for both. Stored as the highlight's name or
-/// as `#rrggbb`.
+/// A colour picked in settings: a preset, which follows the appearance, or
+/// one sRGB value for both. Stored as the preset's name or as `#rrggbb`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Paint {
     Named(Highlight),
@@ -268,20 +287,15 @@ impl Paint {
     /// The colour at full strength.
     pub fn solid(self, theme: &bezel::theme::Theme) -> bezel::gpui::Hsla {
         match self {
-            Self::Named(named) => markdown::highlight_solid(named.color(), theme),
+            Self::Named(named) => named.solid(theme),
             Self::Custom(rgb) => bezel::gpui::rgb(rgb).into(),
         }
     }
 
     /// The colour as a wash behind text, as translucent as a highlight's.
     pub fn wash(self, theme: &bezel::theme::Theme) -> bezel::gpui::Hsla {
-        match self {
-            Self::Named(named) => markdown::default_highlight(named.color(), theme),
-            Self::Custom(_) => {
-                let alpha = markdown::default_highlight(markdown::HighlightColor::Yellow, theme).a;
-                self.solid(theme).opacity(alpha)
-            }
-        }
+        let alpha = markdown::default_highlight(markdown::HighlightColor::Yellow, theme).a;
+        self.solid(theme).opacity(alpha)
     }
 
     pub fn key(self) -> String {
@@ -303,6 +317,19 @@ impl Paint {
             .find(|named| named.key() == key)
             .map(Self::Named)
     }
+}
+
+fn paint_or_unset<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Paint>, D::Error> {
+    let value = toml::Value::deserialize(deserializer)?;
+    Ok(value.as_str().and_then(Paint::parse))
+}
+
+fn highlight_or_default<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Paint, D::Error> {
+    Ok(paint_or_unset(deserializer)?.unwrap_or(Paint::Named(Highlight::default())))
 }
 
 impl Serialize for Paint {
@@ -411,7 +438,6 @@ impl Default for Appearance {
     fn default() -> Self {
         Self {
             mode: AppearanceMode::default(),
-            opaque: None,
             cursor_blink: true,
             text_size: TextStyle::Body.size(),
             article_font_size: None,
@@ -421,6 +447,7 @@ impl Default for Appearance {
             mono_font: None,
             hue: 0.,
             vibrancy: bezel::theme::Theme::VIBRANCY_ALPHA,
+            blur: bezel::theme::Theme::WINDOW_BLUR,
             chroma: 0.,
             wide_pages: false,
             board_view: artifact::board::View::List,
@@ -435,7 +462,7 @@ impl Default for Appearance {
             // nothing scrolls a fence back to a caret typed off its right
             // edge — that is the cost, and the switch is the way back.
             wrap_code: false,
-            highlight: Highlight::default(),
+            highlight: Paint::Named(Highlight::default()),
             selection: None,
             search: None,
             caret: None,
@@ -455,6 +482,10 @@ impl Appearance {
         self.vibrancy = match self.vibrancy.is_finite() {
             true => self.vibrancy.clamp(VIBRANCY.0, VIBRANCY.1),
             false => Self::default().vibrancy,
+        };
+        self.blur = match self.blur.is_finite() {
+            true => self.blur.clamp(BLUR.0, BLUR.1),
+            false => Self::default().blur,
         };
         self.article_font_size = self.article_font_size.map(clamp_content_text_size);
         self.mono_font_size = clamp_content_text_size(self.mono_font_size);
@@ -794,7 +825,7 @@ fn notify_turns() -> bool {
     true
 }
 
-fn keep_pasted_images() -> bool {
+fn download_web_images() -> bool {
     true
 }
 
@@ -829,7 +860,7 @@ impl Settings {
     /// What becomes of a pasted picture — see [`crate::model::media`].
     pub fn pasting(&self) -> crate::model::media::Pasting {
         crate::model::media::Pasting {
-            fetch: self.keep_pasted_images,
+            fetch: self.download_web_images,
             source: self.paste_images_in_source,
         }
     }
@@ -842,7 +873,7 @@ impl Default for Settings {
             watch_bounce: watch_bounce(),
             auto_update: auto_update(),
             notify_turns: notify_turns(),
-            keep_pasted_images: keep_pasted_images(),
+            download_web_images: download_web_images(),
             paste_images_in_source: paste_images_in_source(),
             appearance: Appearance::default(),
             shortcuts: Shortcuts::default(),
@@ -1090,14 +1121,6 @@ fn write_appearance(doc: &mut toml_edit::DocumentMut, appearance: &Appearance) -
         AppearanceMode::Light => "light",
         AppearanceMode::Dark => "dark",
     });
-    // Never said is the absence of the key, not a `false` that would hand
-    // this reader a frosted light mode they never asked for.
-    match appearance.opaque {
-        Some(opaque) => held["opaque"] = toml_edit::value(opaque),
-        None => {
-            held.remove("opaque");
-        }
-    }
     held["cursor_blink"] = toml_edit::value(appearance.cursor_blink);
     held["text_size"] = toml_edit::value(f64::from(appearance.text_size));
     match appearance.article_font_size {
@@ -1125,6 +1148,7 @@ fn write_appearance(doc: &mut toml_edit::DocumentMut, appearance: &Appearance) -
     }
     held["hue"] = toml_edit::value(f64::from(appearance.hue));
     held["vibrancy"] = toml_edit::value(f64::from(appearance.vibrancy));
+    held["blur"] = toml_edit::value(f64::from(appearance.blur));
     held["chroma"] = toml_edit::value(f64::from(appearance.chroma));
     held["wide_pages"] = toml_edit::value(appearance.wide_pages);
     held["board_view"] = toml_edit::value(appearance.board_view.key());
@@ -1254,9 +1278,9 @@ pub fn set_notify_turns(on: bool) -> Result<()> {
 }
 
 /// Switch downloading pasted web pictures on or off in the file.
-pub fn set_keep_pasted_images(on: bool) -> Result<()> {
+pub fn set_download_web_images(on: bool) -> Result<()> {
     edit(|doc| {
-        doc["keep_pasted_images"] = toml_edit::value(on);
+        doc["download_web_images"] = toml_edit::value(on);
         Ok(true)
     })
 }

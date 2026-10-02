@@ -35,7 +35,7 @@ pub fn init(settings: &Settings, cx: &mut App) {
     // Before the window is opened: it reads its background appearance
     // on the way up, and vibrancy is what decides that.
     workspace::apply_caption_style(look.traffic_lights, cx);
-    workspace::apply_transparency(look.opaque, look.vibrancy, cx);
+    workspace::apply_transparency(look.vibrancy, look.blur, cx);
     workspace::apply_tint(Tint::new(look.hue, look.chroma), cx);
     cx.set_caret_blink(look.cursor_blink);
     cx.set_caret_shape(look.caret_shape.into());
@@ -43,7 +43,7 @@ pub fn init(settings: &Settings, cx: &mut App) {
     workspace::apply_wrap_code(look.wrap_code, cx);
     cx.set_source_style(article::source_style);
     cx.set_marks(article::marks());
-    article::set_highlight(look.highlight.color());
+    article::set_highlight(look.highlight);
     cx.set_mark_paint(article::mark_paint);
     article::set_search(look.search);
     cx.set_find_paint(article::find_paint);

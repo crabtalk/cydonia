@@ -28,7 +28,7 @@ use bezel::theme::AppExt as _;
 use bezel::ui::AppExt as _;
 use bezel::{
     gpui::{App, ClipboardItem, Context, EntityId, EventEmitter, Window},
-    theme::{self, Brand, Tint, Vibrancy, appearance::AppearanceMode},
+    theme::{Brand, Tint, Vibrancy, appearance::AppearanceMode},
     ui::icons::Icon,
 };
 use cacp::schema::SessionConfigOptionValue;
@@ -98,9 +98,6 @@ pub struct Workspace {
     pub projects: Vec<Project>,
     pub active: Option<usize>,
     pub appearance: AppearanceMode,
-    /// Whether the window is held opaque, or nothing for the appearance's
-    /// own answer — see [`vibrancy`].
-    pub opaque: Option<bool>,
     pub cursor_blink: bool,
     /// Session ids are minted here and never reused, so a card's link to the
     /// session it opened stays unambiguous for the life of the process.
@@ -196,7 +193,6 @@ impl Workspace {
             projects,
             active,
             appearance: look.mode,
-            opaque: look.opaque,
             cursor_blink: look.cursor_blink,
             text_size: look.text_size,
             article_font_size: look.article_font_size,
@@ -324,7 +320,6 @@ impl Workspace {
     fn save_appearance(&self) {
         let _ = settings::set_appearance(&settings::Appearance {
             mode: self.appearance,
-            opaque: self.opaque,
             cursor_blink: self.cursor_blink,
             text_size: self.text_size,
             article_font_size: self.article_font_size,
@@ -334,6 +329,7 @@ impl Workspace {
             mono_font: self.fonts.mono.as_ref().map(ToString::to_string),
             hue: self.tint.hue,
             vibrancy: self.settings.appearance.vibrancy,
+            blur: self.settings.appearance.blur,
             chroma: self.tint.chroma,
             wide_pages: self.wide_pages,
             board_view: self.board_view,
@@ -491,19 +487,21 @@ impl Workspace {
         cx.notify();
     }
 
-    /// The same window's other choice — see [`vibrancy`] and [`glass`] for
-    /// what each state asks of the theme.
     pub fn set_vibrancy(&mut self, alpha: f32, cx: &mut Context<Self>) {
         let (min, max) = settings::VIBRANCY;
         self.settings.appearance.vibrancy = alpha.clamp(min, max);
-        apply_transparency(self.opaque, self.settings.appearance.vibrancy, cx);
-        self.save_appearance();
-        cx.notify();
+        self.apply_transparency(cx);
     }
 
-    pub fn set_opaque(&mut self, opaque: bool, cx: &mut Context<Self>) {
-        self.opaque = Some(opaque);
-        apply_transparency(self.opaque, self.settings.appearance.vibrancy, cx);
+    pub fn set_blur(&mut self, radius: f32, cx: &mut Context<Self>) {
+        let (min, max) = settings::BLUR;
+        self.settings.appearance.blur = radius.clamp(min, max);
+        self.apply_transparency(cx);
+    }
+
+    fn apply_transparency(&mut self, cx: &mut Context<Self>) {
+        let look = &self.settings.appearance;
+        apply_transparency(look.vibrancy, look.blur, cx);
         self.save_appearance();
         cx.notify();
     }
@@ -698,11 +696,11 @@ impl Workspace {
         cx.notify();
     }
 
-    pub fn set_keep_pasted_images(&mut self, on: bool, cx: &mut Context<Self>) {
-        if settings::set_keep_pasted_images(on).is_err() {
+    pub fn set_download_web_images(&mut self, on: bool, cx: &mut Context<Self>) {
+        if settings::set_download_web_images(on).is_err() {
             return;
         }
-        self.settings.keep_pasted_images = on;
+        self.settings.download_web_images = on;
         crate::model::media::set_pasting(self.settings.pasting(), cx);
         cx.notify();
     }
@@ -878,9 +876,9 @@ impl Workspace {
         cx.notify();
     }
 
-    pub fn set_highlight(&mut self, value: settings::Highlight, cx: &mut Context<Self>) {
+    pub fn set_highlight(&mut self, value: settings::Paint, cx: &mut Context<Self>) {
         self.settings.appearance.highlight = value;
-        crate::view::article::set_highlight(value.color());
+        crate::view::article::set_highlight(value);
         self.save_appearance();
         cx.refresh_windows();
         cx.notify();
@@ -987,27 +985,6 @@ pub fn apply_tint(tint: Tint, cx: &mut App) {
     cx.set_brand(Brand { tint, ..cx.brand() });
 }
 
-/// What the switch asks of the window.
-///
-/// Never [`Vibrancy::On`]: bezel's light palette carries no frosted tokens.
-/// [`Vibrancy::Auto`] is frost in dark and opaque in light; [`Vibrancy::Off`]
-/// is opaque in both. Off macOS the window is always opaque.
-pub fn vibrancy(opaque: Option<bool>) -> Vibrancy {
-    match opaque {
-        _ if !cfg!(target_os = "macos") => Vibrancy::Off,
-        Some(true) => Vibrancy::Off,
-        None | Some(false) => Vibrancy::Auto,
-    }
-}
-
-/// What the same switch asks of the components, which is a separate answer:
-/// glass blends within the window, so an opaque window still carries it. A
-/// build with no blur primitive carries none either way — see
-/// [`bezel::theme::LENSED`].
-pub fn glass(opaque: Option<bool>) -> bool {
-    theme::LENSED && !opaque.unwrap_or(false)
-}
-
 /// How a fence breaks its lines, handed to the renderer that paints one.
 ///
 /// Every document at once, the article's and the transcript's alike: one
@@ -1030,11 +1007,17 @@ pub fn apply_caption_style(traffic_lights: bool, cx: &mut App) {
 /// Hand the answer to bezel, which reapplies it on every light/dark switch
 /// from then on — including the one the OS makes at sunset, which reaches
 /// nothing of ours.
-pub fn apply_transparency(opaque: Option<bool>, vibrancy_alpha: f32, cx: &mut App) {
+///
+/// Never [`Vibrancy::On`]: bezel's light palette carries no frosted tokens.
+/// Off macOS the window is always opaque.
+pub fn apply_transparency(vibrancy_alpha: f32, window_blur: f32, cx: &mut App) {
     cx.set_brand(Brand {
         vibrancy_alpha,
-        vibrancy: vibrancy(opaque),
-        glass: glass(opaque),
+        window_blur,
+        vibrancy: match cfg!(target_os = "macos") {
+            true => Vibrancy::Auto,
+            false => Vibrancy::Off,
+        },
         ..cx.brand()
     });
 }

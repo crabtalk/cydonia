@@ -218,6 +218,8 @@ fn menus(cx: &App) -> Vec<Menu> {
             // [`crate::view::keymap::Command::PlainText`].
             MenuItem::action("Plain Text", TogglePlainText),
             MenuItem::action("Find", crate::view::board::FindCard),
+            MenuItem::action("Find Next", crate::view::find::FindNext),
+            MenuItem::action("Find Previous", crate::view::find::FindPrev),
             MenuItem::action("Search", crate::view::search::ToggleSearch),
             MenuItem::separator(),
             MenuItem::action("Enter Full Screen", ToggleFullScreen),
@@ -364,6 +366,13 @@ impl Cydonia {
             .when(
                 matches!(showing, Some(Pane::Board | Pane::Article | Pane::Chat)),
                 |root| root.on_action(cx.listener(Self::find_card)),
+            )
+            .when(
+                matches!(showing, Some(Pane::Article | Pane::Chat)),
+                |root| {
+                    root.on_action(cx.listener(Self::find_next))
+                        .on_action(cx.listener(Self::find_prev))
+                },
             )
             .when(entries, |root| {
                 root.on_action(cx.listener(Self::next_entry))

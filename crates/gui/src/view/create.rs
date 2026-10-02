@@ -6,7 +6,7 @@
 //! moment the key is free is the moment before there are any, and that is this
 //! one.
 
-use crate::{model::workspace::Showing, view::root::Cydonia};
+use crate::view::root::Cydonia;
 use artifact::board::{self, key};
 use artifact::space::Member;
 use bezel::{
@@ -179,10 +179,7 @@ impl Cydonia {
         match made {
             Ok(ix) => {
                 self.making = None;
-                let member = self
-                    .workspace
-                    .read(cx)
-                    .member_of(project, Showing::Board(ix));
+                let member = self.workspace.read(cx).board_member(project, ix);
                 match into.zip(member) {
                     Some((pane, member)) => self.add_tab(&pane, member, window, cx),
                     None => self.open_board(project, ix, window, cx),

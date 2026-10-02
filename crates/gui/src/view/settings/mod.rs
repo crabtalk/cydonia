@@ -9,11 +9,7 @@
 //! it — see [`embed`].
 
 #[cfg(feature = "desktop")]
-use crate::{
-    agent::Listing,
-    model::update,
-    view::root::{TRAFFIC_LIGHT_X, TRAFFIC_LIGHT_Y},
-};
+use crate::{agent::Listing, model::update, view::root::traffic_lights};
 use crate::{model::workspace::Workspace, view::root::HEADER_HEIGHT};
 use bezel::ui::scroll as scrollbars;
 use bezel::{
@@ -33,7 +29,7 @@ use bezel::{
 use bezel::{
     gpui::{
         Bounds, TitlebarOptions, WindowBackgroundAppearance, WindowBounds, WindowHandle,
-        WindowOptions, point, size,
+        WindowOptions, size,
     },
     theme::appearance,
     ui::input::FieldEvent,
@@ -191,6 +187,13 @@ impl Section {
     }
 }
 
+/// A colour row's custom picker, by the row's id.
+struct CustomColor {
+    id: &'static str,
+    picker: Entity<bezel::ui::color::ColorPicker>,
+    _changed: bezel::gpui::Subscription,
+}
+
 pub struct SettingsWindow {
     workspace: Entity<Workspace>,
     /// The press on the window's [`crate::view::chrome::grip`].
@@ -242,6 +245,8 @@ pub struct SettingsWindow {
     recording: Option<shortcuts::Recording>,
     /// The row whose picker is open, by its id.
     picker: bezel::ui::popover::Popup<&'static str>,
+    /// The colour picker a colour row's popover last opened.
+    custom: Option<CustomColor>,
     #[cfg(feature = "desktop")]
     error: Option<SharedString>,
 }
@@ -274,7 +279,7 @@ pub fn open(
             titlebar: Some(TitlebarOptions {
                 title: Some("Settings".into()),
                 appears_transparent: true,
-                traffic_light_position: Some(point(px(TRAFFIC_LIGHT_X), px(TRAFFIC_LIGHT_Y))),
+                traffic_light_position: Some(traffic_lights()),
             }),
             // Opaque on purpose — see the module note. The root paints the
             // page's own background, so where the window frames itself the
@@ -294,6 +299,7 @@ pub fn open(
             // onto every window on each appearance switch, which is what keeps
             // the main window's frost alive and would frost this one with it.
             appearance::keep_background(window, cx);
+            crate::view::lights::fit(window, cx);
             cx.new(|cx| SettingsWindow::new(workspace, section, cx))
         },
     )
@@ -373,6 +379,7 @@ impl SettingsWindow {
             editing: None,
             recording: None,
             picker: Default::default(),
+            custom: None,
             #[cfg(feature = "desktop")]
             error: None,
         };
@@ -746,9 +753,10 @@ impl Render for SettingsWindow {
         use bezel::ui::titlebar::CaptionSide;
         let theme = Theme::of(cx).clone();
         let owns_scroll = self.section.owns_scroll();
-        // Off macOS the window's top edge is a strip of its own, over the
-        // sidebar's empty band and the page's top margin.
-        let strip = (!cfg!(target_os = "macos") && cfg!(feature = "desktop")).then(|| {
+        // The window's top edge is a strip of its own, over the sidebar's
+        // empty band and the page's top margin. The window owns its titlebar
+        // drag, so on macOS too nothing else moves it.
+        let strip = cfg!(feature = "desktop").then(|| {
             div()
                 .absolute()
                 .top_0()

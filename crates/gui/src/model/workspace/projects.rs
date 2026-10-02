@@ -113,8 +113,11 @@ impl Workspace {
     /// Carry a project to another place in the list. `active` follows the
     /// project it points at rather than the index it sits on: which one is in
     /// front has nothing to do with what order they are listed in.
-    pub fn move_project(&mut self, from: usize, to: usize, cx: &mut Context<Self>) {
-        if from == to || from >= self.projects.len() || to >= self.projects.len() {
+    pub fn move_project(&mut self, path: &Path, to: usize, cx: &mut Context<Self>) {
+        let Some(from) = self.project_at(path) else {
+            return;
+        };
+        if from == to || to >= self.projects.len() {
             return;
         }
         let project = self.projects.remove(from);
@@ -136,7 +139,7 @@ impl Workspace {
     /// does not — see `mcp::tools::project` — so `/tmp/x` on the rail and
     /// `/private/tmp/x` from a tool are one project, and opening the second
     /// would otherwise list the same directory twice.
-    pub(super) fn project_at(&self, path: &Path) -> Option<usize> {
+    pub fn project_at(&self, path: &Path) -> Option<usize> {
         self.projects.iter().position(|open| {
             open.path == path
                 || open

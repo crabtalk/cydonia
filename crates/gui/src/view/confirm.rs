@@ -1,9 +1,12 @@
 //! The question asked before a delete. Raised from the pane header's `···` and
 //! from a card's, so it lives beside neither.
 
-use crate::view::{
-    root::Cydonia,
-    sidebar::{Group, Row},
+use crate::{
+    model::workspace::Showing,
+    view::{
+        root::Cydonia,
+        sidebar::{Group, Row},
+    },
 };
 use bezel::{
     gpui::{AnyElement, App, Context, div, prelude::*, px},
@@ -40,7 +43,7 @@ pub(crate) struct Confirming {
 impl Cydonia {
     /// Raise the question. Delete is the one thing here that cannot be taken
     /// back — Archive, right above it, is the reversible answer.
-    pub(crate) fn ask_delete(&mut self, entry: Row, cx: &mut Context<Self>) {
+    pub(crate) fn ask_delete(&mut self, entry: &Row, cx: &mut Context<Self>) {
         let label = self
             .showing(cx)
             .and_then(|pane| self.toolbar(pane, cx))
@@ -49,7 +52,7 @@ impl Cydonia {
         let (goes, note) = self.goes_with(entry, cx);
         self.menu = None;
         self.confirming = Some(Confirming {
-            doomed: Doomed::Entry(entry),
+            doomed: Doomed::Entry(entry.clone()),
             label,
             goes,
             note,
@@ -100,16 +103,19 @@ impl Cydonia {
 
     /// Where this entry lives and what to say about losing it: a path under
     /// `.cydonia/`, or for a table the database it is dropped out of.
-    fn goes_with(&self, entry: Row, cx: &App) -> (Option<String>, String) {
+    fn goes_with(&self, entry: &Row, cx: &App) -> (Option<String>, String) {
         const UNDONE: &str = "This cannot be undone.";
         let workspace = self.workspace.read(cx);
         let at = |path: Option<String>| (path, UNDONE.to_owned());
+        let located = self.located(entry, cx);
+        let open = located.and_then(|(project, _)| workspace.projects.get(project));
+        let ix = located.map_or(0, |(_, ix)| ix);
         match entry {
             // A space holds none of what it arranges, so nothing but the
             // arrangement itself goes.
-            Row::Group(Group::Space(ix)) => workspace
-                .spaces
-                .get(ix)
+            Row::Group(Group::Space(id)) => workspace
+                .space_ix(id)
+                .map(|ix| &workspace.spaces[ix])
                 .map(|space| {
                     (
                         // Beside the config, not in a project: a space spans
@@ -119,10 +125,11 @@ impl Cydonia {
                     )
                 })
                 .unwrap_or_else(|| at(None)),
-            Row::Session { project, id } => workspace
-                .projects
-                .get(project)
-                .and_then(|open| open.session(id))
+            Row::Entry {
+                showing: Showing::Session(id),
+                ..
+            } => open
+                .and_then(|open| open.session(*id))
                 .and_then(|chat| chat.filed())
                 .map(|record| at(Some(format!(".cydonia/sessions/{record}.json"))))
                 // A session is filed from its first turn — `flush` leaves
@@ -134,24 +141,27 @@ impl Cydonia {
                         format!("It has had no turn, so nothing on disk goes with it. {UNDONE}"),
                     )
                 }),
-            Row::Board { project, ix } => at(workspace
-                .projects
-                .get(project)
+            Row::Entry {
+                showing: Showing::Board(_),
+                ..
+            } => at(open
                 .and_then(|open| open.boards.get(ix))
                 .map(|board| format!(".cydonia/boards/{}.toml", board.id))),
-            Row::Article { project, ix } => at(workspace
-                .projects
-                .get(project)
+            Row::Entry {
+                showing: Showing::Article(_),
+                ..
+            } => at(open
                 .and_then(|open| open.articles.get(ix))
                 .and_then(|article| article.path.parent())
                 .and_then(|dir| dir.file_name())
                 .map(|dir| format!(".cydonia/articles/{}/", dir.to_string_lossy()))),
             // Dropped out of the database rather than unlinked: the file is
             // where to look, not what goes.
-            Row::Table { project, ix } => {
-                let rows = workspace
-                    .projects
-                    .get(project)
+            Row::Entry {
+                showing: Showing::Table(_),
+                ..
+            } => {
+                let rows = open
                     .and_then(|open| open.tables.get(ix))
                     .map_or(0, |table| table.rows);
                 (
@@ -243,7 +253,7 @@ impl Cydonia {
                                             this.confirming = None;
                                             match &doomed {
                                                 Doomed::Entry(entry) => {
-                                                    this.delete_entry(*entry, window, cx)
+                                                    this.delete_entry(entry, window, cx)
                                                 }
                                                 Doomed::Card(board, card) => {
                                                     this.delete_card(board, card, cx)

@@ -51,6 +51,12 @@ cannot reach past.
 | `scrollbars` | `scrolling` | `scrolling`, `always` or `never` |
 | `sidebar_scrollbars` | `never` | The same three |
 | `wrap_code` | `false` | Whether a long line wraps inside a code block rather than scrolling |
+| `highlight` | `yellow` | The colour `==text==` is washed in |
+| `selection` | unset | The colour selected text is washed in; unset is the palette's |
+| `search` | unset | The colour find matches are washed in; unset is the accent |
+| `caret` | unset | The caret's colour; unset is the palette's |
+
+A colour is a preset name — `red`, `orange`, `yellow`, `green`, `mint`, `teal`, `cyan`, `blue`, `indigo`, `purple`, `pink` or `brown`, each following light and dark — or `#rrggbb`. A value that is neither reads as that key's default.
 
 A size out of range paints an interface nobody can read the settings window to
 fix, so hand-edited sizes are clamped before layout sees them.

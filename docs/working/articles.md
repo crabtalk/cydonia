@@ -26,11 +26,11 @@ code; use an image where a rendered diagram is needed.
 Put a displayed picture in its own paragraph, with blank lines around it:
 
 ```markdown
-![Architecture overview](/absolute/path/.cydonia/assets/overview.png)
+![Architecture overview](assets/overview.png)
 
-![Architecture overview|480](/absolute/path/.cydonia/assets/overview.png)
+![Architecture overview|480](assets/overview.png)
 
-![|320](/absolute/path/.cydonia/assets/overview.png)
+![|320](assets/overview.png)
 ```
 
 - Alt text is also the caption. Leave it empty for no caption.
@@ -39,12 +39,14 @@ Put a displayed picture in its own paragraph, with blank lines around it:
   linked alt text.
 - Use the width suffix — not `=480x`, `{width=480}` or HTML attributes. Height,
   crop, alignment and shape have no authored syntax.
-- Local destinations must be absolute paths. Wrap a path containing spaces in
-  angle brackets: `![Overview|480](</path/system overview.png>)`.
+- A local destination is a path relative to the article's folder, such as
+  `assets/overview.png`. Wrap a path containing spaces in
+  angle brackets: `![Overview|480](<assets/system overview.png>)`.
 - HTTP(S) URLs work where the image is reachable from the app.
 
-Media an agent creates belongs in `<project>/.cydonia/assets/`, which is shared:
-an asset outlives the article that referenced it.
+**Settings › Editor › Download web pictures** saves a copy of a pasted picture link into the article's `assets/`; off, the link stays a web address. A pasted screenshot or picture file is always saved into `assets/`. Opening a picture in another app from the button over it always saves a copy into `assets/` and points the article at it, whichever way the switch is set, so edits saved there show in the article.
+
+Each article keeps its pictures and its cover in its own `assets/`, which moves with it. Pictures already under `<project>/.cydonia/assets/` keep working.
 
 ## Links
 

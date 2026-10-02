@@ -57,8 +57,8 @@ fn opening_an_entry_outside_the_space_lands_on_it(cx: &mut gpui::TestAppContext)
                 workspace.new_board(0, "Second".into(), "TWO", cx).ok();
                 workspace.new_board(0, "Third".into(), "THR", cx).ok();
                 (
-                    workspace.member_of(0, Showing::Board(0)).expect("a member"),
-                    workspace.member_of(0, Showing::Board(1)).expect("a member"),
+                    workspace.board_member(0, 0).expect("a member"),
+                    workspace.board_member(0, 1).expect("a member"),
                 )
             });
             root.workspace.update(cx, |workspace, cx| {
@@ -117,8 +117,8 @@ fn making_an_entry_inside_a_space_lands_on_it(cx: &mut gpui::TestAppContext) {
                 workspace.new_board(0, "First".into(), "ONE", cx).ok();
                 workspace.new_board(0, "Second".into(), "TWO", cx).ok();
                 (
-                    workspace.member_of(0, Showing::Board(0)).expect("a member"),
-                    workspace.member_of(0, Showing::Board(1)).expect("a member"),
+                    workspace.board_member(0, 0).expect("a member"),
+                    workspace.board_member(0, 1).expect("a member"),
                 )
             });
             root.workspace.update(cx, |workspace, cx| {
@@ -166,8 +166,8 @@ fn starting_a_session_inside_a_space_lands_on_it(cx: &mut gpui::TestAppContext) 
                 workspace.new_board(0, "First".into(), "ONE", cx).ok();
                 workspace.new_board(0, "Second".into(), "TWO", cx).ok();
                 (
-                    workspace.member_of(0, Showing::Board(0)).expect("a member"),
-                    workspace.member_of(0, Showing::Board(1)).expect("a member"),
+                    workspace.board_member(0, 0).expect("a member"),
+                    workspace.board_member(0, 1).expect("a member"),
                 )
             });
             root.workspace.update(cx, |workspace, cx| {
@@ -215,8 +215,8 @@ fn opening_an_entry_a_space_holds_enters_the_space(cx: &mut gpui::TestAppContext
                 workspace.new_board(0, "Second".into(), "TWO", cx).ok();
                 workspace.new_board(0, "Third".into(), "THR", cx).ok();
                 (
-                    workspace.member_of(0, Showing::Board(0)).expect("a member"),
-                    workspace.member_of(0, Showing::Board(1)).expect("a member"),
+                    workspace.board_member(0, 0).expect("a member"),
+                    workspace.board_member(0, 1).expect("a member"),
                 )
             });
             root.workspace.update(cx, |workspace, cx| {
@@ -280,7 +280,7 @@ fn syncing_the_composers_leaves_the_focus_where_it_was(cx: &mut gpui::TestAppCon
             let (board, session) = root.workspace.update(cx, |workspace, cx| {
                 workspace.open_project(scratch.project("one"), cx);
                 workspace.new_board(0, "First".into(), "ONE", cx).ok();
-                let board = workspace.member_of(0, Showing::Board(0)).expect("a member");
+                let board = workspace.board_member(0, 0).expect("a member");
 
                 let path = workspace.projects[0].path.clone();
                 let mut chat = crate::model::session::ChatSession::restore(

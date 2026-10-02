@@ -22,6 +22,7 @@
 - [Installing agents](./agents/install.md)
 - [Running several agents](./agents/orchestration.md)
 - [MCP](./agents/mcp.md)
+- [What agents are told](./agents/prompts.md)
 
 # Reference
 

@@ -58,8 +58,8 @@ Put each displayed picture in its own paragraph, with blank lines around it:
 ### Image files and destinations
 
 Store new agent-created media in the article's own `assets/` directory, which
-`article_read` and `article_add` return as `assets_path`, the absolute
-directory on the Cydonia host. This is an explicit exception to the restriction
+`article_read` and `article_add` return as `assets_path`, relative to the
+project directory. This is an explicit exception to the restriction
 on direct access to managed artifacts. Create that directory if needed. Use
 unique filenames; preserve existing files unless their replacement or removal
 was requested. Images already under `<project>/.cydonia/assets/` continue to
@@ -68,7 +68,7 @@ work and need not be moved.
 Write an image in the article's own `assets/` as a path relative to the
 article's folder, such as `assets/overview.png`. A relative path is resolved
 against the article's folder, so it keeps working when the folder is moved or
-copied. Absolute filesystem paths also work. Do not assume `file://` URLs
+copied. Do not write absolute filesystem paths. Do not assume `file://` URLs
 behave like local paths. HTTP(S) image URLs can also be used when the image is
 available to the app.
 
@@ -93,13 +93,14 @@ the Cydonia host. Do not claim to upload or copy an image through article tools.
 ### The cover
 
 The cover is the picture over the top of an article, and is not a body image:
-it is never written into the Markdown, and it does not live in `assets/`. It
-sits in the article's own folder, which `article_read` and `article_add` return
-as `article_path`, under a name starting `cover-`. One article has one cover.
+it is never written into the Markdown. It sits in the article's own `assets/`,
+which `article_read` and `article_add` return as `assets_path`, under a name
+starting `cover-`. One article has one cover. Do not give a body image a name
+starting `cover-`: it would be taken for the cover.
 
-Set it with `article_set_cover`, which takes the path of a picture on the
-Cydonia host and files it under the right name, removing whatever was there.
-Do not write a `cover-` file into the folder by hand — the name carries a stamp
+Set it with `article_set_cover`, which takes the path of a picture relative to
+the project directory and files it under the right name, removing whatever was there.
+Do not write a `cover-` file into `assets/` by hand — the name carries a stamp
 that keeps a replaced cover from being served from cache.
 
 Draw or crop it **5:2** — 1500x600 is the size the app cuts its own at, and the

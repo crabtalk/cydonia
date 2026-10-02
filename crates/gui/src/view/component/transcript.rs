@@ -24,14 +24,16 @@ use bezel::{
     motion::Painter,
     theme::{TextStyle, Theme, Typeset, ink},
     ui::{
-        icons, scroll,
+        icons,
+        input::{Granularity, drag_selection},
+        scroll,
         tooltip::Tooltip,
         widgets::{Icons, Layout, Status, Takeover},
     },
 };
 use cacp::schema::ToolKind;
 use markdown::{
-    BlockLayouts, Doc, Selection,
+    BlockLayouts, Cursor, Doc, Selection,
     selectable::{self, Pointer},
 };
 mod follow;
@@ -121,8 +123,9 @@ pub struct State {
     /// in another item is what clears the last, the same way a page of prose
     /// has one selection however many paragraphs it holds.
     selection: Option<(usize, Selection)>,
-    /// Whether the pointer is down and dragging the selection's head about.
-    dragging: bool,
+    /// The unit the press selected by and the span it took, while the button
+    /// is down. A move only extends a selection a press started.
+    pressed: Option<(Granularity, Range<Cursor>)>,
     /// What each item painted, so a press can be resolved against what is on
     /// screen rather than against the source.
     ///
@@ -187,15 +190,13 @@ impl State {
 
     /// Whether the pointer is dragging the head of item `ix`'s selection.
     ///
-    /// Narrower than [`Self::dragging`], which says only that the button is
+    /// Narrower than [`Self::pressed`], which says only that the button is
     /// down: the selection names the item the press came down in, and
     /// [`Self::point`] discards a move reported by any other.
     fn dragging_in(&self, ix: usize) -> bool {
-        self.dragging && self.selection(ix).is_some()
+        self.pressed.is_some() && self.selection(ix).is_some()
     }
 
-    /// Answer the pointer over item `ix`. A press starts a selection there and
-    /// drops whatever another item held; a move drags its head.
     /// Show `images` in the session's preview, opened on the one at `selected`.
     pub fn open_preview(
         &self,
@@ -215,19 +216,30 @@ impl State {
         });
     }
 
-    pub fn point(&mut self, ix: usize, pointer: Pointer) {
+    /// Answer the pointer over item `ix`, whose text is `doc`. A press selects
+    /// the unit under it there and drops whatever another item held; a move
+    /// extends by that unit.
+    pub fn point(&mut self, ix: usize, pointer: Pointer, doc: &Doc) {
         match pointer {
-            Pointer::Down(cursor) => {
-                self.selection = Some((ix, Selection::at(cursor)));
-                self.dragging = true;
+            Pointer::Down(cursor, unit) => {
+                let span = cursor.span(unit, doc);
+                self.selection = Some((ix, Selection::new(span.start, span.end)));
+                self.pressed = Some((unit, span));
             }
             Pointer::Move(cursor) => {
-                if let Some((item, selection)) = self.selection.filter(|(item, _)| *item == ix) {
-                    self.selection = Some((item, selection.extend_to(cursor)));
+                let held = self.selection.is_some_and(|(item, _)| item == ix);
+                if let Some((unit, pressed)) = self.pressed.clone().filter(|_| held) {
+                    let (anchor, head) = drag_selection(pressed, cursor.span(unit, doc));
+                    self.selection = Some((ix, Selection::new(anchor, head)));
                 }
             }
-            Pointer::Up => self.dragging = false,
+            Pointer::Up => self.release(),
         }
+    }
+
+    /// The button came up: whatever the selection had become is what it is.
+    pub fn release(&mut self) {
+        self.pressed = None;
     }
 
     /// Where the bar over a selection stands: the last row the run painted, in
@@ -237,7 +249,7 @@ impl State {
     /// collapsed without a drag — a caret in read-only prose is not a selection
     /// and has nothing for a bar to be about.
     pub fn selection_perch(&self) -> Option<(Bounds<Pixels>, Bounds<Pixels>)> {
-        if self.dragging {
+        if self.pressed.is_some() {
             return None;
         }
         let (ix, selection) = self.selection?;
@@ -251,7 +263,7 @@ impl State {
     /// Drop the run, and the bar over it with it.
     pub fn clear_selection(&mut self) {
         self.selection = None;
-        self.dragging = false;
+        self.pressed = None;
     }
 
     /// What is selected, as it would be pasted, or nothing when a press
@@ -341,6 +353,7 @@ fn prose(
     } else {
         markdown::parse(text)
     };
+    let doc = Rc::new(doc);
     let layouts = chat.transcript.layouts(ix);
     let washes = match chat.transcript.find.borrow().as_ref() {
         Some(query) => {
@@ -365,8 +378,11 @@ fn prose(
         },
         window,
         cx,
-        move |workspace, pointer, cx| {
-            workspace.with_session(id, cx, |chat| chat.transcript.point(ix, pointer));
+        {
+            let doc = doc.clone();
+            move |workspace, pointer, cx| {
+                workspace.with_session(id, cx, |chat| chat.transcript.point(ix, pointer, &doc));
+            }
         },
     );
     let cwd = chat.cwd.clone();
@@ -428,8 +444,7 @@ fn prose(
                         .and_then(|chat| chat.transcript.selection(ix))
                         .is_none_or(|selection| selection.is_collapsed());
                     if clicked {
-                        workspace
-                            .with_session(id, cx, |chat| chat.transcript.point(ix, Pointer::Up));
+                        workspace.with_session(id, cx, |chat| chat.transcript.release());
                         let images = pictures
                             .iter()
                             .map(|(_, url)| gallery::source(url, &cwd))
@@ -481,7 +496,7 @@ fn prose(
                         .is_some_and(|selection| {
                             selection.is_collapsed() && selection.head == cursor
                         });
-                    workspace.with_session(id, cx, |chat| chat.transcript.point(ix, Pointer::Up));
+                    workspace.with_session(id, cx, |chat| chat.transcript.release());
                     cx.stop_propagation();
                     if clicked {
                         window.dispatch_action(

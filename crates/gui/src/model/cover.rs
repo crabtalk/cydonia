@@ -107,9 +107,11 @@ pub fn of(article: &Path) -> Option<PathBuf> {
     artifact::article::cover::of(article)
 }
 
-/// Where this document's next cover goes.
+/// Where this document's next cover goes, with the directory made for it.
 pub fn path(article: &Path, seed: u64, ext: &str) -> Option<PathBuf> {
-    Some(artifact::article::cover::path(article, seed, ext))
+    let to = artifact::article::cover::path(article, seed, ext);
+    std::fs::create_dir_all(to.parent()?).ok()?;
+    Some(to)
 }
 
 /// The seed to cut the next one from: the document's own path the first time,

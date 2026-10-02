@@ -15,21 +15,17 @@ use super::*;
 use crate::model::spaces as store;
 use artifact::space::{Kind as MemberKind, Member, Side, Space};
 
-/// What a pane shows, resolved from the member a space names.
-///
-/// An index into the project's own list, not a borrow: the caller needs the
-/// workspace back to draw with. Resolved fresh for each frame rather than kept
-/// on the pane — an entry made or dropped beside the open one shifts every
-/// index past it, and a pane holding a stale one would draw whatever slid into
-/// its place.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// What a pane shows, resolved from the member a space names: an entry of
+/// one project, by the id it has there.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Showing {
-    /// A session, by the id it was minted with — stable for the life of the
-    /// process, so this one is not an index.
     Session(u64),
-    Board(usize),
-    Article(usize),
-    Table(usize),
+    /// A board's id.
+    Board(String),
+    /// An article's id.
+    Article(String),
+    /// A table's key.
+    Table(String),
 }
 
 impl Workspace {
@@ -103,11 +99,19 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Where the space with `id` is listed.
+    pub fn space_ix(&self, id: &str) -> Option<usize> {
+        self.spaces.iter().position(|space| space.id == id)
+    }
+
     /// Carry a space to another place in the list. `space` follows the one
     /// it points at rather than the index it sits on, the way `active` does
     /// for projects — see [`Workspace::move_project`].
-    pub fn move_space(&mut self, from: usize, to: usize, cx: &mut Context<Self>) {
-        if from == to || from >= self.spaces.len() || to >= self.spaces.len() {
+    pub fn move_space(&mut self, id: &str, to: usize, cx: &mut Context<Self>) {
+        let Some(from) = self.space_ix(id) else {
+            return;
+        };
+        if from == to || to >= self.spaces.len() {
             return;
         }
         let space = self.spaces.remove(from);
@@ -336,7 +340,7 @@ impl Workspace {
             self.delete_space(at, cx);
         }
         let (member, (project, showing)) = survivor?;
-        self.select_showing(project, showing, cx);
+        self.select_showing(project, showing.clone(), cx);
         Some((member, showing))
     }
 
@@ -396,7 +400,7 @@ impl Workspace {
     /// index read before that walk names some other space by the end of it,
     /// or nothing.
     pub fn delete_space_id(&mut self, id: &str, cx: &mut Context<Self>) {
-        if let Some(ix) = self.spaces.iter().position(|space| space.id == id) {
+        if let Some(ix) = self.space_ix(id) {
             self.delete_space(ix, cx);
         }
     }
@@ -485,18 +489,18 @@ impl Workspace {
             MemberKind::Board => open
                 .boards
                 .iter()
-                .position(|board| board.id == member.id)
-                .map(Showing::Board)?,
+                .find(|board| board.id == member.id)
+                .map(|board| Showing::Board(board.id.clone()))?,
             MemberKind::Article => open
                 .articles
                 .iter()
-                .position(|article| article.path.to_string_lossy() == member.id)
-                .map(Showing::Article)?,
+                .find(|article| article.path.to_string_lossy() == member.id)
+                .map(|article| Showing::Article(article.id.clone()))?,
             MemberKind::Table => open
                 .tables
                 .iter()
-                .position(|table| table.key == member.id)
-                .map(Showing::Table)?,
+                .find(|table| table.key == member.id)
+                .map(|table| Showing::Table(table.key.clone()))?,
         };
         Some((at, showing))
     }
@@ -515,18 +519,41 @@ impl Workspace {
                 MemberKind::Session,
                 open.session(id)?.filed()?.to_owned(),
             ),
-            Showing::Board(ix) => {
-                Member::new(path, MemberKind::Board, open.boards.get(ix)?.id.clone())
+            Showing::Board(id) => {
+                open.board_ix(&id)?;
+                Member::new(path, MemberKind::Board, id)
             }
-            Showing::Article(ix) => Member::new(
+            Showing::Article(id) => Member::new(
                 path,
                 MemberKind::Article,
-                open.articles.get(ix)?.path.to_string_lossy().into_owned(),
+                open.articles[open.article_ix(&id)?]
+                    .path
+                    .to_string_lossy()
+                    .into_owned(),
             ),
-            Showing::Table(ix) => {
-                Member::new(path, MemberKind::Table, open.tables.get(ix)?.key.clone())
+            Showing::Table(key) => {
+                open.table_ix(&key)?;
+                Member::new(path, MemberKind::Table, key)
             }
         })
+    }
+
+    /// The member naming the board listed at `ix` in `project`.
+    pub fn board_member(&self, project: usize, ix: usize) -> Option<Member> {
+        let id = self.projects.get(project)?.boards.get(ix)?.id.clone();
+        self.member_of(project, Showing::Board(id))
+    }
+
+    /// The member naming the article listed at `ix` in `project`.
+    pub fn article_member(&self, project: usize, ix: usize) -> Option<Member> {
+        let id = self.projects.get(project)?.articles.get(ix)?.id.clone();
+        self.member_of(project, Showing::Article(id))
+    }
+
+    /// The member naming the table listed at `ix` in `project`.
+    pub fn table_member(&self, project: usize, ix: usize) -> Option<Member> {
+        let key = self.projects.get(project)?.tables.get(ix)?.key.clone();
+        self.member_of(project, Showing::Table(key))
     }
 
     /// The board a pane is on, by its place in its project. Named apart from
@@ -549,7 +576,9 @@ impl Workspace {
             return self.active_board();
         };
         match self.showing_of(member)? {
-            (project, Showing::Board(ix)) => self.board_in(project, ix),
+            (project, Showing::Board(id)) => {
+                self.board_in(project, self.projects.get(project)?.board_ix(&id)?)
+            }
             _ => None,
         }
     }
@@ -573,7 +602,9 @@ impl Workspace {
             return self.active_article();
         };
         match self.showing_of(member)? {
-            (project, Showing::Article(ix)) => self.article_in(project, ix),
+            (project, Showing::Article(id)) => {
+                self.article_in(project, self.projects.get(project)?.article_ix(&id)?)
+            }
             _ => None,
         }
     }
@@ -585,7 +616,9 @@ impl Workspace {
             return self.active_table();
         };
         match self.showing_of(member)? {
-            (project, Showing::Table(ix)) => self.table_in(project, ix),
+            (project, Showing::Table(key)) => {
+                self.table_in(project, self.projects.get(project)?.table_ix(&key)?)
+            }
             _ => None,
         }
     }
@@ -631,24 +664,26 @@ impl Workspace {
         let Some(open) = self.projects.get_mut(project) else {
             return;
         };
-        match showing {
-            Showing::Session(id) => open.active = Some(id),
-            Showing::Board(ix) => {
-                if let Some(id) = open.boards.get(ix).map(|board| board.id.clone())
-                    && open.load_board(&id)
+        match &showing {
+            Showing::Session(id) => open.active = Some(*id),
+            Showing::Board(id) => {
+                if let Some(ix) = open.board_ix(id)
+                    && open.load_board(id)
                 {
                     open.board = Some(ix);
                 }
             }
-            Showing::Article(ix) => {
-                if let Some(article) = open.articles.get_mut(ix) {
-                    article.open(text_size, cx);
+            Showing::Article(id) => {
+                if let Some(ix) = open.article_ix(id) {
+                    open.articles[ix].open(text_size, cx);
                     open.article = Some(ix);
                 }
             }
-            Showing::Table(ix) => {
-                open.table = Some(ix);
-                open.reload_page();
+            Showing::Table(key) => {
+                if let Some(ix) = open.table_ix(key) {
+                    open.table = Some(ix);
+                    open.reload_page();
+                }
             }
         }
         self.active = Some(project);

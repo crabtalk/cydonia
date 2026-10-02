@@ -27,10 +27,11 @@ pub(crate) type Act = Box<dyn Fn(&mut Cydonia, &[usize], &mut Window, &mut Conte
 /// its position would open the wrong one the moment a card moved.
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) enum Menu {
-    /// The `+` on a project heading: what to start here.
-    Add(usize),
-    /// A project heading: what to do to the project.
-    Project(usize),
+    /// The `+` on a project heading, by the project's path: what to start
+    /// here.
+    Add(std::path::PathBuf),
+    /// A project heading, by the project's path: what to do to the project.
+    Project(std::path::PathBuf),
     /// The `···` on an entry's row, whichever kind it is.
     Entry(Row),
     /// The `···` in the pane header. Its own key rather than `Entry` of what
@@ -190,7 +191,7 @@ impl Cydonia {
                             }),
                         // The project's head reports its hover as its `···`.
                         Menu::Add(ix) => el.when(
-                            self.sidebar_hovered.as_ref() != Some(&Menu::Project(*ix)),
+                            !matches!(&self.sidebar_hovered, Some(Menu::Project(at)) if at == ix),
                             |el| el.hidden(),
                         ),
                         Menu::Pane(pane) | Menu::PaneAdd(pane) => {

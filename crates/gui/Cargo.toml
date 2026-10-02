@@ -85,3 +85,7 @@ gpui_platform = { version = "0.3.13", package = "bezel-gpui-platform", features 
 
 [target.'cfg(target_os = "macos")'.dependencies]
 libc = "0.2"
+# The versions and features gpui's macOS backend already builds.
+objc2 = "0.6.4"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSButton", "NSControl", "NSResponder", "NSView", "NSWindow", "objc2-core-foundation"] }
+raw-window-handle = "0.6.2"
