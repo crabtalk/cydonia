@@ -3,8 +3,8 @@
 //! macOS 26, 12px on a 20px pitch before it — and AppKit owns them, so the
 //! header asks rather than assumes.
 
-use crate::view::root::{HEADER_HEIGHT, TRAFFIC_LIGHT_INSET};
-use bezel::gpui::{App, Global, Window, point, px};
+use crate::view::root::TRAFFIC_LIGHT_INSET;
+use bezel::gpui::{App, Global, Window};
 
 /// One light's diameter and the distance between two lights' left edges.
 #[derive(Clone, Copy)]
@@ -39,10 +39,16 @@ impl Lights {
 pub fn fit(window: &mut Window, cx: &mut App) {
     let lights = measure(window).unwrap_or(MACOS_26);
     cx.set_global(lights);
-    window.set_traffic_light_position(point(
-        px(TRAFFIC_LIGHT_INSET),
-        px((HEADER_HEIGHT - lights.size) / 2.),
-    ));
+    // gpui has the setter on macOS only.
+    #[cfg(target_os = "macos")]
+    {
+        use crate::view::root::HEADER_HEIGHT;
+        use bezel::gpui::{point, px};
+        window.set_traffic_light_position(point(
+            px(TRAFFIC_LIGHT_INSET),
+            px((HEADER_HEIGHT - lights.size) / 2.),
+        ));
+    }
 }
 
 #[cfg(target_os = "macos")]

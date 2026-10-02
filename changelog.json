@@ -2,7 +2,6 @@
   {
     "version": "0.1.23",
     "date": "2026-10-03",
-    "nightly": true,
     "summary": "Custom colours, board drag with motion, window blur, and article covers kept with their pictures.",
     "new": [
       "Pick any colour for highlights, selection, search results and the cursor from a colour picker in Settings, beside twelve presets for each",
