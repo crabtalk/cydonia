@@ -192,67 +192,85 @@ pub struct Appearance {
     /// Whether a line too long for a code block wraps rather than scrolling
     /// sideways inside it — `markdown::Layout::wrap_code`.
     pub wrap_code: bool,
-    /// The wash `==text==` paints in.
-    pub highlight: Highlight,
-    /// The wash selected text paints in. Unset keeps the palette's.
+    /// The wash `==text==` paints in. A value that is not a colour reads as
+    /// the default.
+    #[serde(deserialize_with = "highlight_or_default")]
+    pub highlight: Paint,
+    /// The wash selected text paints in. Unset, or not a colour, keeps the
+    /// palette's.
+    #[serde(deserialize_with = "paint_or_unset")]
     pub selection: Option<Paint>,
-    /// The wash find matches paint in. Unset keeps the accent.
+    /// The wash find matches paint in. Unset, or not a colour, keeps the
+    /// accent.
+    #[serde(deserialize_with = "paint_or_unset")]
     pub search: Option<Paint>,
-    /// The caret's colour. Unset keeps the palette's.
+    /// The caret's colour. Unset, or not a colour, keeps the palette's.
+    #[serde(deserialize_with = "paint_or_unset")]
     pub caret: Option<Paint>,
     pub caret_shape: CaretShape,
 }
 
-/// A highlight colour, by the name [`markdown::HighlightColor`] stores.
+/// A preset colour: one of bezel's [`bezel::ui::color::default_swatches`],
+/// in the same order, stored by its lowercase name.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Highlight {
+    Red,
+    Orange,
     #[default]
     Yellow,
     Green,
+    Mint,
+    Teal,
+    Cyan,
     Blue,
-    Pink,
+    Indigo,
     Purple,
+    Pink,
+    Brown,
 }
 
 impl Highlight {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 12] = [
+        Self::Red,
+        Self::Orange,
         Self::Yellow,
         Self::Green,
+        Self::Mint,
+        Self::Teal,
+        Self::Cyan,
         Self::Blue,
-        Self::Pink,
+        Self::Indigo,
         Self::Purple,
+        Self::Pink,
+        Self::Brown,
     ];
 
-    pub fn color(self) -> markdown::HighlightColor {
-        use markdown::HighlightColor;
-        match self {
-            Self::Yellow => HighlightColor::Yellow,
-            Self::Green => HighlightColor::Green,
-            Self::Blue => HighlightColor::Blue,
-            Self::Pink => HighlightColor::Pink,
-            Self::Purple => HighlightColor::Purple,
-        }
-    }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Yellow => "Yellow",
-            Self::Green => "Green",
-            Self::Blue => "Blue",
-            Self::Pink => "Pink",
-            Self::Purple => "Purple",
-        }
+    /// The colour for `theme`'s appearance.
+    pub fn solid(self, theme: &bezel::theme::Theme) -> bezel::gpui::Hsla {
+        bezel::ui::color::default_swatches()[self as usize].resolve(theme)
     }
 
     pub fn key(self) -> &'static str {
-        self.color().name()
+        match self {
+            Self::Red => "red",
+            Self::Orange => "orange",
+            Self::Yellow => "yellow",
+            Self::Green => "green",
+            Self::Mint => "mint",
+            Self::Teal => "teal",
+            Self::Cyan => "cyan",
+            Self::Blue => "blue",
+            Self::Indigo => "indigo",
+            Self::Purple => "purple",
+            Self::Pink => "pink",
+            Self::Brown => "brown",
+        }
     }
 }
 
-/// A colour picked in settings: a highlight colour, which follows the
-/// appearance, or one sRGB value for both. Stored as the highlight's name or
-/// as `#rrggbb`.
+/// A colour picked in settings: a preset, which follows the appearance, or
+/// one sRGB value for both. Stored as the preset's name or as `#rrggbb`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Paint {
     Named(Highlight),
@@ -269,20 +287,15 @@ impl Paint {
     /// The colour at full strength.
     pub fn solid(self, theme: &bezel::theme::Theme) -> bezel::gpui::Hsla {
         match self {
-            Self::Named(named) => markdown::highlight_solid(named.color(), theme),
+            Self::Named(named) => named.solid(theme),
             Self::Custom(rgb) => bezel::gpui::rgb(rgb).into(),
         }
     }
 
     /// The colour as a wash behind text, as translucent as a highlight's.
     pub fn wash(self, theme: &bezel::theme::Theme) -> bezel::gpui::Hsla {
-        match self {
-            Self::Named(named) => markdown::default_highlight(named.color(), theme),
-            Self::Custom(_) => {
-                let alpha = markdown::default_highlight(markdown::HighlightColor::Yellow, theme).a;
-                self.solid(theme).opacity(alpha)
-            }
-        }
+        let alpha = markdown::default_highlight(markdown::HighlightColor::Yellow, theme).a;
+        self.solid(theme).opacity(alpha)
     }
 
     pub fn key(self) -> String {
@@ -304,6 +317,19 @@ impl Paint {
             .find(|named| named.key() == key)
             .map(Self::Named)
     }
+}
+
+fn paint_or_unset<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Paint>, D::Error> {
+    let value = toml::Value::deserialize(deserializer)?;
+    Ok(value.as_str().and_then(Paint::parse))
+}
+
+fn highlight_or_default<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Paint, D::Error> {
+    Ok(paint_or_unset(deserializer)?.unwrap_or(Paint::Named(Highlight::default())))
 }
 
 impl Serialize for Paint {
@@ -436,7 +462,7 @@ impl Default for Appearance {
             // nothing scrolls a fence back to a caret typed off its right
             // edge — that is the cost, and the switch is the way back.
             wrap_code: false,
-            highlight: Highlight::default(),
+            highlight: Paint::Named(Highlight::default()),
             selection: None,
             search: None,
             caret: None,

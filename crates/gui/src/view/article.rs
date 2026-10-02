@@ -28,11 +28,7 @@ use bezel::{
 use editor::AppExt as _;
 use editor::Mode;
 use markdown::AppExt as _;
-use markdown::HighlightColor;
-use std::{
-    path::{Path, PathBuf},
-    sync::atomic::{AtomicUsize, Ordering},
-};
+use std::path::{Path, PathBuf};
 
 actions!(cydonia_article, [LeaveTitle, TogglePlainText]);
 
@@ -97,24 +93,24 @@ pub fn marks() -> markdown::Marks {
     markdown::Marks::new().with(editor::HIGHLIGHT_MARK, "==")
 }
 
-/// The colour [`mark_paint`] washes a highlight in, as an index into
-/// [`HighlightColor::ALL`]. Global because a painter is a bare `fn`.
-static HIGHLIGHT: AtomicUsize = AtomicUsize::new(0);
+/// The colour [`mark_paint`] washes a highlight in. Global because a painter
+/// is a bare `fn`.
+static HIGHLIGHT: std::sync::RwLock<crate::model::settings::Paint> = std::sync::RwLock::new(
+    crate::model::settings::Paint::Named(crate::model::settings::Highlight::Yellow),
+);
 
 /// Paint every highlight in `color` from the next frame on.
-pub fn set_highlight(color: HighlightColor) {
-    let ix = HighlightColor::ALL
-        .iter()
-        .position(|c| *c == color)
-        .unwrap_or(0);
-    HIGHLIGHT.store(ix, Ordering::Relaxed);
+pub fn set_highlight(color: crate::model::settings::Paint) {
+    if let Ok(mut held) = HIGHLIGHT.write() {
+        *held = color;
+    }
 }
 
 /// How [`marks`] paint: every highlight in the colour [`set_highlight`] chose.
 pub fn mark_paint(name: &str, theme: &Theme) -> Option<markdown::MarkPaint> {
-    let color = HighlightColor::ALL[HIGHLIGHT.load(Ordering::Relaxed)];
+    let color = HIGHLIGHT.read().ok().map(|held| *held)?;
     (name == editor::HIGHLIGHT_MARK).then(|| markdown::MarkPaint {
-        background: Some(markdown::default_highlight(color, theme)),
+        background: Some(color.wash(theme)),
         ..Default::default()
     })
 }

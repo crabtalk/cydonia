@@ -187,6 +187,13 @@ impl Section {
     }
 }
 
+/// A colour row's custom picker, by the row's id.
+struct CustomColor {
+    id: &'static str,
+    picker: Entity<bezel::ui::color::ColorPicker>,
+    _changed: bezel::gpui::Subscription,
+}
+
 pub struct SettingsWindow {
     workspace: Entity<Workspace>,
     /// The press on the window's [`crate::view::chrome::grip`].
@@ -238,6 +245,8 @@ pub struct SettingsWindow {
     recording: Option<shortcuts::Recording>,
     /// The row whose picker is open, by its id.
     picker: bezel::ui::popover::Popup<&'static str>,
+    /// The colour picker a colour row's popover last opened.
+    custom: Option<CustomColor>,
     #[cfg(feature = "desktop")]
     error: Option<SharedString>,
 }
@@ -370,6 +379,7 @@ impl SettingsWindow {
             editing: None,
             recording: None,
             picker: Default::default(),
+            custom: None,
             #[cfg(feature = "desktop")]
             error: None,
         };

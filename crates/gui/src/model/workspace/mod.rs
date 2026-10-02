@@ -876,9 +876,9 @@ impl Workspace {
         cx.notify();
     }
 
-    pub fn set_highlight(&mut self, value: settings::Highlight, cx: &mut Context<Self>) {
+    pub fn set_highlight(&mut self, value: settings::Paint, cx: &mut Context<Self>) {
         self.settings.appearance.highlight = value;
-        crate::view::article::set_highlight(value.color());
+        crate::view::article::set_highlight(value);
         self.save_appearance();
         cx.refresh_windows();
         cx.notify();

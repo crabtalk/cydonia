@@ -43,7 +43,7 @@ pub fn init(settings: &Settings, cx: &mut App) {
     workspace::apply_wrap_code(look.wrap_code, cx);
     cx.set_source_style(article::source_style);
     cx.set_marks(article::marks());
-    article::set_highlight(look.highlight.color());
+    article::set_highlight(look.highlight);
     cx.set_mark_paint(article::mark_paint);
     article::set_search(look.search);
     cx.set_find_paint(article::find_paint);

@@ -1,13 +1,13 @@
 //! The appearance section: which of the three modes the app paints in.
 
-use crate::model::settings::Paint;
+use crate::model::settings::{Highlight, Paint};
 use crate::{
     model::workspace::Workspace,
     view::settings::{self, SettingsWindow, Switch},
 };
 use artifact::board::View;
 use bezel::theme::AppExt as _;
-use bezel::ui::{AppExt as _, color::Swatch};
+use bezel::ui::color::Swatch;
 use bezel::{
     gpui::{AnyElement, Context, DragMoveEvent, Empty, div, prelude::*, px},
     theme::{TextStyle, Theme, Tint, Typeset, appearance::AppearanceMode},
@@ -413,23 +413,19 @@ impl SettingsWindow {
 
     /// The colour `==text==` is washed in.
     pub(super) fn highlight_row(&self, cx: &mut Context<Self>) -> AnyElement {
-        use crate::model::settings::Highlight;
-        let theme = Theme::of(cx).clone();
         let current = self.workspace.read(cx).settings.appearance.highlight;
-        let selected = Highlight::ALL.iter().position(|held| *held == current);
+        let paints = Highlight::ALL.into_iter().map(Paint::Named).collect();
         self.color_row(
             true,
             "highlight-color",
             "Highlight colour",
-            markdown::highlight_solid(current.color(), &theme),
-            highlight_swatches(),
-            selected,
+            Some(current),
+            paints,
             None,
             cx,
-            |this, ix, cx| {
-                if let Some(value) = ix.map(|ix| Highlight::ALL[ix]) {
-                    this.workspace
-                        .update(cx, |workspace, cx| workspace.set_highlight(value, cx));
+            |workspace, value, cx| {
+                if let Some(value) = value {
+                    workspace.set_highlight(value, cx);
                 }
             },
         )
@@ -544,8 +540,10 @@ impl SettingsWindow {
         )
     }
 
-    /// bezel's preset colours in rows of six, and Default under them. A
-    /// colour written by hand that is not among them rings nothing.
+    /// bezel's preset colours in rows of six, the colour picker, and Default
+    /// under them. A colour written by hand that is not among them rings
+    /// nothing.
+    #[allow(clippy::too_many_arguments)]
     fn wash_row(
         &self,
         id: &'static str,
@@ -555,79 +553,103 @@ impl SettingsWindow {
         cx: &mut Context<Self>,
         set: fn(&mut Workspace, Option<Paint>, &mut Context<Workspace>),
     ) -> AnyElement {
-        let theme = Theme::of(cx).clone();
-        let swatches: Vec<Swatch> = cx.color_swatches().iter().cloned().collect();
-        let paints: Vec<Paint> = swatches
-            .iter()
-            .map(|swatch| Paint::from_hsla(swatch.resolve(&theme)))
-            .collect();
-        let selected =
-            current.and_then(|current| paints.iter().position(|paint| *paint == current));
-        let shown = current.map_or(system, |paint| paint.solid(&theme));
-        self.color_row(
-            false,
-            id,
-            title,
-            shown,
-            swatches,
-            selected,
-            Some(Reset {
-                on: current.is_none(),
-            }),
-            cx,
-            move |this, ix, cx| {
-                let value = ix.map(|ix| paints[ix]);
-                this.workspace
-                    .update(cx, |workspace, cx| set(workspace, value, cx));
-            },
-        )
+        let paints = Highlight::ALL.into_iter().map(Paint::Named).collect();
+        self.color_row(false, id, title, current, paints, Some(system), cx, set)
     }
 
-    /// A row showing one colour, which opens `swatches` under it to pick
-    /// another. `pick` hears a swatch's index, or `None` for the Default item
-    /// when there is one.
+    /// A row showing one colour, which opens `paints` and a colour picker
+    /// under it to pick another. With `system`, the popover ends
+    /// in a Default item that sets `None`, and `None` shows `system`.
     #[allow(clippy::too_many_arguments)]
     fn color_row(
         &self,
         first: bool,
         id: &'static str,
         title: &'static str,
-        shown: bezel::gpui::Hsla,
-        swatches: Vec<Swatch>,
-        selected: Option<usize>,
-        default: Option<Reset>,
+        current: Option<Paint>,
+        paints: Vec<Paint>,
+        system: Option<bezel::gpui::Hsla>,
         cx: &mut Context<Self>,
-        pick: impl Fn(&mut Self, Option<usize>, &mut Context<Self>) + 'static,
+        set: fn(&mut Workspace, Option<Paint>, &mut Context<Workspace>),
     ) -> AnyElement {
+        use bezel::ui::color::{ColorPicker, ColorPickerEvent};
         use bezel::ui::popover;
         let theme = Theme::of(cx).clone();
+        let shown = current
+            .map(|paint| paint.solid(&theme))
+            .or(system)
+            .unwrap_or_default();
+        let selected =
+            current.and_then(|current| paints.iter().position(|paint| *paint == current));
+        // Down lands before the trigger's click opens the card, so the picker
+        // is in place, at the colour shown, by the card's first frame.
+        let ready = cx.listener(move |this, _: &bezel::gpui::MouseDownEvent, _, cx| {
+            if let Some(custom) = this.custom.as_ref().filter(|custom| custom.id == id) {
+                custom
+                    .picker
+                    .update(cx, |picker, cx| picker.set_color(shown, cx));
+                return;
+            }
+            let picker = cx.new(|cx| ColorPicker::new(shown, false, cx));
+            let changed = cx.subscribe(&picker, move |this, _, event: &ColorPickerEvent, cx| {
+                let ColorPickerEvent::Changed(color) = *event;
+                let paint = Paint::from_hsla(color);
+                this.workspace
+                    .update(cx, |workspace, cx| set(workspace, Some(paint), cx));
+            });
+            this.custom = Some(settings::CustomColor {
+                id,
+                picker,
+                _changed: changed,
+            });
+        });
         let well = popover::menu_trigger_matching(
-            theme.color_well(shown).id(id).relative(),
+            theme
+                .color_well(shown)
+                .id(id)
+                .relative()
+                .on_mouse_down(bezel::gpui::MouseButton::Left, ready),
             |this: &mut Self| &mut this.picker,
             move |open| *open == id,
             move |_| id,
             cx,
         );
-        let pick = std::rc::Rc::new(pick);
         let card = (self.picker.get() == Some(&id)).then(|| {
-            let columns = default.is_some().then_some(SWATCH_COLUMNS);
-            let picker = theme.swatch_picker((id, 0usize), &swatches, selected, columns, {
-                let pick = pick.clone();
-                cx.listener(move |this, ix: &usize, _, cx| {
-                    pick(this, Some(*ix), cx);
-                    popover::close_popup(this, cx, |this: &mut Self| &mut this.picker);
-                })
-            });
-            let reset = default.map(|Reset { on }| {
-                let pick = pick.clone();
-                popover::menu_row(&theme, on, None)
+            let swatches: Vec<Swatch> = paints
+                .iter()
+                .map(|paint| Swatch::fixed(paint.key(), paint.solid(&theme)))
+                .collect();
+            let presets =
+                theme.swatch_picker((id, 0usize), &swatches, selected, Some(SWATCH_COLUMNS), {
+                    let paints = paints.clone();
+                    cx.listener(move |this, ix: &usize, _, cx| {
+                        let paint = paints[*ix];
+                        this.workspace
+                            .update(cx, |workspace, cx| set(workspace, Some(paint), cx));
+                        if let Some(custom) = this.custom.as_ref().filter(|custom| custom.id == id)
+                        {
+                            let color = paint.solid(Theme::of(cx));
+                            custom
+                                .picker
+                                .update(cx, |picker, cx| picker.set_color(color, cx));
+                        }
+                        popover::close_popup(this, cx, |this: &mut Self| &mut this.picker);
+                    })
+                });
+            let custom = self
+                .custom
+                .as_ref()
+                .filter(|custom| custom.id == id)
+                .map(|custom| custom.picker.clone());
+            let reset = system.map(|_| {
+                popover::menu_row(&theme, current.is_none(), None)
                     .id((id, 1usize))
-                    .mt(px(4.))
                     .cursor_pointer()
                     .hover(|row| row.bg(theme.element_hover))
                     .child("Default")
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        pick(this, None, cx);
+                        this.workspace
+                            .update(cx, |workspace, cx| set(workspace, None, cx));
                         popover::close_popup(this, cx, |this: &mut Self| &mut this.picker);
                     }))
             });
@@ -637,7 +659,16 @@ impl SettingsWindow {
                     popover::popover_card(&theme)
                         .flex()
                         .flex_col()
-                        .child(picker)
+                        .child(
+                            // As wide as the preset grid; the picker fills it.
+                            div()
+                                .p(px(popover::MENU_ROW_INSET))
+                                .flex()
+                                .flex_col()
+                                .gap(px(popover::MENU_ROW_INSET))
+                                .child(presets)
+                                .children(custom),
+                        )
                         .children(reset),
                     |this: &mut Self| &mut this.picker,
                     cx,
@@ -829,29 +860,5 @@ impl SettingsWindow {
     }
 }
 
-/// The highlight colours as swatches, each with its light and dark value.
-fn highlight_swatches() -> Vec<Swatch> {
-    use crate::model::settings::Highlight;
-    use bezel::theme::Appearance;
-    let light = Theme::for_appearance(Appearance::Light);
-    let dark = Theme::for_appearance(Appearance::Dark);
-    Highlight::ALL
-        .into_iter()
-        .map(|named| {
-            Swatch::new(
-                named.label(),
-                markdown::highlight_solid(named.color(), &light),
-                markdown::highlight_solid(named.color(), &dark),
-            )
-        })
-        .collect()
-}
-
 /// Swatches a row of the colour popover holds.
 const SWATCH_COLUMNS: usize = 6;
-
-/// The popover's Default item, and whether it is the colour in use.
-#[derive(Clone, Copy)]
-struct Reset {
-    on: bool,
-}
