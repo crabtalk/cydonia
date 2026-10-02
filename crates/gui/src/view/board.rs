@@ -2665,45 +2665,52 @@ impl Cydonia {
             window,
             cx,
         );
+        // An empty lane's `Add a card` row rides in its heading's handle: the
+        // drag displaces handles only, and a row outside one is overlapped.
+        // Nothing to write into a narrowed lane: a card that does not
+        // answer the query would be filed and vanish in one gesture.
+        let add = (!folded && cards.is_empty() && query.trim().is_empty()).then(|| {
+            theme
+                .ghost(SharedString::from(format!("list-add-card-{id}")))
+                .flex_none()
+                .h(px(LIST_ROW_HEIGHT))
+                .px(px(BOARD_INSET))
+                .py(px(6.))
+                .gap(px(6.))
+                .child(
+                    icons::icon(icons::math::Plus)
+                        .size(px(12.))
+                        .text_color(theme.text_faint),
+                )
+                .child(
+                    div()
+                        .text_style(TextStyle::Callout)
+                        .text_color(theme.text_faint)
+                        .child("Add a card"),
+                )
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.edit(
+                        pane.as_ref(),
+                        Editing::New(Place::End, written.clone()),
+                        window,
+                        cx,
+                    );
+                }))
+                .into_any_element()
+        });
+        let heading = div()
+            .id(SharedString::from(format!("list-group-{id}")))
+            .flex_none()
+            .flex()
+            .flex_col()
+            .child(heading)
+            .children(add);
         std::iter::once(
             self.board_sort
                 .handle(BoardItem::Lane(key.clone(), id.clone()), heading)
                 .into_any_element(),
         )
         .chain(rows)
-        // Nothing to write into a narrowed lane: a card that does not
-        // answer the query would be filed and vanish in one gesture.
-        .chain(
-            (!folded && cards.is_empty() && query.trim().is_empty()).then(|| {
-                theme
-                    .ghost(SharedString::from(format!("list-add-card-{id}")))
-                    .flex_none()
-                    .h(px(LIST_ROW_HEIGHT))
-                    .px(px(BOARD_INSET))
-                    .py(px(6.))
-                    .gap(px(6.))
-                    .child(
-                        icons::icon(icons::math::Plus)
-                            .size(px(12.))
-                            .text_color(theme.text_faint),
-                    )
-                    .child(
-                        div()
-                            .text_style(TextStyle::Callout)
-                            .text_color(theme.text_faint)
-                            .child("Add a card"),
-                    )
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.edit(
-                            pane.as_ref(),
-                            Editing::New(Place::End, written.clone()),
-                            window,
-                            cx,
-                        );
-                    }))
-                    .into_any_element()
-            }),
-        )
         .collect()
     }
 
