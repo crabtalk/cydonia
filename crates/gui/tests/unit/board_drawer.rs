@@ -376,7 +376,7 @@ fn horizontal_scroll_keeps_offsets_and_lane_geometry_stable(cx: &mut TestAppCont
     let lane = cx.update(|_, cx| {
         let root = root.read(cx);
         let id = &root.workspace.read(cx).projects[0].boards[0].columns[1].id;
-        root.boards.of(&member.id).lanes.of(id).0
+        root.boards.of(&member.id).lanes.of(id).scroller()
     });
     let horizontal = scroll.offset();
     cx.simulate_event(gpui::ScrollWheelEvent {
@@ -460,7 +460,7 @@ fn offscreen_lanes_do_not_build_markdown(cx: &mut TestAppContext) {
     let lane = cx.update(|_, cx| {
         let root = root.read(cx);
         let id = &root.workspace.read(cx).projects[0].boards[0].columns[1].id;
-        root.boards.of(&member.id).lanes.of(id).0
+        root.boards.of(&member.id).lanes.of(id).scroller()
     });
     lane.set_offset(point(px(0.), px(-120.)));
     cx.update(|window, _| window.refresh());
@@ -830,9 +830,10 @@ fn list_cards_drop_into_a_collapsed_group_without_unfolding(cx: &mut TestAppCont
         });
         settle(&mut cx);
         let source = point(px(180.), px(LIST_HEADING_HEIGHT + LIST_ROW_HEIGHT / 2.));
+        // Past the middle of the folded group's heading.
         let destination = point(
             px(180.),
-            px(LIST_HEADING_HEIGHT * 1.5 + LIST_ROW_HEIGHT * 2.),
+            px(LIST_HEADING_HEIGHT * 1.75 + LIST_ROW_HEIGHT * 2.),
         );
         cx.simulate_mouse_down(source, MouseButton::Left, Modifiers::default());
         cx.simulate_mouse_move(
@@ -843,11 +844,6 @@ fn list_cards_drop_into_a_collapsed_group_without_unfolding(cx: &mut TestAppCont
         settle(&mut cx);
         cx.simulate_mouse_move(destination, Some(MouseButton::Left), Modifiers::default());
         settle(&mut cx);
-        assert!(cx.update(|_, cx| root.read(cx).aimed_into(&target, None, cx)));
-        let indicator = cx
-            .debug_bounds("list-collapsed-drop-target")
-            .expect("visible drop target");
-        assert_eq!(indicator.size.height, px(LIST_HEADING_HEIGHT));
         cx.simulate_mouse_up(destination, MouseButton::Left, Modifiers::default());
         settle(&mut cx);
         cx.update(|_, cx| {
@@ -858,4 +854,72 @@ fn list_cards_drop_into_a_collapsed_group_without_unfolding(cx: &mut TestAppCont
             assert_eq!(column.cards[0].id, cards[0]);
         });
     }
+}
+
+#[gpui::test]
+fn a_long_lane_builds_only_the_cards_on_screen(cx: &mut TestAppContext) {
+    let (_scratch, root, member, _, mut cx) = open("long-lane", cx);
+    cx.update(|window, cx| {
+        root.update(cx, |root, cx| {
+            root.close_card_preview(None, window, cx);
+            root.workspace.update(cx, |workspace, _| {
+                let board = &mut workspace.projects[0].boards[0];
+                let column = board.columns[0].id.clone();
+                for i in 0..150 {
+                    board.add_card(&column, format!("Long card {i}\n\nParagraph."));
+                }
+            });
+            cx.notify();
+        })
+    });
+    settle(&mut cx);
+    let built = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| {
+            root.read(cx)
+                .card_docs
+                .0
+                .borrow()
+                .keys()
+                .filter(|text| text.starts_with("Long card"))
+                .count()
+        })
+    };
+    let before = built(&mut cx);
+    assert!(before < 40, "built {before} of 150 cards in one lane");
+    let lane = cx.update(|_, cx| {
+        let root = root.read(cx);
+        let id = &root.workspace.read(cx).projects[0].boards[0].columns[0].id;
+        root.boards.of(&member.id).lanes.of(id)
+    });
+    // Both seeded cards, the 150, `Add a card` and the foot.
+    assert_eq!(lane.list.item_count(), 154);
+    cx.simulate_event(gpui::ScrollWheelEvent {
+        position: point(px(100.), px(300.)),
+        delta: gpui::ScrollDelta::Pixels(point(px(0.), px(-600.))),
+        modifiers: Default::default(),
+        touch_phase: gpui::TouchPhase::Started,
+    });
+    settle(&mut cx);
+    assert!(lane.scroller().offset().y < px(0.));
+    assert!(
+        built(&mut cx) > before,
+        "scrolling builds the cards it reaches"
+    );
+
+    cx.update(|_, cx| {
+        root.update(cx, |root, cx| {
+            root.workspace.update(cx, |workspace, _| {
+                let board = &mut workspace.projects[0].boards[0];
+                let column = board.columns[0].id.clone();
+                board.add_card(&column, "Long card last".into());
+            });
+            cx.notify();
+        })
+    });
+    settle(&mut cx);
+    assert_eq!(lane.list.item_count(), 155);
+    assert!(
+        lane.scroller().offset().y < px(0.),
+        "a new card keeps the lane where it was"
+    );
 }

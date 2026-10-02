@@ -472,6 +472,9 @@ pub struct Cydonia {
     pub(crate) dock: docking::Dock<Member, Dragged>,
     /// The sidebar's list, carried along itself and out onto the panes.
     pub(crate) sidebar_sort: drag::Domain<(), Dragged>,
+    /// Every board on screen: cards between lanes and boards, lanes and list
+    /// groups along their own board.
+    pub(crate) board_sort: drag::Domain<board::BoardRegion, board::BoardItem>,
     /// Each pane's strip, by the pane's own name.
     pub(crate) strips: RefCell<std::collections::HashMap<SharedString, tabs::Reorder<Dragged>>>,
     /// Which of each pane's tabs is in front, by the pane's own name — see
@@ -888,7 +891,7 @@ impl Cydonia {
     ///
     /// Drawing reads a pane's state through this rather than through
     /// [`Self::leaf`]: every pane drawn against the focused leaf shares one
-    /// scroll, one editor and one landing between them, so moving the focus
+    /// scroll and one editor between them, so moving the focus
     /// moves what the other panes are showing.
     pub(crate) fn leaf_of(&self, on: Option<&Member>) -> &Leaf {
         on.and_then(|on| {
@@ -1015,6 +1018,10 @@ impl Cydonia {
                 }
             }),
             sidebar_sort: drag::Domain::new(Painter::of(cx)),
+            board_sort: drag::Domain::with_ghost(Painter::of(cx), {
+                let this = cx.entity().downgrade();
+                move |item, window, cx| board::ghost(&this, item, window, cx)
+            }),
             strips: RefCell::default(),
             fronts: Default::default(),
             tab_history: Vec::new(),

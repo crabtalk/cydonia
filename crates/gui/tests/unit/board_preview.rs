@@ -24,7 +24,7 @@ fn closing_restores_automatic_scrolling_but_preserves_manual_scrolling() {
     let before = gpui::point(px(0.), px(-30.));
     let after = gpui::point(px(0.), px(-120.));
     let adjustment = LaneAdjustment {
-        scroll: scroll.clone(),
+        scroll: scroll.clone().into(),
         before,
         after,
     };

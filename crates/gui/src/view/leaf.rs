@@ -2,9 +2,9 @@
 //! needs.
 //!
 //! Split out of [`crate::view::root::Cydonia`], which held all of this when a
-//! window showed one entry at a time. A second pane is a second composer, a
-//! second board scroll and a second card in the air — one of each on the root
-//! is what makes two panes impossible, not the drawing.
+//! window showed one entry at a time. A second pane is a second composer and a
+//! second board scroll — one of each on the root is what makes two panes
+//! impossible, not the drawing.
 //!
 //! Nothing here is the window's. The sidebar, the menus, the dialogs and the
 //! settings window are one to a window however many panes it holds, and they
@@ -96,13 +96,6 @@ pub struct Leaf {
     /// Whether an article's or a transcript's find reads its field as a
     /// regular expression.
     pub(crate) find_pattern: bool,
-    /// Where the card now in the air would land. Written by the lanes and
-    /// cards the pointer crosses and read by the one that draws the mark —
-    /// see [`board::Landing`].
-    pub(crate) landing: Option<board::Landing>,
-    /// Where the list group now in the air would land — see
-    /// [`board::GroupLanding`].
-    pub(crate) group_landing: Option<board::GroupLanding>,
     /// What the table pane's field is attached to, and the field itself.
     pub(crate) cell: Option<table::Cell>,
     pub(crate) cell_field: Entity<TextField>,
@@ -135,8 +128,6 @@ impl Leaf {
             finding: false,
             find_at: 0,
             find_pattern: false,
-            landing: None,
-            group_landing: None,
             cell: None,
             cell_field,
             ribbon,
