@@ -2,7 +2,7 @@
 //! writes them.
 
 use crate::{
-    model::{session::ChatSession, workspace::Showing},
+    model::session::ChatSession,
     view::{
         component::{
             menu::{self, Menu},
@@ -838,10 +838,7 @@ impl Cydonia {
         cx: &mut Context<Self>,
     ) {
         self.commit(cx);
-        let member = self
-            .workspace
-            .read(cx)
-            .member_of(project, Showing::Board(ix));
+        let member = self.workspace.read(cx).board_member(project, ix);
         if self.enter_member(member, window, cx) {
             return;
         }
@@ -1567,11 +1564,7 @@ impl Cydonia {
     ) -> Option<&OpenCard> {
         let opened = self.leaf_of(on).open_card.as_ref()?;
         let workspace = self.workspace.read(cx);
-        if workspace
-            .member_of(project, Showing::Board(board_at))
-            .as_ref()
-            != Some(&opened.board)
-        {
+        if workspace.board_member(project, board_at).as_ref() != Some(&opened.board) {
             return None;
         }
         if workspace
@@ -2908,10 +2901,7 @@ impl Cydonia {
         let (opened, run) = (id.to_owned(), id.to_owned());
         let sent = on_board.clone();
         let pane = on.cloned();
-        let member = self
-            .workspace
-            .read(cx)
-            .member_of(project, Showing::Board(board_at));
+        let member = self.workspace.read(cx).board_member(project, board_at);
         let selected = self
             .drawer_for(project, board_at, on, cx)
             .is_some_and(|opened| opened.card == id);
@@ -3657,10 +3647,7 @@ impl Cydonia {
         let (opened, run) = (id.to_owned(), id.to_owned());
         let sent = on_board.clone();
         let pane = on.cloned();
-        let member = self
-            .workspace
-            .read(cx)
-            .member_of(project, Showing::Board(board_at));
+        let member = self.workspace.read(cx).board_member(project, board_at);
         let selected = self
             .leaf_of(on)
             .open_card

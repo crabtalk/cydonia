@@ -2,7 +2,7 @@
 
 use crate::{
     memory,
-    model::{article, workspace::Showing},
+    model::article,
     view::{
         leaf::Pane,
         root::{Cydonia, NewArticle},
@@ -220,10 +220,7 @@ impl Cydonia {
         cx: &mut Context<Self>,
     ) {
         self.commit(cx);
-        let member = self
-            .workspace
-            .read(cx)
-            .member_of(project, Showing::Article(ix));
+        let member = self.workspace.read(cx).article_member(project, ix);
         if self.enter_member(member, window, cx) {
             return;
         }
@@ -670,8 +667,10 @@ impl Cydonia {
     }
 
     /// One article in the sidebar, under the project that holds it.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn article_row(
         &self,
+        entry: &Row,
         project: usize,
         ix: usize,
         title: String,
@@ -681,7 +680,6 @@ impl Cydonia {
     ) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
         let workspace = self.workspace.read(cx);
-        let entry = Row::Article { project, ix };
         let light = self.light_of(entry, cx);
         let selected = light.selected();
         let article = workspace
@@ -690,7 +688,7 @@ impl Cydonia {
             .and_then(|open| open.articles.get(ix));
         let archived = article.is_some_and(|article| article.archived);
         let tint = light.tint(archived, &theme);
-        let id = SharedString::from(format!("article-{project}-{ix}"));
+        let id = SharedString::from(sidebar::key_of(entry));
 
         sidebar::row(
             id,
@@ -718,7 +716,7 @@ impl Cydonia {
                 .child(title),
         )
         .child(self.archive_button(
-            format!("article-archive-{ix}"),
+            format!("archive-{}", sidebar::key_of(entry)),
             "article-row",
             entry,
             archived,

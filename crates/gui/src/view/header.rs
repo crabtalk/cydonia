@@ -66,9 +66,9 @@ impl Cydonia {
         let open = workspace.projects.get(project)?;
         let showing = match pane {
             Pane::Chat => Showing::Session(open.active?),
-            Pane::Board => Showing::Board(open.board?),
-            Pane::Article => Showing::Article(open.article?),
-            Pane::Table => Showing::Table(open.table?),
+            Pane::Board => Showing::Board(open.boards.get(open.board?)?.id.clone()),
+            Pane::Article => Showing::Article(open.articles.get(open.article?)?.id.clone()),
+            Pane::Table => Showing::Table(open.tables.get(open.table?)?.key.clone()),
         };
         self.toolbar_of(project, showing, cx)
     }
@@ -79,6 +79,11 @@ impl Cydonia {
     pub(crate) fn toolbar_of(&self, project: usize, showing: Showing, cx: &App) -> Option<Toolbar> {
         let workspace = self.workspace.read(cx);
         let open = workspace.projects.get(project)?;
+        let row = Row::Entry {
+            project: open.path.clone(),
+            showing: showing.clone(),
+        };
+        let ix = open.ix_of(&showing)?;
         Some(match showing {
             Showing::Session(id) => {
                 let chat = open.session(id)?;
@@ -86,43 +91,43 @@ impl Cydonia {
                     title: chat.label(),
                     number: chat.number,
                     entry: Some(Entry {
-                        row: Row::Session { project, id },
+                        row,
                         archived: chat.closed,
                         naming: Naming::Inline(Renaming::Session(id)),
                     }),
                 }
             }
-            Showing::Board(ix) => {
-                let board = open.boards.get(ix)?;
+            Showing::Board(_) => {
+                let board = &open.boards[ix];
                 Toolbar {
                     title: board.label().to_owned(),
                     number: board.number,
                     entry: Some(Entry {
-                        row: Row::Board { project, ix },
+                        row,
                         archived: board.archived,
                         naming: Naming::Panel(board.id.clone()),
                     }),
                 }
             }
-            Showing::Article(ix) => {
-                let article = open.articles.get(ix)?;
+            Showing::Article(_) => {
+                let article = &open.articles[ix];
                 Toolbar {
                     title: article.label().to_owned(),
                     number: article.number,
                     entry: Some(Entry {
-                        row: Row::Article { project, ix },
+                        row,
                         archived: article.archived,
                         naming: Naming::Page,
                     }),
                 }
             }
-            Showing::Table(ix) => {
-                let table = open.tables.get(ix)?;
+            Showing::Table(_) => {
+                let table = &open.tables[ix];
                 Toolbar {
                     title: table.name.clone(),
                     number: table.number,
                     entry: Some(Entry {
-                        row: Row::Table { project, ix },
+                        row,
                         archived: table.archived,
                         naming: Naming::Inline(Renaming::Table(table.key.clone())),
                     }),
@@ -275,7 +280,7 @@ impl Cydonia {
                             )
                             .children(self.entry_menu(
                                 Menu::Header,
-                                entry.row,
+                                &entry.row,
                                 entry.archived,
                                 window,
                                 cx,

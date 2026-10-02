@@ -47,13 +47,19 @@ use bezel::{
         widgets::{ButtonStyle, Buttons, Layout},
     },
 };
-use std::{cell::RefCell, collections::HashMap, ops::Range, rc::Rc, time::Duration};
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    ops::Range,
+    path::{Path, PathBuf},
+    rc::Rc,
+    time::Duration,
+};
 
 /// What the sidebar needs of a session to draw its row, read out of the model
 /// before the row is built: a turn in flight puts a thinking orb in the mark's
 /// place, and the orb leases the frame clock, which wants the app mutably.
 struct SessionRow {
-    project: usize,
     id: u64,
     label: String,
     icon: Option<Icon>,
@@ -74,30 +80,17 @@ struct Working {
 /// One line of the sidebar. An address, not content: the label behind it is
 /// read when the row is built, which the list only does for the rows on
 /// screen.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub(crate) enum Row {
     /// The heading over a section of the list.
     Heading(Heading),
     /// A project or a space: a heading its entries fold under.
     Group(Group),
-    /// The line the archived entries are folded under.
-    Archive(usize),
-    Session {
-        project: usize,
-        id: u64,
-    },
-    Board {
-        project: usize,
-        ix: usize,
-    },
-    Article {
-        project: usize,
-        ix: usize,
-    },
-    Table {
-        project: usize,
-        ix: usize,
-    },
+    /// The line the archived entries of the project at this path are folded
+    /// under.
+    Archive(PathBuf),
+    /// An entry of the project at `project`.
+    Entry { project: PathBuf, showing: Showing },
 }
 
 /// The two sections of the list.
@@ -128,10 +121,12 @@ impl Heading {
 /// What entries are listed under: a project holds its own, a space the ones it
 /// arranges. One heading, one fold and one drag for both — see
 /// [`Cydonia::group_head`].
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+#[derive(Clone, PartialEq, Eq, Debug, Hash)]
 pub(crate) enum Group {
-    Project(usize),
-    Space(usize),
+    /// A project, by its path.
+    Project(PathBuf),
+    /// A space, by its id.
+    Space(String),
 }
 
 /// How a row's entry stands to what the window is showing.
@@ -156,29 +151,21 @@ impl Light {
     }
 }
 
-/// Which of a project's four an entry row stands for, and `None` for the two
-/// rows that are not entries.
-fn showing_of(row: Row) -> Option<Showing> {
-    Some(match row {
-        // A space arranges entries; it is not one a pane can be put on.
-        Row::Group(_) | Row::Archive(_) | Row::Heading(_) => {
-            return None;
-        }
-        Row::Session { id, .. } => Showing::Session(id),
-        Row::Board { ix, .. } => Showing::Board(ix),
-        Row::Article { ix, .. } => Showing::Article(ix),
-        Row::Table { ix, .. } => Showing::Table(ix),
-    })
+/// What an entry row stands for, and `None` for the rows that are not
+/// entries.
+fn showing_of(row: &Row) -> Option<&Showing> {
+    match row {
+        Row::Entry { showing, .. } => Some(showing),
+        Row::Group(_) | Row::Archive(_) | Row::Heading(_) => None,
+    }
 }
 
-/// The project an entry row belongs to.
-fn project_of(row: Row) -> Option<usize> {
+/// The project an entry row, a project's heading or its archive line belongs
+/// to.
+fn project_of(row: &Row) -> Option<&Path> {
     match row {
-        Row::Group(Group::Project(ix)) | Row::Archive(ix) => Some(ix),
-        Row::Session { project, .. }
-        | Row::Board { project, .. }
-        | Row::Article { project, .. }
-        | Row::Table { project, .. } => Some(project),
+        Row::Group(Group::Project(path)) | Row::Archive(path) => Some(path),
+        Row::Entry { project, .. } => Some(project),
         Row::Group(Group::Space(_)) | Row::Heading(_) => None,
     }
 }
@@ -186,17 +173,12 @@ fn project_of(row: Row) -> Option<usize> {
 /// Whether the kind a row names is switched on. Articles have no switch, and
 /// neither do the two rows that are not entries — a project heading and the
 /// line its archive folds under stand whatever is listed beneath them.
-fn shown(row: Row, features: &Features) -> bool {
-    match row {
-        Row::Session { .. } => features.sessions,
-        Row::Board { .. } => features.boards,
-        Row::Table { .. } => features.tables,
-        Row::Group(Group::Project(_))
-        | Row::Archive(_)
-        | Row::Article { .. }
-        | Row::Group(Group::Space(_))
-        | Row::Heading(Heading::Projects)
-        | Row::Heading(Heading::Spaces) => true,
+fn shown(row: &Row, features: &Features) -> bool {
+    match showing_of(row) {
+        Some(Showing::Session(_)) => features.sessions,
+        Some(Showing::Board(_)) => features.boards,
+        Some(Showing::Table(_)) => features.tables,
+        Some(Showing::Article(_)) | None => true,
     }
 }
 
@@ -284,7 +266,7 @@ fn carried_rows(rows: &[Row], item: &Dragged) -> Vec<Dragged> {
         .skip_while(|at| *at != row)
         .skip(1)
         .take_while(|at| !matches!(at, Row::Heading(_) | Row::Group(_)))
-        .map(|at| Dragged::Row(*at))
+        .map(|at| Dragged::Row(at.clone()))
         .collect()
 }
 
@@ -301,17 +283,22 @@ pub(crate) fn ghost(label: SharedString, theme: &Theme) -> AnyElement {
 }
 
 /// An entry's own name in the element tree: two rows must never share one.
-fn key_of(entry: Row) -> String {
+pub(crate) fn key_of(entry: &Row) -> String {
     match entry {
-        Row::Group(Group::Project(ix)) => format!("project-{ix}"),
-        Row::Group(Group::Space(ix)) => format!("space-{ix}"),
+        Row::Group(Group::Project(path)) => format!("project-{}", path.display()),
+        Row::Group(Group::Space(id)) => format!("space-{id}"),
         Row::Heading(Heading::Projects) => "projects".to_owned(),
         Row::Heading(Heading::Spaces) => "spaces".to_owned(),
-        Row::Archive(ix) => format!("archive-{ix}"),
-        Row::Session { project, id } => format!("session-{project}-{id}"),
-        Row::Board { project, ix } => format!("board-{project}-{ix}"),
-        Row::Article { project, ix } => format!("article-{project}-{ix}"),
-        Row::Table { project, ix } => format!("table-{project}-{ix}"),
+        Row::Archive(path) => format!("archive-{}", path.display()),
+        Row::Entry { project, showing } => {
+            let project = project.display();
+            match showing {
+                Showing::Session(id) => format!("session-{project}-{id}"),
+                Showing::Board(id) => format!("board-{project}-{id}"),
+                Showing::Article(id) => format!("article-{project}-{id}"),
+                Showing::Table(key) => format!("table-{project}-{key}"),
+            }
+        }
     }
 }
 
@@ -659,7 +646,8 @@ impl Cydonia {
     /// the headings of its kind, and either can be carried out onto a pane.
     fn sidebar_list(&self, rows: Vec<Row>, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let places = Rc::new(self.row_places(&rows, cx));
-        let followers = Rc::new(rows.clone());
+        let rows = Rc::new(rows);
+        let followers = rows.clone();
         let count = rows.len();
         let list = uniform_list(
             "project-list",
@@ -667,7 +655,7 @@ impl Cydonia {
             cx.processor(move |this, range: Range<usize>, window, cx| {
                 let lifted: Vec<Dragged> = rows
                     .iter()
-                    .map(|row| Dragged::Row(*row))
+                    .map(|row| Dragged::Row(row.clone()))
                     .filter(|item| this.sidebar_sort.carries(item))
                     .flat_map(|item| {
                         let followers = carried_rows(&rows, &item);
@@ -676,9 +664,9 @@ impl Cydonia {
                     .collect();
                 range
                     .map(|ix| {
-                        let row = rows[ix];
-                        let item = Dragged::Row(row);
-                        let el = this.sidebar_row(row, lifted.contains(&item), window, cx);
+                        let row = rows[ix].clone();
+                        let item = Dragged::Row(row.clone());
+                        let el = this.sidebar_row(&row, lifted.contains(&item), window, cx);
                         match row {
                             Row::Heading(_) | Row::Archive(_) => {
                                 this.sidebar_sort.fixed(item, el).into_any_element()
@@ -708,7 +696,7 @@ impl Cydonia {
     /// they are listed in — the pins, the rest, the archive — and a space's
     /// within that space.
     fn row_places(&self, rows: &[Row], cx: &App) -> HashMap<Row, Place> {
-        let mut group = None;
+        let mut group: Option<&Group> = None;
         let mut section = Heading::Projects;
         rows.iter()
             .map(|row| {
@@ -720,21 +708,21 @@ impl Cydonia {
                     Row::Archive(_) => "archive".into(),
                     Row::Group(Group::Project(_)) => "projects".into(),
                     Row::Group(Group::Space(_)) => "spaces".into(),
-                    _ => match group {
-                        Some(Group::Space(ix)) => format!("space-{ix}").into(),
+                    Row::Entry { project, .. } => match group {
+                        Some(Group::Space(id)) => format!("space-{id}").into(),
                         _ => format!(
                             "entries-{}-{}-{}",
-                            project_of(*row).unwrap_or_default(),
-                            self.pinned(*row, cx),
-                            self.archived_of(*row, cx),
+                            project.display(),
+                            self.pinned(row, cx),
+                            self.archived_of(row, cx),
                         )
                         .into(),
                     },
                 };
                 if let Row::Group(at) = row {
-                    group = Some(*at);
+                    group = Some(at);
                 }
-                (*row, Place { kind, section })
+                (row.clone(), Place { kind, section })
             })
             .collect()
     }
@@ -760,7 +748,7 @@ impl Cydonia {
         else {
             return Empty.into_any_element();
         };
-        let Row::Group(group) = rows[at] else {
+        let Row::Group(group) = rows[at].clone() else {
             return Empty.into_any_element();
         };
         // The next heading pushes this one out rather than sliding under it,
@@ -816,8 +804,11 @@ impl Cydonia {
         let theme = Theme::of(cx).clone();
         let workspace = self.workspace.read(cx);
         let (name, folded, marks, space_id): (String, bool, (Icon, Icon), Option<String>) =
-            match group {
-                Group::Project(ix) => match workspace.projects.get(ix) {
+            match &group {
+                Group::Project(path) => match workspace
+                    .project_at(path)
+                    .and_then(|ix| workspace.projects.get(ix))
+                {
                     Some(project) => (
                         project.name(),
                         !project.expanded,
@@ -826,7 +817,10 @@ impl Cydonia {
                     ),
                     None => return Empty.into_any_element(),
                 },
-                Group::Space(ix) => match workspace.spaces.get(ix) {
+                Group::Space(id) => match workspace
+                    .space_ix(id)
+                    .and_then(|ix| workspace.spaces.get(ix))
+                {
                     Some(space) => (
                         space.label().to_owned(),
                         workspace.space_folded(&space.id),
@@ -840,10 +834,10 @@ impl Cydonia {
                 },
             };
         let folded = folded && self.applied_query().is_none();
-        let key = key_of(Row::Group(group));
-        let (menu, add) = match group {
-            Group::Project(ix) => (Menu::Project(ix), Some(Menu::Add(ix))),
-            Group::Space(_) => (Menu::Entry(Row::Group(group)), None),
+        let key = key_of(&Row::Group(group.clone()));
+        let (menu, add) = match &group {
+            Group::Project(path) => (Menu::Project(path.clone()), Some(Menu::Add(path.clone()))),
+            Group::Space(_) => (Menu::Entry(Row::Group(group.clone())), None),
         };
         // The buttons stay on show while either one's menu is open. They are
         // revealed by the row's hover, and the pointer leaves the row the
@@ -918,9 +912,12 @@ impl Cydonia {
                         .text_color(theme.text_muted)
                         .group_hover("group-head", |el| el.text_color(theme.text)),
                     )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        cx.stop_propagation();
-                        this.fold_group(group, cx);
+                    .on_click(cx.listener({
+                        let group = group.clone();
+                        move |this, _, _, cx| {
+                            cx.stop_propagation();
+                            this.fold_group(&group, cx);
+                        }
                     })),
             )
             .child(label)
@@ -939,21 +936,21 @@ impl Cydonia {
                 // off the far side of the sidebar rather than under the `···`.
                 // A space's is drawn by the row around it — see
                 // [`Self::sidebar_row`].
-                .children(match group {
-                    Group::Project(ix) => self.project_menu(ix, window, cx),
+                .children(match &group {
+                    Group::Project(path) => self.project_menu(path, window, cx),
                     Group::Space(_) => None,
                 }),
             )
-            .children(match group {
-                Group::Project(ix) => Some(
+            .children(match &group {
+                Group::Project(path) => Some(
                     self.menu_button(
                         SharedString::from(format!("group-add-{key}")),
                         reveal,
                         icons::math::Plus,
-                        Menu::Add(ix),
+                        Menu::Add(path.clone()),
                         cx,
                     )
-                    .children(self.add_menu(ix, window, cx)),
+                    .children(self.add_menu(path, window, cx)),
                 ),
                 Group::Space(_) => None,
             })
@@ -961,15 +958,18 @@ impl Cydonia {
             // goes back to the heading it is standing in for, rather than
             // folding away what you are reading. Its own mark still folds —
             // that press stops before it reaches here.
-            .on_click(cx.listener(move |this, _, _, cx| match pinned {
-                true => this.scroll_to_group(group, cx),
-                false => this.fold_group(group, cx),
+            .on_click(cx.listener({
+                let group = group.clone();
+                move |this, _, _, cx| match pinned {
+                    true => this.scroll_to_group(&group, cx),
+                    false => this.fold_group(&group, cx),
+                }
             }));
         // A project's menu opens on the press rather than the click, so the
         // note has to be here too — read stale, a right press would swallow.
         // A space's opens from the row around it, as an entry's does.
-        let head = match group {
-            Group::Project(ix) => self.menu_press(head, Menu::Project(ix), cx),
+        let head = match &group {
+            Group::Project(path) => self.menu_press(head, Menu::Project(path.clone()), cx),
             Group::Space(_) => head,
         };
         match pinned {
@@ -986,8 +986,7 @@ impl Cydonia {
     ///
     /// One list rather than four: the kinds are told apart by their marks, and
     /// grouping by kind buries the table you are working in under every article
-    /// you are not. Only the addresses are ordered — each kind's own list keeps
-    /// the indices these carry.
+    /// you are not.
     pub(crate) fn entries(&self, project: usize, cx: &App) -> Vec<Row> {
         let features = &self.workspace.read(cx).settings.features;
         let mut entries = self.ranked(project, cx);
@@ -995,23 +994,16 @@ impl Cydonia {
         // switch hides it hides here — the entries stay in the project and in
         // memory, and turning it back on lists them again with nothing to
         // rescan.
-        entries.retain(|entry| shown(entry.row, features));
+        entries.retain(|entry| shown(&entry.row, features));
         let split = entries.iter().position(|entry| entry.archived);
-        let mut rows: Vec<Row> = entries
-            .iter()
-            .take(split.unwrap_or(entries.len()))
-            .map(|entry| entry.row)
-            .collect();
-        if let Some(split) = split {
-            rows.push(Row::Archive(project));
-            if self
-                .workspace
-                .read(cx)
-                .projects
-                .get(project)
-                .is_some_and(|open| open.archive_open)
-            {
-                rows.extend(entries[split..].iter().map(|entry| entry.row));
+        let mut entries = entries.into_iter().map(|entry| entry.row);
+        let mut rows: Vec<Row> = entries.by_ref().take(split.unwrap_or(usize::MAX)).collect();
+        if split.is_some()
+            && let Some(open) = self.workspace.read(cx).projects.get(project)
+        {
+            rows.push(Row::Archive(open.path.clone()));
+            if open.archive_open {
+                rows.extend(entries);
             }
         }
         self.ungrouped(rows, cx)
@@ -1031,37 +1023,34 @@ impl Cydonia {
         // Folded for the comparison and kept that way: a sort reads it many
         // times and the case is never shown from here.
         let folded = |name: &str| name.to_lowercase();
+        let row = |showing: Showing| Row::Entry {
+            project: open.path.clone(),
+            showing,
+        };
         let sessions = open.sessions.iter().map(|chat| Ranked {
             archived: chat.closed,
             touched: chat.touched(),
             name: folded(&chat.label()),
-            row: Row::Session {
-                project,
-                id: chat.id,
-            },
+            row: row(Showing::Session(chat.id)),
         });
-        let boards = open.boards.iter().enumerate().map(|(ix, board)| Ranked {
+        let boards = open.boards.iter().map(|board| Ranked {
             archived: board.archived,
             touched: board.touched,
             name: folded(board.label()),
-            row: Row::Board { project, ix },
+            row: row(Showing::Board(board.id.clone())),
         });
-        let articles = open
-            .articles
-            .iter()
-            .enumerate()
-            .map(|(ix, article)| Ranked {
-                archived: article.archived,
-                touched: article.touched,
-                name: folded(article.label()),
-                row: Row::Article { project, ix },
-            });
-        let tables = open.tables.iter().enumerate().map(|(ix, table)| Ranked {
+        let articles = open.articles.iter().map(|article| Ranked {
+            archived: article.archived,
+            touched: article.touched,
+            name: folded(article.label()),
+            row: row(Showing::Article(article.id.clone())),
+        });
+        let tables = open.tables.iter().map(|table| Ranked {
             archived: table.archived,
             // The store keeps seconds; every other stamp here is milliseconds.
             touched: table.updated_at.unwrap_or(table.created_at).max(0) as u128 * 1000,
             name: folded(&table.name),
-            row: Row::Table { project, ix },
+            row: row(Showing::Table(table.key.clone())),
         });
         let mut entries: Vec<Ranked> = sessions
             .chain(boards)
@@ -1073,8 +1062,8 @@ impl Cydonia {
         // ordered by: what is put away is out of the way, and a pin is a place
         // somebody asked for. The sort is what happens between them.
         let head = |entry: &Ranked| {
-            let pin =
-                showing_of(entry.row).and_then(|showing| workspace.pin_rank(project, showing));
+            let pin = showing_of(&entry.row)
+                .and_then(|showing| workspace.pin_rank(project, showing.clone()));
             (entry.archived, pin.is_none(), pin.unwrap_or_default())
         };
         entries.sort_by(|a, b| {
@@ -1088,8 +1077,8 @@ impl Cydonia {
                 // unpinned rows without displacing a pin.
                 state::Sort::Manual => {
                     let rank = |entry: &Ranked| {
-                        let at = showing_of(entry.row)
-                            .and_then(|showing| workspace.rank_of(project, showing));
+                        let at = showing_of(&entry.row)
+                            .and_then(|showing| workspace.rank_of(project, showing.clone()));
                         (at.is_some(), at.unwrap_or_default())
                     };
                     rank(a)
@@ -1111,7 +1100,7 @@ impl Cydonia {
         }
         rows.into_iter()
             .filter(|row| {
-                self.member_of_row(*row, cx)
+                self.member_of_row(row, cx)
                     .and_then(|member| workspace.space_holding(&member))
                     .is_none()
             })
@@ -1127,14 +1116,18 @@ impl Cydonia {
     /// and the same answer decides both lists, so a file written before that
     /// held lists its entry once here rather than twice, and never beside the
     /// copy [`Self::ungrouped`] took out of the project.
-    fn members(&self, group: Group, cx: &App) -> Vec<Row> {
+    fn members(&self, group: &Group, cx: &App) -> Vec<Row> {
+        let workspace = self.workspace.read(cx);
         match group {
-            Group::Project(ix) => self.entries(ix, cx),
-            Group::Space(ix) => {
-                let workspace = self.workspace.read(cx);
-                let Some(space) = workspace.spaces.get(ix) else {
+            Group::Project(path) => workspace
+                .project_at(path)
+                .map(|ix| self.entries(ix, cx))
+                .unwrap_or_default(),
+            Group::Space(id) => {
+                let Some(ix) = workspace.space_ix(id) else {
                     return Vec::new();
                 };
+                let space = &workspace.spaces[ix];
                 workspace
                     .listed_members(space)
                     .iter()
@@ -1146,44 +1139,30 @@ impl Cydonia {
     }
 
     /// Whether a group's rows are folded away under it.
-    fn folded(&self, group: Group, cx: &App) -> bool {
+    fn folded(&self, group: &Group, cx: &App) -> bool {
         let workspace = self.workspace.read(cx);
         match group {
-            Group::Project(ix) => workspace
-                .projects
-                .get(ix)
-                .is_some_and(|open| !open.expanded),
-            Group::Space(ix) => workspace
-                .spaces
-                .get(ix)
-                .is_some_and(|space| workspace.space_folded(&space.id)),
+            Group::Project(path) => workspace
+                .project_at(path)
+                .is_some_and(|ix| !workspace.projects[ix].expanded),
+            Group::Space(id) => workspace.space_folded(id),
         }
     }
 
     /// Fold a group's rows away, or bring them back.
-    pub(crate) fn fold_group(&mut self, group: Group, cx: &mut Context<Self>) {
+    pub(crate) fn fold_group(&mut self, group: &Group, cx: &mut Context<Self>) {
         if self.applied_query().is_some() {
             return;
         }
         self.commit(cx);
-        match group {
-            Group::Project(ix) => self
-                .workspace
-                .update(cx, |workspace, cx| workspace.toggle_project(ix, cx)),
-            Group::Space(ix) => {
-                let Some(id) = self
-                    .workspace
-                    .read(cx)
-                    .spaces
-                    .get(ix)
-                    .map(|space| space.id.clone())
-                else {
-                    return;
-                };
-                self.workspace
-                    .update(cx, |workspace, cx| workspace.toggle_space(&id, cx));
+        self.workspace.update(cx, |workspace, cx| match group {
+            Group::Project(path) => {
+                if let Some(ix) = workspace.project_at(path) {
+                    workspace.toggle_project(ix, cx);
+                }
             }
-        }
+            Group::Space(id) => workspace.toggle_space(id, cx),
+        });
     }
 
     /// How far in a row is drawn: one step for a project's or an open
@@ -1192,7 +1171,7 @@ impl Cydonia {
     /// The indent is the whole of what says a row belongs to the heading above
     /// it. Nothing else is drawn on it — a rule beside it or a wash behind it
     /// is a second way of saying what the offset already says.
-    pub(crate) fn indent_of(&self, row: Row, cx: &App) -> u8 {
+    pub(crate) fn indent_of(&self, row: &Row, cx: &App) -> u8 {
         match row {
             // A space is not inside a project — it can hold panes from
             // several — so its row starts at the column's edge, where the
@@ -1205,12 +1184,10 @@ impl Cydonia {
     /// The row for a member a space holds — the way back from what it names
     /// to the line that stands for it. Nothing where its project is not open.
     fn row_of_member(&self, member: &Member, cx: &App) -> Option<Row> {
-        let (project, showing) = self.workspace.read(cx).showing_of(member)?;
-        Some(match showing {
-            Showing::Session(id) => Row::Session { project, id },
-            Showing::Board(ix) => Row::Board { project, ix },
-            Showing::Article(ix) => Row::Article { project, ix },
-            Showing::Table(ix) => Row::Table { project, ix },
+        let (_, showing) = self.workspace.read(cx).showing_of(member)?;
+        Some(Row::Entry {
+            project: member.project.clone(),
+            showing,
         })
     }
 
@@ -1219,8 +1196,14 @@ impl Cydonia {
     /// none of them.
     pub(crate) fn rows(&self, cx: &Context<Self>) -> Vec<Row> {
         let workspace = self.workspace.read(cx);
-        let projects = (0..workspace.projects.len()).map(Group::Project);
-        let spaces = (0..workspace.spaces.len()).map(Group::Space);
+        let projects = workspace
+            .projects
+            .iter()
+            .map(|open| Group::Project(open.path.clone()));
+        let spaces = workspace
+            .spaces
+            .iter()
+            .map(|space| Group::Space(space.id.clone()));
         // The projects' heading whether or not any are open: it holds the way
         // to open one. After the projects, the spaces, because a space is not
         // inside one.
@@ -1234,12 +1217,18 @@ impl Cydonia {
                 let start = rows.len();
                 rows.push(Row::Heading(heading));
                 for group in groups {
-                    let members = match group {
-                        Group::Project(ix) => self.ungrouped(
-                            self.ranked(ix, cx).into_iter().map(|e| e.row).collect(),
+                    let members = match &group {
+                        Group::Project(path) => self.ungrouped(
+                            workspace
+                                .project_at(path)
+                                .map(|ix| self.ranked(ix, cx))
+                                .unwrap_or_default()
+                                .into_iter()
+                                .map(|e| e.row)
+                                .collect(),
                             cx,
                         ),
-                        Group::Space(_) => self.members(group, cx),
+                        Group::Space(_) => self.members(&group, cx),
                     };
                     let members: Vec<_> = members
                         .into_iter()
@@ -1262,10 +1251,10 @@ impl Cydonia {
                 continue;
             }
             for group in groups {
+                let open = !self.folded(&group, cx);
+                let members = open.then(|| self.members(&group, cx));
                 rows.push(Row::Group(group));
-                if !self.folded(group, cx) {
-                    rows.extend(self.members(group, cx));
-                }
+                rows.extend(members.into_iter().flatten());
             }
         }
         rows
@@ -1278,7 +1267,7 @@ impl Cydonia {
         let features = &workspace.settings.features;
         let mut entries: Vec<Ranked> = (0..workspace.projects.len())
             .flat_map(|project| self.ranked(project, cx))
-            .filter(|entry| !entry.archived && shown(entry.row, features))
+            .filter(|entry| !entry.archived && shown(&entry.row, features))
             .collect();
         entries.sort_by_key(|entry| std::cmp::Reverse(entry.touched));
         entries.into_iter().map(|entry| entry.row).collect()
@@ -1287,26 +1276,61 @@ impl Cydonia {
     /// Open what a row points at — what a keyboard step does with its landing.
     /// The pointer never comes through here: each row carries its own
     /// `on_click`, which needs no [`Row`] to know what it is.
-    pub(crate) fn open_row(&mut self, row: Row, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn open_row(&mut self, row: &Row, window: &mut Window, cx: &mut Context<Self>) {
+        let workspace = self.workspace.read(cx);
         match row {
-            Row::Group(Group::Project(ix)) => self.select_project(ix, cx),
-            Row::Archive(ix) => self.toggle_archive(ix, cx),
-            Row::Session { id, .. } => self.select_session(id, window, cx),
-            Row::Board { project, ix } => self.open_board(project, ix, window, cx),
-            Row::Article { project, ix } => self.open_article(project, ix, window, cx),
-            Row::Table { project, ix } => self.open_table(project, ix, window, cx),
-            Row::Group(Group::Space(ix)) => self.open_space(ix, window, cx),
+            Row::Group(Group::Project(path)) => {
+                if let Some(ix) = workspace.project_at(path) {
+                    self.select_project(ix, cx);
+                }
+            }
+            Row::Archive(path) => {
+                if let Some(ix) = workspace.project_at(path) {
+                    self.toggle_archive(ix, cx);
+                }
+            }
+            Row::Entry {
+                showing: Showing::Session(id),
+                ..
+            } => self.select_session(*id, window, cx),
+            Row::Entry { showing, .. } => {
+                let Some((project, ix)) = self.located(row, cx) else {
+                    return;
+                };
+                match showing {
+                    Showing::Board(_) => self.open_board(project, ix, window, cx),
+                    Showing::Article(_) => self.open_article(project, ix, window, cx),
+                    Showing::Table(_) => self.open_table(project, ix, window, cx),
+                    Showing::Session(_) => {}
+                }
+            }
+            Row::Group(Group::Space(id)) => {
+                if let Some(ix) = workspace.space_ix(id) {
+                    self.open_space(ix, window, cx);
+                }
+            }
             // A heading over a section, and nothing to open.
             Row::Heading(_) => {}
         }
     }
 
+    /// Where an entry row's project is listed now, and where its entry is
+    /// listed among its kind in that project.
+    pub(crate) fn located(&self, row: &Row, cx: &App) -> Option<(usize, usize)> {
+        let Row::Entry { project, showing } = row else {
+            return None;
+        };
+        let workspace = self.workspace.read(cx);
+        let at = workspace.project_at(project)?;
+        Some((at, workspace.projects[at].ix_of(showing)?))
+    }
+
     /// Take the list back to where a group starts, heading and all.
-    fn scroll_to_group(&mut self, group: Group, cx: &mut Context<Self>) {
+    fn scroll_to_group(&mut self, group: &Group, cx: &mut Context<Self>) {
         let Some(at) = self
             .rows(cx)
             .iter()
-            .position(|row| *row == Row::Group(group))
+            .position(|row| matches!(row, Row::Group(at) if at == group))
         else {
             return;
         };
@@ -1317,8 +1341,8 @@ impl Cydonia {
     /// Scroll the rail to a row, if it is not already on screen. `Nearest`
     /// rather than `Top`: a step to the neighbour below should move the list by
     /// a row, not throw the one you came from off the top of it.
-    pub(crate) fn reveal(&mut self, row: Row, cx: &Context<Self>) {
-        if let Some(ix) = self.rows(cx).iter().position(|at| *at == row) {
+    pub(crate) fn reveal(&mut self, row: &Row, cx: &Context<Self>) {
+        if let Some(ix) = self.rows(cx).iter().position(|at| at == row) {
             self.rail.scroll_to_item(ix, ScrollStrategy::Nearest);
         }
     }
@@ -1328,54 +1352,63 @@ impl Cydonia {
     /// either side of it is the gap between two.
     fn sidebar_row(
         &self,
-        row: Row,
+        row: &Row,
         lifted: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let workspace = self.workspace.read(cx);
-        let inner = match row {
-            Row::Group(group) => self.group_head(group, false, lifted, window, cx),
-            Row::Archive(ix) => self.archive_divider(ix, cx),
-            Row::Session { project, id } => match self.session_of(project, id, cx) {
-                Some(session) => self.session_row(session, lifted, window, cx),
+        let located = self.located(row, cx);
+        let inner = match (row, located) {
+            (Row::Group(group), _) => self.group_head(group.clone(), false, lifted, window, cx),
+            (Row::Archive(path), _) => match workspace.project_at(path) {
+                Some(ix) => self.archive_divider(ix, cx),
                 None => Empty.into_any_element(),
             },
-            Row::Board { project, ix } => {
-                match workspace
-                    .projects
-                    .get(project)
-                    .and_then(|open| open.boards.get(ix).map(|board| board.label().to_owned()))
-                {
-                    Some(name) => self.board_row(project, ix, name, lifted, window, cx),
-                    None => Empty.into_any_element(),
-                }
+            (
+                Row::Entry {
+                    showing: Showing::Session(id),
+                    ..
+                },
+                Some((project, _)),
+            ) => match self.session_of(project, *id, cx) {
+                Some(session) => self.session_row(row, session, lifted, window, cx),
+                None => Empty.into_any_element(),
+            },
+            (
+                Row::Entry {
+                    showing: Showing::Board(_),
+                    ..
+                },
+                Some((project, ix)),
+            ) => {
+                let name = workspace.projects[project].boards[ix].label().to_owned();
+                self.board_row(row, project, ix, name, lifted, window, cx)
             }
-            Row::Article { project, ix } => {
-                match workspace.projects.get(project).and_then(|open| {
-                    open.articles
-                        .get(ix)
-                        .map(|article| article.label().to_owned())
-                }) {
-                    Some(title) => self
-                        .article_row(project, ix, title, lifted, window, cx)
-                        .into_any_element(),
-                    None => Empty.into_any_element(),
-                }
+            (
+                Row::Entry {
+                    showing: Showing::Article(_),
+                    ..
+                },
+                Some((project, ix)),
+            ) => {
+                let title = workspace.projects[project].articles[ix].label().to_owned();
+                self.article_row(row, project, ix, title, lifted, window, cx)
+                    .into_any_element()
             }
-            Row::Table { project, ix } => {
-                match workspace
-                    .projects
-                    .get(project)
-                    .and_then(|open| open.tables.get(ix).map(|table| table.name.clone()))
-                {
-                    Some(name) => self
-                        .table_row(project, ix, name, lifted, window, cx)
-                        .into_any_element(),
-                    None => Empty.into_any_element(),
-                }
+            (
+                Row::Entry {
+                    showing: Showing::Table(_),
+                    ..
+                },
+                Some((project, ix)),
+            ) => {
+                let name = workspace.projects[project].tables[ix].name.clone();
+                self.table_row(row, project, ix, name, lifted, window, cx)
+                    .into_any_element()
             }
-            Row::Heading(heading) => self.heading_row(heading, cx),
+            (Row::Entry { .. }, None) => Empty.into_any_element(),
+            (Row::Heading(heading), _) => self.heading_row(*heading, cx),
         };
         let entry = !matches!(
             row,
@@ -1385,8 +1418,11 @@ impl Cydonia {
         div()
             .id(SharedString::from(format!("sidebar-hover-{}", key_of(row))))
             .when(entry, |el| {
-                el.on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
-                    this.sidebar_hover(Menu::Entry(row), *hovered, cx);
+                el.on_hover(cx.listener({
+                    let row = row.clone();
+                    move |this, hovered: &bool, _, cx| {
+                        this.sidebar_hover(Menu::Entry(row.clone()), *hovered, cx);
+                    }
                 }))
                 // Every kind of row from one place, and the menu drawn here
                 // rather than under whatever the row ends in: a right press
@@ -1395,13 +1431,18 @@ impl Cydonia {
                 .relative()
                 .on_mouse_down(
                     MouseButton::Right,
-                    cx.listener(move |this, press: &gpui::MouseDownEvent, _, cx| {
-                        this.toggle_menu_at(Menu::Entry(row), Some(press.position), cx);
+                    cx.listener({
+                        let row = row.clone();
+                        move |this, press: &gpui::MouseDownEvent, _, cx| {
+                            this.toggle_menu_at(Menu::Entry(row.clone()), Some(press.position), cx);
+                        }
                     }),
                 )
                 .children(
                     (!self.pinned(row, cx))
-                        .then(|| self.entry_menu(Menu::Entry(row), row, archived, window, cx))
+                        .then(|| {
+                            self.entry_menu(Menu::Entry(row.clone()), row, archived, window, cx)
+                        })
                         .flatten(),
                 )
             })
@@ -1411,37 +1452,29 @@ impl Cydonia {
     }
 
     /// What the row is called, for the ghost that follows the pointer.
-    pub(crate) fn label_of_row(&self, row: Row, cx: &App) -> String {
+    pub(crate) fn label_of_row(&self, row: &Row, cx: &App) -> String {
         let workspace = self.workspace.read(cx);
         let named = || -> Option<String> {
             Some(match row {
-                Row::Group(Group::Project(ix)) => workspace.projects.get(ix)?.name(),
-                Row::Archive(_) | Row::Heading(_) => return None,
-                Row::Group(Group::Space(ix)) => workspace.spaces.get(ix)?.label().to_owned(),
-                Row::Session { project, id } => {
-                    workspace.projects.get(project)?.session(id)?.label()
+                Row::Group(Group::Project(path)) => {
+                    workspace.projects.get(workspace.project_at(path)?)?.name()
                 }
-                Row::Board { project, ix } => workspace
-                    .projects
-                    .get(project)?
-                    .boards
-                    .get(ix)?
+                Row::Archive(_) | Row::Heading(_) => return None,
+                Row::Group(Group::Space(id)) => workspace
+                    .spaces
+                    .get(workspace.space_ix(id)?)?
                     .label()
                     .to_owned(),
-                Row::Article { project, ix } => workspace
-                    .projects
-                    .get(project)?
-                    .articles
-                    .get(ix)?
-                    .label()
-                    .to_owned(),
-                Row::Table { project, ix } => workspace
-                    .projects
-                    .get(project)?
-                    .tables
-                    .get(ix)?
-                    .name
-                    .clone(),
+                Row::Entry { showing, .. } => {
+                    let (project, ix) = self.located(row, cx)?;
+                    let open = &workspace.projects[project];
+                    match showing {
+                        Showing::Session(_) => open.sessions[ix].label(),
+                        Showing::Board(_) => open.boards[ix].label().to_owned(),
+                        Showing::Article(_) => open.articles[ix].label().to_owned(),
+                        Showing::Table(_) => open.tables[ix].name.clone(),
+                    }
+                }
             })
         };
         named().unwrap_or_default()
@@ -1455,7 +1488,7 @@ impl Cydonia {
     /// How a row's entry stands to what the window is showing — see
     /// [`Light`]. In a space, the focused pane's entry is the lit one and the
     /// others it shows are [`Light::Shown`]; on one entry alone, that entry.
-    pub(crate) fn light_of(&self, row: Row, cx: &App) -> Light {
+    pub(crate) fn light_of(&self, row: &Row, cx: &App) -> Light {
         let workspace = self.workspace.read(cx);
         let Some(space) = workspace.active_space() else {
             return match self.in_front(row, cx) {
@@ -1478,7 +1511,7 @@ impl Cydonia {
     /// A row let go in the list, between the painted rows `after` and
     /// `before`.
     fn sidebar_moved(&mut self, event: &drag::Drop<(), Dragged>, cx: &mut Context<Self>) {
-        let Dragged::Row(carried) = event.item else {
+        let Dragged::Row(carried) = &event.item else {
             return;
         };
         let rows = self.rows(cx);
@@ -1490,49 +1523,48 @@ impl Cydonia {
             .map(|ix| ix + 1)
             .or_else(|| at(&event.before))
             .unwrap_or(0);
-        let above = rows[..gap].iter().filter(|row| **row != carried);
+        let above = rows[..gap].iter().filter(|row| *row != carried);
         match carried {
             // Among the groups of its kind, by how many of them are above it.
-            Row::Group(Group::Project(from)) => {
+            Row::Group(Group::Project(path)) => {
                 let to = above
                     .filter(|row| matches!(row, Row::Group(Group::Project(_))))
                     .count();
-                self.move_project(from, to, cx);
+                self.workspace
+                    .update(cx, |workspace, cx| workspace.move_project(path, to, cx));
             }
-            Row::Group(Group::Space(from)) => {
+            Row::Group(Group::Space(id)) => {
                 let to = above
                     .filter(|row| matches!(row, Row::Group(Group::Space(_))))
                     .count();
-                self.move_space(from, to, cx);
+                self.workspace
+                    .update(cx, |workspace, cx| workspace.move_space(id, to, cx));
             }
             _ => {
                 let places = self.row_places(&rows, cx);
                 let kind = |row: &Row| places.get(row).map(|place| place.kind.clone());
-                let own = kind(&carried);
+                let own = kind(carried);
                 let at = above.filter(|row| kind(row) == own).count();
                 let mut region: Vec<Row> = rows
                     .iter()
-                    .copied()
                     .filter(|row| *row != carried && kind(row) == own)
+                    .cloned()
                     .collect();
-                region.insert(at.min(region.len()), carried);
-                let at = rows.iter().position(|row| *row == carried).unwrap_or(0);
-                let group = rows[..at].iter().rev().find_map(|row| match *row {
+                region.insert(at.min(region.len()), carried.clone());
+                let at = rows.iter().position(|row| row == carried).unwrap_or(0);
+                let group = rows[..at].iter().rev().find_map(|row| match row {
                     Row::Group(group) => Some(group),
                     _ => None,
                 });
                 match group {
                     // The sidebar's order alone: the space's panes stay put.
-                    Some(Group::Space(ix)) => {
+                    Some(Group::Space(id)) => {
                         let members: Vec<Member> = region
                             .iter()
-                            .filter_map(|row| self.member_of_row(*row, cx))
+                            .filter_map(|row| self.member_of_row(row, cx))
                             .collect();
                         self.workspace.update(cx, |workspace, cx| {
-                            if let Some(id) = workspace.spaces.get(ix).map(|space| space.id.clone())
-                            {
-                                workspace.set_space_order(&id, members, cx);
-                            }
+                            workspace.set_space_order(id, members, cx);
                         });
                     }
                     _ => self.reorder_entries(carried, region, cx),
@@ -1552,8 +1584,10 @@ impl Cydonia {
     /// their own order, and a row dragged between the two regions would be
     /// changing what it *is* rather than where it sits — that is what the
     /// button at the end of the row and the band's `···` are for.
-    fn reorder_entries(&mut self, carried: Row, region: Vec<Row>, cx: &mut Context<Self>) {
-        let Some(project) = project_of(carried) else {
+    fn reorder_entries(&mut self, carried: &Row, region: Vec<Row>, cx: &mut Context<Self>) {
+        let Some(project) =
+            project_of(carried).and_then(|path| self.workspace.read(cx).project_at(path))
+        else {
             return;
         };
         let rows: Vec<Row> = self
@@ -1565,8 +1599,8 @@ impl Cydonia {
         let moved: Vec<Row> = rows
             .iter()
             .map(|row| match region.contains(row) {
-                true => next.next().copied().unwrap_or(*row),
-                false => *row,
+                true => next.next().unwrap_or(row).clone(),
+                false => row.clone(),
             })
             .collect();
         if moved == rows {
@@ -1574,7 +1608,7 @@ impl Cydonia {
         }
         let among_pins = self.pinned(carried, cx);
         let workspace = self.workspace.read(cx);
-        let entry_of = |row: &Row| workspace.entry_of(project, showing_of(*row)?);
+        let entry_of = |row: &Row| workspace.entry_of(project, showing_of(row)?.clone());
         // Every entry, so that unpinning one later puts it back where it sat
         // rather than at the top.
         let order: Vec<state::Entry> = moved.iter().filter_map(entry_of).collect();
@@ -1583,7 +1617,7 @@ impl Cydonia {
         let pins: Option<Vec<state::Entry>> = among_pins.then(|| {
             moved
                 .iter()
-                .filter(|row| self.pinned(**row, cx))
+                .filter(|row| self.pinned(row, cx))
                 .filter_map(entry_of)
                 .collect()
         });
@@ -1601,9 +1635,12 @@ impl Cydonia {
     }
 
     /// What a space would name this row, so it can be dragged into one.
-    fn member_of_row(&self, row: Row, cx: &App) -> Option<Member> {
-        let showing = showing_of(row)?;
-        self.workspace.read(cx).member_of(project_of(row)?, showing)
+    fn member_of_row(&self, row: &Row, cx: &App) -> Option<Member> {
+        let Row::Entry { project, showing } = row else {
+            return None;
+        };
+        let workspace = self.workspace.read(cx);
+        workspace.member_of(workspace.project_at(project)?, showing.clone())
     }
 
     /// The member a row names once it lands in a pane. A session carried with
@@ -1611,16 +1648,21 @@ impl Cydonia {
     /// there is nothing to put in one until this runs. Minting it at the drop
     /// rather than at the drag keeps a gesture that went nowhere from leaving
     /// a session behind on disk.
-    pub(crate) fn landed_row(&mut self, row: Row, cx: &mut Context<Self>) -> Option<Member> {
+    pub(crate) fn landed_row(&mut self, row: &Row, cx: &mut Context<Self>) -> Option<Member> {
         if let Some(member) = self.member_of_row(row, cx) {
             return Some(member);
         }
-        let Row::Session { project, id } = row else {
+        let Row::Entry {
+            project,
+            showing: Showing::Session(id),
+        } = row
+        else {
             return None;
         };
+        let id = *id;
         self.workspace.update(cx, |workspace, cx| {
             workspace.retain_session(id, cx)?;
-            workspace.member_of(project, Showing::Session(id))
+            workspace.member_of(workspace.project_at(project)?, Showing::Session(id))
         })
     }
 
@@ -1629,7 +1671,6 @@ impl Cydonia {
         let workspace = self.workspace.read(cx);
         let chat = workspace.projects.get(project)?.session(id)?;
         Some(SessionRow {
-            project,
             id: chat.id,
             label: chat.label(),
             icon: workspace.agent_icon(&chat.entry.name),
@@ -1746,22 +1787,6 @@ impl Cydonia {
         });
     }
 
-    /// Menus address a project by its place in the list, so the one open when
-    /// it moves would be pointing at whichever project slid underneath.
-    fn move_project(&mut self, from: usize, to: usize, cx: &mut Context<Self>) {
-        self.menu = None;
-        self.workspace
-            .update(cx, |workspace, cx| workspace.move_project(from, to, cx));
-    }
-
-    /// Menus address a space by its place in the list, the way they do a
-    /// project — see [`Self::move_project`].
-    fn move_space(&mut self, from: usize, to: usize, cx: &mut Context<Self>) {
-        self.menu = None;
-        self.workspace
-            .update(cx, |workspace, cx| workspace.move_space(from, to, cx));
-    }
-
     /// What the `+` starts here. Session first: it is what the sidebar is for.
     ///
     /// With more than one agent installed the session row asks which, since
@@ -1769,14 +1794,15 @@ impl Cydonia {
     /// leaves every other agent with no way in.
     fn add_menu(
         &self,
-        ix: usize,
+        path: &Path,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        if self.menu != Some(Menu::Add(ix)) {
+        if !matches!(&self.menu, Some(Menu::Add(at)) if at == path) {
             return None;
         }
         let workspace = self.workspace.read(cx);
+        let ix = workspace.project_at(path)?;
         let features = &workspace.settings.features;
         let (sessions, boards, tables) = (features.sessions, features.boards, features.tables);
         let agents: Vec<(String, Option<Icon>)> = workspace
@@ -1843,13 +1869,14 @@ impl Cydonia {
     /// directory and everything in it stays where it is.
     fn project_menu(
         &self,
-        ix: usize,
+        path: &Path,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        if self.menu != Some(Menu::Project(ix)) {
+        if !matches!(&self.menu, Some(Menu::Project(at)) if at == path) {
             return None;
         }
+        let ix = self.workspace.read(cx).project_at(path)?;
         let sort = self.workspace.read(cx).sort_of(ix);
         let by = |label: &'static str, mode: state::Sort| {
             menu::row(
@@ -1921,15 +1948,12 @@ impl Cydonia {
     /// One session: its mark and its name.
     fn session_row(
         &self,
+        entry: &Row,
         session: SessionRow,
         lifted: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let entry = Row::Session {
-            project: session.project,
-            id: session.id,
-        };
         let theme = Theme::of(cx).clone();
         let id = session.id;
         let light = self.light_of(entry, cx);
@@ -1985,7 +2009,7 @@ impl Cydonia {
         )
         .child(label)
         .child(self.archive_button(
-            format!("session-archive-{id}"),
+            format!("archive-{}", key_of(entry)),
             "session-row",
             entry,
             session.archived,
@@ -1999,8 +2023,10 @@ impl Cydonia {
     }
 
     /// One board: its mark and its name.
+    #[allow(clippy::too_many_arguments)]
     fn board_row(
         &self,
+        entry: &Row,
         project: usize,
         ix: usize,
         name: String,
@@ -2010,7 +2036,6 @@ impl Cydonia {
     ) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let workspace = self.workspace.read(cx);
-        let entry = Row::Board { project, ix };
         let light = self.light_of(entry, cx);
         let selected = light.selected();
         let board = workspace
@@ -2024,7 +2049,7 @@ impl Cydonia {
         let label = row_label(name, tint);
 
         row(
-            SharedString::from(format!("board-{project}-{ix}")),
+            SharedString::from(key_of(entry)),
             "board-row",
             selected,
             lifted,
@@ -2039,7 +2064,7 @@ impl Cydonia {
         )
         .child(label)
         .child(self.archive_button(
-            SharedString::from(format!("board-archive-{project}-{ix}")),
+            SharedString::from(format!("archive-{}", key_of(entry))),
             "board-row",
             entry,
             archived,
@@ -2068,7 +2093,7 @@ impl Cydonia {
         &self,
         id: impl Into<SharedString>,
         group: &'static str,
-        entry: Row,
+        entry: &Row,
         archived: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -2077,7 +2102,7 @@ impl Cydonia {
         let id = id.into();
         let pinned = self.pinned(entry, cx);
         if pinned {
-            let at = Menu::Entry(entry);
+            let at = Menu::Entry(entry.clone());
             // The glyph alone turns over; the button is the same button either
             // way, so a press during the frame the hover is still travelling
             // opens the menu rather than falling through to the row.
@@ -2094,7 +2119,8 @@ impl Cydonia {
                 // a right press is all there is to anchor to.
                 .children(self.entry_menu(at, entry, archived, window, cx));
         }
-        let held = self.menu.as_ref() == Some(&Menu::Entry(entry));
+        let held = matches!(&self.menu, Some(Menu::Entry(at)) if at == entry);
+        let entry = entry.clone();
         let mark = match archived {
             true => icons::files::ArchiveRestore,
             false => icons::files::Archive,
@@ -2145,55 +2171,50 @@ impl Cydonia {
             })
             .on_click(cx.listener(move |this, _, window, cx| {
                 cx.stop_propagation();
-                this.archive_entry(entry, !archived, window, cx);
+                this.archive_entry(&entry, !archived, window, cx);
             }))
     }
 
     /// Whether a row's entry is put away. `false` for the rows that are not
     /// entries, and for a space — archiving one drops the arrangement rather
     /// than filing it.
-    fn archived_of(&self, row: Row, cx: &App) -> bool {
-        let workspace = self.workspace.read(cx);
-        match row {
-            Row::Session { project, id } => workspace
-                .projects
-                .get(project)
-                .and_then(|open| open.session(id))
-                .is_some_and(|chat| chat.closed),
-            Row::Board { project, ix } => workspace
-                .projects
-                .get(project)
-                .and_then(|open| open.boards.get(ix))
-                .is_some_and(|board| board.archived),
-            Row::Article { project, ix } => workspace
-                .projects
-                .get(project)
-                .and_then(|open| open.articles.get(ix))
-                .is_some_and(|article| article.archived),
-            Row::Table { project, ix } => workspace
-                .projects
-                .get(project)
-                .and_then(|open| open.tables.get(ix))
-                .is_some_and(|table| table.archived),
-            Row::Group(_) | Row::Archive(_) | Row::Heading(_) => false,
+    fn archived_of(&self, row: &Row, cx: &App) -> bool {
+        let Row::Entry { showing, .. } = row else {
+            return false;
+        };
+        let Some((project, ix)) = self.located(row, cx) else {
+            return false;
+        };
+        let open = &self.workspace.read(cx).projects[project];
+        match showing {
+            Showing::Session(_) => open.sessions[ix].closed,
+            Showing::Board(_) => open.boards[ix].archived,
+            Showing::Article(_) => open.articles[ix].archived,
+            Showing::Table(_) => open.tables[ix].archived,
         }
     }
 
     /// Whether an entry is held at the top of its project's list.
-    pub(crate) fn pinned(&self, entry: Row, cx: &App) -> bool {
-        let (Some(project), Some(showing)) = (project_of(entry), showing_of(entry)) else {
+    pub(crate) fn pinned(&self, entry: &Row, cx: &App) -> bool {
+        let Row::Entry { project, showing } = entry else {
             return false;
         };
-        self.workspace.read(cx).is_pinned(project, showing)
+        let workspace = self.workspace.read(cx);
+        workspace
+            .project_at(project)
+            .is_some_and(|project| workspace.is_pinned(project, showing.clone()))
     }
 
     /// Pin an entry to the top of its project's list, or let it back down.
-    pub(crate) fn pin_entry(&mut self, entry: Row, on: bool, cx: &mut Context<Self>) {
-        let (Some(project), Some(showing)) = (project_of(entry), showing_of(entry)) else {
+    pub(crate) fn pin_entry(&mut self, entry: &Row, on: bool, cx: &mut Context<Self>) {
+        let Row::Entry { project, showing } = entry else {
             return;
         };
-        self.workspace
-            .update(cx, |workspace, cx| workspace.pin(project, showing, on, cx));
+        self.workspace.update(cx, |workspace, cx| {
+            if let Some(project) = workspace.project_at(project) {
+                workspace.pin(project, showing.clone(), on, cx);
+            }
+        });
     }
 
     /// Everything an entry can have done to it: the `···` in the band, and the
@@ -2206,7 +2227,7 @@ impl Cydonia {
     pub(crate) fn entry_menu(
         &self,
         at: Menu,
-        entry: Row,
+        entry: &Row,
         archived: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -2223,9 +2244,13 @@ impl Cydonia {
         // page and a board's name in the band opens its identity panel, so
         // neither is offered a second route here. Everywhere else the name is
         // display-only and this is the way.
-        let named = !matches!(entry, Row::Article { .. } | Row::Board { .. });
-        let mut rows = vec![menu::row(put, move |this, window, cx| {
-            this.archive_entry(entry, !archived, window, cx)
+        let named = !matches!(
+            showing_of(entry),
+            Some(Showing::Article(_) | Showing::Board(_))
+        );
+        let mut rows = vec![menu::row(put, {
+            let entry = entry.clone();
+            move |this, window, cx| this.archive_entry(&entry, !archived, window, cx)
         })];
         // Above archive, and only for an entry still in hand: what is put away
         // is not held at the top of anything.
@@ -2235,18 +2260,19 @@ impl Cydonia {
                 true => Item::action("Unpin").with_icon(icons::navigation::PinOff),
                 false => Item::action("Pin to top").with_icon(icons::navigation::Pin),
             };
+            let entry = entry.clone();
             rows.insert(
                 0,
-                menu::row(pin, move |this, _, cx| this.pin_entry(entry, !pinned, cx)),
+                menu::row(pin, move |this, _, cx| this.pin_entry(&entry, !pinned, cx)),
             );
         }
         if named {
             rows.insert(
                 0,
-                menu::row(
-                    Item::action("Rename").with_icon(icons::text::SquarePen),
-                    move |this, window, cx| this.rename_entry(entry, window, cx),
-                ),
+                menu::row(Item::action("Rename").with_icon(icons::text::SquarePen), {
+                    let entry = entry.clone();
+                    move |this, window, cx| this.rename_entry(&entry, window, cx)
+                }),
             );
         }
         // A page's measure and how it is being read: the open page's, since
@@ -2260,7 +2286,7 @@ impl Cydonia {
             Menu::Tab(tab) => self.leaf().entry.as_ref() == Some(tab),
             _ => true,
         };
-        if matches!(entry, Row::Article { .. }) && page {
+        if matches!(showing_of(entry), Some(Showing::Article(_))) && page {
             let plain_chord = keymap::label(
                 Command::PlainText,
                 &self.workspace.read(cx).settings.shortcuts,
@@ -2321,7 +2347,9 @@ impl Cydonia {
             );
         }
         // Into any other open project, the folder and its pictures with it.
-        if let Row::Article { project, ix } = entry {
+        if let Some(Showing::Article(_)) = showing_of(entry)
+            && let Some((project, ix)) = self.located(entry, cx)
+        {
             let targets: Vec<(Item, menu::Act)> = self
                 .workspace
                 .read(cx)
@@ -2350,10 +2378,14 @@ impl Cydonia {
         }
         rows.push(menu::row(
             Item::action("Delete").with_icon(icons::files::Trash),
-            move |this, _, cx| this.ask_delete(entry, cx),
+            {
+                let entry = entry.clone();
+                move |this, _, cx| this.ask_delete(&entry, cx)
+            },
         ));
-        if let Row::Board { project, ix } = entry
+        if let Some(Showing::Board(_)) = showing_of(entry)
             && !matches!(at, Menu::Entry(_))
+            && let Some((project, ix)) = self.located(entry, cx)
             && let Some((id, view)) = self
                 .workspace
                 .read(cx)
@@ -2396,80 +2428,95 @@ impl Cydonia {
 
     /// Drop an entry, file and all. Deleting the session on screen lands on
     /// the first remaining entry in the sidebar's displayed order.
-    pub(crate) fn delete_entry(&mut self, entry: Row, window: &mut Window, cx: &mut Context<Self>) {
-        let landing_project = match entry {
-            Row::Session { project, id }
-                if self.showing(cx) == Some(Pane::Chat)
-                    && self.workspace.read(cx).active == Some(project)
-                    && self.workspace.read(cx).active_id() == Some(id) =>
+    pub(crate) fn delete_entry(
+        &mut self,
+        entry: &Row,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let located = self.located(entry, cx);
+        let landing_project = match (entry, located) {
+            (
+                Row::Entry {
+                    showing: Showing::Session(id),
+                    ..
+                },
+                Some((project, _)),
+            ) if self.showing(cx) == Some(Pane::Chat)
+                && self.workspace.read(cx).active == Some(project)
+                && self.workspace.read(cx).active_id() == Some(*id) =>
             {
                 Some(project)
             }
             _ => None,
         };
         self.commit(cx);
-        self.workspace.update(cx, |workspace, cx| match entry {
-            Row::Session { id, .. } => workspace.close_session(id, cx),
-            Row::Board { project, ix } => workspace.delete_board(project, ix, cx),
-            Row::Article { project, ix } => workspace.delete_article(project, ix, cx),
-            Row::Table { project, ix } => workspace.delete_table(project, ix, cx),
-            Row::Group(Group::Space(ix)) => workspace.delete_space(ix, cx),
-            Row::Group(Group::Project(_)) | Row::Archive(_) | Row::Heading(_) => {}
-        });
+        self.workspace
+            .update(cx, |workspace, cx| match (entry, located) {
+                (
+                    Row::Entry {
+                        showing: Showing::Session(id),
+                        ..
+                    },
+                    _,
+                ) => workspace.close_session(*id, cx),
+                (Row::Entry { showing, .. }, Some((project, ix))) => match showing {
+                    Showing::Board(_) => workspace.delete_board(project, ix, cx),
+                    Showing::Article(_) => workspace.delete_article(project, ix, cx),
+                    Showing::Table(_) => workspace.delete_table(project, ix, cx),
+                    Showing::Session(_) => {}
+                },
+                (Row::Group(Group::Space(id)), _) => workspace.delete_space_id(id, cx),
+                (Row::Entry { .. }, None)
+                | (Row::Group(Group::Project(_)) | Row::Archive(_) | Row::Heading(_), _) => {}
+            });
         if let Some(project) = landing_project
             && let Some(landing) = self
                 .entries(project, cx)
                 .into_iter()
                 .find(|row| !matches!(row, Row::Archive(_)))
         {
-            self.open_row(landing, window, cx);
-            self.reveal(landing, cx);
+            self.open_row(&landing, window, cx);
+            self.reveal(&landing, cx);
         }
         cx.notify();
     }
 
     /// Put the name field on an entry's row, for the kinds named that way.
-    /// Each is addressed by what identifies it, so the field cannot slide onto
-    /// its neighbour if the list reorders under it.
     ///
     /// A board is named by two things at once, so it opens its identity panel
     /// instead — which lives under the band, so the board is brought to the
     /// front first. One way to name a board, wherever you asked from.
-    fn rename_entry(&mut self, entry: Row, window: &mut Window, cx: &mut Context<Self>) {
-        if let Row::Board { project, ix } = entry {
-            let id = self
-                .workspace
-                .read(cx)
-                .projects
-                .get(project)
-                .and_then(|open| open.boards.get(ix))
-                .map(|board| board.id.clone());
-            if let Some(id) = id {
-                self.open_board(project, ix, window, cx);
-                self.open_info(&id, window, cx);
-            }
-            return;
-        }
-        let workspace = self.workspace.read(cx);
+    fn rename_entry(&mut self, entry: &Row, window: &mut Window, cx: &mut Context<Self>) {
         let what = match entry {
-            Row::Session { id, .. } => Some(Renaming::Session(id)),
-            Row::Table { project, ix } => workspace
-                .projects
-                .get(project)
-                .and_then(|open| open.tables.get(ix))
-                .map(|table| Renaming::Table(table.key.clone())),
+            Row::Entry {
+                showing: Showing::Board(id),
+                ..
+            } => {
+                if let Some((project, ix)) = self.located(entry, cx) {
+                    self.open_board(project, ix, window, cx);
+                    self.open_info(id, window, cx);
+                }
+                return;
+            }
+            Row::Entry {
+                showing: Showing::Session(id),
+                ..
+            } => Some(Renaming::Session(*id)),
+            Row::Entry {
+                showing: Showing::Table(key),
+                ..
+            } => Some(Renaming::Table(key.clone())),
+            Row::Group(Group::Space(id)) => Some(Renaming::Space(id.clone())),
             // An article is named in its own page, and the two that are not
             // entries have no name to take.
-            Row::Group(Group::Space(ix)) => workspace
-                .spaces
-                .get(ix)
-                .map(|space| Renaming::Space(space.id.clone())),
-            Row::Article { .. }
-            | Row::Board { .. }
+            Row::Entry {
+                showing: Showing::Article(_),
+                ..
+            }
             | Row::Group(Group::Project(_))
             | Row::Archive(_)
-            | Row::Heading(Heading::Projects)
-            | Row::Heading(Heading::Spaces) => None,
+            | Row::Heading(_) => None,
         };
         if let Some(what) = what {
             self.start_rename(what, window, cx);
@@ -2481,7 +2528,7 @@ impl Cydonia {
     /// the store — and the sidebar asks for it the same way.
     fn archive_entry(
         &mut self,
-        entry: Row,
+        entry: &Row,
         archived: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -2489,7 +2536,7 @@ impl Cydonia {
         // Read before the flag moves: once the entry is away it is no longer
         // what any pane is on.
         let landing = (archived && self.in_front(entry, cx))
-            .then(|| project_of(entry))
+            .then(|| self.located(entry, cx).map(|(project, _)| project))
             .flatten();
         // A space takes its members with it. Membership is exclusive — an
         // entry is in one space at a time — so the arrangement owns what it
@@ -2498,76 +2545,58 @@ impl Cydonia {
         //
         // The arrangement itself is dropped rather than put away: a space
         // names entries and holds none, so there is nothing in one to come
-        // back to, and it is remade by dragging one entry onto another. By id,
-        // because archiving a member takes it out of the space as it goes —
-        // see [`Workspace::drop_from_spaces`] — and that shifts every index
-        // past it.
-        if let Row::Group(Group::Space(ix)) = entry {
+        // back to, and it is remade by dragging one entry onto another.
+        if let Row::Group(Group::Space(id)) = entry {
             let workspace = self.workspace.read(cx);
-            let Some(space) = workspace.spaces.get(ix) else {
+            let Some(space) = workspace.space_ix(id).map(|ix| &workspace.spaces[ix]) else {
                 return;
             };
-            let id = space.id.clone();
             let members: Vec<Row> = space
                 .entries()
                 .iter()
                 .filter_map(|member| self.row_of_member(member, cx))
                 .collect();
-            for member in members {
+            for member in &members {
                 self.archive_entry(member, archived, window, cx);
             }
             self.workspace
-                .update(cx, |workspace, cx| workspace.delete_space_id(&id, cx));
+                .update(cx, |workspace, cx| workspace.delete_space_id(id, cx));
             return;
         }
+        let Row::Entry { project, showing } = entry else {
+            return;
+        };
         // Putting an entry away takes it out of the two places that hold it
         // up: the pins at the top of the list, and whatever space arranges
         // it. Both are about an entry in hand, and this one no longer is.
-        if archived && let Some(showing) = showing_of(entry) {
+        if archived {
             let member = self.member_of_row(entry, cx);
             self.workspace.update(cx, |workspace, cx| {
-                if let Some(project) = project_of(entry) {
-                    workspace.unpin_entry(project, showing);
+                if let Some(project) = workspace.project_at(project) {
+                    workspace.unpin_entry(project, showing.clone());
                 }
                 if let Some(member) = member {
                     workspace.drop_from_spaces(&member, cx);
                 }
             });
         }
-        self.workspace.update(cx, |workspace, cx| match entry {
-            Row::Group(Group::Space(_)) => {}
-            Row::Session { id, .. } => workspace.archive_session(id, archived, cx),
-            Row::Board { project, ix } => {
-                if let Some(id) = workspace
-                    .projects
-                    .get(project)
-                    .and_then(|open| open.boards.get(ix))
-                    .map(|board| board.id.clone())
-                {
-                    workspace.archive_board(&id, archived, cx);
-                }
-            }
-            Row::Article { project, ix } => {
-                if let Some(path) = workspace
-                    .projects
-                    .get(project)
-                    .and_then(|open| open.articles.get(ix))
-                    .map(|article| article.path.clone())
-                {
+        let article = match (showing, self.located(entry, cx)) {
+            (Showing::Article(_), Some((project, ix))) => Some(
+                self.workspace.read(cx).projects[project].articles[ix]
+                    .path
+                    .clone(),
+            ),
+            _ => None,
+        };
+        self.workspace.update(cx, |workspace, cx| match showing {
+            Showing::Session(id) => workspace.archive_session(*id, archived, cx),
+            Showing::Board(id) => workspace.archive_board(id, archived, cx),
+            Showing::Article(_) => {
+                if let Some(path) = article {
                     workspace.archive_article(&path, archived, cx);
                 }
             }
-            Row::Table { project, ix } => {
-                if let Some(key) = workspace
-                    .projects
-                    .get(project)
-                    .and_then(|open| open.tables.get(ix))
-                    .map(|table| table.key.clone())
-                {
-                    workspace.archive_table(&key, archived, cx);
-                }
-            }
-            Row::Group(Group::Project(_)) | Row::Archive(_) | Row::Heading(_) => {}
+            Showing::Table(key) => workspace.archive_table(key, archived, cx),
         });
         if let Some(project) = landing {
             self.open_top_entry(project, window, cx);
@@ -2575,23 +2604,24 @@ impl Cydonia {
     }
 
     /// Whether the pane in front is on this entry.
-    fn in_front(&self, entry: Row, cx: &App) -> bool {
-        let (Some(project), Some(showing)) = (project_of(entry), showing_of(entry)) else {
+    fn in_front(&self, entry: &Row, cx: &App) -> bool {
+        let Row::Entry { showing, .. } = entry else {
+            return false;
+        };
+        let Some((project, ix)) = self.located(entry, cx) else {
             return false;
         };
         let workspace = self.workspace.read(cx);
-        let Some(open) = workspace.projects.get(project) else {
-            return false;
-        };
         if workspace.active != Some(project) || self.arranged(cx) {
             return false;
         }
+        let open = &workspace.projects[project];
         let pane = self.showing(cx);
         match showing {
-            Showing::Session(id) => pane == Some(Pane::Chat) && open.active == Some(id),
-            Showing::Board(ix) => pane == Some(Pane::Board) && open.board == Some(ix),
-            Showing::Article(ix) => pane == Some(Pane::Article) && open.article == Some(ix),
-            Showing::Table(ix) => pane == Some(Pane::Table) && open.table == Some(ix),
+            Showing::Session(id) => pane == Some(Pane::Chat) && open.active == Some(*id),
+            Showing::Board(_) => pane == Some(Pane::Board) && open.board == Some(ix),
+            Showing::Article(_) => pane == Some(Pane::Article) && open.article == Some(ix),
+            Showing::Table(_) => pane == Some(Pane::Table) && open.table == Some(ix),
         }
     }
 
@@ -2603,11 +2633,11 @@ impl Cydonia {
         let Some(top) = self
             .entries(project, cx)
             .into_iter()
-            .find(|row| showing_of(*row).is_some())
+            .find(|row| showing_of(row).is_some())
         else {
             return;
         };
-        self.open_row(top, window, cx);
+        self.open_row(&top, window, cx);
     }
 
     /// The field, in the row's place. It carries its own press: `TextField`

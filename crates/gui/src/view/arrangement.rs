@@ -222,7 +222,7 @@ impl Cydonia {
         let front = self.front_of(entry, &stack);
         let showing = self.workspace.read(cx).showing_of(&front);
         let key = key_of(entry);
-        let body = match showing {
+        let body = match &showing {
             // The entry has gone since the space named it. The pane says so
             // rather than standing empty: a blank pane reads as a bug, and the
             // space is about to drop the member anyway — see
@@ -234,7 +234,9 @@ impl Cydonia {
                     "It was deleted after the space was made.",
                 )
                 .into_any_element(),
-            Some((project, showing)) => self.pane_body(project, showing, Some(&front), window, cx),
+            Some((project, showing)) => {
+                self.pane_body(*project, showing.clone(), Some(&front), window, cx)
+            }
         };
         let composer = match showing {
             Some((_, Showing::Session(id))) => self
@@ -430,14 +432,14 @@ impl Cydonia {
     fn dropped(&mut self, item: &Dragged, cx: &mut Context<Self>) -> Option<Member> {
         match item {
             Dragged::Tab(member) => Some(member.clone()),
-            Dragged::Row(row) => self.landed_row(*row, cx),
+            Dragged::Row(row) => self.landed_row(row, cx),
         }
     }
 
     /// What a carried item is called, for the ghost that follows the pointer.
     pub(crate) fn label_of_dragged(&self, item: &Dragged, cx: &App) -> String {
         match item {
-            Dragged::Row(row) => self.label_of_row(*row, cx),
+            Dragged::Row(row) => self.label_of_row(row, cx),
             Dragged::Tab(member) => self
                 .workspace
                 .read(cx)
@@ -500,9 +502,9 @@ impl Cydonia {
         let open = workspace.projects.get(project)?;
         let showing = match pane {
             Pane::Chat => Showing::Session(open.active?),
-            Pane::Board => Showing::Board(open.board?),
-            Pane::Article => Showing::Article(open.article?),
-            Pane::Table => Showing::Table(open.table?),
+            Pane::Board => Showing::Board(open.boards.get(open.board?)?.id.clone()),
+            Pane::Article => Showing::Article(open.articles.get(open.article?)?.id.clone()),
+            Pane::Table => Showing::Table(open.tables.get(open.table?)?.key.clone()),
         };
         workspace.member_of(project, showing)
     }
@@ -765,7 +767,7 @@ impl Cydonia {
             .children(toolbar.and_then(|toolbar| toolbar.entry).and_then(|entry| {
                 self.entry_menu(
                     Menu::Tab(tab.clone()),
-                    entry.row,
+                    &entry.row,
                     entry.archived,
                     window,
                     cx,
@@ -952,18 +954,27 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        match showing {
-            Showing::Session(id) => self.conversation(Some(id), on, window, cx),
-            Showing::Board(at) => self.board(project, at, on, window, cx),
+        let at = self
+            .workspace
+            .read(cx)
+            .projects
+            .get(project)
+            .and_then(|open| open.ix_of(&showing));
+        match (showing, at) {
+            (Showing::Session(id), _) => self.conversation(Some(id), on, window, cx),
+            (Showing::Board(_), Some(at)) => self.board(project, at, on, window, cx),
             // An entry can be named and not yet loaded — an article holds no
             // editor until it is opened. The front door stands in for the
             // moment in between.
-            Showing::Article(at) => self
+            (Showing::Article(_), Some(at)) => self
                 .article(project, at, on, window, cx)
                 .unwrap_or_else(|| self.launch(window, cx)),
-            Showing::Table(at) => self
+            (Showing::Table(_), Some(at)) => self
                 .table(project, at, on, window, cx)
                 .unwrap_or_else(|| self.launch(window, cx)),
+            (Showing::Board(_) | Showing::Article(_) | Showing::Table(_), None) => {
+                self.launch(window, cx)
+            }
         }
     }
 
@@ -1178,8 +1189,22 @@ impl Cydonia {
                     workspace.retain_session(id, cx)?;
                     Showing::Session(id)
                 }
-                New::Article => Showing::Article(workspace.new_article(cx)?),
-                New::Table => Showing::Table(workspace.new_table(cx)?),
+                New::Article => {
+                    let ix = workspace.new_article(cx)?;
+                    Showing::Article(
+                        workspace
+                            .projects
+                            .get(project)?
+                            .articles
+                            .get(ix)?
+                            .id
+                            .clone(),
+                    )
+                }
+                New::Table => {
+                    let ix = workspace.new_table(cx)?;
+                    Showing::Table(workspace.projects.get(project)?.tables.get(ix)?.key.clone())
+                }
                 New::Board => return None,
             };
             workspace.member_of(project, showing)

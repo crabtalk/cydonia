@@ -62,8 +62,8 @@ fn two_boards(
         workspace.new_board(0, "First".into(), "ONE", cx).ok();
         workspace.new_board(0, "Second".into(), "TWO", cx).ok();
         (
-            workspace.member_of(0, Showing::Board(0)).expect("a member"),
-            workspace.member_of(0, Showing::Board(1)).expect("a member"),
+            workspace.board_member(0, 0).expect("a member"),
+            workspace.board_member(0, 1).expect("a member"),
         )
     });
     (workspace, a, b)
@@ -98,7 +98,7 @@ fn later_drags_land_in_the_same_space(cx: &mut gpui::TestAppContext) {
         // one leaves the arrangement — so a board made half way through would
         // have the next drag mint a second space.
         workspace.new_board(0, "Third".into(), "THR", cx).ok();
-        let c = workspace.member_of(0, Showing::Board(0)).expect("a member");
+        let c = workspace.board_member(0, 0).expect("a member");
 
         workspace.arrange(&a, &b, Side::Right, cx);
         workspace.arrange(&b, &c, Side::Below, cx);
@@ -141,8 +141,8 @@ fn a_space_can_span_projects(cx: &mut gpui::TestAppContext) {
         workspace.open_project(scratch.project("two"), cx);
         workspace.new_board(0, "Here".into(), "ONE", cx).ok();
         workspace.new_board(1, "There".into(), "TWO", cx).ok();
-        let here = workspace.member_of(0, Showing::Board(0)).expect("a member");
-        let there = workspace.member_of(1, Showing::Board(0)).expect("a member");
+        let here = workspace.board_member(0, 0).expect("a member");
+        let there = workspace.board_member(1, 0).expect("a member");
         assert_ne!(here.project, there.project, "two repositories");
 
         workspace.arrange(&here, &there, Side::Right, cx);
@@ -213,7 +213,7 @@ fn an_entry_belongs_to_one_space(cx: &mut gpui::TestAppContext) {
 
     workspace.update(cx, |workspace, cx| {
         workspace.new_board(0, "Third".into(), "THR", cx).ok();
-        let c = workspace.member_of(0, Showing::Board(2)).expect("a member");
+        let c = workspace.board_member(0, 2).expect("a member");
 
         workspace.arrange(&a, &c, Side::Right, cx);
         let first = workspace.active_space().expect("open").id.clone();
@@ -246,7 +246,7 @@ fn closing_down_to_one_pane_closes_the_space(cx: &mut gpui::TestAppContext) {
         assert!(workspace.active_space().is_none(), "the space is gone");
         assert!(workspace.spaces.is_empty());
         assert_eq!(
-            workspace.member_of(0, Showing::Board(0)).as_ref(),
+            workspace.board_member(0, 0).as_ref(),
             Some(&a),
             "and the window is on the pane that was left",
         );
@@ -321,7 +321,7 @@ fn the_pane_dropped_on_leaves_the_space_that_held_it(cx: &mut gpui::TestAppConte
     let (workspace, a, b) = two_boards(&scratch, cx);
     let c = workspace.update(cx, |workspace, cx| {
         workspace.new_board(0, "Third".into(), "THR", cx).ok();
-        workspace.member_of(0, Showing::Board(2)).expect("a member")
+        workspace.board_member(0, 2).expect("a member")
     });
 
     workspace.update(cx, |workspace, cx| {
@@ -390,7 +390,7 @@ fn an_entry_can_be_dropped_from_the_space_holding_it(cx: &mut gpui::TestAppConte
 
     workspace.update(cx, |workspace, cx| {
         workspace.new_board(0, "Third".into(), "THR", cx).ok();
-        let c = workspace.member_of(0, Showing::Board(0)).expect("a member");
+        let c = workspace.board_member(0, 0).expect("a member");
         workspace.arrange(&a, &b, Side::Right, cx);
         workspace.arrange(&b, &c, Side::Below, cx);
         assert_eq!(workspace.active_space().expect("open").leaves(), 3);
@@ -436,7 +436,7 @@ fn sending_into_a_pane_stays_in_the_space(cx: &mut gpui::TestAppContext) {
     workspace.update(cx, |workspace, cx| {
         workspace.open_project(scratch.project("one"), cx);
         workspace.new_board(0, "First".into(), "ONE", cx).ok();
-        let board = workspace.member_of(0, Showing::Board(0)).expect("a member");
+        let board = workspace.board_member(0, 0).expect("a member");
 
         // Restored rather than opened: a session made through `new_session`
         // starts an agent, and what is under test is the bookkeeping `send`
@@ -498,9 +498,9 @@ fn stacking_joins_a_pane_instead_of_splitting_it(cx: &mut gpui::TestAppContext) 
         for (name, key) in [("First", "ONE"), ("Second", "TWO"), ("Third", "THR")] {
             workspace.new_board(0, name.into(), key, cx).ok();
         }
-        let a = workspace.member_of(0, Showing::Board(0)).expect("a member");
-        let b = workspace.member_of(0, Showing::Board(1)).expect("a member");
-        let c = workspace.member_of(0, Showing::Board(2)).expect("a member");
+        let a = workspace.board_member(0, 0).expect("a member");
+        let b = workspace.board_member(0, 1).expect("a member");
+        let c = workspace.board_member(0, 2).expect("a member");
         workspace.arrange(&a, &b, Side::Right, cx);
         assert_eq!(workspace.active_space().expect("open").leaves(), 2);
 
@@ -529,9 +529,9 @@ fn closing_a_tab_leaves_the_pane_and_the_space_alone(cx: &mut gpui::TestAppConte
         for (name, key) in [("First", "ONE"), ("Second", "TWO"), ("Third", "THR")] {
             workspace.new_board(0, name.into(), key, cx).ok();
         }
-        let a = workspace.member_of(0, Showing::Board(0)).expect("a member");
-        let b = workspace.member_of(0, Showing::Board(1)).expect("a member");
-        let c = workspace.member_of(0, Showing::Board(2)).expect("a member");
+        let a = workspace.board_member(0, 0).expect("a member");
+        let b = workspace.board_member(0, 1).expect("a member");
+        let c = workspace.board_member(0, 2).expect("a member");
         workspace.arrange(&a, &b, Side::Right, cx);
         workspace.stack_pane(&a, &c, cx);
 
@@ -564,9 +564,9 @@ fn stacking_an_arranged_entry_moves_it(cx: &mut gpui::TestAppContext) {
         for (name, key) in [("First", "ONE"), ("Second", "TWO"), ("Third", "THR")] {
             workspace.new_board(0, name.into(), key, cx).ok();
         }
-        let a = workspace.member_of(0, Showing::Board(0)).expect("a member");
-        let b = workspace.member_of(0, Showing::Board(1)).expect("a member");
-        let c = workspace.member_of(0, Showing::Board(2)).expect("a member");
+        let a = workspace.board_member(0, 0).expect("a member");
+        let b = workspace.board_member(0, 1).expect("a member");
+        let c = workspace.board_member(0, 2).expect("a member");
         workspace.arrange(&a, &b, Side::Right, cx);
         workspace.arrange(&b, &c, Side::Below, cx);
         assert_eq!(workspace.active_space().expect("open").leaves(), 3);
@@ -593,8 +593,8 @@ fn stacking_onto_a_lone_pane_starts_a_space(cx: &mut gpui::TestAppContext) {
         for (name, key) in [("First", "ONE"), ("Second", "TWO")] {
             workspace.new_board(0, name.into(), key, cx).ok();
         }
-        let a = workspace.member_of(0, Showing::Board(0)).expect("a member");
-        let b = workspace.member_of(0, Showing::Board(1)).expect("a member");
+        let a = workspace.board_member(0, 0).expect("a member");
+        let b = workspace.board_member(0, 1).expect("a member");
         assert!(workspace.active_space().is_none());
 
         workspace.stack_pane(&a, &b, cx);
@@ -629,10 +629,10 @@ fn stacking_moves_an_entry_between_spaces(cx: &mut gpui::TestAppContext) {
         ] {
             workspace.new_board(0, name.into(), key, cx).ok();
         }
-        let a = workspace.member_of(0, Showing::Board(0)).expect("a member");
-        let b = workspace.member_of(0, Showing::Board(1)).expect("a member");
-        let c = workspace.member_of(0, Showing::Board(2)).expect("a member");
-        let d = workspace.member_of(0, Showing::Board(3)).expect("a member");
+        let a = workspace.board_member(0, 0).expect("a member");
+        let b = workspace.board_member(0, 1).expect("a member");
+        let c = workspace.board_member(0, 2).expect("a member");
+        let d = workspace.board_member(0, 3).expect("a member");
         workspace.arrange(&a, &b, Side::Right, cx);
         workspace.leave_space();
         workspace.arrange(&c, &d, Side::Right, cx);
@@ -663,10 +663,8 @@ fn a_pane_put_on_an_article_opens_it(cx: &mut gpui::TestAppContext) {
     workspace.update(cx, |workspace, cx| {
         workspace.open_project(path, cx);
         workspace.new_board(0, "First".into(), "ONE", cx).ok();
-        let board = workspace.member_of(0, Showing::Board(0)).expect("a member");
-        let article = workspace
-            .member_of(0, Showing::Article(0))
-            .expect("a member");
+        let board = workspace.board_member(0, 0).expect("a member");
+        let article = workspace.article_member(0, 0).expect("a member");
         assert!(
             workspace
                 .article_in(0, 0)
@@ -678,7 +676,8 @@ fn a_pane_put_on_an_article_opens_it(cx: &mut gpui::TestAppContext) {
 
         workspace.arrange(&board, &article, Side::Right, cx);
         workspace.stack_pane(&board, &article, cx);
-        workspace.select_showing(0, Showing::Article(0), cx);
+        let id = workspace.projects[0].articles[0].id.clone();
+        workspace.select_showing(0, Showing::Article(id), cx);
 
         assert!(
             workspace
@@ -706,9 +705,9 @@ fn a_tab_can_be_carried_to_another_pane(cx: &mut gpui::TestAppContext) {
         for (name, key) in [("First", "ONE"), ("Second", "TWO"), ("Third", "THR")] {
             workspace.new_board(0, name.into(), key, cx).ok();
         }
-        let a = workspace.member_of(0, Showing::Board(0)).expect("a member");
-        let b = workspace.member_of(0, Showing::Board(1)).expect("a member");
-        let c = workspace.member_of(0, Showing::Board(2)).expect("a member");
+        let a = workspace.board_member(0, 0).expect("a member");
+        let b = workspace.board_member(0, 1).expect("a member");
+        let c = workspace.board_member(0, 2).expect("a member");
         workspace.arrange(&a, &b, Side::Right, cx);
         workspace.stack_pane(&a, &c, cx);
         assert_eq!(workspace.stack_of(&a), vec![a.clone(), c.clone()]);
@@ -735,9 +734,9 @@ fn a_tab_dropped_on_its_own_bar_stays_put(cx: &mut gpui::TestAppContext) {
         for (name, key) in [("First", "ONE"), ("Second", "TWO"), ("Third", "THR")] {
             workspace.new_board(0, name.into(), key, cx).ok();
         }
-        let a = workspace.member_of(0, Showing::Board(0)).expect("a member");
-        let b = workspace.member_of(0, Showing::Board(1)).expect("a member");
-        let c = workspace.member_of(0, Showing::Board(2)).expect("a member");
+        let a = workspace.board_member(0, 0).expect("a member");
+        let b = workspace.board_member(0, 1).expect("a member");
+        let c = workspace.board_member(0, 2).expect("a member");
         workspace.arrange(&a, &b, Side::Right, cx);
         workspace.stack_pane(&a, &c, cx);
 
@@ -760,9 +759,9 @@ fn a_tab_carried_to_an_edge_becomes_its_own_pane(cx: &mut gpui::TestAppContext) 
         for (name, key) in [("First", "ONE"), ("Second", "TWO"), ("Third", "THR")] {
             workspace.new_board(0, name.into(), key, cx).ok();
         }
-        let a = workspace.member_of(0, Showing::Board(0)).expect("a member");
-        let b = workspace.member_of(0, Showing::Board(1)).expect("a member");
-        let c = workspace.member_of(0, Showing::Board(2)).expect("a member");
+        let a = workspace.board_member(0, 0).expect("a member");
+        let b = workspace.board_member(0, 1).expect("a member");
+        let c = workspace.board_member(0, 2).expect("a member");
         workspace.arrange(&a, &b, Side::Right, cx);
         workspace.stack_pane(&a, &c, cx);
 
@@ -829,7 +828,7 @@ fn a_session_with_no_file_can_be_given_one_and_arranged(cx: &mut gpui::TestAppCo
     workspace.update(cx, |workspace, cx| {
         workspace.open_project(scratch.project("one"), cx);
         workspace.new_board(0, "First".into(), "ONE", cx).ok();
-        let board = workspace.member_of(0, Showing::Board(0)).expect("a member");
+        let board = workspace.board_member(0, 0).expect("a member");
 
         let path = workspace.projects[0].path.clone();
         let mut chat = resting_session(7, &path);
@@ -911,8 +910,8 @@ fn a_space_keeps_the_place_it_was_dragged_to(cx: &mut gpui::TestAppContext) {
         // entry is in one space at a time.
         workspace.new_board(0, "Third".into(), "THR", cx).ok();
         workspace.new_board(0, "Fourth".into(), "FOU", cx).ok();
-        let c = workspace.member_of(0, Showing::Board(0)).expect("a member");
-        let d = workspace.member_of(0, Showing::Board(1)).expect("a member");
+        let c = workspace.board_member(0, 0).expect("a member");
+        let d = workspace.board_member(0, 1).expect("a member");
         workspace.leave_space();
         workspace.arrange(&c, &d, Side::Right, cx);
 
@@ -923,7 +922,7 @@ fn a_space_keeps_the_place_it_was_dragged_to(cx: &mut gpui::TestAppContext) {
             .collect();
         assert_eq!(workspace.space, Some(0), "the newest is the open one");
 
-        workspace.move_space(0, 1, cx);
+        workspace.move_space(&ids[0], 1, cx);
         assert_eq!(
             workspace
                 .spaces
@@ -961,9 +960,9 @@ fn closing_a_pane_beside_a_stack_keeps_the_space(cx: &mut gpui::TestAppContext) 
         for (name, key) in [("First", "ONE"), ("Second", "TWO"), ("Third", "THR")] {
             workspace.new_board(0, name.into(), key, cx).ok();
         }
-        let a = workspace.member_of(0, Showing::Board(0)).expect("a member");
-        let b = workspace.member_of(0, Showing::Board(1)).expect("a member");
-        let c = workspace.member_of(0, Showing::Board(2)).expect("a member");
+        let a = workspace.board_member(0, 0).expect("a member");
+        let b = workspace.board_member(0, 1).expect("a member");
+        let c = workspace.board_member(0, 2).expect("a member");
         workspace.arrange(&a, &b, Side::Right, cx);
         workspace.stack_pane(&a, &c, cx);
 
@@ -989,8 +988,8 @@ fn a_pane_answers_for_its_own_board(cx: &mut gpui::TestAppContext) {
         for (name, key) in [("First", "ONE"), ("Second", "TWO")] {
             workspace.new_board(0, name.into(), key, cx).ok();
         }
-        let a = workspace.member_of(0, Showing::Board(0)).expect("a member");
-        let b = workspace.member_of(0, Showing::Board(1)).expect("a member");
+        let a = workspace.board_member(0, 0).expect("a member");
+        let b = workspace.board_member(0, 1).expect("a member");
         workspace.arrange(&a, &b, Side::Right, cx);
 
         // Whatever the project is pointed at, each pane answers for itself.

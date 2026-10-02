@@ -825,7 +825,7 @@ impl Cydonia {
                 Showing::Table(_) => Pane::Table,
             };
             self.workspace.update(cx, |workspace, cx| {
-                workspace.select_showing(project, showing, cx);
+                workspace.select_showing(project, showing.clone(), cx);
             });
         }
         self.sync_composer(cx);
@@ -853,10 +853,12 @@ impl Cydonia {
                 .session(id)
                 .is_some_and(ChatSession::resumable)
                 .then(|| self.composer_focus_handle(cx)),
-            Showing::Article(at) => self
+            Showing::Article(id) => self
                 .workspace
                 .read(cx)
-                .article_in(project, at)
+                .projects
+                .get(project)
+                .and_then(|open| open.articles.get(open.article_ix(&id)?))
                 .and_then(|article| article.editor.clone())
                 .map(|editor| editor.focus_handle(cx)),
             // A board or a table takes no caret of its own, but an open card
@@ -1203,11 +1205,21 @@ impl Cydonia {
             return;
         };
         let showing = match pane {
-            Pane::Chat => open.active.map(|id| Row::Session { project, id }),
-            Pane::Board => open.board.map(|ix| Row::Board { project, ix }),
-            Pane::Article => open.article.map(|ix| Row::Article { project, ix }),
-            Pane::Table => open.table.map(|ix| Row::Table { project, ix }),
-        };
+            Pane::Chat => open.active.map(Showing::Session),
+            Pane::Board => open
+                .board
+                .and_then(|ix| Some(Showing::Board(open.boards.get(ix)?.id.clone()))),
+            Pane::Article => open
+                .article
+                .and_then(|ix| Some(Showing::Article(open.articles.get(ix)?.id.clone()))),
+            Pane::Table => open
+                .table
+                .and_then(|ix| Some(Showing::Table(open.tables.get(ix)?.key.clone()))),
+        }
+        .map(|showing| Row::Entry {
+            project: open.path.clone(),
+            showing,
+        });
         // The divider is a line, not a landing.
         let ring: Vec<Row> = self
             .entries(project, cx)
@@ -1215,11 +1227,11 @@ impl Cydonia {
             .filter(|row| !matches!(row, Row::Archive(_)))
             .collect();
         let at = showing.and_then(|row| ring.iter().position(|entry| *entry == row));
-        let Some(landing) = stepped(at, ring.len(), step).map(|ix| ring[ix]) else {
+        let Some(landing) = stepped(at, ring.len(), step).map(|ix| ring[ix].clone()) else {
             return;
         };
-        self.open_row(landing, window, cx);
-        self.reveal(landing, cx);
+        self.open_row(&landing, window, cx);
+        self.reveal(&landing, cx);
     }
 
     /// Step the focused pane to the next of its own tabs, wrapping at the

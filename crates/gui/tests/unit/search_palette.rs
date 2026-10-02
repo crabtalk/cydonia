@@ -104,7 +104,13 @@ fn workspace_search_keeps_results_beyond_the_palette_limit(cx: &mut gpui::TestAp
             assert_eq!(
                 this.rows(cx)
                     .iter()
-                    .filter(|row| matches!(row, Row::Article { .. }))
+                    .filter(|row| matches!(
+                        row,
+                        Row::Entry {
+                            showing: crate::model::workspace::Showing::Article(_),
+                            ..
+                        }
+                    ))
                     .count(),
                 SHOWN + 1
             );

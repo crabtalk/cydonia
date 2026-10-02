@@ -5,7 +5,6 @@
 
 use crate::{
     data::ColType,
-    model::workspace::Showing,
     view::{
         component::menu::{self, Menu},
         leaf::Pane,
@@ -116,10 +115,7 @@ impl Cydonia {
         cx: &mut Context<Self>,
     ) {
         self.commit(cx);
-        let member = self
-            .workspace
-            .read(cx)
-            .member_of(project, Showing::Table(ix));
+        let member = self.workspace.read(cx).table_member(project, ix);
         if self.enter_member(member, window, cx) {
             return;
         }
@@ -567,8 +563,10 @@ impl Cydonia {
     }
 
     /// One table in the sidebar, under the project that holds it.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn table_row(
         &self,
+        entry: &Row,
         project: usize,
         ix: usize,
         name: String,
@@ -578,7 +576,6 @@ impl Cydonia {
     ) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
         let workspace = self.workspace.read(cx);
-        let entry = Row::Table { project, ix };
         let light = self.light_of(entry, cx);
         let selected = light.selected();
         let table = workspace
@@ -595,7 +592,7 @@ impl Cydonia {
         let tone = light.tint(archived, &theme);
 
         sidebar::row(
-            SharedString::from(format!("table-{project}-{ix}")),
+            SharedString::from(sidebar::key_of(entry)),
             "table-row",
             selected,
             lifted,
@@ -620,7 +617,7 @@ impl Cydonia {
                 .into_any_element(),
         })
         .child(self.archive_button(
-            format!("table-archive-{ix}"),
+            format!("archive-{}", sidebar::key_of(entry)),
             "table-row",
             entry,
             archived,
