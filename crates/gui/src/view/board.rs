@@ -25,13 +25,14 @@ use bezel::{
         KeyBinding, Pixels, ScrollHandle, SharedString, Stateful, WeakEntity, Window, actions, div,
         prelude::*, px,
     },
-    theme::{TextStyle, Theme, Typeset},
+    theme::{Glass, SurfaceStyle, TextStyle, Theme, Typeset},
     ui::{
         drag, floating, icons,
         input::{self, Shape, TextField},
         menu::Item,
         popover,
         scroll::{self, Axes, FollowState, Scroller},
+        surface::Surfaced as _,
         tooltip::Tooltip,
         widgets::Buttons,
     },
@@ -793,11 +794,10 @@ pub(crate) fn ghost(
         })
     });
     let theme = Theme::of(cx).clone();
-    let frame = div()
-        .rounded(px(Theme::control_radius()))
-        .bg(theme.surface_raised);
+    let frame = div().rounded(px(Theme::control_radius()));
     match held {
         Some(Held::Card(text, base)) => frame
+            .bg(theme.surface_raised)
             .w(px(COLUMN_WIDTH))
             .max_h(px(CARD_MAX_HEIGHT))
             .overflow_hidden()
@@ -819,6 +819,7 @@ pub(crate) fn ghost(
             .text_style(TextStyle::Callout)
             .text_color(theme.text)
             .child(div().min_w_0().truncate().child(title))
+            .surface(&theme, SurfaceStyle::Glass(Glass::Regular))
             .into_any_element(),
         None => gpui::Empty.into_any_element(),
     }
