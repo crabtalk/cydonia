@@ -233,6 +233,7 @@ impl Article {
                 .with_scroll(scroll)
                 .with_mode(self.mode)
         });
+        pictures.update(cx, |pictures, _| pictures.relink_in(editor.downgrade()));
         language::ensure(fences(editor.read(cx)), cx);
         let mut source_digits = self.saved.split('\n').count().to_string().len();
         cx.observe(&editor, move |workspace, editor, cx| {

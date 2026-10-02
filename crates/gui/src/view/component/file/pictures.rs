@@ -2,8 +2,9 @@
 //! article — each opened in another application from a button over it: the
 //! remembered application, or a pick from the ones that open its kind.
 //!
-//! A picture on the web is fetched into [`Assets`] and opened from there; the
-//! document keeps pointing at the web. A picture on disk is watched once it is
+//! A picture on the web is fetched into [`Assets`] and opened from there. With
+//! an editor to relink, the document is pointed at the copy; without one it
+//! keeps pointing at the web. A picture on disk is watched once it is
 //! handed over, and repainted when the other application saves it.
 
 use super::external::{self, Application, Target};
@@ -52,6 +53,8 @@ pub(crate) struct Pictures {
     apps: HashMap<String, Option<Rc<Vec<Application>>>>,
     /// The picture whose list of applications is open, by block.
     menu: popover::Popup<usize>,
+    /// The document to point at a fetched copy, as one undo step.
+    editor: Option<WeakEntity<editor::Editor>>,
     /// Every picture on disk the document has drawn, polled for a save, and
     /// its file as the poll last saw it.
     watching: HashMap<PathBuf, Option<Stamp>>,
@@ -92,6 +95,7 @@ impl Pictures {
             error: None,
             apps: HashMap::new(),
             menu: popover::Popup::default(),
+            editor: None,
             watching: HashMap::new(),
             _poll: poll,
         }
@@ -141,6 +145,11 @@ impl Pictures {
             .entry(path.clone())
             .or_insert(now);
         self.watching.insert(path, now);
+    }
+
+    /// Point each picture fetched from here on in `editor` at its copy.
+    pub(crate) fn relink_in(&mut self, editor: WeakEntity<editor::Editor>) {
+        self.editor = Some(editor);
     }
 
     /// Point relative paths at `base` and fetches at `assets`.
@@ -202,17 +211,21 @@ impl Pictures {
         cx.spawn(async move |this, cx| {
             let opened = cx
                 .background_executor()
-                .spawn(async move {
-                    let file = match url.contains("://") {
-                        true => fetch(&url, &assets)?,
-                        false => base.join(&url),
-                    };
-                    external::open(&file, &target)?;
-                    anyhow::Ok(file)
+                .spawn({
+                    let url = url.clone();
+                    async move {
+                        let file = match url.contains("://") {
+                            true => fetch(&url, &assets)?,
+                            false => base.join(&url),
+                        };
+                        external::open(&file, &target)?;
+                        anyhow::Ok(file)
+                    }
                 })
                 .await;
             let _ = this.update(cx, |this, cx| {
                 match opened {
+                    Ok(file) if url.contains("://") => this.relink(&url, &file, cx),
                     Ok(_) => {}
                     Err(error) => this.error = Some(format!("Open with failed: {error:#}")),
                 }
@@ -221,6 +234,18 @@ impl Pictures {
         })
         .detach();
         cx.notify();
+    }
+}
+
+impl Pictures {
+    /// Point the editor's pictures at `url` to `file`, relative to the base.
+    fn relink(&mut self, url: &str, file: &Path, cx: &mut Context<Self>) {
+        let Some(editor) = self.editor.as_ref().and_then(WeakEntity::upgrade) else {
+            return;
+        };
+        let local = file.strip_prefix(&self.base).unwrap_or(file);
+        let local = local.to_string_lossy().into_owned();
+        editor.update(cx, |editor, cx| editor.relink(url, &local, cx));
     }
 }
 
