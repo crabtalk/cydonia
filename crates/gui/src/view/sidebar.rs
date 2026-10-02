@@ -476,10 +476,7 @@ impl Cydonia {
             // with the sidebar folded: it keeps its place across the toggle.
             .child(
                 root::band()
-                    .pl(px(match window.is_fullscreen() {
-                        true => root::HEADER_INSET,
-                        false => root::TOOLBAR_INSET,
-                    }))
+                    .pl(px(root::toolbar_inset(window, cx)))
                     .when(chrome::has(CaptionSide::Left, window, cx), |band| {
                         band.pl_0()
                     })

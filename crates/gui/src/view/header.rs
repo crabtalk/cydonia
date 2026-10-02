@@ -161,9 +161,9 @@ impl Cydonia {
         let toolbar = self.showing(cx).and_then(|pane| self.toolbar(pane, cx));
         // The lights belong to the window, not a pane, so their clearance is
         // taken here and nowhere a pane can see it.
-        let inset = match self.sidebar_open || window.is_fullscreen() {
+        let inset = match self.sidebar_open {
             true => root::HEADER_INSET,
-            false => root::TOOLBAR_INSET,
+            false => root::toolbar_inset(window, cx),
         };
         // The window's corners, when this band is the one at them: the
         // sidebar holds the left one while it is open, and the right panel

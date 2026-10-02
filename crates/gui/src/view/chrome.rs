@@ -4,7 +4,7 @@
 //! and on Linux asks for client decorations, so nothing but a [`grip`] moves
 //! it. Off macOS the caption buttons are the only ones it has. Each lands in
 //! whichever band sits at that corner of the window, the way
-//! [`crate::view::root::TOOLBAR_INSET`] is taken by whichever sits under the
+//! [`crate::view::root::toolbar_inset`] is taken by whichever sits under the
 //! traffic lights.
 //!
 //! On macOS AppKit paints the lights. In a browser both are inert: the page

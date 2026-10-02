@@ -9,7 +9,7 @@
 //! it — see [`embed`].
 
 #[cfg(feature = "desktop")]
-use crate::{agent::Listing, model::update};
+use crate::{agent::Listing, model::update, view::root::traffic_lights};
 use crate::{model::workspace::Workspace, view::root::HEADER_HEIGHT};
 use bezel::ui::scroll as scrollbars;
 use bezel::{
@@ -270,7 +270,7 @@ pub fn open(
             titlebar: Some(TitlebarOptions {
                 title: Some("Settings".into()),
                 appears_transparent: true,
-                traffic_light_position: None,
+                traffic_light_position: Some(traffic_lights()),
             }),
             // Opaque on purpose — see the module note. The root paints the
             // page's own background, so where the window frames itself the
@@ -290,6 +290,7 @@ pub fn open(
             // onto every window on each appearance switch, which is what keeps
             // the main window's frost alive and would frost this one with it.
             appearance::keep_background(window, cx);
+            crate::view::lights::fit(window, cx);
             cx.new(|cx| SettingsWindow::new(workspace, section, cx))
         },
     )

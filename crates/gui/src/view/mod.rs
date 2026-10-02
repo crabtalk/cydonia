@@ -18,6 +18,7 @@ pub mod hotkey;
 pub mod info;
 pub mod keymap;
 pub mod leaf;
+pub mod lights;
 pub mod menubar;
 pub mod root;
 pub mod search;

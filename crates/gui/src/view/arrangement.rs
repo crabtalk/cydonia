@@ -554,10 +554,10 @@ impl Cydonia {
         let fold = first && !self.sidebar_open;
         let left = fold && chrome::has(CaptionSide::Left, window, cx);
         let right = last && chrome::has(CaptionSide::Right, window, cx);
-        let lead = match (first, self.sidebar_open || window.is_fullscreen()) {
+        let lead = match (first, self.sidebar_open) {
             _ if left => 0.,
             (true, true) => crate::view::root::HEADER_INSET,
-            (true, false) => crate::view::root::TOOLBAR_INSET,
+            (true, false) => crate::view::root::toolbar_inset(window, cx),
             (false, _) => TAB_INSET,
         };
         let hovered = key.clone();

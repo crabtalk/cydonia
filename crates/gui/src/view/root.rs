@@ -1,6 +1,7 @@
 //! Root view: the window's grid, the state the chrome owns, and the frame
 //! the sidebar and the chat column are hung in.
 
+use crate::view::lights::{self, Lights};
 #[cfg(not(feature = "desktop"))]
 use crate::view::settings::{self, SettingsWindow};
 #[cfg(feature = "desktop")]
@@ -39,8 +40,8 @@ use artifact::space::Member;
 use bezel::{
     gpui::{
         self, AnyElement, App, Axis, Bounds, Context, Div, DragMoveEvent, Empty, Entity,
-        FocusHandle, Focusable, Hsla, KeyBinding, PathPromptOptions, Render, SharedString,
-        TitlebarOptions, UniformListScrollHandle, Window, WindowBounds, WindowHandle,
+        FocusHandle, Focusable, Hsla, KeyBinding, PathPromptOptions, Pixels, Point, Render,
+        SharedString, TitlebarOptions, UniformListScrollHandle, Window, WindowBounds, WindowHandle,
         WindowOptions, actions, div, point, prelude::*, px, size,
     },
     motion::{Fade, Painter},
@@ -108,9 +109,9 @@ const SIDEBAR_WIDTH_MAX: f32 = 420.;
 /// The sidebar's gutter: a row's outer margin, and the padding inside it.
 pub(crate) const SIDEBAR_GUTTER: f32 = 8.;
 
-/// The header strip's height: the band AppKit's own traffic lights centre in,
-/// [`TRAFFIC_LIGHT_INSET`] above and below them.
-pub(crate) const HEADER_HEIGHT: f32 = 2. * TRAFFIC_LIGHT_INSET + TRAFFIC_LIGHT_SIZE;
+/// The header strip's height, which the traffic lights centre in: macOS 26's
+/// 14px lights with [`TRAFFIC_LIGHT_INSET`] above and below them.
+pub(crate) const HEADER_HEIGHT: f32 = 32.;
 
 /// The pill at rest, and the agent mark beside it. Half of it is the stadium's
 /// radius.
@@ -159,19 +160,17 @@ pub(crate) fn content_bg(theme: &Theme) -> Hsla {
     theme.window_bg()
 }
 
-/// macOS traffic light diameter — AppKit owns the buttons and reports their
-/// frame, so nothing here can derive it. Measured on macOS 26.
-const TRAFFIC_LIGHT_SIZE: f32 = 14.;
+/// How far the close button stands in from the window's left edge: AppKit's
+/// own place for it in a transparent, full-size-content titlebar on macOS 26.
+pub(crate) const TRAFFIC_LIGHT_INSET: f32 = 9.;
 
-/// Where AppKit puts the close button in a transparent, full-size-content
-/// titlebar, across and down alike. Measured on macOS 26.
-const TRAFFIC_LIGHT_INSET: f32 = 9.;
+/// The lights' origin, for `TitlebarOptions::traffic_light_position`, until
+/// [`lights::fit`] has measured them.
+pub(crate) fn traffic_lights() -> Point<Pixels> {
+    point(px(TRAFFIC_LIGHT_INSET), px(TRAFFIC_LIGHT_INSET))
+}
 
-/// Between the lights' centres, as AppKit lays them out. Measured on macOS 26.
-const TRAFFIC_LIGHT_SPACING: f32 = 23.;
-
-/// The gap the header keeps at the window's edges, and between the lights and
-/// the first control it puts past them.
+/// The gap the header keeps at the window's edges.
 pub(crate) const HEADER_INSET: f32 = 16.;
 
 /// How far the glyph of a control at the end of a row stands from its
@@ -194,7 +193,7 @@ pub(crate) const BUTTON_EDGE: f32 = EDGE - BUTTON_SLACK;
 /// control stands in the next.
 ///
 /// The leading inset is the caller's only where the traffic lights take it —
-/// see [`TOOLBAR_INSET`].
+/// see [`toolbar_inset`].
 pub(crate) fn band() -> Div {
     div()
         .flex_none()
@@ -206,15 +205,20 @@ pub(crate) fn band() -> Div {
         .pr(px(BUTTON_EDGE))
 }
 
-/// Where the toolbar's own controls start: clear of the three lights AppKit
-/// puts down from [`TRAFFIC_LIGHT_INSET`], plus the gutter that clears them and the
-/// strip's own inset, so the first control stands off the lights by the same
-/// measure it keeps from every other edge.
-pub(crate) const TOOLBAR_INSET: f32 = if cfg!(target_os = "macos") {
-    TRAFFIC_LIGHT_INSET + 2. * TRAFFIC_LIGHT_SPACING + TRAFFIC_LIGHT_SIZE + 6. + HEADER_INSET
-} else {
-    HEADER_INSET
-};
+/// The gap between the green light and the glyph of the first control past
+/// it.
+const LIGHTS_GAP: f32 = 16.;
+
+/// Where the toolbar's own controls start at the window's left edge: the
+/// button whose glyph stands [`LIGHTS_GAP`] past the green light, or in full
+/// screen, where there are no lights, in line with the sidebar rows' icons.
+pub(crate) fn toolbar_inset(window: &Window, cx: &App) -> f32 {
+    match (window.is_fullscreen(), cfg!(target_os = "macos")) {
+        (true, _) => 2. * SIDEBAR_GUTTER - BUTTON_SLACK,
+        (false, true) => Lights::of(cx).end() + LIGHTS_GAP - BUTTON_SLACK,
+        (false, false) => HEADER_INSET,
+    }
+}
 
 /// The chords the window keeps whatever the reader says — the commands it also
 /// answers to are bound from [`crate::view::keymap`], which is where they can
@@ -320,7 +324,7 @@ pub fn open(settings: Settings, state: State, cx: &mut App) -> Result<WindowHand
             titlebar: Some(TitlebarOptions {
                 title: Some("Cydonia".into()),
                 appears_transparent: true,
-                traffic_light_position: None,
+                traffic_light_position: Some(traffic_lights()),
             }),
             // Glass needs a blurred window background to blur into. A window
             // that frames itself opens transparent, or its frame band is
@@ -338,6 +342,7 @@ pub fn open(settings: Settings, state: State, cx: &mut App) -> Result<WindowHand
         },
         |window, cx| {
             appearance::observe_window(window, cx).detach();
+            lights::fit(window, cx);
             cx.new(|cx| {
                 let mut root = Cydonia::new(settings, state, window, cx);
                 root.restore_panel_layout();
