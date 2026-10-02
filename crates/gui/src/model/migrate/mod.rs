@@ -30,6 +30,7 @@
 //! deliberate.
 
 pub mod v0_1_11;
+pub mod v0_1_23;
 pub mod v0_1_4;
 
 /// Run every migration, oldest first, before anything reads either file.
@@ -43,4 +44,5 @@ pub mod v0_1_4;
 pub fn run() {
     v0_1_4::run();
     v0_1_11::run();
+    v0_1_23::run();
 }

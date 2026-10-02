@@ -343,7 +343,7 @@ impl SettingsWindow {
             ))
             .child(group(
                 "Pasting",
-                vec![self.source_paste_row(cx), self.keep_pasted_row(cx)],
+                vec![self.source_paste_row(cx), self.download_web_row(cx)],
             ))
             .into_any_element()
     }
@@ -393,19 +393,19 @@ impl SettingsWindow {
     }
 
     /// Whether a picture's pasted web address is downloaded into the article.
-    fn keep_pasted_row(&self, cx: &mut Context<Self>) -> AnyElement {
-        let on = self.workspace.read(cx).settings.keep_pasted_images;
+    fn download_web_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let on = self.workspace.read(cx).settings.download_web_images;
         self.switch_row(
             Switch::new(
-                "keep-pasted-images",
-                "Save pasted pictures",
-                "Download a picture link into the article when it is pasted. Off keeps the link.",
+                "download-web-images",
+                "Download web pictures",
+                "Save a copy of a pasted picture link into the article. Off keeps the web address.",
                 on,
             ),
             cx,
             move |this, cx| {
                 this.workspace.update(cx, |workspace, cx| {
-                    workspace.set_keep_pasted_images(!on, cx)
+                    workspace.set_download_web_images(!on, cx)
                 });
             },
         )

@@ -47,8 +47,8 @@ pub struct Settings {
     /// Whether a picture's web address pasted into a document is downloaded
     /// into the document's `assets/` and pointed at there. Bare, beside the
     /// switches above.
-    #[serde(default = "keep_pasted_images")]
-    pub keep_pasted_images: bool,
+    #[serde(default = "download_web_images")]
+    pub download_web_images: bool,
     /// Whether a picture pasted in source mode goes in as an image line. Bare,
     /// beside the switches above.
     #[serde(default = "paste_images_in_source")]
@@ -825,7 +825,7 @@ fn notify_turns() -> bool {
     true
 }
 
-fn keep_pasted_images() -> bool {
+fn download_web_images() -> bool {
     true
 }
 
@@ -860,7 +860,7 @@ impl Settings {
     /// What becomes of a pasted picture — see [`crate::model::media`].
     pub fn pasting(&self) -> crate::model::media::Pasting {
         crate::model::media::Pasting {
-            fetch: self.keep_pasted_images,
+            fetch: self.download_web_images,
             source: self.paste_images_in_source,
         }
     }
@@ -873,7 +873,7 @@ impl Default for Settings {
             watch_bounce: watch_bounce(),
             auto_update: auto_update(),
             notify_turns: notify_turns(),
-            keep_pasted_images: keep_pasted_images(),
+            download_web_images: download_web_images(),
             paste_images_in_source: paste_images_in_source(),
             appearance: Appearance::default(),
             shortcuts: Shortcuts::default(),
@@ -1278,9 +1278,9 @@ pub fn set_notify_turns(on: bool) -> Result<()> {
 }
 
 /// Switch downloading pasted web pictures on or off in the file.
-pub fn set_keep_pasted_images(on: bool) -> Result<()> {
+pub fn set_download_web_images(on: bool) -> Result<()> {
     edit(|doc| {
-        doc["keep_pasted_images"] = toml_edit::value(on);
+        doc["download_web_images"] = toml_edit::value(on);
         Ok(true)
     })
 }

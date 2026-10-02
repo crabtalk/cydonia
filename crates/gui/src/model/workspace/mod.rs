@@ -696,11 +696,11 @@ impl Workspace {
         cx.notify();
     }
 
-    pub fn set_keep_pasted_images(&mut self, on: bool, cx: &mut Context<Self>) {
-        if settings::set_keep_pasted_images(on).is_err() {
+    pub fn set_download_web_images(&mut self, on: bool, cx: &mut Context<Self>) {
+        if settings::set_download_web_images(on).is_err() {
             return;
         }
-        self.settings.keep_pasted_images = on;
+        self.settings.download_web_images = on;
         crate::model::media::set_pasting(self.settings.pasting(), cx);
         cx.notify();
     }

@@ -44,7 +44,7 @@ Put a displayed picture in its own paragraph, with blank lines around it:
   angle brackets: `![Overview|480](<assets/system overview.png>)`.
 - HTTP(S) URLs work where the image is reachable from the app.
 
-**Settings › Editor › Save pasted pictures** downloads a picture link into the article's `assets/` when it is pasted; off, the link stays a web address. Opening a picture in another app from the button over it always saves a copy into `assets/` and points the article at it, whichever way the switch is set, so edits saved there show in the article.
+**Settings › Editor › Download web pictures** saves a copy of a pasted picture link into the article's `assets/`; off, the link stays a web address. A pasted screenshot or picture file is always saved into `assets/`. Opening a picture in another app from the button over it always saves a copy into `assets/` and points the article at it, whichever way the switch is set, so edits saved there show in the article.
 
 Each article keeps its pictures and its cover in its own `assets/`, which moves with it. Pictures already under `<project>/.cydonia/assets/` keep working.
 

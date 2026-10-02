@@ -3,13 +3,28 @@
     "version": "0.1.23",
     "date": "2026-10-03",
     "nightly": true,
-    "summary": "Article covers kept with their pictures, and docs for what agents are told.",
+    "summary": "Custom colours, board drag with motion, window blur, and article covers kept with their pictures.",
     "new": [
+      "Pick any colour for highlights, selection, search results and the cursor from a colour picker in Settings, beside twelve presets for each",
+      "Drag board cards and lanes with motion, carried list rows painted as glass",
+      "Find the next and previous match with ⌘G and ⇧⌘G, rebindable in Settings",
+      "Select by word or line with a double or triple click in the markdown preview, and drag to extend by it",
       "Read the instructions and resources Cydonia gives agents, word for word, in the docs"
     ],
     "changed": [
+      "Show colours in Settings at full strength, and fall back to the default for a colour settings.toml cannot read",
+      "Adjust window blur with a slider in place of Reduce transparency",
+      "Open a fetched web picture's local copy when it is opened in another app",
       "Keep an article's cover in its assets folder beside its pictures; covers already filed beside the article still show",
-      "Give article paths in MCP results and the cover tool's picture relative to the project directory instead of absolute"
+      "Give article paths in MCP results and the cover tool's picture relative to the project directory instead of absolute",
+      "Rename Save pasted pictures to Download web pictures, carrying keep_pasted_images in settings.toml over as download_web_images",
+      "Build on Bezel 0.2.6 from crates.io"
+    ],
+    "fixed": [
+      "Keep the find field focused across plain text",
+      "Place the macOS traffic lights in the header and keep the sidebar toggle clear of them",
+      "Keep the tab inset off the sidebar toggle when the sidebar is folded",
+      "Drop the accent border from the board drag preview"
     ]
   },
   {
