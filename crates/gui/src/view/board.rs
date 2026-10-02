@@ -795,8 +795,6 @@ pub(crate) fn ghost(
     let theme = Theme::of(cx).clone();
     let frame = div()
         .rounded(px(Theme::control_radius()))
-        .border_1()
-        .border_color(theme.accent)
         .bg(theme.surface_raised);
     match held {
         Some(Held::Card(text, base)) => frame
