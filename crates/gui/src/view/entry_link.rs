@@ -145,8 +145,8 @@ fn nested_row(url: &str, cx: &App) -> AnyElement {
         .into_any_element()
 }
 
-/// The slash rows: a new session on each agent, under the agent's mark from
-/// the registry, and one already running.
+/// The slash menu: the editor's blocks, then a new session on each agent,
+/// under the agent's mark from the registry, and one already running.
 pub(crate) fn slash_items(workspace: &crate::model::workspace::Workspace) -> Vec<SlashItem> {
     let mut rows = workspace
         .settings
@@ -209,10 +209,13 @@ pub(crate) fn slash_items(workspace: &crate::model::workspace::Workspace) -> Vec
         icon: Some(icons::text::Link.into()),
         action: SlashAction::Run(Rc::new(existing)),
     });
-    vec![SlashItem::Group {
+    let mut items = editor::slash_defaults();
+    items.push(SlashItem::Group {
         label: "Session".into(),
+        icon: Some(kind_icon(Kind::Session)),
         rows,
-    }]
+    });
+    items
 }
 
 /// The open project a reference names by its directory's name, and the
