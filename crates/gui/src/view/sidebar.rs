@@ -966,7 +966,17 @@ impl Cydonia {
         // note has to be here too — read stale, a right press would swallow.
         // A space's opens from the row around it, as an entry's does.
         let head = match &group {
-            Group::Project(path) => self.menu_press(head, Menu::Project(path.clone()), cx),
+            Group::Project(path) => self
+                .menu_press(head, Menu::Project(path.clone()), cx)
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener({
+                        let menu = Menu::Project(path.clone());
+                        move |this, press: &gpui::MouseDownEvent, _, cx| {
+                            this.toggle_menu_at(menu.clone(), Some(press.position), cx);
+                        }
+                    }),
+                ),
             Group::Space(_) => head,
         };
         match pinned {
@@ -1911,11 +1921,11 @@ impl Cydonia {
             move |this, _, cx| this.close_project(ix, cx),
         ));
         let id = SharedString::from(format!("project-menu-{ix}"));
-        Some(popover::anchored_menu_below(
-            id.clone(),
-            self.menu_card(id, rows, window, cx),
-            None,
-        ))
+        let card = self.menu_card(id.clone(), rows, window, cx);
+        Some(match self.menu_point(&Menu::Project(path.to_path_buf())) {
+            Some(point) => popover::menu_at(id, point, card, None),
+            None => popover::anchored_menu_below(id, card, None),
+        })
     }
 
     /// Show the project's directory in the file manager. Best effort and off
