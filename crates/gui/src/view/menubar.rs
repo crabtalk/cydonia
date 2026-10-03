@@ -212,6 +212,9 @@ fn menus(cx: &App) -> Vec<Menu> {
             MenuItem::action("Next Entry", NextEntry),
             MenuItem::action("Previous Entry", PrevEntry),
             MenuItem::separator(),
+            MenuItem::action("Back", crate::view::root::GoBack),
+            MenuItem::action("Forward", crate::view::root::GoForward),
+            MenuItem::separator(),
             // Here rather than left to the pane's own `···`, because ⌘E is the
             // editor's inline code and only a key equivalent on the bar takes
             // a chord before the focused surface is offered it — see
@@ -377,6 +380,13 @@ impl Cydonia {
             .when(entries, |root| {
                 root.on_action(cx.listener(Self::next_entry))
                     .on_action(cx.listener(Self::prev_entry))
+            })
+            // Only with somewhere to go, so the menu greys out the other.
+            .when(self.history.can_go_back(), |root| {
+                root.on_action(cx.listener(Self::go_back))
+            })
+            .when(self.history.can_go_forward(), |root| {
+                root.on_action(cx.listener(Self::go_forward))
             })
     }
 }

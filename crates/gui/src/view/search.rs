@@ -38,7 +38,7 @@ use bezel::{
         widgets::Buttons as _,
     },
 };
-use std::{collections::HashMap, ops::Range, path::PathBuf, sync::mpsc, time::Duration};
+use std::{collections::HashMap, ops::Range, path::PathBuf, rc::Rc, sync::mpsc, time::Duration};
 
 actions!(
     cydonia_search,
@@ -88,6 +88,18 @@ pub fn bindings() -> Vec<KeyBinding> {
         KeyBinding::new("shift-tab", PrevFilter, ctx),
     ]
 }
+
+/// A session the palette handed back while it was linking, as its reference,
+/// `project#43`.
+pub(crate) struct Linked {
+    pub reference: String,
+}
+
+/// What picking an entry does while the palette links rather than opens.
+pub(crate) type OnLink = Rc<dyn Fn(&mut Cydonia, Linked, &mut Window, &mut Context<Cydonia>)>;
+
+const PLACEHOLDER: &str = "Search articles, boards, sessions and commands…";
+const LINK_PLACEHOLDER: &str = "Link a session…";
 
 /// One row of the palette.
 #[derive(Clone)]
@@ -147,6 +159,9 @@ pub(crate) struct Search {
     filter: Option<Filter>,
     /// Rows listed at most, once filtered.
     limit: usize,
+    /// Set while the palette links an entry: what picking one does in place
+    /// of opening it. It lists no commands.
+    linking: Option<OnLink>,
     selected: usize,
     scroll: ScrollHandle,
     task: Option<Task<()>>,
@@ -158,7 +173,7 @@ impl Search {
             TextField::new(cx)
                 .with_frame(false)
                 .with_key_context(CONTEXT)
-                .with_placeholder("Search articles, boards, sessions and commands…")
+                .with_placeholder(PLACEHOLDER)
         });
         cx.subscribe(&field, |this, _, event: &FieldEvent, cx| {
             if matches!(event, FieldEvent::Changed(_)) {
@@ -177,6 +192,7 @@ impl Search {
             searching: false,
             filter: None,
             limit: RECENT,
+            linking: None,
             selected: 0,
             scroll: ScrollHandle::new(),
             task: None,
@@ -277,6 +293,10 @@ impl Cydonia {
             return;
         }
         self.search.open = true;
+        self.search.linking = None;
+        self.search
+            .field
+            .update(cx, |field, cx| field.set_placeholder(PLACEHOLDER, cx));
         // Read before the field takes focus: what can run is what the
         // surface under the palette could.
         self.search.commands = menubar::commands(window, cx);
@@ -299,7 +319,43 @@ impl Cydonia {
         cx.notify();
     }
 
+    /// Raise the palette to link an entry: Enter hands the one picked to `on`
+    /// rather than opening it.
+    pub(crate) fn link_search(&mut self, on: OnLink, window: &mut Window, cx: &mut Context<Self>) {
+        self.search.open = true;
+        self.search.linking = Some(on);
+        self.search.commands = Vec::new();
+        self.search.filter = Some(Filter::Kind(Kind::Session));
+        self.search.field.update(cx, |field, cx| {
+            field.set_placeholder(LINK_PLACEHOLDER, cx);
+            field.set_content(String::new(), cx);
+        });
+        self.refresh_search(cx);
+        // Focused once whatever raised the palette has finished handling it.
+        let field = self.search.field.read(cx).focus_handle(cx);
+        window.defer(cx, move |window, cx| window.focus(&field, cx));
+        cx.notify();
+    }
+
+    /// How a session row is written as a reference. Nothing for any other
+    /// row, or a session without a number yet.
+    fn linked(&self, row: &Row, cx: &App) -> Option<Linked> {
+        let Row::Entry {
+            showing: Showing::Session(id),
+            ..
+        } = row
+        else {
+            return None;
+        };
+        Some(Linked {
+            reference: self.workspace.read(cx).reference_of_session(*id)?,
+        })
+    }
+
     fn apply_search(&mut self, _: &ApplySearch, window: &mut Window, cx: &mut Context<Self>) {
+        if self.search.linking.is_some() {
+            return;
+        }
         let Some(query) = self.search.query(cx) else {
             return;
         };
@@ -375,6 +431,7 @@ impl Cydonia {
 
     fn dismiss_search(&mut self, _: &DismissSearch, window: &mut Window, cx: &mut Context<Self>) {
         self.search.open = false;
+        self.search.linking = None;
         self.search.task = None;
         window.focus(&self.leaf().focus, cx);
         cx.notify();
@@ -528,6 +585,15 @@ impl Cydonia {
             }
             None => return,
         };
+        if let Some(on) = self.search.linking.clone() {
+            let Some(linked) = self.linked(&hit.row, cx) else {
+                return;
+            };
+            self.dismiss_search(&DismissSearch, window, cx);
+            on(self, linked, window, cx);
+            cx.notify();
+            return;
+        }
         let query = self.search.field.read(cx).content().clone();
         self.dismiss_search(&DismissSearch, window, cx);
         self.open_row(&hit.row, window, cx);
@@ -635,7 +701,11 @@ impl Cydonia {
     }
 
     /// The palette over the window, while it is up.
-    pub(crate) fn search_palette(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    pub(crate) fn search_palette(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         if !self.search.open {
             return None;
         }
@@ -669,6 +739,7 @@ impl Cydonia {
                 Pick::Hit(hit) => self.hit_row(ix, hit, cx),
             });
         }
+        let preview = self.link_preview(window, cx);
         let note = match (rows.is_empty(), self.search.searching, empty) {
             (false, ..) => None,
             (true, true, _) => Some("Searching…"),
@@ -694,7 +765,7 @@ impl Cydonia {
                 .child(
                     div()
                         .id("search-palette")
-                        .w(px(560.))
+                        .w(px(if preview.is_some() { 720. } else { 560. }))
                         .max_h(px(440.))
                         .flex()
                         .flex_col()
@@ -731,46 +802,95 @@ impl Cydonia {
                         )
                         .child(
                             div()
-                                .id("search-hits")
                                 .flex_1()
                                 .min_h_0()
-                                .overflow_y_scroll()
-                                .track_scroll(&self.search.scroll)
-                                .p(px(6.))
                                 .flex()
-                                .flex_col()
-                                .children(rows)
-                                .children(note.map(|note| {
+                                .flex_row()
+                                .child(
                                     div()
-                                        .px(px(8.))
-                                        .py(px(10.))
-                                        .text_style(TextStyle::Subheadline)
-                                        .text_color(theme.text_faint)
-                                        .child(note)
-                                })),
+                                        .id("search-hits")
+                                        .flex_1()
+                                        .min_h_0()
+                                        .overflow_y_scroll()
+                                        .track_scroll(&self.search.scroll)
+                                        .p(px(6.))
+                                        .flex()
+                                        .flex_col()
+                                        .children(rows)
+                                        .children(note.map(|note| {
+                                            div()
+                                                .px(px(8.))
+                                                .py(px(10.))
+                                                .text_style(TextStyle::Subheadline)
+                                                .text_color(theme.text_faint)
+                                                .child(note)
+                                        }))
+                                        .min_w_0(),
+                                )
+                                .children(preview),
                         )
                         .child(self.palette_footer(cx))
-                        .child(
-                            div()
-                                .id("apply-workspace-search")
-                                .px(px(14.))
-                                .py(px(8.))
-                                .border_t_1()
-                                .border_color(theme.border)
-                                .text_style(TextStyle::Subheadline)
-                                .text_color(if empty { theme.text_faint } else { theme.text })
-                                .when(!empty, |el| {
-                                    el.cursor_pointer().hover(|el| el.bg(theme.element_hover))
-                                })
-                                .child(keymap::platform(
-                                    "Apply to workspace  ⌘↵",
-                                    "Apply to workspace  Ctrl+Enter",
-                                ))
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.apply_search(&ApplySearch, window, cx)
-                                })),
-                        ),
+                        .when(self.search.linking.is_none(), |palette| {
+                            palette.child(
+                                div()
+                                    .id("apply-workspace-search")
+                                    .px(px(14.))
+                                    .py(px(8.))
+                                    .border_t_1()
+                                    .border_color(theme.border)
+                                    .text_style(TextStyle::Subheadline)
+                                    .text_color(if empty { theme.text_faint } else { theme.text })
+                                    .when(!empty, |el| {
+                                        el.cursor_pointer().hover(|el| el.bg(theme.element_hover))
+                                    })
+                                    .child(keymap::platform(
+                                        "Apply to workspace  ⌘↵",
+                                        "Apply to workspace  Ctrl+Enter",
+                                    ))
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.apply_search(&ApplySearch, window, cx)
+                                    })),
+                            )
+                        }),
                 )
+                .into_any_element(),
+        )
+    }
+
+    /// While linking, the last turns of the session the selection is on.
+    fn link_preview(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+        self.search.linking.as_ref()?;
+        let Some(Pick::Hit(Hit {
+            row:
+                Row::Entry {
+                    showing: Showing::Session(id),
+                    ..
+                },
+            ..
+        })) = self.search.shown(cx).get(self.search.selected).copied()
+        else {
+            return None;
+        };
+        let id = *id;
+        let theme = Theme::of(cx).clone();
+        let body = self.workspace.update(cx, |workspace, cx| {
+            crate::view::entry_link::load_history(workspace, id);
+            let chat = workspace.session(id)?;
+            let count = artifact::session::chat::turns(&chat.items).len();
+            let from = count.saturating_sub(crate::view::entry_link::PREVIEW_TURNS);
+            Some(crate::view::component::transcript::excerpt(
+                chat, from, count, window, cx,
+            ))
+        });
+        Some(
+            div()
+                .id("search-preview")
+                .w(px(280.))
+                .flex_none()
+                .border_l_1()
+                .border_color(theme.border)
+                .overflow_y_scroll()
+                .children(body)
                 .into_any_element(),
         )
     }
@@ -784,12 +904,23 @@ impl Cydonia {
     }
 
     fn step_filter(&mut self, by: isize, cx: &mut Context<Self>) {
-        let at = FILTERS
+        let filters = self.filters();
+        let at = filters
             .iter()
             .position(|(kind, _)| *kind == self.search.filter)
             .unwrap_or(0) as isize;
-        let at = (at + by).rem_euclid(FILTERS.len() as isize) as usize;
-        self.set_filter(FILTERS[at].0, cx);
+        let at = (at + by).rem_euclid(filters.len() as isize) as usize;
+        self.set_filter(filters[at].0, cx);
+    }
+
+    /// The kinds on offer: every one, or sessions alone while linking.
+    fn filters(&self) -> Vec<(Option<Filter>, &'static str)> {
+        FILTERS
+            .into_iter()
+            .filter(|(kind, _)| {
+                self.search.linking.is_none() || *kind == Some(Filter::Kind(Kind::Session))
+            })
+            .collect()
     }
 
     fn set_filter(&mut self, filter: Option<Filter>, cx: &mut Context<Self>) {
@@ -832,7 +963,13 @@ impl Cydonia {
                     .items_center()
                     .gap(px(10.))
                     .child(hint("⇥", "Filter"))
-                    .child(hint("↵", "Open")),
+                    .child(hint(
+                        "↵",
+                        match self.search.linking {
+                            Some(_) => "Link",
+                            None => "Open",
+                        },
+                    )),
             )
             .into_any_element()
     }
@@ -844,33 +981,37 @@ impl Cydonia {
             .flex()
             .flex_row()
             .gap(px(4.))
-            .children(FILTERS.iter().enumerate().map(|(ix, (kind, label))| {
-                let on = *kind == self.search.filter;
-                let kind = *kind;
-                div()
-                    .id(("search-filter", ix))
-                    .px(px(8.))
-                    .py(px(2.))
-                    .rounded_full()
-                    .border_1()
-                    .cursor_pointer()
-                    .text_style(TextStyle::Subheadline)
-                    .when(on, |chip| {
-                        chip.bg(theme.element_active)
-                            .border_color(theme.border)
-                            .text_color(theme.text)
-                    })
-                    .when(!on, |chip| {
-                        chip.border_color(gpui::transparent_black())
-                            .text_color(theme.text_muted)
-                            .hover(|chip| chip.bg(theme.element_hover))
-                    })
-                    .child(*label)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        cx.stop_propagation();
-                        this.set_filter(kind, cx);
-                    }))
-            }))
+            .children(
+                self.filters()
+                    .into_iter()
+                    .enumerate()
+                    .map(|(ix, (kind, label))| {
+                        let on = kind == self.search.filter;
+                        div()
+                            .id(("search-filter", ix))
+                            .px(px(8.))
+                            .py(px(2.))
+                            .rounded_full()
+                            .border_1()
+                            .cursor_pointer()
+                            .text_style(TextStyle::Subheadline)
+                            .when(on, |chip| {
+                                chip.bg(theme.element_active)
+                                    .border_color(theme.border)
+                                    .text_color(theme.text)
+                            })
+                            .when(!on, |chip| {
+                                chip.border_color(gpui::transparent_black())
+                                    .text_color(theme.text_muted)
+                                    .hover(|chip| chip.bg(theme.element_hover))
+                            })
+                            .child(label)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                cx.stop_propagation();
+                                this.set_filter(kind, cx);
+                            }))
+                    }),
+            )
             .into_any_element()
     }
 
@@ -937,11 +1078,7 @@ impl Cydonia {
                 .get(project)
                 .map(|open| open.name())
         });
-        let icon: Icon = match kind_of(&hit.row) {
-            Some(Kind::Session) => icons::social::MessageCircle.into(),
-            Some(Kind::Board) => icons::development::SquareKanban.into(),
-            _ => icons::files::FileText.into(),
-        };
+        let icon = kind_icon(kind_of(&hit.row).unwrap_or(Kind::Article));
         let title = self.label_of_row(&hit.row, cx);
         let selected = ix == self.search.selected;
         let snippet = hit.snippet.as_ref().map(|(line, at)| {
@@ -1077,6 +1214,15 @@ const FILTERS: [(Option<Filter>, &str); 5] = [
     (Some(Filter::Kind(Kind::Board)), "Boards"),
     (Some(Filter::Kind(Kind::Article)), "Articles"),
 ];
+
+/// The mark an entry of `kind` wears wherever it is listed or linked.
+pub(crate) fn kind_icon(kind: Kind) -> Icon {
+    match kind {
+        Kind::Session => icons::social::MessageCircle.into(),
+        Kind::Board => icons::development::SquareKanban.into(),
+        Kind::Article => icons::files::FileText.into(),
+    }
+}
 
 fn kind_of(row: &Row) -> Option<Kind> {
     match row {

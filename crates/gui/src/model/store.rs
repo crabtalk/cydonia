@@ -11,6 +11,7 @@ use artifact::{
     board::Board,
     project::{Project, Watching, fs, memory},
     session::record::Record,
+    space::Kind,
 };
 use std::{
     collections::HashMap,
@@ -50,6 +51,17 @@ pub fn open(path: &Path) -> Store {
     match held {
         Some(project) => Store::Memory(project),
         None => Store::Fs(fs::Project::new(path)),
+    }
+}
+
+impl Store {
+    /// Where an entry is on disk — see [`fs::Project::place`]. `None` from a
+    /// backend that is not the disk.
+    pub fn place(&self, kind: Kind, id: &str) -> Option<PathBuf> {
+        match self {
+            Store::Fs(store) => store.place(kind, id),
+            Store::Memory(_) => None,
+        }
     }
 }
 

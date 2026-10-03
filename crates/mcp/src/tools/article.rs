@@ -760,7 +760,7 @@ fn articles(project: &Path) -> Vec<Held> {
 /// the caller is one `list_articles` away from the ids.
 fn locate(project: &Path, needle: &str) -> Result<Held, Trouble> {
     let mut held = articles(project);
-    if let Some(number) = artifact::entry::reference(needle) {
+    if let Some(number) = super::number_in(project, needle)? {
         return held
             .iter()
             .position(|article| article.number == Some(number))

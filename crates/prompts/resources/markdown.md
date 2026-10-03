@@ -1,6 +1,6 @@
 ---
 name: markdown
-description: Write and edit Cydonia articles using its supported Markdown syntax, image sizing and paths, and rich links. Use for content displayed in Cydonia, not ordinary repository Markdown.
+description: Write and edit Cydonia articles using its supported Markdown syntax, image sizing and paths, rich links, and links to sessions, articles and boards. Use for content displayed in Cydonia, not ordinary repository Markdown.
 ---
 
 # Cydonia Markdown
@@ -130,6 +130,27 @@ The spelling controls whether a link stays text or becomes a rich preview:
   A custom label such as `[Guide](url "embed")` stays inline.
 - `"embed"` is a link preview, not an iframe or executable embed. Preview
   details depend on what metadata the destination supplies.
+
+## Links to entries
+
+`cydonia://<project>#<number>` links a session, an article or a board in
+Cydonia. `<project>` is the project directory's name; `cydonia://#43` names
+the entry in the project shown. Spelled like a web link's forms:
+
+```markdown
+[Roadmap](cydonia://cydonia#12)
+
+[cydonia://cydonia#12](cydonia://cydonia#12 "chip")
+
+[cydonia://cydonia#43](cydonia://cydonia#43 "embed")
+```
+
+- An ordinary link stays a text link.
+- `"chip"` paints inline as the entry's mark and title.
+- `"embed"` alone on a line is a card of the entry. A session's card is the
+  session, live, with a message field; `cydonia://cydonia#43:5-7` shows turns
+  5 to 7 alone, read only. An article's or a board's card is its title, kind
+  and number.
 
 ## Supported formatting and limits
 

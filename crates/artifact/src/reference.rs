@@ -8,6 +8,9 @@
 //! | `foo#43:5`       | turn 5 of session #43 in project `foo`  |
 //! | `foo#DEV-12`     | card DEV-12 in project `foo`            |
 //!
+//! Each form may be written as a link behind a `cydonia://` scheme:
+//! `cydonia://foo#43:5-7`.
+//!
 //! Parsing only. Which directory `foo` is, and whether `#43` is a session, are
 //! the caller's to settle.
 
@@ -45,9 +48,13 @@ impl std::fmt::Display for Turns {
     }
 }
 
+/// The scheme an entry link is written behind.
+pub const SCHEME: &str = "cydonia://";
+
 /// Read one reference, or nothing for text that is not one. Surrounding
 /// whitespace is not trimmed.
 pub fn parse(text: &str) -> Option<Reference<'_>> {
+    let text = text.strip_prefix(SCHEME).unwrap_or(text);
     let Some((project, rest)) = text.split_once('#') else {
         let (key, handle) = card(text)?;
         return Some(Reference {

@@ -24,7 +24,7 @@ use bezel::gpui::{self, Render};
 struct RailView(ChatSession, f32);
 
 impl Render for RailView {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // What `transcript::render` does before it builds the rail: every row on
         // screen goes back to unmeasured, so a rail that reads the list's
         // measurements during render reads nothing.
@@ -50,7 +50,14 @@ impl Render for RailView {
                 },
                 |_, _, _| {},
             ))
-            .child(rail(&self.0, &turns(&self.0.items), px(100.)))
+            .child(rail(
+                &self.0,
+                &turns(&self.0.items),
+                px(100.),
+                None,
+                window,
+                cx,
+            ))
     }
 }
 

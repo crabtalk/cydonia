@@ -861,9 +861,9 @@ fn store(args: &Args<'_>) -> Result<fs::Project, Trouble> {
 
 /// The board a needle names: its id, its key, or its name, in that order —
 /// which is least ambiguous first, since only the id is guaranteed unique.
-fn board(project: &impl Project, needle: &str) -> Result<Board, Trouble> {
+fn board(project: &fs::Project, needle: &str) -> Result<Board, Trouble> {
     let mut boards = project.boards();
-    if let Some(number) = artifact::entry::reference(needle) {
+    if let Some(number) = super::number_in(project.root(), needle)? {
         return boards
             .iter()
             .position(|board| board.number == Some(number))

@@ -75,11 +75,17 @@
 </div>
 
 <style>
+	/* No rubber band past either end of a docs page. */
+	:global(html:has(.docs)) {
+		overscroll-behavior: none;
+	}
+
 	.docs {
 		display: grid;
 		grid-template-columns: 204px minmax(0, 1fr) 200px;
 		gap: 40px;
-		padding: 0 24px;
+		--docs-gutter: 24px;
+		padding: 0 var(--docs-gutter);
 	}
 
 	/* A column the height of the window under the bar: the rule down its right
@@ -92,14 +98,20 @@
 		top: var(--header);
 		align-self: start;
 		height: calc(100vh - var(--header));
-		padding: 20px 12px 14px 0;
+		padding: 20px 16px 14px 0;
 		border-right: 1px solid var(--line);
 	}
 
+	/* Everything in the column stands on its content edge. A row's pill is
+	   the one thing past it, bled into the gutter around the text; the list
+	   pads by that much so its scroller does not clip the bleed. */
 	.list {
+		margin-inline: -8px;
+		padding-inline: 8px;
 		flex: 1;
 		min-height: 0;
 		overflow-y: auto;
+		overscroll-behavior: none;
 	}
 
 	/* Beside the page there is nothing to fold, so the control is gone and the
@@ -121,7 +133,6 @@
 
 	.caption {
 		margin: 0 0 3px;
-		padding: 0 6px;
 		color: var(--faint);
 		font-size: 11px;
 		font-weight: 600;
@@ -129,9 +140,10 @@
 		text-transform: uppercase;
 	}
 
-	.nav a {
+	.section a {
 		display: block;
-		padding: 3px 6px;
+		margin-inline: -8px;
+		padding: 3px 8px;
 		border-radius: var(--radius);
 		color: var(--muted);
 		font-size: 13.5px;
@@ -139,14 +151,14 @@
 	}
 
 	@media (hover: hover) {
-		.nav a:hover {
+		.section a:hover {
 			background: var(--panel-high);
 			color: var(--text);
 			text-decoration: none;
 		}
 	}
 
-	.nav a.here {
+	.section a.here {
 		background: var(--panel-high);
 		color: var(--text);
 		font-weight: 500;
@@ -157,8 +169,10 @@
 		display: flex;
 		align-items: center;
 		gap: 12px;
-		margin-top: 16px;
-		padding: 12px 6px 0;
+		/* Edge to edge, from the window's edge to the column's border: the foot
+		   is the column's, not a row of the menu. */
+		margin: 16px -16px 0 calc(-1 * var(--docs-gutter));
+		padding: 12px 16px 0 var(--docs-gutter);
 		border-top: 1px solid var(--line);
 		color: var(--faint);
 		font-size: 13px;
@@ -174,7 +188,6 @@
 	.foot a {
 		display: inline-flex;
 		align-items: center;
-		padding: 0;
 		color: var(--faint);
 	}
 
@@ -215,7 +228,8 @@
 		}
 
 		.foot {
-			margin-top: 16px;
+			margin: 16px 0 0;
+			padding: 12px 0 0;
 		}
 
 		.fold {
@@ -240,7 +254,7 @@
 
 	@media (max-width: 600px) {
 		.docs {
-			padding: 0 16px;
+			--docs-gutter: 16px;
 		}
 	}
 </style>

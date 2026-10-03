@@ -22,6 +22,7 @@ impl Render for ChatView {
                 None,
                 800.,
                 |_, _| None,
+                super::Drawn::Pane,
                 window,
                 cx,
             )

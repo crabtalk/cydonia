@@ -15,6 +15,7 @@ use crate::{
     view::{
         board::{self, Editing},
         component::{composer::Composer, ribbon::Ribbon},
+        drawer::Drawer,
         table,
     },
 };
@@ -79,7 +80,9 @@ pub struct Leaf {
     /// pane on offer.
     pub(crate) asked_session: bool,
     pub(crate) editing: Option<Editing>,
-    pub(crate) open_card: Option<board::OpenCard>,
+    /// What the pane's drawer holds, while it is up — see
+    /// [`crate::view::drawer`].
+    pub(crate) drawer: Option<Drawer>,
     pub(crate) card_drafts: Vec<board::CardDraft>,
     pub(crate) card_field: Entity<TextField>,
     /// The board's find field, and whether its bar is up.
@@ -121,7 +124,7 @@ impl Leaf {
             queued_galleries: Default::default(),
             asked_session: false,
             editing: None,
-            open_card: None,
+            drawer: None,
             card_drafts: Vec::new(),
             card_field,
             find_field,

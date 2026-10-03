@@ -51,10 +51,12 @@ cannot reach past.
 | `scrollbars` | `scrolling` | `scrolling`, `always` or `never` |
 | `sidebar_scrollbars` | `never` | The same three |
 | `wrap_code` | `false` | Whether a long line wraps inside a code block rather than scrolling |
-| `highlight` | `yellow` | The colour `==text==` is washed in |
-| `selection` | unset | The colour selected text is washed in; unset is the palette's |
-| `search` | unset | The colour find matches are washed in; unset is the accent |
+| `highlight` | `yellow` | The colour behind `==text==` |
+| `selection` | unset | The colour behind selected text; unset is the palette's |
+| `search` | unset | The colour behind the current find match, the others at half strength; unset is the accent |
 | `caret` | unset | The caret's colour; unset is the palette's |
+| `caret_shape` | `bar` | `bar`, `block` or `underline` |
+| `caret_height` | `line` | How tall a block caret stands: `line` for the line, `text` for the text |
 
 A colour is a preset name — `red`, `orange`, `yellow`, `green`, `mint`, `teal`, `cyan`, `blue`, `indigo`, `purple`, `pink` or `brown`, each following light and dark — or `#rrggbb`. A value that is neither reads as that key's default.
 

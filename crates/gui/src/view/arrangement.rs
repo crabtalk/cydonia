@@ -74,7 +74,11 @@ impl Cydonia {
 
     /// The panes of the open space, or nothing where none is open and the
     /// window is showing one entry.
-    pub(crate) fn panes(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+    pub(crate) fn panes(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         let space = self.arrangement(cx)?;
         // A zoomed pane stands over the rest, which keep their places
         // underneath — see [`Space::zoom`].
@@ -86,7 +90,7 @@ impl Cydonia {
 
     /// One node: a pane, or a split of them laid out along its axis.
     fn node(
-        &self,
+        &mut self,
         node: &Node<Member>,
         path: &mut Vec<usize>,
         window: &mut Window,
@@ -201,7 +205,7 @@ impl Cydonia {
     /// the space keeps and what every drop and close here is aimed at. What
     /// the pane is showing is [`Self::front_of`], and the two are the same
     /// thing only for a pane holding one entry.
-    fn pane(&self, entry: &Member, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn pane(&mut self, entry: &Member, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         // The pane at the window's top left, which is the one that has to keep
         // clear of the traffic lights.
         let first = self
@@ -269,6 +273,25 @@ impl Cydonia {
                 }),
             _ => None,
         };
+        let board = match &showing {
+            Some((project, Showing::Board(id))) => self
+                .workspace
+                .read(cx)
+                .projects
+                .get(*project)
+                .and_then(|open| open.board_ix(id))
+                .map(|at| (*project, at)),
+            _ => None,
+        };
+        let session = match &showing {
+            Some((_, Showing::Session(_))) => self
+                .leaves
+                .iter()
+                .find(|leaf| leaf.entry.as_ref() == Some(&front))
+                .map(|leaf| leaf.composer.clone()),
+            _ => None,
+        };
+        let drawer = self.drawer_layer(Some(&front), board, window, cx);
         let pane = div()
             .id(SharedString::from(format!("pane-{key}")))
             // With the context but without this, a pane claims chords that
@@ -312,9 +335,31 @@ impl Cydonia {
                     move |this, _, window, cx| this.focus_pane(&on, window, cx)
                 }),
             )
+            // Before anything inside takes the press: a link pressed in this
+            // pane opens in its drawer.
+            .capture_any_mouse_down(cx.listener({
+                let on = front.clone();
+                move |this, _, _, _| this.pressed_pane = Some(on.clone())
+            }))
             .child(self.pane_bar(entry, &stack, &front, first, last, &theme, window, cx))
-            .child(body)
-            .children(composer);
+            .child(
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .flex_col()
+                    .child(body)
+                    .children(composer)
+                    // The whole pane takes a dropped picture for the composer.
+                    .when_some(session, |pane, composer| {
+                        pane.on_drop(move |paths: &bezel::gpui::ExternalPaths, _, cx| {
+                            composer.update(cx, |composer, cx| composer.drop_paths(paths, cx));
+                        })
+                        .child(crate::view::detail::drop_wash(&theme))
+                    })
+                    .children(drawer),
+            );
         // By the tab in front: that is what a drop joins or divides.
         self.dock
             .pane(front, px(crate::view::root::HEADER_HEIGHT), pane)
@@ -398,7 +443,7 @@ impl Cydonia {
     }
 
     /// What the single pane is showing, as a member.
-    fn lone_member(&self, cx: &App) -> Option<Member> {
+    pub(crate) fn lone_member(&self, cx: &App) -> Option<Member> {
         self.workspace
             .read(cx)
             .active
@@ -627,7 +672,10 @@ impl Cydonia {
                 div()
                     .flex_none()
                     .mr(px(crate::view::root::HEADER_INSET - BAR_GAP))
+                    .flex()
+                    .flex_row()
                     .child(self.fold_toggle(cx))
+                    .child(self.history_buttons(cx))
                     .into_any_element()
             }))
             // The tabs in a strip of their own, which scrolls sideways once
@@ -1019,6 +1067,27 @@ impl Cydonia {
             return;
         };
         self.close_pane(&entry, window, cx);
+    }
+
+    /// Take an entry that is going away — archived or deleted — out of the
+    /// open space, and land on the top-left pane's front tab.
+    pub(crate) fn put_away_pane(
+        &mut self,
+        entry: &Member,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.close_pane(entry, window, cx);
+        let Some(pane) = self
+            .arrangement(cx)
+            .and_then(|space| space.panes().first().cloned())
+        else {
+            return;
+        };
+        let stack = self.workspace.read(cx).stack_of(&pane);
+        let front = self.front_of(&pane, &stack);
+        self.focused = usize::MAX;
+        self.focus_pane(&front, window, cx);
     }
 
     /// Stand the pane in front over the others, or put it back.

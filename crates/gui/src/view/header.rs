@@ -9,21 +9,16 @@
 use crate::model::workspace::Showing;
 use crate::view::{
     chrome,
-    component::menu::Menu,
+    component::{menu::Menu, panel::changes_toggle},
     leaf::Pane,
-    root::{self, Cydonia, ToggleChanges},
+    root::{self, Cydonia},
     sidebar::{Renaming, Row},
 };
 use bezel::{
     gpui::{AnyElement, App, Context, FontWeight, SharedString, Window, div, prelude::*, px},
-    motion::{Fade, Painter},
+    motion::Painter,
     theme::{TextStyle, Theme, Typeset},
-    ui::{
-        icons,
-        titlebar::CaptionSide,
-        tooltip::Tooltip,
-        widgets::{ButtonStyle, Buttons as _},
-    },
+    ui::{icons, titlebar::CaptionSide},
 };
 /// What a pane puts in the band.
 pub(crate) struct Toolbar {
@@ -199,6 +194,7 @@ impl Cydonia {
             // The fold belongs to whichever column runs along the window's
             // left edge, so with the sidebar gone it is this one's.
             .children((!self.sidebar_open).then(|| self.fold_toggle(cx).into_any_element()))
+            .children((!self.sidebar_open).then(|| self.history_buttons(cx).into_any_element()))
             .children(toolbar.map(|toolbar| {
                 match renaming {
                     true => div().flex_1().min_w_0().child(self.name_field(cx)),
@@ -292,7 +288,7 @@ impl Cydonia {
                 // Nothing to open it on where there is no directory in front
                 // — see [`Cydonia::shell_cwd`].
                 (!self.changes_open && self.shell_cwd(cx).is_some())
-                    .then(|| self.changes_toggle(cx)),
+                    .then(|| changes_toggle("Show right panel", Painter::of(cx), Theme::of(cx))),
             )
             .when(bare, |band| {
                 band.child(chrome::grip("header-grip", &self.drag, window))
@@ -303,22 +299,5 @@ impl Cydonia {
                     .flatten(),
             )
             .into_any_element()
-    }
-
-    /// The control that brings the right panel back, on the band rather than
-    /// on the panel: the panel's own hide button goes down with the panel. Only
-    /// drawn while the panel is closed. Mirrors [`Cydonia::fold_toggle`].
-    fn changes_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
-        let theme = Theme::of(cx).clone();
-        theme
-            .icon_button(
-                icons::layout::PanelRight,
-                ButtonStyle::Ghost,
-                Some(Fade::new(Painter::of(cx), "toggle-changes")),
-            )
-            .id("toggle-changes")
-            .flex_none()
-            .tooltip(|window, cx| Tooltip::text("Show right panel", window, cx))
-            .on_click(|_, window, cx| window.dispatch_action(Box::new(ToggleChanges), cx))
     }
 }

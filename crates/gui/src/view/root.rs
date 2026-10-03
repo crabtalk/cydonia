@@ -83,7 +83,9 @@ actions!(
         PrevPane,
         ClosePane,
         ZoomPane,
-        CopySelection
+        CopySelection,
+        GoBack,
+        GoForward
     ]
 );
 
@@ -457,6 +459,16 @@ pub struct Cydonia {
     pub(crate) card_marks: board::Marks,
     /// What each card's text parses to, by card id — see [`board::Docs`].
     pub(crate) card_docs: board::Docs,
+    /// The entries the window has been on — see [`super::history`].
+    pub(crate) history: super::history::History,
+    /// The composer each session painted into an article types into, by the
+    /// session's id — see [`super::entry_link`].
+    pub(crate) session_cards:
+        std::collections::HashMap<u64, Entity<super::component::composer::Composer>>,
+    /// The pane the last press came down in: `None` for the one a window with
+    /// no space open shows. Where a link opens — see
+    /// [`Cydonia::open_reference`].
+    pub(crate) pressed_pane: Option<Member>,
     /// Where each board is scrolled to, by board id — see [`board::Scrolls`].
     /// On the window rather than on a pane: the same board arranged in a space
     /// and opened on its own is one board.
@@ -940,6 +952,7 @@ impl Cydonia {
                 .with_placeholder("name this session…")
         });
         let workspace = cx.new(|cx| Workspace::new(settings, state, cx));
+        Workspace::install(&workspace, cx);
         // The model is the only thing that says a session appeared or a turn
         // ended; the composer's placeholder, commands and busy state are all
         // read back from it rather than pushed by whoever caused the change.
@@ -1009,6 +1022,9 @@ impl Cydonia {
             boards: Default::default(),
             card_marks: Default::default(),
             card_docs: Default::default(),
+            history: Default::default(),
+            session_cards: Default::default(),
+            pressed_pane: None,
             #[cfg(feature = "desktop")]
             settings_window: None,
             #[cfg(not(feature = "desktop"))]
@@ -1584,6 +1600,7 @@ impl Cydonia {
 
 impl Render for Cydonia {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.track_history(cx);
         self.sync_leaves(window, cx);
         self.sync_changes(cx);
         self.publish_shown(cx);
@@ -1597,6 +1614,15 @@ impl Render for Cydonia {
             .font_family(theme.font_sans.clone())
             .text_color(theme.text)
             .text_style(TextStyle::Body)
+            // The mouse's own back and forward buttons.
+            .on_mouse_down(
+                gpui::MouseButton::Navigate(gpui::NavigationDirection::Back),
+                cx.listener(|this, _, window, cx| this.go_back(&GoBack, window, cx)),
+            )
+            .on_mouse_down(
+                gpui::MouseButton::Navigate(gpui::NavigationDirection::Forward),
+                cx.listener(|this, _, window, cx| this.go_forward(&GoForward, window, cx)),
+            )
             .on_action(cx.listener(|this, _: &NextPane, window, cx| this.step_pane(1, window, cx)))
             .on_action(cx.listener(|this, _: &PrevPane, window, cx| this.step_pane(-1, window, cx)))
             .on_action(
@@ -1670,7 +1696,7 @@ impl Render for Cydonia {
             // Over every column and every floating control: nothing behind it
             // is answerable while it is asking.
             .children(self.confirm_delete(cx))
-            .children(self.search_palette(cx))
+            .children(self.search_palette(window, cx))
             .children(self.settings_sheet(cx))
             .children(self.desktop_only_notice(cx))
             .children(self.new_board_dialog(cx));

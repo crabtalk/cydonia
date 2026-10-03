@@ -192,15 +192,15 @@ pub struct Appearance {
     /// Whether a line too long for a code block wraps rather than scrolling
     /// sideways inside it — `markdown::Layout::wrap_code`.
     pub wrap_code: bool,
-    /// The wash `==text==` paints in. A value that is not a colour reads as
+    /// The colour behind `==text==`. A value that is not a colour reads as
     /// the default.
     #[serde(deserialize_with = "highlight_or_default")]
     pub highlight: Paint,
-    /// The wash selected text paints in. Unset, or not a colour, keeps the
+    /// The colour behind selected text. Unset, or not a colour, keeps the
     /// palette's.
     #[serde(deserialize_with = "paint_or_unset")]
     pub selection: Option<Paint>,
-    /// The wash find matches paint in. Unset, or not a colour, keeps the
+    /// The colour behind find matches. Unset, or not a colour, keeps the
     /// accent.
     #[serde(deserialize_with = "paint_or_unset")]
     pub search: Option<Paint>,
@@ -208,6 +208,7 @@ pub struct Appearance {
     #[serde(deserialize_with = "paint_or_unset")]
     pub caret: Option<Paint>,
     pub caret_shape: CaretShape,
+    pub caret_height: CaretHeight,
 }
 
 /// A preset colour: one of bezel's [`bezel::ui::color::default_swatches`],
@@ -270,47 +271,47 @@ impl Highlight {
 }
 
 /// A colour picked in settings: a preset, which follows the appearance, or
-/// one sRGB value for both. Stored as the preset's name or as `#rrggbb`.
+/// one sRGB value for both, painted as it is. Stored as the preset's name or
+/// as `#rrggbb`; a `#rrggbbaa` reads as its `#rrggbb`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Paint {
     Named(Highlight),
-    Custom(u32),
+    Custom { rgb: u32 },
 }
 
 impl Paint {
+    /// `color` as a custom colour, without its alpha.
     pub fn from_hsla(color: bezel::gpui::Hsla) -> Self {
         let rgba = color.to_rgb();
         let channel = |value: f32| (value.clamp(0., 1.) * 255.).round() as u32;
-        Self::Custom(channel(rgba.r) << 16 | channel(rgba.g) << 8 | channel(rgba.b))
-    }
-
-    /// The colour at full strength.
-    pub fn solid(self, theme: &bezel::theme::Theme) -> bezel::gpui::Hsla {
-        match self {
-            Self::Named(named) => named.solid(theme),
-            Self::Custom(rgb) => bezel::gpui::rgb(rgb).into(),
+        Self::Custom {
+            rgb: channel(rgba.r) << 16 | channel(rgba.g) << 8 | channel(rgba.b),
         }
     }
 
-    /// The colour as a wash behind text, as translucent as a highlight's.
-    pub fn wash(self, theme: &bezel::theme::Theme) -> bezel::gpui::Hsla {
-        let alpha = markdown::default_highlight(markdown::HighlightColor::Yellow, theme).a;
-        self.solid(theme).opacity(alpha)
+    /// The colour as every setting paints it, at full strength.
+    pub fn solid(self, theme: &bezel::theme::Theme) -> bezel::gpui::Hsla {
+        match self {
+            Self::Named(named) => named.solid(theme),
+            Self::Custom { rgb } => bezel::gpui::rgb(rgb).into(),
+        }
     }
 
     pub fn key(self) -> String {
         match self {
             Self::Named(named) => named.key().to_owned(),
-            Self::Custom(rgb) => format!("#{rgb:06x}"),
+            Self::Custom { rgb } => format!("#{rgb:06x}"),
         }
     }
 
     pub fn parse(key: &str) -> Option<Self> {
         if let Some(hex) = key.strip_prefix('#') {
-            return (hex.len() == 6)
-                .then(|| u32::from_str_radix(hex, 16).ok())
-                .flatten()
-                .map(Self::Custom);
+            let value = u32::from_str_radix(hex, 16).ok()?;
+            return match hex.len() {
+                6 => Some(Self::Custom { rgb: value }),
+                8 => Some(Self::Custom { rgb: value >> 8 }),
+                _ => None,
+            };
         }
         Highlight::ALL
             .into_iter()
@@ -361,6 +362,33 @@ impl From<CaretShape> for bezel::ui::input::CaretShape {
             CaretShape::Bar => Self::Bar,
             CaretShape::Block => Self::Block,
             CaretShape::Underline => Self::Underline,
+        }
+    }
+}
+
+/// How tall a block caret stands: the line's height, or the text's.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CaretHeight {
+    #[default]
+    Line,
+    Text,
+}
+
+impl From<CaretHeight> for bezel::ui::input::CaretHeight {
+    fn from(value: CaretHeight) -> Self {
+        match value {
+            CaretHeight::Line => Self::Line,
+            CaretHeight::Text => Self::Text,
+        }
+    }
+}
+
+impl CaretHeight {
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Line => "line",
+            Self::Text => "text",
         }
     }
 }
@@ -467,6 +495,7 @@ impl Default for Appearance {
             search: None,
             caret: None,
             caret_shape: CaretShape::default(),
+            caret_height: CaretHeight::default(),
         }
     }
 }
@@ -1157,6 +1186,7 @@ fn write_appearance(doc: &mut toml_edit::DocumentMut, appearance: &Appearance) -
     held["settings_sidebar_fits"] = toml_edit::value(appearance.settings_sidebar_fits);
     held["scrollbars"] = toml_edit::value(appearance.scrollbars.key());
     held["caret_shape"] = toml_edit::value(appearance.caret_shape.key());
+    held["caret_height"] = toml_edit::value(appearance.caret_height.key());
     held["sidebar_scrollbars"] = toml_edit::value(appearance.sidebar_scrollbars.key());
     held["wrap_code"] = toml_edit::value(appearance.wrap_code);
     held["highlight"] = toml_edit::value(appearance.highlight.key());

@@ -160,6 +160,28 @@ fn showing_of(row: &Row) -> Option<&Showing> {
     }
 }
 
+/// Show `path` in the file manager, and put it on the clipboard.
+fn on_disk(path: PathBuf) -> [(Item, menu::Act); 2] {
+    let copied = path.to_string_lossy().into_owned();
+    [
+        menu::row(
+            Item::action(if cfg!(target_os = "macos") {
+                "Reveal in Finder"
+            } else if cfg!(windows) {
+                "Show in Explorer"
+            } else {
+                "Open in File Manager"
+            })
+            .with_icon(icons::files::FolderOpen),
+            move |this, _, cx| this.reveal_path(path.clone(), cx),
+        ),
+        menu::row(
+            Item::action("Copy Path").with_icon(icons::text::Copy),
+            move |_, _, cx| cx.write_to_clipboard(gpui::ClipboardItem::new_string(copied.clone())),
+        ),
+    ]
+}
+
 /// The project an entry row, a project's heading or its archive line belongs
 /// to.
 fn project_of(row: &Row) -> Option<&Path> {
@@ -482,6 +504,7 @@ impl Cydonia {
                     })
                     .children(chrome::caption(CaptionSide::Left, window, cx))
                     .child(self.fold_toggle(cx))
+                    .child(self.history_buttons(cx))
                     .child(chrome::grip("sidebar-grip", &self.drag, window)),
             )
             .child(self.search_row(cx))
@@ -966,7 +989,17 @@ impl Cydonia {
         // note has to be here too — read stale, a right press would swallow.
         // A space's opens from the row around it, as an entry's does.
         let head = match &group {
-            Group::Project(path) => self.menu_press(head, Menu::Project(path.clone()), cx),
+            Group::Project(path) => self
+                .menu_press(head, Menu::Project(path.clone()), cx)
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener({
+                        let menu = Menu::Project(path.clone());
+                        move |this, press: &gpui::MouseDownEvent, _, cx| {
+                            this.toggle_menu_at(menu.clone(), Some(press.position), cx);
+                        }
+                    }),
+                ),
             Group::Space(_) => head,
         };
         match pinned {
@@ -1895,51 +1928,46 @@ impl Cydonia {
                 by("Manual", state::Sort::Manual),
             ],
         )];
-        rows.push(menu::row(
-            Item::action(if cfg!(target_os = "macos") {
-                "Reveal in Finder"
-            } else if cfg!(windows) {
-                "Show in Explorer"
-            } else {
-                "Open in File Manager"
-            })
-            .with_icon(icons::files::FolderOpen),
-            move |this, _, cx| this.reveal_project(ix, cx),
-        ));
+        rows.extend(on_disk(path.to_path_buf()));
         rows.push(menu::row(
             Item::action("Remove project").with_icon(icons::files::FolderMinus),
             move |this, _, cx| this.close_project(ix, cx),
         ));
         let id = SharedString::from(format!("project-menu-{ix}"));
-        Some(popover::anchored_menu_below(
-            id.clone(),
-            self.menu_card(id, rows, window, cx),
-            None,
-        ))
+        let card = self.menu_card(id.clone(), rows, window, cx);
+        Some(match self.menu_point(&Menu::Project(path.to_path_buf())) {
+            Some(point) => popover::menu_at(id, point, card, None),
+            None => popover::anchored_menu_below(id, card, None),
+        })
     }
 
-    /// Show the project's directory in the file manager. Best effort and off
-    /// the main thread: opening it is a process, and a file manager that will
-    /// not come to the front is not worth blocking a frame over.
-    fn reveal_project(&mut self, ix: usize, cx: &mut Context<Self>) {
+    /// Show `path` in the file manager. Best effort and off the main thread:
+    /// opening it is a process, and a file manager that will not come to the
+    /// front is not worth blocking a frame over.
+    fn reveal_path(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         if cfg!(not(feature = "desktop")) {
-            self.desktop_only("Showing a project in the file manager", cx);
+            self.desktop_only("Showing it in the file manager", cx);
             return;
         }
-        let Some(path) = self
-            .workspace
-            .read(cx)
-            .projects
-            .get(ix)
-            .map(|open| open.path.clone())
-        else {
-            return;
-        };
         cx.background_executor()
             .spawn(async move {
                 let _ = crate::view::component::file::external::show(&path);
             })
             .detach();
+    }
+
+    /// Where an entry row is on disk, for a backend that is the disk.
+    fn place_of(&self, entry: &Row, cx: &App) -> Option<PathBuf> {
+        use artifact::space::Kind;
+        let (project, _) = self.located(entry, cx)?;
+        let open = &self.workspace.read(cx).projects[project];
+        let (kind, id) = match showing_of(entry)? {
+            Showing::Article(id) => (Kind::Article, id.clone()),
+            Showing::Board(id) => (Kind::Board, id.clone()),
+            Showing::Session(id) => (Kind::Session, open.session(*id)?.filed()?.to_owned()),
+            Showing::Table(_) => return None,
+        };
+        open.store().place(kind, &id)
     }
 
     /// One session: its mark and its name.
@@ -2373,6 +2401,9 @@ impl Cydonia {
                 ));
             }
         }
+        if let Some(path) = self.place_of(entry, cx) {
+            rows.extend(on_disk(path));
+        }
         rows.push(menu::row(
             Item::action("Delete").with_icon(icons::files::Trash),
             {
@@ -2447,9 +2478,15 @@ impl Cydonia {
             }
             _ => None,
         };
+        let member = self.member_of_row(entry, cx);
+        let arranged = self.put_away_arranged(member.as_ref(), window, cx);
+        let landing_project = landing_project.filter(|_| !arranged);
         self.commit(cx);
-        self.workspace
-            .update(cx, |workspace, cx| match (entry, located) {
+        self.workspace.update(cx, |workspace, cx| {
+            if let Some(member) = &member {
+                workspace.drop_from_spaces(member, cx);
+            }
+            match (entry, located) {
                 (
                     Row::Entry {
                         showing: Showing::Session(id),
@@ -2466,7 +2503,8 @@ impl Cydonia {
                 (Row::Group(Group::Space(id)), _) => workspace.delete_space_id(id, cx),
                 (Row::Entry { .. }, None)
                 | (Row::Group(Group::Project(_)) | Row::Archive(_) | Row::Heading(_), _) => {}
-            });
+            }
+        });
         if let Some(project) = landing_project
             && let Some(landing) = self
                 .entries(project, cx)
@@ -2568,6 +2606,7 @@ impl Cydonia {
         // it. Both are about an entry in hand, and this one no longer is.
         if archived {
             let member = self.member_of_row(entry, cx);
+            self.put_away_arranged(member.as_ref(), window, cx);
             self.workspace.update(cx, |workspace, cx| {
                 if let Some(project) = workspace.project_at(project) {
                     workspace.unpin_entry(project, showing.clone());
@@ -2598,6 +2637,24 @@ impl Cydonia {
         if let Some(project) = landing {
             self.open_top_entry(project, window, cx);
         }
+    }
+
+    /// Close the member's pane when the open space holds it — see
+    /// [`Cydonia::put_away_pane`]. Answers whether it did.
+    fn put_away_arranged(
+        &mut self,
+        member: Option<&Member>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(member) = member.filter(|member| {
+            self.arrangement(cx)
+                .is_some_and(|space| space.contains(member))
+        }) else {
+            return false;
+        };
+        self.put_away_pane(&member.clone(), window, cx);
+        true
     }
 
     /// Whether the pane in front is on this entry.

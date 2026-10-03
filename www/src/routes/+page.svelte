@@ -4,6 +4,7 @@
 	import DownloadPanel from '$lib/DownloadPanel.svelte';
 	import Demo from '$lib/Demo.svelte';
 	import Brand from '$lib/Brand.svelte';
+	import Crab from '$lib/Crab.svelte';
 	import Files from '$lib/Files.svelte';
 	import Frame from '$lib/Frame.svelte';
 	import { base } from '$app/paths';
@@ -12,8 +13,9 @@
 
 	let { data } = $props();
 
-	const featured = releases.find((release) => media(release)) ?? latest;
-	const featureMedia = media(featured);
+	// The hero plays one pinned recording; its caption follows the latest release.
+	const pinned = releases.find((release) => release.version === '0.1.23');
+	const featureMedia = media(pinned ?? releases.find((release) => media(release)) ?? latest);
 	const acp = 'https://agentclientprotocol.com';
 
 	// Off until there are real screenshots to put in the frames — three empty
@@ -95,6 +97,12 @@
 
 <ShareImage />
 
+<!-- Fixed behind the page at the top: only a pull past the top shows it. -->
+<div class="signature" aria-hidden="true">
+	<p>Built with <span class="heart">♥</span> by the crabtalk team</p>
+	<span class="crab"><span class="step"><Crab size={12} /></span></span>
+</div>
+
 <section class="hero">
 	<div class="say">
 		<h1>Where agents keep their work.</h1>
@@ -112,13 +120,13 @@
 
 	<figure class="feature">
 		<Demo media={featureMedia} />
-		{#if featured}
+		{#if latest}
 			<figcaption>
-				{#if featured.summary}
-					<p>{featured.summary}</p>
+				{#if latest.summary}
+					<p>{latest.summary}</p>
 				{/if}
-				<a href="{base}{releasePath(featured.version)}">
-					What’s new in {featured.version} <span aria-hidden="true">→</span>
+				<a href="{base}{releasePath(latest.version)}">
+					What’s new in {latest.version} <span aria-hidden="true">→</span>
 				</a>
 			</figcaption>
 		{/if}
@@ -173,6 +181,138 @@
 </section>
 
 <style>
+	.signature {
+		position: fixed;
+		inset: 0 0 auto;
+		z-index: -1;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		height: var(--header);
+		color: var(--faint);
+		font-size: 13px;
+	}
+
+	/* A band of light across the words, then a rest. */
+	.signature p {
+		margin: 0;
+		background: linear-gradient(
+			100deg,
+			var(--faint) 40%,
+			var(--text) 50%,
+			var(--faint) 60%
+		);
+		background-size: 300% 100%;
+		background-clip: text;
+		-webkit-background-clip: text;
+		-webkit-text-fill-color: transparent;
+		animation: shine 4.5s ease-in-out infinite;
+	}
+
+	@keyframes shine {
+		0% {
+			background-position: 100% 0;
+		}
+		33%,
+		100% {
+			background-position: 0 0;
+		}
+	}
+
+	.heart {
+		display: inline-block;
+		color: #e5484d;
+		-webkit-text-fill-color: #e5484d;
+		animation: beat 1.2s ease-in-out infinite;
+	}
+
+	/* Lub-dub, then rest. */
+	@keyframes beat {
+		0%,
+		40%,
+		100% {
+			transform: scale(1);
+		}
+		10% {
+			transform: scale(1.3);
+		}
+		20% {
+			transform: scale(1);
+		}
+		30% {
+			transform: scale(1.15);
+		}
+	}
+
+	/* Along the foot of the band and back, rocking as it goes, turning to
+	   face the way it walks at each edge — and blushing the heart's red as it
+	   turns. */
+	.crab {
+		position: absolute;
+		bottom: 6px;
+		left: 12px;
+		animation:
+			scuttle 32s ease-in-out infinite,
+			blush 32s linear infinite;
+	}
+
+	.step {
+		display: block;
+		animation: step 0.18s linear infinite alternate;
+	}
+
+	@keyframes scuttle {
+		0%,
+		100% {
+			left: 12px;
+			transform: scaleX(1);
+		}
+		49.9% {
+			left: calc(100% - 24px);
+			transform: scaleX(1);
+		}
+		50% {
+			left: calc(100% - 24px);
+			transform: scaleX(-1);
+		}
+		99.9% {
+			left: 12px;
+			transform: scaleX(-1);
+		}
+	}
+
+	@keyframes blush {
+		0%,
+		50%,
+		100% {
+			color: #e5484d;
+		}
+		6%,
+		44%,
+		56%,
+		94% {
+			color: var(--faint);
+		}
+	}
+
+	@keyframes step {
+		from {
+			transform: translateY(0) rotate(-8deg);
+		}
+		to {
+			transform: translateY(-1px) rotate(8deg);
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.signature p,
+		.heart,
+		.crab,
+		.step {
+			animation: none;
+		}
+	}
+
 	.release-content {
 		margin-top: 24px;
 	}

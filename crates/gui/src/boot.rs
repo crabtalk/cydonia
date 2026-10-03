@@ -39,10 +39,13 @@ pub fn init(settings: &Settings, cx: &mut App) {
     workspace::apply_tint(Tint::new(look.hue, look.chroma), cx);
     cx.set_caret_blink(look.cursor_blink);
     cx.set_caret_shape(look.caret_shape.into());
+    cx.set_caret_height(look.caret_height.into());
     cx.set_base_text_size(look.text_size);
     workspace::apply_wrap_code(look.wrap_code, cx);
     cx.set_source_style(article::source_style);
     cx.set_marks(article::marks());
+    markdown::AppExt::set_link_card(cx, crate::view::entry_link::card);
+    editor::AppExt::set_mention_source(cx, crate::view::mention::source);
     article::set_highlight(look.highlight);
     cx.set_mark_paint(article::mark_paint);
     article::set_search(look.search);
@@ -55,8 +58,10 @@ pub fn init(settings: &Settings, cx: &mut App) {
     cx.set_highlighter(language::highlight, language::offerable());
     #[cfg(feature = "desktop")]
     crate::model::link::init(cx);
-    #[cfg(not(target_os = "linux"))]
-    cx.set_link_handler(crate::view::component::browser::open_link);
+    // Without the web fetch, cydonia's own links are the only ones described.
+    #[cfg(not(feature = "desktop"))]
+    cx.set_link_preview(crate::view::mention::preview);
+    cx.set_link_handler(crate::view::entry_link::open_link);
     memory::init(settings.cover_memory * 1_000_000, cx);
     // Every chord in the app, bezel's included — see
     // [`crate::view::keymap`]. One call rather than an `init` per

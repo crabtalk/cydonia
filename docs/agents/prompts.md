@@ -29,5 +29,5 @@ The catalog lists these by name and description; an agent reads one through `res
 
 | Resource | Covers | Source |
 | --- | --- | --- |
-| `cydonia://resources/markdown` | Article Markdown, pictures and covers | [`markdown.md`](https://github.com/crabtalk/cydonia/blob/main/crates/prompts/resources/markdown.md) |
+| `cydonia://resources/markdown` | Article Markdown, pictures, covers and links to entries | [`markdown.md`](https://github.com/crabtalk/cydonia/blob/main/crates/prompts/resources/markdown.md) |
 | `cydonia://resources/browser` | Driving the in-app browser | [`browser.md`](https://github.com/crabtalk/cydonia/blob/main/crates/prompts/resources/browser.md) |

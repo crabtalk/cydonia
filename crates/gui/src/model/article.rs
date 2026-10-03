@@ -223,7 +223,12 @@ impl Article {
         });
         let overlay = Pictures::overlay(&pictures);
         let editor = cx.new(|cx| {
-            let editor = Editor::new(&self.saved, cx).with_image_overlay(overlay);
+            let editor = Editor::new(&self.saved, cx)
+                .with_image_overlay(overlay)
+                .with_chrome(editor::Chrome {
+                    mention: true,
+                    ..editor::Chrome::default()
+                });
             let editor = match self.path.parent() {
                 Some(dir) => editor.with_base(dir),
                 None => editor,

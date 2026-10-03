@@ -1,5 +1,33 @@
 [
   {
+    "version": "0.1.24",
+    "date": "2026-10-03",
+    "nightly": true,
+    "summary": "Entry links across articles, sessions and boards, window-wide back and forward, and pictures dropped anywhere on a session.",
+    "new": [
+      "Link sessions, articles and boards with @ in articles and the session composer, shown as chips and cards, with session excerpts and links to single turns",
+      "Peek at a linked entry in a pane drawer, and let agents resolve cydonia references",
+      "Go back and forward window-wide across projects and spaces, returning to where you were",
+      "Drop pictures anywhere on a session pane, in a space too",
+      "Build an article's slash menu from the editor's default rows",
+      "Reveal and copy the path of projects, entries and articles from the sidebar, and open a project's menu on right-click",
+      "Pick a block cursor height in Settings",
+      "Auto-scroll a terminal selection dragged past the top or bottom edge, and select words and rows with a double or triple click"
+    ],
+    "changed": [
+      "Draw selected and editing board cards with hairline edges and a tinted fill",
+      "Archive or delete a tab through the pane close, landing on the top-left pane",
+      "Share one right-panel toggle between the panel and the header",
+      "Build on Bezel 0.2.7 from crates.io"
+    ],
+    "fixed": [
+      "Paint highlight, selection and search colours at full strength as picked, like the cursor, in the text, the colour well and the picker alike",
+      "Resolve entry chips in transcripts across open projects, and name turn runs",
+      "Centre the macOS traffic lights on the header's measured height",
+      "Move an empty board lane's add row with its heading while dragging in the list"
+    ]
+  },
+  {
     "version": "0.1.23",
     "date": "2026-10-03",
     "summary": "Custom colours, board drag with motion, window blur, and article covers kept with their pictures.",

@@ -3,7 +3,7 @@
 use crate::{
     rail::{self, Change},
     tool::{Answer, Arg, Args, Outcome, Tool, Trouble},
-    tools::{PROJECT, fields, held, many, root},
+    tools::{PROJECT, entry_of, fields, held, many, root},
 };
 use serde_json::json;
 use std::path::{Path, PathBuf};
@@ -23,7 +23,7 @@ relative to the project this session is already in.",
 
 const ENTRY: Arg = Arg {
     name: "entry",
-    about: "The project entry reference, such as #12.",
+    about: "The project entry reference: #12, foo#12 for another open project, or the link cydonia://foo#12.",
 };
 
 pub static TOOLS: [Tool; 4] = [
@@ -187,10 +187,9 @@ fn entries(args: Args<'_>) -> Outcome {
 }
 
 fn read_entry(args: Args<'_>) -> Outcome {
-    let project = root(&args)?;
     let named = args.text(ENTRY)?;
-    let number = artifact::entry::reference(named)
-        .ok_or_else(|| Trouble::Invalid("entry must be a reference such as #12".to_owned()))?;
+    let (project, number) = entry_of(&args, named)?;
+    let project = project.as_path();
     let entries = artifact::entry::list(project).map_err(|e| Trouble::Refused(e.to_string()))?;
     let entry = entries
         .into_iter()

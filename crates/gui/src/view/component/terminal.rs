@@ -29,6 +29,13 @@ use terminal::{
 
 const CONTEXT: &str = "CydoniaTerminal";
 
+/// How often a selection drag held past the grid's top or bottom edge
+/// scrolls the scrollback.
+const EDGE_SCROLL_TICK: Duration = Duration::from_millis(50);
+/// Most lines one edge-scroll tick moves, however far past the edge the
+/// pointer is.
+const EDGE_SCROLL_MAX_LINES: i32 = 12;
+
 /// Paths as a shell reads them: each single-quoted where it needs to be,
 /// joined by spaces, with a trailing space so the next word starts clean.
 fn shell_words(paths: &ExternalPaths) -> String {
@@ -277,6 +284,10 @@ pub struct Terminal {
     /// [`SELECTION_DRAG_THRESHOLD`] and the press becomes a selection.
     pressed: Option<gpui::Point<gpui::Pixels>>,
     selecting: bool,
+    /// The pointer while a selection drag is on, wherever it is in the window.
+    drag: Option<gpui::Point<gpui::Pixels>>,
+    /// Scrolls the scrollback while the drag is held past the top or bottom edge.
+    edge_scroll: Option<Task<()>>,
     scroll_remainder: f32,
     status: Option<String>,
     /// Pending release of a render hold, armed while one is on.
@@ -299,6 +310,8 @@ impl Terminal {
             geometry: None,
             pressed: None,
             selecting: false,
+            drag: None,
+            edge_scroll: None,
             scroll_remainder: 0.,
             status: None,
             hold: None,
@@ -528,17 +541,80 @@ impl Terminal {
         true
     }
 
-    fn select(&mut self, position: gpui::Point<gpui::Pixels>, start: bool) {
+    /// Start a selection at `position` when `start` names its granularity,
+    /// otherwise extend the one on to it.
+    fn select(&mut self, position: gpui::Point<gpui::Pixels>, start: Option<SelectionType>) {
         let Some(hit) = self.cell(position) else {
             return;
         };
         let point = self.emulator.grid_point(hit.row, hit.col);
-        if start {
-            self.emulator
-                .start_selection(SelectionType::Simple, point, hit.side);
+        if let Some(ty) = start {
+            self.emulator.start_selection(ty, point, hit.side);
         } else {
             self.emulator.update_selection(point, hit.side);
         }
+    }
+
+    /// Extend the selection to where the drag is, and scroll the scrollback
+    /// while it is past the grid's top or bottom edge.
+    fn drag_to(&mut self, position: gpui::Point<gpui::Pixels>, cx: &mut Context<Self>) {
+        self.drag = Some(position);
+        self.select(position, None);
+        if self.edge_lines() == 0 {
+            self.edge_scroll = None;
+        } else if self.edge_scroll.is_none() {
+            self.edge_scroll = Some(cx.spawn(async move |this, cx| {
+                loop {
+                    cx.background_executor().timer(EDGE_SCROLL_TICK).await;
+                    let more = this
+                        .update(cx, |this, cx| this.edge_scroll_tick(cx))
+                        .unwrap_or(false);
+                    if !more {
+                        return;
+                    }
+                }
+            }));
+        }
+        cx.notify();
+    }
+
+    /// Lines one edge-scroll tick moves: positive up into history, negative
+    /// toward live, zero while the drag is over the grid.
+    fn edge_lines(&self) -> i32 {
+        let (Some(grid), Some(drag)) = (self.geometry, self.drag) else {
+            return 0;
+        };
+        let top = f32::from(grid.origin.y);
+        let bottom = top + grid.rows as f32 * grid.line_h;
+        let y = f32::from(drag.y);
+        let past = if y < top {
+            top - y
+        } else if y > bottom {
+            -(y - bottom)
+        } else {
+            return 0;
+        };
+        let lines = 1 + (past.abs() / grid.line_h) as i32;
+        lines.min(EDGE_SCROLL_MAX_LINES) * past.signum() as i32
+    }
+
+    fn edge_scroll_tick(&mut self, cx: &mut Context<Self>) -> bool {
+        let lines = if self.selecting { self.edge_lines() } else { 0 };
+        let Some(drag) = self.drag.filter(|_| lines != 0) else {
+            self.edge_scroll = None;
+            return false;
+        };
+        self.emulator.scroll(lines);
+        self.select(drag, None);
+        cx.notify();
+        true
+    }
+
+    fn end_drag(&mut self) {
+        self.pressed = None;
+        self.selecting = false;
+        self.drag = None;
+        self.edge_scroll = None;
     }
 }
 
@@ -620,6 +696,17 @@ impl Render for Terminal {
                             ) {
                                 return;
                             }
+                            if event.click_count > 1 {
+                                this.pressed = None;
+                                this.selecting = true;
+                                this.drag = Some(event.position);
+                                this.select(
+                                    event.position,
+                                    Some(view::selection_type(event.click_count)),
+                                );
+                                cx.notify();
+                                return;
+                            }
                             // The press itself is not yet a selection: the one
                             // that focuses the panel would otherwise take a
                             // cell with it.
@@ -651,21 +738,23 @@ impl Render for Terminal {
                         }),
                     )
                     .on_mouse_move(cx.listener(|this, event: &gpui::MouseMoveEvent, _, cx| {
-                        if !this.selecting {
-                            let held = match event.pressed_button {
-                                Some(gpui::MouseButton::Left) => Some(MouseButton::Left),
-                                Some(gpui::MouseButton::Right) => Some(MouseButton::Right),
-                                Some(gpui::MouseButton::Middle) => Some(MouseButton::Middle),
-                                _ => None,
-                            };
-                            if this.report(
-                                MouseAction::Motion(held),
-                                event.position,
-                                &event.modifiers,
-                                cx,
-                            ) {
-                                return;
-                            }
+                        // A selection drag is followed window-wide by the canvas below.
+                        if this.selecting {
+                            return;
+                        }
+                        let held = match event.pressed_button {
+                            Some(gpui::MouseButton::Left) => Some(MouseButton::Left),
+                            Some(gpui::MouseButton::Right) => Some(MouseButton::Right),
+                            Some(gpui::MouseButton::Middle) => Some(MouseButton::Middle),
+                            _ => None,
+                        };
+                        if this.report(
+                            MouseAction::Motion(held),
+                            event.position,
+                            &event.modifiers,
+                            cx,
+                        ) {
+                            return;
                         }
                         if let Some(origin) = this.pressed {
                             let travel = event.position - origin;
@@ -676,17 +765,13 @@ impl Render for Terminal {
                             }
                             this.pressed = None;
                             this.selecting = true;
-                            this.select(origin, true);
-                        }
-                        if this.selecting {
-                            this.select(event.position, false);
-                            cx.notify();
+                            this.select(origin, Some(SelectionType::Simple));
+                            this.drag_to(event.position, cx);
                         }
                     }))
                     .on_mouse_up(
                         gpui::MouseButton::Left,
                         cx.listener(|this, event: &gpui::MouseUpEvent, _, cx| {
-                            this.pressed = None;
                             if !this.selecting {
                                 this.report(
                                     MouseAction::Release(MouseButton::Left),
@@ -695,7 +780,7 @@ impl Render for Terminal {
                                     cx,
                                 );
                             }
-                            this.selecting = false;
+                            this.end_drag();
                         }),
                     )
                     .on_mouse_up(
@@ -722,10 +807,7 @@ impl Render for Terminal {
                     )
                     .on_mouse_up_out(
                         gpui::MouseButton::Left,
-                        cx.listener(|this, _, _, _| {
-                            this.pressed = None;
-                            this.selecting = false;
-                        }),
+                        cx.listener(|this, _, _, _| this.end_drag()),
                     )
                     .on_scroll_wheel(cx.listener(|this, event: &gpui::ScrollWheelEvent, _, cx| {
                         let line_h = this.geometry.map_or(20., |grid| grid.line_h);
@@ -751,7 +833,34 @@ impl Render for Terminal {
                         cx.stop_propagation();
                         cx.notify();
                     }))
-                    .child(grid),
+                    .child(grid)
+                    .when(self.selecting, |panel| {
+                        let owner = cx.entity().downgrade();
+                        panel.child(
+                            gpui::canvas(
+                                |_, _, _| {},
+                                move |_, _, window, _| {
+                                    window.on_mouse_event(
+                                        move |event: &gpui::MouseMoveEvent, phase, _, cx| {
+                                            if phase != gpui::DispatchPhase::Capture
+                                                || event.pressed_button
+                                                    != Some(gpui::MouseButton::Left)
+                                            {
+                                                return;
+                                            }
+                                            let _ = owner.update(cx, |this, cx| {
+                                                if this.selecting {
+                                                    this.drag_to(event.position, cx);
+                                                }
+                                            });
+                                        },
+                                    );
+                                },
+                            )
+                            .absolute()
+                            .size_full(),
+                        )
+                    }),
             )
     }
 }

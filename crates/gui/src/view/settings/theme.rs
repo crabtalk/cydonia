@@ -329,6 +329,7 @@ impl SettingsWindow {
                 vec![
                     self.cursor_row(cx),
                     self.caret_shape_row(cx),
+                    self.caret_height_row(cx),
                     self.caret_row(cx),
                 ],
             ))
@@ -411,7 +412,7 @@ impl SettingsWindow {
         )
     }
 
-    /// The colour `==text==` is washed in.
+    /// The colour behind `==text==`.
     pub(super) fn highlight_row(&self, cx: &mut Context<Self>) -> AnyElement {
         let current = self.workspace.read(cx).settings.appearance.highlight;
         let paints = Highlight::ALL.into_iter().map(Paint::Named).collect();
@@ -431,12 +432,12 @@ impl SettingsWindow {
         )
     }
 
-    /// The colour selected text is washed in, or the palette's own.
+    /// The colour behind selected text, or the palette's own.
     fn selection_row(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let current = self.workspace.read(cx).settings.appearance.selection;
         let system = Theme::for_appearance(theme.appearance).selection;
-        self.wash_row(
+        self.preset_row(
             "selection-color",
             "Selection colour",
             current,
@@ -510,12 +511,35 @@ impl SettingsWindow {
             .into_any_element()
     }
 
+    /// Whether a block caret fills its line or stands as tall as the text.
+    fn caret_height_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        use crate::model::settings::CaretHeight;
+        let on = self.workspace.read(cx).settings.appearance.caret_height == CaretHeight::Line;
+        self.switch_row(
+            Switch::new(
+                "caret-height",
+                "Fill the line",
+                "Off sizes a block cursor to the text instead of its line.",
+                on,
+            ),
+            cx,
+            move |this, cx| {
+                let height = match on {
+                    true => CaretHeight::Text,
+                    false => CaretHeight::Line,
+                };
+                this.workspace
+                    .update(cx, |workspace, cx| workspace.set_caret_height(height, cx));
+            },
+        )
+    }
+
     /// The caret's colour, or the palette's own.
     fn caret_row(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let current = self.workspace.read(cx).settings.appearance.caret;
         let system = Theme::for_appearance(theme.appearance).caret;
-        self.wash_row(
+        self.preset_row(
             "caret-color",
             "Cursor colour",
             current,
@@ -525,12 +549,12 @@ impl SettingsWindow {
         )
     }
 
-    /// The colour find matches are washed in, or the accent.
+    /// The colour behind find matches, or the accent.
     fn find_row(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let current = self.workspace.read(cx).settings.appearance.search;
         let system = markdown::default_find(&theme).1;
-        self.wash_row(
+        self.preset_row(
             "search-color",
             "Search results colour",
             current,
@@ -543,8 +567,7 @@ impl SettingsWindow {
     /// bezel's preset colours in rows of six, the colour picker, and Default
     /// under them. A colour written by hand that is not among them rings
     /// nothing.
-    #[allow(clippy::too_many_arguments)]
-    fn wash_row(
+    fn preset_row(
         &self,
         id: &'static str,
         title: &'static str,
