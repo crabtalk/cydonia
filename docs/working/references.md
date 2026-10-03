@@ -20,7 +20,7 @@ Written without a project, a reference means the project you are in.
 
 ## As a link
 
-Written after `cydonia://`, a reference is a link: `cydonia://cydonia#43:5-7`. In an article it opens the entry, or shows it as a chip or a card — see [Articles](./articles.md#links-to-sessions-articles-and-boards). A session's turns can be copied as a link from the session itself — see [Sessions](../agents/sessions.md#linking-turns).
+Written after `cydonia://`, a reference is a link: `cydonia://cydonia#43:5-7`. In an article or a session it opens the entry in a drawer at the foot of the pane, or shows it as a chip or a card — see [Articles](./articles.md#links-to-sessions-articles-and-boards). A session's turns can be copied as a link from the session itself — see [Sessions](../agents/sessions.md#linking-turns).
 
 ## Entries and cards
 

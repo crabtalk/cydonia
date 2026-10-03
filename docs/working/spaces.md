@@ -12,7 +12,7 @@ showing. ⌃⇥ and ⇧⌃⇥ step between the panes on screen.
 ## Tabs
 
 A pane holds several entries as tabs, and a tab can be carried to another pane.
-⌘W closes a tab in a space.
+⌘W closes a tab in a space. Archiving or deleting the entry a tab shows closes its pane and moves the focus to the top-left pane.
 
 ## Spaces
 
@@ -33,3 +33,5 @@ it covers the column instead. It is not offered beside a space, which divides
 the room it would stand in.
 
 ⌘⇧F opens Files in it, and ⌘⇧G opens Review.
+
+In a terminal, drag to select; a drag held past the top or bottom edge scrolls the scrollback, faster the further past it goes. A double click selects a word and a triple click a row, and dragging after either extends by words or rows.

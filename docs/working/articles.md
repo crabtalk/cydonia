@@ -81,9 +81,9 @@ A session, an article or a board is linked as `cydonia://` followed by its [refe
 [cydonia://cydonia#43](cydonia://cydonia#43 "embed")
 ```
 
-- An ordinary link stays text. Clicking it opens the entry.
+- An ordinary link stays text. Clicking it opens the entry in a drawer at the foot of the pane; clicking it again puts the drawer away.
 - `"chip"` shows inline as the entry's mark and title.
-- `"embed"` alone on a line is a card of the entry. A session's card is the session itself: its transcript and a message field that sends to it. A link to some of its turns, such as `cydonia://cydonia#43:5-7`, shows those turns alone, read only, under a header naming the session and the range; clicking the header opens the session at the first of them. An article's or a board's card is its title, kind and number, and opens it.
+- `"embed"` alone on a line is a card of the entry. A session's card is the session itself: its transcript and a message field that sends to it. A link to some of its turns, such as `cydonia://cydonia#43:5-7`, shows those turns alone, read only, under a header naming the session and the range; clicking the header opens the session at the first of them. An article's or a board's card is its title, kind and number, and opens it in the pane's drawer.
 
 Deleting a card leaves the entry where it was.
 

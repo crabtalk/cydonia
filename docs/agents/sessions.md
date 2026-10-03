@@ -20,7 +20,8 @@ gets a turn. For more than one at a time, see
 - A turn is split into runs of work in the transcript rather than one unbroken
   stream, so a long turn can be read as it goes.
 - Quote what an agent said to answer a particular line of it.
-- Attach an image to a message.
+- Attach an image to a message, or drop pictures anywhere on the session pane.
+- Type `@` in the message field to link a session, article or board of the project, as in an article — see [Articles](../working/articles.md#links-to-sessions-articles-and-boards).
 - Fork a session to take a conversation in a second direction without losing
   the first.
 - A session can work in any project Cydonia has open, not only the one it
