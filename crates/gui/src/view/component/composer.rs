@@ -1042,7 +1042,7 @@ impl Composer {
             cx,
             move |composer, hit, window, cx| composer.hit(&rows, hit, window, cx),
         )
-        .child(popover::divider())
+        .child(popover::divider(theme))
         .child(self.usage_row(theme));
         Some(popover::anchored_menu_above(
             "composer-menu",

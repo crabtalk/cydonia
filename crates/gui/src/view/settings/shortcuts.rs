@@ -273,7 +273,7 @@ impl SettingsWindow {
         match recording {
             Some(recording) => button
                 .track_focus(&recording.focus)
-                .border_color(theme.accent)
+                .border_color(theme.border_strong)
                 .text_color(theme.accent)
                 .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                     this.captured(event, window, cx)

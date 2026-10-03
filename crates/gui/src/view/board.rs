@@ -3412,13 +3412,19 @@ impl Cydonia {
             .rounded(px(Theme::control_radius()))
             .border_1()
             .border_color(if selected || matched {
-                theme.accent
+                theme.border_strong
             } else {
-                gpui::hsla(0., 0., 0., 0.)
+                gpui::transparent_black()
             })
-            .bg(theme.surface_raised)
+            .bg(if selected || matched {
+                theme.card_selected_bg()
+            } else {
+                theme.surface_raised
+            })
             .cursor_pointer()
-            .hover(|el| el.bg(theme.surface_raised_hover))
+            .when(!(selected || matched), |el| {
+                el.hover(|el| el.bg(theme.surface_raised_hover))
+            })
             .flex()
             .flex_col()
             .gap(px(6.))
@@ -3561,7 +3567,7 @@ impl Cydonia {
             .p(px(8.))
             .rounded(px(Theme::control_radius()))
             .border_1()
-            .border_color(theme.accent)
+            .border_color(theme.border_strong)
             .bg(theme.surface_raised)
             .flex()
             .flex_col()
