@@ -1957,12 +1957,16 @@ impl Cydonia {
 
     /// Where an entry row is on disk, for a backend that is the disk.
     fn place_of(&self, entry: &Row, cx: &App) -> Option<PathBuf> {
+        use artifact::space::Kind;
         let (project, _) = self.located(entry, cx)?;
-        let workspace = self.workspace.read(cx);
-        let member = workspace.member_of(project, showing_of(entry)?.clone())?;
-        workspace.projects[project]
-            .store()
-            .place(member.kind, &member.id)
+        let open = &self.workspace.read(cx).projects[project];
+        let (kind, id) = match showing_of(entry)? {
+            Showing::Article(id) => (Kind::Article, id.clone()),
+            Showing::Board(id) => (Kind::Board, id.clone()),
+            Showing::Session(id) => (Kind::Session, open.session(*id)?.filed()?.to_owned()),
+            Showing::Table(_) => return None,
+        };
+        open.store().place(kind, &id)
     }
 
     /// One session: its mark and its name.
