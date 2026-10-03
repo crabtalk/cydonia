@@ -59,6 +59,7 @@ mod spaces;
 pub use spaces::Showing;
 mod order;
 mod projects;
+pub mod references;
 mod sessions;
 mod tables;
 

@@ -23,10 +23,7 @@ use crate::{
         sidebar::Row,
     },
 };
-use artifact::{
-    reference::{self, Target, Turns},
-    search::Kind,
-};
+use artifact::{reference::Turns, search::Kind};
 use bezel::{
     gpui::{
         self, AnyElement, App, Context, MouseButton, SharedString, Window, div, prelude::*, px,
@@ -220,19 +217,6 @@ pub(crate) fn slash_items(workspace: &crate::model::workspace::Workspace) -> Vec
 
 /// The open project a reference names by its directory's name, and the
 /// active one for a reference naming none.
-fn named_project<'a>(
-    workspace: &'a crate::model::workspace::Workspace,
-    name: Option<&str>,
-) -> Option<&'a crate::model::project::Project> {
-    match name {
-        Some(name) => workspace
-            .projects
-            .iter()
-            .find(|project| project.path.file_name().is_some_and(|last| last == name)),
-        None => workspace.active_project(),
-    }
-}
-
 /// Read a session's turns back off disk, where they were left unloaded.
 pub(crate) fn load_history(workspace: &mut crate::model::workspace::Workspace, id: u64) {
     if let Some(chat) = workspace
@@ -255,46 +239,15 @@ pub(crate) struct Named {
 impl Cydonia {
     /// The entry a reference names, or why it names none.
     pub(crate) fn named(&self, text: &str, cx: &App) -> Result<Named, String> {
-        let Some(reference) = reference::parse(text) else {
-            return Err(format!("{text} is not a reference"));
-        };
-        let Target::Entry { number, turns } = reference.target else {
-            return Err(format!("{text} is a card, not an entry"));
-        };
-        let workspace = self.workspace.read(cx);
-        let Some(project) = named_project(workspace, reference.project) else {
-            return Err(format!("No open project for {text}"));
-        };
-        let found = project
-            .sessions
-            .iter()
-            .find(|chat| chat.number == Some(number))
-            .map(|chat| (Kind::Session, Showing::Session(chat.id)))
-            .or_else(|| {
-                project
-                    .articles
-                    .iter()
-                    .find(|article| article.number == Some(number))
-                    .map(|article| (Kind::Article, Showing::Article(article.id.clone())))
-            })
-            .or_else(|| {
-                project
-                    .boards
-                    .iter()
-                    .find(|board| board.number == Some(number))
-                    .map(|board| (Kind::Board, Showing::Board(board.id.clone())))
-            });
-        let Some((kind, showing)) = found else {
-            return Err(format!("Nothing is {text}"));
-        };
+        let resolved = self.workspace.read(cx).resolve(text)?;
         Ok(Named {
             row: Row::Entry {
-                project: project.path.clone(),
-                showing,
+                project: resolved.project,
+                showing: resolved.showing,
             },
-            kind,
-            number,
-            turns,
+            kind: resolved.kind,
+            number: resolved.number,
+            turns: resolved.turns,
         })
     }
 

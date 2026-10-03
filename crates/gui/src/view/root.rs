@@ -952,6 +952,7 @@ impl Cydonia {
                 .with_placeholder("name this session…")
         });
         let workspace = cx.new(|cx| Workspace::new(settings, state, cx));
+        Workspace::install(&workspace, cx);
         // The model is the only thing that says a session appeared or a turn
         // ended; the composer's placeholder, commands and busy state are all
         // read back from it rather than pushed by whoever caused the change.

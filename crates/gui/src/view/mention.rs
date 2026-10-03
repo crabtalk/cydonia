@@ -16,7 +16,6 @@ const SHOWN: usize = 20;
 
 #[derive(Clone)]
 struct Linkable {
-    kind: Kind,
     title: String,
     about: String,
     url: String,
@@ -41,7 +40,6 @@ pub(crate) fn read(workspace: &Workspace) -> Linkables {
         held.extend(project.sessions.iter().filter_map(|chat| {
             let number = chat.number?;
             Some(Linkable {
-                kind: Kind::Session,
                 title: untitled(&chat.title, "Untitled session"),
                 about: format!("Session · {} · #{number}", chat.entry.name),
                 url: reference(number),
@@ -51,7 +49,6 @@ pub(crate) fn read(workspace: &Workspace) -> Linkables {
         held.extend(project.articles.iter().filter_map(|article| {
             let number = article.number?;
             Some(Linkable {
-                kind: Kind::Article,
                 title: untitled(&article.title, "Untitled article"),
                 about: format!("Article · #{number}"),
                 url: reference(number),
@@ -61,7 +58,6 @@ pub(crate) fn read(workspace: &Workspace) -> Linkables {
         held.extend(project.boards.iter().filter_map(|board| {
             let number = board.number?;
             Some(Linkable {
-                kind: Kind::Board,
                 title: untitled(&board.name, "Untitled board"),
                 about: format!("Board · #{number}"),
                 url: reference(number),
@@ -110,13 +106,25 @@ pub(crate) fn source(query: &str, cx: &App) -> Vec<Mention> {
         .collect()
 }
 
-/// What a chip linking an entry paints: its title, and its kind and number.
+/// What a chip linking an entry paints: its title, and its kind's mark. A
+/// run of a session's turns adds the run.
 pub(crate) fn preview(url: &str, cx: &App) -> Option<Preview> {
-    let Linkables(held) = cx.try_global::<Linkables>()?;
-    let linkable = held.iter().find(|linkable| linkable.url == url)?;
+    let reference = url.strip_prefix(crate::view::entry_link::SCHEME)?;
+    let resolved = crate::model::workspace::references::resolve_in(reference, cx)?;
+    let fallback = match resolved.kind {
+        Kind::Session => "Untitled session",
+        Kind::Article => "Untitled article",
+        Kind::Board => "Untitled board",
+    };
+    let title = untitled(&resolved.title, fallback);
+    let title = match resolved.turns {
+        Some(turns) if turns.from == turns.to => format!("{title} · turn {turns}"),
+        Some(turns) => format!("{title} · turns {turns}"),
+        None => title,
+    };
     Some(Preview {
-        title: Some(linkable.title.clone().into()),
-        glyph: Some(crate::view::search::kind_icon(linkable.kind)),
+        title: Some(title.into()),
+        glyph: Some(crate::view::search::kind_icon(resolved.kind)),
         ..Preview::default()
     })
 }
