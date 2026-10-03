@@ -3,7 +3,7 @@
 mod common;
 
 use common::Scratch;
-use cydonia_artifact::{article::properties::Properties, project::Project as _};
+use cydonia_artifact::{article::properties::Properties, project::Project as _, space::Kind};
 use std::fs;
 
 #[test]
@@ -97,4 +97,23 @@ fn removing_what_is_not_there_is_an_error() {
     assert!(store.remove_board("nope").is_err());
     assert!(store.remove_session("nope").is_err());
     assert!(store.remove_article("nope").is_err());
+}
+
+#[test]
+fn place_is_an_articles_directory_and_a_boards_file() {
+    let scratch = Scratch::new("project-place");
+    let store = scratch.store();
+    let article = store.create_article("# Plan\n").unwrap();
+    let board = store.create_board("Road", "").unwrap();
+    let cydonia = scratch.path().join(".cydonia");
+    assert_eq!(
+        store.place(Kind::Article, &article.id),
+        Some(cydonia.join("articles").join(&article.id))
+    );
+    assert_eq!(
+        store.place(Kind::Board, &board.id),
+        Some(cydonia.join("boards").join(format!("{}.toml", board.id)))
+    );
+    assert_eq!(store.place(Kind::Board, "missing"), None);
+    assert_eq!(store.place(Kind::Table, &board.id), None);
 }

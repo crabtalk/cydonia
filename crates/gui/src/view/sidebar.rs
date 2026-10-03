@@ -160,6 +160,28 @@ fn showing_of(row: &Row) -> Option<&Showing> {
     }
 }
 
+/// Show `path` in the file manager, and put it on the clipboard.
+fn on_disk(path: PathBuf) -> [(Item, menu::Act); 2] {
+    let copied = path.to_string_lossy().into_owned();
+    [
+        menu::row(
+            Item::action(if cfg!(target_os = "macos") {
+                "Reveal in Finder"
+            } else if cfg!(windows) {
+                "Show in Explorer"
+            } else {
+                "Open in File Manager"
+            })
+            .with_icon(icons::files::FolderOpen),
+            move |this, _, cx| this.reveal_path(path.clone(), cx),
+        ),
+        menu::row(
+            Item::action("Copy Path").with_icon(icons::text::Copy),
+            move |_, _, cx| cx.write_to_clipboard(gpui::ClipboardItem::new_string(copied.clone())),
+        ),
+    ]
+}
+
 /// The project an entry row, a project's heading or its archive line belongs
 /// to.
 fn project_of(row: &Row) -> Option<&Path> {
@@ -1905,17 +1927,7 @@ impl Cydonia {
                 by("Manual", state::Sort::Manual),
             ],
         )];
-        rows.push(menu::row(
-            Item::action(if cfg!(target_os = "macos") {
-                "Reveal in Finder"
-            } else if cfg!(windows) {
-                "Show in Explorer"
-            } else {
-                "Open in File Manager"
-            })
-            .with_icon(icons::files::FolderOpen),
-            move |this, _, cx| this.reveal_project(ix, cx),
-        ));
+        rows.extend(on_disk(path.to_path_buf()));
         rows.push(menu::row(
             Item::action("Remove project").with_icon(icons::files::FolderMinus),
             move |this, _, cx| this.close_project(ix, cx),
@@ -1928,28 +1940,29 @@ impl Cydonia {
         })
     }
 
-    /// Show the project's directory in the file manager. Best effort and off
-    /// the main thread: opening it is a process, and a file manager that will
-    /// not come to the front is not worth blocking a frame over.
-    fn reveal_project(&mut self, ix: usize, cx: &mut Context<Self>) {
+    /// Show `path` in the file manager. Best effort and off the main thread:
+    /// opening it is a process, and a file manager that will not come to the
+    /// front is not worth blocking a frame over.
+    fn reveal_path(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         if cfg!(not(feature = "desktop")) {
-            self.desktop_only("Showing a project in the file manager", cx);
+            self.desktop_only("Showing it in the file manager", cx);
             return;
         }
-        let Some(path) = self
-            .workspace
-            .read(cx)
-            .projects
-            .get(ix)
-            .map(|open| open.path.clone())
-        else {
-            return;
-        };
         cx.background_executor()
             .spawn(async move {
                 let _ = crate::view::component::file::external::show(&path);
             })
             .detach();
+    }
+
+    /// Where an entry row is on disk, for a backend that is the disk.
+    fn place_of(&self, entry: &Row, cx: &App) -> Option<PathBuf> {
+        let (project, _) = self.located(entry, cx)?;
+        let workspace = self.workspace.read(cx);
+        let member = workspace.member_of(project, showing_of(entry)?.clone())?;
+        workspace.projects[project]
+            .store()
+            .place(member.kind, &member.id)
     }
 
     /// One session: its mark and its name.
@@ -2382,6 +2395,9 @@ impl Cydonia {
                     targets,
                 ));
             }
+        }
+        if let Some(path) = self.place_of(entry, cx) {
+            rows.extend(on_disk(path));
         }
         rows.push(menu::row(
             Item::action("Delete").with_icon(icons::files::Trash),
