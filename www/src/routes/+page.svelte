@@ -13,8 +13,9 @@
 
 	let { data } = $props();
 
-	const featured = releases.find((release) => media(release)) ?? latest;
-	const featureMedia = media(featured);
+	// The hero plays one pinned recording; its caption follows the latest release.
+	const pinned = releases.find((release) => release.version === '0.1.23');
+	const featureMedia = media(pinned ?? releases.find((release) => media(release)) ?? latest);
 	const acp = 'https://agentclientprotocol.com';
 
 	// Off until there are real screenshots to put in the frames — three empty
@@ -119,13 +120,13 @@
 
 	<figure class="feature">
 		<Demo media={featureMedia} />
-		{#if featured}
+		{#if latest}
 			<figcaption>
-				{#if featured.summary}
-					<p>{featured.summary}</p>
+				{#if latest.summary}
+					<p>{latest.summary}</p>
 				{/if}
-				<a href="{base}{releasePath(featured.version)}">
-					What’s new in {featured.version} <span aria-hidden="true">→</span>
+				<a href="{base}{releasePath(latest.version)}">
+					What’s new in {latest.version} <span aria-hidden="true">→</span>
 				</a>
 			</figcaption>
 		{/if}
