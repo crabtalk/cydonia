@@ -412,7 +412,7 @@ impl SettingsWindow {
         )
     }
 
-    /// The colour `==text==` is washed in.
+    /// The colour behind `==text==`.
     pub(super) fn highlight_row(&self, cx: &mut Context<Self>) -> AnyElement {
         let current = self.workspace.read(cx).settings.appearance.highlight;
         let paints = Highlight::ALL.into_iter().map(Paint::Named).collect();
@@ -423,7 +423,6 @@ impl SettingsWindow {
             Some(current),
             paints,
             None,
-            true,
             cx,
             |workspace, value, cx| {
                 if let Some(value) = value {
@@ -433,12 +432,12 @@ impl SettingsWindow {
         )
     }
 
-    /// The colour selected text is washed in, or the palette's own.
+    /// The colour behind selected text, or the palette's own.
     fn selection_row(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let current = self.workspace.read(cx).settings.appearance.selection;
         let system = Theme::for_appearance(theme.appearance).selection;
-        self.wash_row(
+        self.preset_row(
             "selection-color",
             "Selection colour",
             current,
@@ -540,26 +539,22 @@ impl SettingsWindow {
         let theme = Theme::of(cx).clone();
         let current = self.workspace.read(cx).settings.appearance.caret;
         let system = Theme::for_appearance(theme.appearance).caret;
-        let paints = Highlight::ALL.into_iter().map(Paint::Named).collect();
-        self.color_row(
-            false,
+        self.preset_row(
             "caret-color",
             "Cursor colour",
             current,
-            paints,
-            Some(system),
-            false,
+            system,
             cx,
             |workspace, value, cx| workspace.set_caret(value, cx),
         )
     }
 
-    /// The colour find matches are washed in, or the accent.
+    /// The colour behind find matches, or the accent.
     fn find_row(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let current = self.workspace.read(cx).settings.appearance.search;
         let system = markdown::default_find(&theme).1;
-        self.wash_row(
+        self.preset_row(
             "search-color",
             "Search results colour",
             current,
@@ -572,8 +567,7 @@ impl SettingsWindow {
     /// bezel's preset colours in rows of six, the colour picker, and Default
     /// under them. A colour written by hand that is not among them rings
     /// nothing.
-    #[allow(clippy::too_many_arguments)]
-    fn wash_row(
+    fn preset_row(
         &self,
         id: &'static str,
         title: &'static str,
@@ -583,25 +577,12 @@ impl SettingsWindow {
         set: fn(&mut Workspace, Option<Paint>, &mut Context<Workspace>),
     ) -> AnyElement {
         let paints = Highlight::ALL.into_iter().map(Paint::Named).collect();
-        self.color_row(
-            false,
-            id,
-            title,
-            current,
-            paints,
-            Some(system),
-            true,
-            cx,
-            set,
-        )
+        self.color_row(false, id, title, current, paints, Some(system), cx, set)
     }
 
     /// A row showing one colour, which opens `paints` and a colour picker
     /// under it to pick another. With `system`, the popover ends
     /// in a Default item that sets `None`, and `None` shows `system`.
-    /// The well and the swatches show every colour opaque. With `wash`, the
-    /// picker opens at the colour as [`Paint::wash`] paints it and sets alpha
-    /// too: transparency is shown and set there alone.
     #[allow(clippy::too_many_arguments)]
     fn color_row(
         &self,
@@ -611,22 +592,16 @@ impl SettingsWindow {
         current: Option<Paint>,
         paints: Vec<Paint>,
         system: Option<bezel::gpui::Hsla>,
-        wash: bool,
         cx: &mut Context<Self>,
         set: fn(&mut Workspace, Option<Paint>, &mut Context<Workspace>),
     ) -> AnyElement {
         use bezel::ui::color::{ColorPicker, ColorPickerEvent};
         use bezel::ui::popover;
         let theme = Theme::of(cx).clone();
-        let painted = move |paint: Paint, theme: &Theme| match wash {
-            true => paint.wash(theme),
-            false => paint.solid(theme),
-        };
-        let picked = current
-            .map(|paint| painted(paint, &theme))
+        let shown = current
+            .map(|paint| paint.solid(&theme))
             .or(system)
             .unwrap_or_default();
-        let shown = picked.opacity(1.);
         let selected =
             current.and_then(|current| paints.iter().position(|paint| *paint == current));
         // Down lands before the trigger's click opens the card, so the picker
@@ -635,13 +610,13 @@ impl SettingsWindow {
             if let Some(custom) = this.custom.as_ref().filter(|custom| custom.id == id) {
                 custom
                     .picker
-                    .update(cx, |picker, cx| picker.set_color(picked, cx));
+                    .update(cx, |picker, cx| picker.set_color(shown, cx));
                 return;
             }
-            let picker = cx.new(|cx| ColorPicker::new(picked, wash, cx));
+            let picker = cx.new(|cx| ColorPicker::new(shown, false, cx));
             let changed = cx.subscribe(&picker, move |this, _, event: &ColorPickerEvent, cx| {
                 let ColorPickerEvent::Changed(color) = *event;
-                let paint = Paint::from_hsla(color, wash);
+                let paint = Paint::from_hsla(color);
                 this.workspace
                     .update(cx, |workspace, cx| set(workspace, Some(paint), cx));
             });
@@ -676,7 +651,7 @@ impl SettingsWindow {
                             .update(cx, |workspace, cx| set(workspace, Some(paint), cx));
                         if let Some(custom) = this.custom.as_ref().filter(|custom| custom.id == id)
                         {
-                            let color = painted(paint, Theme::of(cx));
+                            let color = paint.solid(Theme::of(cx));
                             custom
                                 .picker
                                 .update(cx, |picker, cx| picker.set_color(color, cx));

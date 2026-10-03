@@ -21,7 +21,7 @@
       "Build on Bezel 0.2.7 from crates.io"
     ],
     "fixed": [
-      "Paint custom colours as picked, and show colour wells and swatches opaque",
+      "Paint highlight, selection and search colours at full strength as picked, like the cursor, in the text, the colour well and the picker alike",
       "Resolve entry chips in transcripts across open projects, and name turn runs",
       "Centre the macOS traffic lights on the header's measured height",
       "Move an empty board lane's add row with its heading while dragging in the list"

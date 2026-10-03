@@ -68,7 +68,7 @@ pub fn palette(appearance: Appearance) -> Theme {
         theme.font_mono = mono;
     }
     if let Some(color) = SELECTION.read().ok().and_then(|held| *held) {
-        theme.selection = color.wash(&theme);
+        theme.selection = color.solid(&theme);
     }
     if let Some(color) = CARET.read().ok().and_then(|held| *held) {
         theme.caret = color.solid(&theme);

@@ -110,7 +110,7 @@ pub fn set_highlight(color: crate::model::settings::Paint) {
 pub fn mark_paint(name: &str, theme: &Theme) -> Option<markdown::MarkPaint> {
     let color = HIGHLIGHT.read().ok().map(|held| *held)?;
     (name == editor::HIGHLIGHT_MARK).then(|| markdown::MarkPaint {
-        background: Some(color.wash(theme)),
+        background: Some(color.solid(theme)),
         ..Default::default()
     })
 }
@@ -125,14 +125,14 @@ pub fn set_search(color: Option<crate::model::settings::Paint>) {
     }
 }
 
-/// How find matches paint: the colour [`set_search`] chose, the current match
-/// a step stronger than the rest.
+/// How find matches paint: the current match in the colour [`set_search`]
+/// chose, the rest at half its opacity.
 pub fn find_paint(theme: &Theme) -> (bezel::gpui::Hsla, bezel::gpui::Hsla) {
     let Some(color) = SEARCH.read().ok().and_then(|held| *held) else {
         return markdown::default_find(theme);
     };
-    let wash = color.wash(theme);
-    (wash, wash.opacity((wash.a + 0.25).min(1.)))
+    let solid = color.solid(theme);
+    (solid.opacity(0.5), solid)
 }
 
 fn source_offset(editor: &editor::Editor, cx: &App) -> f32 {

@@ -192,15 +192,15 @@ pub struct Appearance {
     /// Whether a line too long for a code block wraps rather than scrolling
     /// sideways inside it — `markdown::Layout::wrap_code`.
     pub wrap_code: bool,
-    /// The wash `==text==` paints in. A value that is not a colour reads as
+    /// The colour behind `==text==`. A value that is not a colour reads as
     /// the default.
     #[serde(deserialize_with = "highlight_or_default")]
     pub highlight: Paint,
-    /// The wash selected text paints in. Unset, or not a colour, keeps the
+    /// The colour behind selected text. Unset, or not a colour, keeps the
     /// palette's.
     #[serde(deserialize_with = "paint_or_unset")]
     pub selection: Option<Paint>,
-    /// The wash find matches paint in. Unset, or not a colour, keeps the
+    /// The colour behind find matches. Unset, or not a colour, keeps the
     /// accent.
     #[serde(deserialize_with = "paint_or_unset")]
     pub search: Option<Paint>,
@@ -271,53 +271,36 @@ impl Highlight {
 }
 
 /// A colour picked in settings: a preset, which follows the appearance, or
-/// one sRGB value for both. Stored as the preset's name, as `#rrggbbaa`, or
-/// as `#rrggbb` — a custom colour with no alpha of its own.
+/// one sRGB value for both, painted as it is. Stored as the preset's name or
+/// as `#rrggbb`; a `#rrggbbaa` reads as its `#rrggbb`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Paint {
     Named(Highlight),
-    Custom { rgb: u32, alpha: Option<u8> },
+    Custom { rgb: u32 },
 }
 
 impl Paint {
-    /// `color` as a custom colour, keeping its alpha only when `alpha`.
-    pub fn from_hsla(color: bezel::gpui::Hsla, alpha: bool) -> Self {
+    /// `color` as a custom colour, without its alpha.
+    pub fn from_hsla(color: bezel::gpui::Hsla) -> Self {
         let rgba = color.to_rgb();
         let channel = |value: f32| (value.clamp(0., 1.) * 255.).round() as u32;
         Self::Custom {
             rgb: channel(rgba.r) << 16 | channel(rgba.g) << 8 | channel(rgba.b),
-            alpha: alpha.then(|| channel(rgba.a) as u8),
         }
     }
 
-    /// The colour at full strength.
+    /// The colour as every setting paints it, at full strength.
     pub fn solid(self, theme: &bezel::theme::Theme) -> bezel::gpui::Hsla {
         match self {
             Self::Named(named) => named.solid(theme),
-            Self::Custom { rgb, .. } => bezel::gpui::rgb(rgb).into(),
+            Self::Custom { rgb } => bezel::gpui::rgb(rgb).into(),
         }
-    }
-
-    /// The colour as a wash behind text: a custom colour's own alpha, else as
-    /// translucent as a highlight's.
-    pub fn wash(self, theme: &bezel::theme::Theme) -> bezel::gpui::Hsla {
-        let alpha = match self {
-            Self::Custom {
-                alpha: Some(alpha), ..
-            } => f32::from(alpha) / 255.,
-            _ => markdown::default_highlight(markdown::HighlightColor::Yellow, theme).a,
-        };
-        self.solid(theme).opacity(alpha)
     }
 
     pub fn key(self) -> String {
         match self {
             Self::Named(named) => named.key().to_owned(),
-            Self::Custom { rgb, alpha: None } => format!("#{rgb:06x}"),
-            Self::Custom {
-                rgb,
-                alpha: Some(alpha),
-            } => format!("#{rgb:06x}{alpha:02x}"),
+            Self::Custom { rgb } => format!("#{rgb:06x}"),
         }
     }
 
@@ -325,14 +308,8 @@ impl Paint {
         if let Some(hex) = key.strip_prefix('#') {
             let value = u32::from_str_radix(hex, 16).ok()?;
             return match hex.len() {
-                6 => Some(Self::Custom {
-                    rgb: value,
-                    alpha: None,
-                }),
-                8 => Some(Self::Custom {
-                    rgb: value >> 8,
-                    alpha: Some((value & 0xff) as u8),
-                }),
+                6 => Some(Self::Custom { rgb: value }),
+                8 => Some(Self::Custom { rgb: value >> 8 }),
                 _ => None,
             };
         }

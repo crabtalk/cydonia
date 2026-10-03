@@ -213,6 +213,8 @@ fn copy_terminal_selection_takes_priority_over_transcript(cx: &mut gpui::TestApp
         geometry: None,
         pressed: None,
         selecting: false,
+        drag: None,
+        edge_scroll: None,
         scroll_remainder: 0.,
         status: None,
         hold: None,
@@ -231,11 +233,11 @@ fn copy_terminal_selection_takes_priority_over_transcript(cx: &mut gpui::TestApp
         let grid = view.geometry.unwrap();
         view.select(
             grid.origin + gpui::point(px(0.), px(grid.line_h / 2.)),
-            true,
+            Some(SelectionType::Simple),
         );
         view.select(
             grid.origin + gpui::point(px(grid.cell_w * 13.), px(grid.line_h / 2.)),
-            false,
+            None,
         );
         assert_eq!(
             view.emulator.selection_text().as_deref(),
@@ -290,6 +292,8 @@ fn measured(cx: &mut gpui::TestAppContext) -> (Entity<Terminal>, gpui::VisualTes
         geometry: None,
         pressed: None,
         selecting: false,
+        drag: None,
+        edge_scroll: None,
         scroll_remainder: 0.,
         status: None,
         hold: None,
