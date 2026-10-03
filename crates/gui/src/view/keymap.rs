@@ -26,9 +26,9 @@ use crate::{
         find::{FindNext, FindPrev},
         info, menubar,
         root::{
-            self, CloseProject, NewArticle, NewBoard, NewSession, NewSessionNext, NewTable,
-            NextEntry, OpenFiles, OpenProject, OpenReview, OpenSettings, PrevEntry, ToggleChanges,
-            ToggleSidebar, ToggleTerminal,
+            self, CloseProject, GoBack, GoForward, NewArticle, NewBoard, NewSession,
+            NewSessionNext, NewTable, NextEntry, OpenFiles, OpenProject, OpenReview, OpenSettings,
+            PrevEntry, ToggleChanges, ToggleSidebar, ToggleTerminal,
         },
         table,
     },
@@ -71,6 +71,8 @@ pub enum Command {
     FindNext,
     FindPrev,
     Search,
+    GoBack,
+    GoForward,
 }
 
 /// Which menu a command is reached by, so the section is read in the order the
@@ -96,7 +98,7 @@ impl Menu {
 }
 
 impl Command {
-    pub const ALL: [Self; 20] = [
+    pub const ALL: [Self; 22] = [
         Self::OpenSettings,
         Self::NewSession,
         Self::NewSessionNext,
@@ -117,6 +119,8 @@ impl Command {
         Self::FindNext,
         Self::FindPrev,
         Self::Search,
+        Self::GoBack,
+        Self::GoForward,
     ];
 
     /// The key it is written under, inside `[shortcuts]`.
@@ -142,6 +146,8 @@ impl Command {
             Self::FindNext => "find_next",
             Self::FindPrev => "find_prev",
             Self::Search => "search",
+            Self::GoBack => "go_back",
+            Self::GoForward => "go_forward",
         }
     }
 
@@ -168,6 +174,8 @@ impl Command {
             Self::FindNext => "Find Next",
             Self::FindPrev => "Find Previous",
             Self::Search => "Search",
+            Self::GoBack => "Back",
+            Self::GoForward => "Forward",
         }
     }
 
@@ -192,7 +200,9 @@ impl Command {
             | Self::FindCard
             | Self::FindNext
             | Self::FindPrev
-            | Self::Search => Menu::View,
+            | Self::Search
+            | Self::GoBack
+            | Self::GoForward => Menu::View,
         }
     }
 
@@ -227,6 +237,9 @@ impl Command {
             Self::FindNext => "secondary-g",
             Self::FindPrev => "secondary-shift-g",
             Self::Search => "secondary-k",
+            // What every browser and editor steps through its history on.
+            Self::GoBack => "secondary-[",
+            Self::GoForward => "secondary-]",
         })
     }
 
@@ -251,6 +264,8 @@ impl Command {
             Self::OpenReview => KeyBinding::new(chord, OpenReview, context),
             Self::NextEntry => KeyBinding::new(chord, NextEntry, context),
             Self::PrevEntry => KeyBinding::new(chord, PrevEntry, context),
+            Self::GoBack => KeyBinding::new(chord, GoBack, context),
+            Self::GoForward => KeyBinding::new(chord, GoForward, context),
             Self::PlainText => KeyBinding::new(chord, TogglePlainText, context),
             Self::FindNext => KeyBinding::new(chord, FindNext, context),
             Self::FindPrev => KeyBinding::new(chord, FindPrev, context),

@@ -83,7 +83,9 @@ actions!(
         PrevPane,
         ClosePane,
         ZoomPane,
-        CopySelection
+        CopySelection,
+        GoBack,
+        GoForward
     ]
 );
 
@@ -457,6 +459,8 @@ pub struct Cydonia {
     pub(crate) card_marks: board::Marks,
     /// What each card's text parses to, by card id — see [`board::Docs`].
     pub(crate) card_docs: board::Docs,
+    /// The entries the window has been on — see [`super::history`].
+    pub(crate) history: super::history::History,
     /// The composer each session painted into an article types into, by the
     /// session's id — see [`super::entry_link`].
     pub(crate) session_cards:
@@ -1013,6 +1017,7 @@ impl Cydonia {
             boards: Default::default(),
             card_marks: Default::default(),
             card_docs: Default::default(),
+            history: Default::default(),
             session_cards: Default::default(),
             #[cfg(feature = "desktop")]
             settings_window: None,
@@ -1589,6 +1594,7 @@ impl Cydonia {
 
 impl Render for Cydonia {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.track_history(cx);
         self.sync_leaves(window, cx);
         self.sync_changes(cx);
         self.publish_shown(cx);
@@ -1602,6 +1608,15 @@ impl Render for Cydonia {
             .font_family(theme.font_sans.clone())
             .text_color(theme.text)
             .text_style(TextStyle::Body)
+            // The mouse's own back and forward buttons.
+            .on_mouse_down(
+                gpui::MouseButton::Navigate(gpui::NavigationDirection::Back),
+                cx.listener(|this, _, window, cx| this.go_back(&GoBack, window, cx)),
+            )
+            .on_mouse_down(
+                gpui::MouseButton::Navigate(gpui::NavigationDirection::Forward),
+                cx.listener(|this, _, window, cx| this.go_forward(&GoForward, window, cx)),
+            )
             .on_action(cx.listener(|this, _: &NextPane, window, cx| this.step_pane(1, window, cx)))
             .on_action(cx.listener(|this, _: &PrevPane, window, cx| this.step_pane(-1, window, cx)))
             .on_action(

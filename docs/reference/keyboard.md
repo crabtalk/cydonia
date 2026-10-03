@@ -22,6 +22,8 @@ description: The default chords, and how to change one.
 | Open Review | ⌘⇧G | `open_review` |
 | Next Entry | ⌃⇥ | `next_entry` |
 | Previous Entry | ⇧⌃⇥ | `prev_entry` |
+| Back | ⌘[ | `go_back` |
+| Forward | ⌘] | `go_forward` |
 | Plain Text | ⌘E | `plain_text` |
 | Find Card | ⌘F | `find_card` |
 

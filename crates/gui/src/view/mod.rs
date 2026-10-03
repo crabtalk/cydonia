@@ -14,6 +14,7 @@ pub mod detail;
 pub mod entry_link;
 pub mod find;
 pub mod header;
+pub mod history;
 #[cfg(feature = "desktop")]
 pub mod hotkey;
 pub mod info;

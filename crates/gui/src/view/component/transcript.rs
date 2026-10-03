@@ -294,6 +294,19 @@ impl State {
             .position(|turn| turn.range.contains(&item))
     }
 
+    /// Where the transcript is scrolled to, for coming back to it.
+    pub(crate) fn top(&self) -> bezel::gpui::ListOffset {
+        self.list.state.logical_scroll_top()
+    }
+
+    /// Back to where [`Self::top`] read, no longer following the agent.
+    pub(crate) fn scroll_to_top(&self, at: bezel::gpui::ListOffset) {
+        self.list
+            .state
+            .set_follow_mode(bezel::gpui::FollowMode::Normal);
+        self.list.state.scroll_to(at);
+    }
+
     /// Scroll to turn `ix`, from 0, the way pressing its rail mark does.
     pub(crate) fn reveal_turn(&self, ix: usize) {
         self.rail_selection.set(Some(RailSelection {

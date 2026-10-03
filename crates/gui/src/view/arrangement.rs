@@ -398,7 +398,7 @@ impl Cydonia {
     }
 
     /// What the single pane is showing, as a member.
-    fn lone_member(&self, cx: &App) -> Option<Member> {
+    pub(crate) fn lone_member(&self, cx: &App) -> Option<Member> {
         self.workspace
             .read(cx)
             .active
@@ -627,7 +627,10 @@ impl Cydonia {
                 div()
                     .flex_none()
                     .mr(px(crate::view::root::HEADER_INSET - BAR_GAP))
+                    .flex()
+                    .flex_row()
                     .child(self.fold_toggle(cx))
+                    .child(self.history_buttons(cx))
                     .into_any_element()
             }))
             // The tabs in a strip of their own, which scrolls sideways once

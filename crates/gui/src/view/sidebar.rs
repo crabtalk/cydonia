@@ -504,6 +504,7 @@ impl Cydonia {
                     })
                     .children(chrome::caption(CaptionSide::Left, window, cx))
                     .child(self.fold_toggle(cx))
+                    .child(self.history_buttons(cx))
                     .child(chrome::grip("sidebar-grip", &self.drag, window)),
             )
             .child(self.search_row(cx))
