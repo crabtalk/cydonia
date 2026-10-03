@@ -763,7 +763,8 @@ impl Cydonia {
                                 .children(self.permission(active, cx))
                                 .child(self.leaf().composer.clone()),
                             footer_height.clone(),
-                        )),
+                        ))
+                        .child(drop_wash(&theme)),
                     false => column.children(
                         self.adrift_strip(cx)
                             .map(|strip| footer(strip, footer_height.clone())),
@@ -916,6 +917,16 @@ impl Cydonia {
                 )
             })
     }
+}
+
+/// A session pane's drop target while a file is dragged over it: a wash over
+/// the whole pane, composer included. Drawn last; it takes no drop itself.
+pub(crate) fn drop_wash(theme: &Theme) -> Div {
+    let wash = theme.drop_target;
+    div()
+        .absolute()
+        .inset_0()
+        .drag_over::<gpui::ExternalPaths>(move |style, _, _, _| style.bg(wash))
 }
 
 /// Where the composer floats, and where anything standing in for it goes: out

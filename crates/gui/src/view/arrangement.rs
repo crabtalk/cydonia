@@ -283,6 +283,14 @@ impl Cydonia {
                 .map(|at| (*project, at)),
             _ => None,
         };
+        let session = match &showing {
+            Some((_, Showing::Session(_))) => self
+                .leaves
+                .iter()
+                .find(|leaf| leaf.entry.as_ref() == Some(&front))
+                .map(|leaf| leaf.composer.clone()),
+            _ => None,
+        };
         let drawer = self.drawer_layer(Some(&front), board, window, cx);
         let pane = div()
             .id(SharedString::from(format!("pane-{key}")))
@@ -343,6 +351,13 @@ impl Cydonia {
                     .flex_col()
                     .child(body)
                     .children(composer)
+                    // The whole pane takes a dropped picture for the composer.
+                    .when_some(session, |pane, composer| {
+                        pane.on_drop(move |paths: &bezel::gpui::ExternalPaths, _, cx| {
+                            composer.update(cx, |composer, cx| composer.drop_paths(paths, cx));
+                        })
+                        .child(crate::view::detail::drop_wash(&theme))
+                    })
                     .children(drawer),
             );
         // By the tab in front: that is what a drop joins or divides.
