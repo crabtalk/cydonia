@@ -128,6 +128,8 @@ pub struct Panel {
     tabs: PanelTabs,
     /// Whose settings the panel's files read.
     workspace: WeakEntity<Workspace>,
+    /// The root's, which paints [`changes_toggle`] on the header too.
+    toggle: Painter,
 }
 
 impl Panel {
@@ -152,6 +154,7 @@ impl Panel {
             drag: Default::default(),
             tabs: PanelTabs::default(),
             workspace: WeakEntity::new_invalid(),
+            toggle: Painter::of(cx),
         }
     }
 
@@ -892,23 +895,7 @@ impl Render for Panel {
                             })),
                     )
                     .child(chrome::grip("panel-grip", &self.drag, window))
-                    .child(
-                        // The column it acts on, which is this one: a
-                        // left-panel glyph on the right panel's own hide
-                        // button pointed at the wrong side of the window.
-                        theme
-                            .icon_button(
-                                icons::layout::PanelRight,
-                                ButtonStyle::Ghost,
-                                Some(Fade::new(Painter::of(cx), "panel-hide")),
-                            )
-                            .id("panel-hide")
-                            .flex_none()
-                            .tooltip(|window, cx| Tooltip::text("Hide right panel", window, cx))
-                            .on_click(|_, window, cx| {
-                                window.dispatch_action(Box::new(ToggleChanges), cx)
-                            }),
-                    )
+                    .child(changes_toggle("Hide right panel", self.toggle, &theme))
                     .children(chrome::caption(CaptionSide::Right, window, cx)),
             )
             .when_some(self.closing, |panel, id| {
@@ -1207,8 +1194,10 @@ impl Cydonia {
         if let Some(panel) = self.right_panels.get(&cwd) {
             return panel.clone();
         }
+        let toggle = Painter::of(cx);
         let panel = cx.new(|cx| {
             let mut panel = Panel::new(cwd.clone(), cx);
+            panel.toggle = toggle;
             panel.restore_pending = persistence::saved_panel(&cwd);
             panel.project_root = cwd.canonicalize().unwrap_or(cwd.clone());
             panel.workspace = self.workspace.downgrade();
@@ -1254,3 +1243,25 @@ mod tests;
 #[cfg(test)]
 #[path = "../../../tests/unit/right_panel.rs"]
 mod right_panel_tests;
+
+/// The control that hides and shows the right panel: on the panel's strip
+/// while it is up, on the header while it is down. One fade under `painter`,
+/// the root, so the wash under the pointer carries across the swap.
+pub(crate) fn changes_toggle(
+    label: &'static str,
+    painter: Painter,
+    theme: &Theme,
+) -> impl IntoElement + use<> {
+    // The column it acts on, which is this one: a left-panel glyph on the
+    // right panel's own hide button pointed at the wrong side of the window.
+    theme
+        .icon_button(
+            icons::layout::PanelRight,
+            ButtonStyle::Ghost,
+            Some(Fade::new(painter, "toggle-changes")),
+        )
+        .id("toggle-changes")
+        .flex_none()
+        .tooltip(move |window, cx| Tooltip::text(label, window, cx))
+        .on_click(|_, window, cx| window.dispatch_action(Box::new(ToggleChanges), cx))
+}
