@@ -1,5 +1,5 @@
-//! The composer: a growing field on a glass card, and the agent's slash
-//! commands behind `/`.
+//! The composer: a growing field on a glass card, the agent's slash commands
+//! behind `/`, and the project's entries behind `@`.
 
 mod activity;
 pub use activity::Activity;
@@ -11,7 +11,7 @@ use crate::{
         session::{Command, Usage},
         settings::PanelTabs,
     },
-    view::root,
+    view::{mention, root},
 };
 use bezel::ui::scroll as scrollbars;
 use bezel::{
@@ -31,6 +31,7 @@ use bezel::{
         widgets::{Buttons as _, Controls as _},
     },
 };
+use editor::Mention;
 use std::{collections::HashMap, sync::Arc};
 
 actions!(
@@ -202,6 +203,39 @@ fn quoted(quote: Option<String>, message: &str) -> String {
     format!("{quoted}\n\n{message}")
 }
 
+/// What the open picker completes.
+enum Completing {
+    /// A slash command, from the filter over the agent's commands.
+    Command,
+    /// An entry link: `at` is the `@`, `rows` what [`mention::source`] gave
+    /// for the text after it.
+    Mention {
+        at: usize,
+        rows: Vec<Mention>,
+        active: Option<usize>,
+    },
+}
+
+/// The `@` the caret is completing: one at the start of the text or after
+/// whitespace, with no whitespace between it and the caret.
+fn mention_at(content: &str, caret: usize) -> Option<usize> {
+    let before = &content[..caret];
+    let at = before.rfind('@')?;
+    let opens_word = before[..at]
+        .chars()
+        .next_back()
+        .is_none_or(char::is_whitespace);
+    (opens_word && !before[at + 1..].contains(char::is_whitespace)).then_some(at)
+}
+
+/// A title as Markdown link text.
+fn escape_label(label: &str) -> String {
+    label
+        .replace('\\', "\\\\")
+        .replace('[', "\\[")
+        .replace(']', "\\]")
+}
+
 pub struct Composer {
     field: Entity<TextField>,
     session: Option<u64>,
@@ -217,11 +251,10 @@ pub struct Composer {
     saved_quotes: HashMap<Option<u64>, String>,
     /// Which of them is open in the lightbox.
     preview: Option<usize>,
-    /// Byte offset of the `/` being typed, or `None` when no picker is open.
-    /// Derived from the text on every change rather than stored as a flag: a
-    /// backspace over the `/` has to close the picker, and a flag would have to
-    /// be told.
-    command: Option<usize>,
+    /// The picker open over the text being typed, or `None`. Derived from the
+    /// text on every change rather than stored as a flag: a backspace over the
+    /// `/` or `@` has to close the picker, and a flag would have to be told.
+    completing: Option<Completing>,
     filter: popover::Filter,
     /// The commands as the agent described them, in the filter's own order —
     /// a row's second line is `commands[item].description`.
@@ -309,7 +342,7 @@ impl Composer {
             quote: None,
             saved_quotes: HashMap::new(),
             preview: None,
-            command: None,
+            completing: None,
             filter: popover::Filter::new(Vec::new()),
             commands: Vec::new(),
             scroll: ScrollHandle::new(),
@@ -406,7 +439,7 @@ impl Composer {
                 .map(|command| SharedString::from(format!("/{}", command.name)))
                 .collect(),
         );
-        self.command = None;
+        self.completing = None;
         cx.notify();
     }
 
@@ -654,23 +687,32 @@ impl Composer {
     }
 
     /// The picker trigger, and it is a *read* of the text rather than a key
-    /// handler: a `/` opening the first line, with no whitespace since. Typing,
-    /// pasting, arrowing back into the word and deleting the `/` all agree
-    /// without any of them being special-cased.
+    /// handler: a `/` opening the first line with no whitespace since, or an
+    /// `@` opening a word with no whitespace between it and the caret. Typing,
+    /// pasting, arrowing back into the word and deleting the `/` or `@` all
+    /// agree without any of them being special-cased.
     fn reread(&mut self, cx: &mut Context<Self>) {
         let content = self.field.read(cx).content().clone();
         let caret = self.field.read(cx).cursor().min(content.len());
-        self.command = content
-            .starts_with('/')
-            .then_some(0)
-            .filter(|_| !self.filter.items().is_empty())
-            .filter(|_| !content[1..caret].contains(char::is_whitespace));
-        if self.command.is_some() {
+        let command = content.starts_with('/')
+            && !self.filter.items().is_empty()
+            && !content[1..caret].contains(char::is_whitespace);
+        self.completing = if command {
             self.filter.refilter(&content[1..caret]);
-            // Narrowing re-enters the list at the top, and the view it is read
-            // through has to go back with it.
-            self.reveal();
-        }
+            Some(Completing::Command)
+        } else {
+            mention_at(&content, caret).map(|at| {
+                let rows = mention::source(&content[at + 1..caret], cx);
+                Completing::Mention {
+                    at,
+                    active: (!rows.is_empty()).then_some(0),
+                    rows,
+                }
+            })
+        };
+        // Narrowing re-enters the list at the top, and the view it is read
+        // through has to go back with it.
+        self.reveal();
         cx.notify();
     }
 
@@ -682,17 +724,77 @@ impl Composer {
         let rest = content[caret..].to_string();
         self.field
             .update(cx, |field, cx| field.set_content(picked + &rest, cx));
-        self.command = None;
+        self.completing = None;
+        cx.notify();
+    }
+
+    /// Replace the typed `@query` with a Markdown link to the picked entry.
+    fn accept_mention(&mut self, at: usize, row: &Mention, cx: &mut Context<Self>) {
+        let content = self.field.read(cx).content().clone();
+        let caret = self.field.read(cx).cursor().min(content.len());
+        let link = format!("[{}]({}) ", escape_label(&row.label), row.url);
+        let end = at + link.len();
+        let text = format!("{}{link}{}", &content[..at], &content[caret..]);
+        self.field.update(cx, |field, cx| {
+            field.set_content(text, cx);
+            field.select(end..end, cx);
+        });
+        self.completing = None;
+        cx.notify();
+    }
+
+    /// The highlighted row's position in the open picker.
+    fn active(&self) -> Option<usize> {
+        match self.completing.as_ref()? {
+            Completing::Command => self.filter.active(),
+            Completing::Mention { active, .. } => *active,
+        }
+    }
+
+    /// Take the row at `position` in the open picker.
+    fn choose(&mut self, position: usize, cx: &mut Context<Self>) {
+        match &self.completing {
+            Some(Completing::Command) => {
+                if let Some(&item) = self.filter.filtered().get(position) {
+                    self.accept(item, cx);
+                }
+            }
+            Some(Completing::Mention { at, rows, .. }) => {
+                if let Some(row) = rows.get(position).cloned() {
+                    self.accept_mention(*at, &row, cx);
+                }
+            }
+            None => {}
+        }
+    }
+
+    fn point(&mut self, position: usize) {
+        match &mut self.completing {
+            Some(Completing::Command) => self.filter.set_active(position),
+            Some(Completing::Mention { rows, active, .. }) if position < rows.len() => {
+                *active = Some(position);
+            }
+            _ => {}
+        }
+    }
+
+    fn step(&mut self, delta: isize, cx: &mut Context<Self>) {
+        match &mut self.completing {
+            Some(Completing::Command) => self.filter.step(delta),
+            Some(Completing::Mention { rows, active, .. }) => {
+                *active = popover::menu_step(*active, rows.len(), delta);
+            }
+            None => {}
+        }
+        self.reveal();
         cx.notify();
     }
 
     pub fn submit(&mut self, cx: &mut Context<Self>) {
         // `enter` is one key doing two jobs: while the picker is up it takes
         // the highlighted row, exactly as the combobox's does.
-        if self.command.is_some()
-            && let Some(item) = self.filter.active_item()
-        {
-            self.accept(item, cx);
+        if let Some(position) = self.active() {
+            self.choose(position, cx);
             return;
         }
         let content = self.field.read(cx).content().clone();
@@ -700,7 +802,7 @@ impl Composer {
             return;
         }
         self.field.update(cx, |field, cx| field.clear(cx));
-        self.command = None;
+        self.completing = None;
         cx.emit(ComposerEvent::Submit(
             quoted(self.quote.take(), &content),
             std::mem::take(&mut self.attachments),
@@ -713,29 +815,25 @@ impl Composer {
     }
 
     fn command_next(&mut self, _: &CommandNext, _: &mut Window, cx: &mut Context<Self>) {
-        self.filter.step(1);
-        self.reveal();
-        cx.notify();
+        self.step(1, cx);
     }
 
     fn command_previous(&mut self, _: &CommandPrevious, _: &mut Window, cx: &mut Context<Self>) {
-        self.filter.step(-1);
-        self.reveal();
-        cx.notify();
+        self.step(-1, cx);
     }
 
     /// Scroll the highlighted row back inside the clamped card. The card's
-    /// children are the filtered rows one for one, so the position the filter
-    /// reports is the child gpui indexes.
+    /// children are the picker's rows one for one, so the active position is
+    /// the child gpui indexes.
     fn reveal(&self) {
-        if let Some(active) = self.filter.active() {
+        if let Some(active) = self.active() {
             self.scroll.scroll_to_item(active);
         }
     }
 
     /// Escape backs out of whatever is happening, outermost first: the agent
-    /// menu, then the command picker, and the turn in flight once there is
-    /// nothing left to close.
+    /// menu, then the picker, and the turn in flight once there is nothing
+    /// left to close.
     fn command_dismiss(&mut self, _: &CommandDismiss, _: &mut Window, cx: &mut Context<Self>) {
         if self.preview.take().is_some() {
             // The open picture is the outermost thing there is.
@@ -745,7 +843,7 @@ impl Composer {
             // A submenu shuts before the menu holding it — one press, one level.
         } else if self.menu || self.picking.is_some() {
             self.close_menu();
-        } else if self.command.take().is_none() {
+        } else if self.completing.take().is_none() {
             cx.emit(ComposerEvent::Cancel);
         }
         cx.notify();
@@ -762,34 +860,43 @@ impl Composer {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        self.command?;
-        let items: Vec<Item> = self
-            .filter
-            .filtered()
-            .iter()
-            .map(|&item| {
-                let row = Item::action(self.filter.items()[item].clone());
-                // An agent is free to send an empty one, and a blank second
-                // line would read as a gap rather than as a description.
-                match self.commands[item].description.trim() {
-                    "" => row,
-                    description => row.with_description(description.to_string()),
-                }
-            })
-            .collect();
+        let items: Vec<Item> = match self.completing.as_ref()? {
+            Completing::Command => self
+                .filter
+                .filtered()
+                .iter()
+                .map(|&item| {
+                    let row = Item::action(self.filter.items()[item].clone());
+                    // An agent is free to send an empty one, and a blank second
+                    // line would read as a gap rather than as a description.
+                    match self.commands[item].description.trim() {
+                        "" => row,
+                        description => row.with_description(description.to_string()),
+                    }
+                })
+                .collect(),
+            Completing::Mention { rows, .. } => rows
+                .iter()
+                .map(|row| {
+                    let item = Item::action(row.label.clone());
+                    match &row.description {
+                        Some(description) => item.with_description(description.clone()),
+                        None => item,
+                    }
+                })
+                .collect(),
+        };
         if items.is_empty() {
             return None;
         }
-        // The filter is what the highlight lives in — it survives a repaint
-        // and the card does not — so the cursor is made from it each frame
-        // rather than kept beside it, where the two could disagree.
+        // The filter or the open mention is what the highlight lives in — it
+        // survives a repaint and the card does not — so the cursor is made
+        // from it each frame rather than kept beside it, where the two could
+        // disagree.
         let mut cursor = Cursor::default();
-        if let Some(active) = self.filter.active() {
+        if let Some(active) = self.active() {
             cursor.point_at(&items, &[active]);
         }
-        // The card reports the row it was on; the commands behind those rows
-        // are whatever the query left standing.
-        let filtered = self.filter.filtered().to_vec();
         Some(popover::anchored_menu_above(
             "composer-commands",
             div()
@@ -807,15 +914,13 @@ impl Composer {
                             // Enter always takes the row that is lit.
                             Hit::Point(path) => {
                                 if let [row] = path[..] {
-                                    composer.filter.set_active(row);
+                                    composer.point(row);
                                     cx.notify();
                                 }
                             }
                             Hit::Choose(path) => {
-                                if let [row] = path[..]
-                                    && let Some(&item) = filtered.get(row)
-                                {
-                                    composer.accept(item, cx);
+                                if let [row] = path[..] {
+                                    composer.choose(row, cx);
                                 }
                             }
                             // Not dismissed on an out-click: `reread` reopens the

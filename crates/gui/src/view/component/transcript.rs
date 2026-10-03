@@ -583,6 +583,16 @@ fn tool_icon(kind: ToolKind) -> &'static [u8] {
     }
 }
 
+/// Where a transcript is drawn.
+pub enum Drawn<'a> {
+    /// The session's own pane.
+    Pane,
+    /// Inside another entry or a drawer, where cydonia's links in it are drawn
+    /// as rows. Scrolled by the list given, without the rail; by the
+    /// session's own where none is.
+    Nested(Option<&'a bezel::ui::list::VariableList<usize>>),
+}
+
 /// The transcript of one session, rendered from the model that owns it —
 /// expanding a work section or a tool's output writes back through `cx`.
 pub fn render(
@@ -590,13 +600,18 @@ pub fn render(
     find: Option<Query>,
     pane_width: f32,
     queued: impl Fn(&mut Window, &mut bezel::gpui::App) -> Option<AnyElement> + 'static,
+    drawn: Drawn,
     _window: &mut Window,
     cx: &mut Context<Workspace>,
 ) -> AnyElement {
     let id = chat.id;
     chat.transcript.find.replace(find);
     let turns = turns(&chat.items);
-    let list = chat.transcript.list.clone();
+    let nested = matches!(drawn, Drawn::Nested(_));
+    let (list, own) = match drawn {
+        Drawn::Nested(Some(list)) => (list.clone(), false),
+        Drawn::Pane | Drawn::Nested(None) => (chat.transcript.list.clone(), true),
+    };
     let keys = keys(&turns);
     list.sync(keys.clone());
     for ix in list
@@ -613,7 +628,10 @@ pub fn render(
             .position(|turn| turn.range.contains(&item))
             .map(|turn| (turn, item))
     });
-    let previous_focus = chat.transcript.focused_turn.replace(selected_turn);
+    let previous_focus = match own {
+        true => chat.transcript.focused_turn.replace(selected_turn),
+        false => selected_turn,
+    };
     if previous_focus != selected_turn {
         if let Some((index, _)) = previous_focus.filter(|(ix, _)| *ix < keys.len()) {
             list.focus_item(index, None);
@@ -646,28 +664,34 @@ pub fn render(
                 )
                 .into_any_element();
             }
-            workspace
-                .update(cx, |workspace, cx| {
-                    let Some(chat) = workspace.session(id) else {
-                        return Empty.into_any_element();
-                    };
-                    let Some(turn) = turns.get(index) else {
-                        return Empty.into_any_element();
-                    };
-                    let running = chat.streaming && index + 1 == count;
-                    content_row(
-                        div()
-                            .relative()
-                            .px(px(24.))
-                            .when(index == 0, |row| row.pt(px(PAD)))
-                            .child(zone(chat, turn, running, window, cx))
-                            .when(running && turn.range.len() <= 1, |row| {
-                                row.child(working(chat, turn.range.start, cx))
-                            }),
-                    )
-                    .into_any_element()
-                })
-                .unwrap_or_else(|_| Empty.into_any_element())
+            let mut draw = |cx: &mut bezel::gpui::App| {
+                workspace
+                    .update(cx, |workspace, cx| {
+                        let Some(chat) = workspace.session(id) else {
+                            return Empty.into_any_element();
+                        };
+                        let Some(turn) = turns.get(index) else {
+                            return Empty.into_any_element();
+                        };
+                        let running = chat.streaming && index + 1 == count;
+                        content_row(
+                            div()
+                                .relative()
+                                .px(px(24.))
+                                .when(index == 0, |row| row.pt(px(PAD)))
+                                .child(zone(chat, turn, running, window, cx))
+                                .when(running && turn.range.len() <= 1, |row| {
+                                    row.child(working(chat, turn.range.start, cx))
+                                }),
+                        )
+                        .into_any_element()
+                    })
+                    .unwrap_or_else(|_| Empty.into_any_element())
+            };
+            match nested {
+                true => crate::view::entry_link::nested(cx, draw),
+                false => draw(cx),
+            }
         },
         move |range, window, cx| {
             let _ = visible_workspace.update(cx, |workspace, cx| {
@@ -700,23 +724,25 @@ pub fn render(
         .flex()
         // The list owns the scrollbar, so only its rows constrain content width.
         .child(follow::viewport(&list.state, virtual_content))
-        .child(rail(
-            chat,
-            &self::turns(&chat.items),
-            px(rail_room(pane_width)),
-            Some({
-                let workspace = cx.entity().downgrade();
-                Rc::new(move |from, to, _: &mut Window, cx: &mut bezel::gpui::App| {
-                    let _ = workspace.update(cx, |workspace, cx| {
-                        if let Some(link) = workspace.turn_link(id, from, to) {
-                            cx.write_to_clipboard(ClipboardItem::new_string(link));
-                        }
-                    });
-                }) as OnLink
-            }),
-            _window,
-            cx,
-        ))
+        .children(own.then(|| {
+            rail(
+                chat,
+                &self::turns(&chat.items),
+                px(rail_room(pane_width)),
+                Some({
+                    let workspace = cx.entity().downgrade();
+                    Rc::new(move |from, to, _: &mut Window, cx: &mut bezel::gpui::App| {
+                        let _ = workspace.update(cx, |workspace, cx| {
+                            if let Some(link) = workspace.turn_link(id, from, to) {
+                                cx.write_to_clipboard(ClipboardItem::new_string(link));
+                            }
+                        });
+                    }) as OnLink
+                }),
+                _window,
+                cx,
+            )
+        }))
         .into_any_element();
     div()
         .flex_1()
@@ -766,7 +792,8 @@ pub fn excerpt(
 ) -> AnyElement {
     let turns = turns(&chat.items);
     let to = to.min(turns.len());
-    div()
+    crate::view::entry_link::enter_nested(cx);
+    let drawn = div()
         .flex()
         .flex_col()
         .px(px(24.))
@@ -778,7 +805,9 @@ pub fn excerpt(
                 .iter()
                 .map(|turn| zone(chat, turn, false, window, cx)),
         )
-        .into_any_element()
+        .into_any_element();
+    crate::view::entry_link::leave_nested(cx);
+    drawn
 }
 
 fn content_row(content: impl IntoElement) -> bezel::gpui::Div {

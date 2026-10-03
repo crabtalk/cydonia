@@ -112,6 +112,54 @@ fn references_are_scoped_to_the_project_a_call_is_about() {
     );
 }
 
+#[test]
+fn a_named_reference_or_link_reaches_its_project() {
+    let one = Scratch::new("entry-link-one");
+    let two = Scratch::new("entry-link-two");
+    let server = one.server();
+    Rail::also(two.path());
+    for (root, text) in [(one.path(), "one"), (two.path(), "two")] {
+        said(server.call(
+            "article_add",
+            json!({"title": "Notes", "text": text}),
+            Some(root),
+        ));
+    }
+    let name = |scratch: &Scratch| {
+        scratch
+            .path()
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned()
+    };
+    let (here, there) = (name(&one), name(&two));
+    for entry in [format!("{there}#1"), format!("cydonia://{there}#1")] {
+        assert_eq!(
+            said(server.call(
+                "project_read_entry",
+                json!({"entry": entry}),
+                Some(one.path())
+            )),
+            "two"
+        );
+    }
+    assert_eq!(
+        said(server.call(
+            "article_read",
+            json!({"article": format!("cydonia://{here}#1")}),
+            Some(one.path())
+        )),
+        "one"
+    );
+    let why = refused(server.call(
+        "article_read",
+        json!({"article": format!("{there}#1")}),
+        Some(one.path()),
+    ));
+    assert!(why.contains(&format!("is in project {there}")), "{why}");
+}
+
 /// The whole of the thing this session was about: a session in one project
 /// writes an article into another, and the article lands there and not here.
 #[test]

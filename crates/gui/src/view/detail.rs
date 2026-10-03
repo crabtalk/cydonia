@@ -639,7 +639,7 @@ impl Cydonia {
     }
 
     pub(crate) fn detail(
-        &self,
+        &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
@@ -770,6 +770,35 @@ impl Cydonia {
                     ),
                 },
             );
+        // The lone pane's drawer, under the band like the pane's body.
+        let lone_board = match showing {
+            Some(Pane::Board) if !arranged => {
+                let workspace = self.workspace.read(cx);
+                workspace
+                    .active
+                    .zip(workspace.active_project().and_then(|open| open.board))
+            }
+            _ => None,
+        };
+        let drawer = match arranged {
+            true => Vec::new(),
+            false => self.drawer_layer(None, lone_board, window, cx),
+        };
+        let main = main
+            .when(!arranged, |main| {
+                main.capture_any_mouse_down(cx.listener(|this, _, _, _| this.pressed_pane = None))
+            })
+            .when(!drawer.is_empty(), |main| {
+                main.child(
+                    div()
+                        .absolute()
+                        .top(px(root::HEADER_HEIGHT))
+                        .bottom_0()
+                        .left_0()
+                        .right_0()
+                        .children(drawer),
+                )
+            });
         // The one panel the window has, under whatever is showing: a space's
         // panes included, which is what the right panel cannot do.
         #[cfg(feature = "desktop")]
@@ -1197,7 +1226,15 @@ impl Cydonia {
         let transcript = self
             .workspace
             .update(cx, |workspace, cx| match workspace.session(id) {
-                Some(chat) => transcript::render(chat, find, pane_width, queued, window, cx),
+                Some(chat) => transcript::render(
+                    chat,
+                    find,
+                    pane_width,
+                    queued,
+                    transcript::Drawn::Pane,
+                    window,
+                    cx,
+                ),
                 None => div().flex_1().into_any_element(),
             });
         div()

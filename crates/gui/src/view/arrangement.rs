@@ -74,7 +74,11 @@ impl Cydonia {
 
     /// The panes of the open space, or nothing where none is open and the
     /// window is showing one entry.
-    pub(crate) fn panes(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+    pub(crate) fn panes(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         let space = self.arrangement(cx)?;
         // A zoomed pane stands over the rest, which keep their places
         // underneath — see [`Space::zoom`].
@@ -86,7 +90,7 @@ impl Cydonia {
 
     /// One node: a pane, or a split of them laid out along its axis.
     fn node(
-        &self,
+        &mut self,
         node: &Node<Member>,
         path: &mut Vec<usize>,
         window: &mut Window,
@@ -201,7 +205,7 @@ impl Cydonia {
     /// the space keeps and what every drop and close here is aimed at. What
     /// the pane is showing is [`Self::front_of`], and the two are the same
     /// thing only for a pane holding one entry.
-    fn pane(&self, entry: &Member, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn pane(&mut self, entry: &Member, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         // The pane at the window's top left, which is the one that has to keep
         // clear of the traffic lights.
         let first = self
@@ -269,6 +273,17 @@ impl Cydonia {
                 }),
             _ => None,
         };
+        let board = match &showing {
+            Some((project, Showing::Board(id))) => self
+                .workspace
+                .read(cx)
+                .projects
+                .get(*project)
+                .and_then(|open| open.board_ix(id))
+                .map(|at| (*project, at)),
+            _ => None,
+        };
+        let drawer = self.drawer_layer(Some(&front), board, window, cx);
         let pane = div()
             .id(SharedString::from(format!("pane-{key}")))
             // With the context but without this, a pane claims chords that
@@ -312,9 +327,24 @@ impl Cydonia {
                     move |this, _, window, cx| this.focus_pane(&on, window, cx)
                 }),
             )
+            // Before anything inside takes the press: a link pressed in this
+            // pane opens in its drawer.
+            .capture_any_mouse_down(cx.listener({
+                let on = front.clone();
+                move |this, _, _, _| this.pressed_pane = Some(on.clone())
+            }))
             .child(self.pane_bar(entry, &stack, &front, first, last, &theme, window, cx))
-            .child(body)
-            .children(composer);
+            .child(
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .flex_col()
+                    .child(body)
+                    .children(composer)
+                    .children(drawer),
+            );
         // By the tab in front: that is what a drop joins or divides.
         self.dock
             .pane(front, px(crate::view::root::HEADER_HEIGHT), pane)

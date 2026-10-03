@@ -24,7 +24,7 @@ use crate::{
     rail,
     tool::{Arg, Args, Trouble},
 };
-use artifact::reference::Reference;
+use artifact::reference::{Reference, Target};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
@@ -108,6 +108,49 @@ pub fn project_of(args: &Args<'_>, reference: &Reference<'_>) -> Result<PathBuf,
             Some(open) => format!("no open project is named {name} — cydonia has {open}"),
         })),
     }
+}
+
+/// The entry number `needle` names in `project`, or nothing when `needle` is
+/// not an entry reference. A reference naming another project, or a run of
+/// turns, is refused.
+pub(crate) fn number_in(project: &Path, needle: &str) -> Result<Option<u64>, Trouble> {
+    let Some(Reference {
+        project: named,
+        target: Target::Entry { number, turns },
+    }) = artifact::reference::parse(needle)
+    else {
+        return Ok(None);
+    };
+    if let Some(name) = named
+        && project.file_name().is_none_or(|last| last != name)
+    {
+        return Err(Trouble::Refused(format!(
+            "{needle} is in project {name}, not {} — pass that project",
+            project.display()
+        )));
+    }
+    if turns.is_some() {
+        return Err(Trouble::Invalid(format!(
+            "{needle} names turns — read them with session_read"
+        )));
+    }
+    Ok(Some(number))
+}
+
+/// The project and entry number `named` refers to, reaching another open
+/// project when it names one.
+pub(crate) fn entry_of(args: &Args<'_>, named: &str) -> Result<(PathBuf, u64), Trouble> {
+    let invalid = || Trouble::Invalid(format!("{named} is not an entry reference such as #12"));
+    let reference = artifact::reference::parse(named).ok_or_else(invalid)?;
+    let Target::Entry { number, turns } = reference.target else {
+        return Err(invalid());
+    };
+    if turns.is_some() {
+        return Err(Trouble::Invalid(format!(
+            "{named} names turns — read them with session_read"
+        )));
+    }
+    Ok((project_of(args, &reference)?, number))
 }
 
 /// The rail, for a refusal to name — a model that named the wrong directory

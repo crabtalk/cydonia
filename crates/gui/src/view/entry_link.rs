@@ -64,10 +64,85 @@ fn embed(reference: &str) -> BlockKind {
 
 /// The card renderer cydonia installs at boot: its own links, and nothing
 /// else.
+///
+/// Inside a session drawn nested — see [`nested`] — every one of them is a
+/// row, drawn without the root.
 pub(crate) fn card(url: &str, form: Form, window: &mut Window, cx: &mut App) -> Option<AnyElement> {
     let reference = url.strip_prefix(SCHEME)?.to_owned();
+    if cx.try_global::<Nested>().is_some_and(|nested| nested.0 > 0) {
+        return Some(nested_row(url, cx));
+    }
     let root = window.root::<Cydonia>().flatten()?;
     Some(root.update(cx, |root, cx| root.entry_card(&reference, form, window, cx)))
+}
+
+/// How deep the drawing is inside sessions drawn in another entry or a
+/// drawer.
+#[derive(Default)]
+struct Nested(usize);
+
+impl gpui::Global for Nested {}
+
+/// Draw with [`card`] answering rows, as inside a session drawn nested.
+pub(crate) fn nested<R>(cx: &mut App, draw: impl FnOnce(&mut App) -> R) -> R {
+    enter_nested(cx);
+    let drawn = draw(cx);
+    leave_nested(cx);
+    drawn
+}
+
+pub(crate) fn enter_nested(cx: &mut App) {
+    cx.default_global::<Nested>().0 += 1;
+}
+
+pub(crate) fn leave_nested(cx: &mut App) {
+    let nested = cx.default_global::<Nested>();
+    nested.0 = nested.0.saturating_sub(1);
+}
+
+/// A link's row inside a nested session: its title and mark, from what `@`
+/// lists. Pressing it opens the link.
+fn nested_row(url: &str, cx: &App) -> AnyElement {
+    let theme = Theme::of(cx).clone();
+    let preview = crate::view::mention::preview(url, cx);
+    let title = preview
+        .as_ref()
+        .and_then(|preview| preview.title.clone())
+        .unwrap_or_else(|| SharedString::from(url.to_owned()));
+    let glyph = preview.and_then(|preview| preview.glyph);
+    let url = url.to_owned();
+    div()
+        .id(SharedString::from(format!("entry-nested-{url}")))
+        .w_full()
+        .px(px(12.))
+        .py(px(10.))
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(10.))
+        .rounded(px(8.))
+        .border_1()
+        .border_color(theme.border)
+        .bg(theme.surface)
+        .cursor_pointer()
+        .hover(|el| el.bg(theme.element_hover))
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .children(glyph.map(|glyph| {
+            icons::icon(glyph)
+                .size(px(16.))
+                .text_color(theme.text_muted)
+        }))
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .text_ellipsis()
+                .text_style(TextStyle::Callout)
+                .text_color(theme.text)
+                .child(title),
+        )
+        .on_click(move |_, window, cx| crate::view::component::browser::open_link(&url, window, cx))
+        .into_any_element()
 }
 
 /// The slash rows: a new session on each agent, under the agent's mark from
@@ -167,16 +242,16 @@ pub(crate) fn load_history(workspace: &mut crate::model::workspace::Workspace, i
 }
 
 /// An entry a reference resolved to.
-struct Named {
-    row: Row,
-    kind: Kind,
-    number: u64,
-    turns: Option<Turns>,
+pub(crate) struct Named {
+    pub(crate) row: Row,
+    pub(crate) kind: Kind,
+    pub(crate) number: u64,
+    pub(crate) turns: Option<Turns>,
 }
 
 impl Cydonia {
     /// The entry a reference names, or why it names none.
-    fn named(&self, text: &str, cx: &App) -> Result<Named, String> {
+    pub(crate) fn named(&self, text: &str, cx: &App) -> Result<Named, String> {
         let Some(reference) = reference::parse(text) else {
             return Err(format!("{text} is not a reference"));
         };
@@ -221,16 +296,15 @@ impl Cydonia {
     }
 
     /// Open the entry a reference names, `project#12` — the target of a
-    /// `cydonia://` link.
+    /// `cydonia://` link — in the drawer of the pane last pressed in.
     pub(crate) fn open_reference(
         &mut self,
         text: &str,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Ok(named) = self.named(text, cx) {
-            self.open_row(&named.row, window, cx);
-        }
+        let on = self.pressed_pane.clone();
+        self.peek(on.as_ref(), text, window, cx);
     }
 
     fn entry_card(
@@ -282,7 +356,7 @@ impl Cydonia {
 
     /// One row naming an entry: its mark, its title, its kind and number, and
     /// a board's columns. Pressing it opens the entry.
-    fn entry_row(&self, named: Named, cx: &mut Context<Self>) -> AnyElement {
+    pub(crate) fn entry_row(&self, named: Named, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let title = self.label_of_row(&named.row, cx);
         let kind = match named.kind {
@@ -417,8 +491,33 @@ impl Cydonia {
     /// transcript's foot. A picture dropped anywhere on it goes to that
     /// composer.
     fn session_live(&mut self, id: u64, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let composer = self.session_composer(id, window, cx);
         let header = self.session_header(id, cx);
+        let transcript = self.session_transcript(id, None, window, cx);
+        div()
+            .flex()
+            .flex_col()
+            .child(header)
+            .child(
+                div()
+                    .h(px(TRANSCRIPT_HEIGHT))
+                    .flex()
+                    .flex_col()
+                    .child(transcript),
+            )
+            .into_any_element()
+    }
+
+    /// Session `id`'s transcript with the composer that sends to it, filling
+    /// the box it is put in. Scrolled by `list` where one is given, else by
+    /// the session's own.
+    pub(crate) fn session_transcript(
+        &mut self,
+        id: u64,
+        list: Option<&bezel::ui::list::VariableList<usize>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let composer = self.session_composer(id, window, cx);
         let (transcript, footer_height) =
             self.workspace
                 .update(cx, |workspace, cx| match workspace.session(id) {
@@ -428,6 +527,7 @@ impl Cydonia {
                             None,
                             CARD_WIDTH,
                             |_, _| None,
+                            transcript::Drawn::Nested(list),
                             window,
                             cx,
                         )),
@@ -437,34 +537,29 @@ impl Cydonia {
                 });
         let dropped = composer.clone();
         div()
+            .id(SharedString::from(format!("session-card-transcript-{id}")))
+            .relative()
+            .flex_1()
+            .min_h_0()
+            // The transcript's wheel stops here, at its ends too, so what is
+            // under it does not scroll with it.
+            .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+            .on_drop(move |paths: &gpui::ExternalPaths, _, cx| {
+                dropped.update(cx, |composer, cx| composer.drop_paths(paths, cx));
+            })
             .flex()
             .flex_col()
-            .child(header)
-            .child(
+            .children(transcript)
+            .child(footer(
                 div()
-                    .id(SharedString::from(format!("session-card-transcript-{id}")))
-                    .relative()
-                    .h(px(TRANSCRIPT_HEIGHT))
-                    // The transcript's wheel stops here, at its ends too, so
-                    // the article under the card does not scroll with it.
-                    .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
-                    .on_drop(move |paths: &gpui::ExternalPaths, _, cx| {
-                        dropped.update(cx, |composer, cx| composer.drop_paths(paths, cx));
-                    })
                     .flex()
                     .flex_col()
-                    .children(transcript)
-                    .child(footer(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap(px(8.))
-                            .children(self.plan(Some(id), cx))
-                            .children(self.permission(Some(id), cx))
-                            .child(composer),
-                        footer_height,
-                    )),
-            )
+                    .gap(px(8.))
+                    .children(self.plan(Some(id), cx))
+                    .children(self.permission(Some(id), cx))
+                    .child(composer),
+                footer_height,
+            ))
             .into_any_element()
     }
 
@@ -482,20 +577,16 @@ impl Cydonia {
         let theme = Theme::of(cx).clone();
         let from = turns.from.saturating_sub(1) as usize;
         let to = turns.to as usize;
-        let read = self.workspace.update(cx, |workspace, cx| {
-            load_history(workspace, id);
-            let chat = workspace.session(id)?;
-            let count = artifact::session::chat::turns(&chat.items).len();
-            let body = transcript::excerpt(chat, from, to, window, cx);
-            Some((
+        let body = self.excerpt_body(id, turns, Some(px(TRANSCRIPT_HEIGHT)), window, cx);
+        let read = self.workspace.read(cx).session(id).map(|chat| {
+            (
                 chat.title.clone(),
                 chat.entry.name.clone(),
-                count,
+                artifact::session::chat::turns(&chat.items).len(),
                 chat.streaming,
-                body,
-            ))
+            )
         });
-        let Some((title, agent, count, streaming, body)) = read else {
+        let Some((title, agent, count, streaming)) = read else {
             return div().into_any_element();
         };
         let range = match turns.from == turns.to {
@@ -558,20 +649,53 @@ impl Cydonia {
             .flex()
             .flex_col()
             .child(header)
-            .child(
-                div()
-                    // The excerpt's wheel stops here, at its ends too, so the
-                    // article under the card does not scroll with it.
-                    .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
-                    .child(scroll::Viewport::new(
-                        SharedString::from(format!("session-excerpt-{id}")),
-                        div()
-                            .id(SharedString::from(format!("session-excerpt-rows-{id}")))
-                            .max_h(px(TRANSCRIPT_HEIGHT))
-                            .child(body),
-                        gpui::Axis::Vertical,
-                    )),
-            )
+            .child(body)
+            .into_any_element()
+    }
+
+    /// Turns `turns` of session `id`, in a box that scrolls past `max_height`
+    /// where one is given and fills the box it is put in where none is.
+    pub(crate) fn excerpt_body(
+        &mut self,
+        id: u64,
+        turns: Turns,
+        max_height: Option<gpui::Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let from = turns.from.saturating_sub(1) as usize;
+        let to = turns.to as usize;
+        let body = self.workspace.update(cx, |workspace, cx| {
+            load_history(workspace, id);
+            let chat = workspace.session(id)?;
+            Some(transcript::excerpt(chat, from, to, window, cx))
+        });
+        let Some(body) = body else {
+            return div().into_any_element();
+        };
+        let rows = div()
+            .id(SharedString::from(format!("session-excerpt-rows-{id}")))
+            .child(body);
+        div()
+            // The excerpt's wheel stops here, at its ends too, so what is
+            // under it does not scroll with it.
+            .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+            .child(match max_height {
+                Some(height) => scroll::Viewport::new(
+                    SharedString::from(format!("session-excerpt-{id}")),
+                    rows.max_h(height),
+                    gpui::Axis::Vertical,
+                ),
+                None => scroll::Viewport::new(
+                    SharedString::from(format!("session-excerpt-{id}")),
+                    rows.flex_1().min_h_0(),
+                    gpui::Axis::Vertical,
+                )
+                .fill(),
+            })
+            .when(max_height.is_none(), |el| {
+                el.flex_1().min_h_0().flex().flex_col()
+            })
             .into_any_element()
     }
 

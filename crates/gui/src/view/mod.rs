@@ -11,6 +11,7 @@ pub mod confirm;
 pub mod create;
 pub mod desktop;
 pub mod detail;
+pub mod drawer;
 pub mod entry_link;
 pub mod find;
 pub mod header;

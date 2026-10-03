@@ -23,9 +23,22 @@ impl Drop for Scratch {
 struct BoardView(Entity<Cydonia>);
 impl Render for BoardView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // As a pane hosts it: the board, and its drawer over it.
+        let (board, drawer) = self.0.update(cx, |root, cx| {
+            (
+                root.board(0, 0, None, window, cx),
+                root.drawer_layer(None, Some((0, 0)), window, cx),
+            )
+        });
         div().size_full().flex().flex_col().child(
-            self.0
-                .update(cx, |root, cx| root.board(0, 0, None, window, cx)),
+            div()
+                .relative()
+                .flex_1()
+                .min_h_0()
+                .flex()
+                .flex_col()
+                .child(board)
+                .children(drawer),
         )
     }
 }
@@ -63,6 +76,7 @@ fn open(
         input::init(cx);
         editor::init(cx);
         cx.bind_keys(bindings());
+        cx.bind_keys(crate::view::drawer::bindings());
     });
     let window = cx.add_window(|window, cx| {
         let root =
@@ -146,7 +160,7 @@ fn click(selector: &'static str, cx: &mut VisualTestContext) {
 #[gpui::test]
 fn resizing_expanding_and_restoring_use_the_board_pane(cx: &mut TestAppContext) {
     let (_scratch, root, _, _, mut cx) = open("resize", cx);
-    let handle = cx.debug_bounds("card-drawer-resize").unwrap().center();
+    let handle = cx.debug_bounds("drawer-resize").unwrap().center();
     cx.simulate_mouse_down(handle, MouseButton::Left, Modifiers::default());
     cx.simulate_mouse_move(
         handle - point(px(0.), px(20.)),
@@ -157,7 +171,7 @@ fn resizing_expanding_and_restoring_use_the_board_pane(cx: &mut TestAppContext) 
     assert!(cx.update(|_, cx| {
         root.read(cx)
             .leaf()
-            .open_card
+            .drawer
             .as_ref()
             .unwrap()
             .resize_grab
@@ -174,30 +188,19 @@ fn resizing_expanding_and_restoring_use_the_board_pane(cx: &mut TestAppContext) 
         Modifiers::default(),
     );
     settle(&mut cx);
-    let resized = cx.debug_bounds("card-drawer").unwrap().size.height;
+    let resized = cx.debug_bounds("drawer").unwrap().size.height;
     assert!(resized > px(380.) && resized < px(460.), "{resized:?}");
-    click("card-drawer-expand", &mut cx);
-    assert_eq!(
-        cx.debug_bounds("card-drawer").unwrap().size.height,
-        px(600.)
-    );
-    click("card-drawer-expand", &mut cx);
-    assert_eq!(cx.debug_bounds("card-drawer").unwrap().size.height, resized);
+    click("drawer-expand", &mut cx);
+    assert_eq!(cx.debug_bounds("drawer").unwrap().size.height, px(600.));
+    click("drawer-expand", &mut cx);
+    assert_eq!(cx.debug_bounds("drawer").unwrap().size.height, resized);
     cx.simulate_resize(size(px(700.), px(120.)));
     settle(&mut cx);
-    assert!(cx.debug_bounds("card-drawer").unwrap().size.height <= px(120.));
-    assert!(!cx.update(|_, cx| {
-        root.read(cx)
-            .leaf()
-            .open_card
-            .as_ref()
-            .unwrap()
-            .size
-            .expanded
-    }));
+    assert!(cx.debug_bounds("drawer").unwrap().size.height <= px(120.));
+    assert!(!cx.update(|_, cx| { root.read(cx).leaf().drawer.as_ref().unwrap().size.expanded }));
     cx.simulate_resize(size(px(240.), px(400.)));
     settle(&mut cx);
-    for selector in ["card-drawer-expand", "card-drawer-close"] {
+    for selector in ["drawer-expand", "drawer-close"] {
         let bounds = cx.debug_bounds(selector).unwrap();
         assert!(
             bounds.left() >= px(0.) && bounds.right() <= px(240.),
@@ -222,7 +225,7 @@ fn opening_a_card_writes_nothing(cx: &mut TestAppContext) {
     cx.update(|window, cx| {
         root.update(cx, |root, cx| {
             root.open_card(None, member.clone(), cards[1].clone(), window, cx);
-            root.close_card_preview(None, window, cx);
+            root.close_drawer(None, window, cx);
         })
     });
     assert_eq!(
@@ -250,7 +253,7 @@ fn switching_and_closing_save_at_once(cx: &mut TestAppContext) {
     );
     assert_eq!(draft_text(&root, &mut cx), "Second card");
     type_card(&root, "Closed", &mut cx);
-    click("card-drawer-close", &mut cx);
+    click("drawer-close", &mut cx);
     assert_eq!(saved_text(&scratch, &member, &cards[1]).unwrap(), "Closed");
     assert!(cx.update(|_, cx| root.read(cx).leaf().card_drafts.is_empty()));
 }
@@ -313,10 +316,10 @@ fn emptied_cards_are_kept_and_never_saved(cx: &mut TestAppContext) {
         saved_text(&scratch, &member, &cards[0]).unwrap(),
         "First card"
     );
-    click("card-drawer-close", &mut cx);
+    click("drawer-close", &mut cx);
     cx.update(|window, cx| {
         root.update(cx, |root, cx| {
-            assert!(root.leaf().open_card.is_none());
+            assert!(root.leaf().drawer.is_none());
             root.open_card(None, member.clone(), cards[0].clone(), window, cx);
         })
     });
@@ -331,7 +334,7 @@ fn a_removed_card_keeps_its_text_accessible(cx: &mut TestAppContext) {
     board.remove_card(&cards[0]);
     store.save_board(&mut board).unwrap();
     type_card(&root, "Keep this text", &mut cx);
-    assert!(cx.debug_bounds("card-drawer").is_some());
+    assert!(cx.debug_bounds("drawer").is_some());
     assert_eq!(draft_text(&root, &mut cx), "Keep this text");
     assert!(store.board(&member.id).unwrap().card(&cards[0]).is_none());
 }
@@ -342,7 +345,7 @@ fn horizontal_scroll_keeps_offsets_and_lane_geometry_stable(cx: &mut TestAppCont
     cx.update(|_, cx| cx.set_markdown_layout(markdown::Layout { wrap_code: false }));
     cx.update(|window, cx| {
         root.update(cx, |root, cx| {
-            root.close_card_preview(None, window, cx);
+            root.close_drawer(None, window, cx);
             root.workspace.update(cx, |workspace, cx| {
                 let board = &mut workspace.projects[0].boards[0];
                 for i in 0..4 {
@@ -409,7 +412,7 @@ fn horizontal_scroll_keeps_offsets_and_lane_geometry_stable(cx: &mut TestAppCont
         "drawer wheel must not move the board"
     );
     assert!(cx.debug_bounds("board-bar-track").is_some());
-    let grip = cx.debug_bounds("card-drawer-resize").unwrap().center();
+    let grip = cx.debug_bounds("drawer-resize").unwrap().center();
     cx.simulate_mouse_down(grip, MouseButton::Left, Modifiers::default());
     cx.simulate_mouse_move(
         grip - point(px(0.), px(50.)),
@@ -433,7 +436,7 @@ fn offscreen_lanes_do_not_build_markdown(cx: &mut TestAppContext) {
     let (_scratch, root, member, _, mut cx) = open("offscreen", cx);
     cx.update(|window, cx| {
         root.update(cx, |root, cx| {
-            root.close_card_preview(None, window, cx);
+            root.close_drawer(None, window, cx);
             root.workspace.update(cx, |workspace, _| {
                 let board = &mut workspace.projects[0].boards[0];
                 for i in 0..20 {
@@ -511,7 +514,7 @@ fn list_scroll_builds_visible_rows_and_keeps_its_extent(cx: &mut TestAppContext)
     let (_scratch, root, member, cards, mut cx) = open("list-window", cx);
     cx.update(|window, cx| {
         root.update(cx, |root, cx| {
-            root.close_card_preview(None, window, cx);
+            root.close_drawer(None, window, cx);
             root.workspace.update(cx, |workspace, _| {
                 let board = &mut workspace.projects[0].boards[0];
                 board.view = View::List;
@@ -583,7 +586,7 @@ fn list_window_tracks_group_folding_and_search(cx: &mut TestAppContext) {
     let (_scratch, root, member, _, mut cx) = open("list-groups", cx);
     cx.update(|window, cx| {
         root.update(cx, |root, cx| {
-            root.close_card_preview(None, window, cx);
+            root.close_drawer(None, window, cx);
             root.workspace.update(cx, |workspace, _| {
                 let board = &mut workspace.projects[0].boards[0];
                 board.view = View::List;
@@ -657,7 +660,7 @@ fn list_rows_open_drawer_and_group_controls_stay_independent(cx: &mut TestAppCon
     store.save_board(&mut board).unwrap();
     cx.update(|window, cx| {
         root.update(cx, |root, cx| {
-            root.close_card_preview(None, window, cx);
+            root.close_drawer(None, window, cx);
             root.workspace.update(cx, |workspace, _| {
                 workspace.projects[0].boards[0].view = View::List
             });
@@ -669,21 +672,23 @@ fn list_rows_open_drawer_and_group_controls_stay_independent(cx: &mut TestAppCon
     cx.simulate_mouse_down(first, MouseButton::Left, Modifiers::default());
     cx.simulate_mouse_up(first, MouseButton::Left, Modifiers::default());
     settle(&mut cx);
-    assert!(cx.debug_bounds("card-drawer").is_some());
+    assert!(cx.debug_bounds("drawer").is_some());
     assert!(cx.update(|_, cx| root.read(cx).leaf().editing.is_none()));
     assert_eq!(
         cx.update(|_, cx| root
             .read(cx)
             .leaf()
-            .open_card
+            .drawer
             .as_ref()
+            .unwrap()
+            .card()
             .unwrap()
             .card
             .clone()),
         cards[0]
     );
     type_card(&root, "List text", &mut cx);
-    click("card-drawer-close", &mut cx);
+    click("drawer-close", &mut cx);
     assert_eq!(
         cx.update(
             |_, cx| root.read(cx).workspace.read(cx).projects[0].boards[0]
@@ -712,7 +717,7 @@ fn list_drawer_reveals_lower_rows_and_restores_scroll(cx: &mut TestAppContext) {
     let (_scratch, root, member, _, mut cx) = open("list-reveal", cx);
     cx.update(|window, cx| {
         root.update(cx, |root, cx| {
-            root.close_card_preview(None, window, cx);
+            root.close_drawer(None, window, cx);
             root.workspace.update(cx, |workspace, _| {
                 let board = &mut workspace.projects[0].boards[0];
                 board.view = View::List;
@@ -731,12 +736,12 @@ fn list_drawer_reveals_lower_rows_and_restores_scroll(cx: &mut TestAppContext) {
     cx.simulate_mouse_down(position, MouseButton::Left, Modifiers::default());
     cx.simulate_mouse_up(position, MouseButton::Left, Modifiers::default());
     settle(&mut cx);
-    assert!(cx.debug_bounds("card-drawer").is_some());
+    assert!(cx.debug_bounds("drawer").is_some());
     assert!(
         scroll.offset().y < before.y,
         "selected row should be revealed above the drawer"
     );
-    click("card-drawer-close", &mut cx);
+    click("drawer-close", &mut cx);
     assert_eq!(scroll.offset(), before);
 }
 
@@ -745,7 +750,7 @@ fn busy_orb_opens_its_session_without_opening_the_card(cx: &mut TestAppContext) 
     let (_scratch, root, _, cards, mut cx) = open("busy-orb", cx);
     cx.update(|window, cx| {
         root.update(cx, |root, cx| {
-            root.close_card_preview(None, window, cx);
+            root.close_drawer(None, window, cx);
             root.workspace.update(cx, |workspace, _| {
                 workspace.settings.features.sessions = true;
                 let project = &mut workspace.projects[0];
@@ -795,7 +800,7 @@ fn busy_orb_opens_its_session_without_opening_the_card(cx: &mut TestAppContext) 
         let root = root.read(cx);
         assert_eq!(root.workspace.read(cx).projects[0].active, Some(77));
         assert!(matches!(root.leaf().pane, Pane::Chat));
-        assert!(root.leaf().open_card.is_none());
+        assert!(root.leaf().drawer.is_none());
     });
 }
 
@@ -810,7 +815,7 @@ fn list_cards_drop_into_a_collapsed_group_without_unfolding(cx: &mut TestAppCont
         let (_scratch, root, _, cards, mut cx) = open(name, cx);
         let target = cx.update(|window, cx| {
             root.update(cx, |root, cx| {
-                root.close_card_preview(None, window, cx);
+                root.close_drawer(None, window, cx);
                 let target = root.workspace.update(cx, |workspace, _| {
                     let project = &mut workspace.projects[0];
                     let store = project.store();
@@ -861,7 +866,7 @@ fn a_long_lane_builds_only_the_cards_on_screen(cx: &mut TestAppContext) {
     let (_scratch, root, member, _, mut cx) = open("long-lane", cx);
     cx.update(|window, cx| {
         root.update(cx, |root, cx| {
-            root.close_card_preview(None, window, cx);
+            root.close_drawer(None, window, cx);
             root.workspace.update(cx, |workspace, _| {
                 let board = &mut workspace.projects[0].boards[0];
                 let column = board.columns[0].id.clone();

@@ -28,6 +28,12 @@ fn every_form_in_the_spec_parses() {
     assert_eq!(parse("foo#43"), entry(Some("foo"), 43, None));
     assert_eq!(parse("foo#43:5-7"), entry(Some("foo"), 43, Some((5, 7))));
     assert_eq!(parse("foo#DEV-12"), card(Some("foo"), "DEV", 12));
+    assert_eq!(
+        parse("cydonia://foo#43:5-7"),
+        entry(Some("foo"), 43, Some((5, 7)))
+    );
+    assert_eq!(parse("cydonia://#43"), entry(None, 43, None));
+    assert_eq!(parse("cydonia://resources/board"), None);
 }
 
 /// A key may end in a digit, so a handle splits at its last dash.

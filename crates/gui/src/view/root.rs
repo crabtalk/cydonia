@@ -465,6 +465,10 @@ pub struct Cydonia {
     /// session's id — see [`super::entry_link`].
     pub(crate) session_cards:
         std::collections::HashMap<u64, Entity<super::component::composer::Composer>>,
+    /// The pane the last press came down in: `None` for the one a window with
+    /// no space open shows. Where a link opens — see
+    /// [`Cydonia::open_reference`].
+    pub(crate) pressed_pane: Option<Member>,
     /// Where each board is scrolled to, by board id — see [`board::Scrolls`].
     /// On the window rather than on a pane: the same board arranged in a space
     /// and opened on its own is one board.
@@ -1019,6 +1023,7 @@ impl Cydonia {
             card_docs: Default::default(),
             history: Default::default(),
             session_cards: Default::default(),
+            pressed_pane: None,
             #[cfg(feature = "desktop")]
             settings_window: None,
             #[cfg(not(feature = "desktop"))]

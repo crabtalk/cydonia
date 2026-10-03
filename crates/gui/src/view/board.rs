@@ -8,7 +8,8 @@ use crate::{
             menu::{self, Menu},
             transcript,
         },
-        leaf::Pane,
+        drawer::{Drawer, Face, Peek},
+        leaf::{Leaf, Pane},
         root::{Cydonia, NewBoard},
         sidebar::Renaming,
     },
@@ -27,7 +28,7 @@ use bezel::{
     },
     theme::{Glass, SurfaceStyle, TextStyle, Theme, Typeset},
     ui::{
-        drag, floating, icons,
+        drag, icons,
         input::{self, Shape, TextField},
         menu::Item,
         popover,
@@ -48,13 +49,7 @@ use std::{
 
 actions!(
     cydonia_board,
-    [
-        CommitCard,
-        DismissCard,
-        FindCard,
-        DismissFind,
-        CloseCardPreview
-    ]
+    [CommitCard, DismissCard, FindCard, DismissFind]
 );
 
 /// Claimed on top of `TextField`, so `enter` files the card here and stays a
@@ -64,7 +59,6 @@ const KEY_CONTEXT: &str = "CydoniaCard";
 /// The find field's own, so `escape` puts the bar away and stays whatever it is
 /// everywhere else.
 pub(crate) const FIND_CONTEXT: &str = "CydoniaBoardFind";
-const DRAWER_CONTEXT: &str = "CydoniaCardPreview";
 
 const COLUMN_WIDTH: f32 = 272.;
 
@@ -135,7 +129,6 @@ pub fn bindings() -> Vec<KeyBinding> {
         KeyBinding::new("shift-enter", input::InsertNewline, ctx),
         KeyBinding::new("escape", DismissCard, ctx),
         KeyBinding::new("escape", DismissFind, Some(FIND_CONTEXT)),
-        KeyBinding::new("escape", CloseCardPreview, Some(DRAWER_CONTEXT)),
     ]
 }
 
@@ -301,54 +294,10 @@ pub enum Editing {
 
 /// The rendered card open in this pane, scoped to its board.
 pub struct OpenCard {
-    board: Member,
-    card: String,
-    scroll: ScrollHandle,
-    focus: gpui::FocusHandle,
-    reveal: Rc<Cell<bool>>,
-    bounds: Rc<Cell<gpui::Bounds<Pixels>>>,
+    pub(crate) board: Member,
+    pub(crate) card: String,
+    pub(crate) reveal: Rc<Cell<bool>>,
     adjustments: Rc<RefCell<HashMap<String, LaneAdjustment>>>,
-    size: DrawerSize,
-    resize_grab: Option<Pixels>,
-    pane_bounds: Rc<Cell<gpui::Bounds<Pixels>>>,
-}
-
-#[derive(Clone, Copy)]
-struct DrawerSize {
-    fraction: f32,
-    expanded: bool,
-}
-
-impl Default for DrawerSize {
-    fn default() -> Self {
-        Self {
-            fraction: 0.5,
-            expanded: false,
-        }
-    }
-}
-
-impl DrawerSize {
-    fn fraction(&self, pane_height: Pixels) -> f32 {
-        if self.expanded {
-            return 1.;
-        }
-        let height = f32::from(pane_height);
-        if height <= 0. {
-            return self.fraction;
-        }
-        self.fraction.max((160. / height).min(1.)).min(1.)
-    }
-
-    fn resize(&mut self, pointer_y: Pixels, pane: gpui::Bounds<Pixels>) {
-        let height = f32::from(pane.size.height);
-        if height <= 0. {
-            return;
-        }
-        self.fraction =
-            (f32::from(pane.bottom() - pointer_y) / height).clamp((160. / height).min(1.), 1.);
-        self.expanded = false;
-    }
 }
 
 /// The editor over the card open in a pane's drawer, saved as it is typed in.
@@ -1544,75 +1493,60 @@ impl Cydonia {
         if let Some(on) = on {
             self.focus_pane(on, window, cx);
         }
-        let leaf = self.leaf_of_mut(on);
-        if leaf
-            .open_card
-            .as_ref()
+        fn opened(leaf: &Leaf) -> Option<&OpenCard> {
+            leaf.drawer.as_ref().and_then(Drawer::card)
+        }
+        if opened(self.leaf_of(on))
             .is_some_and(|opened| opened.board == board && opened.card == card)
         {
-            return self.close_card_preview(on, window, cx);
+            return self.close_drawer(on, window, cx);
         }
-        if let Some(opened) = &self.leaf_of(on).open_card
+        if let Some(opened) = opened(self.leaf_of(on))
             && (opened.board != board || opened.card != card)
         {
             let (was_board, was_card) = (opened.board.clone(), opened.card.clone());
             self.settle_card_draft(on, &was_board, &was_card, cx);
         }
         let leaf = self.leaf_of_mut(on);
-        if let Some(opened) = &mut leaf.open_card
-            && opened.board == board
+        if let Some(drawer) = &mut leaf.drawer
+            && drawer.card().is_some_and(|opened| opened.board == board)
         {
+            let opened = drawer.card_mut().unwrap();
             if opened.card != card {
                 opened.card = card;
-                opened.scroll = ScrollHandle::new();
+                drawer.scroll = ScrollHandle::new();
             }
-            opened.reveal.set(true);
+            drawer.card().unwrap().reveal.set(true);
         } else {
-            leaf.open_card = Some(OpenCard {
-                board,
-                card,
-                scroll: ScrollHandle::new(),
-                focus: cx.focus_handle(),
-                reveal: Rc::new(Cell::new(true)),
-                bounds: Default::default(),
-                adjustments: Default::default(),
-                size: DrawerSize::default(),
-                resize_grab: None,
-                pane_bounds: Default::default(),
-            });
+            self.drop_drawer(on, cx);
+            let drawer = Drawer::new(
+                Peek::Card(OpenCard {
+                    board,
+                    card,
+                    reveal: Rc::new(Cell::new(true)),
+                    adjustments: Default::default(),
+                }),
+                cx.focus_handle(),
+            );
+            self.leaf_of_mut(on).drawer = Some(drawer);
         }
-        let focus = leaf.open_card.as_ref().unwrap().focus.clone();
+        let focus = self.leaf_of(on).drawer.as_ref().unwrap().focus.clone();
         self.ensure_card_draft(on, cx);
         window.focus(&focus, cx);
         cx.notify();
     }
 
-    fn close_card_preview(
-        &mut self,
-        on: Option<&Member>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.drop_drawer(on, cx);
-        window.focus(&self.leaf_of(on).focus, cx);
-        cx.notify();
-    }
-
-    /// Put the drawer away, saving the card it had open.
-    fn drop_drawer(&mut self, on: Option<&Member>, cx: &mut Context<Self>) {
-        if let Some(opened) = self.leaf_of_mut(on).open_card.take() {
-            self.settle_card_draft(on, &opened.board, &opened.card, cx);
-        }
-    }
-
-    fn drawer_for(
+    /// The drawer `on` holds, where it holds a card of the board at `board_at`
+    /// that is still there or still being written.
+    pub(crate) fn drawer_for(
         &self,
         project: usize,
         board_at: usize,
         on: Option<&Member>,
         cx: &App,
-    ) -> Option<&OpenCard> {
-        let opened = self.leaf_of(on).open_card.as_ref()?;
+    ) -> Option<&Drawer> {
+        let drawer = self.leaf_of(on).drawer.as_ref()?;
+        let opened = drawer.card()?;
         let workspace = self.workspace.read(cx);
         if workspace.board_member(project, board_at).as_ref() != Some(&opened.board) {
             return None;
@@ -1625,12 +1559,23 @@ impl Cydonia {
         {
             return None;
         }
-        Some(opened)
+        Some(drawer)
+    }
+
+    /// The drawer over the board at `board_at`, whatever it holds.
+    fn drawer_over(
+        &self,
+        project: usize,
+        board_at: usize,
+        on: Option<&Member>,
+        cx: &App,
+    ) -> Option<&Drawer> {
+        self.drawer_shown(on, Some((project, board_at)), cx)
     }
 
     fn draft_for(&self, on: Option<&Member>) -> Option<&CardDraft> {
         let leaf = self.leaf_of(on);
-        let opened = leaf.open_card.as_ref()?;
+        let opened = leaf.drawer.as_ref().and_then(Drawer::card)?;
         leaf.card_drafts
             .iter()
             .find(|draft| draft.board == opened.board && draft.card == opened.card)
@@ -1657,14 +1602,17 @@ impl Cydonia {
 
     /// Put an editor over the card open in the drawer, unless one is there.
     fn ensure_card_draft(&mut self, on: Option<&Member>, cx: &mut Context<Self>) {
-        let Some(opened) = self.leaf_of(on).open_card.as_ref() else {
+        let Some(drawer) = self.leaf_of(on).drawer.as_ref() else {
+            return;
+        };
+        let Some(opened) = drawer.card() else {
             return;
         };
         if self.draft_for(on).is_some() {
             return;
         }
         let (board, card) = (opened.board.clone(), opened.card.clone());
-        let scroll = opened.scroll.clone();
+        let scroll = drawer.scroll.clone();
         let workspace = self.workspace.read(cx);
         let Some(text) = workspace
             .board_of(Some(&board))
@@ -1741,7 +1689,7 @@ impl Cydonia {
     }
 
     /// Let a card's editor go with its drawer, unless its last save failed.
-    fn settle_card_draft(
+    pub(crate) fn settle_card_draft(
         &mut self,
         on: Option<&Member>,
         board: &Member,
@@ -1755,7 +1703,7 @@ impl Cydonia {
 
     /// Drop the editor's text and read the card back off the board.
     fn reload_card_draft(&mut self, on: Option<&Member>, cx: &mut Context<Self>) {
-        let Some(opened) = self.leaf_of(on).open_card.as_ref() else {
+        let Some(opened) = self.leaf_of(on).drawer.as_ref().and_then(Drawer::card) else {
             return;
         };
         let (board, card) = (opened.board.clone(), opened.card.clone());
@@ -1766,43 +1714,17 @@ impl Cydonia {
         cx.notify();
     }
 
-    fn drawer_action(
-        &self,
-        id: &'static str,
-        glyph: &'static [u8],
-        label: impl Into<SharedString>,
-        cx: &Context<Self>,
-    ) -> Stateful<Div> {
-        let theme = Theme::of(cx);
-        theme
-            .ghost(id)
-            .debug_selector(move || id.to_owned())
-            .flex_none()
-            .size(px(24.))
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded(px(Theme::control_radius()))
-            .child(
-                icons::icon(glyph)
-                    .size(px(14.))
-                    .text_color(theme.text_muted),
-            )
-            .tooltip({
-                let label = label.into();
-                move |window, cx| Tooltip::text(label.clone(), window, cx)
-            })
-    }
-
-    fn card_drawer(
+    /// What the drawer draws for the card it holds over the board at
+    /// `board_at`.
+    pub(crate) fn card_face(
         &self,
         project: usize,
         board_at: usize,
         on: Option<&Member>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        let opened = self.drawer_for(project, board_at, on, cx)?;
+    ) -> Option<Face> {
+        let opened = self.drawer_for(project, board_at, on, cx)?.card()?;
         let board = self.workspace.read(cx).board_in(project, board_at)?;
         let card = board.card(&opened.card).cloned();
         let card = card.as_ref();
@@ -1830,22 +1752,10 @@ impl Cydonia {
                 })
             });
         }
-        let expanded = opened.size.expanded;
-        let scroll = opened.scroll.clone();
-        let focus = opened.focus.clone();
         let editor = draft.map(|draft| draft.editor.clone());
         let working = card.and_then(|card| self.card_working(card, self.card_session(card, cx)));
         let theme = Theme::of(cx).clone();
-        let bounds = opened.bounds.clone();
-        let reveal = opened.reveal.clone();
-        let resize_on = on.cloned();
-        let (close_on, escape_on, focus_on, discard_on, expand_on) = (
-            on.cloned(),
-            on.cloned(),
-            on.cloned(),
-            on.cloned(),
-            on.cloned(),
-        );
+        let discard_on = on.cloned();
         let body = match &editor {
             Some(editor) => div()
                 .min_h_full()
@@ -1878,213 +1788,46 @@ impl Cydonia {
             )
             .into_any_element(),
         };
-        Some(
-            scroll::contain_wheel(floating::layer("card-drawer"), Axes::Both)
-                .debug_selector(|| "card-drawer".into())
-                .key_context(DRAWER_CONTEXT)
-                .track_focus(&opened.focus)
-                // Before the editor takes its own press, which the pane's
-                // focus would otherwise take back off it.
-                .capture_any_mouse_down(cx.listener(move |this, _, window, cx| {
-                    if let Some(on) = &focus_on {
-                        this.focus_pane(on, window, cx);
-                    }
-                }))
-                .on_mouse_down(gpui::MouseButton::Left, {
-                    let editor = editor.clone();
-                    move |_, window, cx| {
-                        let typing = editor
-                            .as_ref()
-                            .is_some_and(|editor| editor.focus_handle(cx).is_focused(window));
-                        if !typing {
-                            window.focus(&focus, cx);
-                        }
-                        cx.stop_propagation();
-                    }
-                })
-                .on_action(cx.listener(move |this, _: &CloseCardPreview, window, cx| {
-                    this.close_card_preview(escape_on.as_ref(), window, cx);
-                }))
-                .bottom_0()
-                .left_0()
-                .right_0()
-                .h(gpui::relative(
-                    opened.size.fraction(opened.pane_bounds.get().size.height),
-                ))
-                .bg(theme.surface_raised)
-                .rounded_t(px(if expanded {
-                    0.
-                } else {
-                    Theme::control_radius()
-                }))
-                .border_t_1()
-                .border_l_1()
-                .border_r_1()
-                .border_color(theme.border)
-                .shadow(vec![gpui::BoxShadow {
-                    color: gpui::hsla(0., 0., 0., 0.12),
-                    offset: gpui::point(px(0.), px(-4.)),
-                    blur_radius: px(16.),
-                    spread_radius: px(-4.),
-                    inset: false,
-                }])
-                .text_color(theme.text)
-                .flex()
-                .flex_col()
-                .overflow_hidden()
-                .child(
-                    div()
-                        .id("card-drawer-resize")
-                        .debug_selector(|| "card-drawer-resize".into())
-                        .group("drawer-resize")
-                        .flex_none()
-                        .h(px(9.))
-                        .w_full()
-                        .cursor_row_resize()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .child(
-                            div()
-                                .w(px(32.))
-                                .h(px(2.))
-                                .rounded_full()
-                                .bg(theme.text_faint.opacity(0.4))
-                                .group_hover("drawer-resize", |el| el.bg(theme.text_muted)),
-                        )
-                        .on_mouse_down(
-                            gpui::MouseButton::Left,
-                            cx.listener(move |this, event: &gpui::MouseDownEvent, _, cx| {
-                                if let Some(opened) =
-                                    &mut this.leaf_of_mut(resize_on.as_ref()).open_card
-                                {
-                                    opened.resize_grab =
-                                        Some(event.position.y - opened.bounds.get().top());
-                                    cx.notify();
-                                }
-                                cx.stop_propagation();
-                            }),
-                        ),
-                )
-                .child(
-                    div()
-                        .flex_none()
-                        .flex()
-                        .items_center()
-                        .gap(px(6.))
-                        .px(px(16.))
-                        .pb(px(6.))
-                        .flex_wrap()
-                        .text_style(TextStyle::Caption)
-                        .text_color(theme.text_muted)
-                        .child(div().font_family(theme.font_mono.clone()).child(handle))
-                        .children(resting(status).map(|status| status_chip(status, &theme)))
-                        .children(working.map(|at| self.card_orb(at, cx)))
-                        .child(div().flex_1())
-                        .when(error.is_some() && editor.is_some(), |el| {
-                            el.child(
-                                self.drawer_action(
-                                    "card-draft-discard",
-                                    icons::glyph::Undo2,
-                                    "Discard your text and reload the card",
-                                    cx,
-                                )
-                                .on_click(cx.listener(
-                                    move |this, _, _, cx| {
-                                        cx.stop_propagation();
-                                        this.reload_card_draft(discard_on.as_ref(), cx);
-                                    },
-                                )),
-                            )
-                        })
-                        .child(
-                            self.drawer_action(
-                                "card-drawer-expand",
-                                if expanded {
-                                    icons::arrows::Shrink
-                                } else {
-                                    icons::arrows::Expand
-                                },
-                                if expanded {
-                                    "Restore drawer"
-                                } else {
-                                    "Expand drawer"
-                                },
-                                cx,
-                            )
-                            .on_click(cx.listener(
-                                move |this, _, _, cx| {
-                                    cx.stop_propagation();
-                                    if let Some(opened) =
-                                        &mut this.leaf_of_mut(expand_on.as_ref()).open_card
-                                    {
-                                        opened.size.expanded = !opened.size.expanded;
-                                        opened.reveal.set(!opened.size.expanded);
-                                    }
-                                    cx.notify();
-                                },
-                            )),
-                        )
-                        .child(
-                            self.drawer_action(
-                                "card-drawer-close",
-                                icons::notifications::X,
-                                "Close",
-                                cx,
-                            )
-                            .on_click(cx.listener(
-                                move |this, _, window, cx| {
-                                    cx.stop_propagation();
-                                    this.close_card_preview(close_on.as_ref(), window, cx);
-                                },
-                            )),
-                        ),
-                )
-                .children(error.map(|error| {
-                    div()
-                        .flex_none()
-                        .px(px(16.))
-                        .pb(px(8.))
-                        .text_style(TextStyle::Caption)
-                        .text_color(theme.danger)
-                        .child(error)
-                }))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_h_0()
-                        .relative()
-                        .child(
-                            scroll::pane("card-drawer-body", Axes::Vertical)
-                                .size_full()
-                                .track_scroll(&scroll)
-                                .p(px(16.))
-                                .child(body),
-                        )
-                        .child(scrollbars::Overlay::new(
-                            "card-drawer-scroll",
-                            &scroll,
-                            gpui::Axis::Vertical,
-                        )),
-                )
-                .child(
-                    gpui::canvas(
-                        move |measured, window, _| {
-                            let old = bounds.replace(measured);
-                            if old != measured {
-                                if !expanded {
-                                    reveal.set(true);
-                                }
-                                window.on_next_frame(|window, _| window.refresh());
-                            }
-                        },
-                        |_, _, _, _| {},
+        Some(Face {
+            lead: std::iter::once(
+                div()
+                    .font_family(theme.font_mono.clone())
+                    .child(handle)
+                    .into_any_element(),
+            )
+            .chain(resting(status).map(|status| status_chip(status, &theme).into_any_element()))
+            .chain(working.map(|at| self.card_orb(at, cx).into_any_element()))
+            .collect(),
+            actions: (error.is_some() && editor.is_some())
+                .then(|| {
+                    self.drawer_action(
+                        "card-draft-discard",
+                        icons::glyph::Undo2,
+                        "Discard your text and reload the card",
+                        cx,
                     )
-                    .absolute()
-                    .size_full(),
-                )
-                .into_any_element(),
-        )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.reload_card_draft(discard_on.as_ref(), cx);
+                    }))
+                    .into_any_element()
+                })
+                .into_iter()
+                .collect(),
+            notice: error.map(|error| {
+                div()
+                    .flex_none()
+                    .px(px(16.))
+                    .pb(px(8.))
+                    .text_style(TextStyle::Caption)
+                    .text_color(theme.danger)
+                    .child(error)
+                    .into_any_element()
+            }),
+            body,
+            scrolls: true,
+            open: None,
+        })
     }
 
     /// The board, laid out the way the board says — see
@@ -2118,7 +1861,7 @@ impl Cydonia {
             .relative()
             // A click the drawer and the cards did not take closes the drawer.
             .on_click(cx.listener(move |this, _, window, cx| {
-                let Some(opened) = this.leaf_of(close_on.as_ref()).open_card.as_ref() else {
+                let Some(opened) = this.leaf_of(close_on.as_ref()).drawer.as_ref() else {
                     return;
                 };
                 // The focus goes back to the board only from the drawer: the
@@ -2136,68 +1879,8 @@ impl Cydonia {
             .on_action(cx.listener(Self::commit_card))
             .on_action(cx.listener(Self::dismiss_card))
             .on_action(cx.listener(Self::dismiss_find))
-            .children(self.drawer_for(project, board_at, on, cx).map(|opened| {
-                let bounds = opened.pane_bounds.clone();
-                gpui::canvas(
-                    move |measured, window, _| {
-                        if bounds.replace(measured) != measured {
-                            window.on_next_frame(|window, _| window.refresh());
-                        }
-                    },
-                    |_, _, _, _| {},
-                )
-                .absolute()
-                .size_full()
-            }))
             .child(body)
             .children(self.find_bar(on, cx))
-            .children(self.card_drawer(project, board_at, on, window, cx))
-            .children(
-                self.drawer_for(project, board_at, on, cx)
-                    .and_then(|opened| {
-                        opened.resize_grab.map(|grab| {
-                            let move_on = on.cloned();
-                            let release_on = on.cloned();
-                            let release =
-                                move |this: &mut Self,
-                                      _: &gpui::MouseUpEvent,
-                                      _: &mut Window,
-                                      cx: &mut Context<Self>| {
-                                    if let Some(opened) =
-                                        &mut this.leaf_of_mut(release_on.as_ref()).open_card
-                                    {
-                                        opened.resize_grab = None;
-                                        cx.notify();
-                                    }
-                                    cx.stop_propagation();
-                                };
-                            floating::layer("card-drawer-resizing")
-                                .inset_0()
-                                .cursor_row_resize()
-                                .on_mouse_move(cx.listener(
-                                    move |this, event: &gpui::MouseMoveEvent, _, cx| {
-                                        if let Some(opened) =
-                                            &mut this.leaf_of_mut(move_on.as_ref()).open_card
-                                        {
-                                            if event.pressed_button == Some(gpui::MouseButton::Left)
-                                            {
-                                                opened.size.resize(
-                                                    event.position.y - grab,
-                                                    opened.pane_bounds.get(),
-                                                );
-                                            } else {
-                                                opened.resize_grab = None;
-                                            }
-                                            cx.notify();
-                                        }
-                                        cx.stop_propagation();
-                                    },
-                                ))
-                                .on_mouse_up(gpui::MouseButton::Left, cx.listener(release.clone()))
-                                .on_mouse_up_out(gpui::MouseButton::Left, cx.listener(release))
-                        })
-                    }),
-            )
             .into_any_element()
     }
 
@@ -2321,7 +2004,7 @@ impl Cydonia {
                     bezel::gpui::Axis::Horizontal,
                 )
                 .when(
-                    self.drawer_for(project, board_at, on, cx)
+                    self.drawer_over(project, board_at, on, cx)
                         .is_some_and(|drawer| drawer.resize_grab.is_some()),
                     |bar| bar.visibility(scrollbars::Visibility::Never),
                 ),
@@ -2467,7 +2150,7 @@ impl Cydonia {
                             .flex_col()
                             .pb(px(BOARD_INSET)
                                 + self
-                                    .drawer_for(project, board_at, on, cx)
+                                    .drawer_over(project, board_at, on, cx)
                                     .map(|drawer| drawer.bounds.get().size.height)
                                     .unwrap_or_default())
                             .track_scroll(&scroll.down)
@@ -2508,7 +2191,7 @@ impl Cydonia {
                     bezel::gpui::Axis::Vertical,
                 )
                 .when(
-                    self.drawer_for(project, board_at, on, cx)
+                    self.drawer_over(project, board_at, on, cx)
                         .is_some_and(|drawer| drawer.resize_grab.is_some()),
                     |bar| bar.visibility(scrollbars::Visibility::Never),
                 ),
@@ -2889,6 +2572,7 @@ impl Cydonia {
         let member = self.workspace.read(cx).board_member(project, board_at);
         let selected = self
             .drawer_for(project, board_at, on, cx)
+            .and_then(Drawer::card)
             .is_some_and(|opened| opened.card == id);
 
         let viewport = self.scrolls(project, board_at, cx).down;
@@ -2897,13 +2581,14 @@ impl Cydonia {
             .filter(|drawer| {
                 selected
                     && !drawer.size.expanded
-                    && drawer.reveal.get()
+                    && drawer.card().is_some_and(|card| card.reveal.get())
                     && drawer.bounds.get().size.height > px(0.)
             })
-            .map(|drawer| {
-                let pending = drawer.reveal.clone();
+            .and_then(|drawer| Some((drawer, drawer.card()?)))
+            .map(|(drawer, opened)| {
+                let pending = opened.reveal.clone();
                 let drawer_top = drawer.bounds.get().top();
-                let adjustments = drawer.adjustments.clone();
+                let adjustments = opened.adjustments.clone();
                 let scroll = viewport.clone();
                 let column = "list".to_owned();
                 gpui::canvas(
@@ -3135,7 +2820,7 @@ impl Cydonia {
             rows.push(LaneRow::Add);
         }
         let clearance = self
-            .drawer_for(project, board_at, on, cx)
+            .drawer_over(project, board_at, on, cx)
             .map(|drawer| drawer.bounds.get().size.height)
             .unwrap_or_default();
         // The foot of the scroll, where `Add a card` sits: each row carries
@@ -3220,7 +2905,7 @@ impl Cydonia {
                         // Centres bezel's 4px thumb in the lane's channel.
                         .margin((LANE_CHANNEL - px(4.)) * 0.5)
                         .when(
-                            self.drawer_for(project, board_at, on, cx)
+                            self.drawer_over(project, board_at, on, cx)
                                 .is_some_and(|drawer| drawer.resize_grab.is_some()),
                             |bar| bar.visibility(scrollbars::Visibility::Never),
                         ),
@@ -3272,13 +2957,14 @@ impl Cydonia {
             .drawer_for(project, board_at, on, cx)
             .filter(|drawer| {
                 !drawer.size.expanded
-                    && drawer.reveal.get()
+                    && drawer.card().is_some_and(|card| card.reveal.get())
                     && drawer.bounds.get().size.height > px(0.)
             })?;
         let lane = self.scrolls(project, board_at, cx).lanes.of(column);
-        let pending = drawer.reveal.clone();
+        let opened = drawer.card()?;
+        let pending = opened.reveal.clone();
         let drawer_top = drawer.bounds.get().top();
-        let adjustments = drawer.adjustments.clone();
+        let adjustments = opened.adjustments.clone();
         let scroll = lane.scroller();
         let column = column.to_owned();
         Some(
@@ -3689,8 +3375,9 @@ impl Cydonia {
         let member = self.workspace.read(cx).board_member(project, board_at);
         let selected = self
             .leaf_of(on)
-            .open_card
+            .drawer
             .as_ref()
+            .and_then(Drawer::card)
             .is_some_and(|opened| Some(&opened.board) == member.as_ref() && opened.card == id);
         let overflow = window.use_keyed_state(
             SharedString::from(format!("card-overflow-{on:?}-{id}")),
@@ -3702,7 +3389,7 @@ impl Cydonia {
         // once the list is done laying out.
         let reveal = self
             .drawer_for(project, board_at, on, cx)
-            .filter(|drawer| selected && drawer.reveal.get())
+            .filter(|drawer| selected && drawer.card().is_some_and(|card| card.reveal.get()))
             .map(|_| {
                 let revealed = self
                     .scrolls(project, board_at, cx)

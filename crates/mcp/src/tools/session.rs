@@ -38,7 +38,8 @@ const MESSAGE: Arg = Arg {
 const READ: Arg = Arg {
     name: "session",
     about: "The session: its reference, such as #43, optionally with turns \
-(#43:5 or #43:5-7), and optionally in another open project (foo#43:5-7).",
+(#43:5 or #43:5-7), and optionally in another open project (foo#43:5-7), \
+or as the link cydonia://foo#43:5-7.",
 };
 
 const SEARCHED: Arg = Arg {
@@ -154,7 +155,7 @@ fn send(args: Args<'_>) -> Outcome {
     let Some(named) = args.maybe(SESSION) else {
         return start(project, args.maybe(AGENT), message);
     };
-    let number = artifact::entry::reference(named)
+    let number = super::number_in(project, named)?
         .ok_or_else(|| Trouble::Invalid("session must be a reference such as #43".to_owned()))?;
     let entry = artifact::entry::list(project)
         .map_err(|e| Trouble::Refused(e.to_string()))?
