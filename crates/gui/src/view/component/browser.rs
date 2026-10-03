@@ -3,10 +3,7 @@
 //! A tab holds a tab id, not the page. Pages live in [`Pages`], app-wide, so a
 //! panel or window dropping does not drop them; only closing the tab does.
 
-use crate::{
-    model::settings::{Browsing, Links},
-    view::root::Cydonia,
-};
+use crate::model::settings::Browsing;
 use bezel::{
     gpui::{
         self, AnyElement, App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable,
@@ -72,32 +69,6 @@ pub fn forget(id: u64, cx: &mut App) {
     {
         cx.global_mut::<Pages>().0.remove(&id);
     }
-}
-
-/// Opens a link clicked in an article or a transcript: an http(s) link in a
-/// panel tab where Settings says so and the window can take one, else in the
-/// system browser. Installed as markdown's link handler.
-pub fn open_link(url: &str, window: &mut Window, cx: &mut App) {
-    if let Some(reference) = url.strip_prefix(crate::view::entry_link::SCHEME) {
-        if let Some(Some(root)) = window.root::<Cydonia>() {
-            root.update(cx, |root, cx| root.open_reference(reference, window, cx));
-        }
-        return;
-    }
-    let panel = cx
-        .try_global::<Browsing>()
-        .is_some_and(|browsing| browsing.links == Links::Panel);
-    let web = url.starts_with("https://") || url.starts_with("http://");
-    if panel
-        && web
-        && let Some(Some(root)) = window.root::<Cydonia>()
-        && root.update(cx, |root, cx| {
-            root.open_in_panel(url.to_owned(), window, cx)
-        })
-    {
-        return;
-    }
-    cx.open_url(url);
 }
 
 #[derive(Default)]

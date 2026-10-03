@@ -61,8 +61,7 @@ pub fn init(settings: &Settings, cx: &mut App) {
     // Without the web fetch, cydonia's own links are the only ones described.
     #[cfg(not(feature = "desktop"))]
     cx.set_link_preview(crate::view::mention::preview);
-    #[cfg(not(target_os = "linux"))]
-    cx.set_link_handler(crate::view::component::browser::open_link);
+    cx.set_link_handler(crate::view::entry_link::open_link);
     memory::init(settings.cover_memory * 1_000_000, cx);
     // Every chord in the app, bezel's included — see
     // [`crate::view::keymap`]. One call rather than an `init` per

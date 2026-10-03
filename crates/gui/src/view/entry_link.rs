@@ -138,8 +138,38 @@ fn nested_row(url: &str, cx: &App) -> AnyElement {
                 .text_color(theme.text)
                 .child(title),
         )
-        .on_click(move |_, window, cx| crate::view::component::browser::open_link(&url, window, cx))
+        .on_click(move |_, window, cx| open_link(&url, window, cx))
         .into_any_element()
+}
+
+/// Opens a link clicked in an article or a transcript: an http(s) link in a
+/// panel tab where Settings says so and the window can take one, else in the
+/// system browser. Installed as markdown's link handler.
+pub fn open_link(url: &str, window: &mut Window, cx: &mut App) {
+    if let Some(reference) = url.strip_prefix(SCHEME) {
+        if let Some(Some(root)) = window.root::<Cydonia>() {
+            root.update(cx, |root, cx| root.open_reference(reference, window, cx));
+        }
+        return;
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        use crate::model::settings::{Browsing, Links};
+        let panel = cx
+            .try_global::<Browsing>()
+            .is_some_and(|browsing| browsing.links == Links::Panel);
+        let web = url.starts_with("https://") || url.starts_with("http://");
+        if panel
+            && web
+            && let Some(Some(root)) = window.root::<Cydonia>()
+            && root.update(cx, |root, cx| {
+                root.open_in_panel(url.to_owned(), window, cx)
+            })
+        {
+            return;
+        }
+    }
+    cx.open_url(url);
 }
 
 /// The slash menu: the editor's blocks, then a new session on each agent,
