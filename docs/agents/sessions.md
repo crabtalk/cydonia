@@ -47,6 +47,14 @@ A turn behind the composer is not on screen, and its mark stays dim.
 The last few turns of a long session cannot be brought to the top of the pane
 by scrolling. Press their marks to read them.
 
+## Linking turns
+
+Each of these copies a link to turns of the session, such as `cydonia://cydonia#43:5-7`, to paste into an article — see [References](../working/references.md#as-a-link). A session that has not been saved yet is saved first, so the link has a number to name.
+
+- Hover one of your messages and press its link button for the turn it opens.
+- Shift-press a mark on the rail to select from the turn you are reading to that one; the menu over it copies the range.
+- Select text in a message and choose **Link** for the turn it is in.
+
 ## Notifications
 
 When a turn finishes while Cydonia is in the background, the system is told. A

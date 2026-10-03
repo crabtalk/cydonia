@@ -18,6 +18,10 @@ A reference names something in a project in a short form that you and agents can
 
 Written without a project, a reference means the project you are in.
 
+## As a link
+
+Written after `cydonia://`, a reference is a link: `cydonia://cydonia#43:5-7`. In an article it opens the entry, or shows it as a chip or a card — see [Articles](./articles.md#links-to-sessions-articles-and-boards). A session's turns can be copied as a link from the session itself — see [Sessions](../agents/sessions.md#linking-turns).
+
 ## Entries and cards
 
 `#43` is the number an entry carries — see [Projects and entries](./projects.md). `DEV-12` is a card's handle: its board's key and its number on that board — see [Boards and tables](./boards.md).
