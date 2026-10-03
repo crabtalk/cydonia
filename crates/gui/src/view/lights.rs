@@ -1,15 +1,16 @@
-//! The macOS traffic lights' size and spacing, read off a window's own
-//! buttons. They differ across macOS releases — 14px on a 23px pitch on
-//! macOS 26, 12px on a 20px pitch before it — and AppKit owns them, so the
-//! header asks rather than assumes.
+//! The macOS traffic lights' frame and spacing, read off a window's own
+//! buttons. They differ across macOS releases and AppKit owns them, so the
+//! header asks rather than assumes. A button's frame need not be square:
+//! gpui places it by its full height.
 
 use crate::view::root::TRAFFIC_LIGHT_INSET;
 use bezel::gpui::{App, Global, Window};
 
-/// One light's diameter and the distance between two lights' left edges.
+/// One light's frame and the distance between two lights' left edges.
 #[derive(Clone, Copy)]
 pub struct Lights {
     pub size: f32,
+    pub height: f32,
     pub pitch: f32,
 }
 
@@ -18,6 +19,7 @@ impl Global for Lights {}
 /// What macOS 26 draws, for a window not measured yet and off macOS.
 const MACOS_26: Lights = Lights {
     size: 14.,
+    height: 14.,
     pitch: 23.,
 };
 
@@ -46,7 +48,7 @@ pub fn fit(window: &mut Window, cx: &mut App) {
         use bezel::gpui::{point, px};
         window.set_traffic_light_position(point(
             px(TRAFFIC_LIGHT_INSET),
-            px((HEADER_HEIGHT - lights.size) / 2.),
+            px((HEADER_HEIGHT - lights.height) / 2.),
         ));
     }
 }
@@ -72,6 +74,7 @@ fn measure(window: &Window) -> Option<Lights> {
         .frame();
     Some(Lights {
         size: close.size.width as f32,
+        height: close.size.height as f32,
         pitch: (minimize.origin.x - close.origin.x) as f32,
     })
 }
