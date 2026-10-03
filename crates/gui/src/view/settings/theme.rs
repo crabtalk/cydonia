@@ -329,6 +329,7 @@ impl SettingsWindow {
                 vec![
                     self.cursor_row(cx),
                     self.caret_shape_row(cx),
+                    self.caret_height_row(cx),
                     self.caret_row(cx),
                 ],
             ))
@@ -422,6 +423,7 @@ impl SettingsWindow {
             Some(current),
             paints,
             None,
+            true,
             cx,
             |workspace, value, cx| {
                 if let Some(value) = value {
@@ -510,16 +512,43 @@ impl SettingsWindow {
             .into_any_element()
     }
 
+    /// Whether a block caret fills its line or stands as tall as the text.
+    fn caret_height_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        use crate::model::settings::CaretHeight;
+        let on = self.workspace.read(cx).settings.appearance.caret_height == CaretHeight::Line;
+        self.switch_row(
+            Switch::new(
+                "caret-height",
+                "Fill the line",
+                "Off sizes a block cursor to the text instead of its line.",
+                on,
+            ),
+            cx,
+            move |this, cx| {
+                let height = match on {
+                    true => CaretHeight::Text,
+                    false => CaretHeight::Line,
+                };
+                this.workspace
+                    .update(cx, |workspace, cx| workspace.set_caret_height(height, cx));
+            },
+        )
+    }
+
     /// The caret's colour, or the palette's own.
     fn caret_row(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let current = self.workspace.read(cx).settings.appearance.caret;
         let system = Theme::for_appearance(theme.appearance).caret;
-        self.wash_row(
+        let paints = Highlight::ALL.into_iter().map(Paint::Named).collect();
+        self.color_row(
+            false,
             "caret-color",
             "Cursor colour",
             current,
-            system,
+            paints,
+            Some(system),
+            false,
             cx,
             |workspace, value, cx| workspace.set_caret(value, cx),
         )
@@ -554,12 +583,24 @@ impl SettingsWindow {
         set: fn(&mut Workspace, Option<Paint>, &mut Context<Workspace>),
     ) -> AnyElement {
         let paints = Highlight::ALL.into_iter().map(Paint::Named).collect();
-        self.color_row(false, id, title, current, paints, Some(system), cx, set)
+        self.color_row(
+            false,
+            id,
+            title,
+            current,
+            paints,
+            Some(system),
+            true,
+            cx,
+            set,
+        )
     }
 
     /// A row showing one colour, which opens `paints` and a colour picker
     /// under it to pick another. With `system`, the popover ends
     /// in a Default item that sets `None`, and `None` shows `system`.
+    /// With `wash`, every colour shows as [`Paint::wash`] paints it, and the
+    /// picker sets alpha too.
     #[allow(clippy::too_many_arguments)]
     fn color_row(
         &self,
@@ -569,14 +610,19 @@ impl SettingsWindow {
         current: Option<Paint>,
         paints: Vec<Paint>,
         system: Option<bezel::gpui::Hsla>,
+        wash: bool,
         cx: &mut Context<Self>,
         set: fn(&mut Workspace, Option<Paint>, &mut Context<Workspace>),
     ) -> AnyElement {
         use bezel::ui::color::{ColorPicker, ColorPickerEvent};
         use bezel::ui::popover;
         let theme = Theme::of(cx).clone();
+        let painted = move |paint: Paint, theme: &Theme| match wash {
+            true => paint.wash(theme),
+            false => paint.solid(theme),
+        };
         let shown = current
-            .map(|paint| paint.solid(&theme))
+            .map(|paint| painted(paint, &theme))
             .or(system)
             .unwrap_or_default();
         let selected =
@@ -590,10 +636,10 @@ impl SettingsWindow {
                     .update(cx, |picker, cx| picker.set_color(shown, cx));
                 return;
             }
-            let picker = cx.new(|cx| ColorPicker::new(shown, false, cx));
+            let picker = cx.new(|cx| ColorPicker::new(shown, wash, cx));
             let changed = cx.subscribe(&picker, move |this, _, event: &ColorPickerEvent, cx| {
                 let ColorPickerEvent::Changed(color) = *event;
-                let paint = Paint::from_hsla(color);
+                let paint = Paint::from_hsla(color, wash);
                 this.workspace
                     .update(cx, |workspace, cx| set(workspace, Some(paint), cx));
             });
@@ -617,7 +663,7 @@ impl SettingsWindow {
         let card = (self.picker.get() == Some(&id)).then(|| {
             let swatches: Vec<Swatch> = paints
                 .iter()
-                .map(|paint| Swatch::fixed(paint.key(), paint.solid(&theme)))
+                .map(|paint| Swatch::fixed(paint.key(), painted(*paint, &theme)))
                 .collect();
             let presets =
                 theme.swatch_picker((id, 0usize), &swatches, selected, Some(SWATCH_COLUMNS), {
@@ -628,7 +674,7 @@ impl SettingsWindow {
                             .update(cx, |workspace, cx| set(workspace, Some(paint), cx));
                         if let Some(custom) = this.custom.as_ref().filter(|custom| custom.id == id)
                         {
-                            let color = paint.solid(Theme::of(cx));
+                            let color = painted(paint, Theme::of(cx));
                             custom
                                 .picker
                                 .update(cx, |picker, cx| picker.set_color(color, cx));

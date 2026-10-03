@@ -344,6 +344,7 @@ impl Workspace {
             search: self.settings.appearance.search,
             caret: self.settings.appearance.caret,
             caret_shape: self.settings.appearance.caret_shape,
+            caret_height: self.settings.appearance.caret_height,
         });
     }
 
@@ -779,6 +780,13 @@ impl Workspace {
     pub fn set_caret_shape(&mut self, shape: settings::CaretShape, cx: &mut Context<Self>) {
         self.settings.appearance.caret_shape = shape;
         cx.set_caret_shape(shape.into());
+        self.save_appearance();
+        cx.notify();
+    }
+
+    pub fn set_caret_height(&mut self, height: settings::CaretHeight, cx: &mut Context<Self>) {
+        self.settings.appearance.caret_height = height;
+        cx.set_caret_height(height.into());
         self.save_appearance();
         cx.notify();
     }

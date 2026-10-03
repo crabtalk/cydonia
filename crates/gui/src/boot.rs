@@ -39,6 +39,7 @@ pub fn init(settings: &Settings, cx: &mut App) {
     workspace::apply_tint(Tint::new(look.hue, look.chroma), cx);
     cx.set_caret_blink(look.cursor_blink);
     cx.set_caret_shape(look.caret_shape.into());
+    cx.set_caret_height(look.caret_height.into());
     cx.set_base_text_size(look.text_size);
     workspace::apply_wrap_code(look.wrap_code, cx);
     cx.set_source_style(article::source_style);
