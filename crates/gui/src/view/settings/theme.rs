@@ -599,8 +599,9 @@ impl SettingsWindow {
     /// A row showing one colour, which opens `paints` and a colour picker
     /// under it to pick another. With `system`, the popover ends
     /// in a Default item that sets `None`, and `None` shows `system`.
-    /// With `wash`, every colour shows as [`Paint::wash`] paints it, and the
-    /// picker sets alpha too.
+    /// The well and the swatches show every colour opaque. With `wash`, the
+    /// picker opens at the colour as [`Paint::wash`] paints it and sets alpha
+    /// too: transparency is shown and set there alone.
     #[allow(clippy::too_many_arguments)]
     fn color_row(
         &self,
@@ -621,10 +622,11 @@ impl SettingsWindow {
             true => paint.wash(theme),
             false => paint.solid(theme),
         };
-        let shown = current
+        let picked = current
             .map(|paint| painted(paint, &theme))
             .or(system)
             .unwrap_or_default();
+        let shown = picked.opacity(1.);
         let selected =
             current.and_then(|current| paints.iter().position(|paint| *paint == current));
         // Down lands before the trigger's click opens the card, so the picker
@@ -633,10 +635,10 @@ impl SettingsWindow {
             if let Some(custom) = this.custom.as_ref().filter(|custom| custom.id == id) {
                 custom
                     .picker
-                    .update(cx, |picker, cx| picker.set_color(shown, cx));
+                    .update(cx, |picker, cx| picker.set_color(picked, cx));
                 return;
             }
-            let picker = cx.new(|cx| ColorPicker::new(shown, wash, cx));
+            let picker = cx.new(|cx| ColorPicker::new(picked, wash, cx));
             let changed = cx.subscribe(&picker, move |this, _, event: &ColorPickerEvent, cx| {
                 let ColorPickerEvent::Changed(color) = *event;
                 let paint = Paint::from_hsla(color, wash);
@@ -663,7 +665,7 @@ impl SettingsWindow {
         let card = (self.picker.get() == Some(&id)).then(|| {
             let swatches: Vec<Swatch> = paints
                 .iter()
-                .map(|paint| Swatch::fixed(paint.key(), painted(*paint, &theme)))
+                .map(|paint| Swatch::fixed(paint.key(), paint.solid(&theme)))
                 .collect();
             let presets =
                 theme.swatch_picker((id, 0usize), &swatches, selected, Some(SWATCH_COLUMNS), {
