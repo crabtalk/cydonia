@@ -22,6 +22,25 @@ impl Workspace {
         self.new_session_in(ix, entry, seed, true, cx)
     }
 
+    /// How a session is written as a reference, `project#43`: its project's
+    /// directory name and its entry number. Nothing before it has a number.
+    pub fn reference_of_session(&self, id: u64) -> Option<String> {
+        let project = &self.projects[self.project_of(id)?];
+        let number = project.session(id)?.number?;
+        let name = project.path.file_name()?.to_string_lossy();
+        Some(format!("{name}#{number}"))
+    }
+
+    /// [`Self::new_session`] behind whatever the window shows.
+    pub fn new_session_behind(
+        &mut self,
+        entry: settings::Agent,
+        cx: &mut Context<Self>,
+    ) -> Option<u64> {
+        let ix = self.active?;
+        self.new_session_in(ix, entry, None, false, cx)
+    }
+
     /// [`Self::new_session`] in the project at `ix` rather than the active one.
     /// `front` puts it in front of its project; without it, whatever the
     /// window shows stays put.

@@ -457,6 +457,10 @@ pub struct Cydonia {
     pub(crate) card_marks: board::Marks,
     /// What each card's text parses to, by card id — see [`board::Docs`].
     pub(crate) card_docs: board::Docs,
+    /// The composer each session painted into an article types into, by the
+    /// session's id — see [`super::session_card`].
+    pub(crate) session_cards:
+        std::collections::HashMap<u64, Entity<super::component::composer::Composer>>,
     /// Where each board is scrolled to, by board id — see [`board::Scrolls`].
     /// On the window rather than on a pane: the same board arranged in a space
     /// and opened on its own is one board.
@@ -1009,6 +1013,7 @@ impl Cydonia {
             boards: Default::default(),
             card_marks: Default::default(),
             card_docs: Default::default(),
+            session_cards: Default::default(),
             #[cfg(feature = "desktop")]
             settings_window: None,
             #[cfg(not(feature = "desktop"))]
@@ -1670,7 +1675,7 @@ impl Render for Cydonia {
             // Over every column and every floating control: nothing behind it
             // is answerable while it is asking.
             .children(self.confirm_delete(cx))
-            .children(self.search_palette(cx))
+            .children(self.search_palette(window, cx))
             .children(self.settings_sheet(cx))
             .children(self.desktop_only_notice(cx))
             .children(self.new_board_dialog(cx));

@@ -621,6 +621,7 @@ impl Cydonia {
                 composer.set_usage(usage, cx);
             });
         }
+        self.sync_session_cards(cx);
     }
 
     pub(crate) fn detail(

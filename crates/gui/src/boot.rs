@@ -44,6 +44,8 @@ pub fn init(settings: &Settings, cx: &mut App) {
     workspace::apply_wrap_code(look.wrap_code, cx);
     cx.set_source_style(article::source_style);
     cx.set_marks(article::marks());
+    cx.set_block_renderer(crate::view::session_card::render);
+    editor::AppExt::set_mention_source(cx, crate::view::mention::source);
     article::set_highlight(look.highlight);
     cx.set_mark_paint(article::mark_paint);
     article::set_search(look.search);

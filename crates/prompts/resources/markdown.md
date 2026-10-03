@@ -131,6 +131,27 @@ The spelling controls whether a link stays text or becomes a rich preview:
 - `"embed"` is a link preview, not an iframe or executable embed. Preview
   details depend on what metadata the destination supplies.
 
+## Sessions and entry links
+
+A `session` fence holding a session's reference displays that session as a
+card:
+
+````markdown
+```session
+cydonia://cydonia#43
+```
+````
+
+- `cydonia://<project>#<number>` shows the whole session, live, with a message
+  field. `<project>` is the project directory's name; `cydonia://#43` names
+  the session in the project shown.
+- `cydonia://<project>#43:5-7` shows turns 5 to 7 alone, read only.
+
+A link to `cydonia://<project>#<number>` opens that entry — a session, an
+article or a board — in Cydonia: `[Roadmap](cydonia://cydonia#12)`. Spelled
+as a chip, it paints as the entry's title and kind:
+`[cydonia://cydonia#12](cydonia://cydonia#12 "chip")`.
+
 ## Supported formatting and limits
 
 Use headings, paragraphs, bold, italic, strikethrough, inline code, fenced

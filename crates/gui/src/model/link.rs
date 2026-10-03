@@ -50,7 +50,10 @@ pub fn init(cx: &mut App) {
     .detach();
 }
 
-fn preview(url: &str, _: &App) -> Option<Preview> {
+fn preview(url: &str, cx: &App) -> Option<Preview> {
+    if url.starts_with(crate::view::session_card::SCHEME) {
+        return crate::view::mention::preview(url, cx);
+    }
     let mut entries = cache().lock().ok()?;
     match entries.get(url) {
         Some(Entry::Done(preview)) => return Some(preview.clone()),

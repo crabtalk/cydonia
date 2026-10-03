@@ -693,6 +693,32 @@ pub fn render(
         .into_any_element()
 }
 
+/// Turns `from..to` of a session (0-based, clipped to what it holds), drawn
+/// in a column without the list, the rail or a composer under them.
+pub fn excerpt(
+    chat: &ChatSession,
+    from: usize,
+    to: usize,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) -> AnyElement {
+    let turns = turns(&chat.items);
+    let to = to.min(turns.len());
+    div()
+        .flex()
+        .flex_col()
+        .px(px(24.))
+        .py(px(PAD))
+        .children(
+            turns
+                .get(from.min(to)..to)
+                .unwrap_or_default()
+                .iter()
+                .map(|turn| zone(chat, turn, false, window, cx)),
+        )
+        .into_any_element()
+}
+
 fn content_row(content: impl IntoElement) -> bezel::gpui::Div {
     div()
         .w_full()
