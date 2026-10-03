@@ -2478,9 +2478,15 @@ impl Cydonia {
             }
             _ => None,
         };
+        let member = self.member_of_row(entry, cx);
+        let arranged = self.put_away_arranged(member.as_ref(), window, cx);
+        let landing_project = landing_project.filter(|_| !arranged);
         self.commit(cx);
-        self.workspace
-            .update(cx, |workspace, cx| match (entry, located) {
+        self.workspace.update(cx, |workspace, cx| {
+            if let Some(member) = &member {
+                workspace.drop_from_spaces(member, cx);
+            }
+            match (entry, located) {
                 (
                     Row::Entry {
                         showing: Showing::Session(id),
@@ -2497,7 +2503,8 @@ impl Cydonia {
                 (Row::Group(Group::Space(id)), _) => workspace.delete_space_id(id, cx),
                 (Row::Entry { .. }, None)
                 | (Row::Group(Group::Project(_)) | Row::Archive(_) | Row::Heading(_), _) => {}
-            });
+            }
+        });
         if let Some(project) = landing_project
             && let Some(landing) = self
                 .entries(project, cx)
@@ -2599,6 +2606,7 @@ impl Cydonia {
         // it. Both are about an entry in hand, and this one no longer is.
         if archived {
             let member = self.member_of_row(entry, cx);
+            self.put_away_arranged(member.as_ref(), window, cx);
             self.workspace.update(cx, |workspace, cx| {
                 if let Some(project) = workspace.project_at(project) {
                     workspace.unpin_entry(project, showing.clone());
@@ -2629,6 +2637,24 @@ impl Cydonia {
         if let Some(project) = landing {
             self.open_top_entry(project, window, cx);
         }
+    }
+
+    /// Close the member's pane when the open space holds it — see
+    /// [`Cydonia::put_away_pane`]. Answers whether it did.
+    fn put_away_arranged(
+        &mut self,
+        member: Option<&Member>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(member) = member.filter(|member| {
+            self.arrangement(cx)
+                .is_some_and(|space| space.contains(member))
+        }) else {
+            return false;
+        };
+        self.put_away_pane(&member.clone(), window, cx);
+        true
     }
 
     /// Whether the pane in front is on this entry.

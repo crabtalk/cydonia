@@ -1069,6 +1069,27 @@ impl Cydonia {
         self.close_pane(&entry, window, cx);
     }
 
+    /// Take an entry that is going away — archived or deleted — out of the
+    /// open space, and land on the top-left pane's front tab.
+    pub(crate) fn put_away_pane(
+        &mut self,
+        entry: &Member,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.close_pane(entry, window, cx);
+        let Some(pane) = self
+            .arrangement(cx)
+            .and_then(|space| space.panes().first().cloned())
+        else {
+            return;
+        };
+        let stack = self.workspace.read(cx).stack_of(&pane);
+        let front = self.front_of(&pane, &stack);
+        self.focused = usize::MAX;
+        self.focus_pane(&front, window, cx);
+    }
+
     /// Stand the pane in front over the others, or put it back.
     pub(crate) fn zoom_focused_pane(&mut self, cx: &mut Context<Self>) {
         let Some(entry) = self.leaf().entry.clone() else {
