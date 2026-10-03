@@ -11,6 +11,7 @@ pub mod confirm;
 pub mod create;
 pub mod desktop;
 pub mod detail;
+pub mod entry_link;
 pub mod find;
 pub mod header;
 #[cfg(feature = "desktop")]
@@ -24,7 +25,6 @@ pub mod menubar;
 pub mod root;
 pub mod search;
 pub mod section;
-pub mod session_card;
 pub mod settings;
 pub mod sidebar;
 pub mod table;

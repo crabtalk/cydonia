@@ -1,8 +1,9 @@
 //! What `@` in an article lists: the active project's sessions, boards and
 //! articles, linked as `cydonia://<project>#<number>` chips — and the title a
-//! chip of one paints.
+//! chip of one paints: the kind's mark and the title.
 
-use crate::{model::workspace::Workspace, view::session_card::link};
+use crate::{model::workspace::Workspace, view::entry_link::link};
+use artifact::search::Kind;
 use bezel::{
     gpui::{App, Global, SharedString},
     ui::popover::filter_indices,
@@ -15,6 +16,7 @@ const SHOWN: usize = 20;
 
 #[derive(Clone)]
 struct Linkable {
+    kind: Kind,
     title: String,
     about: String,
     url: String,
@@ -39,6 +41,7 @@ pub(crate) fn read(workspace: &Workspace) -> Linkables {
         held.extend(project.sessions.iter().filter_map(|chat| {
             let number = chat.number?;
             Some(Linkable {
+                kind: Kind::Session,
                 title: untitled(&chat.title, "Untitled session"),
                 about: format!("Session · {} · #{number}", chat.entry.name),
                 url: reference(number),
@@ -48,6 +51,7 @@ pub(crate) fn read(workspace: &Workspace) -> Linkables {
         held.extend(project.articles.iter().filter_map(|article| {
             let number = article.number?;
             Some(Linkable {
+                kind: Kind::Article,
                 title: untitled(&article.title, "Untitled article"),
                 about: format!("Article · #{number}"),
                 url: reference(number),
@@ -57,6 +61,7 @@ pub(crate) fn read(workspace: &Workspace) -> Linkables {
         held.extend(project.boards.iter().filter_map(|board| {
             let number = board.number?;
             Some(Linkable {
+                kind: Kind::Board,
                 title: untitled(&board.name, "Untitled board"),
                 about: format!("Board · #{number}"),
                 url: reference(number),
@@ -111,7 +116,7 @@ pub(crate) fn preview(url: &str, cx: &App) -> Option<Preview> {
     let linkable = held.iter().find(|linkable| linkable.url == url)?;
     Some(Preview {
         title: Some(linkable.title.clone().into()),
-        label: Some(linkable.about.clone().into()),
+        glyph: Some(crate::view::search::kind_icon(linkable.kind)),
         ..Preview::default()
     })
 }

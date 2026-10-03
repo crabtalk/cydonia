@@ -467,7 +467,21 @@ impl Cydonia {
                 &theme,
                 cx,
                 |this, window, cx| this.quote_selection(window, cx),
-            ));
+            ))
+            .child(
+                self.selection_action("Link", icons::text::Link, &theme, cx, |this, _, cx| {
+                    let link = this.workspace.update(cx, |workspace, _| {
+                        let chat = workspace.active_session()?;
+                        let (id, turn) = (chat.id, chat.transcript.selected_turn(chat)? + 1);
+                        workspace.turn_link(id, turn, turn)
+                    });
+                    if let Some(link) = link {
+                        cx.write_to_clipboard(bezel::gpui::ClipboardItem::new_string(link));
+                    }
+                    this.workspace
+                        .update(cx, |workspace, cx| workspace.clear_selection(cx));
+                }),
+            );
         Some(ribbon::floated(
             "transcript-selection",
             at,
@@ -475,7 +489,7 @@ impl Cydonia {
         ))
     }
 
-    /// One of the bar's two, as a word beside its mark.
+    /// One of the bar's actions, as a word beside its mark.
     fn selection_action(
         &self,
         label: &'static str,

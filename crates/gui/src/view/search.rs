@@ -331,7 +331,9 @@ impl Cydonia {
             field.set_content(String::new(), cx);
         });
         self.refresh_search(cx);
-        window.focus(&self.search.field.read(cx).focus_handle(cx), cx);
+        // Focused once whatever raised the palette has finished handling it.
+        let field = self.search.field.read(cx).focus_handle(cx);
+        window.defer(cx, move |window, cx| window.focus(&field, cx));
         cx.notify();
     }
 
@@ -763,7 +765,7 @@ impl Cydonia {
                 .child(
                     div()
                         .id("search-palette")
-                        .w(px(if preview.is_some() { 900. } else { 560. }))
+                        .w(px(if preview.is_some() { 720. } else { 560. }))
                         .max_h(px(440.))
                         .flex()
                         .flex_col()
@@ -872,17 +874,10 @@ impl Cydonia {
         let id = *id;
         let theme = Theme::of(cx).clone();
         let body = self.workspace.update(cx, |workspace, cx| {
-            // A session read back from disk holds no turns until it is read.
-            if let Some(chat) = workspace
-                .projects
-                .iter_mut()
-                .find_map(|project| project.session_mut(id))
-            {
-                chat.load_history();
-            }
+            crate::view::entry_link::load_history(workspace, id);
             let chat = workspace.session(id)?;
             let count = artifact::session::chat::turns(&chat.items).len();
-            let from = count.saturating_sub(crate::view::session_card::PREVIEW_TURNS);
+            let from = count.saturating_sub(crate::view::entry_link::PREVIEW_TURNS);
             Some(crate::view::component::transcript::excerpt(
                 chat, from, count, window, cx,
             ))
@@ -890,7 +885,7 @@ impl Cydonia {
         Some(
             div()
                 .id("search-preview")
-                .w(px(340.))
+                .w(px(280.))
                 .flex_none()
                 .border_l_1()
                 .border_color(theme.border)
@@ -1083,11 +1078,7 @@ impl Cydonia {
                 .get(project)
                 .map(|open| open.name())
         });
-        let icon: Icon = match kind_of(&hit.row) {
-            Some(Kind::Session) => icons::social::MessageCircle.into(),
-            Some(Kind::Board) => icons::development::SquareKanban.into(),
-            _ => icons::files::FileText.into(),
-        };
+        let icon = kind_icon(kind_of(&hit.row).unwrap_or(Kind::Article));
         let title = self.label_of_row(&hit.row, cx);
         let selected = ix == self.search.selected;
         let snippet = hit.snippet.as_ref().map(|(line, at)| {
@@ -1223,6 +1214,15 @@ const FILTERS: [(Option<Filter>, &str); 5] = [
     (Some(Filter::Kind(Kind::Board)), "Boards"),
     (Some(Filter::Kind(Kind::Article)), "Articles"),
 ];
+
+/// The mark an entry of `kind` wears wherever it is listed or linked.
+pub(crate) fn kind_icon(kind: Kind) -> Icon {
+    match kind {
+        Kind::Session => icons::social::MessageCircle.into(),
+        Kind::Board => icons::development::SquareKanban.into(),
+        Kind::Article => icons::files::FileText.into(),
+    }
+}
 
 fn kind_of(row: &Row) -> Option<Kind> {
     match row {

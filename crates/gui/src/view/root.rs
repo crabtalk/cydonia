@@ -458,7 +458,7 @@ pub struct Cydonia {
     /// What each card's text parses to, by card id — see [`board::Docs`].
     pub(crate) card_docs: board::Docs,
     /// The composer each session painted into an article types into, by the
-    /// session's id — see [`super::session_card`].
+    /// session's id — see [`super::entry_link`].
     pub(crate) session_cards:
         std::collections::HashMap<u64, Entity<super::component::composer::Composer>>,
     /// Where each board is scrolled to, by board id — see [`board::Scrolls`].

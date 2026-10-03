@@ -44,7 +44,7 @@ pub fn init(settings: &Settings, cx: &mut App) {
     workspace::apply_wrap_code(look.wrap_code, cx);
     cx.set_source_style(article::source_style);
     cx.set_marks(article::marks());
-    cx.set_block_renderer(crate::view::session_card::render);
+    markdown::AppExt::set_link_card(cx, crate::view::entry_link::card);
     editor::AppExt::set_mention_source(cx, crate::view::mention::source);
     article::set_highlight(look.highlight);
     cx.set_mark_paint(article::mark_paint);
@@ -58,6 +58,9 @@ pub fn init(settings: &Settings, cx: &mut App) {
     cx.set_highlighter(language::highlight, language::offerable());
     #[cfg(feature = "desktop")]
     crate::model::link::init(cx);
+    // Without the web fetch, cydonia's own links are the only ones described.
+    #[cfg(not(feature = "desktop"))]
+    cx.set_link_preview(crate::view::mention::preview);
     #[cfg(not(target_os = "linux"))]
     cx.set_link_handler(crate::view::component::browser::open_link);
     memory::init(settings.cover_memory * 1_000_000, cx);

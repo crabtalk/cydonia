@@ -78,7 +78,7 @@ pub fn forget(id: u64, cx: &mut App) {
 /// panel tab where Settings says so and the window can take one, else in the
 /// system browser. Installed as markdown's link handler.
 pub fn open_link(url: &str, window: &mut Window, cx: &mut App) {
-    if let Some(reference) = url.strip_prefix(crate::view::session_card::SCHEME) {
+    if let Some(reference) = url.strip_prefix(crate::view::entry_link::SCHEME) {
         if let Some(Some(root)) = window.root::<Cydonia>() {
             root.update(cx, |root, cx| root.open_reference(reference, window, cx));
         }

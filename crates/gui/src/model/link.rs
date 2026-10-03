@@ -51,7 +51,7 @@ pub fn init(cx: &mut App) {
 }
 
 fn preview(url: &str, cx: &App) -> Option<Preview> {
-    if url.starts_with(crate::view::session_card::SCHEME) {
+    if url.starts_with(crate::view::entry_link::SCHEME) {
         return crate::view::mention::preview(url, cx);
     }
     let mut entries = cache().lock().ok()?;
@@ -195,6 +195,7 @@ pub fn parse(html: &str, base: &Url) -> Preview {
             .or_else(|| Some("/favicon.ico".to_string()))
             .and_then(link),
         label: label(base),
+        glyph: None,
     }
 }
 
@@ -342,6 +343,7 @@ fn post_preview(
         image: image.map(Into::into),
         icon: Some("https://abs.twimg.com/favicons/twitter.3.ico".into()),
         label: handle.map(Into::into),
+        glyph: None,
     }
 }
 

@@ -1,0 +1,668 @@
+//! Links to cydonia's own entries, `cydonia://<project>#<number>` — see
+//! [`artifact::reference`] — painted by cydonia rather than as web links.
+//!
+//! A link card is the entry itself: a session whole is live, with a composer
+//! that sends to it, and a run of its turns, `#43:5-7`, is those turns alone,
+//! read only; an article or a board is its title, kind and number. A
+//! bookmark-sized card of any of them is that one row.
+//!
+//! The link names the entry; deleting the block leaves the entry where it was.
+
+use std::rc::Rc;
+
+use crate::{
+    model::workspace::Showing,
+    view::{
+        component::{
+            composer::{Composer, ComposerEvent},
+            transcript,
+        },
+        detail::footer,
+        root::Cydonia,
+        search::{Linked, kind_icon},
+        sidebar::Row,
+    },
+};
+use artifact::{
+    reference::{self, Target, Turns},
+    search::Kind,
+};
+use bezel::{
+    gpui::{
+        self, AnyElement, App, Context, MouseButton, SharedString, Window, div, prelude::*, px,
+    },
+    theme::{TextStyle, Theme, Typeset},
+    ui::{
+        icons, scroll,
+        widgets::{ButtonStyle, Buttons},
+    },
+};
+use editor::{SlashAction, SlashAt, SlashItem, SlashRow};
+use markdown::{BlockKind, Form};
+
+pub(crate) const SCHEME: &str = "cydonia://";
+/// The transcript's box. It scrolls inside; the article does not grow with
+/// the conversation.
+const TRANSCRIPT_HEIGHT: f32 = 320.;
+/// What the transcript lays its column out against.
+const CARD_WIDTH: f32 = 720.;
+/// How many of a session's last turns the link picker previews.
+pub(crate) const PREVIEW_TURNS: usize = 3;
+
+/// The link a reference is written as.
+pub(crate) fn link(reference: &str) -> String {
+    format!("{SCHEME}{reference}")
+}
+
+/// The card a reference is written into.
+fn embed(reference: &str) -> BlockKind {
+    BlockKind::Bookmark {
+        url: link(reference),
+        form: Form::Embed,
+    }
+}
+
+/// The card renderer cydonia installs at boot: its own links, and nothing
+/// else.
+pub(crate) fn card(url: &str, form: Form, window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+    let reference = url.strip_prefix(SCHEME)?.to_owned();
+    let root = window.root::<Cydonia>().flatten()?;
+    Some(root.update(cx, |root, cx| root.entry_card(&reference, form, window, cx)))
+}
+
+/// The slash rows: a new session on each agent, under the agent's mark from
+/// the registry, and one already running.
+pub(crate) fn slash_items(workspace: &crate::model::workspace::Workspace) -> Vec<SlashItem> {
+    let mut rows = workspace
+        .settings
+        .agents
+        .iter()
+        .map(|agent| {
+            let name = agent.name.clone();
+            let run = move |at: SlashAt, window: &mut Window, cx: &mut App| {
+                let Some(root) = window.root::<Cydonia>().flatten() else {
+                    return;
+                };
+                let made = root.update(cx, |root, cx| {
+                    root.workspace.update(cx, |workspace, cx| {
+                        let entry = workspace
+                            .settings
+                            .agents
+                            .iter()
+                            .find(|entry| entry.name == name)
+                            .cloned()?;
+                        let id = workspace.new_session_behind(entry, cx)?;
+                        workspace.mint_record(id)?;
+                        workspace.reference_of_session(id)
+                    })
+                });
+                if let Some(reference) = made {
+                    at.editor
+                        .update(cx, |editor, cx| {
+                            editor.place_block(at.block, embed(&reference), cx)
+                        })
+                        .ok();
+                }
+            };
+            SlashRow {
+                label: SharedString::from(agent.name.clone()),
+                icon: workspace.agent_icon(&agent.name),
+                action: SlashAction::Run(Rc::new(run)),
+            }
+        })
+        .collect::<Vec<_>>();
+    let existing = |at: SlashAt, window: &mut Window, cx: &mut App| {
+        let Some(root) = window.root::<Cydonia>().flatten() else {
+            return;
+        };
+        root.update(cx, |root, cx| {
+            root.link_search(
+                Rc::new(move |_, linked: Linked, _, cx| {
+                    at.editor
+                        .update(cx, |editor, cx| {
+                            editor.place_block(at.block, embed(&linked.reference), cx)
+                        })
+                        .ok();
+                }),
+                window,
+                cx,
+            )
+        });
+    };
+    rows.push(SlashRow {
+        label: "Existing…".into(),
+        icon: Some(icons::text::Link.into()),
+        action: SlashAction::Run(Rc::new(existing)),
+    });
+    vec![SlashItem::Group {
+        label: "Session".into(),
+        rows,
+    }]
+}
+
+/// The open project a reference names by its directory's name, and the
+/// active one for a reference naming none.
+fn named_project<'a>(
+    workspace: &'a crate::model::workspace::Workspace,
+    name: Option<&str>,
+) -> Option<&'a crate::model::project::Project> {
+    match name {
+        Some(name) => workspace
+            .projects
+            .iter()
+            .find(|project| project.path.file_name().is_some_and(|last| last == name)),
+        None => workspace.active_project(),
+    }
+}
+
+/// Read a session's turns back off disk, where they were left unloaded.
+pub(crate) fn load_history(workspace: &mut crate::model::workspace::Workspace, id: u64) {
+    if let Some(chat) = workspace
+        .projects
+        .iter_mut()
+        .find_map(|project| project.session_mut(id))
+    {
+        chat.load_history();
+    }
+}
+
+/// An entry a reference resolved to.
+struct Named {
+    row: Row,
+    kind: Kind,
+    number: u64,
+    turns: Option<Turns>,
+}
+
+impl Cydonia {
+    /// The entry a reference names, or why it names none.
+    fn named(&self, text: &str, cx: &App) -> Result<Named, String> {
+        let Some(reference) = reference::parse(text) else {
+            return Err(format!("{text} is not a reference"));
+        };
+        let Target::Entry { number, turns } = reference.target else {
+            return Err(format!("{text} is a card, not an entry"));
+        };
+        let workspace = self.workspace.read(cx);
+        let Some(project) = named_project(workspace, reference.project) else {
+            return Err(format!("No open project for {text}"));
+        };
+        let found = project
+            .sessions
+            .iter()
+            .find(|chat| chat.number == Some(number))
+            .map(|chat| (Kind::Session, Showing::Session(chat.id)))
+            .or_else(|| {
+                project
+                    .articles
+                    .iter()
+                    .find(|article| article.number == Some(number))
+                    .map(|article| (Kind::Article, Showing::Article(article.id.clone())))
+            })
+            .or_else(|| {
+                project
+                    .boards
+                    .iter()
+                    .find(|board| board.number == Some(number))
+                    .map(|board| (Kind::Board, Showing::Board(board.id.clone())))
+            });
+        let Some((kind, showing)) = found else {
+            return Err(format!("Nothing is {text}"));
+        };
+        Ok(Named {
+            row: Row::Entry {
+                project: project.path.clone(),
+                showing,
+            },
+            kind,
+            number,
+            turns,
+        })
+    }
+
+    /// Open the entry a reference names, `project#12` — the target of a
+    /// `cydonia://` link.
+    pub(crate) fn open_reference(
+        &mut self,
+        text: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Ok(named) = self.named(text, cx) {
+            self.open_row(&named.row, window, cx);
+        }
+    }
+
+    fn entry_card(
+        &mut self,
+        reference: &str,
+        form: Form,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        let body = match self.named(reference, cx) {
+            Ok(Named {
+                row:
+                    Row::Entry {
+                        showing: Showing::Session(id),
+                        ..
+                    },
+                turns,
+                ..
+            }) if form == Form::Embed => match turns {
+                None => self.session_live(id, window, cx),
+                Some(turns) => self.session_excerpt(id, turns, window, cx),
+            },
+            Ok(named) => self.entry_row(named, cx),
+            Err(why) => div()
+                .p(px(12.))
+                .text_style(TextStyle::Callout)
+                .text_color(theme.text_faint)
+                .child(why)
+                .into_any_element(),
+        };
+        div()
+            .id(SharedString::from(format!("entry-card-{reference}")))
+            .w_full()
+            .flex()
+            .flex_col()
+            .rounded(px(8.))
+            .border_1()
+            .border_color(theme.border)
+            .bg(theme.surface)
+            .overflow_hidden()
+            // The card's presses are the card's: the editor would otherwise
+            // put its caret in the block and show the link instead.
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
+            .child(body)
+            .into_any_element()
+    }
+
+    /// One row naming an entry: its mark, its title, its kind and number, and
+    /// a board's columns. Pressing it opens the entry.
+    fn entry_row(&self, named: Named, cx: &mut Context<Self>) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        let title = self.label_of_row(&named.row, cx);
+        let kind = match named.kind {
+            Kind::Session => "Session",
+            Kind::Article => "Article",
+            Kind::Board => "Board",
+        };
+        let columns = match &named.row {
+            Row::Entry {
+                project,
+                showing: Showing::Board(id),
+            } => self
+                .workspace
+                .read(cx)
+                .projects
+                .iter()
+                .find(|open| &open.path == project)
+                .and_then(|open| open.boards.get(open.board_ix(id)?))
+                .map(|board| {
+                    board
+                        .columns
+                        .iter()
+                        .map(|column| format!("{} {}", column.name, column.cards.len()))
+                        .collect::<Vec<_>>()
+                        .join(" · ")
+                }),
+            _ => None,
+        };
+        let row = named.row.clone();
+        div()
+            .id("entry-row")
+            .px(px(12.))
+            .py(px(10.))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(10.))
+            .cursor_pointer()
+            .hover(|el| el.bg(theme.element_hover))
+            .child(
+                icons::icon(kind_icon(named.kind))
+                    .size(px(16.))
+                    .text_color(theme.text_muted),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .child(
+                        div()
+                            .text_ellipsis()
+                            .text_style(TextStyle::Callout)
+                            .text_color(theme.text)
+                            .child(title),
+                    )
+                    .children(columns.map(|columns| {
+                        div()
+                            .text_ellipsis()
+                            .text_style(TextStyle::Caption)
+                            .text_color(theme.text_faint)
+                            .child(columns)
+                    })),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .text_style(TextStyle::Caption)
+                    .text_color(theme.text_faint)
+                    .child(format!("{kind} · #{}", named.number)),
+            )
+            .on_click(cx.listener(move |this, _, window, cx| this.open_row(&row, window, cx)))
+            .into_any_element()
+    }
+
+    /// A session's name, its agent and whether it is working, and the button
+    /// that opens it in a pane.
+    fn session_header(&self, id: u64, cx: &mut Context<Self>) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        let (title, agent, streaming) = self
+            .workspace
+            .read(cx)
+            .session(id)
+            .map(|chat| (chat.title.clone(), chat.entry.name.clone(), chat.streaming))
+            .unwrap_or_default();
+        div()
+            .h(px(36.))
+            .px(px(12.))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(8.))
+            .border_b_1()
+            .border_color(theme.border)
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .text_ellipsis()
+                    .text_style(TextStyle::Subheadline)
+                    .text_color(theme.text)
+                    .child(match title.trim() {
+                        "" => "Untitled session".to_owned(),
+                        title => title.to_owned(),
+                    }),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .text_style(TextStyle::Caption)
+                    .text_color(theme.text_faint)
+                    .child(match streaming {
+                        true => format!("{agent} · working"),
+                        false => agent,
+                    }),
+            )
+            .child(
+                theme
+                    .icon_button(icons::layout::Maximize, ButtonStyle::Ghost, None)
+                    .id(SharedString::from(format!("session-card-open-{id}")))
+                    .flex_none()
+                    .on_click(
+                        cx.listener(move |this, _, window, cx| this.select_session(id, window, cx)),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    /// A whole session, as its pane draws it: the transcript, and the plan,
+    /// any permission asked and a composer that sends to it floating over the
+    /// transcript's foot. A picture dropped anywhere on it goes to that
+    /// composer.
+    fn session_live(&mut self, id: u64, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let composer = self.session_composer(id, window, cx);
+        let header = self.session_header(id, cx);
+        let (transcript, footer_height) =
+            self.workspace
+                .update(cx, |workspace, cx| match workspace.session(id) {
+                    Some(chat) => (
+                        Some(transcript::render(
+                            chat,
+                            None,
+                            CARD_WIDTH,
+                            |_, _| None,
+                            window,
+                            cx,
+                        )),
+                        Some(chat.transcript.footer_height.clone()),
+                    ),
+                    None => (None, None),
+                });
+        let dropped = composer.clone();
+        div()
+            .flex()
+            .flex_col()
+            .child(header)
+            .child(
+                div()
+                    .id(SharedString::from(format!("session-card-transcript-{id}")))
+                    .relative()
+                    .h(px(TRANSCRIPT_HEIGHT))
+                    // The transcript's wheel stops here, at its ends too, so
+                    // the article under the card does not scroll with it.
+                    .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+                    .on_drop(move |paths: &gpui::ExternalPaths, _, cx| {
+                        dropped.update(cx, |composer, cx| composer.drop_paths(paths, cx));
+                    })
+                    .flex()
+                    .flex_col()
+                    .children(transcript)
+                    .child(footer(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(8.))
+                            .children(self.plan(Some(id), cx))
+                            .children(self.permission(Some(id), cx))
+                            .child(composer),
+                        footer_height,
+                    )),
+            )
+            .into_any_element()
+    }
+
+    /// A run of a session's turns, read only, the way GitHub embeds a range of
+    /// a file's lines: a header naming the session and the range, which
+    /// opens the session at its first turn, over the turns in a box that
+    /// scrolls past [`TRANSCRIPT_HEIGHT`].
+    fn session_excerpt(
+        &mut self,
+        id: u64,
+        turns: Turns,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        let from = turns.from.saturating_sub(1) as usize;
+        let to = turns.to as usize;
+        let read = self.workspace.update(cx, |workspace, cx| {
+            load_history(workspace, id);
+            let chat = workspace.session(id)?;
+            let count = artifact::session::chat::turns(&chat.items).len();
+            let body = transcript::excerpt(chat, from, to, window, cx);
+            Some((
+                chat.title.clone(),
+                chat.entry.name.clone(),
+                count,
+                chat.streaming,
+                body,
+            ))
+        });
+        let Some((title, agent, count, streaming, body)) = read else {
+            return div().into_any_element();
+        };
+        let range = match turns.from == turns.to {
+            true => format!("Turn {} of {count}", turns.from),
+            false => format!("Turns {}–{} of {count}", turns.from, turns.to),
+        };
+        let note = if to > count {
+            Some(format!("Turn {to} doesn’t exist yet"))
+        } else if streaming && to == count {
+            Some(format!("Turn {to} is still running"))
+        } else {
+            None
+        };
+        let header = div()
+            .id(SharedString::from(format!("session-excerpt-head-{id}")))
+            .h(px(36.))
+            .px(px(12.))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(8.))
+            .border_b_1()
+            .border_color(theme.border)
+            .cursor_pointer()
+            .hover(|el| el.bg(theme.element_hover))
+            .child(
+                icons::icon(kind_icon(Kind::Session))
+                    .size(px(14.))
+                    .text_color(theme.text_muted),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .text_ellipsis()
+                    .text_style(TextStyle::Subheadline)
+                    .text_color(theme.text)
+                    .child(match title.trim() {
+                        "" => "Untitled session".to_owned(),
+                        title => title.to_owned(),
+                    }),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .text_style(TextStyle::Caption)
+                    .text_color(theme.text_faint)
+                    .child(match note {
+                        Some(note) => format!("{agent} · {range} · {note}"),
+                        None => format!("{agent} · {range}"),
+                    }),
+            )
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.select_session(id, window, cx);
+                if let Some(chat) = this.workspace.read(cx).session(id) {
+                    chat.transcript.reveal_turn(from);
+                }
+            }));
+        div()
+            .flex()
+            .flex_col()
+            .child(header)
+            .child(
+                div()
+                    // The excerpt's wheel stops here, at its ends too, so the
+                    // article under the card does not scroll with it.
+                    .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+                    .child(scroll::Viewport::new(
+                        SharedString::from(format!("session-excerpt-{id}")),
+                        div()
+                            .id(SharedString::from(format!("session-excerpt-rows-{id}")))
+                            .max_h(px(TRANSCRIPT_HEIGHT))
+                            .child(body),
+                        gpui::Axis::Vertical,
+                    )),
+            )
+            .into_any_element()
+    }
+
+    /// The composer the card for session `id` types into, made the first time
+    /// the card is drawn and synced by [`Cydonia::sync_composer`] after.
+    fn session_composer(
+        &mut self,
+        id: u64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> gpui::Entity<Composer> {
+        if let Some(composer) = self.session_cards.get(&id) {
+            return composer.clone();
+        }
+        let composer = cx.new(Composer::new);
+        let draft = self
+            .workspace
+            .read(cx)
+            .session(id)
+            .map(|chat| chat.draft.clone())
+            .unwrap_or_default();
+        composer.update(cx, |composer, cx| {
+            composer.set_tools(false, cx);
+            composer.set_session(Some(id), &draft, cx);
+        });
+        cx.subscribe_in(
+            &composer,
+            window,
+            move |this, _, event: &ComposerEvent, _, cx| match event {
+                ComposerEvent::Submit(text, attachments) => {
+                    this.workspace
+                        .update(cx, |workspace, cx| match attachments.is_empty() {
+                            true => workspace.send(id, text.clone(), cx),
+                            false => workspace.send_attached(id, text.clone(), attachments, cx),
+                        });
+                    if let Some(chat) = this.workspace.read(cx).session(id) {
+                        chat.transcript.follow_tail();
+                    }
+                }
+                ComposerEvent::Draft(id, draft) => {
+                    this.workspace.update(cx, |workspace, cx| {
+                        workspace.set_draft(*id, draft.clone(), cx)
+                    });
+                }
+                ComposerEvent::Cancel => {
+                    this.workspace.update(cx, |workspace, cx| {
+                        workspace.with_session(id, cx, |chat| chat.cancel())
+                    });
+                }
+                // TODO: reconnect and switches act on the active session; a
+                // card's composer does not offer them yet.
+                ComposerEvent::Reconnect
+                | ComposerEvent::Switch(..)
+                | ComposerEvent::Terminal
+                | ComposerEvent::Changes
+                | ComposerEvent::Files => {}
+            },
+        )
+        .detach();
+        self.session_cards.insert(id, composer.clone());
+        composer
+    }
+
+    /// Keep each card's composer on its session, and the slash menu's agents
+    /// on the ones settings hold — the cards' half of
+    /// [`Cydonia::sync_composer`].
+    pub(crate) fn sync_session_cards(&mut self, cx: &mut Context<Self>) {
+        let workspace = self.workspace.read(cx);
+        let items = slash_items(workspace);
+        let linkables = crate::view::mention::read(workspace);
+        let pointed: Vec<_> = self
+            .session_cards
+            .iter()
+            .map(|(id, composer)| {
+                let chat = workspace.session(*id);
+                (
+                    composer.clone(),
+                    chat.map(|chat| chat.draft.clone()).unwrap_or_default(),
+                    chat.map(|chat| chat.commands.clone()).unwrap_or_default(),
+                    chat.is_some_and(|chat| chat.streaming),
+                )
+            })
+            .collect();
+        editor::AppExt::set_slash_items(&mut **cx, items);
+        cx.set_global(linkables);
+        for (composer, draft, commands, streaming) in pointed {
+            composer.update(cx, |composer, cx| {
+                composer.set_session(composer.session(), &draft, cx);
+                composer.set_commands(&commands, cx);
+                composer.set_streaming(streaming, cx);
+            });
+        }
+    }
+}

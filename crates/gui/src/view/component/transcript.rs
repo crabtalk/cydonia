@@ -103,6 +103,10 @@ pub struct State {
     list: bezel::ui::list::VariableList<usize>,
     focused_turn: Cell<Option<(usize, usize)>>,
     rail_selection: Rc<Cell<Option<RailSelection>>>,
+    /// The turns shift-clicked on the rail, from 0 and in order, and the menu
+    /// over them.
+    rail_range: Rc<Cell<Option<(usize, usize)>>>,
+    range_cursor: Rc<RefCell<bezel::ui::menu::Cursor>>,
     /// The run of turns the rail lights, read a frame behind.
     ///
     /// [`render`] puts every row on screen back to unmeasured before it builds
@@ -279,6 +283,39 @@ impl State {
         let text = selectable::copied(&doc, selection);
         (!text.is_empty()).then_some(text)
     }
+}
+
+impl State {
+    /// The turn the selection is in, from 0.
+    pub(crate) fn selected_turn(&self, chat: &ChatSession) -> Option<usize> {
+        let (item, _) = self.selection?;
+        turns(&chat.items)
+            .iter()
+            .position(|turn| turn.range.contains(&item))
+    }
+
+    /// Scroll to turn `ix`, from 0, the way pressing its rail mark does.
+    pub(crate) fn reveal_turn(&self, ix: usize) {
+        self.rail_selection.set(Some(RailSelection {
+            turn: ix,
+            offset: None,
+        }));
+        self.list.scroll_to(ix);
+    }
+}
+
+/// The link to turns `from..=to` of a session, from 1: `cydonia://<project>#43:5-7`.
+/// Nothing for a session without a number yet.
+pub(crate) fn turn_link(chat: &ChatSession, from: usize, to: usize) -> Option<String> {
+    let number = chat.number?;
+    let name = chat.cwd.file_name()?.to_string_lossy();
+    let turns = artifact::reference::Turns {
+        from: from.min(to) as u64,
+        to: from.max(to) as u64,
+    };
+    Some(crate::view::entry_link::link(&format!(
+        "{name}#{number}:{turns}"
+    )))
 }
 
 /// Text available for selection and copying.
@@ -654,6 +691,18 @@ pub fn render(
             chat,
             &self::turns(&chat.items),
             px(rail_room(pane_width)),
+            Some({
+                let workspace = cx.entity().downgrade();
+                Rc::new(move |from, to, _: &mut Window, cx: &mut bezel::gpui::App| {
+                    let _ = workspace.update(cx, |workspace, cx| {
+                        if let Some(link) = workspace.turn_link(id, from, to) {
+                            cx.write_to_clipboard(ClipboardItem::new_string(link));
+                        }
+                    });
+                }) as OnLink
+            }),
+            _window,
+            cx,
         ))
         .into_any_element();
     div()
@@ -829,8 +878,68 @@ fn rail_room(pane_width: f32) -> f32 {
     ((pane_width - CONTENT_MAX_WIDTH) / 2.).max(0.)
 }
 
+/// What copying a range's link does: given the turns, from 1.
+pub(crate) type OnLink = Rc<dyn Fn(usize, usize, &mut Window, &mut bezel::gpui::App)>;
+
+/// The menu over a range of turns shift-clicked on the rail.
+fn range_menu<V: 'static>(
+    chat: &ChatSession,
+    link: OnLink,
+    window: &mut Window,
+    cx: &mut Context<V>,
+) -> Option<AnyElement> {
+    let (from, to) = chat.transcript.rail_range.get()?;
+    let label = match from == to {
+        true => format!("Copy link to turn {}", from + 1),
+        false => format!("Copy link to turns {}–{}", from + 1, to + 1),
+    };
+    let items = vec![bezel::ui::menu::Item::action(label).with_icon(icons::text::Link)];
+    let shown = items.clone();
+    let theme = Theme::of(cx).clone();
+    let (range, cursor) = (
+        chat.transcript.rail_range.clone(),
+        chat.transcript.range_cursor.clone(),
+    );
+    let card = bezel::ui::menu::card(
+        &theme,
+        "rail-range",
+        &items,
+        &chat.transcript.range_cursor.borrow(),
+        window,
+        cx,
+        move |_: &mut V, hit, window, cx| {
+            match hit {
+                bezel::ui::menu::Hit::Point(path) => {
+                    cursor.borrow_mut().point_at(&shown, &path);
+                }
+                bezel::ui::menu::Hit::Choose(_) => {
+                    // Out of this handler first: the view it runs in may be
+                    // the one the link writes to.
+                    let link = link.clone();
+                    window.defer(cx, move |window, cx| link(from + 1, to + 1, window, cx));
+                    range.set(None);
+                }
+                bezel::ui::menu::Hit::Dismiss => range.set(None),
+            }
+            cx.notify();
+        },
+    );
+    Some(bezel::ui::popover::anchored_menu_below(
+        "rail-range-menu",
+        card.into_any_element(),
+        None,
+    ))
+}
+
 /// One clickable mark per turn, with its question as the tooltip.
-fn rail(chat: &ChatSession, turns: &[Turn], room: Pixels) -> AnyElement {
+fn rail<V: 'static>(
+    chat: &ChatSession,
+    turns: &[Turn],
+    room: Pixels,
+    link: Option<OnLink>,
+    window: &mut Window,
+    cx: &mut Context<V>,
+) -> AnyElement {
     // The marks' padding reaches toward the text, so it comes off the room
     // before bezel is asked: a hitbox over the prose would swallow presses
     // meant for it.
@@ -840,6 +949,7 @@ fn rail(chat: &ChatSession, turns: &[Turn], room: Pixels) -> AnyElement {
     let handle = chat.transcript.list.clone();
     let count = turns.len();
     let selection = chat.transcript.rail_selection.clone();
+    let range = chat.transcript.rail_range.get();
     let inset = chat
         .transcript
         .footer_height
@@ -919,6 +1029,12 @@ fn rail(chat: &ChatSession, turns: &[Turn], room: Pixels) -> AnyElement {
                     .filter(|asked| !asked.is_empty());
                     let handle = chat.transcript.list.clone();
                     let selection = chat.transcript.rail_selection.clone();
+                    let in_range = range.is_some_and(|(from, to)| (from..=to).contains(&ix));
+                    let menu = link
+                        .clone()
+                        .filter(|_| range.map(|(_, to)| to) == Some(ix))
+                        .and_then(|link| range_menu(chat, link, window, cx));
+                    let held = chat.transcript.rail_range.clone();
                     div()
                         .id(("rail-mark", ix))
                         // Padding provides the hitbox and gap; the tone is what the
@@ -928,7 +1044,15 @@ fn rail(chat: &ChatSession, turns: &[Turn], room: Pixels) -> AnyElement {
                         .when_some(asked, |mark, asked| {
                             mark.tooltip(move |window, cx| Tooltip::text(asked.clone(), window, cx))
                         })
-                        .on_click(move |_, window, _| {
+                        .on_click(move |event, window, _| {
+                            // GitHub's line numbers: shift extends from the
+                            // turn being read to this one, and the range opens
+                            // a menu.
+                            if event.modifiers().shift {
+                                held.set(Some((at.min(ix), at.max(ix))));
+                                window.refresh();
+                                return;
+                            }
                             selection.set(Some(RailSelection {
                                 turn: ix,
                                 offset: None,
@@ -937,10 +1061,13 @@ fn rail(chat: &ChatSession, turns: &[Turn], room: Pixels) -> AnyElement {
                             if ix + 1 == count {
                                 handle.state.set_follow_mode(bezel::gpui::FollowMode::Tail);
                             }
+                            held.set(None);
                             window.refresh();
                         })
+                        .relative()
+                        .children(menu)
                         .child(div().w(px(MARK)).h(px(MARK_THICK)).rounded_full().bg(ink(
-                            if ix == at {
+                            if ix == at || in_range {
                                 MARK_READING
                             } else if showing.contains(&ix) {
                                 MARK_VISIBLE
@@ -962,6 +1089,10 @@ fn zone(
 ) -> AnyElement {
     let theme = Theme::of(cx).clone();
     let first = turn.range.start;
+    let turn_at = turns(&chat.items)
+        .iter()
+        .position(|held| held.range.start == first)
+        .unwrap_or_default();
     let mut zone = div().flex().flex_col().gap(px(10.)).pb(px(28.));
     if let Some(ChatItem::User(text)) = chat.items.get(first) {
         let (doc, images) = gallery::document(text);
@@ -1039,6 +1170,39 @@ fn zone(
                                 .flex_none()
                                 .items_center()
                                 .gap(px(caption_size * 0.2))
+                                .child({
+                                    let link_group =
+                                        SharedString::from(format!("link-message-{id}-{first}"));
+                                    let turn = turn_at + 1;
+                                    div()
+                                        .id(("link-user-message", first))
+                                        .group(link_group.clone())
+                                        .size(button_size)
+                                        .flex_none()
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .cursor_pointer()
+                                        .tooltip(|window, cx| {
+                                            Tooltip::text("Copy link to turn", window, cx)
+                                        })
+                                        .on_click(cx.listener(move |workspace, _, _, cx| {
+                                            if let Some(link) = workspace.turn_link(id, turn, turn)
+                                            {
+                                                cx.write_to_clipboard(ClipboardItem::new_string(
+                                                    link,
+                                                ));
+                                            }
+                                        }))
+                                        .child(
+                                            theme
+                                                .icon_at(TextStyle::Caption, icons::text::Link)
+                                                .text_color(theme.text_muted)
+                                                .group_hover(link_group, |icon| {
+                                                    icon.text_color(theme.text)
+                                                }),
+                                        )
+                                })
                                 .child(
                                     div()
                                         .id(("fork-user-message", first))

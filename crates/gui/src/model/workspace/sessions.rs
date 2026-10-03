@@ -22,6 +22,13 @@ impl Workspace {
         self.new_session_in(ix, entry, seed, true, cx)
     }
 
+    /// The link to turns `from..=to` of a session, from 1, filing the session
+    /// first so it has the number the link names.
+    pub fn turn_link(&mut self, id: u64, from: usize, to: usize) -> Option<String> {
+        self.mint_record(id)?;
+        crate::view::component::transcript::turn_link(self.session(id)?, from, to)
+    }
+
     /// How a session is written as a reference, `project#43`: its project's
     /// directory name and its entry number. Nothing before it has a number.
     pub fn reference_of_session(&self, id: u64) -> Option<String> {
