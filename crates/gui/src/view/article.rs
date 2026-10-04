@@ -533,19 +533,18 @@ impl Cydonia {
     /// The editor is a new entity, so whatever focus the old one held went with
     /// it — and focus on an element no frame draws is focus nowhere.
     ///
-    /// Never off the title. That field survives a re-read that did not rebuild
-    /// it, and dragging the caret out of a name somebody is typing is worse
-    /// than one they have to click back into the body.
+    /// Only when the focus is nowhere, or already back on the window: a re-read
+    /// that rebuilt nothing leaves the title, a card's composer or whatever
+    /// else holds the focus where it is.
     pub(crate) fn follow_article(&self, window: &mut Window, cx: &mut Context<Self>) {
         if self.showing(cx) != Some(Pane::Article) {
             return;
         }
-        let article = self.pane_doc(cx);
-        let titling = article
-            .and_then(|article| article.field.clone())
-            .is_some_and(|field| field.focus_handle(cx).contains_focused(window, cx));
-        let editor = article.and_then(|article| article.editor.clone());
-        if let Some(editor) = editor.filter(|_| !titling) {
+        let lost = window
+            .focused(cx)
+            .is_none_or(|focused| focused == self.focus);
+        let editor = self.pane_doc(cx).and_then(|article| article.editor.clone());
+        if let Some(editor) = editor.filter(|_| lost) {
             window.focus(&editor.focus_handle(cx), cx);
         }
     }

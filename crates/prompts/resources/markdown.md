@@ -151,6 +151,8 @@ the entry in the project shown. Spelled like a web link's forms:
   session, live, with a message field; `cydonia://cydonia#43:5-7` shows turns
   5 to 7 alone, read only. An article's or a board's card is its title, kind
   and number.
+- When the body ends on a session's card, write new content above that card,
+  not after it, unless the user asks for it below.
 
 ## Supported formatting and limits
 

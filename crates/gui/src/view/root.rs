@@ -485,6 +485,10 @@ pub struct Cydonia {
     /// session's id — see [`super::entry_link`].
     pub(crate) session_cards:
         std::collections::HashMap<u64, Entity<super::component::composer::Composer>>,
+    /// The session whose card composer takes the focus once a frame has drawn
+    /// it. Focusing a composer that is not in the tree yet loses the focus to
+    /// the window on the next frame.
+    pub(crate) card_focus: Option<u64>,
     /// The pane the last press came down in: `None` for the one a window with
     /// no space open shows. Where a link opens — see
     /// [`Cydonia::open_reference`].
@@ -1047,6 +1051,7 @@ impl Cydonia {
             card_docs: Default::default(),
             history: Default::default(),
             session_cards: Default::default(),
+            card_focus: None,
             pressed_pane: None,
             #[cfg(feature = "desktop")]
             settings_window: None,

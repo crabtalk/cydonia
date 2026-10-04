@@ -206,8 +206,8 @@ pub(crate) fn slash_items(workspace: &crate::model::workspace::Workspace) -> Vec
                         })
                         .ok();
                     root.update(cx, |root, cx| {
-                        let composer = root.session_composer(id, window, cx);
-                        window.focus(&composer.focus_handle(cx), cx);
+                        root.card_focus = Some(id);
+                        cx.notify();
                     });
                 }
             };
@@ -526,6 +526,11 @@ impl Cydonia {
                     ),
                     None => (None, None),
                 });
+        if self.card_focus == Some(id) {
+            self.card_focus = None;
+            let focus = composer.focus_handle(cx);
+            window.defer(cx, move |window, cx| window.focus(&focus, cx));
+        }
         let dropped = composer.clone();
         div()
             .id(SharedString::from(format!("session-card-transcript-{id}")))
