@@ -4,6 +4,7 @@
 //! `use super::*`: these methods work on the same struct and reach the same
 //! names as the rest of it.
 use super::*;
+use crate::model::session_preferences;
 use artifact::project::Project as _;
 
 impl Workspace {
@@ -223,7 +224,9 @@ impl Workspace {
     /// `settings.toml` comes back readable but cannot reconnect.
     pub(super) fn restore_sessions(&mut self, ix: usize) {
         let path = self.projects[ix].path.clone();
-        for stored in self.projects[ix].store().sessions() {
+        let records = self.projects[ix].store().sessions();
+        let _ = session_preferences::keep_sessions(&path, records.iter().map(|r| r.id.as_str()));
+        for stored in records {
             let id = self.next_id;
             self.next_id += 1;
             let entry = super::named(
@@ -376,6 +379,7 @@ impl Workspace {
         // the row back on the next launch.
         if let Some(record) = project.session(id).and_then(|chat| chat.record.clone()) {
             let _ = project.store().remove_session(&record);
+            let _ = session_preferences::forget_session(&project.path, &record);
         }
         project.sessions.retain(|chat| chat.id != id);
         if project.active == Some(id) {

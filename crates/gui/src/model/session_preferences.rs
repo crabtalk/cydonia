@@ -102,16 +102,22 @@ pub fn load(cwd: &Path, agent: &Agent, session: Option<&str>) -> Choices {
 }
 
 fn edit(cwd: &Path, agent: &Agent, change: impl FnOnce(&mut AgentChoices)) -> Result<()> {
+    rewrite(|stored| {
+        change(
+            stored
+                .entry(cwd.to_path_buf())
+                .or_default()
+                .entry(agent_key(agent))
+                .or_default(),
+        )
+    })
+}
+
+fn rewrite(change: impl FnOnce(&mut Stored)) -> Result<()> {
     let path = path()?;
     let mut stored = read(&path)?;
     let before = serde_json::to_vec(&stored)?;
-    change(
-        stored
-            .entry(cwd.to_path_buf())
-            .or_default()
-            .entry(agent_key(agent))
-            .or_default(),
-    );
+    change(&mut stored);
     let after = serde_json::to_vec(&stored)?;
     if before == after {
         return Ok(());
@@ -121,6 +127,28 @@ fn edit(cwd: &Path, agent: &Agent, change: impl FnOnce(&mut AgentChoices)) -> Re
     std::fs::write(&temporary, after)?;
     std::fs::rename(temporary, path)?;
     Ok(())
+}
+
+/// Drop the choices of session `id` in the project at `cwd`, under every agent.
+pub fn forget_session(cwd: &Path, id: &str) -> Result<()> {
+    keep_sessions_where(cwd, |session| session != id)
+}
+
+/// Drop the choices of every session in the project at `cwd` that `ids` does
+/// not name. Each agent's defaults stay.
+pub fn keep_sessions<'a>(cwd: &Path, ids: impl IntoIterator<Item = &'a str>) -> Result<()> {
+    let ids: std::collections::BTreeSet<&str> = ids.into_iter().collect();
+    keep_sessions_where(cwd, |session| ids.contains(session))
+}
+
+fn keep_sessions_where(cwd: &Path, keep: impl Fn(&str) -> bool) -> Result<()> {
+    rewrite(|stored| {
+        if let Some(project) = stored.get_mut(cwd) {
+            for agent in project.values_mut() {
+                agent.sessions.retain(|session, _| keep(session));
+            }
+        }
+    })
 }
 
 pub fn remember_mode(cwd: &Path, agent: &Agent, mode: &str) -> Result<()> {
