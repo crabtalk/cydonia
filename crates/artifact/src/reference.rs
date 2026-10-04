@@ -86,6 +86,44 @@ pub fn parse(text: &str) -> Option<Reference<'_>> {
     Some(Reference { project, target })
 }
 
+/// A reference still being typed: the project as far as it is written, and
+/// the start of what comes after it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Partial<'a> {
+    /// Before a `#`. Nothing means no `#` has been typed, or it opens the text.
+    pub project: Option<&'a str>,
+    pub target: Prefix<'a>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Prefix<'a> {
+    /// The leading digits of an entry's number, empty right after a `#`.
+    Number(&'a str),
+    /// The leading letters and digits of a board's key, before any `-`.
+    Key(&'a str),
+}
+
+/// Read the start of a reference: `#`, `#4`, `foo#`, `foo#4`, `4`, `DE`.
+/// Nothing for text no reference starts with. A bare key prefix carries no
+/// project; a bare number is an entry's.
+pub fn partial(text: &str) -> Option<Partial<'_>> {
+    let text = text.strip_prefix(SCHEME).unwrap_or(text);
+    let (project, rest) = match text.split_once('#') {
+        Some(("", rest)) => (None, rest),
+        Some((name, _)) if name.chars().any(|c| c.is_whitespace() || c == ':') => return None,
+        Some((name, rest)) => (Some(name), rest),
+        None => (None, text),
+    };
+    let target = if rest.bytes().all(|b| b.is_ascii_digit()) {
+        Prefix::Number(rest)
+    } else if rest.chars().all(|c| c.is_ascii_alphanumeric()) {
+        Prefix::Key(rest)
+    } else {
+        return None;
+    };
+    Some(Partial { project, target })
+}
+
 /// `KEY-N`, split at the last `-`: a key may end in a digit.
 fn card(text: &str) -> Option<(&str, u64)> {
     let (key, handle) = text.rsplit_once('-')?;

@@ -1,6 +1,6 @@
 //! The written form of a reference.
 
-use cydonia_artifact::reference::{Reference, Target, Turns, parse};
+use cydonia_artifact::reference::{Partial, Prefix, Reference, Target, Turns, parse, partial};
 
 fn entry(project: Option<&str>, number: u64, turns: Option<(u64, u64)>) -> Option<Reference<'_>> {
     Some(Reference {
@@ -78,4 +78,41 @@ fn malformed_text_is_not_a_reference() {
 fn a_run_writes_back_as_it_was_read() {
     assert_eq!(Turns { from: 5, to: 5 }.to_string(), "5");
     assert_eq!(Turns { from: 5, to: 7 }.to_string(), "5-7");
+}
+
+fn typed<'a>(project: Option<&'a str>, target: Prefix<'a>) -> Option<Partial<'a>> {
+    Some(Partial { project, target })
+}
+
+#[test]
+fn the_start_of_a_reference_reads_as_far_as_it_is_written() {
+    assert_eq!(partial("#"), typed(None, Prefix::Number("")));
+    assert_eq!(partial("#4"), typed(None, Prefix::Number("4")));
+    assert_eq!(partial("4"), typed(None, Prefix::Number("4")));
+    assert_eq!(partial("bezel#"), typed(Some("bezel"), Prefix::Number("")));
+    assert_eq!(
+        partial("bezel#11"),
+        typed(Some("bezel"), Prefix::Number("11"))
+    );
+    assert_eq!(
+        partial("cydonia://bezel#1"),
+        typed(Some("bezel"), Prefix::Number("1"))
+    );
+    assert_eq!(partial("DE"), typed(None, Prefix::Key("DE")));
+    assert_eq!(partial("bezel#DE"), typed(Some("bezel"), Prefix::Key("DE")));
+}
+
+#[test]
+fn text_no_reference_starts_with_is_none() {
+    for text in [
+        "#4:",
+        "DEV-",
+        "my notes#4",
+        "a:b#4",
+        "a#b#4",
+        "#4 ",
+        "two words",
+    ] {
+        assert_eq!(partial(text), None, "{text:?}");
+    }
 }

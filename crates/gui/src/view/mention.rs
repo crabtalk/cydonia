@@ -2,8 +2,15 @@
 //! articles, linked as `cydonia://<project>#<number>` chips — and the title a
 //! chip of one paints: the kind's mark and the title.
 
-use crate::{model::workspace::Workspace, view::entry_link::link};
-use artifact::search::Kind;
+use crate::{
+    model::workspace::Workspace,
+    view::{entry_link::link, search::kind_icon},
+};
+use artifact::{
+    reference::{self, Prefix},
+    search::Kind,
+};
+use bezel::ui::icons::Icon;
 use bezel::{
     gpui::{App, Global, SharedString},
     ui::popover::filter_indices,
@@ -16,7 +23,8 @@ const SHOWN: usize = 20;
 
 #[derive(Clone)]
 pub(crate) struct Linkable {
-    pub(crate) kind: Kind,
+    /// A session's agent's mark, else its kind's.
+    pub(crate) icon: Icon,
     pub(crate) title: String,
     pub(crate) about: String,
     pub(crate) url: String,
@@ -53,8 +61,8 @@ pub(crate) fn read(workspace: &Workspace) -> Linkables {
             false => reference(number),
         };
         let linkable =
-            |kind: Kind, title: String, about: String, number: u64, touched: u128| Linkable {
-                kind,
+            |icon: Icon, title: String, about: String, number: u64, touched: u128| Linkable {
+                icon,
                 title,
                 about,
                 url: link(&reference(number)),
@@ -67,7 +75,9 @@ pub(crate) fn read(workspace: &Workspace) -> Linkables {
         held.extend(project.sessions.iter().filter_map(|chat| {
             let number = chat.number?;
             Some(linkable(
-                Kind::Session,
+                workspace
+                    .agent_icon(&chat.entry.name)
+                    .unwrap_or_else(|| kind_icon(Kind::Session)),
                 untitled(&chat.title, "Untitled session"),
                 format!("Session · {} · {}", chat.entry.name, shown(number)),
                 number,
@@ -77,7 +87,7 @@ pub(crate) fn read(workspace: &Workspace) -> Linkables {
         held.extend(project.articles.iter().filter_map(|article| {
             let number = article.number?;
             Some(linkable(
-                Kind::Article,
+                kind_icon(Kind::Article),
                 untitled(&article.title, "Untitled article"),
                 format!("Article · {}", shown(number)),
                 number,
@@ -94,7 +104,7 @@ pub(crate) fn read(workspace: &Workspace) -> Linkables {
             Some(Linkable {
                 key,
                 ..linkable(
-                    Kind::Board,
+                    kind_icon(Kind::Board),
                     untitled(&board.name, "Untitled board"),
                     about,
                     number,
@@ -125,7 +135,7 @@ pub(crate) fn source(query: &str, cx: &App) -> Vec<Mention> {
         .map(|ix| {
             let linkable = &held[ix];
             Mention {
-                icon: Some(crate::view::search::kind_icon(linkable.kind)),
+                icon: Some(linkable.icon.clone()),
                 label: SharedString::from(linkable.title.clone()),
                 description: Some(SharedString::from(linkable.about.clone())),
                 url: linkable.url.clone(),
@@ -136,71 +146,68 @@ pub(crate) fn source(query: &str, cx: &App) -> Vec<Mention> {
 
 /// What `query` lists, as positions in `held`, best first.
 ///
-/// A query with a `#` is a reference: `#12` and `bezel#12` list the entries
-/// of the active project and of `bezel` whose number starts with what follows
-/// the `#`. Without one, it lists the active project's entries: those whose
-/// number starts with an all-digit query, then boards whose key starts with
-/// it, then the rest by title. An exact number or key leads its group; ties
-/// keep the most recently touched first.
+/// Read as the start of a reference first — see [`reference::partial`]: a
+/// number prefix lists the entries whose number starts with it, a key prefix
+/// the boards whose key does, each in the project named before the `#` or
+/// the active one. A bare query also matches the active project's titles
+/// after those. An exact number or key leads its group; ties keep the most
+/// recently touched first.
 pub(crate) fn rank(query: &str, held: &[Linkable]) -> Vec<usize> {
     let query = query.trim();
-    if let Some((project, number)) = query.split_once('#') {
-        if !number.bytes().all(|b| b.is_ascii_digit()) {
-            return Vec::new();
-        }
-        let scoped: Vec<usize> = (0..held.len())
-            .filter(|&ix| match project {
-                "" => held[ix].active,
-                name => held[ix].project.eq_ignore_ascii_case(name),
-            })
-            .collect();
-        return by_number(&scoped, number, held);
-    }
-    let active: Vec<usize> = (0..held.len()).filter(|&ix| held[ix].active).collect();
-    if query.is_empty() {
-        return active;
-    }
-    let mut rows = Vec::new();
-    if query.bytes().all(|b| b.is_ascii_digit()) {
-        rows = by_number(&active, query, held);
-    }
-    let lower = query.to_lowercase();
-    let mut keyed: Vec<usize> = active
-        .iter()
-        .copied()
-        .filter(|&ix| {
-            held[ix]
-                .key
-                .as_ref()
-                .is_some_and(|key| key.to_lowercase().starts_with(&lower))
+    let partial = reference::partial(query);
+    let project = partial.as_ref().and_then(|partial| partial.project);
+    let scoped: Vec<usize> = (0..held.len())
+        .filter(|&ix| match project {
+            None => held[ix].active,
+            Some(name) => held[ix].project.eq_ignore_ascii_case(name),
         })
         .collect();
-    keyed.sort_by_key(|&ix| held[ix].key.as_ref().map(|key| key.len()));
-    rows.extend(keyed);
-    let words: Vec<String> = active
-        .iter()
-        .map(|&ix| format!("{} {}", held[ix].title, held[ix].about))
-        .collect();
-    rows.extend(
-        filter_indices(query, &words)
-            .into_iter()
-            .map(|at| active[at]),
-    );
+    if query.is_empty() {
+        return scoped;
+    }
+    let mut rows = match partial.map(|partial| partial.target) {
+        Some(Prefix::Number(number)) => by_prefix(&scoped, number, held, |linkable| {
+            Some(linkable.number.to_string())
+        }),
+        Some(Prefix::Key(key)) => by_prefix(&scoped, key, held, |linkable| {
+            linkable.key.as_ref().map(|key| key.to_lowercase())
+        }),
+        None => Vec::new(),
+    };
+    if !query.contains('#') {
+        let words: Vec<String> = scoped
+            .iter()
+            .map(|&ix| format!("{} {}", held[ix].title, held[ix].about))
+            .collect();
+        rows.extend(
+            filter_indices(query, &words)
+                .into_iter()
+                .map(|at| scoped[at]),
+        );
+    }
     let mut seen = std::collections::HashSet::new();
     rows.retain(|ix| seen.insert(*ix));
     rows
 }
 
-/// The positions in `scoped` whose number starts with `number`, the exact
-/// one first.
-fn by_number(scoped: &[usize], number: &str, held: &[Linkable]) -> Vec<usize> {
-    let mut rows: Vec<usize> = scoped
+/// The positions in `scoped` whose `field` starts with `prefix`, compared
+/// lowercase, the exact one first.
+fn by_prefix(
+    scoped: &[usize],
+    prefix: &str,
+    held: &[Linkable],
+    field: impl Fn(&Linkable) -> Option<String>,
+) -> Vec<usize> {
+    let prefix = prefix.to_lowercase();
+    let mut rows: Vec<(bool, usize)> = scoped
         .iter()
-        .copied()
-        .filter(|&ix| held[ix].number.to_string().starts_with(number))
+        .filter_map(|&ix| {
+            let value = field(&held[ix])?;
+            value.starts_with(&prefix).then_some((value != prefix, ix))
+        })
         .collect();
-    rows.sort_by_key(|&ix| held[ix].number.to_string() != number);
-    rows
+    rows.sort_by_key(|&(inexact, _)| inexact);
+    rows.into_iter().map(|(_, ix)| ix).collect()
 }
 
 /// What a chip linking an entry paints: its title, and its kind's mark. A
@@ -221,7 +228,7 @@ pub(crate) fn preview(url: &str, cx: &App) -> Option<Preview> {
     };
     Some(Preview {
         title: Some(title.into()),
-        glyph: Some(crate::view::search::kind_icon(resolved.kind)),
+        glyph: Some(kind_icon(resolved.kind)),
         ..Preview::default()
     })
 }

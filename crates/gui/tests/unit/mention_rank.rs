@@ -5,7 +5,7 @@ use super::*;
 
 fn entry(project: &str, active: bool, number: u64, title: &str, key: Option<&str>) -> Linkable {
     Linkable {
-        kind: Kind::Article,
+        icon: kind_icon(Kind::Article),
         title: title.to_owned(),
         about: format!("Article · #{number}"),
         url: format!("cydonia://{project}#{number}"),
@@ -56,6 +56,7 @@ fn an_unknown_project_or_a_non_number_lists_nothing() {
 #[test]
 fn a_board_key_matches_before_titles() {
     assert_eq!(rank("dev", &held()), vec![3]);
+    assert_eq!(rank("bezel#DE", &held()), vec![5]);
 }
 
 #[test]
