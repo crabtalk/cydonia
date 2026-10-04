@@ -74,9 +74,9 @@ const RAIL_PAD: f32 = 64.;
 /// much of the session the pane is showing, and which turn of it you are on.
 /// Off one value the second question has no answer; off two the first one is a
 /// single dash whatever is on screen.
-const MARK_READING: f32 = 0.6;
-const MARK_VISIBLE: f32 = 0.38;
-const MARK_AWAY: f32 = 0.16;
+pub(crate) const MARK_READING: f32 = 0.6;
+pub(crate) const MARK_VISIBLE: f32 = 0.38;
+pub(crate) const MARK_AWAY: f32 = 0.16;
 
 /// How much of a question its mark's tooltip carries.
 const ASKED_MAX: usize = 80;

@@ -4,7 +4,10 @@ use crate::{
     memory,
     model::article,
     view::{
-        component::menu::{self, Menu},
+        component::{
+            menu::{self, Menu},
+            transcript::{MARK_AWAY, MARK_READING, MARK_VISIBLE},
+        },
         leaf::Pane,
         root::{Cydonia, NewArticle},
         sidebar::{self, Row},
@@ -15,11 +18,11 @@ use bezel::ui::scroll as scrollbars;
 use bezel::{
     gpui::{
         self, AnyElement, App, Context, CursorStyle, Div, Entity, Focusable as _, KeyBinding,
-        MouseButton, ObjectFit, PathPromptOptions, SharedString, Window, actions, div, img,
+        MouseButton, ObjectFit, PathPromptOptions, SharedString, Window, actions, canvas, div, img,
         prelude::*, px,
     },
     motion::{Fade, Painter},
-    theme::{ControlSize, Sizing as _, TextStyle, Theme, Typeset},
+    theme::{ControlSize, Sizing as _, TextStyle, Theme, Typeset, ink},
     ui::{
         icons,
         input::TextField,
@@ -31,7 +34,11 @@ use bezel::{
 use editor::AppExt as _;
 use editor::Mode;
 use markdown::AppExt as _;
-use std::path::{Path, PathBuf};
+use std::{
+    cell::RefCell,
+    path::{Path, PathBuf},
+    rc::Rc,
+};
 
 actions!(
     cydonia_article,
@@ -83,10 +90,95 @@ const TAIL: f32 = 120.;
 /// handle's whole room, in either measure.
 const COLUMN_INSET: f32 = 24.;
 
-/// The most dashes the outline draws; past it the column stops growing.
-const OUTLINE_DASHES: usize = 24;
+/// The most dashes the outline draws at once. A longer outline shows the run
+/// of them around the heading being read — see [`dash_window`].
+const OUTLINE_DASHES: usize = 12;
 
 const OUTLINE_DASH_GAP: f32 = 6.;
+
+/// The widest the outline's menu is drawn.
+const OUTLINE_MAX_WIDTH: f32 = 280.;
+
+/// The tallest the outline's menu is drawn; its rows scroll past it.
+const OUTLINE_MAX_HEIGHT: f32 = 320.;
+
+/// The first dash drawn, so that the one at `at` sits mid-column, held at
+/// either end of an outline longer than [`OUTLINE_DASHES`].
+fn dash_window(count: usize, at: Option<usize>) -> usize {
+    at.unwrap_or(0)
+        .saturating_sub(OUTLINE_DASHES / 2)
+        .min(count.saturating_sub(OUTLINE_DASHES))
+}
+
+/// Where the reader is among the headings at `starts`, from where the blocks
+/// painted last frame against the scroll box. `None` while no block has painted
+/// inside it.
+fn reading_of(
+    layouts: &markdown::BlockLayouts,
+    starts: &[usize],
+    blocks: usize,
+    scroll: &gpui::ScrollHandle,
+) -> Option<article::Reading> {
+    let view = scroll.bounds();
+    let mut on = (0..blocks).filter(|&ix| {
+        layouts
+            .block_bounds(ix)
+            .is_some_and(|b| b.bottom() > view.top() && b.top() < view.bottom())
+    });
+    let first = on.next()?;
+    let last = on.next_back().unwrap_or(first);
+    // Headings at or before a block: the last of them owns its section.
+    let upto = |block: usize| starts.partition_point(|&start| start <= block);
+    let at = upto(first).checked_sub(1);
+    Some(article::Reading {
+        at,
+        shown: at.unwrap_or(0)..upto(last),
+    })
+}
+
+/// An article's headings, in order: each one's block, level and text.
+fn headings(editor: &editor::Editor) -> Vec<(usize, u8, String)> {
+    editor
+        .doc()
+        .blocks
+        .iter()
+        .enumerate()
+        .filter_map(|(ix, block)| match &block.kind {
+            markdown::BlockKind::Heading { level, text } => Some((ix, *level, text.text.clone())),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The outline menu's rows, one per heading, stepped in from the highest level
+/// the article uses.
+fn outline_items(headings: &[(usize, u8, String)]) -> Vec<Item> {
+    let top = headings
+        .iter()
+        .map(|(_, level, _)| *level)
+        .min()
+        .unwrap_or(1);
+    headings
+        .iter()
+        .map(|(_, level, text)| {
+            Item::action(text.clone())
+                .with_icon(heading_icon(*level))
+                .indented(usize::from(level - top))
+        })
+        .collect()
+}
+
+/// The mark an outline row carries for its heading's level.
+fn heading_icon(level: u8) -> &'static [u8] {
+    match level {
+        1 => icons::text::Heading1,
+        2 => icons::text::Heading2,
+        3 => icons::text::Heading3,
+        4 => icons::text::Heading4,
+        5 => icons::text::Heading5,
+        _ => icons::text::Heading6,
+    }
+}
 
 /// Plain-text styling, resolved against the active theme on every paint.
 pub fn source_style(theme: &Theme) -> markdown::SourceStyle {
@@ -320,8 +412,42 @@ impl Cydonia {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(path) = self.pane_article(cx) {
-            self.toggle_menu(Menu::Outline(path), cx);
+        let Some(article) = self.pane_doc(cx) else {
+            return;
+        };
+        let path = article.path.clone();
+        let at = article.reading.borrow().at;
+        let items = article
+            .editor
+            .as_ref()
+            .map(|editor| outline_items(&headings(editor.read(cx))))
+            .unwrap_or_default();
+        self.toggle_outline_menu(Menu::Outline(path), at, &items, cx);
+    }
+
+    /// Open or shut an outline's menu, opening it lit on the heading being
+    /// read.
+    fn toggle_outline_menu(
+        &mut self,
+        menu: Menu,
+        at: Option<usize>,
+        items: &[Item],
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_menu(menu.clone(), cx);
+        self.outline_hovered = false;
+        if self.menu.as_ref() == Some(&menu) {
+            self.light_outline(at, items);
+        }
+    }
+
+    /// Light the outline menu's row for the heading at `at`, or none.
+    fn light_outline(&mut self, at: Option<usize>, items: &[Item]) {
+        match at {
+            Some(at) => {
+                self.menu_cursor.point_at(items, &[at]);
+            }
+            None => self.menu_cursor.clear(),
         }
     }
 
@@ -458,6 +584,8 @@ impl Cydonia {
         let source_offset = source_offset(editor.read(cx), cx);
         let stale = article.stale.then(|| article.path.clone());
         let path = article.path.clone();
+        let reading = article.reading.clone();
+        let scroll = article.scroll.clone();
         let document = div()
             .id("article")
             .on_action(cx.listener(Self::leave_title))
@@ -562,7 +690,7 @@ impl Cydonia {
                             bezel::gpui::Axis::Vertical,
                         ))
                         .children(self.search_pill(on, cx))
-                        .children(self.outline(&editor, &path, window, cx)),
+                        .children(self.outline(&editor, &path, reading, scroll, window, cx)),
                 )
                 // Last, and floated over the document from where the
                 // selection ends — the bar is chrome the page runs under.
@@ -581,6 +709,8 @@ impl Cydonia {
         &self,
         editor: &Entity<editor::Editor>,
         path: &Path,
+        reading: Rc<RefCell<article::Reading>>,
+        scroll: gpui::ScrollHandle,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
@@ -591,56 +721,113 @@ impl Cydonia {
         if read.mode() == Mode::Source {
             return None;
         }
-        let headings: Vec<(usize, u8, String)> = read
-            .doc()
-            .blocks
-            .iter()
-            .enumerate()
-            .filter_map(|(ix, block)| match &block.kind {
-                markdown::BlockKind::Heading { level, text } => {
-                    Some((ix, *level, text.text.clone()))
-                }
-                _ => None,
-            })
-            .collect();
+        let headings = headings(read);
+        let items = outline_items(&headings);
         let top = headings.iter().map(|(_, level, _)| *level).min()?;
         let theme = Theme::of(cx).clone();
         let menu = Menu::Outline(path.to_owned());
         let open = self.menu.as_ref() == Some(&menu);
+        let now = reading.borrow().clone();
+        let tone = |ordinal: usize| {
+            ink(if now.at == Some(ordinal) {
+                MARK_READING
+            } else if now.shown.contains(&ordinal) {
+                MARK_VISIBLE
+            } else {
+                MARK_AWAY
+            })
+        };
+        // Taken after layout, from where the blocks painted, and drawn from on
+        // the frame after — the transcript's rail reads its run the same way.
+        let starts: Vec<usize> = headings.iter().map(|(ix, _, _)| *ix).collect();
+        let blocks = read.doc().blocks.len();
+        let root = cx.entity().downgrade();
+        let watch = canvas(
+            {
+                let editor = editor.clone();
+                let reading = reading.clone();
+                let menu = menu.clone();
+                let items = items.clone();
+                move |_, window, cx| {
+                    let next = reading_of(editor.read(cx).layouts(), &starts, blocks, &scroll);
+                    let Some(next) = next else {
+                        return;
+                    };
+                    if *reading.borrow() == next {
+                        return;
+                    }
+                    let at = next.at;
+                    *reading.borrow_mut() = next;
+                    // After the frame: the root is not to be updated while it
+                    // is being painted.
+                    let (root, menu, items) = (root.clone(), menu.clone(), items.clone());
+                    window.defer(cx, move |_, cx| {
+                        let _ = root.update(cx, |this, cx| {
+                            if this.menu.as_ref() == Some(&menu) && !this.outline_hovered {
+                                this.light_outline(at, &items);
+                                cx.notify();
+                            }
+                        });
+                    });
+                    window.refresh();
+                }
+            },
+            |_, _, _, _| {},
+        )
+        .absolute();
         let dashes = div()
             .flex()
             .flex_col()
             .items_end()
             .gap(px(OUTLINE_DASH_GAP))
-            .children(headings.iter().take(OUTLINE_DASHES).map(|(_, level, _)| {
-                let depth = f32::from(level - top);
-                div()
-                    .h(px(2.))
-                    .w(px((16. - 4. * depth).max(6.)))
-                    .rounded_full()
-                    .bg(theme.text_faint)
-            }));
+            .children(
+                headings
+                    .iter()
+                    .enumerate()
+                    .skip(dash_window(headings.len(), now.at))
+                    .take(OUTLINE_DASHES)
+                    .map(|(ordinal, (_, level, _))| {
+                        let depth = f32::from(level - top);
+                        div()
+                            .h(px(2.))
+                            .w(px((16. - 4. * depth).max(6.)))
+                            .rounded_full()
+                            .bg(tone(ordinal))
+                    }),
+            );
         let card = open.then(|| {
             let rows = headings
-                .into_iter()
-                .map(|(ix, level, text)| {
+                .iter()
+                .zip(items.iter().cloned())
+                .map(|(&(ix, _, _), item)| {
                     let editor = editor.clone();
-                    menu::row(
-                        Item::action(text).indented(usize::from(level - top)),
-                        move |_, window, cx| {
-                            let at = markdown::Selection::at(markdown::Cursor::new(
-                                ix,
-                                markdown::Part::Body,
-                                0,
-                            ));
-                            editor.update(cx, |editor, cx| editor.select(at, cx));
-                            window.focus(&editor.focus_handle(cx), cx);
-                        },
-                    )
+                    menu::row(item, move |_, window, cx| {
+                        let at = markdown::Selection::at(markdown::Cursor::new(
+                            ix,
+                            markdown::Part::Body,
+                            0,
+                        ));
+                        editor.update(cx, |editor, cx| editor.select(at, cx));
+                        window.focus(&editor.focus_handle(cx), cx);
+                    })
                 })
                 .collect();
             let id = SharedString::from(format!("outline-card-{}", path.display()));
-            popover::anchored_menu_above_end(id.clone(), self.menu_card(id, rows, window, cx), None)
+            let items = items.clone();
+            let reading = reading.clone();
+            let card = self
+                .menu_panel(id.clone(), rows, window, cx)
+                .id(SharedString::from(format!("{id}-hover")))
+                .max_w(px(OUTLINE_MAX_WIDTH))
+                .max_h(px(OUTLINE_MAX_HEIGHT))
+                .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
+                    this.outline_hovered = *hovered;
+                    if !hovered {
+                        this.light_outline(reading.borrow().at, &items);
+                        cx.notify();
+                    }
+                }));
+            popover::anchored_menu_above_end(id, card.into_any_element(), None)
         });
         let trigger = theme
             .ghost(SharedString::from(format!("outline-{}", path.display())))
@@ -650,9 +837,10 @@ impl Cydonia {
             .child(dashes)
             .on_click({
                 let menu = menu.clone();
+                let at = now.at;
                 cx.listener(move |this, _, _, cx| {
                     cx.stop_propagation();
-                    this.toggle_menu(menu.clone(), cx);
+                    this.toggle_outline_menu(menu.clone(), at, &items, cx);
                 })
             })
             .children(card);
@@ -662,6 +850,7 @@ impl Cydonia {
                 .occlude()
                 .bottom(px(16.))
                 .right(px(16.))
+                .child(watch)
                 .child(self.menu_press(trigger, menu, cx))
                 .into_any_element(),
         )

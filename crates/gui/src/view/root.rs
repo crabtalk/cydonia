@@ -552,6 +552,9 @@ pub struct Cydonia {
     /// Whether the press now being handled landed on the open menu's own
     /// trigger — read by [`Cydonia::toggle_menu`] and nothing else.
     pub(crate) menu_pressed: bool,
+    /// Whether the pointer is over an open outline menu. Off it, the menu's
+    /// lit row follows the heading being read.
+    pub(crate) outline_hovered: bool,
     /// What the name field is attached to, and the field itself.
     pub(crate) renaming: Option<Renaming>,
     pub(crate) name_field: Entity<TextField>,
@@ -1079,6 +1082,7 @@ impl Cydonia {
             list_hovered: None,
             menu_cursor: Cursor::default(),
             menu_pressed: false,
+            outline_hovered: false,
             renaming: None,
             name_field,
             search: crate::view::search::Search::new(cx),

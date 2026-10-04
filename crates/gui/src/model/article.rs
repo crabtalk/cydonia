@@ -28,7 +28,21 @@ use bezel::{
 };
 use editor::{Editor, Mode};
 use markdown::AppExt as _;
-use std::path::{Path, PathBuf};
+use std::{
+    cell::RefCell,
+    ops::Range,
+    path::{Path, PathBuf},
+    rc::Rc,
+};
+
+/// Which of an article's headings the pane is on, counted among the headings
+/// from 0: the one whose section holds the first block on screen, and every
+/// one whose section has a block on screen.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Reading {
+    pub at: Option<usize>,
+    pub shown: Range<usize>,
+}
 
 /// What articles were called before they were named for their age, and what an
 /// unnamed one was called among them.
@@ -67,6 +81,8 @@ pub struct Article {
     /// The pane's scroll box, shared with the editor so typing follows the
     /// caret down.
     pub scroll: ScrollHandle,
+    /// Where the outline says the reader is, taken from the last frame.
+    pub reading: Rc<RefCell<Reading>>,
     /// Which form the document is edited in — see [`Article::set_mode`]. Held
     /// beside the editor rather than only in it, because a re-read builds a
     /// new editor and somebody reading the markdown did not ask to leave it.
@@ -110,6 +126,7 @@ impl Article {
             editor: None,
             pictures: None,
             scroll: ScrollHandle::new(),
+            reading: Rc::default(),
             mode: Mode::default(),
             saved: String::new(),
             stale: false,
