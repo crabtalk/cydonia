@@ -223,7 +223,7 @@ impl Browser {
                 }
             }
             WebViewEvent::Title(title) => self.title = title.clone(),
-            WebViewEvent::Load(_) | WebViewEvent::History { .. } => {}
+            WebViewEvent::Load(_) | WebViewEvent::History { .. } | WebViewEvent::Console(_) => {}
             WebViewEvent::NewWindow(url) => {
                 cx.emit(OpenTab(url.clone()));
                 return;

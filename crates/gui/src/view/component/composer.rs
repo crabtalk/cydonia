@@ -921,7 +921,10 @@ impl Composer {
             Completing::Mention { rows, .. } => rows
                 .iter()
                 .map(|row| {
-                    let item = Item::action(row.label.clone());
+                    let mut item = Item::action(row.label.clone());
+                    if let Some(icon) = &row.icon {
+                        item = item.with_icon(icon.clone());
+                    }
                     match &row.description {
                         Some(description) => item.with_description(description.clone()),
                         None => item,

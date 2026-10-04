@@ -45,7 +45,7 @@ pub fn init(settings: &Settings, cx: &mut App) {
     cx.set_source_style(article::source_style);
     cx.set_marks(article::marks());
     markdown::AppExt::set_link_card(cx, crate::view::entry_link::card);
-    editor::AppExt::set_mention_source(cx, crate::view::mention::source);
+    editor::AppExt::set_mention_source(cx, '@', crate::view::mention::source);
     article::set_highlight(look.highlight);
     cx.set_mark_paint(article::mark_paint);
     article::set_search(look.search);
