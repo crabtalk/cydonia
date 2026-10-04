@@ -13,7 +13,10 @@ use bezel::{
     gpui::{App, Pixels, SharedString, font, px},
     theme::{Appearance, Theme},
 };
-use std::sync::RwLock;
+use std::sync::{
+    RwLock,
+    atomic::{AtomicBool, Ordering},
+};
 
 /// What the reader picked, or nothing where they have not. Nothing keeps the
 /// palette's own faces, which differ per platform.
@@ -36,6 +39,9 @@ static SELECTION: RwLock<Option<Paint>> = RwLock::new(None);
 
 /// The caret colour the reader picked, held the same way.
 static CARET: RwLock<Option<Paint>> = RwLock::new(None);
+
+/// Whether terminals draw the app's caret, colour included.
+static TERMINAL_CARET: AtomicBool = AtomicBool::new(false);
 
 fn held() -> Families {
     FAMILIES
@@ -72,6 +78,9 @@ pub fn palette(appearance: Appearance) -> Theme {
     }
     if let Some(color) = CARET.read().ok().and_then(|held| *held) {
         theme.caret = color.solid(&theme);
+    }
+    if terminal_caret() {
+        theme.cursor = theme.caret;
     }
     theme
 }
@@ -118,6 +127,22 @@ pub fn init_caret(color: Option<Paint>) {
 /// Record the caret colour and rebuild the palette under it.
 pub fn set_caret(color: Option<Paint>, cx: &mut App) {
     init_caret(color);
+    let appearance = Theme::of(cx).appearance;
+    Theme::install(appearance, cx);
+}
+
+pub fn terminal_caret() -> bool {
+    TERMINAL_CARET.load(Ordering::Relaxed)
+}
+
+/// Record whether terminals take the caret without repainting — for startup.
+pub fn init_terminal_caret(on: bool) {
+    TERMINAL_CARET.store(on, Ordering::Relaxed);
+}
+
+/// Record whether terminals take the caret and rebuild the palette under it.
+pub fn set_terminal_caret(on: bool, cx: &mut App) {
+    init_terminal_caret(on);
     let appearance = Theme::of(cx).appearance;
     Theme::install(appearance, cx);
 }

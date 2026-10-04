@@ -30,6 +30,7 @@ pub fn init(settings: &Settings, cx: &mut App) {
     crate::view::component::file::external::init(settings.open_with.clone());
     fonts::init_selection(look.selection);
     fonts::init_caret(look.caret);
+    fonts::init_terminal_caret(look.terminal_caret);
     cx.set_palette(fonts::palette);
     appearance::init(look.mode, cx);
     // Before the window is opened: it reads its background appearance
@@ -40,8 +41,6 @@ pub fn init(settings: &Settings, cx: &mut App) {
     cx.set_caret_blink(look.cursor_blink);
     cx.set_caret_shape(look.caret_shape.into());
     cx.set_caret_height(look.caret_height.into());
-    #[cfg(feature = "desktop")]
-    crate::view::component::terminal::set_caret_override(look.terminal_caret, cx);
     cx.set_base_text_size(look.text_size);
     workspace::apply_wrap_code(look.wrap_code, cx);
     cx.set_source_style(article::source_style);

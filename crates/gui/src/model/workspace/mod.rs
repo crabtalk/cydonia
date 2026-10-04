@@ -789,8 +789,7 @@ impl Workspace {
 
     pub fn set_terminal_caret(&mut self, on: bool, cx: &mut Context<Self>) {
         self.settings.appearance.terminal_caret = on;
-        #[cfg(feature = "desktop")]
-        crate::view::component::terminal::set_caret_override(on, cx);
+        crate::model::fonts::set_terminal_caret(on, cx);
         self.save_appearance();
         cx.notify();
     }

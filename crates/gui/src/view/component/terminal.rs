@@ -1,11 +1,14 @@
 //! A session's shell: the PTY lives as long as this entity, even while hidden.
 
-use crate::{model::typography, view::keymap};
+use crate::{
+    model::{fonts, typography},
+    view::keymap,
+};
 use bezel::{
     gpui::{
         self, App, ClipboardEntry, ClipboardItem, Context, Edges, Entity, EventEmitter,
-        ExternalPaths, FocusHandle, Focusable, Global, KeyBinding, Render, Subscription, Task,
-        Window, div, prelude::*, px,
+        ExternalPaths, FocusHandle, Focusable, KeyBinding, Render, Subscription, Task, Window, div,
+        prelude::*, px,
     },
     motion,
     theme::{TextStyle, Theme, Typeset},
@@ -32,19 +35,9 @@ const CONTEXT: &str = "CydoniaTerminal";
 /// Half the cursor's blink period, the text caret's own.
 const BLINK: Duration = Duration::from_millis(500);
 
-/// Whether terminals draw the app's caret instead of the program's cursor.
-struct CaretOverride(bool);
-
-impl Global for CaretOverride {}
-
-pub fn set_caret_override(on: bool, cx: &mut App) {
-    cx.set_global(CaretOverride(on));
-    cx.refresh_windows();
-}
-
 /// The app's caret as a terminal cursor, when terminals take it.
 fn caret_override(cx: &App) -> Option<CursorStyle> {
-    if !cx.try_global::<CaretOverride>().is_some_and(|on| on.0) {
+    if !fonts::terminal_caret() {
         return None;
     }
     let shape = match cx.caret_shape() {
