@@ -347,6 +347,7 @@ impl Workspace {
             caret: self.settings.appearance.caret,
             caret_shape: self.settings.appearance.caret_shape,
             caret_height: self.settings.appearance.caret_height,
+            terminal_caret: self.settings.appearance.terminal_caret,
         });
     }
 
@@ -782,6 +783,14 @@ impl Workspace {
     pub fn set_caret_shape(&mut self, shape: settings::CaretShape, cx: &mut Context<Self>) {
         self.settings.appearance.caret_shape = shape;
         cx.set_caret_shape(shape.into());
+        self.save_appearance();
+        cx.notify();
+    }
+
+    pub fn set_terminal_caret(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.settings.appearance.terminal_caret = on;
+        #[cfg(feature = "desktop")]
+        crate::view::component::terminal::set_caret_override(on, cx);
         self.save_appearance();
         cx.notify();
     }

@@ -331,6 +331,7 @@ impl SettingsWindow {
                     self.caret_shape_row(cx),
                     self.caret_height_row(cx),
                     self.caret_row(cx),
+                    self.terminal_caret_row(cx),
                 ],
             ))
             .child(group(
@@ -550,6 +551,23 @@ impl SettingsWindow {
                 };
                 this.workspace
                     .update(cx, |workspace, cx| workspace.set_caret_height(height, cx));
+            },
+        )
+    }
+
+    fn terminal_caret_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let on = self.workspace.read(cx).settings.appearance.terminal_caret;
+        self.switch_row(
+            Switch::new(
+                "terminal-caret",
+                "Use in terminals",
+                "Off lets the running program choose the terminal cursor.",
+                on,
+            ),
+            cx,
+            move |this, cx| {
+                this.workspace
+                    .update(cx, |workspace, cx| workspace.set_terminal_caret(!on, cx));
             },
         )
     }

@@ -4,12 +4,12 @@ use crate::{model::typography, view::keymap};
 use bezel::{
     gpui::{
         self, App, ClipboardEntry, ClipboardItem, Context, Edges, Entity, EventEmitter,
-        ExternalPaths, FocusHandle, Focusable, KeyBinding, Render, Subscription, Task, Window, div,
-        prelude::*, px,
+        ExternalPaths, FocusHandle, Focusable, Global, KeyBinding, Render, Subscription, Task,
+        Window, div, prelude::*, px,
     },
     motion,
     theme::{TextStyle, Theme, Typeset},
-    ui::{icons, input, tabs, tooltip::Tooltip},
+    ui::{AppExt as _, icons, input, tabs, tooltip::Tooltip},
 };
 use futures::{SinkExt, StreamExt, channel::mpsc};
 use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
@@ -20,7 +20,7 @@ use std::{
     time::Duration,
 };
 use terminal::{
-    emulator::{Emulator, HOLD_TIMEOUT, KeyboardMode, SelectionType},
+    emulator::{CursorShape, CursorStyle, Emulator, HOLD_TIMEOUT, KeyboardMode, SelectionType},
     view::{
         self, Batched, GridGeometry, GridSnapshot, Images, KeyEvent, MouseAction, MouseButton,
         OUTPUT_BATCH_MS, OutputBatch, SELECTION_DRAG_THRESHOLD, TerminalElement,
@@ -28,6 +28,35 @@ use terminal::{
 };
 
 const CONTEXT: &str = "CydoniaTerminal";
+
+/// Half the cursor's blink period, the text caret's own.
+const BLINK: Duration = Duration::from_millis(500);
+
+/// Whether terminals draw the app's caret instead of the program's cursor.
+struct CaretOverride(bool);
+
+impl Global for CaretOverride {}
+
+pub fn set_caret_override(on: bool, cx: &mut App) {
+    cx.set_global(CaretOverride(on));
+    cx.refresh_windows();
+}
+
+/// The app's caret as a terminal cursor, when terminals take it.
+fn caret_override(cx: &App) -> Option<CursorStyle> {
+    if !cx.try_global::<CaretOverride>().is_some_and(|on| on.0) {
+        return None;
+    }
+    let shape = match cx.caret_shape() {
+        input::CaretShape::Bar => CursorShape::Beam,
+        input::CaretShape::Block => CursorShape::Block,
+        input::CaretShape::Underline => CursorShape::Underline,
+    };
+    Some(CursorStyle {
+        shape,
+        blinking: cx.caret_blink(),
+    })
+}
 
 /// How often a selection drag held past the grid's top or bottom edge
 /// scrolls the scrollback.
@@ -296,6 +325,10 @@ pub struct Terminal {
     batch: OutputBatch,
     /// The batch window's timer, running while the batch is open.
     flush: Option<Task<()>>,
+    /// Which half of its blink the cursor is in.
+    cursor_on: bool,
+    /// The blink, alive only while focused on a blinking cursor.
+    blink: Option<Task<()>>,
     _pump: Option<Task<()>>,
 }
 
@@ -317,6 +350,8 @@ impl Terminal {
             hold: None,
             batch: OutputBatch::default(),
             flush: None,
+            cursor_on: true,
+            blink: None,
             _pump: None,
         };
         match Shell::open(cwd) {
@@ -396,6 +431,22 @@ impl Terminal {
         cx.notify();
     }
 
+    fn start_blink(&mut self, cx: &mut Context<Self>) {
+        self.cursor_on = true;
+        self.blink = Some(cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(BLINK).await;
+                let flipped = this.update(cx, |this, cx| {
+                    this.cursor_on = !this.cursor_on;
+                    cx.notify();
+                });
+                if flipped.is_err() {
+                    break;
+                }
+            }
+        }));
+    }
+
     fn write(&self, bytes: Vec<u8>) {
         if !bytes.is_empty()
             && let Some(shell) = &self.shell
@@ -439,6 +490,8 @@ impl Terminal {
         if !matches!(event, KeyEvent::Release) {
             self.emulator.clear_selection();
             self.emulator.scroll_to_bottom();
+            // The next render starts the blink again, lit first.
+            self.blink = None;
         }
         self.write(bytes);
         cx.stop_propagation();
@@ -627,6 +680,20 @@ impl Focusable for Terminal {
 impl Render for Terminal {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::of(cx).clone();
+        let focused = self.focus.is_focused(window);
+        self.emulator.set_cursor_override(caret_override(cx));
+        let blinking = self
+            .emulator
+            .cursor()
+            .is_some_and(|cursor| cursor.style.blinking);
+        if focused && blinking {
+            if self.blink.is_none() {
+                self.start_blink(cx);
+            }
+        } else {
+            self.blink = None;
+            self.cursor_on = true;
+        }
         let this = cx.weak_entity();
         let grid = TerminalElement::new(
             move |geometry, cx| {
@@ -657,8 +724,9 @@ impl Render for Terminal {
                 })
                 .ok()
             },
-            self.focus.is_focused(window),
+            focused,
         )
+        .with_cursor_on(self.cursor_on)
         .with_text_size(typography::terminal_size(cx))
         .with_content_inset(Edges::all(px(12.0)));
         div()

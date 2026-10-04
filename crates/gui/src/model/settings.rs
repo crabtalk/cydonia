@@ -211,6 +211,9 @@ pub struct Appearance {
     pub caret: Option<Paint>,
     pub caret_shape: CaretShape,
     pub caret_height: CaretHeight,
+    /// Terminals draw the caret's shape and blink, and ignore the shape the
+    /// running program asks for.
+    pub terminal_caret: bool,
 }
 
 /// A preset colour: one of bezel's [`bezel::ui::color::default_swatches`],
@@ -499,6 +502,7 @@ impl Default for Appearance {
             caret: None,
             caret_shape: CaretShape::default(),
             caret_height: CaretHeight::default(),
+            terminal_caret: true,
         }
     }
 }
@@ -1191,6 +1195,7 @@ fn write_appearance(doc: &mut toml_edit::DocumentMut, appearance: &Appearance) -
     held["scrollbars"] = toml_edit::value(appearance.scrollbars.key());
     held["caret_shape"] = toml_edit::value(appearance.caret_shape.key());
     held["caret_height"] = toml_edit::value(appearance.caret_height.key());
+    held["terminal_caret"] = toml_edit::value(appearance.terminal_caret);
     held["sidebar_scrollbars"] = toml_edit::value(appearance.sidebar_scrollbars.key());
     held["wrap_code"] = toml_edit::value(appearance.wrap_code);
     held["highlight"] = toml_edit::value(appearance.highlight.key());
