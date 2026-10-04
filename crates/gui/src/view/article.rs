@@ -4,6 +4,7 @@ use crate::{
     memory,
     model::article,
     view::{
+        component::menu::{self, Menu},
         leaf::Pane,
         root::{Cydonia, NewArticle},
         sidebar::{self, Row},
@@ -22,6 +23,8 @@ use bezel::{
     ui::{
         icons,
         input::TextField,
+        menu::Item,
+        popover,
         widgets::{ButtonStyle, Buttons as _, Status as _},
     },
 };
@@ -30,7 +33,10 @@ use editor::Mode;
 use markdown::AppExt as _;
 use std::path::{Path, PathBuf};
 
-actions!(cydonia_article, [LeaveTitle, TogglePlainText]);
+actions!(
+    cydonia_article,
+    [LeaveTitle, ToggleOutline, TogglePlainText]
+);
 
 /// `enter` and `down` in the title move to the content. Bound on the field's
 /// own context, which is the only thing deep enough to beat the field itself.
@@ -76,6 +82,11 @@ const TAIL: f32 = 120.;
 /// the same measure to line up with the first paragraph. That allowance is the
 /// handle's whole room, in either measure.
 const COLUMN_INSET: f32 = 24.;
+
+/// The most dashes the outline draws; past it the column stops growing.
+const OUTLINE_DASHES: usize = 24;
+
+const OUTLINE_DASH_GAP: f32 = 6.;
 
 /// Plain-text styling, resolved against the active theme on every paint.
 pub fn source_style(theme: &Theme) -> markdown::SourceStyle {
@@ -302,6 +313,18 @@ impl Cydonia {
         cx.notify();
     }
 
+    /// Open or shut the focused article's outline — the View menu's Outline.
+    pub(crate) fn toggle_outline(
+        &mut self,
+        _: &ToggleOutline,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(path) = self.pane_article(cx) {
+            self.toggle_menu(Menu::Outline(path), cx);
+        }
+    }
+
     /// Whether the open document is being edited as markdown, or `None` where
     /// there is no document to be in either form.
     pub(crate) fn plain_text(&self, cx: &App) -> Option<bool> {
@@ -434,6 +457,7 @@ impl Cydonia {
         let wide = article.wide(self.workspace.read(cx).wide_pages);
         let source_offset = source_offset(editor.read(cx), cx);
         let stale = article.stale.then(|| article.path.clone());
+        let path = article.path.clone();
         let document = div()
             .id("article")
             .on_action(cx.listener(Self::leave_title))
@@ -537,11 +561,108 @@ impl Cydonia {
                             &article.scroll,
                             bezel::gpui::Axis::Vertical,
                         ))
-                        .children(self.search_pill(on, cx)),
+                        .children(self.search_pill(on, cx))
+                        .children(self.outline(&editor, &path, window, cx)),
                 )
                 // Last, and floated over the document from where the
                 // selection ends — the bar is chrome the page runs under.
                 .children(self.ribbon(on, window, cx))
+                .into_any_element(),
+        )
+    }
+
+    /// The outline over the pane's bottom right: a dash per heading, longer
+    /// the higher the heading, and above it while open the menu of headings.
+    /// Picking one puts the caret at its start.
+    ///
+    /// Nothing while the setting is off, in plain text, or for a document with
+    /// no headings.
+    fn outline(
+        &self,
+        editor: &Entity<editor::Editor>,
+        path: &Path,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        if !self.workspace.read(cx).settings.appearance.outline {
+            return None;
+        }
+        let read = editor.read(cx);
+        if read.mode() == Mode::Source {
+            return None;
+        }
+        let headings: Vec<(usize, u8, String)> = read
+            .doc()
+            .blocks
+            .iter()
+            .enumerate()
+            .filter_map(|(ix, block)| match &block.kind {
+                markdown::BlockKind::Heading { level, text } => {
+                    Some((ix, *level, text.text.clone()))
+                }
+                _ => None,
+            })
+            .collect();
+        let top = headings.iter().map(|(_, level, _)| *level).min()?;
+        let theme = Theme::of(cx).clone();
+        let menu = Menu::Outline(path.to_owned());
+        let open = self.menu.as_ref() == Some(&menu);
+        let dashes = div()
+            .flex()
+            .flex_col()
+            .items_end()
+            .gap(px(OUTLINE_DASH_GAP))
+            .children(headings.iter().take(OUTLINE_DASHES).map(|(_, level, _)| {
+                let depth = f32::from(level - top);
+                div()
+                    .h(px(2.))
+                    .w(px((16. - 4. * depth).max(6.)))
+                    .rounded_full()
+                    .bg(theme.text_faint)
+            }));
+        let card = open.then(|| {
+            let rows = headings
+                .into_iter()
+                .map(|(ix, level, text)| {
+                    let editor = editor.clone();
+                    menu::row(
+                        Item::action(text).indented(usize::from(level - top)),
+                        move |_, window, cx| {
+                            let at = markdown::Selection::at(markdown::Cursor::new(
+                                ix,
+                                markdown::Part::Body,
+                                0,
+                            ));
+                            editor.update(cx, |editor, cx| editor.select(at, cx));
+                            window.focus(&editor.focus_handle(cx), cx);
+                        },
+                    )
+                })
+                .collect();
+            let id = SharedString::from(format!("outline-card-{}", path.display()));
+            popover::anchored_menu_above_end(id.clone(), self.menu_card(id, rows, window, cx), None)
+        });
+        let trigger = theme
+            .ghost(SharedString::from(format!("outline-{}", path.display())))
+            .relative()
+            .p(px(8.))
+            .rounded_md()
+            .child(dashes)
+            .on_click({
+                let menu = menu.clone();
+                cx.listener(move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.toggle_menu(menu.clone(), cx);
+                })
+            })
+            .children(card);
+        Some(
+            div()
+                .absolute()
+                .occlude()
+                .bottom(px(16.))
+                .right(px(16.))
+                .child(self.menu_press(trigger, menu, cx))
                 .into_any_element(),
         )
     }

@@ -176,6 +176,8 @@ pub struct Appearance {
     /// *has* been decided about carries the decision in its own
     /// `properties.toml` and ignores this.
     pub wide_pages: bool,
+    /// Whether an article offers its floating outline button.
+    pub outline: bool,
     /// How a new board is laid out. Every board carries its own answer from the
     /// moment it is made — see [`artifact::board::Board::view`] — so this seeds
     /// one and never steers it afterwards.
@@ -478,6 +480,7 @@ impl Default for Appearance {
             blur: bezel::theme::Theme::WINDOW_BLUR,
             chroma: 0.,
             wide_pages: false,
+            outline: true,
             board_view: artifact::board::View::List,
             indent_project_rows: true,
             settings_sidebar_fits: false,
@@ -1180,6 +1183,7 @@ fn write_appearance(doc: &mut toml_edit::DocumentMut, appearance: &Appearance) -
     held["blur"] = toml_edit::value(f64::from(appearance.blur));
     held["chroma"] = toml_edit::value(f64::from(appearance.chroma));
     held["wide_pages"] = toml_edit::value(appearance.wide_pages);
+    held["outline"] = toml_edit::value(appearance.outline);
     held["board_view"] = toml_edit::value(appearance.board_view.key());
     held["indent_project_rows"] = toml_edit::value(appearance.indent_project_rows);
     held["traffic_lights"] = toml_edit::value(appearance.traffic_lights);

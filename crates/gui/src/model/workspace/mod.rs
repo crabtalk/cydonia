@@ -333,6 +333,7 @@ impl Workspace {
             blur: self.settings.appearance.blur,
             chroma: self.tint.chroma,
             wide_pages: self.wide_pages,
+            outline: self.settings.appearance.outline,
             board_view: self.board_view,
             indent_project_rows: self.indent_project_rows,
             settings_sidebar_fits: self.settings.appearance.settings_sidebar_fits,
@@ -849,6 +850,12 @@ impl Workspace {
     /// the rest follow this.
     pub fn set_wide_pages(&mut self, wide: bool, cx: &mut Context<Self>) {
         self.wide_pages = wide;
+        self.save_appearance();
+        cx.notify();
+    }
+
+    pub fn set_outline(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.settings.appearance.outline = on;
         self.save_appearance();
         cx.notify();
     }

@@ -60,6 +60,8 @@ pub(crate) enum Menu {
     Turn,
     /// The `···` on a card, by card id.
     Card(String),
+    /// An article's outline, by the article's file — a space can show several.
+    Outline(std::path::PathBuf),
 }
 
 /// One row of a menu, and what picking it does.

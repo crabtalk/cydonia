@@ -333,7 +333,10 @@ impl SettingsWindow {
                     self.caret_row(cx),
                 ],
             ))
-            .child(group("Layout", vec![self.pages_row(cx), self.wrap_row(cx)]))
+            .child(group(
+                "Layout",
+                vec![self.pages_row(cx), self.outline_row(cx), self.wrap_row(cx)],
+            ))
             .child(group(
                 "Colours",
                 vec![
@@ -356,6 +359,23 @@ impl SettingsWindow {
     /// usually does, and the cost of it here is that nothing scrolls a fence
     /// back to a caret typed off its right edge — the page follows the caret
     /// down, but a block's own sideways scroll is the reader's to drag.
+    pub(super) fn outline_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let on = self.workspace.read(cx).settings.appearance.outline;
+        self.switch_row(
+            Switch::new(
+                "article-outline",
+                "Article outline",
+                "A floating button over an article that lists its headings.",
+                on,
+            ),
+            cx,
+            move |this, cx| {
+                this.workspace
+                    .update(cx, |workspace, cx| workspace.set_outline(!on, cx));
+            },
+        )
+    }
+
     pub(super) fn wrap_row(&self, cx: &mut Context<Self>) -> AnyElement {
         let on = self.workspace.read(cx).wrap_code;
         self.switch_row(
