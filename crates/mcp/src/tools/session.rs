@@ -65,6 +65,17 @@ const FULL: Arg = Arg {
 default: each tool call is one line.",
 };
 
+const TITLE: Arg = Arg {
+    name: "title",
+    about: "The session's new title.",
+};
+
+const REPLACE: Arg = Arg {
+    name: "replace_user_title",
+    about: "Replace a title the user gave the session. Set it only when the user \
+asked for the rename.",
+};
+
 /// Turns read when none are asked for.
 const LATEST: u64 = 3;
 
@@ -74,7 +85,7 @@ const HITS: usize = 20;
 /// Characters of a hit's line shown, at most.
 const SNIPPET: usize = 160;
 
-pub static TOOLS: [Tool; 3] = [
+pub static TOOLS: [Tool; 4] = [
     Tool {
         name: "session_send",
         description: "Send a message to another agent session in the project, named by its entry \
@@ -132,6 +143,22 @@ pub static TOOLS: [Tool; 3] = [
         deletes: false,
         call: search,
     },
+    Tool {
+        name: "session_rename",
+        description: "Retitle the session you are running in, when the work has moved past \
+            its current title or the user asks. Refused when the user titled the session \
+            themselves, unless replace_user_title is set because they asked for this rename.",
+        schema: |bound| {
+            let mut schema = fields(bound, &[TITLE]);
+            schema["properties"][REPLACE.name] =
+                json!({ "type": "boolean", "description": REPLACE.about });
+            schema["required"] = json!([TITLE.name]);
+            schema
+        },
+        writes: true,
+        deletes: false,
+        call: rename,
+    },
 ];
 
 fn send(args: Args<'_>) -> Outcome {
@@ -173,6 +200,34 @@ fn send(args: Args<'_>) -> Outcome {
         message: message.to_owned(),
     })?;
     Ok(Answer::said(format!("sent to #{number} {}", entry.title)))
+}
+
+fn rename(args: Args<'_>) -> Outcome {
+    let title = args.text(TITLE)?.trim();
+    if title.is_empty() {
+        return Err(Trouble::Invalid("title is empty".to_owned()));
+    }
+    let (Some(at), Some(record)) = (args.at(), args.session()) else {
+        return Err(Trouble::Refused(
+            "only a session can rename itself, and this caller is not one".to_owned(),
+        ));
+    };
+    let filed = fs::Project::new(at)
+        .session(record)
+        .ok_or_else(|| Trouble::Refused("this session is not on disk yet".to_owned()))?;
+    if let Some(name) = &filed.name
+        && !args.boolean(REPLACE, false)?
+    {
+        return Err(Trouble::Refused(format!(
+            "the user titled this session \"{name}\"; set replace_user_title only if they \
+             asked for this rename"
+        )));
+    }
+    rail::ask(Change::Rename {
+        session: record.to_owned(),
+        title: title.to_owned(),
+    })?;
+    Ok(Answer::said(format!("renamed to {title}")))
 }
 
 /// The calling session as a reference to the turn it is on — `#42:7`, or

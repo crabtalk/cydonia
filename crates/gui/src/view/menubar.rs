@@ -27,7 +27,7 @@ use crate::model::update;
 use crate::{
     model::settings,
     view::{
-        article::TogglePlainText,
+        article::{ToggleOutline, TogglePlainText},
         keymap,
         leaf::Pane,
         root::{
@@ -220,6 +220,7 @@ fn menus(cx: &App) -> Vec<Menu> {
             // a chord before the focused surface is offered it — see
             // [`crate::view::keymap::Command::PlainText`].
             MenuItem::action("Plain Text", TogglePlainText),
+            MenuItem::action("Outline", ToggleOutline),
             MenuItem::action("Find", crate::view::board::FindCard),
             MenuItem::action("Find Next", crate::view::find::FindNext),
             MenuItem::action("Find Previous", crate::view::find::FindPrev),
@@ -365,6 +366,7 @@ impl Cydonia {
             // Pane-specific commands grey themselves everywhere else.
             .when(showing == Some(Pane::Article), |root| {
                 root.on_action(cx.listener(Self::toggle_plain_text))
+                    .on_action(cx.listener(Self::toggle_outline))
             })
             .when(
                 matches!(showing, Some(Pane::Board | Pane::Article | Pane::Chat)),

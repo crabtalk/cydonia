@@ -2,8 +2,8 @@
 
 use crate::{
     model::{
-        session::{ChatSession, Choice},
-        workspace::Showing,
+        session::{ChatSession, Choice, Command, Usage},
+        workspace::{Showing, Workspace},
     },
     view::{
         component::{
@@ -400,25 +400,13 @@ impl Cydonia {
         self.leaf().composer.focus_handle(cx)
     }
 
-    /// Run `f` on the active session. Every composer action is this shape:
-    /// the view knows which session is in front, the model owns it.
-    fn with_active(&mut self, cx: &mut Context<Self>, f: impl FnOnce(&mut ChatSession)) {
-        let Some(id) = self.workspace.read(cx).active_id() else {
-            return;
-        };
-        self.workspace
-            .update(cx, |workspace, cx| workspace.with_session(id, cx, f));
-    }
-
-    pub(crate) fn submit(
+    fn submit(
         &mut self,
+        id: u64,
         text: String,
         attachments: Vec<crate::model::media::Attachment>,
         cx: &mut Context<Self>,
     ) {
-        let Some(id) = self.workspace.read(cx).active_id() else {
-            return;
-        };
         self.workspace
             .update(cx, |workspace, cx| match attachments.is_empty() {
                 true => workspace.send(id, text, cx),
@@ -539,8 +527,44 @@ impl Cydonia {
         window.focus(&self.composer_focus_handle(cx), cx);
     }
 
-    pub(crate) fn cancel_turn(&mut self, cx: &mut Context<Self>) {
-        self.with_active(cx, |chat| chat.cancel());
+    /// What a press in a composer pointed at `session` asks for — the pane's
+    /// and an article card's alike.
+    pub(crate) fn composer_event(
+        &mut self,
+        session: Option<u64>,
+        event: &composer::ComposerEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use composer::ComposerEvent;
+        match event {
+            ComposerEvent::Draft(id, draft) => {
+                self.workspace.update(cx, |workspace, cx| {
+                    workspace.set_draft(*id, draft.clone(), cx)
+                });
+            }
+            ComposerEvent::Terminal => self.show_terminal(window, cx),
+            ComposerEvent::Changes => self.show_changes(window, cx),
+            ComposerEvent::Files => self.show_files(window, cx),
+            _ => {
+                let Some(id) = session else {
+                    return;
+                };
+                match event {
+                    ComposerEvent::Submit(text, attachments) => {
+                        self.submit(id, text.clone(), attachments.clone(), cx)
+                    }
+                    ComposerEvent::Cancel => self.workspace.update(cx, |workspace, cx| {
+                        workspace.with_session(id, cx, |chat| chat.cancel())
+                    }),
+                    ComposerEvent::Reconnect => self
+                        .workspace
+                        .update(cx, |workspace, cx| workspace.wake_session(id, cx)),
+                    ComposerEvent::Switch(switch, value) => self.switch(id, switch, value, cx),
+                    _ => {}
+                }
+            }
+        }
     }
 
     /// The composer's agent chip. An ACP session is bound to the process that
@@ -566,15 +590,7 @@ impl Cydonia {
     pub(crate) fn sync_composer(&mut self, cx: &mut Context<Self>) {
         let workspace = self.workspace.read(cx);
         let arranged = workspace.active_space().is_some();
-        let agents: Vec<composer::Agent> = workspace
-            .settings
-            .agents
-            .iter()
-            .map(|entry| composer::Agent {
-                name: entry.name.clone().into(),
-                icon: workspace.agent_icon(&entry.name),
-            })
-            .collect();
+        let agents = composer_agents(workspace);
         // The session each pane is on: its own where a space put it there,
         // and whatever the project is on for the single pane.
         let on: Vec<Option<u64>> = self
@@ -592,47 +608,16 @@ impl Cydonia {
             .collect();
         // Read out before writing: the composers are updated through `cx`,
         // which the workspace is borrowed from.
-        let mut pointed = Vec::with_capacity(on.len());
-        for id in on {
-            let chat = id.and_then(|id| workspace.session(id));
-            let placeholder = chat.map_or_else(
-                || "message the agent…".to_owned(),
-                |chat| format!("message {}…", chat.entry.name),
-            );
-            let current = chat
-                .map(|chat| chat.entry.name.clone())
-                .and_then(|name| agents.iter().position(|agent| agent.name == name));
-            // Both belong to the agent process rather than to the transcript,
-            // so a session read back off disk offers neither until it
-            // reconnects.
-            let live = chat.filter(|chat| chat.live());
-            pointed.push((
-                chat.map(|chat| chat.id),
-                chat.map(|chat| chat.draft.clone()).unwrap_or_default(),
-                placeholder,
-                chat.map(|chat| chat.commands.clone()).unwrap_or_default(),
-                chat.is_some_and(|chat| chat.streaming),
-                chat.and_then(composer::Activity::of),
-                current,
-                live.map(switches).unwrap_or_default(),
-                live.and_then(|chat| chat.usage),
-            ));
-        }
+        let pointed: Vec<_> = on
+            .into_iter()
+            .map(|id| Pointing::of(id.and_then(|id| workspace.session(id)), &agents))
+            .collect();
         let tabs = workspace.settings.features.panel;
         for (leaf, point) in self.leaves.iter().zip(pointed) {
-            let (session, draft, placeholder, commands, streaming, activity, current, sw, usage) =
-                point;
             leaf.composer.update(cx, |composer, cx| {
                 composer.set_tools(!arranged, cx);
                 composer.set_panel_tabs(tabs, cx);
-                composer.set_session(session, &draft, cx);
-                composer.set_placeholder(&placeholder, cx);
-                composer.set_commands(&commands, cx);
-                composer.set_streaming(streaming, cx);
-                composer.set_activity(activity, cx);
-                composer.set_agents(&agents, current, cx);
-                composer.set_switches(&sw, cx);
-                composer.set_usage(usage, cx);
+                point.apply(composer, cx);
             });
         }
         self.sync_session_cards(cx);
@@ -754,16 +739,7 @@ impl Cydonia {
                                     .update(cx, |composer, cx| composer.drop_paths(paths, cx));
                             }),
                         )
-                        .child(footer(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .gap(px(8.))
-                                .children(self.plan(active, cx))
-                                .children(self.permission(active, cx))
-                                .child(self.leaf().composer.clone()),
-                            footer_height.clone(),
-                        ))
+                        .child(self.session_footer(active, self.leaf().composer.clone(), None, cx))
                         .child(drop_wash(&theme)),
                     false => column.children(
                         self.adrift_strip(cx)
@@ -927,6 +903,76 @@ pub(crate) fn drop_wash(theme: &Theme) -> Div {
         .absolute()
         .inset_0()
         .drag_over::<gpui::ExternalPaths>(move |style, _, _, _| style.bg(wash))
+}
+
+/// The agents a composer's mark is drawn from, in settings order.
+pub(crate) fn composer_agents(workspace: &Workspace) -> Vec<composer::Agent> {
+    workspace
+        .settings
+        .agents
+        .iter()
+        .map(|entry| composer::Agent {
+            name: entry.name.clone().into(),
+            icon: workspace.agent_icon(&entry.name),
+        })
+        .collect()
+}
+
+/// What a composer shows of the session it is pointed at, read out of the
+/// workspace before any composer is written.
+pub(crate) struct Pointing {
+    session: Option<u64>,
+    draft: String,
+    placeholder: String,
+    commands: Vec<Command>,
+    streaming: bool,
+    activity: Option<composer::Activity>,
+    agents: Vec<composer::Agent>,
+    current: Option<usize>,
+    switches: Vec<composer::Switch>,
+    usage: Option<Usage>,
+}
+
+impl Pointing {
+    pub(crate) fn of(chat: Option<&ChatSession>, agents: &[composer::Agent]) -> Self {
+        // Both belong to the agent process rather than to the transcript, so a
+        // session read back off disk offers neither until it reconnects.
+        let live = chat.filter(|chat| chat.live());
+        Self {
+            session: chat.map(|chat| chat.id),
+            draft: chat.map(|chat| chat.draft.clone()).unwrap_or_default(),
+            placeholder: chat.map_or_else(
+                || "message the agent…".to_owned(),
+                |chat| format!("message {}…", chat.entry.name),
+            ),
+            commands: chat.map(|chat| chat.commands.clone()).unwrap_or_default(),
+            streaming: chat.is_some_and(|chat| chat.streaming),
+            activity: chat.and_then(composer::Activity::of),
+            agents: agents.to_vec(),
+            current: chat.and_then(|chat| {
+                agents
+                    .iter()
+                    .position(|agent| agent.name == chat.entry.name)
+            }),
+            switches: live.map(switches).unwrap_or_default(),
+            usage: live.and_then(|chat| chat.usage),
+        }
+    }
+
+    pub(crate) fn apply(
+        self,
+        composer: &mut composer::Composer,
+        cx: &mut Context<composer::Composer>,
+    ) {
+        composer.set_session(self.session, &self.draft, cx);
+        composer.set_placeholder(&self.placeholder, cx);
+        composer.set_commands(&self.commands, cx);
+        composer.set_streaming(self.streaming, cx);
+        composer.set_activity(self.activity, cx);
+        composer.set_agents(&self.agents, self.current, cx);
+        composer.set_switches(&self.switches, cx);
+        composer.set_usage(self.usage, cx);
+    }
 }
 
 /// Where the composer floats, and where anything standing in for it goes: out
@@ -1315,6 +1361,37 @@ impl Cydonia {
         )
     }
 
+    /// What floats at the foot of a session's transcript: the agent's plan, any
+    /// permission it is asking for, and `composer`. A press on it focuses
+    /// `press`, the pane it stands in, where one is given.
+    pub(crate) fn session_footer(
+        &self,
+        session: Option<u64>,
+        composer: gpui::Entity<composer::Composer>,
+        press: Option<Member>,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
+        let height = session
+            .and_then(|id| self.workspace.read(cx).session(id))
+            .map(|chat| chat.transcript.footer_height.clone());
+        footer(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(8.))
+                .when_some(press, |band, on| {
+                    band.on_mouse_down(
+                        gpui::MouseButton::Left,
+                        cx.listener(move |this, _, window, cx| this.focus_pane(&on, window, cx)),
+                    )
+                })
+                .children(self.plan(session, cx))
+                .children(self.permission(session, cx))
+                .child(composer),
+            height,
+        )
+    }
+
     /// The agent's plan, while it still has something left to do.
     pub(crate) fn plan(
         &self,
@@ -1494,15 +1571,13 @@ impl Cydonia {
 
     /// A pick from one of the composer's switches — the session's mode, or a
     /// config option like the model.
-    pub(crate) fn switch(
+    fn switch(
         &mut self,
+        session: u64,
         id: &composer::SwitchId,
         value: &SharedString,
         cx: &mut Context<Self>,
     ) {
-        let Some(session) = self.workspace.read(cx).active_session().map(|chat| chat.id) else {
-            return;
-        };
         let value = value.to_string();
         self.workspace.update(cx, |workspace, cx| match id {
             composer::SwitchId::Mode => workspace.set_session_mode(session, value, cx),

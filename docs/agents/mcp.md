@@ -32,13 +32,15 @@ external MCP client at it to reach the same projects the app has open.
 | --- | --- |
 | Projects | `project_open`, `project_close`, `project_entries`, `project_read_entry` |
 | Articles | `article_list`, `article_read`, `article_add`, `article_edit`, `article_rewrite`, `article_rename`, `article_move`, `article_set_cover`, `article_archive`, `article_remove` |
-| Boards | `board_list`, `board_read`, `board_add`, `board_rename`, `board_archive`, `board_remove`, `board_add_column`, `board_rename_column`, `board_move_column`, `board_remove_column`, `board_add_card`, `board_rewrite_card`, `board_move_card`, `board_remove_card`, `board_set_card_status` |
-| Sessions | `session_send`, `session_read`, `session_search` |
+| Boards | `board_list`, `board_search`, `board_read`, `board_add`, `board_rename`, `board_archive`, `board_remove`, `board_add_column`, `board_rename_column`, `board_move_column`, `board_remove_column`, `board_add_card`, `board_rewrite_card`, `board_move_card`, `board_remove_card`, `board_set_card_status` |
+| Sessions | `session_send`, `session_read`, `session_search`, `session_rename` |
 
 A board is named by its key (`ROAD`), its name or its id; a card by its handle
 (`ROAD-12`) or its id; a column by its name or its id; an article by its title
 or its id. The entry references from [Projects and entries](../working/projects.md) work
 wherever one of these is taken.
+
+Keys are unique within a project, not across projects. `board_search` takes a key, a handle or a name, or a list of them, and answers every open project holding a matching board; the board tools then take that project.
 
 Eight tools take a list where they take one thing, so a turn that touches several is one call: `project_close` takes several paths, `article_move` several articles, and `board_add_card`, `board_add_column`, `board_remove_card`, `board_remove_column`, `board_move_card` and `board_set_card_status` several cards or columns. Everything else about the call stays singular — one destination, one column, one board. They are all or nothing: every name is resolved before anything is written, so a list with a typo in it changes nothing.
 
@@ -47,6 +49,7 @@ Eight tools take a list where they take one thing, so a turn that touches severa
 - `session_send` queues a message as another session's next prompt, or starts a new session on a named agent with it. Nothing is waited for or answered back. A message sent from a session starts with `from #42:7`, the sender and the turn it was on.
 - `session_read` answers turns of a session, the last 3 when none are named. Each tool call is one line unless `full` is asked for.
 - `session_search` finds text case-insensitively in one session or every session in a project, archived ones included, and answers each matching turn as a reference such as `#43:5`, at most 20.
+- `session_rename` retitles the session that calls it, and no other. Where you titled the session yourself it is refused unless the agent sets `replace_user_title`, which it is told to do only when you asked for the rename; the new title then replaces yours.
 
 Agents are also offered `markdown` and `browser` resources. [What agents are told](./prompts.md) has their text, and the instructions that come with every prompt.
 

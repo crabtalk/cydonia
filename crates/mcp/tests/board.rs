@@ -314,7 +314,11 @@ fn a_read_only_server_offers_no_way_to_write() {
         .iter()
         .filter_map(|tool| tool["name"].as_str())
         .collect();
-    assert_eq!(names, ["board_list", "board_read"], "{names:?}");
+    assert_eq!(
+        names,
+        ["board_list", "board_search", "board_read"],
+        "{names:?}"
+    );
 
     let why = refused(server.call(
         "board_add_column",
@@ -855,4 +859,38 @@ fn busy_cards_record_the_calling_session_and_keep_it_when_cleared() {
         assert_eq!(card.status, None);
         assert_eq!(card.session.as_deref(), Some("working-session"));
     }
+}
+
+/// A key, or a handle on the board, finds the open project the board is in;
+/// several are asked in one call.
+#[test]
+fn a_board_is_found_across_open_projects() {
+    let here = Scratch::new("search-here");
+    let there = Scratch::new("search-there");
+    here.store()
+        .create_board("Development", "ZQA")
+        .expect("a board");
+    there
+        .store()
+        .create_board("Development", "ZQB")
+        .expect("a board");
+    let server = here.server();
+    Rail::also(there.path());
+
+    let text = said(server.call(
+        "board_search",
+        json!({ "board": ["ZQB-109", "zqa", "ZQC"] }),
+        None,
+    ));
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 3, "{text}");
+    assert!(
+        lines[0].ends_with(&there.path().display().to_string()),
+        "{text}"
+    );
+    assert!(
+        lines[1].ends_with(&here.path().display().to_string()),
+        "{text}"
+    );
+    assert!(lines[2].starts_with("no board ZQC"), "{text}");
 }

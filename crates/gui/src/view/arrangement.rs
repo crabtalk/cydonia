@@ -247,29 +247,10 @@ impl Cydonia {
                 .leaves
                 .iter()
                 .find(|leaf| leaf.entry.as_ref() == Some(&front))
+                // The band occludes the pane, so the pane's own press never
+                // sees one landing here.
                 .map(|leaf| {
-                    crate::view::detail::footer(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap(px(8.))
-                            // The band occludes the pane, so the pane's own
-                            // press never sees one landing here.
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener({
-                                    let on = front.clone();
-                                    move |this, _, window, cx| this.focus_pane(&on, window, cx)
-                                }),
-                            )
-                            .children(self.plan(Some(id), cx))
-                            .children(self.permission(Some(id), cx))
-                            .child(leaf.composer.clone()),
-                        self.workspace
-                            .read(cx)
-                            .session(id)
-                            .map(|chat| chat.transcript.footer_height.clone()),
-                    )
+                    self.session_footer(Some(id), leaf.composer.clone(), Some(front.clone()), cx)
                 }),
             _ => None,
         };
@@ -669,13 +650,8 @@ impl Cydonia {
             // edge, so with the sidebar gone it is this pane's. The tabs keep
             // the inset off it that they keep off the sidebar's edge.
             .children(fold.then(|| {
-                div()
-                    .flex_none()
+                self.fold_controls(cx)
                     .mr(px(crate::view::root::HEADER_INSET - BAR_GAP))
-                    .flex()
-                    .flex_row()
-                    .child(self.fold_toggle(cx))
-                    .child(self.history_buttons(cx))
                     .into_any_element()
             }))
             // The tabs in a strip of their own, which scrolls sideways once

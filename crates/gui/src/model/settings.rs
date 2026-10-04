@@ -176,6 +176,8 @@ pub struct Appearance {
     /// *has* been decided about carries the decision in its own
     /// `properties.toml` and ignores this.
     pub wide_pages: bool,
+    /// Whether an article offers its floating outline button.
+    pub outline: bool,
     /// How a new board is laid out. Every board carries its own answer from the
     /// moment it is made — see [`artifact::board::Board::view`] — so this seeds
     /// one and never steers it afterwards.
@@ -209,6 +211,9 @@ pub struct Appearance {
     pub caret: Option<Paint>,
     pub caret_shape: CaretShape,
     pub caret_height: CaretHeight,
+    /// Terminals draw the caret's shape and blink, and ignore the shape the
+    /// running program asks for.
+    pub terminal_caret: bool,
 }
 
 /// A preset colour: one of bezel's [`bezel::ui::color::default_swatches`],
@@ -478,6 +483,7 @@ impl Default for Appearance {
             blur: bezel::theme::Theme::WINDOW_BLUR,
             chroma: 0.,
             wide_pages: false,
+            outline: true,
             board_view: artifact::board::View::List,
             indent_project_rows: true,
             settings_sidebar_fits: false,
@@ -496,6 +502,7 @@ impl Default for Appearance {
             caret: None,
             caret_shape: CaretShape::default(),
             caret_height: CaretHeight::default(),
+            terminal_caret: true,
         }
     }
 }
@@ -1180,6 +1187,7 @@ fn write_appearance(doc: &mut toml_edit::DocumentMut, appearance: &Appearance) -
     held["blur"] = toml_edit::value(f64::from(appearance.blur));
     held["chroma"] = toml_edit::value(f64::from(appearance.chroma));
     held["wide_pages"] = toml_edit::value(appearance.wide_pages);
+    held["outline"] = toml_edit::value(appearance.outline);
     held["board_view"] = toml_edit::value(appearance.board_view.key());
     held["indent_project_rows"] = toml_edit::value(appearance.indent_project_rows);
     held["traffic_lights"] = toml_edit::value(appearance.traffic_lights);
@@ -1187,6 +1195,7 @@ fn write_appearance(doc: &mut toml_edit::DocumentMut, appearance: &Appearance) -
     held["scrollbars"] = toml_edit::value(appearance.scrollbars.key());
     held["caret_shape"] = toml_edit::value(appearance.caret_shape.key());
     held["caret_height"] = toml_edit::value(appearance.caret_height.key());
+    held["terminal_caret"] = toml_edit::value(appearance.terminal_caret);
     held["sidebar_scrollbars"] = toml_edit::value(appearance.sidebar_scrollbars.key());
     held["wrap_code"] = toml_edit::value(appearance.wrap_code);
     held["highlight"] = toml_edit::value(appearance.highlight.key());

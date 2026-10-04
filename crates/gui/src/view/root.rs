@@ -101,6 +101,15 @@ pub struct NewSessionWith {
     pub agent: String,
 }
 
+/// Open the space at `index` in the sidebar's order — `cmd-1` through
+/// `cmd-8` — or the last one for `None`, `cmd-9`. An index past the last space
+/// does nothing.
+#[derive(Clone, Debug, PartialEq, gpui::Action)]
+#[action(namespace = cydonia, no_json)]
+pub struct SwitchSpace {
+    pub index: Option<usize>,
+}
+
 /// Claimed on the rename field so `enter` files the name and `escape` drops it.
 const RENAME_CONTEXT: &str = "CydoniaSessionName";
 
@@ -226,39 +235,50 @@ pub(crate) fn toolbar_inset(window: &Window, cx: &App) -> f32 {
 /// answers to are bound from [`crate::view::keymap`], which is where they can
 /// be moved.
 pub fn bindings() -> Vec<KeyBinding> {
-    vec![
-        // What a browser binds its tabs to, and the only chord these answer to:
-        // the menu bar cannot draw it — gpui has no macOS equivalent for `tab`,
-        // so AppKit is handed the word where the API takes one character and
-        // shows ⌃T — and a chord it *can* draw is claimed by AppKit before the
-        // window is ever offered it.
-        //
-        // Scoped to the root rather than left contextless, so that a surface
-        // with a row of its own can take the chord for its own row: a binding
-        // with no predicate ranks at the depth of the whole stack, which puts
-        // it *above* every scoped one rather than below — see
-        // `Keymap::binding_enabled`. The `cmd-c` fallback below is the same
-        // trick for the same reason.
-        KeyBinding::new("ctrl-tab", NextEntry, Some("Cydonia")),
-        KeyBinding::new("ctrl-shift-tab", PrevEntry, Some("Cydonia")),
-        // The panes of a space, on the chords beside the ones that step
-        // through entries.
-        KeyBinding::new("ctrl-alt-tab", NextPane, Some("Cydonia")),
-        KeyBinding::new("ctrl-alt-shift-tab", PrevPane, Some("Cydonia")),
-        KeyBinding::new("ctrl-alt-w", ClosePane, Some("Cydonia")),
-        KeyBinding::new("ctrl-alt-z", ZoomPane, Some("Cydonia")),
-        // Scope the fallback to the root so focused text surfaces take priority.
+    let spaces = (1..=9).map(|n| {
         KeyBinding::new(
-            "secondary-c",
-            CopySelection,
-            Some(super::keymap::platform(
-                "Cydonia",
-                "Cydonia && !CydoniaTerminal",
-            )),
-        ),
-        KeyBinding::new("enter", CommitName, Some(RENAME_CONTEXT)),
-        KeyBinding::new("escape", DismissName, Some(RENAME_CONTEXT)),
-    ]
+            &format!("secondary-{n}"),
+            SwitchSpace {
+                index: (n < 9).then(|| n - 1),
+            },
+            Some("Cydonia"),
+        )
+    });
+    spaces
+        .chain([
+            // What a browser binds its tabs to, and the only chord these answer to:
+            // the menu bar cannot draw it — gpui has no macOS equivalent for `tab`,
+            // so AppKit is handed the word where the API takes one character and
+            // shows ⌃T — and a chord it *can* draw is claimed by AppKit before the
+            // window is ever offered it.
+            //
+            // Scoped to the root rather than left contextless, so that a surface
+            // with a row of its own can take the chord for its own row: a binding
+            // with no predicate ranks at the depth of the whole stack, which puts
+            // it *above* every scoped one rather than below — see
+            // `Keymap::binding_enabled`. The `cmd-c` fallback below is the same
+            // trick for the same reason.
+            KeyBinding::new("ctrl-tab", NextEntry, Some("Cydonia")),
+            KeyBinding::new("ctrl-shift-tab", PrevEntry, Some("Cydonia")),
+            // The panes of a space, on the chords beside the ones that step
+            // through entries.
+            KeyBinding::new("ctrl-alt-tab", NextPane, Some("Cydonia")),
+            KeyBinding::new("ctrl-alt-shift-tab", PrevPane, Some("Cydonia")),
+            KeyBinding::new("ctrl-alt-w", ClosePane, Some("Cydonia")),
+            KeyBinding::new("ctrl-alt-z", ZoomPane, Some("Cydonia")),
+            // Scope the fallback to the root so focused text surfaces take priority.
+            KeyBinding::new(
+                "secondary-c",
+                CopySelection,
+                Some(super::keymap::platform(
+                    "Cydonia",
+                    "Cydonia && !CydoniaTerminal",
+                )),
+            ),
+            KeyBinding::new("enter", CommitName, Some(RENAME_CONTEXT)),
+            KeyBinding::new("escape", DismissName, Some(RENAME_CONTEXT)),
+        ])
+        .collect()
 }
 
 impl Cydonia {
@@ -465,6 +485,10 @@ pub struct Cydonia {
     /// session's id — see [`super::entry_link`].
     pub(crate) session_cards:
         std::collections::HashMap<u64, Entity<super::component::composer::Composer>>,
+    /// The session whose card composer takes the focus once a frame has drawn
+    /// it. Focusing a composer that is not in the tree yet loses the focus to
+    /// the window on the next frame.
+    pub(crate) card_focus: Option<u64>,
     /// The pane the last press came down in: `None` for the one a window with
     /// no space open shows. Where a link opens — see
     /// [`Cydonia::open_reference`].
@@ -532,6 +556,9 @@ pub struct Cydonia {
     /// Whether the press now being handled landed on the open menu's own
     /// trigger — read by [`Cydonia::toggle_menu`] and nothing else.
     pub(crate) menu_pressed: bool,
+    /// Whether the pointer is over an open outline menu. Off it, the menu's
+    /// lit row follows the heading being read.
+    pub(crate) outline_hovered: bool,
     /// What the name field is attached to, and the field itself.
     pub(crate) renaming: Option<Renaming>,
     pub(crate) name_field: Entity<TextField>,
@@ -594,28 +621,8 @@ impl Cydonia {
                 {
                     this.focus_pane(&on, window, cx);
                 }
-                match event {
-                    ComposerEvent::Submit(text, attachments) => {
-                        this.submit(text.clone(), attachments.clone(), cx)
-                    }
-                    ComposerEvent::Draft(id, draft) => {
-                        this.workspace.update(cx, |workspace, cx| {
-                            workspace.set_draft(*id, draft.clone(), cx)
-                        });
-                    }
-                    ComposerEvent::Cancel => this.cancel_turn(cx),
-                    ComposerEvent::Reconnect => {
-                        this.workspace.update(cx, |workspace, cx| {
-                            if let Some(id) = workspace.active_id() {
-                                workspace.select_session(id, cx);
-                            }
-                        });
-                    }
-                    ComposerEvent::Terminal => this.show_terminal(window, cx),
-                    ComposerEvent::Changes => this.show_changes(window, cx),
-                    ComposerEvent::Files => this.show_files(window, cx),
-                    ComposerEvent::Switch(id, value) => this.switch(id, value, cx),
-                }
+                let session = this.workspace.read(cx).active_id();
+                this.composer_event(session, event, window, cx);
             },
         )
         .detach();
@@ -1024,6 +1031,7 @@ impl Cydonia {
             card_docs: Default::default(),
             history: Default::default(),
             session_cards: Default::default(),
+            card_focus: None,
             pressed_pane: None,
             #[cfg(feature = "desktop")]
             settings_window: None,
@@ -1059,6 +1067,7 @@ impl Cydonia {
             list_hovered: None,
             menu_cursor: Cursor::default(),
             menu_pressed: false,
+            outline_hovered: false,
             renaming: None,
             name_field,
             search: crate::view::search::Search::new(cx),
@@ -1623,6 +1632,16 @@ impl Render for Cydonia {
                 gpui::MouseButton::Navigate(gpui::NavigationDirection::Forward),
                 cx.listener(|this, _, window, cx| this.go_forward(&GoForward, window, cx)),
             )
+            .on_action(cx.listener(|this, at: &SwitchSpace, window, cx| {
+                let workspace = this.workspace.read(cx);
+                let last = workspace.spaces.len().checked_sub(1);
+                let Some(ix) = at.index.or(last).filter(|ix| Some(*ix) <= last) else {
+                    return;
+                };
+                if workspace.space != Some(ix) {
+                    this.open_space(ix, window, cx);
+                }
+            }))
             .on_action(cx.listener(|this, _: &NextPane, window, cx| this.step_pane(1, window, cx)))
             .on_action(cx.listener(|this, _: &PrevPane, window, cx| this.step_pane(-1, window, cx)))
             .on_action(

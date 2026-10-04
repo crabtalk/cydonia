@@ -3,7 +3,7 @@ archived = false
 name = "Launch"
 key = "LAUNCH"
 next_handle = 8
-view = "lanes"
+view = "list"
 
 [[columns]]
 id = "1790000000201"

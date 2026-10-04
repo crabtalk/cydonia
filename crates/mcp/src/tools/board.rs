@@ -38,6 +38,11 @@ const BOARDS: Arg = Arg {
     name: "board",
     about: "The board, or several: each its project reference (#12), key, name or id.",
 };
+/// What [`search`] looks for, across every open project rather than in one.
+const SOUGHT: Arg = Arg {
+    name: "board",
+    about: "The board, or several: each its key (ROAD), a card handle on it (ROAD-12), or its name.",
+};
 /// Which way the switch goes — the same wording `article::ARCHIVED` carries,
 /// because it is the same act on the other surface.
 const ARCHIVED: Arg = Arg {
@@ -129,7 +134,7 @@ const KEY_NOW: Arg = Arg {
     about: "A new key for card handles, such as ROAD. Every handle on the board is read off it, so ROAD-12 becomes BACK-12. Left out, the key does not change.",
 };
 
-pub static TOOLS: [Tool; 15] = [
+pub static TOOLS: [Tool; 16] = [
     Tool {
         name: "board_add",
         description: "Create a board with a name and unique key. Returns its id, project number, key, and columns. Use board_add_column to add columns.",
@@ -145,6 +150,18 @@ pub static TOOLS: [Tool; 15] = [
         writes: false,
         deletes: false,
         call: list,
+    },
+    Tool {
+        name: "board_search",
+        description: "Find which open project a board is in, by its key (ROAD), a card handle on it (ROAD-12) or its name. Answers every board that matches, with its project's path to pass to the other board tools.",
+        schema: |_| {
+            let mut schema = fields(false, &[SOUGHT]);
+            many(&mut schema, SOUGHT);
+            schema
+        },
+        writes: false,
+        deletes: false,
+        call: search,
     },
     Tool {
         name: "board_rename",
@@ -447,6 +464,57 @@ fn list(args: Args<'_>) -> Outcome {
         })
         .collect::<Vec<_>>();
     Ok(Answer::said(listing(&boards)).with(json!({ "boards": data })))
+}
+
+fn search(args: Args<'_>) -> Outcome {
+    let open = crate::rail::open();
+    if open.is_empty() {
+        return Err(Trouble::Refused("cydonia has no project open".into()));
+    }
+    let boards: Vec<(std::path::PathBuf, Board)> = open
+        .iter()
+        .flat_map(|path| {
+            fs::Project::new(path)
+                .boards()
+                .into_iter()
+                .map(move |board| (path.clone(), board))
+        })
+        .collect();
+    let mut said = Vec::new();
+    let mut data = Vec::new();
+    for needle in args.list(SOUGHT)? {
+        let needle = needle.trim();
+        // A handle's key is before its last dash, as in [`locate`].
+        let key = match needle.rsplit_once('-') {
+            Some((key, number)) if number.parse::<u64>().is_ok() => key,
+            _ => needle,
+        };
+        let found: Vec<&(std::path::PathBuf, Board)> = boards
+            .iter()
+            .filter(|(_, board)| same(&board.key, key) || same(&board.name, needle))
+            .collect();
+        if found.is_empty() {
+            said.push(format!("no board {needle} in any open project"));
+        }
+        for (path, board) in found {
+            said.push(format!(
+                "{needle}: {} ({}) in {}",
+                board.label(),
+                board.key,
+                path.display()
+            ));
+            data.push(json!({
+                "sought": needle,
+                "project": path,
+                "id": board.id,
+                "number": board.number,
+                "key": board.key,
+                "name": board.name,
+                "archived": board.archived,
+            }));
+        }
+    }
+    Ok(Answer::said(said.join("\n")).with(json!({ "boards": data })))
 }
 
 fn read(args: Args<'_>) -> Outcome {

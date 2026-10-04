@@ -29,6 +29,10 @@ use bezel::{
 };
 use std::{collections::HashMap, path::PathBuf};
 
+/// Whether the right panel is up for a directory nothing was saved for: up on
+/// the desktop, down in the browser build.
+const UNSAVED_PANEL_OPEN: bool = cfg!(feature = "desktop");
+
 gpui::actions!(
     session_panel,
     [
@@ -1131,7 +1135,8 @@ impl Cydonia {
             Some(cwd) => match self.changes_shown.get(cwd) {
                 Some(open) => *open,
                 None => {
-                    let open = persistence::saved_panel(cwd).is_none_or(|saved| saved.open);
+                    let open = persistence::saved_panel(cwd)
+                        .map_or(UNSAVED_PANEL_OPEN, |saved| saved.open);
                     self.changes_shown.insert(cwd.clone(), open);
                     open
                 }

@@ -266,3 +266,79 @@ fn a_message_from_a_session_is_signed_with_its_turn() {
         message: format!("from {from}:2\n\nfoo"),
     }));
 }
+
+/// A session filed in `scratch` titled `title`, and named `name` by the user
+/// where one is given. Answers its record id.
+fn titled(scratch: &Scratch, title: &str, name: Option<&str>) -> String {
+    use artifact::project::Project as _;
+    let store = scratch.store();
+    let record = store.create_session().unwrap();
+    let filed: artifact::session::record::Record = serde_json::from_value(json!({
+        "id": record, "agent": "claude", "title": title, "name": name,
+        "updated": 0, "items": [],
+    }))
+    .unwrap();
+    store.save_session(&filed).unwrap();
+    record
+}
+
+#[test]
+fn a_session_renames_itself() {
+    let scratch = Scratch::new("session-rename");
+    let server = scratch.server();
+    let rail = Rail;
+    let record = titled(&scratch, "Old", None);
+
+    said(server.call_from(
+        "session_rename",
+        json!({ "title": " New " }),
+        Some(scratch.path()),
+        Some(&record),
+    ));
+
+    assert!(rail.was_asked(Change::Rename {
+        session: record,
+        title: "New".to_owned(),
+    }));
+}
+
+#[test]
+fn a_title_the_user_gave_is_replaced_only_when_asked() {
+    let scratch = Scratch::new("session-rename-named");
+    let server = scratch.server();
+    let rail = Rail;
+    let record = titled(&scratch, "Old", Some("Mine"));
+
+    let why = refused(server.call_from(
+        "session_rename",
+        json!({ "title": "New" }),
+        Some(scratch.path()),
+        Some(&record),
+    ));
+    assert!(why.contains("\"Mine\""), "{why}");
+
+    said(server.call_from(
+        "session_rename",
+        json!({ "title": "New", "replace_user_title": true }),
+        Some(scratch.path()),
+        Some(&record),
+    ));
+    assert!(rail.was_asked(Change::Rename {
+        session: record,
+        title: "New".to_owned(),
+    }));
+}
+
+#[test]
+fn a_caller_that_is_not_a_session_cannot_rename() {
+    let scratch = Scratch::new("session-rename-nobody");
+    let server = scratch.server();
+
+    let why = refused(server.call(
+        "session_rename",
+        json!({ "title": "New" }),
+        Some(scratch.path()),
+    ));
+
+    assert!(why.contains("not one"), "{why}");
+}

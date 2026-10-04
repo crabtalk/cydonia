@@ -110,7 +110,7 @@ fn long_session_renders_nearby_turns_and_navigates_without_losing_selection(
     });
     let focus = workspace.update(&mut visual, |workspace, cx| {
         workspace.with_session(1, cx, |chat| {
-            let doc = markdown::parse("a selectable reply");
+            let doc = std::rc::Rc::new(markdown::parse("a selectable reply"));
             chat.transcript.point(
                 600,
                 selectable::Pointer::Down(

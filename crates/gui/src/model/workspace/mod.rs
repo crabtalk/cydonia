@@ -231,6 +231,7 @@ impl Workspace {
             this.watch_project(ix, cx);
         }
         this.open_last_entry(cx);
+        this.bring_up_space(cx);
         this.load_agent_icons(cx);
         this.refresh_door();
         cx.set_global(this.settings.browser.clone());
@@ -333,6 +334,7 @@ impl Workspace {
             blur: self.settings.appearance.blur,
             chroma: self.tint.chroma,
             wide_pages: self.wide_pages,
+            outline: self.settings.appearance.outline,
             board_view: self.board_view,
             indent_project_rows: self.indent_project_rows,
             settings_sidebar_fits: self.settings.appearance.settings_sidebar_fits,
@@ -346,6 +348,7 @@ impl Workspace {
             caret: self.settings.appearance.caret,
             caret_shape: self.settings.appearance.caret_shape,
             caret_height: self.settings.appearance.caret_height,
+            terminal_caret: self.settings.appearance.terminal_caret,
         });
     }
 
@@ -785,6 +788,13 @@ impl Workspace {
         cx.notify();
     }
 
+    pub fn set_terminal_caret(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.settings.appearance.terminal_caret = on;
+        crate::model::fonts::set_terminal_caret(on, cx);
+        self.save_appearance();
+        cx.notify();
+    }
+
     pub fn set_caret_height(&mut self, height: settings::CaretHeight, cx: &mut Context<Self>) {
         self.settings.appearance.caret_height = height;
         cx.set_caret_height(height.into());
@@ -849,6 +859,12 @@ impl Workspace {
     /// the rest follow this.
     pub fn set_wide_pages(&mut self, wide: bool, cx: &mut Context<Self>) {
         self.wide_pages = wide;
+        self.save_appearance();
+        cx.notify();
+    }
+
+    pub fn set_outline(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.settings.appearance.outline = on;
         self.save_appearance();
         cx.notify();
     }

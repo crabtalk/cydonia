@@ -12,11 +12,11 @@
 
 	let { children } = $props();
 
-	// The docs stand a sidebar and a contents column beside the page, which
-	// needs more room than the marketing pages want. The foot follows that
-	// width. The bar is 1400px, and the full window on the docs.
+	// The docs are as wide as the bar, 1400px; the home page 1200px, the other
+	// pages 1080px. The foot follows the page's width.
 	const docs = $derived(page.url.pathname.startsWith('/docs'));
-	const shell = $derived(docs ? '1400px' : '1080px');
+	const home = $derived(page.url.pathname === `${base}/` || page.url.pathname === base);
+	const shell = $derived(docs ? '1400px' : home ? '1200px' : '1080px');
 
 	// One delegated handler for the whole site: every `.code-block` gets a working
 	// copy button without an `onclick` of its own.

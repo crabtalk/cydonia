@@ -16,9 +16,9 @@ use gui::{
     boot,
     model::{
         disk, language,
-        settings::{Agent, Settings},
+        settings::{Agent, Appearance, Settings},
         spaces,
-        state::State,
+        state::{self, State},
         store, welcome,
     },
     view::root,
@@ -28,13 +28,15 @@ use wasm_bindgen::prelude::wasm_bindgen;
 
 include!(concat!(env!("OUT_DIR"), "/prepared.rs"));
 
-/// The faces gpui-web resolves its defaults to: `.SystemUIFont` and `.ZedSans`
-/// to IBM Plex Sans, `.ZedMono` to Lilex. The browser has no system fonts, and
-/// text drawn outside the theme — a drag preview — asks for these by name.
+/// The faces the demo draws with: Inter, set as the interface family in
+/// [`start`], and Lilex, which gpui-web resolves `.ZedMono` to. The browser
+/// has no system fonts. gpui-web resolves `.SystemUIFont` and `.ZedSans` to
+/// IBM Plex Sans, which is not bundled, so text drawn outside the theme — a
+/// drag preview — falls back.
 const FONTS: [&[u8]; 5] = [
-    include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf"),
-    include_bytes!("../assets/fonts/IBMPlexSans-SemiBold.ttf"),
-    include_bytes!("../assets/fonts/IBMPlexSans-Italic.ttf"),
+    include_bytes!("../assets/fonts/Inter-Regular.ttf"),
+    include_bytes!("../assets/fonts/Inter-SemiBold.ttf"),
+    include_bytes!("../assets/fonts/Inter-Italic.ttf"),
     include_bytes!("../assets/fonts/Lilex-Regular.ttf"),
     include_bytes!("../assets/fonts/Lilex-Bold.ttf"),
 ];
@@ -104,16 +106,20 @@ fn show(text: &str) {
     }
 }
 
-/// The tour's article beside its board, with the session behind the board's
-/// cards under it.
-fn tour_space() {
-    let article = fs::Project::new(TOUR)
+/// The tour's article, by the id the app names it with: its path.
+fn tour_article() -> String {
+    fs::Project::new(TOUR)
         .cydonia()
-        .join("articles/1790000000100/content.md");
-    let article = Member::new(TOUR, Kind::Article, article.to_string_lossy());
-    let Some(mut space) = spaces::create("Tour", article.clone()) else {
-        return;
-    };
+        .join("articles/1790000000100/content.md")
+        .to_string_lossy()
+        .into_owned()
+}
+
+/// The tour's article beside its board, with the session behind the board's
+/// cards under it. Returns the space's id.
+fn tour_space() -> Option<String> {
+    let article = Member::new(TOUR, Kind::Article, tour_article());
+    let mut space = spaces::create("Tour", article.clone())?;
     space.tree = Node::split(
         Axis::Horizontal,
         vec![
@@ -128,6 +134,19 @@ fn tour_space() {
         ],
     );
     spaces::save(&mut space);
+    Some(space.id)
+}
+
+/// The `show` parameter of the page's query: what the window opens on, for a
+/// host page that frames one entry at a time. `article`, `board`, `session`
+/// and `space` open the tour's; anything else, or none, the welcome project.
+fn shown() -> Option<String> {
+    let search = web_sys::window()?.location().search().ok()?;
+    search
+        .trim_start_matches('?')
+        .split('&')
+        .find_map(|pair| pair.strip_prefix("show="))
+        .map(str::to_owned)
 }
 
 #[wasm_bindgen(start)]
@@ -140,7 +159,7 @@ pub fn start() {
     language::prepare(PREPARED);
     store::seed(PROJECT, memory::Project::seed(welcome::files()));
     store::seed(TOUR, memory::Project::seed(TOUR_FILES));
-    tour_space();
+    let space = tour_space();
     disk::seed(PROJECT.as_ref(), WELCOME_TREE);
     disk::seed(TOUR.as_ref(), TOUR_TREE);
 
@@ -154,13 +173,32 @@ pub fn start() {
             args: Vec::new(),
             env: Default::default(),
         }],
+        appearance: Appearance {
+            ui_font: Some("Inter".into()),
+            ..Default::default()
+        },
         ..Settings::default()
     };
-    let state = State {
+    let mut state = State {
         projects: vec![PROJECT.into(), TOUR.into()],
         last: [(PROJECT.into(), welcome::landing(PROJECT.as_ref()))].into(),
         ..State::default()
     };
+    let tour = |kind, id: String| state::Entry { kind, id };
+    let entry = match shown().as_deref() {
+        Some("article") => Some(tour(state::Kind::Article, tour_article())),
+        Some("board") => Some(tour(state::Kind::Board, "1790000000200".into())),
+        Some("session") => Some(tour(state::Kind::Session, "1790000000300".into())),
+        Some("space") => {
+            state.space = space;
+            None
+        }
+        _ => None,
+    };
+    if let Some(entry) = entry {
+        state.active = 1;
+        state.last.insert(TOUR.into(), entry);
+    }
     let platform = Rc::new(gpui_web::WebPlatform::new(false));
     let http_client = Arc::new(platform.fetch_http_client());
     let handle = Application::with_platform(platform)

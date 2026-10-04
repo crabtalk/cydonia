@@ -60,6 +60,8 @@ pub(crate) enum Menu {
     Turn,
     /// The `···` on a card, by card id.
     Card(String),
+    /// An article's outline, by the article's file — a space can show several.
+    Outline(std::path::PathBuf),
 }
 
 /// One row of a menu, and what picking it does.
@@ -221,6 +223,18 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        self.menu_panel(id, rows, window, cx).into_any_element()
+    }
+
+    /// [`Cydonia::menu_card`] before it is erased, for a menu that sizes its
+    /// own card.
+    pub(crate) fn menu_panel(
+        &self,
+        id: impl Into<SharedString>,
+        rows: Vec<(Item, Act)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
         let theme = Theme::of(cx).clone();
         let (items, acts): (Vec<Item>, Vec<Act>) = rows.into_iter().unzip();
         // A hit names a row by its path, and reading one back means holding
@@ -255,6 +269,5 @@ impl Cydonia {
                 }
             },
         )
-        .into_any_element()
     }
 }

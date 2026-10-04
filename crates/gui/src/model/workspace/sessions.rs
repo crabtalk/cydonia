@@ -4,6 +4,7 @@
 //! `use super::*`: these methods work on the same struct and reach the same
 //! names as the rest of it.
 use super::*;
+use crate::model::session_preferences;
 use artifact::project::Project as _;
 
 impl Workspace {
@@ -193,10 +194,11 @@ impl Workspace {
     /// in, and what an agent reports on connect — its modes, its model — is
     /// what the composer needs before the first prompt rather than after it.
     ///
-    /// Only ever the one in front. Every other session a project holds stays
-    /// idle, which is what still keeps a launch from starting an agent per
-    /// transcript. An archived one stays where it was put.
-    pub(super) fn wake_session(&mut self, id: u64, cx: &mut Context<Self>) {
+    /// Only the one in front, or one a composer asks to reconnect. Every other
+    /// session a project holds stays idle, which is what still keeps a launch
+    /// from starting an agent per transcript. An archived one stays where it
+    /// was put.
+    pub(crate) fn wake_session(&mut self, id: u64, cx: &mut Context<Self>) {
         if !self.settings.features.sessions {
             return;
         }
@@ -223,7 +225,9 @@ impl Workspace {
     /// `settings.toml` comes back readable but cannot reconnect.
     pub(super) fn restore_sessions(&mut self, ix: usize) {
         let path = self.projects[ix].path.clone();
-        for stored in self.projects[ix].store().sessions() {
+        let records = self.projects[ix].store().sessions();
+        let _ = session_preferences::keep_sessions(&path, records.iter().map(|r| r.id.as_str()));
+        for stored in records {
             let id = self.next_id;
             self.next_id += 1;
             let entry = super::named(
@@ -368,6 +372,21 @@ impl Workspace {
         self.prune_archived(cx);
     }
 
+    /// An agent's rename of its own session: the user's name where the user
+    /// gave one, else the agent's title.
+    pub fn retitle_record(&mut self, record: &str, title: String, cx: &mut Context<Self>) {
+        let Some(id) = self.session_by_record(record).map(|chat| chat.id) else {
+            return;
+        };
+        self.with_session(id, cx, |chat| {
+            match chat.name {
+                Some(_) => chat.name = Some(title),
+                None => chat.title = title,
+            }
+            chat.flush();
+        });
+    }
+
     pub fn close_session(&mut self, id: u64, cx: &mut Context<Self>) {
         let Some(project) = self.project_of(id).map(|ix| &mut self.projects[ix]) else {
             return;
@@ -376,6 +395,7 @@ impl Workspace {
         // the row back on the next launch.
         if let Some(record) = project.session(id).and_then(|chat| chat.record.clone()) {
             let _ = project.store().remove_session(&record);
+            let _ = session_preferences::forget_session(&project.path, &record);
         }
         project.sessions.retain(|chat| chat.id != id);
         if project.active == Some(id) {

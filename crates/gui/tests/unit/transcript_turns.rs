@@ -128,7 +128,7 @@ fn selecting_message_text_takes_focus_from_the_composer(cx: &mut gpui::TestAppCo
 fn only_the_item_the_press_landed_in_is_told_it_is_dragging() {
     use bezel::ui::input::Granularity;
     use markdown::{Cursor, Part};
-    let doc = markdown::parse("a reply");
+    let doc = std::rc::Rc::new(markdown::parse("a reply"));
     let mut state = State::default();
     assert!(!state.dragging_in(0));
     state.point(

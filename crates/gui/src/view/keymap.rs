@@ -19,7 +19,7 @@
 use crate::{
     model::settings::Shortcuts,
     view::{
-        article::{self, TogglePlainText},
+        article::{self, ToggleOutline, TogglePlainText},
         board,
         component::{composer, ribbon},
         create,
@@ -67,6 +67,7 @@ pub enum Command {
     NextEntry,
     PrevEntry,
     PlainText,
+    Outline,
     FindCard,
     FindNext,
     FindPrev,
@@ -98,7 +99,7 @@ impl Menu {
 }
 
 impl Command {
-    pub const ALL: [Self; 22] = [
+    pub const ALL: [Self; 23] = [
         Self::OpenSettings,
         Self::NewSession,
         Self::NewSessionNext,
@@ -115,6 +116,7 @@ impl Command {
         Self::NextEntry,
         Self::PrevEntry,
         Self::PlainText,
+        Self::Outline,
         Self::FindCard,
         Self::FindNext,
         Self::FindPrev,
@@ -142,6 +144,7 @@ impl Command {
             Self::NextEntry => "next_entry",
             Self::PrevEntry => "prev_entry",
             Self::PlainText => "plain_text",
+            Self::Outline => "outline",
             Self::FindCard => "find_card",
             Self::FindNext => "find_next",
             Self::FindPrev => "find_prev",
@@ -170,6 +173,7 @@ impl Command {
             Self::NextEntry => "Next Entry",
             Self::PrevEntry => "Previous Entry",
             Self::PlainText => "Plain Text",
+            Self::Outline => "Outline",
             Self::FindCard => "Find",
             Self::FindNext => "Find Next",
             Self::FindPrev => "Find Previous",
@@ -197,6 +201,7 @@ impl Command {
             | Self::NextEntry
             | Self::PrevEntry
             | Self::PlainText
+            | Self::Outline
             | Self::FindCard
             | Self::FindNext
             | Self::FindPrev
@@ -233,6 +238,7 @@ impl Command {
             Self::OpenFiles => "secondary-shift-f",
             Self::OpenReview => "alt-secondary-g",
             Self::PlainText => "secondary-e",
+            Self::Outline => "alt-secondary-o",
             Self::FindCard => "secondary-f",
             Self::FindNext => "secondary-g",
             Self::FindPrev => "secondary-shift-g",
@@ -267,6 +273,7 @@ impl Command {
             Self::GoBack => KeyBinding::new(chord, GoBack, context),
             Self::GoForward => KeyBinding::new(chord, GoForward, context),
             Self::PlainText => KeyBinding::new(chord, TogglePlainText, context),
+            Self::Outline => KeyBinding::new(chord, ToggleOutline, context),
             Self::FindNext => KeyBinding::new(chord, FindNext, context),
             Self::FindPrev => KeyBinding::new(chord, FindPrev, context),
             // Everywhere but the files panel, which holds ⌘F for its own

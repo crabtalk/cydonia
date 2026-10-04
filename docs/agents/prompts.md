@@ -17,7 +17,7 @@ Each prompt you send a session carries a context block, `cydonia://session/conte
 | Part | Covers | Source |
 | --- | --- | --- |
 | Workspace introduction | What Cydonia is, and reading resources before Cydonia formats | [`workspace.md`](https://github.com/crabtalk/cydonia/blob/main/crates/prompts/instructions/workspace.md) |
-| Artifact rules | Entries and how to name them, files under `.cydonia/`, cards you work on | [`artifacts.md`](https://github.com/crabtalk/cydonia/blob/main/crates/prompts/instructions/artifacts.md) |
+| Artifact rules | Entries and how to name them, files under `.cydonia/`, where to check out git worktrees, cards you work on | [`artifacts.md`](https://github.com/crabtalk/cydonia/blob/main/crates/prompts/instructions/artifacts.md) |
 
 ## As MCP server instructions
 

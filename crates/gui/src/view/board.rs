@@ -103,7 +103,10 @@ const LIST_HANDLE_WIDTH: f32 = 64.;
 /// does not fit in this much of a lane is read by opening it.
 const CARD_MAX_HEIGHT: f32 = 140.;
 
-/// The widest a list row in flight is drawn; a longer title ends in `…`.
+/// How wide a list row in flight is drawn; a longer title ends in `…`.
+///
+/// A width, not a cap: gpui lays a drag view out at its min-content size, and
+/// a truncated title's min-content is nothing.
 const HELD_ROW_WIDTH: f32 = 360.;
 
 /// Where the card editor would start scrolling inside itself. Set past any
@@ -725,7 +728,8 @@ pub(crate) fn ghost(
 ) -> AnyElement {
     enum Held {
         Card(String, Option<PathBuf>),
-        Row(SharedString),
+        /// A list row's handle, if it is a card's, and its title.
+        Row(Option<String>, SharedString),
     }
     let held = root.upgrade().and_then(|root| {
         let root = root.read(cx);
@@ -736,10 +740,15 @@ pub(crate) fn ghost(
                 let text = board.card(card)?.text.clone();
                 match board.view {
                     View::Lanes => Held::Card(text, root.card_base(project, cx)),
-                    View::List => Held::Row(root.card_docs.title(&text)),
+                    View::List => Held::Row(
+                        board.card(card).and_then(|card| board.handle_of(card)),
+                        root.card_docs.title(&text),
+                    ),
                 }
             }
-            BoardItem::Lane(_, column) => Held::Row(board.column(column)?.name.clone().into()),
+            BoardItem::Lane(_, column) => {
+                Held::Row(None, board.column(column)?.name.clone().into())
+            }
         })
     });
     let theme = Theme::of(cx).clone();
@@ -759,14 +768,24 @@ pub(crate) fn ghost(
                 cx,
             ))
             .into_any_element(),
-        Some(Held::Row(title)) => frame
-            .max_w(px(HELD_ROW_WIDTH))
+        Some(Held::Row(handle, title)) => frame
+            .w(px(HELD_ROW_WIDTH))
             .h(px(LIST_ROW_HEIGHT))
             .flex()
             .items_center()
             .px(px(12.))
             .text_style(TextStyle::Callout)
             .text_color(theme.text)
+            .gap(px(8.))
+            .children(handle.map(|handle| {
+                div()
+                    .flex_none()
+                    .w(px(LIST_HANDLE_WIDTH))
+                    .text_style(TextStyle::Caption)
+                    .font_family(theme.font_mono.clone())
+                    .text_color(theme.text_faint)
+                    .child(handle)
+            }))
             .child(div().min_w_0().truncate().child(title))
             .surface(&theme, SurfaceStyle::Glass(Glass::Regular))
             .into_any_element(),
