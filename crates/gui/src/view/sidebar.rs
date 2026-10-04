@@ -503,8 +503,7 @@ impl Cydonia {
                         band.pl_0()
                     })
                     .children(chrome::caption(CaptionSide::Left, window, cx))
-                    .child(self.fold_toggle(cx))
-                    .child(self.history_buttons(cx))
+                    .child(self.fold_controls(cx))
                     .child(chrome::grip("sidebar-grip", &self.drag, window)),
             )
             .child(self.search_row(cx))
@@ -659,6 +658,19 @@ impl Cydonia {
             .flex_none()
             .tooltip(move |window, cx| Tooltip::text(label, window, cx))
             .on_click(cx.listener(|this, _, _, cx| this.toggle_sidebar(cx)))
+    }
+
+    /// The fold with back and forward beside it. Every band along the
+    /// window's left edge places this one element, so the three stand in the
+    /// same spots whether the sidebar is open or folded.
+    pub(crate) fn fold_controls(&self, cx: &mut Context<Self>) -> Div {
+        div()
+            .flex_none()
+            .flex()
+            .flex_row()
+            .items_center()
+            .child(self.fold_toggle(cx))
+            .child(self.history_buttons(cx))
     }
 
     /// The rows as one drag region over the list: an entry moves within the

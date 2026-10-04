@@ -669,13 +669,8 @@ impl Cydonia {
             // edge, so with the sidebar gone it is this pane's. The tabs keep
             // the inset off it that they keep off the sidebar's edge.
             .children(fold.then(|| {
-                div()
-                    .flex_none()
+                self.fold_controls(cx)
                     .mr(px(crate::view::root::HEADER_INSET - BAR_GAP))
-                    .flex()
-                    .flex_row()
-                    .child(self.fold_toggle(cx))
-                    .child(self.history_buttons(cx))
                     .into_any_element()
             }))
             // The tabs in a strip of their own, which scrolls sideways once
