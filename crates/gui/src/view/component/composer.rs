@@ -816,13 +816,18 @@ impl Composer {
         }
     }
 
+    /// With no picker open the key is the field's caret motion, so it is
+    /// passed on rather than swallowed.
     fn step(&mut self, delta: isize, cx: &mut Context<Self>) {
         match &mut self.completing {
             Some(Completing::Command) => self.filter.step(delta),
             Some(Completing::Mention { rows, active, .. }) => {
                 *active = popover::menu_step(*active, rows.len(), delta);
             }
-            None => {}
+            None => {
+                cx.propagate();
+                return;
+            }
         }
         self.reveal();
         cx.notify();
