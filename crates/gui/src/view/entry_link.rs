@@ -17,7 +17,7 @@ use crate::{
             composer::{Composer, ComposerEvent},
             transcript,
         },
-        detail::footer,
+        detail::{Pointing, composer_agents},
         root::Cydonia,
         search::{Linked, kind_icon},
         sidebar::Row,
@@ -202,7 +202,12 @@ pub(crate) fn slash_items(workspace: &crate::model::workspace::Workspace) -> Vec
                 if let Some((id, reference)) = made {
                     at.editor
                         .update(cx, |editor, cx| {
-                            editor.place_block(at.block, embed(&reference), cx)
+                            editor.place_block(at.block, embed(&reference), cx);
+                            // The card's composer takes the focus once it is
+                            // drawn, and a block below the fold is not built.
+                            editor.layouts().reveal(markdown::Selection::at(
+                                markdown::Cursor::new(at.block, markdown::Part::Body, 0),
+                            ));
                         })
                         .ok();
                     root.update(cx, |root, cx| {
@@ -314,10 +319,11 @@ impl Cydonia {
                         ..
                     },
                 turns,
+                number,
                 ..
             }) if form == Form::Embed => match turns {
-                None => self.session_live(id, window, cx),
-                Some(turns) => self.session_excerpt(id, turns, window, cx),
+                None => self.session_live(id, number, window, cx),
+                Some(turns) => self.session_excerpt(id, number, turns, window, cx),
             },
             Ok(named) => self.entry_row(named, cx),
             Err(why) => div()
@@ -426,7 +432,7 @@ impl Cydonia {
 
     /// A session's name, its agent and whether it is working, and the button
     /// that opens it in a pane.
-    fn session_header(&self, id: u64, cx: &mut Context<Self>) -> AnyElement {
+    fn session_header(&self, id: u64, number: u64, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let (title, agent, streaming) = self
             .workspace
@@ -461,8 +467,8 @@ impl Cydonia {
                     .text_style(TextStyle::Caption)
                     .text_color(theme.text_faint)
                     .child(match streaming {
-                        true => format!("{agent} · working"),
-                        false => agent,
+                        true => format!("{agent} · #{number} · working"),
+                        false => format!("{agent} · #{number}"),
                     }),
             )
             .child(
@@ -481,8 +487,14 @@ impl Cydonia {
     /// any permission asked and a composer that sends to it floating over the
     /// transcript's foot. A picture dropped anywhere on it goes to that
     /// composer.
-    fn session_live(&mut self, id: u64, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let header = self.session_header(id, cx);
+    fn session_live(
+        &mut self,
+        id: u64,
+        number: u64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let header = self.session_header(id, number, cx);
         let transcript = self.session_transcript(id, None, window, cx);
         div()
             .flex()
@@ -509,23 +521,19 @@ impl Cydonia {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let composer = self.session_composer(id, window, cx);
-        let (transcript, footer_height) =
-            self.workspace
-                .update(cx, |workspace, cx| match workspace.session(id) {
-                    Some(chat) => (
-                        Some(transcript::render(
-                            chat,
-                            None,
-                            CARD_WIDTH,
-                            |_, _| None,
-                            transcript::Drawn::Nested(list),
-                            window,
-                            cx,
-                        )),
-                        Some(chat.transcript.footer_height.clone()),
-                    ),
-                    None => (None, None),
-                });
+        let transcript = self.workspace.update(cx, |workspace, cx| {
+            workspace.session(id).map(|chat| {
+                transcript::render(
+                    chat,
+                    None,
+                    CARD_WIDTH,
+                    |_, _| None,
+                    transcript::Drawn::Nested(list),
+                    window,
+                    cx,
+                )
+            })
+        });
         if self.card_focus == Some(id) {
             self.card_focus = None;
             let focus = composer.focus_handle(cx);
@@ -546,16 +554,7 @@ impl Cydonia {
             .flex()
             .flex_col()
             .children(transcript)
-            .child(footer(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(8.))
-                    .children(self.plan(Some(id), cx))
-                    .children(self.permission(Some(id), cx))
-                    .child(composer),
-                footer_height,
-            ))
+            .child(self.session_footer(Some(id), composer, None, cx))
             .into_any_element()
     }
 
@@ -566,6 +565,7 @@ impl Cydonia {
     fn session_excerpt(
         &mut self,
         id: u64,
+        number: u64,
         turns: Turns,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -631,8 +631,8 @@ impl Cydonia {
                     .text_style(TextStyle::Caption)
                     .text_color(theme.text_faint)
                     .child(match note {
-                        Some(note) => format!("{agent} · {range} · {note}"),
-                        None => format!("{agent} · {range}"),
+                        Some(note) => format!("{agent} · #{number} · {range} · {note}"),
+                        None => format!("{agent} · #{number} · {range}"),
                     }),
             )
             .on_click(cx.listener(move |this, _, window, cx| {
@@ -707,47 +707,19 @@ impl Cydonia {
             return composer.clone();
         }
         let composer = cx.new(Composer::new);
-        let draft = self
-            .workspace
-            .read(cx)
-            .session(id)
-            .map(|chat| chat.draft.clone())
-            .unwrap_or_default();
+        let point = {
+            let workspace = self.workspace.read(cx);
+            Pointing::of(workspace.session(id), &composer_agents(workspace))
+        };
         composer.update(cx, |composer, cx| {
             composer.set_tools(false, cx);
-            composer.set_session(Some(id), &draft, cx);
+            point.apply(composer, cx);
         });
         cx.subscribe_in(
             &composer,
             window,
-            move |this, _, event: &ComposerEvent, _, cx| match event {
-                ComposerEvent::Submit(text, attachments) => {
-                    this.workspace
-                        .update(cx, |workspace, cx| match attachments.is_empty() {
-                            true => workspace.send(id, text.clone(), cx),
-                            false => workspace.send_attached(id, text.clone(), attachments, cx),
-                        });
-                    if let Some(chat) = this.workspace.read(cx).session(id) {
-                        chat.transcript.follow_tail();
-                    }
-                }
-                ComposerEvent::Draft(id, draft) => {
-                    this.workspace.update(cx, |workspace, cx| {
-                        workspace.set_draft(*id, draft.clone(), cx)
-                    });
-                }
-                ComposerEvent::Cancel => {
-                    this.workspace.update(cx, |workspace, cx| {
-                        workspace.with_session(id, cx, |chat| chat.cancel())
-                    });
-                }
-                // TODO: reconnect and switches act on the active session; a
-                // card's composer does not offer them yet.
-                ComposerEvent::Reconnect
-                | ComposerEvent::Switch(..)
-                | ComposerEvent::Terminal
-                | ComposerEvent::Changes
-                | ComposerEvent::Files => {}
+            move |this, _, event: &ComposerEvent, window, cx| {
+                this.composer_event(Some(id), event, window, cx)
             },
         )
         .detach();
@@ -762,27 +734,21 @@ impl Cydonia {
         let workspace = self.workspace.read(cx);
         let items = slash_items(workspace);
         let linkables = crate::view::mention::read(workspace);
+        let agents = composer_agents(workspace);
         let pointed: Vec<_> = self
             .session_cards
             .iter()
             .map(|(id, composer)| {
-                let chat = workspace.session(*id);
                 (
                     composer.clone(),
-                    chat.map(|chat| chat.draft.clone()).unwrap_or_default(),
-                    chat.map(|chat| chat.commands.clone()).unwrap_or_default(),
-                    chat.is_some_and(|chat| chat.streaming),
+                    Pointing::of(workspace.session(*id), &agents),
                 )
             })
             .collect();
         editor::AppExt::set_slash_items(&mut **cx, items);
         cx.set_global(linkables);
-        for (composer, draft, commands, streaming) in pointed {
-            composer.update(cx, |composer, cx| {
-                composer.set_session(composer.session(), &draft, cx);
-                composer.set_commands(&commands, cx);
-                composer.set_streaming(streaming, cx);
-            });
+        for (composer, point) in pointed {
+            composer.update(cx, |composer, cx| point.apply(composer, cx));
         }
     }
 }

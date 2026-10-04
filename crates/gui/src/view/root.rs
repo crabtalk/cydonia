@@ -621,28 +621,8 @@ impl Cydonia {
                 {
                     this.focus_pane(&on, window, cx);
                 }
-                match event {
-                    ComposerEvent::Submit(text, attachments) => {
-                        this.submit(text.clone(), attachments.clone(), cx)
-                    }
-                    ComposerEvent::Draft(id, draft) => {
-                        this.workspace.update(cx, |workspace, cx| {
-                            workspace.set_draft(*id, draft.clone(), cx)
-                        });
-                    }
-                    ComposerEvent::Cancel => this.cancel_turn(cx),
-                    ComposerEvent::Reconnect => {
-                        this.workspace.update(cx, |workspace, cx| {
-                            if let Some(id) = workspace.active_id() {
-                                workspace.select_session(id, cx);
-                            }
-                        });
-                    }
-                    ComposerEvent::Terminal => this.show_terminal(window, cx),
-                    ComposerEvent::Changes => this.show_changes(window, cx),
-                    ComposerEvent::Files => this.show_files(window, cx),
-                    ComposerEvent::Switch(id, value) => this.switch(id, value, cx),
-                }
+                let session = this.workspace.read(cx).active_id();
+                this.composer_event(session, event, window, cx);
             },
         )
         .detach();

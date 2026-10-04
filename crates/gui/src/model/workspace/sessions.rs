@@ -194,10 +194,11 @@ impl Workspace {
     /// in, and what an agent reports on connect — its modes, its model — is
     /// what the composer needs before the first prompt rather than after it.
     ///
-    /// Only ever the one in front. Every other session a project holds stays
-    /// idle, which is what still keeps a launch from starting an agent per
-    /// transcript. An archived one stays where it was put.
-    pub(super) fn wake_session(&mut self, id: u64, cx: &mut Context<Self>) {
+    /// Only the one in front, or one a composer asks to reconnect. Every other
+    /// session a project holds stays idle, which is what still keeps a launch
+    /// from starting an agent per transcript. An archived one stays where it
+    /// was put.
+    pub(crate) fn wake_session(&mut self, id: u64, cx: &mut Context<Self>) {
         if !self.settings.features.sessions {
             return;
         }
