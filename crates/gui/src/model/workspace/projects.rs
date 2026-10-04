@@ -35,6 +35,9 @@ impl Workspace {
                         Change::Send { session, message } => {
                             workspace.send_to_record(&session, message, cx)
                         }
+                        Change::Rename { session, title } => {
+                            workspace.retitle_record(&session, title, cx)
+                        }
                         Change::Start {
                             project,
                             agent,

@@ -35,6 +35,12 @@ pub enum Change {
         session: String,
         message: String,
     },
+    /// A new title for the session filed under `session`: in the user's slot
+    /// where the user named it, else in the agent's.
+    Rename {
+        session: String,
+        title: String,
+    },
     /// A new session in `project` on the agent `settings.toml` names `agent`,
     /// with `message` as its first prompt.
     Start {

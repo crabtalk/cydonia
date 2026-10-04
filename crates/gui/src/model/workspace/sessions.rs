@@ -371,6 +371,21 @@ impl Workspace {
         self.prune_archived(cx);
     }
 
+    /// An agent's rename of its own session: the user's name where the user
+    /// gave one, else the agent's title.
+    pub fn retitle_record(&mut self, record: &str, title: String, cx: &mut Context<Self>) {
+        let Some(id) = self.session_by_record(record).map(|chat| chat.id) else {
+            return;
+        };
+        self.with_session(id, cx, |chat| {
+            match chat.name {
+                Some(_) => chat.name = Some(title),
+                None => chat.title = title,
+            }
+            chat.flush();
+        });
+    }
+
     pub fn close_session(&mut self, id: u64, cx: &mut Context<Self>) {
         let Some(project) = self.project_of(id).map(|ix| &mut self.projects[ix]) else {
             return;
