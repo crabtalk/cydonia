@@ -1,5 +1,32 @@
 [
   {
+    "version": "0.1.25",
+    "date": "2026-10-04",
+    "nightly": true,
+    "summary": "A floating heading outline in articles, @ mentions as chips, the app caret in terminals, and live session cards that match the session pane.",
+    "new": [
+      "Float a heading outline over articles that tracks the reading position, and switch spaces with ⌘ and a number",
+      "Write @ mentions as chips in the session composer, matched by partial references across open projects, with kind icons and agent logos",
+      "Draw the app caret's shape and blink in terminals, painting the terminal cursor in the caret colour",
+      "Let agents retitle their own session, and find which open project a board key belongs to",
+      "Show a session card's entry number in its title bar"
+    ],
+    "changed": [
+      "Give session cards in articles the session pane's status line, model and mode switches, context usage and reconnect",
+      "Tell agents to check out worktrees under .cydonia/worktrees, and to write above a session card that ends an article",
+      "Build on Bezel 0.2.8 from crates.io"
+    ],
+    "fixed": [
+      "Focus a new session card's composer from the slash menu and scroll the article to it",
+      "Keep the focus where it is when a project is re-read",
+      "Scroll the transcript while a selection drag is held past its top or bottom edge",
+      "Keep back and forward in place across the sidebar toggle",
+      "Carry a board list row at a set width with its handle ahead of the title",
+      "Pass up and down to the composer field when no picker is open",
+      "Prune the preferences of deleted sessions"
+    ]
+  },
+  {
     "version": "0.1.24",
     "date": "2026-10-03",
     "summary": "Entry links across articles, sessions and boards, window-wide back and forward, and pictures dropped anywhere on a session.",
