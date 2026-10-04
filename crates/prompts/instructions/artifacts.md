@@ -14,6 +14,11 @@
 - In assets/, use unique filenames and preserve existing files unless replacement or removal is requested.
 - This exception does not override read-only settings or filesystem permissions, and does not grant filesystem access to remote clients.
 
+## Git worktrees
+
+- Check out a git worktree at .cydonia/worktrees/<name> in the project directory, unless the user names another location.
+- Reuse a worktree already there for the same work rather than adding a second one.
+
 ## Cards you work on
 
 A request that names a card is a card you are working.

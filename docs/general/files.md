@@ -6,7 +6,7 @@ description: The three directories Cydonia reads and writes.
 ```
 ~/.config/cydonia/   settings.toml, state.toml, mcp.toml, the agent catalogue cache
 ~/.local/share/      installed agents
-<project>/.cydonia/  that project's articles, boards, tables, sessions and store
+<project>/.cydonia/  that project's articles, boards, tables, sessions, store and agents' worktrees
 ```
 
 ## The project store
@@ -14,6 +14,8 @@ description: The three directories Cydonia reads and writes.
 `<project>/.cydonia/` holds everything written about that project, and carries a
 `.gitignore` of its own — none of it is the project's source. Copy the directory
 and the project's articles and boards come with it.
+
+Agents are told to check out git worktrees under `<project>/.cydonia/worktrees/`, which that `.gitignore` keeps out of the repo.
 
 ## Configuration
 
