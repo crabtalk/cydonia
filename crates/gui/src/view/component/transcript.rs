@@ -54,6 +54,11 @@ const CONTENT_MAX_WIDTH: f32 = 720.;
 /// floating composer on top of it, so the last message scrolls clear of it.
 const PAD: f32 = 28.;
 
+/// How often a selection drag held past the stream's top or bottom edge
+/// scrolls it, and the most one tick moves however far past the pointer is.
+const EDGE_SCROLL_TICK: Duration = Duration::from_millis(16);
+const EDGE_SCROLL_MAX: f32 = 48.;
+
 /// The rail's marks, down the left of the pane: one dash per turn, how far it
 /// stands off the edge, and the padding that carries both the gap between two
 /// marks and the hitbox — a two-pixel line is not something a pointer catches.
@@ -130,6 +135,12 @@ pub struct State {
     /// The unit the press selected by and the span it took, while the button
     /// is down. A move only extends a selection a press started.
     pressed: Option<(Granularity, Range<Cursor>)>,
+    /// The text the press came down in, for extending it without a move.
+    pressed_doc: Option<Rc<Doc>>,
+    /// Where the pointer is while the button is down, in window coordinates.
+    drag: Option<bezel::gpui::Point<Pixels>>,
+    /// Scrolls the stream while the drag is held past its top or bottom edge.
+    edge_scroll: Option<Task<()>>,
     /// What each item painted, so a press can be resolved against what is on
     /// screen rather than against the source.
     ///
@@ -223,12 +234,13 @@ impl State {
     /// Answer the pointer over item `ix`, whose text is `doc`. A press selects
     /// the unit under it there and drops whatever another item held; a move
     /// extends by that unit.
-    pub fn point(&mut self, ix: usize, pointer: Pointer, doc: &Doc) {
+    pub fn point(&mut self, ix: usize, pointer: Pointer, doc: &Rc<Doc>) {
         match pointer {
             Pointer::Down(cursor, unit) => {
                 let span = cursor.span(unit, doc);
                 self.selection = Some((ix, Selection::new(span.start, span.end)));
                 self.pressed = Some((unit, span));
+                self.pressed_doc = Some(doc.clone());
             }
             Pointer::Move(cursor) => {
                 let held = self.selection.is_some_and(|(item, _)| item == ix);
@@ -244,6 +256,51 @@ impl State {
     /// The button came up: whatever the selection had become is what it is.
     pub fn release(&mut self) {
         self.pressed = None;
+        self.pressed_doc = None;
+        self.drag = None;
+        self.edge_scroll = None;
+    }
+
+    /// How far one edge-scroll tick moves the stream: negative up, positive
+    /// down, zero while the drag is over it or no press is held.
+    fn edge_step(&self) -> f32 {
+        let Some(drag) = self.drag.filter(|_| self.pressed.is_some()) else {
+            return 0.;
+        };
+        let viewport = self.list.state.viewport_bounds();
+        // The composer floats over the bottom of the stream.
+        let bottom = viewport.bottom() - self.footer_height.get();
+        let past = if drag.y < viewport.top() {
+            f32::from(drag.y - viewport.top())
+        } else if drag.y > bottom {
+            f32::from(drag.y - bottom)
+        } else {
+            return 0.;
+        };
+        (past / 2.).clamp(-EDGE_SCROLL_MAX, EDGE_SCROLL_MAX)
+    }
+
+    /// Scroll by one edge-scroll step and extend the selection to the pointer.
+    /// Answers whether the drag is still past an edge.
+    fn edge_scroll_tick(&mut self) -> bool {
+        let step = self.edge_step();
+        if step == 0. {
+            self.edge_scroll = None;
+            return false;
+        }
+        if step < 0. {
+            self.list
+                .state
+                .set_follow_mode(bezel::gpui::FollowMode::Normal);
+        }
+        self.list.state.scroll_by(px(step));
+        if let (Some((ix, _)), Some(doc), Some(drag)) =
+            (self.selection, self.pressed_doc.clone(), self.drag)
+            && let Some(cursor) = self.layouts(ix).hit(drag)
+        {
+            self.point(ix, Pointer::Move(cursor), &doc);
+        }
+        true
     }
 
     /// Where the bar over a selection stands: the last row the run painted, in
@@ -267,7 +324,7 @@ impl State {
     /// Drop the run, and the bar over it with it.
     pub fn clear_selection(&mut self) {
         self.selection = None;
-        self.pressed = None;
+        self.release();
     }
 
     /// What is selected, as it would be pasted, or nothing when a press
@@ -651,6 +708,7 @@ pub fn render(
     list.set_end_inset(footer_height);
     let workspace = cx.entity().downgrade();
     let visible_workspace = workspace.clone();
+    let edge_workspace = workspace.clone();
     let count = turns.len();
     let virtual_content = list.render(
         move |index, window, cx| {
@@ -724,6 +782,30 @@ pub fn render(
         .flex()
         // The list owns the scrollbar, so only its rows constrain content width.
         .child(follow::viewport(&list.state, virtual_content))
+        // Registered in the paint phase: a drag past the stream is off every
+        // hitbox in it.
+        .children((own && chat.transcript.pressed.is_some()).then(|| {
+            canvas(
+                |_, _, _| (),
+                move |_, _, window, _| {
+                    let workspace = edge_workspace.clone();
+                    window.on_mouse_event(
+                        move |event: &bezel::gpui::MouseMoveEvent, phase, _, cx| {
+                            if phase != bezel::gpui::DispatchPhase::Bubble
+                                || event.pressed_button != Some(bezel::gpui::MouseButton::Left)
+                            {
+                                return;
+                            }
+                            let _ = workspace.update(cx, |workspace, cx| {
+                                drag(workspace, id, event.position, cx)
+                            });
+                        },
+                    );
+                },
+            )
+            .absolute()
+            .size_0()
+        }))
         .children(own.then(|| {
             rail(
                 chat,
@@ -779,6 +861,38 @@ pub fn render(
         .child(transcript)
         .children(chat.transcript.preview.borrow().clone())
         .into_any_element()
+}
+
+/// Follow a held press to `position`, and scroll the stream while it is past
+/// the top or bottom edge.
+fn drag(
+    workspace: &mut Workspace,
+    id: u64,
+    position: bezel::gpui::Point<Pixels>,
+    cx: &mut Context<Workspace>,
+) {
+    let start = Cell::new(false);
+    workspace.with_session(id, cx, |chat| {
+        let transcript = &mut chat.transcript;
+        transcript.drag = Some(position);
+        start.set(transcript.edge_scroll.is_none() && transcript.edge_step() != 0.);
+    });
+    if !start.get() {
+        return;
+    }
+    let task = cx.spawn(async move |workspace, cx| {
+        loop {
+            cx.background_executor().timer(EDGE_SCROLL_TICK).await;
+            let more = Cell::new(false);
+            let alive = workspace.update(cx, |workspace, cx| {
+                workspace.with_session(id, cx, |chat| more.set(chat.transcript.edge_scroll_tick()));
+            });
+            if alive.is_err() || !more.get() {
+                return;
+            }
+        }
+    });
+    workspace.with_session(id, cx, |chat| chat.transcript.edge_scroll = Some(task));
 }
 
 /// Turns `from..to` of a session (0-based, clipped to what it holds), drawn
