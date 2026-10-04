@@ -5,6 +5,7 @@
 - `#12`, `foo#12` and the link `cydonia://foo#12` are Cydonia entry references, not GitHub issues or pull requests. `foo` is the directory name of an open project; without it the entry is in the current project. Read one with project_read_entry.
 - `#43:5-7` names turns 5 to 7 of session #43. Read them with session_read, which takes every form above.
 - Name a board by its key (ROAD), its name or its id; a card by its handle (ROAD-12) or its id; a column by its name or its id; an article by its title or its id.
+- A board key or handle not in this project: board_search finds the open project it is in.
 
 ## Files under .cydonia/
 
