@@ -2,7 +2,6 @@
   {
     "version": "0.1.24",
     "date": "2026-10-03",
-    "nightly": true,
     "summary": "Entry links across articles, sessions and boards, window-wide back and forward, and pictures dropped anywhere on a session.",
     "new": [
       "Link sessions, articles and boards with @ in articles and the session composer, shown as chips and cards, with session excerpts and links to single turns",

@@ -26,7 +26,8 @@ use crate::{
 use artifact::{reference::Turns, search::Kind};
 use bezel::{
     gpui::{
-        self, AnyElement, App, Context, MouseButton, SharedString, Window, div, prelude::*, px,
+        self, AnyElement, App, Context, Focusable, MouseButton, SharedString, Window, div,
+        prelude::*, px,
     },
     theme::{TextStyle, Theme, Typeset},
     ui::{
@@ -195,15 +196,19 @@ pub(crate) fn slash_items(workspace: &crate::model::workspace::Workspace) -> Vec
                             .cloned()?;
                         let id = workspace.new_session_behind(entry, cx)?;
                         workspace.mint_record(id)?;
-                        workspace.reference_of_session(id)
+                        Some((id, workspace.reference_of_session(id)?))
                     })
                 });
-                if let Some(reference) = made {
+                if let Some((id, reference)) = made {
                     at.editor
                         .update(cx, |editor, cx| {
                             editor.place_block(at.block, embed(&reference), cx)
                         })
                         .ok();
+                    root.update(cx, |root, cx| {
+                        let composer = root.session_composer(id, window, cx);
+                        window.focus(&composer.focus_handle(cx), cx);
+                    });
                 }
             };
             SlashRow {
