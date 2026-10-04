@@ -1,8 +1,9 @@
 // Stamps the demo's JS and wasm URLs in the built index.html with a hash of both
-// files, so a browser cannot pair the glue of one build with the wasm of another.
+// files, so a browser cannot pair the glue of one build with the wasm of another,
+// and writes the wasm's size in for the loading bar.
 // Runs on build/, after `vite build`; static/demo/index.html keeps bare URLs.
 import { createHash } from 'node:crypto';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, statSync, writeFileSync } from 'node:fs';
 
 const dir = 'build/demo';
 const hash = createHash('sha256')
@@ -15,8 +16,13 @@ const path = `${dir}/index.html`;
 const source = readFileSync(path, 'utf8');
 const stamped = source
 	.replace("from './cydonia_demo.js'", `from './cydonia_demo.js?v=${hash}'`)
-	.replace('init()', `init({ module_or_path: './cydonia_demo_bg.wasm?v=${hash}' })`);
-if (!stamped.includes(`cydonia_demo.js?v=${hash}`) || !stamped.includes(`cydonia_demo_bg.wasm?v=${hash}`)) {
-	throw new Error(`stamp-demo: expected import or init() not found in ${path}`);
+	.replace("const WASM = './cydonia_demo_bg.wasm';", `const WASM = './cydonia_demo_bg.wasm?v=${hash}';`)
+	.replace('const WASM_BYTES = 0;', `const WASM_BYTES = ${statSync(`${dir}/cydonia_demo_bg.wasm`).size};`);
+if (
+	!stamped.includes(`cydonia_demo.js?v=${hash}`) ||
+	!stamped.includes(`cydonia_demo_bg.wasm?v=${hash}`) ||
+	stamped.includes('const WASM_BYTES = 0;')
+) {
+	throw new Error(`stamp-demo: expected import, WASM or WASM_BYTES not found in ${path}`);
 }
 writeFileSync(path, stamped);

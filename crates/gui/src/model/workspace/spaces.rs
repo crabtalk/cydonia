@@ -154,6 +154,7 @@ impl Workspace {
             self.open_project(path, cx);
         }
         self.space = Some(ix);
+        self.bring_up_space(cx);
         self.save();
         cx.notify();
     }
@@ -652,33 +653,21 @@ impl Workspace {
     /// The four slots are what every command without a pane of its own reads,
     /// so this is what makes the focused pane the one they act on.
     ///
-    /// Each kind is brought up to what drawing it needs, because putting a
-    /// pane on an entry is the whole of how one arrives here — a drop, a tab
-    /// coming forward, a space opening — and the `open_*` calls are only the
-    /// sidebar's route. An article with no editor draws as the front door and
-    /// an archived board draws as an empty one, so neither can be left to
-    /// whoever asked.
+    /// The entry is brought up to what drawing it needs first — see
+    /// [`Self::bring_up`].
     pub fn select_showing(&mut self, project: usize, showing: Showing, cx: &mut Context<Self>) {
-        // Read before the project is borrowed for the rest of this.
-        let text_size = self.article_font_size();
+        let drawable = self.bring_up(project, &showing, cx);
         let Some(open) = self.projects.get_mut(project) else {
             return;
         };
         match &showing {
             Showing::Session(id) => open.active = Some(*id),
             Showing::Board(id) => {
-                if let Some(ix) = open.board_ix(id)
-                    && open.load_board(id)
-                {
-                    open.board = Some(ix);
+                if drawable {
+                    open.board = open.board_ix(id);
                 }
             }
-            Showing::Article(id) => {
-                if let Some(ix) = open.article_ix(id) {
-                    open.articles[ix].open(text_size, cx);
-                    open.article = Some(ix);
-                }
-            }
+            Showing::Article(id) => open.article = open.article_ix(id),
             Showing::Table(key) => {
                 if let Some(ix) = open.table_ix(key) {
                     open.table = Some(ix);
@@ -691,6 +680,46 @@ impl Workspace {
             self.wake_session(id, cx);
         }
         cx.notify();
+    }
+
+    /// Bring an entry up to what drawing it in a pane needs, without selecting
+    /// it. An article with no editor draws as the front door and an archived
+    /// board draws as an empty one. `false` where the entry is not there to
+    /// draw: no such project, or a board that would not load.
+    fn bring_up(&mut self, project: usize, showing: &Showing, cx: &mut Context<Self>) -> bool {
+        // Read before the project is borrowed for the rest of this.
+        let text_size = self.article_font_size();
+        let Some(open) = self.projects.get_mut(project) else {
+            return false;
+        };
+        match showing {
+            Showing::Board(id) => open.board_ix(id).is_some() && open.load_board(id),
+            Showing::Article(id) => {
+                if let Some(ix) = open.article_ix(id) {
+                    open.articles[ix].open(text_size, cx);
+                }
+                true
+            }
+            Showing::Session(_) | Showing::Table(_) => true,
+        }
+    }
+
+    /// Bring every pane of the open space up to what drawing it needs — each
+    /// pane's front entry, focused or not. For entering a space, which puts
+    /// all of them on screen at once.
+    pub(crate) fn bring_up_space(&mut self, cx: &mut Context<Self>) {
+        let Some(space) = self.active_space() else {
+            return;
+        };
+        let showing: Vec<_> = space
+            .tree
+            .panes()
+            .iter()
+            .filter_map(|member| self.showing_of(member))
+            .collect();
+        for (project, showing) in showing {
+            self.bring_up(project, &showing, cx);
+        }
     }
 
     /// Change the open space and write it back, if the change took.

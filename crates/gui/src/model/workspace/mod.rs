@@ -231,6 +231,7 @@ impl Workspace {
             this.watch_project(ix, cx);
         }
         this.open_last_entry(cx);
+        this.bring_up_space(cx);
         this.load_agent_icons(cx);
         this.refresh_door();
         cx.set_global(this.settings.browser.clone());

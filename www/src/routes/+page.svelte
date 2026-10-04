@@ -3,6 +3,7 @@
 	import { siGithub } from 'simple-icons';
 	import DownloadPanel from '$lib/DownloadPanel.svelte';
 	import Demo from '$lib/Demo.svelte';
+	import Media from '$lib/Media.svelte';
 	import Brand from '$lib/Brand.svelte';
 	import Crab from '$lib/Crab.svelte';
 	import Files from '$lib/Files.svelte';
@@ -42,6 +43,20 @@
 		}
 	];
 
+	// What the tour's frame opens on, one at a time; `show` is the demo's.
+	const tours = [
+		{ show: 'article', title: 'Article', body: 'Markdown documents with covers, highlighted code and links to everything else in the project.' },
+		{ show: 'board', title: 'Board', body: 'Cards in columns, each one a task an agent can be handed.' },
+		{ show: 'session', title: 'Session', body: 'An agent working in the project, its transcript kept beside what it wrote.' },
+		{ show: 'space', title: 'Space', body: 'Articles, boards and sessions split side by side in one window.' }
+	];
+
+	let shown = $state(tours[0].show);
+	let tour = $derived(tours.find((entry) => entry.show === shown));
+
+	function pick(next) {
+		shown = next.show;
+	}
 
 	// The outline follows the reel: whichever scene owns the middle of the
 	// viewport is the one it marks.
@@ -119,7 +134,9 @@
 	</div>
 
 	<figure class="feature">
-		<Demo media={featureMedia} />
+		{#if featureMedia}
+			<Media media={featureMedia} />
+		{/if}
 		{#if latest}
 			<figcaption>
 				{#if latest.summary}
@@ -131,6 +148,29 @@
 			</figcaption>
 		{/if}
 	</figure>
+</section>
+
+<section class="tour">
+	<span class="kicker">Inside</span>
+	<div class="split">
+		<h2>One window for what you write and who writes it.</h2>
+		<p>{tour.body}</p>
+	</div>
+
+	<div class="surface">
+		<div class="strip" role="tablist">
+			{#each tours as entry (entry.show)}
+				<button
+					type="button"
+					role="tab"
+					aria-selected={shown === entry.show}
+					class:on={shown === entry.show}
+					onclick={() => pick(entry)}>{entry.title}</button
+				>
+			{/each}
+		</div>
+		<Demo show={tour.show} />
+	</div>
 </section>
 
 {#if showcase}
@@ -318,7 +358,7 @@
 	}
 
 	section {
-		max-width: 1080px;
+		max-width: calc(1200px + 2 * var(--gutter));
 		margin: 0 auto;
 		padding: 0 var(--gutter);
 	}
@@ -356,6 +396,10 @@
 		margin: 0;
 	}
 
+
+	.feature :global(.media) {
+		margin: 0;
+	}
 
 	.feature figcaption {
 		display: flex;
@@ -420,6 +464,82 @@
 		margin: 20px 0 0;
 		color: var(--faint);
 		font-size: 14px;
+	}
+
+	.tour {
+		padding-top: clamp(80px, 11vw, 144px);
+	}
+
+	.kicker {
+		color: var(--faint);
+		font-family: var(--mono);
+		font-size: 12px;
+		letter-spacing: 0.16em;
+		text-transform: uppercase;
+	}
+
+	/* The claim on the left, the picked entry's line on the right. */
+	.split {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: 24px 48px;
+		margin: 12px 0 36px;
+	}
+
+	.split h2 {
+		max-width: 22ch;
+		margin: 0;
+		font-size: clamp(24px, 3vw, 32px);
+		font-weight: 600;
+		letter-spacing: -0.03em;
+		text-wrap: balance;
+	}
+
+	.split p {
+		max-width: 46ch;
+		margin: 0;
+		color: var(--muted);
+		line-height: 1.6;
+	}
+
+	.strip {
+		display: flex;
+		gap: 2px;
+		margin-bottom: 12px;
+	}
+
+	.strip button {
+		height: 26px;
+		padding: 0 10px;
+		border: 0;
+		border-radius: var(--radius);
+		background: none;
+		color: var(--muted);
+		font: inherit;
+		font-size: 13px;
+		font-weight: 500;
+		cursor: pointer;
+		transition:
+			background 0.12s,
+			color 0.12s;
+	}
+
+	@media (hover: hover) {
+		.strip button:hover {
+			background: var(--panel);
+			color: var(--text);
+		}
+	}
+
+	.strip button:focus-visible {
+		outline: 2px solid var(--text);
+		outline-offset: 1px;
+	}
+
+	.strip button.on {
+		background: var(--panel-high);
+		color: var(--text);
 	}
 
 	.scenes {
@@ -605,10 +725,12 @@
 		.reel {
 			gap: 64px;
 		}
+
 	}
 
 	@media (max-width: 720px) {
 		.say,
+		.split,
 		.feature figcaption {
 			flex-direction: column;
 			align-items: flex-start;
