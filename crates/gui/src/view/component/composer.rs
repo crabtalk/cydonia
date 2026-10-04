@@ -23,7 +23,7 @@ use bezel::{
     theme::{Glass, SurfaceStyle, TextStyle, Theme, Typeset},
     ui::{
         icons::{self, Icon},
-        input::{self, FieldEvent, Shape, TextField},
+        input::{self, Chip, FieldEvent, Shape, TextField},
         menu::{self, Cursor, Hit, Item},
         popover,
         surface::{self, Surfaced as _},
@@ -228,12 +228,44 @@ fn mention_at(content: &str, caret: usize) -> Option<usize> {
     (opens_word && !before[at + 1..].contains(char::is_whitespace)).then_some(at)
 }
 
-/// A title as Markdown link text.
-fn escape_label(label: &str) -> String {
-    label
-        .replace('\\', "\\\\")
-        .replace('[', "\\[")
-        .replace(']', "\\]")
+/// The chips in `text`: each `[label](cydonia://… "chip")` that names an
+/// entry, painted as the entry's mark and title.
+fn mention_chips(text: &str, cx: &App) -> Vec<Chip> {
+    use pulldown_cmark::{Event, Parser, Tag};
+    Parser::new(text)
+        .into_offset_iter()
+        .filter_map(|(event, range)| match event {
+            Event::Start(Tag::Link {
+                dest_url, title, ..
+            }) if &*title == "chip" => {
+                let preview = mention::preview(&dest_url, cx)?;
+                Some(Chip {
+                    range,
+                    glyph: preview.glyph?,
+                    title: preview.title?,
+                })
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// `label` linking `url` as a chip, in the Markdown an article writes for one.
+fn mention_chip(label: &str, url: &str) -> String {
+    let chip = markdown::Text {
+        text: label.to_owned(),
+        marks: vec![markdown::MarkSpan {
+            range: 0..label.len(),
+            mark: markdown::Mark::Mention {
+                url: url.to_owned(),
+                form: markdown::Form::Chip,
+            },
+        }],
+    };
+    let doc = markdown::Doc {
+        blocks: vec![markdown::Block::new(markdown::BlockKind::Paragraph(chip))],
+    };
+    markdown::serialize(&doc).trim_end().to_owned()
 }
 
 pub struct Composer {
@@ -394,8 +426,7 @@ impl Composer {
         } else {
             draft.to_owned()
         };
-        self.field
-            .update(cx, |field, cx| field.set_content(draft, cx));
+        self.set_text(draft, cx);
         self.reread(cx);
         cx.notify();
     }
@@ -413,8 +444,7 @@ impl Composer {
         } else {
             format!("{text}\n\n{draft}")
         };
-        self.field
-            .update(cx, |field, cx| field.set_content(content, cx));
+        self.set_text(content, cx);
         self.reread(cx);
         window.focus(&self.focus_handle(cx), cx);
         cx.notify();
@@ -716,29 +746,37 @@ impl Composer {
         cx.notify();
     }
 
+    /// Set the field's text, with its mention chips drawn as chips.
+    fn set_text(&mut self, text: impl Into<SharedString>, cx: &mut Context<Self>) {
+        let text = text.into();
+        let chips = mention_chips(&text, cx);
+        self.field.update(cx, |field, cx| {
+            field.set_content(text, cx);
+            field.set_chips(chips, cx);
+        });
+    }
+
     /// Replace the typed `/query` with the picked command.
     fn accept(&mut self, item: usize, cx: &mut Context<Self>) {
         let content = self.field.read(cx).content().clone();
         let caret = self.field.read(cx).cursor().min(content.len());
         let picked = format!("{} ", self.filter.items()[item]);
         let rest = content[caret..].to_string();
-        self.field
-            .update(cx, |field, cx| field.set_content(picked + &rest, cx));
+        self.set_text(picked + &rest, cx);
         self.completing = None;
         cx.notify();
     }
 
-    /// Replace the typed `@query` with a Markdown link to the picked entry.
+    /// Replace the typed `@query` with a chip linking the picked entry.
     fn accept_mention(&mut self, at: usize, row: &Mention, cx: &mut Context<Self>) {
         let content = self.field.read(cx).content().clone();
         let caret = self.field.read(cx).cursor().min(content.len());
-        let link = format!("[{}]({}) ", escape_label(&row.label), row.url);
+        let link = format!("{} ", mention_chip(&row.label, &row.url));
         let end = at + link.len();
         let text = format!("{}{link}{}", &content[..at], &content[caret..]);
-        self.field.update(cx, |field, cx| {
-            field.set_content(text, cx);
-            field.select(end..end, cx);
-        });
+        self.set_text(text, cx);
+        self.field
+            .update(cx, |field, cx| field.select(end..end, cx));
         self.completing = None;
         cx.notify();
     }

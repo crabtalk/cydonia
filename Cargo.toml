@@ -31,6 +31,7 @@ markdown = { version = "0.2.7", package = "bezel-markdown" }
 mcp = { version = "0.1.16", path = "crates/mcp", package = "cydonia-mcp", default-features = false }
 notify = "8"
 portable-pty = "0.9"
+pulldown-cmark = { version = "0.13", default-features = false }
 regex = "1"
 rusqlite = { version = "0.40", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
