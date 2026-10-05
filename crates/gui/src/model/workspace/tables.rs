@@ -13,6 +13,14 @@ impl Workspace {
     /// and a column you can rename is a better start than a dialog asking for
     /// the shape before anything exists to shape.
     pub fn new_table(&mut self, cx: &mut Context<Self>) -> Option<usize> {
+        let ix = self.create_table()?;
+        self.open_table(self.active?, ix, cx);
+        Some(ix)
+    }
+
+    /// The same, not opened — what a space's pane takes as a tab without
+    /// leaving the space.
+    pub fn create_table(&mut self) -> Option<usize> {
         if !self.settings.features.tables {
             return None;
         }
@@ -43,9 +51,7 @@ impl Workspace {
         project.reload_tables();
         // Found by key rather than taken as a known row: the list is ordered by
         // age, and where the newest lands is the list's business, not this one's.
-        let ix = project.tables.iter().position(|table| table.key == key)?;
-        self.open_table(at, ix, cx);
-        Some(ix)
+        project.tables.iter().position(|table| table.key == key)
     }
 
     /// Every project's tables are on show, so picking one brings its project

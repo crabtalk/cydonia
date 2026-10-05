@@ -1093,3 +1093,29 @@ fn a_space_fold_is_kept_like_a_project_fold(cx: &mut gpui::TestAppContext) {
     let restored = cx.new(|cx| Workspace::new(Settings::default(), state, cx));
     restored.update(cx, |workspace, _| assert!(workspace.space_folded(&id)));
 }
+
+/// An article made from a pane's `+` lands as a tab of that pane, in the space
+/// that is open.
+#[gpui::test]
+fn an_article_made_in_a_pane_stays_in_the_space(cx: &mut gpui::TestAppContext) {
+    let scratch = Scratch::new("pane-article");
+    let (workspace, a, b) = two_boards(&scratch, cx);
+    workspace.update(cx, |workspace, cx| {
+        workspace.arrange(&a, &b, Side::Right, cx);
+        let ix = workspace.create_article().expect("made");
+        let id = workspace.projects[0].articles[ix].id.clone();
+        let member = workspace
+            .member_of(0, Showing::Article(id))
+            .expect("a member");
+        workspace.stack_pane(&b, &member, cx);
+        assert_eq!(workspace.space, Some(0));
+        assert_eq!(workspace.spaces.len(), 1);
+        assert!(
+            workspace
+                .active_space()
+                .unwrap()
+                .entries()
+                .contains(&member)
+        );
+    });
+}

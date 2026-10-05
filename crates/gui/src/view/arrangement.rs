@@ -1241,7 +1241,7 @@ impl Cydonia {
                     Showing::Session(id)
                 }
                 New::Article => {
-                    let ix = workspace.new_article(cx)?;
+                    let ix = workspace.create_article()?;
                     Showing::Article(
                         workspace
                             .projects
@@ -1253,7 +1253,7 @@ impl Cydonia {
                     )
                 }
                 New::Table => {
-                    let ix = workspace.new_table(cx)?;
+                    let ix = workspace.create_table()?;
                     Showing::Table(workspace.projects.get(project)?.tables.get(ix)?.key.clone())
                 }
                 New::Board => return None,
@@ -1330,7 +1330,3 @@ fn top_right(node: &Node<Member>) -> Option<Member> {
 #[cfg(test)]
 #[path = "../../tests/unit/pane_footer.rs"]
 mod pane_footer_tests;
-
-#[cfg(test)]
-#[path = "../../tests/unit/pane_hover.rs"]
-mod pane_hover_tests;

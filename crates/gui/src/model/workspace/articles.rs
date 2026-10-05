@@ -9,12 +9,19 @@ impl Workspace {
     /// A fresh document in the active project, opened as it lands — an empty
     /// article has nothing to look at but the caret.
     pub fn new_article(&mut self, cx: &mut Context<Self>) -> Option<usize> {
+        let ix = self.create_article()?;
+        self.open_article(self.active?, ix, cx);
+        Some(ix)
+    }
+
+    /// A fresh document in the active project, not opened — what a space's
+    /// pane takes as a tab without leaving the space.
+    pub fn create_article(&mut self) -> Option<usize> {
         let project = self.active?;
         let article = article::create(&self.projects[project].path)?;
         // Where a re-read would put it: the list is newest first, and a new one
         // appended would sit at the bottom until the next load moved it.
         self.projects[project].articles.insert(0, article);
-        self.open_article(project, 0, cx);
         Some(0)
     }
 
