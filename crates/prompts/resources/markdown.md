@@ -147,12 +147,9 @@ the entry in the project shown. Spelled like a web link's forms:
 
 - An ordinary link stays a text link.
 - `"chip"` paints inline as the entry's mark and title.
-- `"embed"` alone on a line is a card of the entry. A session's card is the
-  session, live, with a message field; `cydonia://cydonia#43:5-7` shows turns
-  5 to 7 alone, read only. An article's or a board's card is its title, kind
-  and number.
-- When the body ends on a session's card, write new content above that card,
-  not after it, unless the user asks for it below.
+- `"embed"` alone on a line is a card of the entry. A session's card is its
+  transcript, read only; `cydonia://cydonia#43:5-7` shows turns 5 to 7 alone.
+  An article's or a board's card is its title, kind and number.
 
 ## Supported formatting and limits
 
