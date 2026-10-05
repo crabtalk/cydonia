@@ -27,7 +27,7 @@ gui = { version = "0.1.16", path = "crates/gui", package = "cydonia-gui", defaul
 global-hotkey = "0.8"
 image = "0.25"
 lru = "0.18"
-markdown = { version = "0.2.8", package = "bezel-markdown" }
+markdown = { version = "0.2.8", package = "bezel-markdown", features = ["mermaid"] }
 mcp = { version = "0.1.16", path = "crates/mcp", package = "cydonia-mcp", default-features = false }
 notify = "8"
 portable-pty = "0.9"

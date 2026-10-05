@@ -811,7 +811,12 @@ impl Cydonia {
                                         .id("search-hits")
                                         .flex_1()
                                         .min_h_0()
-                                        .overflow_y_scroll()
+                                        .map(|el| {
+                                            bezel::ui::scroll::scrolls(
+                                                el,
+                                                bezel::ui::scroll::Axes::Vertical,
+                                            )
+                                        })
                                         .track_scroll(&self.search.scroll)
                                         .p(px(6.))
                                         .flex()
@@ -889,7 +894,7 @@ impl Cydonia {
                 .flex_none()
                 .border_l_1()
                 .border_color(theme.border)
-                .overflow_y_scroll()
+                .map(|el| bezel::ui::scroll::scrolls(el, bezel::ui::scroll::Axes::Vertical))
                 .children(body)
                 .into_any_element(),
         )

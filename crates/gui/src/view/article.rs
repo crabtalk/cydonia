@@ -601,7 +601,7 @@ impl Cydonia {
             .flex_1()
             .min_h_0()
             .w_full()
-            .overflow_y_scroll()
+            .map(|el| scrollbars::scrolls(el, scrollbars::Axes::Vertical))
             .track_scroll(&article.scroll)
             .flex()
             .flex_col()

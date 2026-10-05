@@ -789,7 +789,9 @@ impl Render for SettingsWindow {
                     // list is the scroller, and a page scrolling behind one
                     // would be two bars down one column.
                     .when(owns_scroll, |el| el.overflow_hidden())
-                    .when(!owns_scroll, |el| el.overflow_y_scroll())
+                    .when(!owns_scroll, |el| {
+                        scrollbars::scrolls(el, scrollbars::Axes::Vertical)
+                    })
                     .px(px(32.))
                     .py(px(32.))
                     .when(strip.is_some(), |el| el.pt(px(HEADER_HEIGHT)))

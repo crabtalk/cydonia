@@ -212,7 +212,9 @@ impl Composer {
                         div()
                             .id("composer-activity-details")
                             .max_h(px(180.))
-                            .overflow_y_scroll()
+                            .map(|el| {
+                                bezel::ui::scroll::scrolls(el, bezel::ui::scroll::Axes::Vertical)
+                            })
                             .px(px(12.))
                             .py(px(8.))
                             .rounded(px(8.))

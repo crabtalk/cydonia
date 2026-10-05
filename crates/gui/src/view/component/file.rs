@@ -691,7 +691,7 @@ impl FileView {
                 div()
                     .id("file-source")
                     .size_full()
-                    .overflow_y_scroll()
+                    .map(|el| bezel::ui::scroll::scrolls(el, bezel::ui::scroll::Axes::Vertical))
                     .track_scroll(&self.scroll)
                     .pl(gutter + px(8.))
                     .pr(px(8.))
@@ -980,7 +980,9 @@ impl Render for FileView {
                             )
                             .flex_1()
                             .min_h_0()
-                            .overflow_y_scroll()
+                            .map(|el| {
+                                bezel::ui::scroll::scrolls(el, bezel::ui::scroll::Axes::Vertical)
+                            })
                             .p(px(16.))
                             .child(markdown::render::render_with(
                                 &doc,

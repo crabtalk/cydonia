@@ -163,8 +163,9 @@ literal pipes in table cells with `\|`.
 
 Raw HTML is literal text, not layout. Underline, text colors, `==highlight==`,
 math typesetting, footnotes and special callout blocks are not enabled.
-Mermaid fences display code; Cydonia does not install a diagram renderer.
-Use an image when a rendered diagram is needed.
+A ` ```mermaid ` fence holding a flowchart, state diagram or class diagram is
+drawn as a diagram; any other kind of mermaid, or source that does not parse,
+shows as code. Use an image for other diagrams.
 
 Avoid relying on nested quote depth or combinations such as a list inside a
 quote: the editor flattens mixed containers. Soft and hard line breaks share

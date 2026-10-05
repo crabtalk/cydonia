@@ -983,7 +983,7 @@ impl Composer {
                     // [`root::composer_width`].
                     .max_w(px(root::composer_width()))
                     .max_h(px(PICKER_HEIGHT))
-                    .overflow_y_scroll()
+                    .map(|el| scrollbars::scrolls(el, scrollbars::Axes::Vertical))
                     .track_scroll(&self.scroll),
                 )
                 .child(scrollbars::Overlay::new(
@@ -1149,7 +1149,7 @@ impl Composer {
         )
         .id("composer-options-list")
         .max_h(px(PICKER_HEIGHT))
-        .overflow_y_scroll()
+        .map(|el| scrollbars::scrolls(el, scrollbars::Axes::Vertical))
         .track_scroll(&self.picking_scroll);
         Some(popover::anchored_menu_above(
             "composer-options",
