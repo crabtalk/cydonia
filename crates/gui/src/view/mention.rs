@@ -3,18 +3,15 @@
 //! chip of one paints: the kind's mark and the title.
 
 use crate::{
-    model::workspace::Workspace,
-    view::{entry_link::link, search::kind_icon},
+    model::workspace::{Showing, Workspace},
+    view::{entry_link::link, search::kind_icon, sidebar::Row},
 };
 use artifact::{
     reference::{self, Prefix},
     search::Kind,
 };
+use bezel::gpui::{App, Global, SharedString};
 use bezel::ui::icons::Icon;
-use bezel::{
-    gpui::{App, Global, SharedString},
-    ui::popover::filter_indices,
-};
 use editor::Mention;
 use markdown::Preview;
 
@@ -36,6 +33,12 @@ pub(crate) struct Linkable {
     pub(crate) number: u64,
     /// A board's card prefix.
     pub(crate) key: Option<String>,
+    /// A session's agent.
+    pub(crate) agent: Option<String>,
+    pub(crate) archived: bool,
+    pub(crate) kind: Kind,
+    /// The sidebar's row for it.
+    pub(crate) row: Row,
 }
 
 /// The entries `@` can link, most recently touched first. Rebuilt whenever
@@ -60,39 +63,59 @@ pub(crate) fn read(workspace: &Workspace) -> Linkables {
             true => format!("#{number}"),
             false => reference(number),
         };
+        let row = |showing: Showing| Row::Entry {
+            project: project.path.clone(),
+            showing,
+        };
         let linkable =
-            |icon: Icon, title: String, about: String, number: u64, touched: u128| Linkable {
-                icon,
-                title,
-                about,
-                url: link(&reference(number)),
-                touched,
-                project: name.to_string(),
-                active,
-                number,
-                key: None,
+            |icon: Icon, title: String, about: String, number: u64, touched: u128, row: Row| {
+                Linkable {
+                    archived: false,
+                    kind: Kind::Session,
+                    icon,
+                    title,
+                    about,
+                    url: link(&reference(number)),
+                    touched,
+                    project: name.to_string(),
+                    active,
+                    number,
+                    key: None,
+                    agent: None,
+                    row,
+                }
             };
         held.extend(project.sessions.iter().filter_map(|chat| {
             let number = chat.number?;
-            Some(linkable(
-                workspace
-                    .agent_icon(&chat.entry.name)
-                    .unwrap_or_else(|| kind_icon(Kind::Session)),
-                untitled(&chat.title, "Untitled session"),
-                format!("Session · {} · {}", chat.entry.name, shown(number)),
-                number,
-                chat.touched(),
-            ))
+            Some(Linkable {
+                agent: Some(chat.entry.name.clone()),
+                archived: chat.closed,
+                ..linkable(
+                    workspace
+                        .agent_icon(&chat.entry.name)
+                        .unwrap_or_else(|| kind_icon(Kind::Session)),
+                    untitled(&chat.title, "Untitled session"),
+                    format!("Session · {} · {}", chat.entry.name, shown(number)),
+                    number,
+                    chat.touched(),
+                    row(Showing::Session(chat.id)),
+                )
+            })
         }));
         held.extend(project.articles.iter().filter_map(|article| {
             let number = article.number?;
-            Some(linkable(
-                kind_icon(Kind::Article),
-                untitled(&article.title, "Untitled article"),
-                format!("Article · {}", shown(number)),
-                number,
-                article.touched,
-            ))
+            Some(Linkable {
+                archived: article.archived,
+                kind: Kind::Article,
+                ..linkable(
+                    kind_icon(Kind::Article),
+                    untitled(&article.title, "Untitled article"),
+                    format!("Article · {}", shown(number)),
+                    number,
+                    article.touched,
+                    row(Showing::Article(article.id.clone())),
+                )
+            })
         }));
         held.extend(project.boards.iter().filter_map(|board| {
             let number = board.number?;
@@ -103,12 +126,15 @@ pub(crate) fn read(workspace: &Workspace) -> Linkables {
             };
             Some(Linkable {
                 key,
+                archived: board.archived,
+                kind: Kind::Board,
                 ..linkable(
                     kind_icon(Kind::Board),
                     untitled(&board.name, "Untitled board"),
                     about,
                     number,
                     board.touched,
+                    row(Showing::Board(board.id.clone())),
                 )
             })
         }));
@@ -144,50 +170,127 @@ pub(crate) fn source(query: &str, cx: &App) -> Vec<Mention> {
         .collect()
 }
 
-/// What `query` lists, as positions in `held`, best first.
+/// What `query` lists, as positions in `held`, best first. An empty query
+/// lists the active project, archived entries last. A query opening with a
+/// kind's prefix — see [`kind_prefix`] — lists that kind alone.
 ///
-/// Read as the start of a reference first — see [`reference::partial`]: a
-/// number prefix lists the entries whose number starts with it, a key prefix
-/// the boards whose key does, each in the project named before the `#` or
-/// the active one. A bare query also matches the active project's titles
-/// after those. An exact number or key leads its group; ties keep the most
-/// recently touched first.
+/// Each entry is placed by its best match: an exact reference — see
+/// [`references`] — then a title starting with the query, then a reference
+/// prefix or a title holding it, then a session's agent holding it. Titles
+/// are matched in every project, and not for a query holding `#`. Archived
+/// entries follow every other match but an exact reference. Within a place
+/// the active project leads; ties keep the most recently touched first.
 pub(crate) fn rank(query: &str, held: &[Linkable]) -> Vec<usize> {
+    let (kind, query) = kind_prefix(query);
+    let mut rows = rank_all(query, held);
+    if let Some(kind) = kind {
+        rows.retain(|&ix| held[ix].kind == kind);
+    }
+    rows
+}
+
+/// The kind a query opens with, `s:`, `a:` or `b:` in either case, and the
+/// query after it.
+pub(crate) fn kind_prefix(query: &str) -> (Option<Kind>, &str) {
+    let query = query.trim_start();
+    let kind = match query.get(..2).map(str::to_ascii_lowercase).as_deref() {
+        Some("s:") => Kind::Session,
+        Some("a:") => Kind::Article,
+        Some("b:") => Kind::Board,
+        _ => return (None, query),
+    };
+    (Some(kind), &query[2..])
+}
+
+fn rank_all(query: &str, held: &[Linkable]) -> Vec<usize> {
     let query = query.trim();
-    let partial = reference::partial(query);
-    let project = partial.as_ref().and_then(|partial| partial.project);
+    if query.is_empty() {
+        let mut rows: Vec<usize> = (0..held.len()).filter(|&ix| held[ix].active).collect();
+        rows.sort_by_key(|&ix| held[ix].archived);
+        return rows;
+    }
+    let mut place: Vec<Option<u8>> = vec![None; held.len()];
+    for ix in references(query, held) {
+        place[ix] = Some(match exact(query, &held[ix]) {
+            true => 0,
+            false => 2,
+        });
+    }
+    if !query.contains('#') {
+        let lower = query.to_lowercase();
+        for (ix, linkable) in held.iter().enumerate() {
+            let title = linkable.title.to_lowercase();
+            let found = if title.starts_with(&lower) {
+                Some(1)
+            } else if title.contains(&lower) {
+                Some(2)
+            } else if linkable
+                .agent
+                .as_ref()
+                .is_some_and(|agent| agent.to_lowercase().contains(&lower))
+            {
+                Some(3)
+            } else {
+                None
+            };
+            place[ix] = match (place[ix], found) {
+                (Some(a), Some(b)) => Some(a.min(b)),
+                (a, b) => a.or(b),
+            };
+        }
+    }
+    let mut rows: Vec<(bool, u8, bool, usize)> = place
+        .into_iter()
+        .enumerate()
+        .filter_map(|(ix, place)| {
+            let place = place?;
+            let sunk = place > 0 && held[ix].archived;
+            Some((sunk, place, !held[ix].active, ix))
+        })
+        .collect();
+    rows.sort_by_key(|&(sunk, place, inactive, _)| (sunk, place, inactive));
+    rows.into_iter().map(|(.., ix)| ix).collect()
+}
+
+/// Whether `query` names `linkable` exactly: its number or its key.
+fn exact(query: &str, linkable: &Linkable) -> bool {
+    let target = query.rsplit_once('#').map_or(query, |(_, rest)| rest);
+    target == linkable.number.to_string()
+        || linkable
+            .key
+            .as_ref()
+            .is_some_and(|key| key.eq_ignore_ascii_case(target))
+}
+
+/// The entries `query` starts a reference to, as positions in `held`, best
+/// first. Nothing for an empty query.
+///
+/// Read as [`reference::partial`]: a number prefix lists the entries whose
+/// number starts with it, a key prefix the boards whose key does, each in the
+/// project named before the `#` or the active one. An exact number or key
+/// leads; ties keep the most recently touched first.
+fn references(query: &str, held: &[Linkable]) -> Vec<usize> {
+    let query = query.trim();
+    if query.is_empty() {
+        return Vec::new();
+    }
+    let Some(partial) = reference::partial(query) else {
+        return Vec::new();
+    };
     let scoped: Vec<usize> = (0..held.len())
-        .filter(|&ix| match project {
+        .filter(|&ix| match partial.project {
             None => held[ix].active,
             Some(name) => held[ix].project.eq_ignore_ascii_case(name),
         })
         .collect();
-    if query.is_empty() {
-        return scoped;
-    }
-    let mut rows = match partial.map(|partial| partial.target) {
-        Some(Prefix::Number(number)) => by_prefix(&scoped, number, held, |linkable| {
+    match partial.target {
+        Prefix::Number(number) => by_prefix(&scoped, number, held, |linkable| {
             Some(linkable.number.to_string())
         }),
-        Some(Prefix::Key(key)) => by_prefix(&scoped, key, held, |linkable| {
+        Prefix::Key(key) => by_prefix(&scoped, key, held, |linkable| {
             linkable.key.as_ref().map(|key| key.to_lowercase())
         }),
-        None => Vec::new(),
-    };
-    if !query.contains('#') {
-        let words: Vec<String> = scoped
-            .iter()
-            .map(|&ix| format!("{} {}", held[ix].title, held[ix].about))
-            .collect();
-        rows.extend(
-            filter_indices(query, &words)
-                .into_iter()
-                .map(|at| scoped[at]),
-        );
     }
-    let mut seen = std::collections::HashSet::new();
-    rows.retain(|ix| seen.insert(*ix));
-    rows
 }
 
 /// The positions in `scoped` whose `field` starts with `prefix`, compared

@@ -2,6 +2,7 @@
 //! then titles.
 
 use super::*;
+use crate::{model::workspace::Showing, view::sidebar::Row};
 
 fn entry(project: &str, active: bool, number: u64, title: &str, key: Option<&str>) -> Linkable {
     Linkable {
@@ -14,6 +15,16 @@ fn entry(project: &str, active: bool, number: u64, title: &str, key: Option<&str
         active,
         number,
         key: key.map(str::to_owned),
+        agent: None,
+        archived: false,
+        kind: match key {
+            Some(_) => Kind::Board,
+            None => Kind::Article,
+        },
+        row: Row::Entry {
+            project: project.into(),
+            showing: Showing::Article(number.to_string()),
+        },
     }
 }
 
@@ -35,9 +46,9 @@ fn a_hash_number_lists_the_active_project_by_number_exact_first() {
 
 #[test]
 fn a_bare_number_leads_with_references_then_titles() {
-    // #12 exact, #120 by prefix, then "Notes on 12 things" is already listed
-    // and #112 matches only through its description.
-    assert_eq!(rank("12", &held()), vec![2, 0, 1]);
+    // #12 exact, then #120 by prefix and by its title. #112 neither starts
+    // with 12 nor holds it in a title.
+    assert_eq!(rank("12", &held()), vec![2, 0]);
 }
 
 #[test]
@@ -62,4 +73,48 @@ fn a_board_key_matches_before_titles() {
 #[test]
 fn an_empty_query_lists_only_the_active_project() {
     assert_eq!(rank("", &held()), vec![0, 1, 2, 3]);
+}
+
+#[test]
+fn references_list_no_titles() {
+    assert_eq!(references("12", &held()), vec![2, 0]);
+    assert_eq!(references("bezel#dev", &held()), vec![5]);
+    assert!(references("Design", &held()).is_empty());
+    assert!(references("", &held()).is_empty());
+}
+
+#[test]
+fn a_title_starting_with_the_query_outranks_a_key_prefix() {
+    let mut held = held();
+    held.push(entry("cydonia", true, 30, "Roadmap board", Some("PXL")));
+    held.push(entry("cydonia", true, 31, "Px notes", None));
+    assert_eq!(rank("px", &held), vec![7, 6]);
+}
+
+#[test]
+fn titles_match_every_project_the_active_one_first() {
+    let mut held = held();
+    held.push(entry("cydonia", true, 30, "Board games", None));
+    assert_eq!(rank("board", &held), vec![6, 5]);
+}
+
+#[test]
+fn archived_entries_follow_every_other_match_but_an_exact_reference() {
+    let mut held = held();
+    held[2].archived = true;
+    // Design (#12) is archived: still first by its exact number, but last
+    // when only its title matches.
+    assert_eq!(rank("12", &held), vec![2, 0]);
+    held.push(entry("bezel", false, 40, "Design review", None));
+    assert_eq!(rank("design", &held), vec![6, 2]);
+    assert_eq!(rank("", &held), vec![0, 1, 3, 2]);
+}
+
+#[test]
+fn a_kind_prefix_lists_that_kind_alone() {
+    assert_eq!(rank("b:", &held()), vec![3]);
+    assert_eq!(rank("B:dev", &held()), vec![3]);
+    assert_eq!(rank("a:12", &held()), vec![2, 0]);
+    assert!(rank("s:", &held()).is_empty());
+    assert_eq!(kind_prefix("x:12"), (None, "x:12"));
 }

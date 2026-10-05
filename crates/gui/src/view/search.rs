@@ -4,7 +4,11 @@
 //!
 //! A query also lists the menu bar's commands, matched by name or by the chord
 //! bound to them; an empty one lists the commands run last. A query starting
-//! with `>` lists commands alone.
+//! with `>` lists commands alone, and one starting with a kind's prefix,
+//! `s:`, `a:` or `b:`, that kind's entries alone.
+//!
+//! A query lists the entries `@` would for it first — see
+//! [`crate::view::mention::rank`] — then the ones it is found in.
 //!
 //! An empty query lists what was touched last. A query is searched off disk on
 //! a background thread — see [`artifact::search::disk`] — so an entry's hits
@@ -15,6 +19,7 @@ use crate::{
     model::workspace::Showing,
     view::{
         keymap::{self, Command},
+        mention::{self, Linkables},
         menubar,
         root::Cydonia,
         sidebar::{self, Row},
@@ -205,16 +210,14 @@ impl Search {
         let commands = self
             .matched
             .iter()
-            .filter(|_| self.filter.is_none() || only_commands)
+            .filter(|_| self.kind(cx).is_none() || only_commands)
             .map(|&ix| Pick::Command(&self.commands[ix]));
+        let kind = self.kind(cx);
         let hits = self
             .hits
             .iter()
             .filter(|_| !only_commands)
-            .filter(|hit| match self.filter {
-                Some(Filter::Kind(kind)) => kind_of(&hit.row) == Some(kind),
-                _ => true,
-            })
+            .filter(|hit| kind.is_none_or(|kind| kind_of(&hit.row) == Some(kind)))
             .take(self.limit)
             .map(Pick::Hit);
         commands.chain(hits).collect()
@@ -271,12 +274,23 @@ impl Search {
             .collect();
     }
 
-    /// What the entries are searched for. Nothing for a query of commands.
+    /// What the entries are searched for, less a kind's prefix. Nothing for
+    /// a query of commands.
     fn query(&self, cx: &App) -> Option<Query> {
         let content = self.field.read(cx).content();
         match content.trim_start().starts_with(COMMAND_PREFIX) {
             true => None,
-            false => Query::literal(content),
+            false => Query::literal(mention::kind_prefix(content).1),
+        }
+    }
+
+    /// The one kind listed: the filter's, else the query's prefix's — see
+    /// [`mention::kind_prefix`].
+    fn kind(&self, cx: &App) -> Option<Kind> {
+        match self.filter {
+            Some(Filter::Kind(kind)) => Some(kind),
+            Some(Filter::Commands) => None,
+            None => mention::kind_prefix(self.field.read(cx).content()).0,
         }
     }
 }
@@ -361,10 +375,7 @@ impl Cydonia {
         };
         self.search.applied = Some(Applied {
             query,
-            filter: match self.search.filter {
-                Some(Filter::Kind(kind)) => Some(kind),
-                _ => None,
-            },
+            filter: self.search.kind(cx),
             found: Vec::new(),
             ready: false,
         });
@@ -467,7 +478,14 @@ impl Cydonia {
                 .spawn(async move { search_all(&roots, &query) })
                 .await;
             let _ = this.update(cx, |this, cx| {
-                this.search.hits = this.ranked_hits(found, cx);
+                let mut hits = this.named_hits(cx);
+                let ranked: Vec<Hit> = this
+                    .ranked_hits(found, cx)
+                    .into_iter()
+                    .filter(|hit| !hits.iter().any(|held| held.row == hit.row))
+                    .collect();
+                hits.extend(ranked);
+                this.search.hits = hits;
                 this.search.limit = SHOWN;
                 this.search.searching = false;
                 this.search.selected = 0;
@@ -487,6 +505,20 @@ impl Cydonia {
         self.recent_rows(cx)
             .into_iter()
             .map(|row| Hit { row, snippet: None })
+            .collect()
+    }
+
+    /// The entries the field's query names — see [`mention::rank`].
+    fn named_hits(&self, cx: &App) -> Vec<Hit> {
+        let Some(Linkables(held)) = cx.try_global::<Linkables>() else {
+            return Vec::new();
+        };
+        mention::rank(self.search.field.read(cx).content(), held)
+            .into_iter()
+            .map(|ix| Hit {
+                row: held[ix].row.clone(),
+                snippet: None,
+            })
             .collect()
     }
 

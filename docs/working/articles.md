@@ -89,7 +89,7 @@ Deleting a card leaves the entry where it was.
 
 In the editor:
 
-- Type `@` to link a session, article or board of the project as a chip. What you type after it narrows the list by title, kind or number.
+- Type `@` to link a session, article or board as a chip. What you type after it narrows the list — see [References](./references.md#finding-an-entry).
 - `/Session` lists the agents: pick one to start a session and put its card here, or **Existing…** to search the project's sessions, with a preview of the last turns of each, and put the one you pick here.
 - Paste a `cydonia://` link on a line of its own and choose how it shows, as for a web link.
 

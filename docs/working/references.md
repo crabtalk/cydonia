@@ -26,6 +26,33 @@ Written after `cydonia://`, a reference is a link: `cydonia://cydonia#43:5-7`. I
 
 `#43` is the number an entry carries — see [Projects and entries](./projects.md). `DEV-12` is a card's handle: its board's key and its number on that board — see [Boards and tables](./boards.md).
 
+## Finding an entry
+
+`@` in an article or a message, and the search palette, list the entries what you type names, in this order:
+
+1. The entry whose number or board key you typed exactly: `#43`, `cydonia#43`, `DEV`.
+2. Entries whose title starts with what you typed.
+3. Entries whose title contains it, and entries whose number or board key starts with it: `#4`, `DE`.
+4. Sessions whose agent's name contains it.
+
+- Titles are matched in every open project; numbers and keys in this project, or in the one named before the `#`.
+- Within each step, this project's entries come first, then the most recently changed.
+- Archived entries come after every other match, unless named exactly.
+- Card handles such as `DEV-12` are not matched.
+- With nothing typed, `@` lists this project's entries.
+
+Start with a kind's prefix to list that kind alone:
+
+| Typed | Lists |
+| --- | --- |
+| `s:` | Sessions |
+| `a:` | Articles |
+| `b:` | Boards |
+
+`@s:review` lists the sessions matching `review`. A prefix comes first and a turn range after a number, so `@s:#43` and `#43:5` do not collide.
+
+The search palette also lists the commands that match, and the entries whose text contains what you typed.
+
 ## Turns
 
 A session is made of turns. Each turn begins with a message sent to the agent and holds everything the agent did in answer, up to the next message. Turns are counted from 1, in the order they happened.
