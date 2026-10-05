@@ -2416,6 +2416,13 @@ impl Cydonia {
         if let Some(path) = self.place_of(entry, cx) {
             rows.extend(on_disk(path));
         }
+        if let Menu::Tab(tab) = &at {
+            let tab = tab.clone();
+            rows.push(menu::row(
+                Item::action("Close tab").with_icon(icons::notifications::X),
+                move |this, window, cx| this.close_pane(&tab, window, cx),
+            ));
+        }
         rows.push(menu::row(
             Item::action("Delete").with_icon(icons::files::Trash),
             {
