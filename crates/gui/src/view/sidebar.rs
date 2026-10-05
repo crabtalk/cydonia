@@ -36,7 +36,7 @@ use bezel::{
     motion::{Fade, Painter},
     theme::{self, TextStyle, Theme, Typeset},
     ui::{
-        drag,
+        drag::{self, Carried},
         icons::{self, Icon},
         input::Case,
         menu::{Item, Segment},
@@ -294,13 +294,15 @@ fn carried_rows(rows: &[Row], item: &Dragged) -> Vec<Dragged> {
 
 /// What rides under the pointer while an item is carried to a pane.
 pub(crate) fn ghost(label: SharedString, theme: &Theme) -> AnyElement {
-    popover::popover_card(theme)
+    div()
+        .rounded(px(Theme::control_radius()))
         .px(px(10.))
         .py(px(4.))
         .text_style(TextStyle::Callout)
         .text_color(theme.text)
         .truncate()
         .child(label)
+        .ghost(theme)
         .into_any_element()
 }
 
@@ -363,7 +365,8 @@ pub(crate) fn row(
     theme: &Theme,
 ) -> Stateful<Div> {
     row_frame(id, group, indent)
-        .when(lifted, |el| lift(el, theme))
+        // A carried row is drawn inside [`Cydonia::sidebar_ghost`]'s frame.
+        .when(lifted, |el| el.m_0())
         .when(!lifted && selected, |el| {
             el.bg(theme.card_selected_bg())
                 .shadow(theme::glass_selected_shadows())
@@ -373,12 +376,6 @@ pub(crate) fn row(
         .when(!lifted && !selected, |el| {
             el.hover(|el| el.bg(theme.element_hover))
         })
-}
-
-/// A row being carried in the list: raised the way a carried tab is, or only
-/// its text would travel.
-fn lift(el: Stateful<Div>, theme: &Theme) -> Stateful<Div> {
-    el.bg(theme.surface_raised).cursor_grabbing()
 }
 
 /// A row's place in the column with none of its washes: what a line that is
@@ -922,7 +919,7 @@ impl Cydonia {
                     .h(px(ROW_PILL))
                     .rounded(px(Theme::control_radius()))
             })
-            .when(lifted, |el| lift(el, &theme))
+            .when(lifted, |el| el.m_0())
             .flex()
             .flex_row()
             .items_center()
@@ -1390,6 +1387,28 @@ impl Cydonia {
         if let Some(ix) = self.rows(cx).iter().position(|at| at == row) {
             self.rail.scroll_to_item(ix, ScrollStrategy::Nearest);
         }
+    }
+
+    /// What rides under the pointer while a sidebar row is carried: the row
+    /// itself, at its width in the list.
+    pub(crate) fn sidebar_ghost(
+        &self,
+        item: &Dragged,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let Dragged::Row(row) = item else {
+            return Empty.into_any_element();
+        };
+        let theme = Theme::of(cx).clone();
+        div()
+            .w(px(self.sidebar_width - 2. * root::SIDEBAR_GUTTER))
+            .h(px(ROW_PILL))
+            .rounded(px(Theme::control_radius()))
+            .overflow_hidden()
+            .child(self.sidebar_row(row, true, window, cx))
+            .ghost(&theme)
+            .into_any_element()
     }
 
     /// One line, built when the list scrolls it into view. The box around it is

@@ -1047,7 +1047,13 @@ impl Cydonia {
                     super::sidebar::ghost(label.into(), Theme::of(cx))
                 }
             }),
-            sidebar_sort: drag::Domain::new(Painter::of(cx)),
+            sidebar_sort: drag::Domain::with_ghost(Painter::of(cx), {
+                let this = cx.entity().downgrade();
+                move |item, window, cx| {
+                    this.update(cx, |this, cx| this.sidebar_ghost(item, window, cx))
+                        .unwrap_or_else(|_| gpui::Empty.into_any_element())
+                }
+            }),
             board_sort: drag::Domain::with_ghost(Painter::of(cx), {
                 let this = cx.entity().downgrade();
                 move |item, window, cx| board::ghost(&this, item, window, cx)
