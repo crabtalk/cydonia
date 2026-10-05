@@ -348,6 +348,7 @@ impl Workspace {
             caret: self.settings.appearance.caret,
             caret_shape: self.settings.appearance.caret_shape,
             caret_height: self.settings.appearance.caret_height,
+            hollow_caret: self.settings.appearance.hollow_caret,
             terminal_caret: self.settings.appearance.terminal_caret,
         });
     }
@@ -798,6 +799,13 @@ impl Workspace {
     pub fn set_caret_height(&mut self, height: settings::CaretHeight, cx: &mut Context<Self>) {
         self.settings.appearance.caret_height = height;
         cx.set_caret_height(height.into());
+        self.save_appearance();
+        cx.notify();
+    }
+
+    pub fn set_hollow_caret(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.settings.appearance.hollow_caret = on;
+        cx.set_inactive_caret(settings::inactive_caret(on));
         self.save_appearance();
         cx.notify();
     }

@@ -749,6 +749,7 @@ impl Render for Terminal {
             focused,
         )
         .with_cursor_on(self.cursor_on)
+        .with_hollow_inactive(cx.inactive_caret() == bezel::ui::input::InactiveCaret::Hollow)
         .with_text_size(typography::terminal_size(cx))
         .with_content_inset(Edges::all(px(12.0)));
         div()
