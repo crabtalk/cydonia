@@ -56,7 +56,7 @@ pub(crate) fn link(reference: &str) -> String {
 fn embed(reference: &str) -> BlockKind {
     BlockKind::Bookmark {
         url: link(reference),
-        form: Form::Embed,
+        form: Form::Embed(None),
     }
 }
 
@@ -316,6 +316,8 @@ impl Cydonia {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = Theme::of(cx).clone();
+        // A height the card's link states is the whole card's.
+        let mut height = None;
         let body = match self.named(reference, cx) {
             Ok(Named {
                 row:
@@ -326,10 +328,13 @@ impl Cydonia {
                 turns,
                 number,
                 ..
-            }) if form == Form::Embed => match turns {
-                None => self.session_live(id, number, window, cx),
-                Some(turns) => self.session_excerpt(id, number, turns, window, cx),
-            },
+            }) if let Form::Embed(stated) = form => {
+                height = stated;
+                match turns {
+                    None => self.session_live(id, number, stated, window, cx),
+                    Some(turns) => self.session_excerpt(id, number, turns, stated, window, cx),
+                }
+            }
             Ok(named) => self.entry_row(named, cx),
             Err(why) => div()
                 .p(px(12.))
@@ -348,6 +353,7 @@ impl Cydonia {
             .border_color(theme.border)
             .bg(theme.surface)
             .overflow_hidden()
+            .when_some(height, |el, height| el.h(px(height as f32)))
             // The card's presses are the card's: the editor would otherwise
             // put its caret in the block and show the link instead.
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -496,6 +502,7 @@ impl Cydonia {
         &mut self,
         id: u64,
         number: u64,
+        height: Option<u32>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -504,10 +511,14 @@ impl Cydonia {
         div()
             .flex()
             .flex_col()
+            .when(height.is_some(), |el| el.flex_1().min_h_0())
             .child(header)
             .child(
                 div()
-                    .h(px(TRANSCRIPT_HEIGHT))
+                    .map(|el| match height {
+                        Some(_) => el.flex_1().min_h_0(),
+                        None => el.h(px(TRANSCRIPT_HEIGHT)),
+                    })
                     .flex()
                     .flex_col()
                     .child(transcript),
@@ -572,13 +583,20 @@ impl Cydonia {
         id: u64,
         number: u64,
         turns: Turns,
+        height: Option<u32>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let from = turns.from.saturating_sub(1) as usize;
         let to = turns.to as usize;
-        let body = self.excerpt_body(id, turns, Some(px(TRANSCRIPT_HEIGHT)), window, cx);
+        let body = self.excerpt_body(
+            id,
+            turns,
+            height.is_none().then(|| px(TRANSCRIPT_HEIGHT)),
+            window,
+            cx,
+        );
         let read = self.workspace.read(cx).session(id).map(|chat| {
             (
                 chat.title.clone(),
@@ -649,6 +667,7 @@ impl Cydonia {
         div()
             .flex()
             .flex_col()
+            .when(height.is_some(), |el| el.flex_1().min_h_0())
             .child(header)
             .child(body)
             .into_any_element()

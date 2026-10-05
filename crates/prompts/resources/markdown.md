@@ -167,6 +167,11 @@ A ` ```mermaid ` fence holding a flowchart, state diagram or class diagram is
 drawn as a diagram; any other kind of mermaid, or source that does not parse,
 shows as code. Use an image for other diagrams.
 
+A drawn mermaid fence and an `"embed"` card can be given a height, in whole
+pixels, for the whole block: after the fence's language (` ```mermaid 360 `)
+or after the title's form (`"embed 360"`). Leave it out for the block's own
+height. Dragging the block's bottom edge in the editor writes it.
+
 Avoid relying on nested quote depth or combinations such as a list inside a
 quote: the editor flattens mixed containers. Soft and hard line breaks share
 one representation. Exact source formatting is not preserved across editor
