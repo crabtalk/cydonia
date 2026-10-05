@@ -250,7 +250,7 @@ fn source_offset(editor: &editor::Editor, cx: &App) -> f32 {
         * 10.)
         .round()
         / 10.;
-    let code_size = cx.typography().scaled(size / base).code.size();
+    let text_size = cx.typography().scaled(size / base).body.size();
     let digits = editor
         .source()
         .split('\n')
@@ -260,7 +260,7 @@ fn source_offset(editor: &editor::Editor, cx: &App) -> f32 {
         .max(style.gutter_min_digits);
     // Cancel Bezel's code padding and full gutter so source text aligns with the title.
     12. + if style.line_numbers {
-        (digits as f32 + style.gutter_gap.max(0.)) * code_size
+        (digits as f32 + style.gutter_gap.max(0.)) * text_size
     } else {
         0.
     }
