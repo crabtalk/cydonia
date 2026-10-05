@@ -5,6 +5,7 @@ import { dirname, resolve } from 'node:path';
 import sharp from 'sharp';
 import { published } from '../src/lib/releases.js';
 import { metadata, slugs } from '../src/lib/docs/catalog.js';
+import { hero, media } from '../src/lib/media.js';
 
 const at = (path) => fileURLToPath(new URL(path, import.meta.url));
 const svg = (body, width = 1200, height = 630) => Buffer.from(
@@ -32,16 +33,35 @@ async function inter() {
 	return path;
 }
 
+/** The hero's poster, cached by URL. */
+async function poster(releases) {
+	const release = releases.find(({ version }) => version === hero);
+	const url = release && media(release)?.poster;
+	if (!url) throw new Error(`OG image: no poster for the hero release ${hero}`);
+	const path = at(`../.cache/poster-${digest(url).slice(0, 16)}.jpg`);
+	const cached = await readFile(path).catch(() => null);
+	if (cached) return cached;
+	const response = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+	if (!response.ok) throw new Error(`OG image: ${response.status} fetching ${url}`);
+	const image = Buffer.from(await response.arrayBuffer());
+	await mkdir(at('../.cache'), { recursive: true });
+	await writeFile(path, image);
+	return image;
+}
+
 const escape = (text) => text.replace(/[&<>"']/g, (char) => ({
 	'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;'
 })[char]);
 
 const slogan = 'Where agents keep their work.';
 
+const BG = '#141416';
+
 const mark = '<path d="M79 98 404 0 316 185Z"/><path d="M162 166 365 261 0 393Z"/>';
 
-/** Render the same brand family without depending on release screenshots. */
-export async function renderCard({ title, label, subtitle = slogan, summary }, fontfile = undefined) {
+/** `shot`, when given, lays the card out as a one-line title over the
+    screenshot, which runs off the bottom edge. */
+export async function renderCard({ title, label, subtitle = slogan, summary, shot }, fontfile = undefined) {
 	fontfile ??= await inter();
 	const text = async (value, size, color = '#eaeaea', width = undefined) => sharp({
 		text: {
@@ -50,6 +70,7 @@ export async function renderCard({ title, label, subtitle = slogan, summary }, f
 			...(width ? { width, wrap: 'word-char' } : {})
 		}
 	}).png().toBuffer();
+	if (shot) return renderShot({ title, shot, text });
 	let heading;
 	for (let size = 68; size >= 36; size -= 2) {
 		heading = await text(title, size, '#eaeaea', 680);
@@ -65,7 +86,7 @@ export async function renderCard({ title, label, subtitle = slogan, summary }, f
 		if ((await sharp(description).metadata()).height > 210) throw new Error(`OG summary is too long: ${title}`);
 	}
 	const background = svg(`
-		<rect width="1200" height="630" fill="#272727"/>
+		<rect width="1200" height="630" fill="${BG}"/>
 		<g transform="translate(64 52) scale(.08)" fill="#eaeaea">${mark}</g>
 		<g transform="translate(849 194) scale(.624)" fill="#eaeaea">${mark}</g>
 	`);
@@ -80,10 +101,45 @@ export async function renderCard({ title, label, subtitle = slogan, summary }, f
 	]).png().toBuffer();
 }
 
+async function renderShot({ title, shot, text }) {
+	// The screenshot fills the card below `TOP`; a fade from the card colour
+	// carries the heading into its wallpaper.
+	const TOP = 160;
+	const FADE = 150;
+	let heading;
+	for (let size = 40; size >= 28; size -= 2) {
+		heading = await text(title, size, '#f2f2f3');
+		if ((await sharp(heading).metadata()).width <= 760) break;
+	}
+	if ((await sharp(heading).metadata()).width > 760) throw new Error(`OG title is too long: ${title}`);
+	const frame = await sharp(shot)
+		.resize(1200)
+		.extract({ left: 0, top: 0, width: 1200, height: 630 - TOP })
+		.png()
+		.toBuffer();
+	const host = await text('cydonia.sh', 18, '#a2a4ab');
+	const hostWidth = (await sharp(host).metadata()).width;
+	const background = svg(`<rect width="1200" height="630" fill="${BG}"/>`);
+	const overlay = svg(`
+		<defs><linearGradient id="fade" x1="0" y1="0" x2="0" y2="1">
+			<stop offset="0" stop-color="${BG}"/><stop offset="1" stop-color="${BG}" stop-opacity="0"/>
+		</linearGradient></defs>
+		<rect y="${TOP}" width="1200" height="${FADE}" fill="url(#fade)"/>
+		<g transform="translate(64 52) scale(.08)" fill="#f2f2f3">${mark}</g>
+	`);
+	return sharp(background).composite([
+		{ input: frame, left: 0, top: TOP },
+		{ input: overlay, left: 0, top: 0 },
+		{ input: await text('Cydonia', 28, '#f2f2f3'), left: 112, top: 55 },
+		{ input: host, left: 1136 - hostWidth, top: 62 },
+		{ input: heading, left: 62, top: 118 }
+	]).png().toBuffer();
+}
+
 export async function generateOg() {
 	const releases = published(JSON.parse(await readFile(at('../../changelog.json'), 'utf8')));
 	const cards = [
-		{ key: 'home', title: 'Where agents\nkeep their work.', label: '', subtitle: '' },
+		{ key: 'home', title: 'Where agents keep their work.', label: '', subtitle: '', shot: await poster(releases) },
 		{ key: 'changelog', title: 'Changelog', label: 'Releases', subtitle: slogan },
 		...releases.map(({ version, summary }) => ({ summary, key: `releases/${version}`, title: `v${version}`, label: 'Release notes', subtitle: slogan })),
 		...slugs().map((slug) => ({ key: `docs/${slug}`, title: metadata(slug).title, label: 'Documentation', subtitle: slogan }))
@@ -95,7 +151,10 @@ export async function generateOg() {
 		const path = `/og/${card.key}.${digest(output).slice(0, 16)}.png`;
 		await mkdir(dirname(at(`../static${path}`)), { recursive: true });
 		await writeFile(at(`../static${path}`), output);
-		manifest[card.key] = { path, alt: `Cydonia — ${card.title.replaceAll('\n', ' ')}. ${card.summary ?? card.subtitle}` };
+		const heading = card.title.replaceAll('\n', ' ');
+		const tail = card.summary ?? card.subtitle;
+		const alt = `Cydonia — ${heading}${/[.!?]$/.test(heading) ? '' : '.'}${tail ? ` ${tail}` : ''}`;
+		manifest[card.key] = { path, alt };
 		if (card.key === 'home') await writeFile(at('../static/og.png'), output);
 	}
 	await mkdir(at('../src/lib/generated'), { recursive: true });

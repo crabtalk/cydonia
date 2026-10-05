@@ -30,6 +30,7 @@
 		"vite": "^6.0.0"
 	},
 	"dependencies": {
+		"@lobehub/icons-static-svg": "^1.95.1",
 		"lucide-static": "^1.31.0",
 		"simple-icons": "^16.28.0"
 	}

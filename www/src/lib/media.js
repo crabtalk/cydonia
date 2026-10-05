@@ -1,6 +1,9 @@
 /** Shared by the site and the build-time share image generator. */
 export const cdn = 'https://cdn.crabtalk.ai';
 
+/** The release whose recording the hero plays and the home share card shows. */
+export const hero = '0.1.23';
+
 const VIDEO = /\.(mp4|webm|mov)$/i;
 
 /** Omitted media uses versioned CDN paths. Explicit poster-only media is a
