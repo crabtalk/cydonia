@@ -759,6 +759,7 @@ impl Cydonia {
                 .items_center()
                 .pt(px(96.))
                 .bg(theme.scrim())
+                .child(bezel::ui::cover::cover())
                 .on_click(cx.listener(|this, _, window, cx| {
                     this.dismiss_search(&DismissSearch, window, cx)
                 }))

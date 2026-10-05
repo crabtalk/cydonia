@@ -249,6 +249,7 @@ impl Cydonia {
                 .items_center()
                 .justify_center()
                 .bg(theme.scrim())
+                .child(bezel::ui::cover::cover())
                 .on_click(cx.listener(|this, _, _, cx| this.dismiss_delete(cx)))
                 .child(
                     div()
