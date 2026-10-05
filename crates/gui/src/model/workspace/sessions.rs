@@ -70,7 +70,6 @@ impl Workspace {
         project.sessions.push(chat);
         if front {
             project.active = Some(id);
-            self.reveal_project(ix, cx);
         }
         self.prune_archived_for(Some(state::Kind::Session), cx);
         cx.notify();
@@ -124,7 +123,6 @@ impl Workspace {
         self.next_id += 1;
         fork.flush();
         self.projects[ix].sessions.push(fork);
-        self.reveal_project(ix, cx);
         self.select_session(id, cx);
         Some(id)
     }
