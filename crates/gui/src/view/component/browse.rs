@@ -261,6 +261,10 @@ async fn serve(
                 .replace("$ENTER", if enter { "true" } else { "false" });
             act_on(&panel, tab, &js, element, cx).await
         }
+        Act::Console => {
+            let browser = pick(&panel, tab, cx)?;
+            Ok(browser.read_with(cx, |browser, cx| console(&browser.console(cx))))
+        }
         Act::Scroll(pages) => {
             let js = SCROLL.replace("$PAGES", &format!("{:.2}", pages.clamp(-20., 20.)));
             act_on(&panel, tab, &js, 0, cx).await
@@ -398,6 +402,24 @@ fn described(id: u64, page: &Page) -> String {
         }
     }
     out
+}
+
+/// A tab's log as the model reads it: one line per message.
+fn console(log: &[browser::ConsoleMessage]) -> String {
+    if log.is_empty() {
+        return "the page has logged nothing".to_owned();
+    }
+    log.iter()
+        .map(|message| {
+            format!(
+                "[{}] {} ({})",
+                format!("{:?}", message.level).to_lowercase(),
+                message.text,
+                message.source
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn tabs(panel: &Panel, cx: &Context<Panel>) -> String {

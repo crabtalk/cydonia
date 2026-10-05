@@ -186,6 +186,8 @@ pub enum Act {
     },
     /// Screenfuls down; negative goes up.
     Scroll(f64),
+    /// What the tab's page has logged.
+    Console,
 }
 
 /// One browser call, with where its answer goes.

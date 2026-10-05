@@ -205,9 +205,14 @@ pub(crate) fn slash_items(workspace: &crate::model::workspace::Workspace) -> Vec
                             editor.place_block(at.block, embed(&reference), cx);
                             // The card's composer takes the focus once it is
                             // drawn, and a block below the fold is not built.
-                            editor.layouts().reveal(markdown::Selection::at(
-                                markdown::Cursor::new(at.block, markdown::Part::Body, 0),
-                            ));
+                            editor.layouts().reveal_with(
+                                markdown::Selection::at(markdown::Cursor::new(
+                                    at.block,
+                                    markdown::Part::Body,
+                                    0,
+                                )),
+                                markdown::RevealMode::Nearest,
+                            );
                         })
                         .ok();
                     root.update(cx, |root, cx| {
