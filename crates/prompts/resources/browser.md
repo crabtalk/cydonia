@@ -33,3 +33,10 @@ sure it still holds.
 A read already has the whole page's text, up to a limit it marks as truncated.
 Scroll when a page loads more of itself as it goes down, as a feed does, or to
 reach text past that limit.
+
+## The console
+
+`browser_console` gives what a tab's page has logged since the tab opened:
+console calls, uncaught errors and unhandled rejections, each with the frame
+that logged it. Failed loads and other messages the engine writes itself are
+not in it.

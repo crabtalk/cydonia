@@ -1,9 +1,8 @@
 //! Links to cydonia's own entries, `cydonia://<project>#<number>` — see
 //! [`artifact::reference`] — painted by cydonia rather than as web links.
 //!
-//! A link card is the entry itself: a session whole is live, with a composer
-//! that sends to it, and a run of its turns, `#43:5-7`, is those turns alone,
-//! read only; an article or a board is its title, kind and number. A
+//! A link card is the entry itself: a session is its turns, read only, whole
+//! or the run a reference names, `#43:5-7`; an article or a board is its title, kind and number. A
 //! bookmark-sized card of any of them is that one row.
 //!
 //! The link names the entry; deleting the block leaves the entry where it was.
@@ -26,8 +25,7 @@ use crate::{
 use artifact::{reference::Turns, search::Kind};
 use bezel::{
     gpui::{
-        self, AnyElement, App, Context, Focusable, MouseButton, SharedString, Window, div,
-        prelude::*, px,
+        self, AnyElement, App, Context, MouseButton, SharedString, Window, div, prelude::*, px,
     },
     theme::{TextStyle, Theme, Typeset},
     ui::{
@@ -36,7 +34,10 @@ use bezel::{
     },
 };
 use editor::{SlashAction, SlashAt, SlashItem, SlashRow};
-use markdown::{BlockKind, Form};
+use markdown::{
+    BlockKind, Form,
+    render::{fence_band, fence_panel},
+};
 
 pub(crate) const SCHEME: &str = "cydonia://";
 /// The transcript's box. It scrolls inside; the article does not grow with
@@ -56,7 +57,7 @@ pub(crate) fn link(reference: &str) -> String {
 fn embed(reference: &str) -> BlockKind {
     BlockKind::Bookmark {
         url: link(reference),
-        form: Form::Embed,
+        form: Form::Embed(None),
     }
 }
 
@@ -173,56 +174,8 @@ pub fn open_link(url: &str, window: &mut Window, cx: &mut App) {
     cx.open_url(url);
 }
 
-/// The slash menu: the editor's blocks, then a new session on each agent,
-/// under the agent's mark from the registry, and one already running.
-pub(crate) fn slash_items(workspace: &crate::model::workspace::Workspace) -> Vec<SlashItem> {
-    let mut rows = workspace
-        .settings
-        .agents
-        .iter()
-        .map(|agent| {
-            let name = agent.name.clone();
-            let run = move |at: SlashAt, window: &mut Window, cx: &mut App| {
-                let Some(root) = window.root::<Cydonia>().flatten() else {
-                    return;
-                };
-                let made = root.update(cx, |root, cx| {
-                    root.workspace.update(cx, |workspace, cx| {
-                        let entry = workspace
-                            .settings
-                            .agents
-                            .iter()
-                            .find(|entry| entry.name == name)
-                            .cloned()?;
-                        let id = workspace.new_session_behind(entry, cx)?;
-                        workspace.mint_record(id)?;
-                        Some((id, workspace.reference_of_session(id)?))
-                    })
-                });
-                if let Some((id, reference)) = made {
-                    at.editor
-                        .update(cx, |editor, cx| {
-                            editor.place_block(at.block, embed(&reference), cx);
-                            // The card's composer takes the focus once it is
-                            // drawn, and a block below the fold is not built.
-                            editor.layouts().reveal(markdown::Selection::at(
-                                markdown::Cursor::new(at.block, markdown::Part::Body, 0),
-                            ));
-                        })
-                        .ok();
-                    root.update(cx, |root, cx| {
-                        root.card_focus = Some(id);
-                        cx.notify();
-                    });
-                }
-            };
-            SlashRow {
-                label: SharedString::from(agent.name.clone()),
-                icon: workspace.agent_icon(&agent.name),
-                action: SlashAction::Run(Rc::new(run)),
-            }
-        })
-        .collect::<Vec<_>>();
+/// The slash menu: the editor's blocks, then a session already running.
+pub(crate) fn slash_items() -> Vec<SlashItem> {
     let existing = |at: SlashAt, window: &mut Window, cx: &mut App| {
         let Some(root) = window.root::<Cydonia>().flatten() else {
             return;
@@ -241,17 +194,12 @@ pub(crate) fn slash_items(workspace: &crate::model::workspace::Workspace) -> Vec
             )
         });
     };
-    rows.push(SlashRow {
-        label: "Existing…".into(),
-        icon: Some(icons::text::Link.into()),
-        action: SlashAction::Run(Rc::new(existing)),
-    });
     let mut items = editor::slash_defaults();
-    items.push(SlashItem::Group {
+    items.push(SlashItem::Row(SlashRow {
         label: "Session".into(),
         icon: Some(kind_icon(Kind::Session)),
-        rows,
-    });
+        action: SlashAction::Run(Rc::new(existing)),
+    }));
     items
 }
 
@@ -311,6 +259,8 @@ impl Cydonia {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = Theme::of(cx).clone();
+        // A height the card's link states is the whole card's.
+        let mut height = None;
         let body = match self.named(reference, cx) {
             Ok(Named {
                 row:
@@ -321,10 +271,13 @@ impl Cydonia {
                 turns,
                 number,
                 ..
-            }) if form == Form::Embed => match turns {
-                None => self.session_live(id, number, window, cx),
-                Some(turns) => self.session_excerpt(id, number, turns, window, cx),
-            },
+            }) if let Form::Embed(stated) = form => {
+                height = stated;
+                match turns {
+                    None => self.session_whole(id, number, stated, window, cx),
+                    Some(turns) => self.session_excerpt(id, number, turns, stated, window, cx),
+                }
+            }
             Ok(named) => self.entry_row(named, cx),
             Err(why) => div()
                 .p(px(12.))
@@ -333,16 +286,12 @@ impl Cydonia {
                 .child(why)
                 .into_any_element(),
         };
-        div()
+        fence_panel(&theme)
             .id(SharedString::from(format!("entry-card-{reference}")))
             .w_full()
             .flex()
             .flex_col()
-            .rounded(px(8.))
-            .border_1()
-            .border_color(theme.border)
-            .bg(theme.surface)
-            .overflow_hidden()
+            .when_some(height, |el, height| el.h(px(height as f32)))
             // The card's presses are the card's: the editor would otherwise
             // put its caret in the block and show the link instead.
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -440,15 +389,8 @@ impl Cydonia {
             .session(id)
             .map(|chat| (chat.title.clone(), chat.entry.name.clone(), chat.streaming))
             .unwrap_or_default();
-        div()
-            .h(px(36.))
-            .px(px(12.))
-            .flex()
-            .flex_row()
-            .items_center()
+        fence_band(&theme)
             .gap(px(8.))
-            .border_b_1()
-            .border_color(theme.border)
             .child(
                 div()
                     .flex_1()
@@ -483,30 +425,34 @@ impl Cydonia {
             .into_any_element()
     }
 
-    /// A whole session, as its pane draws it: the transcript, and the plan,
-    /// any permission asked and a composer that sends to it floating over the
-    /// transcript's foot. A picture dropped anywhere on it goes to that
-    /// composer.
-    fn session_live(
+    /// A whole session, read only: every turn, in a box that scrolls past
+    /// [`TRANSCRIPT_HEIGHT`].
+    fn session_whole(
         &mut self,
         id: u64,
         number: u64,
+        height: Option<u32>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let header = self.session_header(id, number, cx);
-        let transcript = self.session_transcript(id, None, window, cx);
+        let all = Turns {
+            from: 1,
+            to: u64::MAX,
+        };
+        let body = self.excerpt_body(
+            id,
+            all,
+            height.is_none().then(|| px(TRANSCRIPT_HEIGHT)),
+            window,
+            cx,
+        );
         div()
             .flex()
             .flex_col()
+            .when(height.is_some(), |el| el.flex_1().min_h_0())
             .child(header)
-            .child(
-                div()
-                    .h(px(TRANSCRIPT_HEIGHT))
-                    .flex()
-                    .flex_col()
-                    .child(transcript),
-            )
+            .child(body)
             .into_any_element()
     }
 
@@ -521,6 +467,7 @@ impl Cydonia {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let composer = self.session_composer(id, window, cx);
+        let root = cx.entity().downgrade();
         let transcript = self.workspace.update(cx, |workspace, cx| {
             workspace.session(id).map(|chat| {
                 transcript::render(
@@ -528,17 +475,15 @@ impl Cydonia {
                     None,
                     CARD_WIDTH,
                     |_, _| None,
+                    move |at, window, cx| {
+                        let _ = root.update(cx, |root, cx| root.ask_rewind(id, at, window, cx));
+                    },
                     transcript::Drawn::Nested(list),
                     window,
                     cx,
                 )
             })
         });
-        if self.card_focus == Some(id) {
-            self.card_focus = None;
-            let focus = composer.focus_handle(cx);
-            window.defer(cx, move |window, cx| window.focus(&focus, cx));
-        }
         let dropped = composer.clone();
         div()
             .id(SharedString::from(format!("session-card-transcript-{id}")))
@@ -567,13 +512,20 @@ impl Cydonia {
         id: u64,
         number: u64,
         turns: Turns,
+        height: Option<u32>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let from = turns.from.saturating_sub(1) as usize;
         let to = turns.to as usize;
-        let body = self.excerpt_body(id, turns, Some(px(TRANSCRIPT_HEIGHT)), window, cx);
+        let body = self.excerpt_body(
+            id,
+            turns,
+            height.is_none().then(|| px(TRANSCRIPT_HEIGHT)),
+            window,
+            cx,
+        );
         let read = self.workspace.read(cx).session(id).map(|chat| {
             (
                 chat.title.clone(),
@@ -596,16 +548,9 @@ impl Cydonia {
         } else {
             None
         };
-        let header = div()
+        let header = fence_band(&theme)
             .id(SharedString::from(format!("session-excerpt-head-{id}")))
-            .h(px(36.))
-            .px(px(12.))
-            .flex()
-            .flex_row()
-            .items_center()
             .gap(px(8.))
-            .border_b_1()
-            .border_color(theme.border)
             .cursor_pointer()
             .hover(|el| el.bg(theme.element_hover))
             .child(
@@ -644,6 +589,7 @@ impl Cydonia {
         div()
             .flex()
             .flex_col()
+            .when(height.is_some(), |el| el.flex_1().min_h_0())
             .child(header)
             .child(body)
             .into_any_element()
@@ -732,7 +678,7 @@ impl Cydonia {
     /// [`Cydonia::sync_composer`].
     pub(crate) fn sync_session_cards(&mut self, cx: &mut Context<Self>) {
         let workspace = self.workspace.read(cx);
-        let items = slash_items(workspace);
+        let items = slash_items();
         let linkables = crate::view::mention::read(workspace);
         let agents = composer_agents(workspace);
         let pointed: Vec<_> = self

@@ -189,6 +189,7 @@ fn an_empty_fork_is_saved_with_its_draft_before_any_prompt() {
     let restored = ChatSession::restore(3, path.clone(), agent(), saved);
     assert!(restored.items.is_empty());
     assert_eq!(restored.draft, "editable prompt");
-    assert!(restored.fork.unwrap().pending);
+    assert!(restored.fork.is_some());
+    assert_eq!(restored.replay, Some(0));
     std::fs::remove_dir_all(path).unwrap();
 }

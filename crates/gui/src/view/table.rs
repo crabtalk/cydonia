@@ -388,7 +388,7 @@ impl Cydonia {
                         .id("table-body")
                         .flex_1()
                         .min_h_0()
-                        .overflow_y_scroll()
+                        .map(|el| scrollbars::scrolls(el, scrollbars::Axes::Vertical))
                         .px(px(24.))
                         .pb(px(20.))
                         .child(body)

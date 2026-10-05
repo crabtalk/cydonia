@@ -211,6 +211,9 @@ pub struct Appearance {
     pub caret: Option<Paint>,
     pub caret_shape: CaretShape,
     pub caret_height: CaretHeight,
+    /// A block caret shows outlined while its window is inactive; off, it
+    /// does not show.
+    pub hollow_caret: bool,
     /// Terminals draw the caret's shape and blink, and ignore the shape the
     /// running program asks for.
     pub terminal_caret: bool,
@@ -389,6 +392,14 @@ impl From<CaretHeight> for bezel::ui::input::CaretHeight {
     }
 }
 
+/// What [`Appearance::hollow_caret`] asks bezel for.
+pub fn inactive_caret(hollow: bool) -> bezel::ui::input::InactiveCaret {
+    match hollow {
+        true => bezel::ui::input::InactiveCaret::Hollow,
+        false => bezel::ui::input::InactiveCaret::Hidden,
+    }
+}
+
 impl CaretHeight {
     pub fn key(self) -> &'static str {
         match self {
@@ -502,6 +513,7 @@ impl Default for Appearance {
             caret: None,
             caret_shape: CaretShape::default(),
             caret_height: CaretHeight::default(),
+            hollow_caret: true,
             terminal_caret: true,
         }
     }
@@ -1195,6 +1207,7 @@ fn write_appearance(doc: &mut toml_edit::DocumentMut, appearance: &Appearance) -
     held["scrollbars"] = toml_edit::value(appearance.scrollbars.key());
     held["caret_shape"] = toml_edit::value(appearance.caret_shape.key());
     held["caret_height"] = toml_edit::value(appearance.caret_height.key());
+    held["hollow_caret"] = toml_edit::value(appearance.hollow_caret);
     held["terminal_caret"] = toml_edit::value(appearance.terminal_caret);
     held["sidebar_scrollbars"] = toml_edit::value(appearance.sidebar_scrollbars.key());
     held["wrap_code"] = toml_edit::value(appearance.wrap_code);

@@ -159,6 +159,8 @@ pub struct ChatSession {
     pub items: Vec<ChatItem>,
     history_unloaded: bool,
     pub fork: Option<ForkOrigin>,
+    /// See [`Record::replay`].
+    pub replay: Option<usize>,
     pub draft: String,
     pub(crate) draft_save: Option<Task<()>>,
     pub sent_at: BTreeMap<usize, u64>,
@@ -253,6 +255,7 @@ impl ChatSession {
             items: Vec::new(),
             history_unloaded: false,
             fork: None,
+            replay: None,
             draft: String::new(),
             draft_save: None,
             sent_at: BTreeMap::new(),
@@ -293,6 +296,7 @@ impl ChatSession {
             entry,
             cwd,
             connection: Connection::Idle,
+            replay: record.replay,
             items: record.items,
             history_unloaded: false,
             fork: record.fork,
@@ -336,6 +340,7 @@ impl ChatSession {
         else {
             return false;
         };
+        self.replay = record.replay;
         self.items = record.items;
         self.sent_at = record.sent_at;
         self.fork = record.fork;
@@ -362,6 +367,7 @@ impl ChatSession {
         self.items = Vec::new();
         self.sent_at = BTreeMap::new();
         self.fork = None;
+        self.replay = None;
         self.draft = String::new();
         self.transcript = transcript::State::default();
         self.plan = Vec::new();
@@ -401,6 +407,7 @@ impl ChatSession {
             closed: self.closed,
             items: self.items.clone(),
             fork: self.fork.clone(),
+            replay: self.replay,
             draft: self.draft.clone(),
             sent_at: self.sent_at.clone(),
         }
@@ -447,6 +454,37 @@ impl ChatSession {
     /// Whether nothing has been said in it yet — see [`nothing_said`].
     pub fn unsaid(&self) -> bool {
         !self.history_unloaded && nothing_said(&self.items)
+    }
+
+    /// Cut the transcript back to before the user message at `at` and return
+    /// that message. The agent is restarted on a fresh session, and what is
+    /// left goes to it as history with the next prompt.
+    pub fn rewind(&mut self, at: usize, cx: &mut Context<Workspace>) -> Option<String> {
+        if !self.load_history() {
+            return None;
+        }
+        let ChatItem::User(text) = self.items.get(at)? else {
+            return None;
+        };
+        let text = text.clone();
+        self.cancel();
+        self.items.truncate(at);
+        self.sent_at.retain(|ix, _| *ix < at);
+        self.agent_session = None;
+        self.replay = Some(at);
+        self.transcript = transcript::State::default();
+        self.streaming = false;
+        self.queue.clear();
+        self.plan = Vec::new();
+        self.permission = None;
+        self.flight = None;
+        self.turn_started = None;
+        self.tool_started = BTreeMap::new();
+        self.connection = Connection::Idle;
+        self._pump = Task::ready(());
+        self.flush();
+        self.resume(cx);
+        Some(text)
     }
 
     /// Give a session with panel tabs a stable identity, even before its first prompt.
@@ -500,15 +538,11 @@ impl ChatSession {
                 &self.entry,
                 Launch {
                     previous: self.agent_session.clone(),
-                    history: self.fork.as_ref().map(|fork| {
-                        let end = if fork.pending {
-                            fork.before.min(self.items.len())
-                        } else {
-                            self.items.len()
-                        };
+                    history: (self.fork.is_some() || self.replay.is_some()).then(|| {
+                        let end = self.replay.unwrap_or(usize::MAX).min(self.items.len());
                         acp::history(&self.items[..end])
                     }),
-                    history_pending: self.fork.as_ref().is_some_and(|fork| fork.pending),
+                    history_pending: self.replay.is_some(),
                     choices: self.preferences.clone(),
                     record: self.record.clone(),
                     ..Launch::new(self.cwd.clone())
@@ -814,10 +848,8 @@ impl ChatSession {
             Event::Permission(request, reply) => self.open_permission(request, reply),
             Event::Stderr(line) => self.stderr(line),
             Event::TurnDone(result) => {
-                if result.is_ok()
-                    && let Some(fork) = &mut self.fork
-                {
-                    fork.pending = false;
+                if result.is_ok() {
+                    self.replay = None;
                 }
                 self.finish_thinking();
                 self.streaming = false;

@@ -18,6 +18,7 @@ impl Render for ChatView {
                 None,
                 self.width,
                 |_, _| Some(div().h(px(30.)).child("Queued message").into_any_element()),
+                |_, _, _| {},
                 super::Drawn::Pane,
                 window,
                 cx,

@@ -12,7 +12,9 @@ use bezel::{
     },
     motion,
     theme::{TextStyle, Theme, Typeset},
-    ui::{AppExt as _, icons, input, tabs, tooltip::Tooltip},
+    ui::{
+        AppExt as _, context_menu::ContextMenu, icons, input, menu::Item, tabs, tooltip::Tooltip,
+    },
 };
 use futures::{SinkExt, StreamExt, channel::mpsc};
 use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
@@ -322,6 +324,8 @@ pub struct Terminal {
     cursor_on: bool,
     /// The blink, alive only while focused on a blinking cursor.
     blink: Option<Task<()>>,
+    /// The right-click menu, while the program is not reporting the mouse.
+    menu: ContextMenu,
     _pump: Option<Task<()>>,
 }
 
@@ -333,6 +337,7 @@ impl Terminal {
             images: Images::new(),
             shell: None,
             focus: cx.focus_handle(),
+            menu: ContextMenu::default(),
             geometry: None,
             pressed: None,
             selecting: false,
@@ -449,6 +454,10 @@ impl Terminal {
     }
 
     fn key(&mut self, event: &gpui::KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
+        // The open menu's keys are its own.
+        if self.menu.is_open() {
+            return;
+        }
         let kind = if event.is_held {
             KeyEvent::Repeat
         } else {
@@ -509,6 +518,26 @@ impl Terminal {
                 cx.notify();
             });
         }));
+    }
+
+    fn open_menu(
+        &mut self,
+        at: gpui::Point<gpui::Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let enable = |item: Item, on: bool| if on { item } else { item.disabled() };
+        let items = vec![
+            enable(
+                Item::action("Copy").with_shortcut(&input::Copy, window),
+                self.emulator.selection_text().is_some(),
+            ),
+            enable(
+                Item::action("Paste").with_shortcut(&input::Paste, window),
+                cx.read_from_clipboard().is_some(),
+            ),
+        ];
+        self.menu.open(at, items, window, cx);
     }
 
     fn copy(&mut self, _: &input::Copy, _: &mut Window, cx: &mut Context<Self>) {
@@ -720,6 +749,7 @@ impl Render for Terminal {
             focused,
         )
         .with_cursor_on(self.cursor_on)
+        .with_hollow_inactive(cx.inactive_caret() == bezel::ui::input::InactiveCaret::Hollow)
         .with_text_size(typography::terminal_size(cx))
         .with_content_inset(Edges::all(px(12.0)));
         div()
@@ -745,6 +775,17 @@ impl Render for Terminal {
                     .on_action(cx.listener(Self::copy))
                     .on_action(cx.listener(Self::paste))
                     .on_drop(cx.listener(Self::drop_paths))
+                    .children(self.menu.render(
+                        "terminal-menu",
+                        |this| &mut this.menu,
+                        |this, path, window, cx| match path {
+                            [0] => this.copy(&input::Copy, window, cx),
+                            [1] => this.paste(&input::Paste, window, cx),
+                            _ => {}
+                        },
+                        window,
+                        cx,
+                    ))
                     .on_mouse_down(
                         gpui::MouseButton::Left,
                         cx.listener(|this, event: &gpui::MouseDownEvent, window, cx| {
@@ -778,13 +819,15 @@ impl Render for Terminal {
                     )
                     .on_mouse_down(
                         gpui::MouseButton::Right,
-                        cx.listener(|this, event: &gpui::MouseDownEvent, _, cx| {
-                            this.report(
+                        cx.listener(|this, event: &gpui::MouseDownEvent, window, cx| {
+                            if !this.report(
                                 MouseAction::Press(MouseButton::Right),
                                 event.position,
                                 &event.modifiers,
                                 cx,
-                            );
+                            ) {
+                                this.open_menu(event.position, window, cx);
+                            }
                         }),
                     )
                     .on_mouse_down(

@@ -11,7 +11,7 @@
 
 use bezel::{
     gpui::{App, Pixels, SharedString, font, px},
-    theme::{Appearance, Theme},
+    theme::{Appearance, Glass, SurfaceStyle, Theme},
 };
 use std::sync::{
     RwLock,
@@ -62,6 +62,7 @@ pub fn families() -> Families {
 /// straight onto the theme would last until sunset.
 pub fn palette(appearance: Appearance) -> Theme {
     let mut theme = Theme::for_appearance(appearance);
+    theme.drop_preview = SurfaceStyle::Glass(Glass::Clear);
     let families = held();
     if let Some(sans) = families.sans {
         theme.font_body = sans.clone();

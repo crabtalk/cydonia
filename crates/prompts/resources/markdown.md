@@ -147,12 +147,9 @@ the entry in the project shown. Spelled like a web link's forms:
 
 - An ordinary link stays a text link.
 - `"chip"` paints inline as the entry's mark and title.
-- `"embed"` alone on a line is a card of the entry. A session's card is the
-  session, live, with a message field; `cydonia://cydonia#43:5-7` shows turns
-  5 to 7 alone, read only. An article's or a board's card is its title, kind
-  and number.
-- When the body ends on a session's card, write new content above that card,
-  not after it, unless the user asks for it below.
+- `"embed"` alone on a line is a card of the entry. A session's card is its
+  transcript, read only; `cydonia://cydonia#43:5-7` shows turns 5 to 7 alone.
+  An article's or a board's card is its title, kind and number.
 
 ## Supported formatting and limits
 
@@ -163,8 +160,14 @@ literal pipes in table cells with `\|`.
 
 Raw HTML is literal text, not layout. Underline, text colors, `==highlight==`,
 math typesetting, footnotes and special callout blocks are not enabled.
-Mermaid fences display code; Cydonia does not install a diagram renderer.
-Use an image when a rendered diagram is needed.
+A ` ```mermaid ` fence holding a flowchart, state diagram or class diagram is
+drawn as a diagram; any other kind of mermaid, or source that does not parse,
+shows as code. Use an image for other diagrams.
+
+A drawn mermaid fence and an `"embed"` card can be given a height, in whole
+pixels, for the whole block: after the fence's language (` ```mermaid 360 `)
+or after the title's form (`"embed 360"`). Leave it out for the block's own
+height. Dragging the block's bottom edge in the editor writes it.
 
 Avoid relying on nested quote depth or combinations such as a list inside a
 quote: the editor flattens mixed containers. Soft and hard line breaks share

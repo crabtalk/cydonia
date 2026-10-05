@@ -41,7 +41,7 @@ const PAGES: Arg = Arg {
 };
 
 /// [`looking`] then [`acting`].
-pub static TOOLS: [Tool; 6] = [
+pub static TOOLS: [Tool; 7] = [
     Tool {
         name: "browser_tabs",
         description: "The browser tabs open in the project's right panel: id, address and title \
@@ -91,6 +91,16 @@ pub static TOOLS: [Tool; 6] = [
         call: scroll,
     },
     Tool {
+        name: "browser_console",
+        description: "What a browser tab's page has logged: its console calls, uncaught errors \
+            and unhandled rejections, oldest first, each with the frame that logged it. Failed \
+            loads and other messages the engine writes itself are not in it.",
+        schema: |bound| with_tab(fields(bound, &[PROJECT])),
+        writes: false,
+        deletes: false,
+        call: console,
+    },
+    Tool {
         name: "browser_click",
         description: "Click an element by its number from the last read of the tab, and read \
             back the page it leaves.",
@@ -121,14 +131,14 @@ pub static TOOLS: [Tool; 6] = [
 ];
 
 /// The tools that read pages and move between them: tabs, open, read,
-/// scroll.
+/// scroll, console.
 pub fn looking() -> &'static [Tool] {
-    &TOOLS[..4]
+    &TOOLS[..5]
 }
 
 /// The tools that act on a page as the user would: click, type.
 pub fn acting() -> &'static [Tool] {
-    &TOOLS[4..]
+    &TOOLS[5..]
 }
 
 fn with_tab(mut schema: Value) -> Value {
@@ -187,6 +197,10 @@ fn open(args: Args<'_>) -> Outcome {
 
 fn read(args: Args<'_>) -> Outcome {
     ask(&args, tab(&args)?, Act::Read)
+}
+
+fn console(args: Args<'_>) -> Outcome {
+    ask(&args, tab(&args)?, Act::Console)
 }
 
 fn click(args: Args<'_>) -> Outcome {

@@ -481,14 +481,10 @@ pub struct Cydonia {
     pub(crate) card_docs: board::Docs,
     /// The entries the window has been on — see [`super::history`].
     pub(crate) history: super::history::History,
-    /// The composer each session painted into an article types into, by the
-    /// session's id — see [`super::entry_link`].
+    /// The composer each session drawn in a drawer types into, by the
+    /// session's id — see [`Cydonia::session_transcript`].
     pub(crate) session_cards:
         std::collections::HashMap<u64, Entity<super::component::composer::Composer>>,
-    /// The session whose card composer takes the focus once a frame has drawn
-    /// it. Focusing a composer that is not in the tree yet loses the focus to
-    /// the window on the next frame.
-    pub(crate) card_focus: Option<u64>,
     /// The pane the last press came down in: `None` for the one a window with
     /// no space open shows. Where a link opens — see
     /// [`Cydonia::open_reference`].
@@ -1031,7 +1027,6 @@ impl Cydonia {
             card_docs: Default::default(),
             history: Default::default(),
             session_cards: Default::default(),
-            card_focus: None,
             pressed_pane: None,
             #[cfg(feature = "desktop")]
             settings_window: None,
@@ -1047,7 +1042,13 @@ impl Cydonia {
                     super::sidebar::ghost(label.into(), Theme::of(cx))
                 }
             }),
-            sidebar_sort: drag::Domain::new(Painter::of(cx)),
+            sidebar_sort: drag::Domain::with_ghost(Painter::of(cx), {
+                let this = cx.entity().downgrade();
+                move |item, window, cx| {
+                    this.update(cx, |this, cx| this.sidebar_ghost(item, window, cx))
+                        .unwrap_or_else(|_| gpui::Empty.into_any_element())
+                }
+            }),
             board_sort: drag::Domain::with_ghost(Painter::of(cx), {
                 let this = cx.entity().downgrade();
                 move |item, window, cx| board::ghost(&this, item, window, cx)

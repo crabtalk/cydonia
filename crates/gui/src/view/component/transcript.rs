@@ -652,11 +652,13 @@ pub enum Drawn<'a> {
 
 /// The transcript of one session, rendered from the model that owns it —
 /// expanding a work section or a tool's output writes back through `cx`.
+#[allow(clippy::too_many_arguments)]
 pub fn render(
     chat: &ChatSession,
     find: Option<Query>,
     pane_width: f32,
     queued: impl Fn(&mut Window, &mut bezel::gpui::App) -> Option<AnyElement> + 'static,
+    rewind: impl Fn(usize, &mut Window, &mut bezel::gpui::App) + 'static,
     drawn: Drawn,
     _window: &mut Window,
     cx: &mut Context<Workspace>,
@@ -710,6 +712,7 @@ pub fn render(
     let visible_workspace = workspace.clone();
     let edge_workspace = workspace.clone();
     let count = turns.len();
+    let rewind: Rewind = Rc::new(rewind);
     let virtual_content = list.render(
         move |index, window, cx| {
             if index == count {
@@ -737,7 +740,14 @@ pub fn render(
                                 .relative()
                                 .px(px(24.))
                                 .when(index == 0, |row| row.pt(px(PAD)))
-                                .child(zone(chat, turn, running, window, cx))
+                                .child(zone(
+                                    chat,
+                                    turn,
+                                    running,
+                                    (index + 1 == count).then(|| rewind.clone()),
+                                    window,
+                                    cx,
+                                ))
                                 .when(running && turn.range.len() <= 1, |row| {
                                     row.child(working(chat, turn.range.start, cx))
                                 }),
@@ -917,7 +927,7 @@ pub fn excerpt(
                 .get(from.min(to)..to)
                 .unwrap_or_default()
                 .iter()
-                .map(|turn| zone(chat, turn, false, window, cx)),
+                .map(|turn| zone(chat, turn, false, None, window, cx)),
         )
         .into_any_element();
     crate::view::entry_link::leave_nested(cx);
@@ -1236,10 +1246,15 @@ fn rail<V: 'static>(
         .into_any_element()
 }
 
+/// What the last message's edit button runs, given that message's item.
+type Rewind = Rc<dyn Fn(usize, &mut Window, &mut bezel::gpui::App)>;
+
+/// One turn. `rewind` is there on the last turn only.
 fn zone(
     chat: &ChatSession,
     turn: &Turn,
     running: bool,
+    rewind: Option<Rewind>,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) -> AnyElement {
@@ -1326,6 +1341,31 @@ fn zone(
                                 .flex_none()
                                 .items_center()
                                 .gap(px(caption_size * 0.2))
+                                .children(rewind.map(|rewind| {
+                                    let edit_group =
+                                        SharedString::from(format!("edit-message-{id}-{first}"));
+                                    div()
+                                        .id(("edit-user-message", first))
+                                        .group(edit_group.clone())
+                                        .size(button_size)
+                                        .flex_none()
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .cursor_pointer()
+                                        .tooltip(|window, cx| {
+                                            Tooltip::text("Edit message", window, cx)
+                                        })
+                                        .on_click(move |_, window, cx| rewind(first, window, cx))
+                                        .child(
+                                            theme
+                                                .icon_at(TextStyle::Caption, icons::text::Pencil)
+                                                .text_color(theme.text_muted)
+                                                .group_hover(edit_group, |icon| {
+                                                    icon.text_color(theme.text)
+                                                }),
+                                        )
+                                }))
                                 .child({
                                     let link_group =
                                         SharedString::from(format!("link-message-{id}-{first}"));

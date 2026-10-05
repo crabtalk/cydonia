@@ -16,7 +16,10 @@ use crate::{
         section::Section,
     },
 };
-use artifact::{session::chat::PlanStatus, space::Member};
+use artifact::{
+    session::chat::{ChatItem, PlanStatus},
+    space::Member,
+};
 use bezel::{
     gpui::{
         self, AnyElement, App, Axis, Context, Div, DragMoveEvent, Empty, FocusHandle,
@@ -926,6 +929,7 @@ pub(crate) struct Pointing {
     placeholder: String,
     commands: Vec<Command>,
     streaming: bool,
+    last_asked: Option<String>,
     activity: Option<composer::Activity>,
     agents: Vec<composer::Agent>,
     current: Option<usize>,
@@ -947,6 +951,12 @@ impl Pointing {
             ),
             commands: chat.map(|chat| chat.commands.clone()).unwrap_or_default(),
             streaming: chat.is_some_and(|chat| chat.streaming),
+            last_asked: chat.and_then(|chat| {
+                chat.items.iter().rev().find_map(|item| match item {
+                    ChatItem::User(text) => Some(text.clone()),
+                    _ => None,
+                })
+            }),
             activity: chat.and_then(composer::Activity::of),
             agents: agents.to_vec(),
             current: chat.and_then(|chat| {
@@ -968,6 +978,7 @@ impl Pointing {
         composer.set_placeholder(&self.placeholder, cx);
         composer.set_commands(&self.commands, cx);
         composer.set_streaming(self.streaming, cx);
+        composer.set_last_asked(self.last_asked);
         composer.set_activity(self.activity, cx);
         composer.set_agents(&self.agents, self.current, cx);
         composer.set_switches(&self.switches, cx);
@@ -1279,6 +1290,12 @@ impl Cydonia {
             .ok()
             .flatten()
         };
+        let rewind = {
+            let root = cx.entity().downgrade();
+            move |at, window: &mut Window, cx: &mut bezel::gpui::App| {
+                let _ = root.update(cx, |root, cx| root.ask_rewind(id, at, window, cx));
+            }
+        };
         let find = self.transcript_query(entry, cx);
         let transcript = self
             .workspace
@@ -1288,6 +1305,7 @@ impl Cydonia {
                     find,
                     pane_width,
                     queued,
+                    rewind,
                     transcript::Drawn::Pane,
                     window,
                     cx,
@@ -1720,7 +1738,9 @@ impl Cydonia {
                                                     .composer
                                                     .clone()
                                                     .update(cx, |composer, cx| {
-                                                        composer.restore_queued(text, window, cx);
+                                                        composer.restore(text, cx);
+                                                        window
+                                                            .focus(&composer.focus_handle(cx), cx);
                                                     });
                                             })
                                         }),

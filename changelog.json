@@ -1,8 +1,37 @@
 [
   {
+    "version": "0.1.26",
+    "date": "2026-10-06",
+    "nightly": true,
+    "summary": "Mermaid diagrams, read-only session cards, one entry matcher for search and @, and tabs that close back to where you were.",
+    "new": [
+      "Draw mermaid flowcharts, state and class diagrams in articles, and resize session cards and diagrams by dragging their bottom edge",
+      "Rank the search palette and @ with one matcher, with references and kind prefixes",
+      "Rewind the last message back into the composer, and recall it with up",
+      "Copy and paste from a terminal's right-click menu",
+      "Close a tab from its right-click menu, and open the right panel from a space's top-right pane",
+      "Read a page's console log as an agent, and open the web inspector",
+      "Keep the caret outlined while the window is inactive, from Settings"
+    ],
+    "changed": [
+      "Show session cards in articles as read-only transcripts in the code-block box, and let /Session pick an existing session",
+      "Put a quote into the composer as a blockquote",
+      "Draw mermaid nodes translucent on the glass",
+      "Draw the selected sidebar entry and a carried entry on glass, and clear glass over a space's drop target",
+      "Build on Bezel 0.2.9 from crates.io"
+    ],
+    "fixed": [
+      "Land on the last tab used when closing a tab in a space, not the top-left pane",
+      "Keep a pane's new article or table in the open space",
+      "Leave a project's fold alone when making an entry",
+      "Match plain-text mode to the preview's typography",
+      "Cover the web page with the search palette, dialogs and drawer",
+      "Ignore sideways scrolls in vertical panes"
+    ]
+  },
+  {
     "version": "0.1.25",
     "date": "2026-10-04",
-    "nightly": true,
     "summary": "A floating heading outline in articles, @ mentions as chips, the app caret in terminals, and live session cards that match the session pane.",
     "new": [
       "Float a heading outline over articles that tracks the reading position, and switch spaces with ⌘ and a number",

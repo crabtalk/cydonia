@@ -10,6 +10,7 @@ use std::{collections::BTreeMap, time::Duration};
 use web_time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Clone, Serialize, Deserialize)]
+#[serde(remote = "Self")]
 pub struct Record {
     /// What names this session here, minted when its file is and never moving
     /// after. Not [`Record::session`]: that one is the agent's, absent until
@@ -52,6 +53,11 @@ pub struct Record {
     pub closed: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fork: Option<ForkOrigin>,
+    /// Items before this index have not reached the agent's session yet, and
+    /// go to it as history with the next prompt. Cleared by the first turn
+    /// that finishes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replay: Option<usize>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub draft: String,
     pub items: Vec<ChatItem>,
@@ -64,9 +70,23 @@ pub struct Record {
 pub struct ForkOrigin {
     pub session: String,
     pub title: String,
-    /// Exclusive item boundary retained from the source.
-    pub before: usize,
-    pub pending: bool,
+    /// [`Record::replay`] as a record written before it kept it: read, never
+    /// written.
+    #[serde(default, skip_serializing)]
+    before: usize,
+    #[serde(default, skip_serializing)]
+    pending: bool,
+}
+
+impl ForkOrigin {
+    pub fn new(session: String, title: String) -> Self {
+        Self {
+            session,
+            title,
+            before: 0,
+            pending: false,
+        }
+    }
 }
 
 impl Record {
@@ -96,12 +116,8 @@ impl Record {
                 .unwrap_or_default()
                 .as_secs(),
             closed: false,
-            fork: Some(ForkOrigin {
-                session: self.id.clone(),
-                title,
-                before,
-                pending: true,
-            }),
+            fork: Some(ForkOrigin::new(self.id.clone(), title)),
+            replay: Some(before),
             draft: draft.clone(),
             items: self.items[..before].to_vec(),
             sent_at: self
@@ -114,5 +130,25 @@ impl Record {
 
     pub fn at(&self) -> SystemTime {
         UNIX_EPOCH + Duration::from_secs(self.updated)
+    }
+}
+
+impl Serialize for Record {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        Record::serialize(self, serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Record {
+    /// Lifts [`Record::replay`] out of the fork, where a record written
+    /// before it existed kept it.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let mut record = Record::deserialize(deserializer)?;
+        if let Some(fork) = &mut record.fork
+            && std::mem::take(&mut fork.pending)
+        {
+            record.replay = record.replay.or(Some(fork.before));
+        }
+        Ok(record)
     }
 }

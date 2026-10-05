@@ -871,11 +871,9 @@ fn a_pane_holding_one_tab_closes(cx: &mut gpui::TestAppContext) {
     });
 }
 
-/// Making something in a folded project unfolds it. An entry minted under a
-/// closed heading is one the sidebar does not list, so the window would land
-/// on a row nobody can see.
+/// A project's fold is the reader's: making an entry in it leaves it folded.
 #[gpui::test]
-fn making_an_entry_unfolds_the_project_it_lands_in(cx: &mut gpui::TestAppContext) {
+fn making_an_entry_leaves_the_project_folded(cx: &mut gpui::TestAppContext) {
     let scratch = Scratch::new("reveal");
     cx.update(|cx| bezel::theme::Theme::install(bezel::theme::Appearance::Light, cx));
     let workspace = cx.new(|cx| Workspace::new(Settings::default(), state::State::default(), cx));
@@ -886,12 +884,6 @@ fn making_an_entry_unfolds_the_project_it_lands_in(cx: &mut gpui::TestAppContext
         assert!(!workspace.projects[0].expanded, "folded to start");
 
         workspace.new_board(0, "First".into(), "ONE", cx).ok();
-        assert!(workspace.projects[0].expanded);
-
-        // And folding it again is left alone by anything that only opens an
-        // entry already there — the fold is a reader's decision.
-        workspace.toggle_project(0, cx);
-        workspace.open_board(0, 0, cx);
         assert!(!workspace.projects[0].expanded);
     });
 }
@@ -1100,4 +1092,30 @@ fn a_space_fold_is_kept_like_a_project_fold(cx: &mut gpui::TestAppContext) {
     };
     let restored = cx.new(|cx| Workspace::new(Settings::default(), state, cx));
     restored.update(cx, |workspace, _| assert!(workspace.space_folded(&id)));
+}
+
+/// An article made from a pane's `+` lands as a tab of that pane, in the space
+/// that is open.
+#[gpui::test]
+fn an_article_made_in_a_pane_stays_in_the_space(cx: &mut gpui::TestAppContext) {
+    let scratch = Scratch::new("pane-article");
+    let (workspace, a, b) = two_boards(&scratch, cx);
+    workspace.update(cx, |workspace, cx| {
+        workspace.arrange(&a, &b, Side::Right, cx);
+        let ix = workspace.create_article().expect("made");
+        let id = workspace.projects[0].articles[ix].id.clone();
+        let member = workspace
+            .member_of(0, Showing::Article(id))
+            .expect("a member");
+        workspace.stack_pane(&b, &member, cx);
+        assert_eq!(workspace.space, Some(0));
+        assert_eq!(workspace.spaces.len(), 1);
+        assert!(
+            workspace
+                .active_space()
+                .unwrap()
+                .entries()
+                .contains(&member)
+        );
+    });
 }

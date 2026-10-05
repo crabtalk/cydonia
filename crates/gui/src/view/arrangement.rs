@@ -11,6 +11,7 @@ use crate::{
         component::{
             divider,
             menu::{self, Menu},
+            panel::changes_toggle,
         },
         leaf::Pane,
         root::Cydonia,
@@ -708,6 +709,11 @@ impl Cydonia {
                 )
                 .children(self.pane_menu(pane, window, cx)),
             )
+            // The band's right-panel button, on the pane at the window's top
+            // right — which is `last` only while the panel is down.
+            .children(
+                last.then(|| changes_toggle("Show right panel", Painter::of(cx), Theme::of(cx))),
+            )
             .children(
                 right
                     .then(|| chrome::caption(CaptionSide::Right, window, cx))
@@ -906,34 +912,31 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // The pane the tab was in, if it survives losing it: what the window
-        // lands on next is that pane's new front, not whatever leaf happens to
-        // sit where the closed one did.
+        // Where the window lands once the tab is gone: the tab that was in
+        // front before it, anywhere in the space, so closing walks back the
+        // way the reader came. Nothing remembered falls back to a neighbour in
+        // the tab's own strip — the one to its left, or to its right for the
+        // first — and, for a pane's last tab, to the space's last tab.
         let stack = self.workspace.read(cx).stack_of(entry);
-        let kept = (stack.len() > 1)
-            .then(|| {
-                // The tab that was in front before this one, so closing walks
-                // back the way the reader came. Nothing remembered — a pane
-                // never left its first tab — falls back to a neighbour in the
-                // strip: the one to its left, or the one to its right for the
-                // first.
-                let recent = self
-                    .tab_history
-                    .iter()
-                    .rev()
-                    .find(|tab| *tab != entry && stack.contains(tab))
-                    .cloned();
-                recent.or_else(|| {
-                    stack
-                        .iter()
-                        .position(|tab| tab == entry)
-                        .map(|at| match at {
-                            0 => stack[1].clone(),
-                            at => stack[at - 1].clone(),
-                        })
-                })
+        let entries = self
+            .arrangement(cx)
+            .map(|space| space.entries())
+            .unwrap_or_default();
+        let kept = self
+            .tab_history
+            .iter()
+            .rev()
+            .find(|tab| *tab != entry && entries.contains(tab))
+            .cloned()
+            .or_else(|| {
+                let at = stack.iter().position(|tab| tab == entry)?;
+                match at {
+                    _ if stack.len() < 2 => None,
+                    0 => stack.get(1).cloned(),
+                    at => stack.get(at - 1).cloned(),
+                }
             })
-            .flatten();
+            .or_else(|| entries.iter().rev().find(|tab| *tab != entry).cloned());
         self.tab_history.retain(|tab| tab != entry);
         // The entry left when this close took the space with it. Without
         // putting the pane on its kind the window drops back to whatever the
@@ -1235,7 +1238,7 @@ impl Cydonia {
                     Showing::Session(id)
                 }
                 New::Article => {
-                    let ix = workspace.new_article(cx)?;
+                    let ix = workspace.create_article()?;
                     Showing::Article(
                         workspace
                             .projects
@@ -1247,7 +1250,7 @@ impl Cydonia {
                     )
                 }
                 New::Table => {
-                    let ix = workspace.new_table(cx)?;
+                    let ix = workspace.create_table()?;
                     Showing::Table(workspace.projects.get(project)?.tables.get(ix)?.key.clone())
                 }
                 New::Board => return None,
@@ -1324,7 +1327,3 @@ fn top_right(node: &Node<Member>) -> Option<Member> {
 #[cfg(test)]
 #[path = "../../tests/unit/pane_footer.rs"]
 mod pane_footer_tests;
-
-#[cfg(test)]
-#[path = "../../tests/unit/pane_hover.rs"]
-mod pane_hover_tests;

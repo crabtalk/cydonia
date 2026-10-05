@@ -427,6 +427,7 @@ impl Cydonia {
                     drawer.size.fraction(drawer.pane_bounds.get().size.height),
                 ))
                 .bg(theme.surface_raised)
+                .child(bezel::ui::cover::cover())
                 .rounded_t(px(if expanded {
                     0.
                 } else {

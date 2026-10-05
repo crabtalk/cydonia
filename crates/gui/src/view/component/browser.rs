@@ -21,8 +21,8 @@ use bezel::{
         widgets::{ButtonStyle, Buttons as _},
     },
 };
-use browser::{DataStore, WebView, WebViewEvent};
-use std::collections::HashMap;
+use browser::{ConsoleMessage, DataStore, WebView, WebViewEvent};
+use std::collections::{HashMap, VecDeque};
 
 actions!(cydonia_browser, [Go, Reload, HardReload]);
 
@@ -55,6 +55,15 @@ struct Pages(HashMap<u64, Entity<WebView>>);
 
 impl Global for Pages {}
 
+/// Messages a tab's log keeps; older ones are dropped.
+const LOG_LIMIT: usize = 500;
+
+/// What each live page has logged, by tab id, oldest first.
+#[derive(Default)]
+struct Logs(HashMap<u64, VecDeque<ConsoleMessage>>);
+
+impl Global for Logs {}
+
 /// A tab id no other tab holds: tab ids are saved across restarts.
 pub fn new_id() -> u64 {
     std::time::SystemTime::now()
@@ -68,6 +77,11 @@ pub fn forget(id: u64, cx: &mut App) {
         && pages.0.contains_key(&id)
     {
         cx.global_mut::<Pages>().0.remove(&id);
+    }
+    if let Some(logs) = cx.try_global::<Logs>()
+        && logs.0.contains_key(&id)
+    {
+        cx.global_mut::<Logs>().0.remove(&id);
     }
 }
 
@@ -86,6 +100,7 @@ pub(crate) fn set_clearing(value: bool, cx: &mut App) {
 
 pub(crate) fn forget_all(cx: &mut App) {
     cx.default_global::<Pages>().0.clear();
+    cx.default_global::<Logs>().0.clear();
 }
 
 /// The title or location changed.
@@ -148,6 +163,14 @@ impl Browser {
     }
 
     /// The tab's page, once a render has built it.
+    /// What the tab's page has logged, oldest first.
+    pub(crate) fn console(&self, cx: &App) -> Vec<ConsoleMessage> {
+        cx.try_global::<Logs>()
+            .and_then(|logs| logs.0.get(&self.id))
+            .map(|log| log.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
     pub(crate) fn webview(&self) -> Option<Entity<WebView>> {
         self.page.clone()
     }
@@ -191,7 +214,12 @@ impl Browser {
                 true => DataStore::new(),
                 false => DataStore::new().incognito(),
             };
-            let page = cx.new(|cx| WebView::new(url, window, cx).with_data_store(store));
+            let page = cx.new(|cx| {
+                WebView::new(url, window, cx)
+                    .with_data_store(store)
+                    .with_console()
+                    .with_inspector()
+            });
             cx.default_global::<Pages>().0.insert(self.id, page.clone());
             page
         });
@@ -223,7 +251,15 @@ impl Browser {
                 }
             }
             WebViewEvent::Title(title) => self.title = title.clone(),
-            WebViewEvent::Load(_) | WebViewEvent::History { .. } | WebViewEvent::Console(_) => {}
+            WebViewEvent::Load(_) | WebViewEvent::History { .. } => {}
+            WebViewEvent::Console(message) => {
+                let log = cx.default_global::<Logs>().0.entry(self.id).or_default();
+                if log.len() == LOG_LIMIT {
+                    log.pop_front();
+                }
+                log.push_back(message.clone());
+                return;
+            }
             WebViewEvent::NewWindow(url) => {
                 cx.emit(OpenTab(url.clone()));
                 return;
@@ -251,6 +287,7 @@ impl Browser {
         let items = [
             Item::action("Reload").with_shortcut_in(&Reload, CONTEXT, window),
             Item::action("Hard Reload").with_shortcut_in(&HardReload, CONTEXT, window),
+            Item::action("Web Inspector"),
         ];
         let paths = items.to_vec();
         let card = menu::card(
@@ -271,6 +308,7 @@ impl Browser {
                         match path.first() {
                             Some(0) => this.reload(&Reload, window, cx),
                             Some(1) => this.hard_reload(&HardReload, window, cx),
+                            Some(2) => this.page(window, cx).read(cx).open_inspector(),
                             _ => {}
                         }
                     }

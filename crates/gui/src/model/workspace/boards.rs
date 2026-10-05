@@ -94,7 +94,6 @@ impl Workspace {
         board.view = view;
         let _ = open.store().save_board(&mut board);
         open.boards.insert(0, board);
-        self.reveal_project(project, cx);
         self.open_board(project, 0, cx);
         Ok(0)
     }

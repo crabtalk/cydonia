@@ -324,16 +324,16 @@ impl SettingsWindow {
             .flex()
             .flex_col()
             .gap(px(settings::GROUP_GAP))
-            .child(group(
-                "Cursor",
-                vec![
-                    self.cursor_row(cx),
-                    self.caret_shape_row(cx),
-                    self.caret_height_row(cx),
-                    self.caret_row(cx),
-                    self.terminal_caret_row(cx),
-                ],
-            ))
+            .child(group("Cursor", {
+                let block = self.workspace.read(cx).settings.appearance.caret_shape
+                    == crate::model::settings::CaretShape::Block;
+                let mut rows = vec![self.cursor_row(cx), self.caret_shape_row(cx)];
+                if block {
+                    rows.extend([self.caret_height_row(cx), self.hollow_caret_row(cx)]);
+                }
+                rows.extend([self.caret_row(cx), self.terminal_caret_row(cx)]);
+                rows
+            }))
             .child(group(
                 "Layout",
                 vec![self.pages_row(cx), self.outline_row(cx), self.wrap_row(cx)],
@@ -551,6 +551,24 @@ impl SettingsWindow {
                 };
                 this.workspace
                     .update(cx, |workspace, cx| workspace.set_caret_height(height, cx));
+            },
+        )
+    }
+
+    /// Whether a block caret shows outlined in an inactive window.
+    fn hollow_caret_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let on = self.workspace.read(cx).settings.appearance.hollow_caret;
+        self.switch_row(
+            Switch::new(
+                "hollow-caret",
+                "Outline when inactive",
+                "Off hides a block cursor while the window is in the background.",
+                on,
+            ),
+            cx,
+            move |this, cx| {
+                this.workspace
+                    .update(cx, |workspace, cx| workspace.set_hollow_caret(!on, cx));
             },
         )
     }

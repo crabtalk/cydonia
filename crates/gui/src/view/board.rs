@@ -26,14 +26,14 @@ use bezel::{
         KeyBinding, Pixels, ScrollHandle, SharedString, Stateful, WeakEntity, Window, actions, div,
         prelude::*, px,
     },
-    theme::{Glass, SurfaceStyle, TextStyle, Theme, Typeset},
+    theme::{TextStyle, Theme, Typeset},
     ui::{
-        drag, icons,
+        drag::{self, Carried},
+        icons,
         input::{self, Shape, TextField},
         menu::Item,
         popover,
         scroll::{self, Axes, FollowState, Scroller},
-        surface::Surfaced as _,
         tooltip::Tooltip,
         widgets::Buttons,
     },
@@ -755,7 +755,6 @@ pub(crate) fn ghost(
     let frame = div().rounded(px(Theme::control_radius()));
     match held {
         Some(Held::Card(text, base)) => frame
-            .bg(theme.surface_raised)
             .w(px(COLUMN_WIDTH))
             .max_h(px(CARD_MAX_HEIGHT))
             .overflow_hidden()
@@ -767,6 +766,7 @@ pub(crate) fn ghost(
                 window,
                 cx,
             ))
+            .ghost(&theme)
             .into_any_element(),
         Some(Held::Row(handle, title)) => frame
             .w(px(HELD_ROW_WIDTH))
@@ -787,7 +787,7 @@ pub(crate) fn ghost(
                     .child(handle)
             }))
             .child(div().min_w_0().truncate().child(title))
-            .surface(&theme, SurfaceStyle::Glass(Glass::Regular))
+            .ghost(&theme)
             .into_any_element(),
         None => gpui::Empty.into_any_element(),
     }
