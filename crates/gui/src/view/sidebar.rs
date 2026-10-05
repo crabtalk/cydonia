@@ -34,7 +34,7 @@ use bezel::{
         UniformListDecoration, Window, div, prelude::*, px, uniform_list,
     },
     motion::{Fade, Painter},
-    theme::{TextStyle, Theme, Typeset},
+    theme::{self, TextStyle, Theme, Typeset},
     ui::{
         drag,
         icons::{self, Icon},
@@ -364,7 +364,10 @@ pub(crate) fn row(
 ) -> Stateful<Div> {
     row_frame(id, group, indent)
         .when(lifted, |el| lift(el, theme))
-        .when(!lifted && selected, |el| el.bg(theme.element_active))
+        .when(!lifted && selected, |el| {
+            el.bg(theme.card_selected_bg())
+                .shadow(theme::glass_selected_shadows())
+        })
         // Only off the open row: the hover wash is the weaker rung, and
         // painting it over the selection would dim what the pointer is on.
         .when(!lifted && !selected, |el| {

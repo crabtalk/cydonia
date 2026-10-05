@@ -2,7 +2,6 @@
   {
     "version": "0.1.25",
     "date": "2026-10-04",
-    "nightly": true,
     "summary": "A floating heading outline in articles, @ mentions as chips, the app caret in terminals, and live session cards that match the session pane.",
     "new": [
       "Float a heading outline over articles that tracks the reading position, and switch spaces with ⌘ and a number",
