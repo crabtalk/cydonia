@@ -92,6 +92,7 @@ fn record(id: &str) -> Record {
         updated: 1_757_000_000,
         closed: false,
         fork: None,
+        replay: None,
         draft: String::new(),
         items: Vec::new(),
         sent_at: Default::default(),

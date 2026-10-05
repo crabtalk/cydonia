@@ -9,7 +9,7 @@ use crate::{
     },
 };
 use bezel::{
-    gpui::{AnyElement, App, Context, div, prelude::*, px},
+    gpui::{AnyElement, App, Context, Focusable as _, Window, div, prelude::*, px},
     theme::{TextStyle, Theme, Typeset},
     ui::widgets::{ButtonStyle, Buttons, Scaffolding as _},
 };
@@ -24,6 +24,8 @@ pub(crate) enum Doomed {
     Card(String, String),
     /// One column, by the board it is on and its own id.
     Column(String, String),
+    /// A session's last turn, by the session and the item its message is.
+    Turn(u64, usize),
 }
 
 /// A delete that has been asked for and not yet agreed to.
@@ -99,6 +101,60 @@ impl Cydonia {
             note: "This cannot be undone.".to_owned(),
         });
         cx.notify();
+    }
+
+    /// Take a session's last message back into its composer. Asked first when
+    /// a reply goes with it.
+    pub(crate) fn ask_rewind(
+        &mut self,
+        id: u64,
+        at: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let answered = self
+            .workspace
+            .read(cx)
+            .session(id)
+            .is_some_and(|chat| chat.items.len() > at + 1);
+        if !answered {
+            self.rewind(id, at, window, cx);
+            return;
+        }
+        self.menu = None;
+        self.confirming = Some(Confirming {
+            doomed: Doomed::Turn(id, at),
+            label: "the last turn".to_owned(),
+            goes: None,
+            note: "The reply goes with it, and the agent restarts without it. Files it changed stay changed."
+                .to_owned(),
+        });
+        cx.notify();
+    }
+
+    fn rewind(&mut self, id: u64, at: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(text) = self
+            .workspace
+            .update(cx, |workspace, cx| workspace.rewind_session(id, at, cx))
+        else {
+            return;
+        };
+        let composers: Vec<_> = self
+            .leaves
+            .iter()
+            .map(|leaf| leaf.composer.clone())
+            .chain(self.session_cards.get(&id).cloned())
+            .filter(|composer| composer.read(cx).session() == Some(id))
+            .collect();
+        let Some(first) = composers.first() else {
+            self.workspace
+                .update(cx, |workspace, cx| workspace.set_draft(id, text, cx));
+            return;
+        };
+        window.focus(&first.focus_handle(cx), cx);
+        for composer in composers {
+            composer.update(cx, |composer, cx| composer.restore(text.clone(), cx));
+        }
     }
 
     /// Where this entry lives and what to say about losing it: a path under
@@ -260,6 +316,9 @@ impl Cydonia {
                                                 }
                                                 Doomed::Column(board, column) => {
                                                     this.drop_column(board, column, cx)
+                                                }
+                                                Doomed::Turn(id, at) => {
+                                                    this.rewind(*id, *at, window, cx)
                                                 }
                                             }
                                         })),

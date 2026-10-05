@@ -537,6 +537,7 @@ impl Cydonia {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let composer = self.session_composer(id, window, cx);
+        let root = cx.entity().downgrade();
         let transcript = self.workspace.update(cx, |workspace, cx| {
             workspace.session(id).map(|chat| {
                 transcript::render(
@@ -544,6 +545,9 @@ impl Cydonia {
                     None,
                     CARD_WIDTH,
                     |_, _| None,
+                    move |at, window, cx| {
+                        let _ = root.update(cx, |root, cx| root.ask_rewind(id, at, window, cx));
+                    },
                     transcript::Drawn::Nested(list),
                     window,
                     cx,

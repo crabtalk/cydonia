@@ -297,6 +297,9 @@ pub struct Composer {
     scroll: ScrollHandle,
     /// Whether a turn is in flight — what the button does when pressed.
     streaming: bool,
+    /// The session's last user message, which `up` in an empty field brings
+    /// back.
+    last_asked: Option<String>,
     /// Whether the session tools are on offer. Off beside a space: all three
     /// of them open the window's own panels, which a space divides the room
     /// for — see [`crate::view::arrangement`].
@@ -379,6 +382,7 @@ impl Composer {
             commands: Vec::new(),
             scroll: ScrollHandle::new(),
             streaming: false,
+            last_asked: None,
             tools: true,
             activity: None,
             activity_open: false,
@@ -431,7 +435,9 @@ impl Composer {
         cx.notify();
     }
 
-    pub fn restore_queued(&mut self, text: String, window: &mut Window, cx: &mut Context<Self>) {
+    /// Put a message that was sent back in the field, ahead of whatever is
+    /// typed there.
+    pub fn restore(&mut self, text: String, cx: &mut Context<Self>) {
         let (text, attachments) = crate::model::media::detach(&text);
         self.attachments
             .splice(0..0, attachments.into_iter().map(Attachment::File));
@@ -446,7 +452,6 @@ impl Composer {
         };
         self.set_text(content, cx);
         self.reread(cx);
-        window.focus(&self.focus_handle(cx), cx);
         cx.notify();
     }
 
@@ -492,6 +497,10 @@ impl Composer {
             self.streaming = streaming;
             cx.notify();
         }
+    }
+
+    pub fn set_last_asked(&mut self, last_asked: Option<String>) {
+        self.last_asked = last_asked;
     }
 
     /// The agents on offer, and the one the session is talking to.
@@ -817,7 +826,8 @@ impl Composer {
     }
 
     /// With no picker open the key is the field's caret motion, so it is
-    /// passed on rather than swallowed.
+    /// passed on rather than swallowed — except `up` in an empty field, which
+    /// brings back the last message sent.
     fn step(&mut self, delta: isize, cx: &mut Context<Self>) {
         match &mut self.completing {
             Some(Completing::Command) => self.filter.step(delta),
@@ -825,7 +835,15 @@ impl Composer {
                 *active = popover::menu_step(*active, rows.len(), delta);
             }
             None => {
-                cx.propagate();
+                if delta < 0
+                    && self.field.read(cx).content().is_empty()
+                    && let Some(text) = self.last_asked.clone()
+                {
+                    self.set_text(text, cx);
+                    cx.notify();
+                } else {
+                    cx.propagate();
+                }
                 return;
             }
         }

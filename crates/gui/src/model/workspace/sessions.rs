@@ -129,6 +129,17 @@ impl Workspace {
         Some(id)
     }
 
+    /// See [`ChatSession::rewind`].
+    pub fn rewind_session(&mut self, id: u64, at: usize, cx: &mut Context<Self>) -> Option<String> {
+        let text = self
+            .projects
+            .iter_mut()
+            .find_map(|project| project.session_mut(id))?
+            .rewind(at, cx)?;
+        cx.notify();
+        Some(text)
+    }
+
     pub fn set_draft(&mut self, id: u64, draft: String, cx: &mut Context<Self>) {
         if !self
             .projects

@@ -41,10 +41,9 @@ fn fork_retains_only_prior_history_and_does_not_reuse_agent_identity() {
     assert_eq!(fork.sent_at.keys().copied().collect::<Vec<_>>(), vec![0]);
     assert_eq!(serde_json::to_value(&original).unwrap(), before);
     let restored: Record = serde_json::from_str(&serde_json::to_string(&fork).unwrap()).unwrap();
+    assert_eq!(restored.replay, Some(2));
     let origin = restored.fork.unwrap();
     assert_eq!(origin.session, "original");
-    assert_eq!(origin.before, 2);
-    assert!(origin.pending);
     assert_eq!(restored.draft, "edit me");
 }
 
@@ -58,4 +57,22 @@ fn first_message_can_fork_and_non_user_positions_are_rejected() {
     assert!(original.fork_at(1).is_none());
     assert!(original.fork_at(4).is_none());
     assert!(original.fork_at(usize::MAX).is_none());
+}
+
+#[test]
+fn replay_is_read_from_where_an_older_fork_kept_it() {
+    let pending: Record = serde_json::from_value(serde_json::json!({
+        "agent": "fake", "title": "", "name": null, "updated": 1, "items": [],
+        "fork": {"session": "original", "title": "Original", "before": 2, "pending": true}
+    }))
+    .unwrap();
+    assert_eq!(pending.replay, Some(2));
+    let written = serde_json::to_value(&pending).unwrap();
+    assert!(written["fork"].get("pending").is_none());
+    let done: Record = serde_json::from_value(serde_json::json!({
+        "agent": "fake", "title": "", "name": null, "updated": 1, "items": [],
+        "fork": {"session": "original", "title": "Original", "before": 2, "pending": false}
+    }))
+    .unwrap();
+    assert_eq!(done.replay, None);
 }

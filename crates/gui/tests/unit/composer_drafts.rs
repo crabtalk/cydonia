@@ -151,15 +151,14 @@ fn editing_queued_images_restores_attachments_and_preserves_draft(cx: &mut TestA
     let composer = cx.new(Composer::new);
     let window = cx.add_window(|_, _| PopoverComposer(composer.clone()));
     let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
-    visual.update(|window, cx| {
+    visual.update(|_, cx| {
         composer.update(cx, |composer, cx| {
             composer.set_session(Some(1), "current draft", cx);
             composer
                 .attachments
                 .push(Attachment::File("/tmp/draft.png".into()));
-            composer.restore_queued(
+            composer.restore(
                 "queued text\n\n![](</tmp/first image.png>)\n\n![](</tmp/second.png>)".into(),
-                window,
                 cx,
             );
             assert_eq!(
@@ -182,7 +181,7 @@ fn editing_queued_images_restores_attachments_and_preserves_draft(cx: &mut TestA
             );
             composer.set_session(Some(2), "", cx);
             assert!(composer.attachments.is_empty());
-            composer.restore_queued("![](</tmp/image-only.png>)".into(), window, cx);
+            composer.restore("![](</tmp/image-only.png>)".into(), cx);
             assert!(composer.field.read(cx).content().is_empty());
             assert_eq!(composer.attachments.len(), 1);
             assert!(!composer.is_empty(cx));
