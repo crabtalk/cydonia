@@ -11,6 +11,7 @@ use crate::{
         component::{
             divider,
             menu::{self, Menu},
+            panel::changes_toggle,
         },
         leaf::Pane,
         root::Cydonia,
@@ -707,6 +708,11 @@ impl Cydonia {
                     cx,
                 )
                 .children(self.pane_menu(pane, window, cx)),
+            )
+            // The band's right-panel button, on the pane at the window's top
+            // right — which is `last` only while the panel is down.
+            .children(
+                last.then(|| changes_toggle("Show right panel", Painter::of(cx), Theme::of(cx))),
             )
             .children(
                 right
