@@ -572,18 +572,25 @@ impl Composer {
 
     /// Answer this. The transcript hands over what was picked out of it — see
     /// [`crate::view::component::transcript`] — and it lands in the field as a
-    /// blockquote above whatever is already typed.
+    /// blockquote paragraph at the caret, which lands after it.
     pub fn quote(&mut self, text: String, cx: &mut Context<Self>) {
         let text = text.trim();
         if text.is_empty() {
             return;
         }
-        let draft = self.field.read(cx).content().clone();
-        let quoted = match draft.trim().is_empty() {
-            true => format!("{}\n\n", blockquote(text)),
-            false => format!("{}\n\n{draft}", blockquote(text)),
+        let content = self.field.read(cx).content().clone();
+        let caret = self.field.read(cx).cursor().min(content.len());
+        let before = content[..caret].trim_end();
+        let after = content[caret..].trim_start();
+        let lead = match before.is_empty() {
+            true => String::new(),
+            false => format!("{before}\n\n"),
         };
-        self.set_text(quoted, cx);
+        let quoted = format!("{lead}{}\n\n", blockquote(text));
+        let end = quoted.len();
+        self.set_text(quoted + after, cx);
+        self.field
+            .update(cx, |field, cx| field.select(end..end, cx));
         cx.notify();
     }
 
