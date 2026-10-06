@@ -31,9 +31,9 @@ use artifact::{
 };
 use bezel::{
     gpui::{
-        self, AnyElement, App, Context, Entity, Focusable as _, FontWeight, HighlightStyle,
-        KeyBinding, ScrollHandle, SharedString, StyledText, Task, Window, actions, div, prelude::*,
-        px,
+        self, AnyElement, App, Context, Entity, FocusHandle, Focusable as _, FontWeight,
+        HighlightStyle, KeyBinding, ScrollHandle, SharedString, StyledText, Task, Window, actions,
+        div, prelude::*, px,
     },
     theme::{TextStyle, Theme, Typeset as _},
     ui::{
@@ -170,6 +170,10 @@ pub(crate) struct Search {
     selected: usize,
     scroll: ScrollHandle,
     task: Option<Task<()>>,
+    /// What held focus when the palette opened, given it back on dismiss.
+    /// Its commands are the ones [`Self::commands`] lists, so a command runs
+    /// from it.
+    returns_to: Option<FocusHandle>,
 }
 
 impl Search {
@@ -201,6 +205,7 @@ impl Search {
             selected: 0,
             scroll: ScrollHandle::new(),
             task: None,
+            returns_to: None,
         }
     }
 
@@ -314,6 +319,7 @@ impl Cydonia {
         // Read before the field takes focus: what can run is what the
         // surface under the palette could.
         self.search.commands = menubar::commands(window, cx);
+        self.search.returns_to = window.focused(cx);
         let query = self
             .search
             .applied
@@ -339,6 +345,7 @@ impl Cydonia {
         self.search.open = true;
         self.search.linking = Some(on);
         self.search.commands = Vec::new();
+        self.search.returns_to = window.focused(cx);
         self.search.filter = Some(Filter::Kind(Kind::Session));
         self.search.field.update(cx, |field, cx| {
             field.set_placeholder(LINK_PLACEHOLDER, cx);
@@ -444,7 +451,8 @@ impl Cydonia {
         self.search.open = false;
         self.search.linking = None;
         self.search.task = None;
-        window.focus(&self.leaf().focus, cx);
+        let back = self.search.returns_to.take();
+        window.focus(back.as_ref().unwrap_or(&self.leaf().focus), cx);
         cx.notify();
     }
 
