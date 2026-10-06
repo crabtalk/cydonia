@@ -70,7 +70,8 @@ fn a_hand_edit_makes_a_held_copy_stale() {
     let file = scratch
         .path()
         .join(".cydonia/boards")
-        .join(format!("{}.toml", made.id));
+        .join(&made.id)
+        .join("board.toml");
     let text = std::fs::read_to_string(&file).unwrap();
     std::fs::write(&file, text.replace("Plans", "Edited")).unwrap();
     held.name = "Mine".into();

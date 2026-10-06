@@ -100,7 +100,7 @@ fn removing_what_is_not_there_is_an_error() {
 }
 
 #[test]
-fn place_is_an_articles_directory_and_a_boards_file() {
+fn place_is_an_articles_directory_and_a_boards_directory() {
     let scratch = Scratch::new("project-place");
     let store = scratch.store();
     let article = store.create_article("# Plan\n").unwrap();
@@ -112,7 +112,7 @@ fn place_is_an_articles_directory_and_a_boards_file() {
     );
     assert_eq!(
         store.place(Kind::Board, &board.id),
-        Some(cydonia.join("boards").join(format!("{}.toml", board.id)))
+        Some(cydonia.join("boards").join(&board.id))
     );
     assert_eq!(store.place(Kind::Board, "missing"), None);
     assert_eq!(store.place(Kind::Table, &board.id), None);

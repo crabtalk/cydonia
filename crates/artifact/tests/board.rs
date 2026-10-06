@@ -373,6 +373,7 @@ fn unnamed(name: &str, cards: usize) -> Column {
             text: format!("card {n}"),
             session: None,
             status: None,
+            version: None,
         })
         .collect();
     column

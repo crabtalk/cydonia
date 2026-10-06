@@ -4,11 +4,12 @@
 //! its `cwd`, and moving it moves everything under it — so there is nothing to
 //! open and nothing to close, and a [`Project`] is the path and no more.
 //!
-//! An entry's [`crate::id`] is the name of the file it is in, so nothing
-//! here keeps a second map from one to the other — `boards/<id>.toml` is the
-//! whole lookup, and a board handed back can be written again from its id
+//! An entry's [`crate::id`] is the name of the file or directory it is in, so
+//! nothing here keeps a second map from one to the other — `boards/<id>/` is
+//! the whole lookup, and a board handed back can be written again from its id
 //! alone.
 
+use super::layout;
 #[cfg(feature = "sqlite")]
 use crate::entry;
 use crate::{
@@ -33,10 +34,10 @@ use url::Url;
 /// sessions, its boards and its database.
 const DIR: &str = ".cydonia";
 
-/// Where a project's boards live, and what the one board a project used to be
-/// allowed was called.
+/// Where a project's boards live, a directory each — see [`super::layout`] —
+/// and what the one board a project used to be allowed was called.
 const BOARDS: &str = "boards";
-const BOARD_FILE: &str = "board.toml";
+const LEGACY_BOARD: &str = "board.toml";
 
 /// The project's SQL tables.
 pub const DATA: &str = "data.db";
@@ -125,25 +126,14 @@ impl Project {
         }
     }
 
-    /// Cards in `board` that `held` (the file before this save) lacks are
+    /// Cards in `board` that `before` (the board ahead of this save) lacks are
     /// created; cards whose status became done are done.
     #[cfg(feature = "sqlite")]
-    fn record_cards(&self, held: &[u8], board: &Board) {
-        let old: Option<Board> = std::str::from_utf8(held)
-            .ok()
-            .and_then(|body| toml::from_str(body).ok());
-        // A file written before cards had ids is having them minted now.
-        let minting = old.as_ref().is_some_and(|old| {
-            old.columns
-                .iter()
-                .flat_map(|column| &column.cards)
-                .any(|card| card.id.is_empty())
-        });
+    fn record_cards(&self, before: Option<&Board>, board: &Board) {
         let mut created = Vec::new();
         let mut done = Vec::new();
         for card in board.columns.iter().flat_map(|column| &column.cards) {
-            match old.as_ref().and_then(|old| old.card(&card.id)) {
-                None if minting => {}
+            match before.and_then(|before| before.card(&card.id)) {
                 None => created.push(&card.id),
                 Some(was) => {
                     if card.status == Some(board::Status::Done)
@@ -173,24 +163,47 @@ impl Project {
         self.cydonia().join(BOARDS)
     }
 
-    /// The file a board of this id is in. Derived rather than stored: the id
-    /// is the name, so there is no second copy of it to disagree.
-    fn board_file(&self, id: &str) -> PathBuf {
-        self.boards_dir().join(format!("{id}.toml"))
+    /// The directory a board of this id is in. Derived rather than stored:
+    /// the id is the name, so there is no second copy of it to disagree.
+    fn board_dir(&self, id: &str) -> PathBuf {
+        self.boards_dir().join(id)
     }
 
+    /// A board as it is on disk, in either layout: its directory, or a flat
+    /// `boards/<id>.toml` written before boards had directories.
     fn read_board(&self, path: &Path) -> Option<Board> {
-        let body = std::fs::read_to_string(path).ok()?;
-        let mut board: Board = toml::from_str(&body).ok()?;
-        board.touched = stamp::of(path);
-        board.version = Some(version(body.as_bytes()));
-        // A board written before ids existed already has one — the name of the
-        // file it is in. Its columns and cards have none at all, and filling
-        // those is [`Board::mint_ids`], which `boards` calls once it has the
-        // whole list.
-        if board.id.is_empty() {
-            board.id = stem(path);
+        match path.is_dir() {
+            true => self.read_board_dir(path),
+            false => read_flat_board(path),
         }
+    }
+
+    fn read_board_dir(&self, dir: &Path) -> Option<Board> {
+        let file = dir.join(layout::BOARD_FILE);
+        let body = std::fs::read_to_string(&file).ok()?;
+        let mut touched = stamp::of(&file);
+        let mut cards = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(dir.join(layout::CARDS)) {
+            for path in entries.flatten().map(|entry| entry.path()) {
+                if path.extension().is_none_or(|ext| ext != "md") {
+                    continue;
+                }
+                let Ok(text) = std::fs::read_to_string(&path) else {
+                    continue;
+                };
+                if let Some(mut card) = layout::parse_card(&stem(&path), &text) {
+                    card.version = Some(version(text.as_bytes()));
+                    touched = touched.max(stamp::of(&path));
+                    cards.push(card);
+                }
+            }
+        }
+        let mut board = layout::assemble(&body, cards)?;
+        if board.id.is_empty() {
+            board.id = stem(dir);
+        }
+        board.touched = touched;
+        board.version = Some(version(body.as_bytes()));
         Some(board)
     }
 
@@ -198,21 +211,147 @@ impl Project {
     /// name and the directory the rest are made with, and it is the first of
     /// many.
     fn migrate_board(&self) {
-        let old = self.cydonia().join(BOARD_FILE);
-        let Some(mut board) = self.read_board(&old) else {
+        let old = self.cydonia().join(LEGACY_BOARD);
+        let Some(mut board) = read_flat_board(&old) else {
             return;
         };
-        let to = self.boards_dir();
-        if std::fs::create_dir_all(&to).is_err() {
+        if std::fs::create_dir_all(self.boards_dir()).is_err() {
             return;
         }
-        board.id = stem(&free(&to, stamp::now()));
+        board.id = free_board(&self.boards_dir(), stamp::now());
         board.name = board::NAMED.to_owned();
-        // A new file, so there is nothing there to be checked against.
-        board.version = None;
-        if super::Project::save_board(self, &mut board).is_ok() {
+        board.mint_ids();
+        if self.write_board(&mut board, false).is_ok() {
             let _ = std::fs::remove_file(old);
         }
+    }
+
+    /// Move a flat `boards/<id>.toml` into its directory. One whose directory
+    /// already exists is left where it is.
+    fn migrate_flat(&self, flat: &Path) {
+        let id = stem(flat);
+        if self.board_dir(&id).exists() {
+            return;
+        }
+        let Some(mut board) = read_flat_board(flat) else {
+            return;
+        };
+        board.id = id;
+        board.mint_ids();
+        if self.write_board(&mut board, false).is_ok() {
+            let _ = std::fs::remove_file(flat);
+        }
+    }
+
+    fn migrate_flats(&self) {
+        let Ok(entries) = std::fs::read_dir(self.boards_dir()) else {
+            return;
+        };
+        for path in entries.flatten().map(|entry| entry.path()) {
+            if path.is_file() && path.extension().is_some_and(|ext| ext == "toml") {
+                self.migrate_flat(&path);
+            }
+        }
+    }
+
+    /// Write a board into its directory under an exclusive lock on its
+    /// `board.toml`, so two cydonia processes saving one board cannot both
+    /// pass the check. The lock is advisory.
+    ///
+    /// `board.toml` is checked against [`Board::version`] only when this save
+    /// changes it; a card file is checked against [`board::Card::version`]
+    /// only when this save changes that card. Card files are written before
+    /// `board.toml`, and the files of cards it no longer lists are removed
+    /// after it.
+    fn write_board(&self, board: &mut Board, record: bool) -> Result<()> {
+        let dir = self.board_dir(component(&board.id)?);
+        let file = dir.join(layout::BOARD_FILE);
+        let cards_dir = dir.join(layout::CARDS);
+        if board.version.is_some() && !file.is_file() {
+            return Err(super::Stale.into());
+        }
+        std::fs::create_dir_all(&cards_dir)?;
+        let structure = layout::board_toml(board)?;
+        let structure_version = version(structure.as_bytes());
+        let mut lock = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&file)?;
+        lock.lock()?;
+        let mut held = String::new();
+        lock.read_to_string(&mut held)?;
+        let ours = board.version.as_deref() != Some(structure_version.as_str());
+        let theirs = board
+            .version
+            .as_ref()
+            .is_some_and(|seen| *seen != version(held.as_bytes()));
+        if ours && theirs {
+            return Err(super::Stale.into());
+        }
+        let held_ids: HashSet<String> = layout::card_ids(&held);
+        let mut writes = Vec::new();
+        for card in board.columns.iter().flat_map(|column| &column.cards) {
+            if !ours && !held_ids.contains(&card.id) {
+                return Err(super::Stale.into());
+            }
+            let body = layout::card_md(card)?;
+            let written = version(body.as_bytes());
+            if card.version.as_deref() == Some(written.as_str()) {
+                continue;
+            }
+            let path = cards_dir.join(format!("{}.md", component(&card.id)?));
+            if let Some(seen) = &card.version
+                && std::fs::read(&path)
+                    .ok()
+                    .map(|bytes| version(&bytes))
+                    .as_ref()
+                    != Some(seen)
+            {
+                return Err(super::Stale.into());
+            }
+            writes.push((card.id.clone(), path, body, written));
+        }
+        #[cfg(feature = "sqlite")]
+        let before = record.then(|| self.read_board_dir(&dir)).flatten();
+        #[cfg(not(feature = "sqlite"))]
+        let _ = record;
+        for (_, path, body, _) in &writes {
+            std::fs::write(path, body)?;
+        }
+        if ours {
+            lock.set_len(0)?;
+            lock.seek(SeekFrom::Start(0))?;
+            lock.write_all(structure.as_bytes())?;
+            let kept: HashSet<&str> = board
+                .columns
+                .iter()
+                .flat_map(|column| &column.cards)
+                .map(|card| card.id.as_str())
+                .collect();
+            for gone in held_ids.iter().filter(|id| !kept.contains(id.as_str())) {
+                if let Ok(gone) = component(gone) {
+                    let _ = std::fs::remove_file(cards_dir.join(format!("{gone}.md")));
+                }
+            }
+            board.version = Some(structure_version);
+        }
+        for card in board
+            .columns
+            .iter_mut()
+            .flat_map(|column| &mut column.cards)
+        {
+            if let Some((.., written)) = writes.iter().find(|(id, ..)| *id == card.id) {
+                card.version = Some(written.clone());
+            }
+        }
+        board.touched = stamp::now();
+        #[cfg(feature = "sqlite")]
+        if record {
+            self.record_cards(before.as_ref(), board);
+        }
+        Ok(())
     }
 
     /// Every session file in this project by the id it is filed under,
@@ -243,7 +382,7 @@ impl Project {
             .collect()
     }
 
-    /// Every board file in this project by the board's id, unread.
+    /// Every board directory in this project by the board's id, unread.
     pub fn board_files(&self) -> Vec<(String, PathBuf)> {
         let Ok(entries) = std::fs::read_dir(self.boards_dir()) else {
             return Vec::new();
@@ -251,13 +390,13 @@ impl Project {
         entries
             .flatten()
             .map(|entry| entry.path())
-            .filter(|path| path.extension().is_some_and(|ext| ext == "toml"))
+            .filter(|path| path.join(layout::BOARD_FILE).is_file())
             .map(|path| (stem(&path), path))
             .collect()
     }
 
-    /// One board file as it is on disk: ids it lacks are not minted and
-    /// nothing is written back.
+    /// One board as it is on disk, from its directory: ids it lacks are not
+    /// minted and nothing is written back.
     pub fn read_board_file(&self, path: &Path) -> Option<Board> {
         self.read_board(path)
     }
@@ -273,7 +412,7 @@ impl Project {
     pub fn place(&self, kind: Kind, id: &str) -> Option<PathBuf> {
         let path = match kind {
             Kind::Article => self.article_file(id).ok()?.parent()?.to_path_buf(),
-            Kind::Board => self.board_file(component(id).ok()?),
+            Kind::Board => self.board_dir(component(id).ok()?),
             Kind::Session => self.session_file(component(id).ok()?),
             Kind::Table => return None,
         };
@@ -317,21 +456,27 @@ impl super::Project for Project {
     }
 
     fn board(&self, id: &str) -> Option<Board> {
-        let mut board = self.read_board(&self.board_file(id))?;
+        let id = component(id).ok()?;
+        let flat = self.boards_dir().join(format!("{id}.toml"));
+        if flat.is_file() {
+            self.migrate_flat(&flat);
+        }
+        let mut board = self.read_board_dir(&self.board_dir(id))?;
         board.number = self.number("board", id).ok();
         Some(board)
     }
 
     fn boards(&self) -> Vec<Board> {
         self.migrate_board();
+        self.migrate_flats();
         let Ok(entries) = std::fs::read_dir(self.boards_dir()) else {
             return Vec::new();
         };
         let mut boards: Vec<Board> = entries
             .flatten()
             .map(|entry| entry.path())
-            .filter(|path| path.extension().is_some_and(|ext| ext == "toml"))
-            .filter_map(|path| self.read_board(&path))
+            .filter(|path| path.is_dir())
+            .filter_map(|path| self.read_board_dir(&path))
             .collect();
         // A key is unique among a project's boards, so it is settled here,
         // where the whole list is in hand and nothing else can be holding one.
@@ -363,7 +508,7 @@ impl super::Project for Project {
     fn create_board(&self, name: &str, key: &str) -> Result<Board> {
         let dir = self.init()?.join(BOARDS);
         std::fs::create_dir_all(&dir)?;
-        let mut board = Board::new(stem(&free(&dir, stamp::now())), name);
+        let mut board = Board::new(free_board(&dir, stamp::now()), name);
         board.key = match key::normalize(key) {
             Some(key) => key,
             // Nothing given, so it is derived from the name — against what the
@@ -381,52 +526,12 @@ impl super::Project for Project {
         Ok(board)
     }
 
-    /// The check and the write happen under an exclusive lock on the file,
-    /// so two cydonia processes saving one board cannot both pass the check.
-    /// The lock is advisory: a writer that does not take it is not stopped.
     fn save_board(&self, board: &mut Board) -> Result<()> {
-        let body = toml::to_string_pretty(&*board)?;
-        let path = self.board_file(&board.id);
-        match &board.version {
-            Some(seen) => {
-                let mut file = match std::fs::OpenOptions::new()
-                    .read(true)
-                    .write(true)
-                    .open(&path)
-                {
-                    Ok(file) => file,
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                        return Err(super::Stale.into());
-                    }
-                    Err(e) => return Err(e.into()),
-                };
-                file.lock()?;
-                let mut held = Vec::new();
-                file.read_to_end(&mut held)?;
-                if version(&held) != *seen {
-                    return Err(super::Stale.into());
-                }
-                file.set_len(0)?;
-                file.seek(SeekFrom::Start(0))?;
-                file.write_all(body.as_bytes())?;
-                #[cfg(feature = "sqlite")]
-                self.record_cards(&held, board);
-            }
-            None => {
-                #[cfg(feature = "sqlite")]
-                let held = std::fs::read(&path).unwrap_or_default();
-                std::fs::write(&path, &body)?;
-                #[cfg(feature = "sqlite")]
-                self.record_cards(&held, board);
-            }
-        }
-        board.touched = stamp::now();
-        board.version = Some(version(body.as_bytes()));
-        Ok(())
+        self.write_board(board, true)
     }
 
     fn remove_board(&self, id: &str) -> Result<()> {
-        std::fs::remove_file(self.board_file(id))?;
+        std::fs::remove_dir_all(self.board_dir(component(id)?))?;
         self.retire("board", id)
     }
 
@@ -683,9 +788,22 @@ fn component(name: &str) -> Result<&str> {
 
 /// This millisecond's file, or the first after it that is not taken. Two
 /// boards made inside one millisecond is the only way that happens.
-fn free(dir: &Path, stamp: u128) -> PathBuf {
+/// A board id no directory or flat file under `dir` is using.
+fn free_board(dir: &Path, stamp: u128) -> String {
     (stamp..)
-        .map(|stamp| dir.join(format!("{stamp}.toml")))
-        .find(|board| !board.exists())
-        .unwrap_or_else(|| dir.join(format!("{stamp}.toml")))
+        .map(|stamp| stamp.to_string())
+        .find(|id| !dir.join(id).exists() && !dir.join(format!("{id}.toml")).exists())
+        .unwrap_or_else(|| stamp.to_string())
+}
+
+/// A board written whole into one TOML file, its cards inline: the layout
+/// before boards had directories.
+fn read_flat_board(path: &Path) -> Option<Board> {
+    let body = std::fs::read_to_string(path).ok()?;
+    let mut board: Board = toml::from_str(&body).ok()?;
+    board.touched = stamp::of(path);
+    if board.id.is_empty() {
+        board.id = stem(path);
+    }
+    Some(board)
 }

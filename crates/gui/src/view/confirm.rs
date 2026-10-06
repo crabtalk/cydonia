@@ -202,7 +202,7 @@ impl Cydonia {
                 ..
             } => at(open
                 .and_then(|open| open.boards.get(ix))
-                .map(|board| format!(".cydonia/boards/{}.toml", board.id))),
+                .map(|board| format!(".cydonia/boards/{}/", board.id))),
             Row::Entry {
                 showing: Showing::Article(_),
                 ..

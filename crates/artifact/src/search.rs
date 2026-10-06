@@ -268,6 +268,13 @@ pub fn disk(project: &fs::Project, kinds: &[Kind], query: &Query, found: &Sender
     );
     files.retain(|(kind, ..)| kinds.contains(kind));
     parallel(&files, |(kind, id, path)| {
+        if *kind == Kind::Board {
+            // A directory of files; parsed whole.
+            let Some(board) = project.read_board_file(path) else {
+                return true;
+            };
+            return one(&board, query, found);
+        }
         let Ok(bytes) = std::fs::read(path) else {
             return true;
         };
@@ -301,13 +308,7 @@ pub fn disk(project: &fs::Project, kinds: &[Kind], query: &Query, found: &Sender
                     found,
                 )
             }
-            Kind::Board => {
-                // TOML escapes too, but a board is small enough to parse.
-                let Some(board) = project.read_board_file(path) else {
-                    return true;
-                };
-                one(&board, query, found)
-            }
+            Kind::Board => true,
         }
     });
 }

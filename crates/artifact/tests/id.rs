@@ -37,9 +37,14 @@ fn a_board_written_before_ids_takes_the_name_of_its_file() {
 #[test]
 fn reading_a_settled_board_leaves_the_file_alone() {
     let scratch = Scratch::new("board-quiet");
-    let dir = scratch.store().init().unwrap().join("boards");
+    let dir = scratch
+        .store()
+        .init()
+        .unwrap()
+        .join("boards")
+        .join("1757000000000");
     fs::create_dir_all(&dir).unwrap();
-    let file = dir.join("1757000000000.toml");
+    let file = dir.join("board.toml");
     let before = "id = \"1757000000000\"\narchived = false\nname = \"Roadmap\"\nkey = \"ROA\"\nnext_handle = 1\ncolumns = []\n";
     fs::write(&file, before).unwrap();
 
