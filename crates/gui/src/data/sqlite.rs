@@ -61,8 +61,7 @@ impl Data {
         writer.execute(
             "ATTACH DATABASE ?1 AS entry_registry",
             [fs::Project::new(project)
-                .cydonia()
-                .join("entries.db")
+                .state()?
                 .to_string_lossy()
                 .as_ref()],
         )?;

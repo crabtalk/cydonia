@@ -17,7 +17,7 @@ pub struct Registry(Connection);
 #[cfg(feature = "sqlite")]
 impl Registry {
     pub fn open(project: &Path) -> Result<Self> {
-        let path = fs::Project::new(project).init()?.join("entries.db");
+        let path = fs::Project::new(project).state()?;
         let connection = Connection::open(path)?;
         connection.busy_timeout(Duration::from_secs(5))?;
         connection.execute_batch(

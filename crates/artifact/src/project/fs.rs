@@ -41,6 +41,12 @@ const BOARD_FILE: &str = "board.toml";
 /// The project's SQL tables.
 pub const DATA: &str = "data.db";
 
+/// The project's bookkeeping: entry numbers and statistics.
+pub const STATE: &str = "state.db";
+
+/// What [`STATE`] was called before it held statistics.
+const ENTRIES: &str = "entries.db";
+
 /// Where a project's sessions live. One file each, so writing one does not
 /// rewrite the rest.
 const SESSIONS: &str = "sessions";
@@ -89,6 +95,78 @@ impl Project {
             std::fs::write(&ignore, "*\n")?;
         }
         Ok(dir)
+    }
+
+    /// [`STATE`], made if it is not there. A project still carrying
+    /// `entries.db` has it renamed into place first.
+    pub fn state(&self) -> std::io::Result<PathBuf> {
+        let dir = self.init()?;
+        let state = dir.join(STATE);
+        let entries = dir.join(ENTRIES);
+        if !state.exists() && entries.exists() {
+            match std::fs::rename(&entries, &state) {
+                // Another connection renamed it first.
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                result => result?,
+            }
+        }
+        Ok(state)
+    }
+
+    /// Statistics are best effort: a write that lands is never failed by them.
+    #[cfg(feature = "sqlite")]
+    fn record_words(&self, article: &str, old: &str, new: &str) {
+        let (added, removed) = crate::stats::word_delta(old, new);
+        if added == 0 && removed == 0 {
+            return;
+        }
+        if let Ok(stats) = crate::stats::Stats::open(&self.root) {
+            let _ = stats.words(&crate::stats::today(), article, added, removed);
+        }
+    }
+
+    /// Cards in `board` that `held` (the file before this save) lacks are
+    /// created; cards whose status became done are done.
+    #[cfg(feature = "sqlite")]
+    fn record_cards(&self, held: &[u8], board: &Board) {
+        let old: Option<Board> = std::str::from_utf8(held)
+            .ok()
+            .and_then(|body| toml::from_str(body).ok());
+        // A file written before cards had ids is having them minted now.
+        let minting = old.as_ref().is_some_and(|old| {
+            old.columns
+                .iter()
+                .flat_map(|column| &column.cards)
+                .any(|card| card.id.is_empty())
+        });
+        let mut created = Vec::new();
+        let mut done = Vec::new();
+        for card in board.columns.iter().flat_map(|column| &column.cards) {
+            match old.as_ref().and_then(|old| old.card(&card.id)) {
+                None if minting => {}
+                None => created.push(&card.id),
+                Some(was) => {
+                    if card.status == Some(board::Status::Done)
+                        && was.status != Some(board::Status::Done)
+                    {
+                        done.push(&card.id);
+                    }
+                }
+            }
+        }
+        if created.is_empty() && done.is_empty() {
+            return;
+        }
+        let Ok(stats) = crate::stats::Stats::open(&self.root) else {
+            return;
+        };
+        let day = crate::stats::today();
+        for card in created {
+            let _ = stats.card_created(&day, card);
+        }
+        for card in done {
+            let _ = stats.card_done(&day, card);
+        }
     }
 
     fn boards_dir(&self) -> PathBuf {
@@ -331,8 +409,16 @@ impl super::Project for Project {
                 file.set_len(0)?;
                 file.seek(SeekFrom::Start(0))?;
                 file.write_all(body.as_bytes())?;
+                #[cfg(feature = "sqlite")]
+                self.record_cards(&held, board);
             }
-            None => std::fs::write(&path, &body)?,
+            None => {
+                #[cfg(feature = "sqlite")]
+                let held = std::fs::read(&path).unwrap_or_default();
+                std::fs::write(&path, &body)?;
+                #[cfg(feature = "sqlite")]
+                self.record_cards(&held, board);
+            }
         }
         board.touched = stamp::now();
         board.version = Some(version(body.as_bytes()));
@@ -422,7 +508,10 @@ impl super::Project for Project {
         std::fs::create_dir_all(&landing)?;
         let content = article::content(&landing);
         std::fs::write(&content, markdown)?;
-        Ok(self.describe(&content))
+        let article = self.describe(&content);
+        #[cfg(feature = "sqlite")]
+        self.record_words(&article.id, "", markdown);
+        Ok(article)
     }
 
     fn read_article(&self, id: &str) -> Result<String> {
@@ -430,7 +519,12 @@ impl super::Project for Project {
     }
 
     fn write_article(&self, id: &str, markdown: &str) -> Result<()> {
-        std::fs::write(self.article_file(id)?, markdown)?;
+        let path = self.article_file(id)?;
+        #[cfg(feature = "sqlite")]
+        let old = std::fs::read_to_string(&path).unwrap_or_default();
+        std::fs::write(&path, markdown)?;
+        #[cfg(feature = "sqlite")]
+        self.record_words(id, &old, markdown);
         Ok(())
     }
 

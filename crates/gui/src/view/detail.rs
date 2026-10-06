@@ -635,12 +635,22 @@ impl Cydonia {
         // Nothing to send to: no session at all, or one whose agent has gone
         // from settings.toml, leaving nothing to reconnect it to.
         let live = self.workspace.read(cx).reachable();
-        let showing = self.showing(cx);
-        let arranged = self.workspace.read(cx).active_space().is_some();
+        #[cfg(feature = "desktop")]
+        let page: Option<gpui::AnyView> = self.statistics.clone().map(Into::into);
+        #[cfg(not(feature = "desktop"))]
+        let page: Option<gpui::AnyView> = None;
+        // The page stands in for every pane, a space's included.
+        let showing = self.showing(cx).filter(|_| page.is_none());
+        let arranged = self.workspace.read(cx).active_space().is_some() && page.is_none();
         let active = self.workspace.read(cx).active_id();
         // A space arranges several entries, so it draws its own panes. One
         // entry open on its own is the single pane below.
-        let body = match self.panes(window, cx) {
+        let paged = page.is_some();
+        let panes = match page {
+            Some(page) => Some(page.into_any_element()),
+            None => self.panes(window, cx),
+        };
+        let body = match panes {
             Some(panes) => panes,
             None => match showing {
                 None => self.launch(window, cx),
@@ -720,7 +730,7 @@ impl Cydonia {
             // After the content, so it draws over it. A space has no band of
             // its own: one title over several panes would name whichever is in
             // front and say nothing about the rest.
-            .children((!arranged).then(|| self.pane_header(window, cx)))
+            .children((!arranged && !paged).then(|| self.pane_header(window, cx)))
             .children(match showing == Some(Pane::Chat) {
                 true => self.selection_bar(cx),
                 false => None,
@@ -760,7 +770,7 @@ impl Cydonia {
             }
             _ => None,
         };
-        let drawer = match arranged {
+        let drawer = match arranged || paged {
             true => Vec::new(),
             false => self.drawer_layer(None, lone_board, window, cx),
         };

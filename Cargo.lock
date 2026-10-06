@@ -2331,6 +2331,7 @@ version = "0.1.26"
 dependencies = [
  "anyhow",
  "cacp",
+ "chrono",
  "notify",
  "regex",
  "rusqlite",

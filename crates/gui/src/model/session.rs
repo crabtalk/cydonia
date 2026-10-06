@@ -37,8 +37,8 @@ use bezel::gpui::{Context, Task};
 #[cfg(feature = "desktop")]
 use cacp::schema::{
     ContentBlock, MaybeUndefined, PlanEntryStatus, RequestPermissionRequest,
-    RequestPermissionResponse, SessionConfigKind, SessionUpdate, StopReason, ToolCallContent,
-    ToolCallStatus,
+    RequestPermissionResponse, SessionConfigKind, SessionConfigOptionCategory, SessionUpdate,
+    StopReason, ToolCallContent, ToolCallStatus,
 };
 use cacp::schema::{
     PermissionOptionKind, SessionConfigOption, SessionConfigOptionValue, SessionModeState,
@@ -183,6 +183,10 @@ pub struct ChatSession {
     /// What the turn in flight is counted from — see [`Self::elapsed`] and
     /// [`Self::spent`].
     flight: Option<Flight>,
+    /// The `used` of every usage update since the turn in flight was sent —
+    /// see [`crate::agent::spent::codex_turn`].
+    #[cfg(feature = "desktop")]
+    turn_used: u64,
     /// The agent's own name for the session, from `SessionInfoUpdate`.
     pub title: String,
     /// The name you typed, which the agent never overwrites. Two fields rather
@@ -267,6 +271,8 @@ impl ChatSession {
             preferences,
             usage: None,
             flight: None,
+            #[cfg(feature = "desktop")]
+            turn_used: 0,
             title: String::new(),
             name: None,
             updated: SystemTime::now(),
@@ -311,6 +317,8 @@ impl ChatSession {
             preferences,
             usage: None,
             flight: None,
+            #[cfg(feature = "desktop")]
+            turn_used: 0,
             title: record.title,
             name: record.name,
             updated,
@@ -671,9 +679,15 @@ impl ChatSession {
                 return;
             };
             session.prompt(&content, self.number);
+            if let Some(record) = &self.record
+                && let Ok(stats) = artifact::stats::Stats::open(&self.cwd)
+            {
+                let _ = stats.message(&artifact::stats::today(), record);
+            }
             self.last_activity = Instant::now();
             self.turn_started = Some(self.last_activity);
             self.tool_started.clear();
+            self.turn_used = 0;
             self.flight = Some(Flight {
                 at: SystemTime::now(),
                 used: self.usage.map_or(0, |usage| usage.used),
@@ -848,6 +862,7 @@ impl ChatSession {
             Event::Update(update) => self.apply_update(update),
             Event::Permission(request, reply) => self.open_permission(request, reply),
             Event::Stderr(line) => self.stderr(line),
+            Event::Spent(tokens) => self.record_spent(tokens),
             Event::TurnDone(result) => {
                 if result.is_ok() {
                     self.replay = None;
@@ -1009,6 +1024,9 @@ impl ChatSession {
                 self.save_preferences();
             }
             SessionUpdate::UsageUpdate(update) => {
+                if self.streaming {
+                    self.turn_used += update.used;
+                }
                 self.usage = Some(Usage {
                     used: update.used,
                     size: update.size,
@@ -1018,6 +1036,37 @@ impl ChatSession {
             SessionUpdate::UserMessageChunk(_) => {}
             _ => {}
         }
+    }
+
+    /// Filed under the session's Model option, or `unknown`.
+    #[cfg(feature = "desktop")]
+    fn record_spent(&self, tokens: artifact::stats::Tokens) {
+        let Some(record) = &self.record else {
+            return;
+        };
+        let Ok(stats) = artifact::stats::Stats::open(&self.cwd) else {
+            return;
+        };
+        let model = self.model().unwrap_or_else(|| "unknown".to_owned());
+        let tokens = match self.entry.id.as_deref() {
+            Some("codex-acp") => crate::agent::spent::codex_turn(tokens, self.turn_used),
+            _ => tokens,
+        };
+        let _ = stats.usage(&artifact::stats::today(), record, &model, tokens);
+    }
+
+    /// The current value of the agent's Model config option.
+    #[cfg(feature = "desktop")]
+    fn model(&self) -> Option<String> {
+        self.config.iter().find_map(|option| {
+            if option.category != Some(SessionConfigOptionCategory::Model) {
+                return None;
+            }
+            match session_preferences::current(option) {
+                SessionConfigOptionValue::ValueId { value } => Some(value.to_string()),
+                _ => None,
+            }
+        })
     }
 
     #[cfg(feature = "desktop")]

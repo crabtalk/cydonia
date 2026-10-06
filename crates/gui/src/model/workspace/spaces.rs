@@ -156,6 +156,7 @@ impl Workspace {
         self.space = Some(ix);
         self.bring_up_space(cx);
         self.save();
+        cx.emit(super::Opened);
         cx.notify();
     }
 

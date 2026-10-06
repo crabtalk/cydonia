@@ -13,12 +13,16 @@ pub mod link;
 pub mod media;
 pub mod migrate;
 pub mod notify;
+#[cfg(feature = "desktop")]
+pub mod prices;
 pub mod project;
 pub mod session;
 pub mod session_preferences;
 pub mod settings;
 pub mod spaces;
 pub mod state;
+#[cfg(feature = "desktop")]
+pub mod statistics;
 pub mod store;
 #[cfg(feature = "desktop")]
 pub mod update;
