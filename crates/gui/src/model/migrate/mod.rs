@@ -9,8 +9,8 @@
 //! # One module per release
 //!
 //! Named for the version that **performs** the migration, not the last one
-//! that needs it — [`v0_1_4`] is what 0.1.4 does on first launch to a file
-//! written by anything up to 0.1.3. Flyway's rule, and it is the one that
+//! that needs it — [`v0_1_23`] is what 0.1.23 does on first launch to a file
+//! written by anything up to 0.1.22. Flyway's rule, and it is the one that
 //! survives being read a year later: the module name is the tag it shipped in,
 //! so the release notes and the code answer the same question. Naming it for
 //! the old version instead means asking "has that one shipped yet?" every time
@@ -29,9 +29,12 @@
 //! update. Dropping one is not a fix anybody notices, so it needs to be
 //! deliberate.
 
-pub mod v0_1_11;
+//! # Backups
+//!
+//! A module copies each file into the backup of the release whose format it is
+//! in — [`keep`] — before it writes over it. See [`artifact::backup`].
+
 pub mod v0_1_23;
-pub mod v0_1_4;
 
 /// Run every migration, oldest first, before anything reads either file.
 ///
@@ -42,7 +45,15 @@ pub mod v0_1_4;
 /// carry-over that could not be written leaves both files as they were and is
 /// tried again next launch.
 pub fn run() {
-    v0_1_4::run();
-    v0_1_11::run();
     v0_1_23::run();
+}
+
+/// Copy a file in the config directory into `version`'s backup, unless that
+/// backup already holds it. Best effort.
+pub(crate) fn keep(version: &str, path: &std::path::Path) {
+    if let Ok(dir) = super::settings::dir()
+        && let Ok(file) = path.strip_prefix(&dir)
+    {
+        let _ = artifact::backup::keep_config(version, &file.to_string_lossy());
+    }
 }

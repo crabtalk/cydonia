@@ -1,8 +1,23 @@
 [
   {
+    "version": "0.1.27",
+    "date": "2026-10-07",
+    "nightly": true,
+    "summary": "A statistics page, one directory per board with one folder per card, and backups you can roll back to when a release changes how things are stored.",
+    "new": [
+      "Open a statistics page from the button beside settings: activity heatmap, words written, cards created and done, and token usage priced from LiteLLM's list",
+      "Keep each card's pictures in its own folder, and edit cards with the article editor's pictures, mentions and paste",
+      "Back up the files a migration replaces under ~/.local/share/cydonia/backup, and manage, delete or roll back to them in Settings › Backups"
+    ],
+    "changed": [
+      "Store each board as a directory, with one folder per card holding its text, properties and pictures, so agents editing different cards no longer clash",
+      "Keep a card's id when it moves to another board or project",
+      "Rename .cydonia/entries.db to .cydonia/state.db, which now also holds statistics"
+    ]
+  },
+  {
     "version": "0.1.26",
     "date": "2026-10-06",
-    "nightly": true,
     "summary": "Mermaid diagrams, read-only session cards, one entry matcher for search and @, and tabs that close back to where you were.",
     "new": [
       "Draw mermaid flowcharts, state and class diagrams in articles, and resize session cards and diagrams by dragging their bottom edge",

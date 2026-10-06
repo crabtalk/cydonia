@@ -37,7 +37,24 @@ pub(super) fn stage(version: &str, _: &Path) -> Result<PathBuf> {
 
 /// Start the installer and leave it to close this process and relaunch the new
 /// one — `/RELAUNCH` is `cydonia.iss`'s own switch for that.
-pub(super) fn swap_on_exit(_: &Path, setup: &Path) -> Result<()> {
+/// With a backup to `restore`, the installer is run by a copy of this binary
+/// outside the install directory instead — see [`super::restore_mode`].
+pub(super) fn swap_on_exit(_: &Path, setup: &Path, restore: Option<&str>) -> Result<()> {
+    if let Some(version) = restore {
+        let exe = std::env::current_exe().context("this binary has no path")?;
+        let helper = std::env::temp_dir().join("cydonia-restore.exe");
+        std::fs::copy(&exe, &helper).context("the restore helper could not be copied")?;
+        std::process::Command::new(helper)
+            .arg("--restore-backup")
+            .arg(version)
+            .arg("--install")
+            .arg(setup)
+            .arg("--launch")
+            .arg(exe)
+            .spawn()
+            .context("the restore helper did not start")?;
+        return Ok(());
+    }
     std::process::Command::new(setup)
         .args([
             "/VERYSILENT",

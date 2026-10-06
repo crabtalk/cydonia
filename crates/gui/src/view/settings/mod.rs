@@ -43,6 +43,7 @@ mod agents;
 #[path = "agents_web.rs"]
 mod agents;
 mod apps;
+mod backups;
 #[cfg(not(target_os = "linux"))]
 mod browser;
 mod developer;
@@ -86,7 +87,7 @@ impl Section {
         matches!(self, Self::Agents)
     }
 
-    const ALL: [Self; 10] = [
+    const ALL: [Self; 11] = [
         Self::General,
         Self::Appearance,
         Self::Editor,
@@ -96,6 +97,7 @@ impl Section {
         Self::Agents,
         Self::Mcp,
         Self::Performance,
+        Self::Backups,
         Self::Developer,
     ];
 
@@ -115,6 +117,7 @@ impl Section {
         use crate::model::settings::Feature;
         match self {
             Self::Developer => cfg!(debug_assertions) || cfg!(feature = "developer"),
+            Self::Backups => artifact::backup::any(),
             Self::Browser => {
                 cfg!(feature = "desktop")
                     && Feature::Browser.available()
@@ -131,7 +134,7 @@ impl Section {
             Self::General | Self::Appearance | Self::Editor | Self::Shortcuts => None,
             Self::Features | Self::Browser => Some("Workspace"),
             Self::Agents | Self::Mcp => Some("Agents"),
-            Self::Performance | Self::Developer => Some("Advanced"),
+            Self::Performance | Self::Backups | Self::Developer => Some("Advanced"),
         }
     }
 
@@ -146,6 +149,7 @@ impl Section {
             Self::Mcp => "MCP",
             Self::Browser => "Browser",
             Self::Performance => "Performance",
+            Self::Backups => "Backups",
             Self::Developer => "Developer",
         }
     }
@@ -164,6 +168,9 @@ impl Section {
             }
             Self::Browser => Some("The browser tabs in the right panel."),
             Self::Developer => Some("Switches for looking at what has not happened yet."),
+            Self::Backups => {
+                Some("Files a migration replaced, kept from the release they belong to.")
+            }
             Self::General | Self::Appearance | Self::Editor | Self::Agents | Self::Performance => {
                 None
             }
@@ -182,6 +189,7 @@ impl Section {
             Self::Mcp => icons::development::Plug,
             Self::Browser => icons::navigation::Globe,
             Self::Performance => icons::devices::Cpu,
+            Self::Backups => icons::files::Archive,
             Self::Developer => icons::development::Wrench,
         }
     }
@@ -240,6 +248,10 @@ pub struct SettingsWindow {
     browser_data: browser::BrowserData,
     /// The field whose dialog is up — see [`SettingsWindow::field_dialog`].
     editing: Option<(Field, Entity<TextField>)>,
+    /// The backups section's list, read when the section is shown.
+    backups: Vec<artifact::backup::Backup>,
+    /// A backup row waiting for its action to be agreed to.
+    backup_ask: Option<(String, backups::Ask)>,
     /// The shortcut row taking keys, while one is — see
     /// [`shortcuts::Recording`].
     recording: Option<shortcuts::Recording>,
@@ -377,6 +389,8 @@ impl SettingsWindow {
             #[cfg(not(target_os = "linux"))]
             browser_data: Default::default(),
             editing: None,
+            backups: artifact::backup::list(),
+            backup_ask: None,
             recording: None,
             picker: Default::default(),
             custom: None,
@@ -669,6 +683,7 @@ impl SettingsWindow {
         }
         match section {
             Section::Agents => self.load(cx),
+            Section::Backups => self.load_backups(),
             Section::General
             | Section::Appearance
             | Section::Editor
@@ -842,6 +857,7 @@ impl Render for SettingsWindow {
                                 #[cfg(target_os = "linux")]
                                 Section::Browser => div().into_any_element(),
                                 Section::Performance => self.performance_body(cx),
+                                Section::Backups => self.backups_body(cx),
                                 Section::Developer => self.developer_body(cx),
                             }),
                     )

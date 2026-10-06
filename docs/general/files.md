@@ -4,9 +4,9 @@ description: The three directories Cydonia reads and writes.
 ---
 
 ```
-~/.config/cydonia/   settings.toml, state.toml, mcp.toml, the agent catalogue cache
-~/.local/share/      installed agents
-<project>/.cydonia/  that project's articles, boards, tables, sessions, store and agents' worktrees
+~/.config/cydonia/       settings.toml, state.toml, mcp.toml, the agent catalogue cache
+~/.local/share/cydonia/  installed agents, caches, and migration backups
+<project>/.cydonia/      that project's articles, boards, tables, sessions, store and agents' worktrees
 ```
 
 ## The project store
@@ -35,3 +35,7 @@ carrying to another one.
 An agent installed from the registry is unpacked under `~/.local/share/`, and
 its `settings.toml` entry points at the unpacked executable. An agent you wrote
 into the file yourself is never touched by the installer.
+
+## Backups
+
+A release that changes how projects or the configuration are stored copies each file it replaces into `~/.local/share/cydonia/backup/` first. See [Backups and rolling back](./backups.md).

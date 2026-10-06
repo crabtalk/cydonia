@@ -20,6 +20,9 @@ pub enum Section {
     // same reading that puts Features before it.
     Mcp,
     Performance,
+    // Beside Performance, which also lists what the app holds on disk; listed
+    // only while a backup exists — see [`Section::listed`].
+    Backups,
     // Last, and in a debug build alone — see [`Section::listed`].
     Developer,
 }

@@ -175,6 +175,6 @@ fn team(bundle: &Path) -> Result<Option<String>> {
 }
 
 /// Swap the staged bundle in once this process is gone, and open it.
-pub(super) fn swap_on_exit(app: &Path, staged: &Path) -> Result<()> {
-    super::swap_on_exit(app, staged, r#"open "$app""#)
+pub(super) fn swap_on_exit(app: &Path, staged: &Path, restore: Option<&str>) -> Result<()> {
+    super::swap_on_exit(app, staged, r#"open "$app""#, restore)
 }

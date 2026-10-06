@@ -3,7 +3,7 @@ members = ["crates/cydonia", "crates/gui", "crates/demo", "crates/artifact", "cr
 resolver = "3"
 
 [workspace.package]
-version = "0.1.26"
+version = "0.1.27"
 edition = "2024"
 rust-version = "1.95"
 license = "MIT"
@@ -71,3 +71,28 @@ bezel-syntax-std = { path = "../bezel/crates/syntax-std" }
 bezel-terminal = { path = "../bezel/crates/terminal" }
 bezel-theme = { path = "../bezel/crates/theme" }
 bezel-ui = { path = "../bezel/crates/ui" }
+bezel-zed-collections = { path = "../zed/crates/collections" }
+bezel-gpui = { path = "../zed/crates/gpui" }
+bezel-gpui-apple = { path = "../zed/crates/gpui_apple" }
+bezel-gpui-linux = { path = "../zed/crates/gpui_linux" }
+bezel-gpui-macos = { path = "../zed/crates/gpui_macos" }
+bezel-gpui-macros = { path = "../zed/crates/gpui_macros" }
+bezel-gpui-platform = { path = "../zed/crates/gpui_platform" }
+bezel-gpui-shared-string = { path = "../zed/crates/gpui_shared_string" }
+bezel-gpui-util = { path = "../zed/crates/gpui_util" }
+bezel-gpui-web = { path = "../zed/crates/gpui_web" }
+bezel-gpui-wgpu = { path = "../zed/crates/gpui_wgpu" }
+bezel-gpui-windows = { path = "../zed/crates/gpui_windows" }
+bezel-zed-http-client = { path = "../zed/crates/http_client" }
+bezel-zed-http-client-tls = { path = "../zed/crates/http_client_tls" }
+bezel-zed-path = { path = "../zed/crates/path" }
+bezel-zed-perf = { path = "../zed/tooling/perf" }
+bezel-zed-refineable = { path = "../zed/crates/refineable" }
+bezel-zed-reqwest-client = { path = "../zed/crates/reqwest_client" }
+bezel-zed-scheduler = { path = "../zed/crates/scheduler" }
+bezel-zed-sum-tree = { path = "../zed/crates/sum_tree" }
+bezel-zed-util-macros = { path = "../zed/crates/util_macros" }
+bezel-zed-zlog = { path = "../zed/crates/zlog" }
+bezel-zed-ztracing = { path = "../zed/crates/ztracing" }
+bezel-zed-ztracing-macro = { path = "../zed/crates/ztracing_macro" }
+bezel-zed-derive-refineable = { path = "../zed/crates/refineable/derive_refineable" }

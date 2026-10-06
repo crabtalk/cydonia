@@ -196,3 +196,58 @@ fn a_card_keeps_properties_cydonia_does_not_know() {
     assert!(now.contains("label = \"bug\""));
     assert!(now.contains("status = \"done\""));
 }
+
+#[test]
+fn migration_backs_up_what_it_replaces() {
+    use cydonia_artifact::backup;
+    let scratch = Scratch::new("layout-backup");
+    let store = scratch.store();
+    let boards = store.init().unwrap().join("boards");
+    fs::create_dir_all(&boards).unwrap();
+    let flat = "name = \"Old\"\nkey = \"OLD\"\n";
+    fs::write(boards.join("1757000000001.toml"), flat).unwrap();
+    fs::write(store.cydonia().join("entries.db"), b"db").unwrap();
+
+    store.boards();
+    store.state().unwrap();
+
+    let backup = backup::project_dir("v0_1_26", scratch.path()).unwrap();
+    assert_eq!(
+        fs::read_to_string(backup.join("boards/1757000000001.toml")).unwrap(),
+        flat
+    );
+    assert_eq!(fs::read(backup.join("entries.db")).unwrap(), b"db");
+    assert_eq!(
+        fs::read_to_string(backup.join("path")).unwrap(),
+        scratch.path().to_string_lossy()
+    );
+}
+
+#[test]
+fn a_restore_puts_the_old_layout_back() {
+    use cydonia_artifact::backup;
+    let scratch = Scratch::new("layout-restore");
+    let store = scratch.store();
+    let boards = store.init().unwrap().join("boards");
+    fs::create_dir_all(&boards).unwrap();
+    let flat = "name = \"Old\"\nkey = \"OLD\"\n";
+    fs::write(boards.join("1757000000002.toml"), flat).unwrap();
+    fs::write(store.cydonia().join("entries.db"), b"db").unwrap();
+    store.boards();
+    store.state().unwrap();
+    assert!(boards.join("1757000000002").is_dir());
+
+    backup::restore("v0_1_26").unwrap();
+    assert_eq!(
+        fs::read_to_string(boards.join("1757000000002.toml")).unwrap(),
+        flat
+    );
+    assert!(!boards.join("1757000000002").exists());
+    assert_eq!(fs::read(store.cydonia().join("entries.db")).unwrap(), b"db");
+    assert!(!store.cydonia().join("state.db").exists());
+    assert!(
+        backup::list()
+            .iter()
+            .any(|kept| kept.version == "v0_1_26" && kept.release() == "0.1.26")
+    );
+}

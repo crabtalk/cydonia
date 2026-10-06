@@ -48,6 +48,10 @@ pub const STATE: &str = "state.db";
 /// What [`STATE`] was called before it held statistics.
 const ENTRIES: &str = "entries.db";
 
+/// The release whose files the migrations here replace — the backup they are
+/// kept under; see [`crate::backup`].
+const REPLACED: &str = "v0_1_26";
+
 /// Where a project's sessions live. One file each, so writing one does not
 /// rewrite the rest.
 const SESSIONS: &str = "sessions";
@@ -105,6 +109,7 @@ impl Project {
         let state = dir.join(STATE);
         let entries = dir.join(ENTRIES);
         if !state.exists() && entries.exists() {
+            let _ = crate::backup::keep(REPLACED, &self.root, Path::new(ENTRIES));
             match std::fs::rename(&entries, &state) {
                 // Another connection renamed it first.
                 Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
@@ -216,6 +221,7 @@ impl Project {
         let Some(mut board) = read_flat_board(&old) else {
             return;
         };
+        let _ = crate::backup::keep(REPLACED, &self.root, Path::new(LEGACY_BOARD));
         if std::fs::create_dir_all(self.boards_dir()).is_err() {
             return;
         }
@@ -224,6 +230,7 @@ impl Project {
         board.mint_ids();
         self.adopt_assets(&mut board);
         if self.write_board(&mut board, false).is_ok() {
+            let _ = crate::backup::note_legacy_board(REPLACED, &self.root, &board.id);
             let _ = std::fs::remove_file(old);
         }
     }
@@ -238,6 +245,11 @@ impl Project {
         let Some(mut board) = read_flat_board(flat) else {
             return;
         };
+        let _ = crate::backup::keep(
+            REPLACED,
+            &self.root,
+            &Path::new(BOARDS).join(format!("{id}.toml")),
+        );
         board.id = id;
         board.mint_ids();
         self.adopt_assets(&mut board);

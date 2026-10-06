@@ -74,7 +74,7 @@ mod platform {
     pub(super) fn stage(_: &str, _: &Path) -> Result<PathBuf> {
         bail!("no release is cut for this platform")
     }
-    pub(super) fn swap_on_exit(_: &Path, _: &Path) -> Result<()> {
+    pub(super) fn swap_on_exit(_: &Path, _: &Path, _: Option<&str>) -> Result<()> {
         bail!("no release is cut for this platform")
     }
 }
@@ -161,6 +161,16 @@ pub struct Updater {
     /// has no bundle behind it, and a state that says it has would be one
     /// [`Updater::restart`] could act on.
     preview: bool,
+    /// A rollback in hand: the release being fetched, or why it stopped.
+    rollback: Option<Rollback>,
+}
+
+/// Where a rollback to an earlier release has got to — see
+/// [`Updater::roll_back`].
+#[derive(Clone)]
+pub enum Rollback {
+    Downloading(SharedString),
+    Failed(SharedString),
 }
 
 /// The one updater, reached from the menu bar and from settings.
@@ -180,6 +190,7 @@ pub fn init(auto: bool, cx: &mut App) {
             app,
             poll: None,
             preview: false,
+            rollback: None,
         };
         if auto {
             this.poll(cx);
@@ -315,7 +326,7 @@ impl Updater {
             let (Status::Ready { staged, .. }, Some(app)) = (&self.status, &self.app) else {
                 return;
             };
-            platform::swap_on_exit(app, staged)
+            platform::swap_on_exit(app, staged, None)
         };
         match handed {
             // Not `cx.restart()`: that script re-opens the bundle and nothing
@@ -323,6 +334,45 @@ impl Updater {
             Ok(()) => cx.quit(),
             Err(err) => self.settle(Status::Failed(format!("{err:#}").into()), cx),
         }
+    }
+
+    pub fn rollback(&self) -> Option<&Rollback> {
+        self.rollback.as_ref()
+    }
+
+    /// Fetch `release`, then quit into it with `backup` put back first — see
+    /// [`artifact::backup::restore`]. The restore runs after this process is
+    /// gone, so nothing re-migrates the projects in between.
+    pub fn roll_back(&mut self, release: String, backup: String, cx: &mut Context<Self>) {
+        if matches!(self.rollback, Some(Rollback::Downloading(_))) {
+            return;
+        }
+        let Some(app) = self.app.clone() else {
+            return;
+        };
+        self.rollback = Some(Rollback::Downloading(release.clone().into()));
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let staged = cx
+                .background_executor()
+                .spawn({
+                    let (release, app) = (release.clone(), app.clone());
+                    async move { platform::stage(&release, &app) }
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                let handed =
+                    staged.and_then(|staged| platform::swap_on_exit(&app, &staged, Some(&backup)));
+                match handed {
+                    Ok(()) => cx.quit(),
+                    Err(err) => {
+                        this.rollback = Some(Rollback::Failed(format!("{err:#}").into()));
+                        cx.notify();
+                    }
+                }
+            });
+        })
+        .detach();
     }
 
     /// Start or stop looking on our own. The file is written by
@@ -563,6 +613,9 @@ const SWAP: &str = r#"
     while kill -0 $0 2> /dev/null; do
         sleep 0.1
     done
+    if [ -n "$4" ]; then
+        "$3" --restore-backup "$4"
+    fi
     app="$1"
     staged="$2"
     old="$app.old"
@@ -577,8 +630,10 @@ const SWAP: &str = r#"
     fi
 "#;
 
+/// `restore` is a backup to put back once this process is gone, by this
+/// binary's `--restore-backup` mode — see [`restore_mode`].
 #[cfg(unix)]
-fn swap_on_exit(app: &Path, staged: &Path, launch: &str) -> Result<()> {
+fn swap_on_exit(app: &Path, staged: &Path, launch: &str, restore: Option<&str>) -> Result<()> {
     use std::os::unix::process::CommandExt as _;
     let mut command = Command::new("/bin/sh");
     command
@@ -587,6 +642,8 @@ fn swap_on_exit(app: &Path, staged: &Path, launch: &str) -> Result<()> {
         .arg(std::process::id().to_string())
         .arg(app)
         .arg(staged)
+        .arg(std::env::current_exe().context("this binary has no path")?)
+        .arg(restore.unwrap_or_default())
         // A process group of its own, so whatever ends this process does not
         // take the swap with it. gpui's own `restart` does the same.
         .process_group(0);
@@ -617,4 +674,43 @@ fn failure(err: anyhow::Error, manual: bool) -> Status {
     } else {
         Status::Idle
     }
+}
+
+/// The binary's `--restore-backup <version>` mode: put a backup back with no
+/// cydonia running — see [`Updater::roll_back`]. `None` for an ordinary launch.
+///
+/// On Windows it is also handed the installer (`--install <setup>`) and what
+/// to launch after (`--launch <exe>`): it runs from a copy outside the install
+/// directory, waits for the installer, which closes the app, then restores and
+/// launches.
+pub fn restore_mode() -> Option<Result<()>> {
+    let args: Vec<String> = std::env::args().collect();
+    let at = args.iter().position(|arg| arg == "--restore-backup")?;
+    let version = args.get(at + 1)?.clone();
+    let after = |flag: &str| {
+        args.iter()
+            .position(|arg| arg == flag)
+            .and_then(|at| args.get(at + 1))
+            .cloned()
+    };
+    Some((|| {
+        if let Some(setup) = after("--install") {
+            std::process::Command::new(setup)
+                .args([
+                    "/VERYSILENT",
+                    "/SUPPRESSMSGBOXES",
+                    "/NORESTART",
+                    "/CLOSEAPPLICATIONS",
+                ])
+                .status()
+                .context("the installer did not run")?;
+        }
+        artifact::backup::restore(&version)?;
+        if let Some(launch) = after("--launch") {
+            std::process::Command::new(launch)
+                .spawn()
+                .context("the app did not start")?;
+        }
+        Ok(())
+    })())
 }

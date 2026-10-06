@@ -81,9 +81,7 @@ struct SavedPanels {
     /// Absent until the bottom panel is dragged.
     #[serde(skip_serializing_if = "Option::is_none")]
     terminal_height: Option<f32>,
-    /// One panel per working directory — see [`Cydonia::changes_for`]. Up to
-    /// 0.1.11 this held one per session inside each project, which
-    /// [`crate::model::migrate::v0_1_11`] clears.
+    /// One panel per working directory — see [`Cydonia::changes_for`].
     projects: BTreeMap<PathBuf, SavedPanel>,
 }
 

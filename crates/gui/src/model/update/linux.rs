@@ -82,10 +82,11 @@ pub(super) fn stage(version: &str, app: &Path) -> Result<PathBuf> {
 
 /// Swap the staged tree in once this process is gone, and start it detached
 /// from the script.
-pub(super) fn swap_on_exit(app: &Path, staged: &Path) -> Result<()> {
+pub(super) fn swap_on_exit(app: &Path, staged: &Path, restore: Option<&str>) -> Result<()> {
     super::swap_on_exit(
         app,
         staged,
         r#"nohup "$app/bin/cydonia" > /dev/null 2>&1 &"#,
+        restore,
     )
 }
