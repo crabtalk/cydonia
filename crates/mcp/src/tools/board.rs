@@ -734,7 +734,10 @@ fn move_card(args: Args<'_>) -> Outcome {
             if let Some(landed) =
                 artifact::board::carry_card(&mut board, &mut to, id, lane.as_deref())
             {
-                carried.push(landed);
+                project
+                    .carry_card_files(&board.id, id, destination, &to.id, &landed.id)
+                    .map_err(unwritten)?;
+                carried.push(landed.said);
             }
         }
         moved.push(board);

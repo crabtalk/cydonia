@@ -19,6 +19,7 @@
 
 pub mod article;
 pub mod board;
+pub mod document;
 pub mod entry;
 pub mod id;
 pub mod project;

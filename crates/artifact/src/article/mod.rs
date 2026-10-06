@@ -19,7 +19,7 @@ pub mod properties;
 
 #[cfg(feature = "sqlite")]
 use crate::entry;
-use crate::{project::fs, stamp};
+use crate::project::fs;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use url::Url;
@@ -52,11 +52,9 @@ pub struct Article {
 /// Where a project's articles live, and what the document is called inside the
 /// directory that is one.
 pub(crate) const DIR: &str = "articles";
-const CONTENT: &str = "content.md";
 
-/// Where the pictures in one article's body go, inside the directory that is
-/// that article.
-const ASSETS: &str = "assets";
+pub use crate::document::{assets, content, touched};
+use crate::document::{carry, carry_assets, repoint};
 
 /// Where this project's articles are, whether or not any have been written.
 pub fn dir(project: &Path) -> PathBuf {
@@ -68,39 +66,6 @@ pub fn init(project: &Path) -> std::io::Result<PathBuf> {
     Ok(fs::Project::new(project).init()?.join(DIR))
 }
 
-/// The document inside one article's directory — the path an agent is given.
-pub fn content(article: &Path) -> PathBuf {
-    article.join(CONTENT)
-}
-
-/// Where this article's body pictures go, whether or not any have been
-/// written. Takes the path of its `content.md`.
-///
-/// Inside the article's directory, so removing or moving the article takes
-/// them with it.
-pub fn assets(content: &Path) -> PathBuf {
-    content.with_file_name(ASSETS)
-}
-
-/// When the article was last written, whichever of its files took the write.
-///
-/// Both of them, because naming a page *is* writing it and the name lives in
-/// the properties: ordered on the markdown alone, an article renamed and never
-/// otherwise touched sinks back down the list the moment it is re-read.
-///
-/// The properties are only asked about when they are there — [`stamp::of`]
-/// answers `now` for a file it cannot stat, which would float every article
-/// that has never had a property to the top and keep it moving.
-pub fn touched(content: &Path) -> u128 {
-    let written = stamp::of(content);
-    match properties::path(content).filter(|path| path.is_file()) {
-        Some(properties) => written.max(stamp::of(&properties)),
-        None => written,
-    }
-}
-
-/// This millisecond's directory, or the first after it that is not taken. Two
-/// articles made inside one millisecond is the only way that happens.
 /// What names the article a document sits in: the directory it is in, which
 /// is what a reader asks for it by.
 pub fn id_of(content: &Path) -> String {
@@ -111,6 +76,8 @@ pub fn id_of(content: &Path) -> String {
         .map_or_else(crate::id::mint, str::to_owned)
 }
 
+/// This millisecond's directory, or the first after it that is not taken. Two
+/// articles made inside one millisecond is the only way that happens.
 pub fn free(dir: &Path, stamp: u128) -> PathBuf {
     (stamp..)
         .map(|stamp| dir.join(stamp.to_string()))
@@ -183,100 +150,4 @@ pub fn remove(content: &Path) -> std::io::Result<()> {
 /// The project a `content.md` is in: `<project>/.cydonia/articles/<id>/content.md`.
 pub fn project_of(content: &Path) -> Option<&Path> {
     content.ancestors().nth(4)
-}
-
-/// Move the directory, falling back to a copy where a rename cannot cross what
-/// is between the two — a project on another disk is the usual reason.
-fn carry(from: &Path, to: &Path) -> std::io::Result<()> {
-    if std::fs::rename(from, to).is_ok() {
-        return Ok(());
-    }
-    copy_dir(from, to)?;
-    std::fs::remove_dir_all(from)
-}
-
-fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
-    std::fs::create_dir_all(to)?;
-    for entry in std::fs::read_dir(from)? {
-        let entry = entry?;
-        let (source, target) = (entry.path(), to.join(entry.file_name()));
-        match entry.file_type()?.is_dir() {
-            true => copy_dir(&source, &target)?,
-            false => {
-                std::fs::copy(&source, &target)?;
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Point the body at where its own directory is now.
-///
-/// A picture in the article's `assets/` is written into the markdown as a whole
-/// path, and the article's directory is named for its id in the project it is
-/// in — so a move changes both halves of the prefix.
-///
-/// Best effort: the move stands whether or not the document could be rewritten.
-fn repoint(content: &Path, from: &Path, to: &Path) {
-    let (from, to) = (from.to_string_lossy(), to.to_string_lossy());
-    let Ok(text) = std::fs::read_to_string(content) else {
-        return;
-    };
-    if !text.contains(from.as_ref()) {
-        return;
-    }
-    let _ = std::fs::write(content, text.replace(from.as_ref(), to.as_ref()));
-}
-
-/// Bring the pictures the document points at along with it.
-///
-/// A body can hold whole paths into the project's shared `assets/`, which is why
-/// a move has to touch the document at all. The file names are hashes of the
-/// bytes, so a picture already in the destination is the same file and is not
-/// copied again.
-///
-/// Best effort: the move stands whether or not the pictures followed.
-fn carry_assets(content: &Path, from: &Path, to: &Path) {
-    let Ok(text) = std::fs::read_to_string(content) else {
-        return;
-    };
-    let (here, there) = (
-        fs::Project::new(from).assets(),
-        fs::Project::new(to).assets(),
-    );
-    let (here, there) = (here.to_string_lossy(), there.to_string_lossy());
-    if !text.contains(here.as_ref()) {
-        return;
-    }
-    for name in assets_named(&text, &here) {
-        let (source, target) = (
-            Path::new(here.as_ref()).join(&name),
-            Path::new(there.as_ref()).join(&name),
-        );
-        if target.exists() {
-            continue;
-        }
-        if std::fs::create_dir_all(there.as_ref()).is_ok() {
-            let _ = std::fs::copy(&source, &target);
-        }
-    }
-    let _ = std::fs::write(content, text.replace(here.as_ref(), there.as_ref()));
-}
-
-/// The file names under `assets` the document mentions. Everything up to what
-/// cannot be in one: a path in markdown is followed by a quote, a bracket or
-/// the end of the line, and none of those are in a name this app writes.
-fn assets_named(text: &str, assets: &str) -> Vec<String> {
-    let mut names = Vec::new();
-    for rest in text.split(assets).skip(1) {
-        let rest = rest.strip_prefix(std::path::MAIN_SEPARATOR).unwrap_or(rest);
-        let name: String = rest
-            .chars()
-            .take_while(|c| !matches!(c, '"' | '\'' | ')' | ']' | '>' | '\n' | '\r' | ' '))
-            .collect();
-        if !name.is_empty() && !names.contains(&name) {
-            names.push(name);
-        }
-    }
-    names
 }

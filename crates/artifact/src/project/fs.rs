@@ -15,7 +15,7 @@ use crate::entry;
 use crate::{
     article::{self, Article, properties::Properties},
     board::{self, Board, key},
-    id,
+    document, id,
     session::record::Record,
     space::Kind,
     stamp,
@@ -184,18 +184,19 @@ impl Project {
         let mut touched = stamp::of(&file);
         let mut cards = Vec::new();
         if let Ok(entries) = std::fs::read_dir(dir.join(layout::CARDS)) {
-            for path in entries.flatten().map(|entry| entry.path()) {
-                if path.extension().is_none_or(|ext| ext != "md") {
-                    continue;
-                }
-                let Ok(text) = std::fs::read_to_string(&path) else {
+            for card_dir in entries.flatten().map(|entry| entry.path()) {
+                let path = document::content(&card_dir);
+                let Some((text, properties)) = read_card_files(&path) else {
                     continue;
                 };
-                if let Some(mut card) = layout::parse_card(&stem(&path), &text) {
-                    card.version = Some(version(text.as_bytes()));
-                    touched = touched.max(stamp::of(&path));
-                    cards.push(card);
-                }
+                let id = card_dir
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                let mut card = layout::parse_card(&id, &text, &properties);
+                card.version = Some(card_version(&text, &properties));
+                touched = touched.max(document::touched(&path));
+                cards.push(card);
             }
         }
         let mut board = layout::assemble(&body, cards)?;
@@ -221,6 +222,7 @@ impl Project {
         board.id = free_board(&self.boards_dir(), stamp::now());
         board.name = board::NAMED.to_owned();
         board.mint_ids();
+        self.adopt_assets(&mut board);
         if self.write_board(&mut board, false).is_ok() {
             let _ = std::fs::remove_file(old);
         }
@@ -238,9 +240,54 @@ impl Project {
         };
         board.id = id;
         board.mint_ids();
+        self.adopt_assets(&mut board);
         if self.write_board(&mut board, false).is_ok() {
             let _ = std::fs::remove_file(flat);
         }
+    }
+
+    /// Copy the pictures a card points at in the project's `.cydonia/assets/`
+    /// into the card's own `assets/`, and point the card at the copies — see
+    /// [`document::adopt_assets`].
+    fn adopt_assets(&self, board: &mut Board) {
+        let shared = self.assets();
+        let dir = self.board_dir(&board.id);
+        for card in board
+            .columns
+            .iter_mut()
+            .flat_map(|column| &mut column.cards)
+        {
+            let Ok(id) = component(&card.id) else {
+                continue;
+            };
+            let own = document::assets(&document::content(&dir.join(layout::CARDS).join(id)));
+            card.text = document::adopt_assets(&card.text, &shared, &own);
+        }
+    }
+
+    /// The directory a card is — see [`layout`].
+    pub fn card_dir(&self, board: &str, card: &str) -> PathBuf {
+        self.board_dir(board).join(layout::CARDS).join(card)
+    }
+
+    /// Copy a card's directory to where it is landing on another board, which
+    /// may be in another project, so its pictures go with it. Run before
+    /// either board is saved: the source's save removes the card's directory.
+    pub fn carry_card_files(
+        &self,
+        board: &str,
+        card: &str,
+        to: &Project,
+        to_board: &str,
+        to_card: &str,
+    ) -> Result<()> {
+        let from = self.card_dir(component(board)?, component(card)?);
+        if !from.is_dir() {
+            return Ok(());
+        }
+        let landing = to.card_dir(component(to_board)?, component(to_card)?);
+        document::copy_dir(&from, &landing)?;
+        Ok(())
     }
 
     fn migrate_flats(&self) {
@@ -296,29 +343,47 @@ impl Project {
             if !ours && !held_ids.contains(&card.id) {
                 return Err(super::Stale.into());
             }
-            let body = layout::card_md(card)?;
-            let written = version(body.as_bytes());
+            let path = document::content(&cards_dir.join(component(&card.id)?));
+            let held = read_card_files(&path);
+            let held_properties = held.as_ref().map_or("", |(_, properties)| properties);
+            let properties = layout::card_properties(card, held_properties);
+            let written = card_version(&card.text, properties.as_deref().unwrap_or(""));
             if card.version.as_deref() == Some(written.as_str()) {
                 continue;
             }
-            let path = cards_dir.join(format!("{}.md", component(&card.id)?));
             if let Some(seen) = &card.version
-                && std::fs::read(&path)
-                    .ok()
-                    .map(|bytes| version(&bytes))
+                && held
+                    .as_ref()
+                    .map(|(text, properties)| card_version(text, properties))
                     .as_ref()
                     != Some(seen)
             {
                 return Err(super::Stale.into());
             }
-            writes.push((card.id.clone(), path, body, written));
+            writes.push((
+                card.id.clone(),
+                path,
+                card.text.clone(),
+                properties,
+                written,
+            ));
         }
         #[cfg(feature = "sqlite")]
         let before = record.then(|| self.read_board_dir(&dir)).flatten();
         #[cfg(not(feature = "sqlite"))]
         let _ = record;
-        for (_, path, body, _) in &writes {
-            std::fs::write(path, body)?;
+        for (_, path, text, properties, _) in &writes {
+            if let Some(dir) = path.parent() {
+                std::fs::create_dir_all(dir)?;
+            }
+            std::fs::write(path, text)?;
+            let beside = document::properties(path);
+            match properties {
+                Some(properties) => std::fs::write(&beside, properties)?,
+                None => {
+                    let _ = std::fs::remove_file(&beside);
+                }
+            }
         }
         if ours {
             lock.set_len(0)?;
@@ -332,7 +397,7 @@ impl Project {
                 .collect();
             for gone in held_ids.iter().filter(|id| !kept.contains(id.as_str())) {
                 if let Ok(gone) = component(gone) {
-                    let _ = std::fs::remove_file(cards_dir.join(format!("{gone}.md")));
+                    let _ = std::fs::remove_dir_all(cards_dir.join(gone));
                 }
             }
             board.version = Some(structure_version);
@@ -788,6 +853,19 @@ fn component(name: &str) -> Result<&str> {
 
 /// This millisecond's file, or the first after it that is not taken. Two
 /// boards made inside one millisecond is the only way that happens.
+/// A card's `content.md` and its `properties.toml`, empty where that file is
+/// missing. `None` for a card with no `content.md`.
+fn read_card_files(content: &Path) -> Option<(String, String)> {
+    let text = std::fs::read_to_string(content).ok()?;
+    let properties = std::fs::read_to_string(document::properties(content)).unwrap_or_default();
+    Some((text, properties))
+}
+
+/// What a card's two files hold, as one version.
+fn card_version(text: &str, properties: &str) -> String {
+    version(format!("{text}\0{properties}").as_bytes())
+}
+
 /// A board id no directory or flat file under `dir` is using.
 fn free_board(dir: &Path, stamp: u128) -> String {
     (stamp..)

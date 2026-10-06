@@ -35,8 +35,12 @@ fn a_flat_board_moves_into_its_directory() {
     assert!(!boards.join("1757000000000.toml").exists());
     assert!(dir.join("board.toml").is_file());
     assert_eq!(
-        fs::read_to_string(dir.join("cards/a.md")).unwrap(),
-        "+++\nhandle = 1\nstatus = \"busy\"\n+++\nfirst"
+        fs::read_to_string(dir.join("cards/a/content.md")).unwrap(),
+        "first"
+    );
+    assert_eq!(
+        fs::read_to_string(dir.join("cards/a/properties.toml")).unwrap(),
+        "handle = 1\nstatus = \"busy\"\n"
     );
     let cards = &read[0].columns[0].cards;
     assert_eq!(cards.len(), 2);
@@ -99,7 +103,7 @@ fn a_card_edit_survives_a_reorder_elsewhere_but_not_its_removal() {
         .join(".cydonia/boards")
         .join(&id)
         .join("cards")
-        .join(format!("{one}.md"));
+        .join(&one);
     assert!(!file.exists());
     late.set_card_status(&one, Some(Status::Busy));
     assert!(store.save_board(&mut late).unwrap_err().is::<Stale>());
@@ -118,4 +122,77 @@ fn a_moved_card_keeps_its_id() {
     store.save_board(&mut from).unwrap();
     assert!(store.board(&to.id).unwrap().card(&one).is_some());
     assert!(store.board(&id).unwrap().card(&one).is_none());
+}
+
+#[test]
+fn migration_moves_card_pictures_into_the_card() {
+    let scratch = Scratch::new("layout-assets");
+    let store = scratch.store();
+    let shared = store.init().unwrap().join("assets");
+    fs::create_dir_all(&shared).unwrap();
+    fs::write(shared.join("pic.png"), b"png").unwrap();
+    let boards = store.cydonia().join("boards");
+    fs::create_dir_all(&boards).unwrap();
+    let text = format!(
+        "look ![](<{}/pic.png>) and ![](/elsewhere/x.png)",
+        shared.display()
+    );
+    fs::write(
+        boards.join("1757000000000.toml"),
+        format!(
+            "name = \"Old\"\nkey = \"OLD\"\n\n[[columns]]\nid = \"c\"\nname = \"TODO\"\n\n[[columns.cards]]\nid = \"a\"\nhandle = 1\ntext = {text:?}\n"
+        ),
+    )
+    .unwrap();
+
+    let read = store.boards();
+    let card = &read[0].columns[0].cards[0];
+    assert_eq!(
+        card.text,
+        "look ![](<assets/pic.png>) and ![](/elsewhere/x.png)"
+    );
+    let card_dir = store.card_dir("1757000000000", "a");
+    assert_eq!(fs::read(card_dir.join("assets/pic.png")).unwrap(), b"png");
+    assert!(shared.join("pic.png").exists());
+}
+
+#[test]
+fn a_carried_card_takes_its_pictures() {
+    let scratch = Scratch::new("layout-carry-assets");
+    let (id, one, _) = board_with_two(&scratch);
+    let store = scratch.store();
+    let assets = store.card_dir(&id, &one).join("assets");
+    fs::create_dir_all(&assets).unwrap();
+    fs::write(assets.join("pic.png"), b"png").unwrap();
+
+    let mut from = store.board(&id).unwrap();
+    let mut to = store.create_board("Plan", "PLAN").unwrap();
+    to.add_column("Todo");
+    let landed = board::carry_card(&mut from, &mut to, &one, None).unwrap();
+    store
+        .carry_card_files(&id, &one, &store, &to.id, &landed.id)
+        .unwrap();
+    store.save_board(&mut to).unwrap();
+    store.save_board(&mut from).unwrap();
+    assert_eq!(
+        fs::read(store.card_dir(&to.id, &landed.id).join("assets/pic.png")).unwrap(),
+        b"png"
+    );
+    assert!(!store.card_dir(&id, &one).exists());
+}
+
+#[test]
+fn a_card_keeps_properties_cydonia_does_not_know() {
+    let scratch = Scratch::new("layout-keys");
+    let (id, one, _) = board_with_two(&scratch);
+    let store = scratch.store();
+    let properties = store.card_dir(&id, &one).join("properties.toml");
+    let held = fs::read_to_string(&properties).unwrap();
+    fs::write(&properties, format!("{held}label = \"bug\"\n")).unwrap();
+    let mut board = store.board(&id).unwrap();
+    board.set_card_status(&one, Some(Status::Done));
+    store.save_board(&mut board).unwrap();
+    let now = fs::read_to_string(&properties).unwrap();
+    assert!(now.contains("label = \"bug\""));
+    assert!(now.contains("status = \"done\""));
 }

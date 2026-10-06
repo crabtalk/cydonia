@@ -57,6 +57,21 @@ pub fn open(path: &Path) -> Store {
 impl Store {
     /// Where an entry is on disk — see [`fs::Project::place`]. `None` from a
     /// backend that is not the disk.
+    /// See [`fs::Project::carry_card_files`]. Best effort; a backend with
+    /// no files has no pictures to carry.
+    pub fn carry_card_files(
+        &self,
+        board: &str,
+        card: &str,
+        to: &Store,
+        to_board: &str,
+        to_card: &str,
+    ) {
+        if let (Store::Fs(from), Store::Fs(to)) = (self, to) {
+            let _ = from.carry_card_files(board, card, to, to_board, to_card);
+        }
+    }
+
     pub fn place(&self, kind: Kind, id: &str) -> Option<PathBuf> {
         match self {
             Store::Fs(store) => store.place(kind, id),

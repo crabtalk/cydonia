@@ -1,16 +1,24 @@
 //! How a board is laid out on disk: a directory per board, `board.toml` for
-//! the board and its columns, and one `cards/<card-id>.md` per card.
+//! the board and its columns, and a directory per card, `cards/<card-id>/`.
 //!
 //! `board.toml` holds each column's cards as an ordered list of card ids. A
-//! card file is TOML frontmatter between `+++` lines (handle, status,
-//! session), then the card's text. The card's id is its file's stem.
+//! card's directory is a [`crate::document`]: `content.md` is its text,
+//! `properties.toml` its handle, status and session, and `assets/` its
+//! pictures, referenced as `assets/<name>`. The card's id is its directory's
+//! name.
 
-use crate::board::{Board, Card, Column, Status, View};
+use crate::{
+    board::{Board, Card, Column, Status, View},
+    document,
+};
 use serde::{Deserialize, Serialize};
 
 pub const BOARD_FILE: &str = "board.toml";
 pub const CARDS: &str = "cards";
-const FENCE: &str = "+++";
+
+const HANDLE: &str = "handle";
+const STATUS: &str = "status";
+const SESSION: &str = "session";
 
 #[derive(Serialize, Deserialize)]
 struct Disk {
@@ -39,16 +47,6 @@ struct DiskColumn {
     collapsed: bool,
     #[serde(default)]
     cards: Vec<String>,
-}
-
-#[derive(Default, Serialize, Deserialize)]
-struct Front {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    handle: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    status: Option<Status>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    session: Option<String>,
 }
 
 /// `board.toml` for a board: everything but the cards' contents.
@@ -86,35 +84,49 @@ pub fn card_ids(body: &str) -> std::collections::HashSet<String> {
         .unwrap_or_default()
 }
 
-/// A card file's contents.
-pub fn card_md(card: &Card) -> Result<String, toml::ser::Error> {
-    let front = toml::to_string(&Front {
-        handle: card.handle,
-        status: card.status,
-        session: card.session.clone(),
-    })?;
-    Ok(format!("{FENCE}\n{front}{FENCE}\n{}", card.text))
+/// A card's `properties.toml`, written over `held` (what the file holds now)
+/// so keys cydonia does not know about stay. `None` for a card with nothing to
+/// say there, whose file should not exist.
+pub fn card_properties(card: &Card, held: &str) -> Option<String> {
+    document::apply(
+        held,
+        &[
+            (
+                HANDLE,
+                card.handle
+                    .and_then(|handle| i64::try_from(handle).ok())
+                    .map(toml_edit::value),
+            ),
+            (
+                STATUS,
+                card.status.map(|status| toml_edit::value(status.key())),
+            ),
+            (SESSION, card.session.as_deref().map(toml_edit::value)),
+        ],
+    )
 }
 
-/// A card from its file's contents and its id.
-pub fn parse_card(id: &str, body: &str) -> Option<Card> {
-    let rest = body.strip_prefix(FENCE)?.strip_prefix('\n')?;
-    let (front, text) = match rest.split_once(&format!("\n{FENCE}\n")) {
-        Some((front, text)) => (front, text),
-        None => (rest.strip_suffix(&format!("\n{FENCE}"))?, ""),
-    };
-    let front: Front = match front.trim().is_empty() {
-        true => Front::default(),
-        false => toml::from_str(front).ok()?,
-    };
-    Some(Card {
+/// A card from its directory's name, its `content.md` and its
+/// `properties.toml`.
+pub fn parse_card(id: &str, content: &str, properties: &str) -> Card {
+    let doc = document::parse(properties);
+    Card {
         id: id.to_owned(),
-        handle: front.handle,
-        text: text.to_owned(),
-        session: front.session,
-        status: front.status,
+        handle: doc
+            .get(HANDLE)
+            .and_then(|handle| handle.as_integer())
+            .and_then(|handle| u64::try_from(handle).ok()),
+        text: content.to_owned(),
+        session: doc
+            .get(SESSION)
+            .and_then(|session| session.as_str())
+            .map(str::to_owned),
+        status: doc
+            .get(STATUS)
+            .and_then(|status| status.as_str())
+            .and_then(Status::parse),
         version: None,
-    })
+    }
 }
 
 /// A board from `board.toml` and the cards read beside it. Cards no column

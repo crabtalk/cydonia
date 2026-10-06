@@ -219,8 +219,8 @@ struct Tally {
 }
 
 /// Render Markdown at the lane's text scale. Full reading uses the drawer.
-/// `base` is where a card's relative picture paths resolve: its project's
-/// `.cydonia` folder.
+/// `base` is where a card's relative picture paths resolve: its own
+/// directory.
 fn card_body(
     doc: &markdown::Doc,
     base: Option<&std::path::Path>,
@@ -317,6 +317,7 @@ pub struct CardDraft {
     shown: String,
     editor: Entity<Editor>,
     error: Option<String>,
+    _pictures: Entity<crate::view::component::file::pictures::Pictures>,
     _subscription: gpui::Subscription,
 }
 
@@ -739,7 +740,7 @@ pub(crate) fn ghost(
             BoardItem::Card(_, card) => {
                 let text = board.card(card)?.text.clone();
                 match board.view {
-                    View::Lanes => Held::Card(text, root.card_base(project, cx)),
+                    View::Lanes => Held::Card(text, root.card_base(project, &board.id, card, cx)),
                     View::List => Held::Row(
                         board.card(card).and_then(|card| board.handle_of(card)),
                         root.card_docs.title(&text),
@@ -1600,11 +1601,16 @@ impl Cydonia {
             .find(|draft| draft.board == opened.board && draft.card == opened.card)
     }
 
-    /// Where a card's relative picture paths resolve: its project's
-    /// `.cydonia` folder, which is where its pasted pictures are kept.
-    fn card_base(&self, project: usize, cx: &App) -> Option<std::path::PathBuf> {
+    /// Where a card's relative picture paths resolve: its own directory.
+    fn card_base(
+        &self,
+        project: usize,
+        board: &str,
+        card: &str,
+        cx: &App,
+    ) -> Option<std::path::PathBuf> {
         let open = self.workspace.read(cx).projects.get(project)?;
-        Some(artifact::project::fs::Project::new(&open.path).cydonia())
+        Some(artifact::project::fs::Project::new(&open.path).card_dir(board, card))
     }
 
     fn draft_mut(
@@ -1641,13 +1647,14 @@ impl Cydonia {
             return;
         };
         let text_size = workspace.text_size;
-        let base = artifact::project::fs::Project::new(&board.project).cydonia();
-        let editor = cx.new(|cx| {
-            Editor::new(&text, cx)
-                .with_base(base)
-                .with_text_size(text_size)
-                .with_scroll(scroll)
-        });
+        let dir = artifact::project::fs::Project::new(&board.project).card_dir(&board.id, &card);
+        let (editor, pictures) = crate::model::document::editor(
+            &dir,
+            &text,
+            self.workspace.downgrade(),
+            |editor| editor.with_text_size(text_size).with_scroll(scroll),
+            cx,
+        );
         crate::model::language::ensure(crate::model::article::fences(editor.read(cx)), cx);
         let shown = editor.read(cx).source();
         let (held_on, held_board, held_card) = (on.cloned(), board.clone(), card.clone());
@@ -1664,6 +1671,7 @@ impl Cydonia {
             shown,
             editor,
             error: None,
+            _pictures: pictures,
             _subscription: subscription,
         });
     }
@@ -3455,7 +3463,7 @@ impl Cydonia {
                     .gap(px(6.))
                     .child(div().flex_1().min_w_0().child({
                         let (doc, shortened) = self.card_docs.preview(&text);
-                        let base = self.card_base(project, cx);
+                        let base = self.card_base(project, &on_board, id, cx);
                         card_preview(
                             &doc,
                             base.as_deref(),

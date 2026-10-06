@@ -471,7 +471,7 @@ pub fn carry_card(
     to: &mut Board,
     card: &str,
     column: Option<&str>,
-) -> Option<String> {
+) -> Option<Landed> {
     let source = from.column_of(card)?;
     let (came_from, named) = (source.id.clone(), source.name.clone());
     let landing = column
@@ -490,7 +490,7 @@ pub fn carry_card(
     card.version = None;
     card.handle = Some(to.take_handle());
     card.session = None;
-    let handle = to.handle_of(&card);
+    let said = to.handle_of(&card).unwrap_or_else(|| card.id.clone());
     let id = card.id.clone();
     match to.column_mut(&landing) {
         Some(column) => column.cards.push(card),
@@ -501,5 +501,15 @@ pub fn carry_card(
             return None;
         }
     }
-    Some(handle.unwrap_or(id))
+    Some(Landed { id, said })
+}
+
+/// Where [`carry_card`] put a card.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Landed {
+    /// Its id on the destination.
+    pub id: String,
+    /// What it is called there — its handle, `PLAN-3`, or its id where the
+    /// board has no key.
+    pub said: String,
 }

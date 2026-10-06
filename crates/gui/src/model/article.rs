@@ -16,7 +16,7 @@ use crate::model::{
     store::{self, Store},
     workspace::Workspace,
 };
-use crate::view::component::file::pictures::{Assets, Pictures};
+use crate::view::component::file::pictures::Pictures;
 use artifact::project::Project as _;
 use artifact::{
     article as layout,
@@ -233,29 +233,19 @@ impl Article {
             .parent()
             .map(Path::to_path_buf)
             .unwrap_or_default();
-        let workspace = cx.entity().downgrade();
-        let pictures = cx.new(|cx| {
-            let assets = artifact::article::assets(&artifact::article::content(&dir));
-            Pictures::new(dir.clone(), Assets::Dir(assets), workspace, cx)
-        });
-        let overlay = Pictures::overlay(&pictures);
-        let editor = cx.new(|cx| {
-            let editor = Editor::new(&self.saved, cx)
-                .with_image_overlay(overlay)
-                .with_chrome(editor::Chrome {
-                    mention: true,
-                    ..editor::Chrome::default()
-                });
-            let editor = match self.path.parent() {
-                Some(dir) => editor.with_base(dir),
-                None => editor,
-            };
-            editor
-                .with_text_size(text_size)
-                .with_scroll(scroll)
-                .with_mode(self.mode)
-        });
-        pictures.update(cx, |pictures, _| pictures.relink_in(editor.downgrade()));
+        let (text_size, mode) = (text_size, self.mode);
+        let (editor, pictures) = super::document::editor(
+            &dir,
+            &self.saved,
+            cx.entity().downgrade(),
+            |editor| {
+                editor
+                    .with_text_size(text_size)
+                    .with_scroll(scroll)
+                    .with_mode(mode)
+            },
+            cx,
+        );
         language::ensure(fences(editor.read(cx)), cx);
         let mut source_digits = self.saved.split('\n').count().to_string().len();
         cx.observe(&editor, move |workspace, editor, cx| {
@@ -276,16 +266,6 @@ impl Article {
                     source_digits = digits;
                     cx.notify();
                 }
-            }
-        })
-        .detach();
-
-        // A picture saved in another app, or its list of apps arriving,
-        // repaints the page.
-        cx.observe(&pictures, {
-            let editor = editor.downgrade();
-            move |_, _, cx| {
-                let _ = editor.update(cx, |_, cx| cx.notify());
             }
         })
         .detach();
