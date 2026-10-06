@@ -38,12 +38,24 @@ directory path."
 }
 
 /// Current session state alongside static instructions, refreshed each turn.
-pub fn session_context(cwd: &Path, mcp_available: bool, hidden: &[&str]) -> String {
+///
+/// `session` is the session's entry number; without one the context names no
+/// session.
+pub fn session_context(
+    cwd: &Path,
+    session: Option<u64>,
+    mcp_available: bool,
+    hidden: &[&str],
+) -> String {
     let mut context = format!(
-        "Cydonia session context\n{}\n\nCurrent project: {}\n\n",
+        "Cydonia session context\n{}\n\nCurrent project: {}\n",
         workspace(),
         cwd.display(),
     );
+    if let Some(number) = session {
+        context.push_str(&format!("Current session: #{number}\n"));
+    }
+    context.push('\n');
     if mcp_available {
         context.push_str(ARTIFACTS.trim());
         context.push_str("\n\n");

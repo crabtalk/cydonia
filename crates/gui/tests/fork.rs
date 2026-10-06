@@ -89,12 +89,12 @@ fn fork_context_is_sent_once_and_completed_forks_resume_without_reimporting() {
             events.try_recv().is_err(),
             "opening a fork must not run a turn"
         );
-        session.prompt("edited question");
+        session.prompt("edited question", None);
         let text = answer(&mut events).await;
         assert!(text.contains("unique prior question"));
         assert!(text.contains("unique prior answer"));
         assert!(text.contains("edited question"));
-        session.prompt("next question");
+        session.prompt("next question", None);
         let text = answer(&mut events).await;
         assert!(!text.contains("unique prior question"));
         drop(session);
@@ -113,7 +113,7 @@ fn fork_context_is_sent_once_and_completed_forks_resume_without_reimporting() {
         .await
         .unwrap();
         assert!(loaded.loaded);
-        loaded.prompt("after reopening");
+        loaded.prompt("after reopening", None);
         assert!(!answer(&mut events).await.contains("unique prior question"));
     });
 }
@@ -155,7 +155,7 @@ fn unsent_fork_reimports_after_loading_and_missing_agent_state_uses_saved_histor
             .await
             .unwrap();
             assert_eq!(session.loaded, loaded);
-            session.prompt("continue");
+            session.prompt("continue", None);
             assert!(answer(&mut events).await.contains("preserved context"));
         }
     });

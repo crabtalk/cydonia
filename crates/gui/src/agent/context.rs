@@ -7,12 +7,17 @@ use std::path::Path;
 
 pub fn prompt(
     cwd: &Path,
+    session: Option<u64>,
     mcp_available: bool,
     embedded_context: bool,
     mut blocks: Vec<ContentBlock>,
 ) -> Vec<ContentBlock> {
-    let mut context =
-        prompts::session_context(cwd, mcp_available, &super::serve::hidden_resources());
+    let mut context = prompts::session_context(
+        cwd,
+        session,
+        mcp_available,
+        &super::serve::hidden_resources(),
+    );
     if let Some(shown) = mcp::tools::workspace::on_screen() {
         context.push_str("\n\nOn screen in cydonia:\n");
         context.push_str(&shown);
