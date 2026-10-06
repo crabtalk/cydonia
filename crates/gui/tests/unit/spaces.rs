@@ -1119,3 +1119,30 @@ fn an_article_made_in_a_pane_stays_in_the_space(cx: &mut gpui::TestAppContext) {
         );
     });
 }
+
+/// Archived anywhere, not only from the sidebar, an entry leaves its space,
+/// and a space left with one pane goes with it.
+#[gpui::test]
+fn archiving_an_entry_takes_it_out_of_its_space(cx: &mut gpui::TestAppContext) {
+    let scratch = Scratch::new("archived");
+    let (workspace, a, b) = two_boards(&scratch, cx);
+
+    workspace.update(cx, |workspace, cx| {
+        workspace.new_board(0, "Third".into(), "THR", cx).ok();
+        let c = workspace.board_member(0, 0).expect("a member");
+        workspace.arrange(&a, &b, Side::Right, cx);
+        workspace.arrange(&b, &c, Side::Below, cx);
+
+        workspace.archive_board(&b.id, true, cx);
+        let space = workspace.active_space().expect("still open");
+        assert!(!space.contains(&b), "the pane went with the entry");
+        assert_eq!(space.leaves(), 2);
+
+        workspace.archive_board(&c.id, true, cx);
+        assert!(
+            workspace.spaces.is_empty(),
+            "one pane left is no arrangement"
+        );
+        assert_eq!(workspace.space_holding(&a), None);
+    });
+}
