@@ -314,10 +314,20 @@ fn by_prefix(
 }
 
 /// What a chip linking an entry paints: its title, and its kind's mark. A
-/// run of a session's turns adds the run.
+/// run of a session's turns adds the run. A link naming no entry paints the
+/// reference and the app's mark.
 pub(crate) fn preview(url: &str, cx: &App) -> Option<Preview> {
     let reference = url.strip_prefix(crate::view::entry_link::SCHEME)?;
-    let resolved = crate::model::workspace::references::resolve_in(reference, cx)?;
+    let Some(resolved) = crate::model::workspace::references::resolve_in(reference, cx) else {
+        return Some(Preview {
+            title: Some(SharedString::from(reference.to_owned())),
+            glyph: Some(match crate::assets::mark() {
+                Some(mark) => Icon::file(mark.to_string_lossy().into_owned()),
+                None => bezel::ui::icons::text::Link.into(),
+            }),
+            ..Preview::default()
+        });
+    };
     let fallback = match resolved.kind {
         Kind::Session => "Untitled session",
         Kind::Article => "Untitled article",

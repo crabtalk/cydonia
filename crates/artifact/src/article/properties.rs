@@ -6,10 +6,8 @@
 //! expected: re-serialising it through a value tree would drop every key and
 //! comment cydonia does not itself know about.
 
+use crate::document;
 use std::path::{Path, PathBuf};
-
-/// What it is called inside the article's own directory.
-const FILE: &str = "properties.toml";
 
 const TITLE: &str = "title";
 
@@ -23,7 +21,7 @@ const FULL_WIDTH: &str = "full_width";
 /// Where this article's properties live — beside its content, in the directory
 /// that is the article.
 pub fn path(content: &Path) -> Option<PathBuf> {
-    Some(content.with_file_name(FILE))
+    Some(document::properties(content))
 }
 
 /// Everything a listing reads off one article, in one pass over the file.
@@ -88,22 +86,12 @@ pub fn set_full_width(content: &Path, wide: Option<bool>) {
 /// Write every field at once, in one pass over the file. Keys this module does
 /// not know about are kept.
 pub fn save(content: &Path, properties: &Properties) -> std::io::Result<()> {
-    let Some(path) = path(content) else {
-        return Ok(());
-    };
-    let text = std::fs::read_to_string(&path).unwrap_or_default();
-    match apply(&text, properties) {
-        Some(text) => std::fs::write(&path, text),
-        None => match std::fs::remove_file(&path) {
-            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
-            _ => Ok(()),
-        },
-    }
+    document::save(content, &fields(properties))
 }
 
 /// Every field read out of a properties file's text.
 pub fn parse(text: &str) -> Properties {
-    let doc: toml_edit::DocumentMut = text.parse().unwrap_or_default();
+    let doc = document::parse(text);
     Properties {
         title: doc
             .get(TITLE)
@@ -122,8 +110,11 @@ pub fn parse(text: &str) -> Properties {
 /// module does not know about. `None` when nothing is left to say, which is a
 /// file that should not exist.
 pub fn apply(text: &str, properties: &Properties) -> Option<String> {
-    let mut doc: toml_edit::DocumentMut = text.parse().unwrap_or_default();
-    let fields = [
+    document::apply(text, &fields(properties))
+}
+
+fn fields(properties: &Properties) -> [(&'static str, Option<toml_edit::Item>); 3] {
+    [
         (
             TITLE,
             (!properties.title.is_empty()).then(|| toml_edit::value(properties.title.as_str())),
@@ -133,42 +124,12 @@ pub fn apply(text: &str, properties: &Properties) -> Option<String> {
             properties.archived.then(|| toml_edit::value(true)),
         ),
         (FULL_WIDTH, properties.full_width.map(toml_edit::value)),
-    ];
-    for (key, value) in fields {
-        match value {
-            Some(value) => doc[key] = value,
-            None => {
-                doc.remove(key);
-            }
-        }
-    }
-    (!doc.is_empty()).then(|| doc.to_string())
+    ]
 }
 
 /// Put a key in, or take it out when there is nothing to say. A properties file
 /// with nothing left in it is removed: an article that has never been named
 /// should not leave a file behind saying so.
 fn set(content: &Path, key: &str, value: Option<toml_edit::Item>) {
-    let Some(path) = path(content) else {
-        return;
-    };
-    let mut doc = read(&path);
-    match value {
-        Some(value) => doc[key] = value,
-        None => {
-            doc.remove(key);
-        }
-    }
-    if doc.is_empty() {
-        let _ = std::fs::remove_file(&path);
-        return;
-    }
-    let _ = std::fs::write(&path, doc.to_string());
-}
-
-fn read(path: &Path) -> toml_edit::DocumentMut {
-    std::fs::read_to_string(path)
-        .ok()
-        .and_then(|text| text.parse().ok())
-        .unwrap_or_default()
+    let _ = document::save(content, &[(key, value)]);
 }

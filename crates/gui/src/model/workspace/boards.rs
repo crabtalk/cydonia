@@ -429,12 +429,20 @@ impl Workspace {
             self.projects.get(from.0)?.store(),
             self.projects.get(to.0)?.store(),
         );
+        source_store.carry_card_files(&source.id, card, &landing_store, &landing.id, &landed.id);
         if let Err(error) = landing_store.save_board(&mut landing)
             && error.is::<Stale>()
         {
             source = source_store.board(&source.id)?;
             landing = landing_store.board(&landing.id)?;
             landed = artifact::board::carry_card(&mut source, &mut landing, card, column)?;
+            source_store.carry_card_files(
+                &source.id,
+                card,
+                &landing_store,
+                &landing.id,
+                &landed.id,
+            );
             let _ = landing_store.save_board(&mut landing);
         }
         let _ = source_store.save_board(&mut source);
@@ -446,7 +454,7 @@ impl Workspace {
                 *held = board;
             }
         }
-        Some(landed)
+        Some(landed.said)
     }
 
     /// A board by where it sits, read off the disk if it has not been yet.

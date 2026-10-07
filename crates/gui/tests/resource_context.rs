@@ -17,6 +17,7 @@ fn text(block: &ContentBlock) -> &str {
 fn mcp_sessions_receive_the_catalog_alongside_unchanged_user_content() {
     let blocks = context::prompt(
         Path::new("/projects/example"),
+        None,
         true,
         true,
         vec!["Write an article".into()],
@@ -44,6 +45,7 @@ fn sessions_without_mcp_report_unavailable_resources_without_embedding_them() {
     for _ in 0..2 {
         let blocks = context::prompt(
             Path::new("/projects/example"),
+            None,
             false,
             false,
             vec!["Continue".into()],
@@ -59,7 +61,7 @@ fn sessions_without_mcp_report_unavailable_resources_without_embedding_them() {
 #[test]
 fn text_only_agents_keep_user_blocks_first() {
     let user: Vec<ContentBlock> = vec!["First part".into(), "Second part".into()];
-    let blocks = context::prompt(Path::new("/project"), true, false, user.clone());
+    let blocks = context::prompt(Path::new("/project"), None, true, false, user.clone());
     assert_eq!(&blocks[..user.len()], user.as_slice());
     assert!(matches!(&blocks[2], ContentBlock::Text(_)));
     assert!(text(&blocks[2]).contains(&prompts::resources::catalog(

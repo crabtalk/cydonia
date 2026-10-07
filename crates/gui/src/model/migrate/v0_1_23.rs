@@ -27,6 +27,7 @@ pub fn run() {
         return;
     };
     if rename_key(&mut document) {
+        super::keep("v0_1_22", &path);
         let _ = std::fs::write(&path, document.to_string());
     }
 }

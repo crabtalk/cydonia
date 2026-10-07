@@ -1,3 +1,5 @@
+import { siClaudecode, siCursor, siOpencode, siPi } from 'simple-icons';
+import codexSvg from '@lobehub/icons-static-svg/icons/codex.svg?raw';
 import { latest } from './changelog.js';
 
 export const repo = 'https://github.com/crabtalk/cydonia';
@@ -14,7 +16,18 @@ export const site = 'https://cydonia.sh';
 
 /** The app in one line — search results and share cards. */
 export const tagline =
-	'A desktop workspace for the coding agents you run. Open any directory as a project, put an ACP agent to work in it, and keep what comes out as durable artifacts on your own disk — articles, boards and tables, not a chat log.';
+	'An open-source control panel for coding agents. Run Claude Code, Codex, Cursor, OpenCode, pi or any ACP agent in your project, and keep their work as articles and boards on your own disk.';
+
+/** Agents named on the home page and in its structured data. Each one is
+    installable from the ACP registry. */
+export const agents = [
+	{ name: 'Claude Code', icon: siClaudecode },
+	// Not in simple-icons; lobehub's mark is a single even-odd path.
+	{ name: 'Codex', icon: { path: codexSvg.match(/ d="([^"]+)"/)[1], rule: 'evenodd' } },
+	{ name: 'Cursor', icon: siCursor },
+	{ name: 'OpenCode', icon: siOpencode },
+	{ name: 'pi', icon: siPi }
+];
 
 /** Where the demo clips and stills live. A changelog entry names a path under
     it rather than repeating the host in every release. */

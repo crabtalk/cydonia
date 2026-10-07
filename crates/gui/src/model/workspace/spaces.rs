@@ -371,6 +371,50 @@ impl Workspace {
         }
     }
 
+    /// Take every archived entry out of the space holding it, by the rule
+    /// [`Self::drop_from_spaces`] follows: a space left with one pane goes.
+    pub(super) fn drop_archived_from_spaces(&mut self, cx: &mut Context<Self>) {
+        let archived: Vec<Member> = self
+            .spaces
+            .iter()
+            .flat_map(Space::entries)
+            .filter(|member| self.archived(member))
+            .collect();
+        for member in archived {
+            self.drop_from_spaces(&member, cx);
+        }
+    }
+
+    /// Whether the entry a member names is archived. One no open project lists
+    /// is not.
+    fn archived(&self, member: &Member) -> bool {
+        let Some(open) = self
+            .projects
+            .iter()
+            .find(|open| open.path == member.project)
+        else {
+            return false;
+        };
+        match member.kind {
+            MemberKind::Session => open
+                .sessions
+                .iter()
+                .any(|chat| chat.closed && chat.record.as_deref() == Some(member.id.as_str())),
+            MemberKind::Board => open
+                .boards
+                .iter()
+                .any(|board| board.archived && board.id == member.id),
+            MemberKind::Article => open
+                .articles
+                .iter()
+                .any(|article| article.archived && article.path.to_string_lossy() == member.id),
+            MemberKind::Table => open
+                .tables
+                .iter()
+                .any(|table| table.archived && table.key == member.id),
+        }
+    }
+
     /// Stand one pane over the others, or put it back.
     pub fn zoom_pane(&mut self, entry: &Member, cx: &mut Context<Self>) {
         self.edit_space(cx, |space| {

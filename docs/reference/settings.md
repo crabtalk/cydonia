@@ -85,9 +85,24 @@ See [Features](../general/features.md).
 [mcp]
 serve = true
 write = false
+delete = false
 ```
 
 See [MCP](../agents/mcp.md).
+
+## `[browser]`
+
+| Key | Default | What it is |
+| --- | --- | --- |
+| `home` | `https://duckduckgo.com` | What a new tab opens on |
+| `search` | DuckDuckGo | Where a search from the address field goes; `%s` is the query |
+| `links` | `system` | Where a web link in an article or a transcript opens: `system` or `panel` |
+| `agents_read` | `true` | Offer agents the browser tools that read pages |
+| `agents_act` | `true` | Offer agents the browser tools that click and type; needs `agents_read` |
+| `agents_blocked` | `[]` | Hosts agents may not read or act on, subdomains included |
+| `keep_signed_in` | `true` | Keep cookies and storage across restarts; off builds each page in memory |
+
+The browser tools are offered only while `[features.panel] browser` is on, and never on Linux. `agents_blocked` is checked against the tab's address when a call arrives.
 
 ## `[shortcuts]`
 

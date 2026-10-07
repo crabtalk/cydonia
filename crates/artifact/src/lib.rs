@@ -18,7 +18,9 @@
 //! hold: a shape a client reads must not carry anything about a window.
 
 pub mod article;
+pub mod backup;
 pub mod board;
+pub mod document;
 pub mod entry;
 pub mod id;
 pub mod project;

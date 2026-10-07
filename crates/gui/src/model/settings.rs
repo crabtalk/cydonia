@@ -940,8 +940,7 @@ impl Default for Settings {
             // that fetched a package off npm and ran it. Settings › Agents is
             // where an agent arrives — see [`crate::agent::install`], which
             // writes the entry — and until one does, this list is empty and
-            // nothing here can spawn. [`crate::model::migrate::v0_1_4`] takes
-            // the two lines back out of a file that already has them.
+            // nothing here can spawn.
             agents: Vec::new(),
         }
     }
@@ -951,42 +950,15 @@ impl Default for Settings {
 /// `~/.local/share/cydonia`. Programs, not preferences, so they do not belong
 /// beside the files a person edits.
 pub fn data_dir() -> Result<PathBuf> {
-    if let Ok(xdg) = std::env::var("XDG_DATA_HOME")
-        && !xdg.is_empty()
-    {
-        return Ok(PathBuf::from(xdg).join("cydonia"));
-    }
-    Ok(home()?.join(".local").join("share").join("cydonia"))
+    artifact::backup::data_dir()
 }
 
 /// Cydonia's config directory: `$XDG_CONFIG_HOME/cydonia`, defaulting to
 /// `~/.config/cydonia` — on macOS too, so a hand-edited settings.toml sits
-/// where its neighbours do rather than in Application Support.
+/// where its neighbours do rather than in Application Support. Under a test,
+/// a directory of the test process's own — see [`artifact::backup`].
 pub fn dir() -> Result<PathBuf> {
-    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME")
-        && !xdg.is_empty()
-    {
-        return Ok(PathBuf::from(xdg).join("cydonia"));
-    }
-    Ok(home()?.join(".config").join("cydonia"))
-}
-
-/// The home every directory above hangs off — except under a test, where it is
-/// a directory of this process's own.
-///
-/// A [`crate::model::workspace::Workspace`] writes `state.toml` whenever the
-/// open projects change, and a test that builds one writes it too: run against
-/// the real home, a suite replaces the project list of whoever ran it with a
-/// list of temp directories (user report).
-///
-/// `NEXTEST` is set by the runner in every test process, which is what reaches
-/// the integration binaries — they link this crate compiled without `cfg(test)`
-/// and see none of it otherwise.
-fn home() -> Result<PathBuf> {
-    if cfg!(test) || std::env::var_os("NEXTEST").is_some() {
-        return Ok(std::env::temp_dir().join(format!("cydonia-test-home-{}", std::process::id())));
-    }
-    dirs::home_dir().context("no home directory on this system")
+    artifact::backup::config_dir()
 }
 
 /// `~/.config/cydonia/settings.toml`.

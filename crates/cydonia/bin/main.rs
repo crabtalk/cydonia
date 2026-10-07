@@ -17,6 +17,11 @@ use gui::{
 const BUNDLE_ID: &str = "sh.cydonia";
 
 fn main() -> Result<()> {
+    // A rollback's last step, run by the swap once the app has quit — see
+    // `update::restore_mode`. Nothing else starts.
+    if let Some(restored) = update::restore_mode() {
+        return restored;
+    }
     // First of all, and while this is still the only thread: it writes the
     // process environment, and everything downstream of it — an agent spawned
     // by name, an `npm` the installer runs — resolves against what it leaves.

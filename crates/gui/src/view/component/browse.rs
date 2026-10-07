@@ -227,9 +227,12 @@ async fn serve(
                     browser.update(cx, |browser, cx| browser.navigate(url, cx));
                     browser
                 }
-                None => panel
-                    .update(cx, |panel, cx| panel.open_browser(url, cx))
-                    .ok_or("browser tabs are switched off in cydonia's settings")?,
+                None => match showing(&panel, &url, cx) {
+                    Some(browser) => browser,
+                    None => panel
+                        .update(cx, |panel, cx| panel.open_browser(url, cx))
+                        .ok_or("browser tabs are switched off in cydonia's settings")?,
+                },
             };
             panel.update(cx, |panel, cx| panel.activate_browser(&browser, cx));
             this.update(cx, |this, cx| this.reveal_browser_panel(&panel, cx))
@@ -332,6 +335,30 @@ fn pick(
         Some(id) => format!("no browser tab {id} in this project; browser_tabs lists them"),
         None => "no browser tab open in this project; browser_open opens one".to_owned(),
     })
+}
+
+/// The project's tab already at `url`, fragments aside, the front one first.
+fn showing(panel: &Entity<Panel>, url: &str, cx: &mut AsyncApp) -> Option<Entity<Browser>> {
+    let wanted = same_page(url);
+    let mut browsers = panel.read_with(cx, |panel, _| panel.browsers());
+    browsers.sort_by_key(|(_, front)| !*front);
+    cx.update(|cx| {
+        browsers
+            .into_iter()
+            .map(|(browser, _)| browser)
+            .find(|browser| same_page(browser.read(cx).url()) == wanted)
+    })
+}
+
+/// `url` as two addresses of one page compare: parsed, without its fragment.
+fn same_page(url: &str) -> String {
+    match url::Url::parse(url) {
+        Ok(mut url) => {
+            url.set_fragment(None);
+            url.into()
+        }
+        Err(_) => url.to_owned(),
+    }
 }
 
 /// The tab's page, waiting a moment for a render to build it.

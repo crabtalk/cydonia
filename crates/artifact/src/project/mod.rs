@@ -10,6 +10,7 @@
 //! this trait.
 
 pub mod fs;
+pub mod layout;
 pub mod memory;
 
 use crate::{

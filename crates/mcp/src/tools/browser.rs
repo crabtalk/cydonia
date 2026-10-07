@@ -55,8 +55,9 @@ pub static TOOLS: [Tool; 7] = [
         name: "browser_open",
         description: "Load a URL in the project's in-app browser and read the page back. The \
             browser is the user's own, signed in where they are, and runs the page's scripts. \
-            Without `tab` it opens a new tab in the project's right panel. A plain fetch is \
-            cheaper for an ordinary public page.",
+            With `tab` it loads the URL in that tab. Without one it brings forward a tab \
+            already at the URL, unreloaded, or else opens a new tab in the project's right \
+            panel. A plain fetch is cheaper for an ordinary public page.",
         schema: |bound| {
             let mut schema = fields(bound, &[PROJECT, URL]);
             schema["properties"][TAB.name] = json!({ "type": "integer", "description": TAB.about });

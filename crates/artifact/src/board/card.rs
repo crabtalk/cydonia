@@ -60,6 +60,10 @@ pub struct Card {
     /// said anything about, which is most of them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<Status>,
+    /// What the backend held for this card when it was read — see
+    /// [`super::Board::version`]. `None` for a card not read from a backend.
+    #[serde(skip)]
+    pub version: Option<String>,
 }
 
 impl Card {
@@ -72,6 +76,7 @@ impl Card {
             text,
             session: None,
             status: None,
+            version: None,
         }
     }
 }

@@ -7,6 +7,7 @@
 - [Getting started](./general/getting-started.md)
 - [Features](./general/features.md)
 - [Where things live](./general/files.md)
+- [Backups and rolling back](./general/backups.md)
 
 # Working
 

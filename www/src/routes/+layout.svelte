@@ -5,6 +5,8 @@
 	import Brand from '$lib/Brand.svelte';
 	import Logo from '$lib/Logo.svelte';
 	import Crab from '$lib/Crab.svelte';
+	import Glyphs from '$lib/Glyphs.svelte';
+	import Signature from '$lib/Signature.svelte';
 	import { crabtalk, discord, repo } from '$lib/meta.js';
 	import { page } from '$app/state';
 
@@ -49,6 +51,12 @@
 
 		<nav>
 			<a class="docs" href="{base}/docs/">Docs</a>
+			<span class="icons">
+				<a href={repo} aria-label="Cydonia on GitHub"><Brand icon={siGithub} size={15} /></a>
+				<a href={discord} target="_blank" rel="noreferrer" aria-label="Cydonia on Discord">
+					<Brand icon={siDiscord} size={16} />
+				</a>
+			</span>
 			<a class="control button" href="{base}/#download">
 				Download
 			</a>
@@ -56,29 +64,42 @@
 	</div>
 </header>
 
-{@render children()}
-
-{#if !docs}
-	<footer style:--shell={shell}>
-		<nav class="left">
-			<a class="by" href={crabtalk}>
-				<Crab size={14} />
-				crabtalk
-			</a>
-		</nav>
-		<nav class="right">
-			<a href={discord} target="_blank" rel="noreferrer" aria-label="Cydonia on Discord">
-				<Brand icon={siDiscord} size={16} />
-			</a>
-			<a href={repo} aria-label="Cydonia on GitHub"><Brand icon={siGithub} size={16} /></a>
-			<a href={author} target="_blank" rel="noreferrer" aria-label="The author on X">
-				<Brand icon={siX} size={15} />
-			</a>
-		</nav>
-	</footer>
+{#if home}
+	<Signature />
+	<Glyphs />
 {/if}
 
+<div class="page">
+	{@render children()}
+
+	{#if !docs}
+		<footer style:--shell={shell}>
+			<nav class="left">
+				<a class="by" href={crabtalk}>
+					<Crab size={14} />
+					crabtalk
+				</a>
+			</nav>
+			<nav class="right">
+				<a href={discord} target="_blank" rel="noreferrer" aria-label="Cydonia on Discord">
+					<Brand icon={siDiscord} size={16} />
+				</a>
+				<a href={repo} aria-label="Cydonia on GitHub"><Brand icon={siGithub} size={16} /></a>
+				<a href={author} target="_blank" rel="noreferrer" aria-label="The author on X">
+					<Brand icon={siX} size={15} />
+				</a>
+			</nav>
+		</footer>
+	{/if}
+</div>
+
 <style>
+	/* Above the glyphs, which are fixed behind it. */
+	.page {
+		position: relative;
+		z-index: 1;
+	}
+
 	footer {
 		display: flex;
 		align-items: center;
@@ -191,6 +212,33 @@
 		.docs:hover {
 			color: var(--text);
 			text-decoration: none;
+		}
+	}
+
+	/* Square ghost controls the height of the button beside them, ruled off
+	   from it. */
+	.icons {
+		display: flex;
+		align-items: center;
+		gap: 2px;
+		margin-left: -8px;
+		padding-right: 12px;
+		border-right: 1px solid var(--line);
+		color: var(--muted);
+	}
+
+	.icons a {
+		display: grid;
+		place-items: center;
+		width: var(--control-height);
+		height: var(--control-height);
+		border-radius: var(--radius);
+	}
+
+	@media (hover: hover) {
+		.icons a:hover {
+			background: var(--panel-high);
+			color: var(--text);
 		}
 	}
 

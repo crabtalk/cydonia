@@ -10,7 +10,7 @@ Its `.cydonia/.gitignore` holds `*.db` rather than the `*` that
 copy that file into the project it creates; `init` writes the real one.
 
 Nothing else here is excluded, so keep the databases out by hand if one turns
-up under another name: `data.db` and `entries.db` belong to a machine.
+up under another name: `data.db` and `state.db` belong to a machine.
 
 An entry's id is the name of the file it is in, and a board's `id` field
 repeats it. Renaming one makes a different entry.

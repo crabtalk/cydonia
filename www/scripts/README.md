@@ -2,10 +2,10 @@ Run `npm run og` from `www` to generate the share cards. The same generator
 runs before Vite builds and when the dev server starts. Docs and release edits
 restart the dev server to refresh the cards.
 
-Cards use a flat graphite background, soft white Cydonia symbol and type. Home
+Cards use a flat background in the site's dark `--panel-high`, soft white Cydonia symbol and type. Home
 and changelog cards are stable; published releases get version cards, and docs
-get title cards. Screenshots remain in release notes, not share images. No
-release media download is needed. Entries marked `nightly` are excluded from
+get title cards. The home card shows the poster of the hero release (`hero`
+in `src/lib/media.js`), downloaded once into `.cache/`. Entries marked `nightly` are excluded from
 cards, release routes and the sitemap.
 
 Generated PNGs live in `static/og/<page>.<content-hash>.png`. The generated

@@ -235,7 +235,7 @@ fn a_query_with_quotes_is_found() {
     assert!(hits.contains(&format!("{at}:1")), "{hits}");
 }
 
-/// A message from a session says which turn of it sent it.
+/// A message from a session is signed with a chip of the turn that sent it.
 #[test]
 fn a_message_from_a_session_is_signed_with_its_turn() {
     let scratch = Scratch::new("session-send-signed");
@@ -261,9 +261,11 @@ fn a_message_from_a_session_is_signed_with_its_turn() {
         Some(&caller),
     ));
 
+    let project = scratch.path().file_name().unwrap().to_string_lossy();
+    let link = format!("cydonia://{project}{from}:2");
     assert!(rail.was_asked(Change::Send {
         session: target,
-        message: format!("from {from}:2\n\nfoo"),
+        message: format!("from [{link}]({link} \"chip\")\n\nfoo"),
     }));
 }
 

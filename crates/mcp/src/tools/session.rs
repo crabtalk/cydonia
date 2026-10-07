@@ -174,7 +174,7 @@ fn send(args: Args<'_>) -> Outcome {
             project.display()
         )));
     }
-    let signed = match sender(&args, project) {
+    let signed = match sender(&args) {
         Some(from) => format!("from {from}\n\n{message}"),
         None => message.to_owned(),
     };
@@ -230,24 +230,17 @@ fn rename(args: Args<'_>) -> Outcome {
     Ok(Answer::said(format!("renamed to {title}")))
 }
 
-/// The calling session as a reference to the turn it is on — `#42:7`, or
-/// `foo#42:7` when the message leaves its project. Nothing for a caller that is
-/// not a session, or one with no turn on disk yet.
-fn sender(args: &Args<'_>, to: &Path) -> Option<String> {
+/// The calling session as a chip of the turn it is on,
+/// `[cydonia://foo#42:7](cydonia://foo#42:7 "chip")`. Nothing for a caller
+/// that is not a session, or one with no turn on disk yet.
+fn sender(args: &Args<'_>) -> Option<String> {
     let (at, record) = (args.at()?, args.session()?);
     let store = fs::Project::new(at);
     let turn = chat::turns(&store.session(record)?.items).len();
     let number = store.number("session", record).ok()?;
-    let project = match same_dir(at, to) {
-        true => String::new(),
-        false => at.file_name()?.to_string_lossy().into_owned(),
-    };
-    (turn > 0).then(|| format!("{project}#{number}:{turn}"))
-}
-
-fn same_dir(a: &Path, b: &Path) -> bool {
-    let settled = |path: &Path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    settled(a) == settled(b)
+    let project = at.file_name()?.to_string_lossy();
+    let link = format!("cydonia://{project}#{number}:{turn}");
+    (turn > 0).then(|| format!("[{link}]({link} \"chip\")"))
 }
 
 /// A new session on `agent`, seeded with `message`.

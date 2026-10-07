@@ -12,8 +12,13 @@ screen. For an ordinary public page, a plain fetch is cheaper and enough.
 
 Tabs belong to a project. `browser_tabs` lists the project's browser tabs; the
 one marked front is the one the user is looking at, and the one you get when you
-name no tab. `browser_open` without a tab opens a new one in front of the
+name no tab. `browser_open` without a tab brings forward a tab already at that
+address, as it stands and not reloaded, or else opens a new one in front of the
 project's right panel, where the user can watch it and take it over.
+
+Every read starts with its tab id. To go somewhere new in a tab you are working
+in, or to reload it, pass that id to `browser_open` rather than opening another
+tab.
 
 A tab's page exists only once its panel has been on screen. A call on a tab
 whose panel is not showing answers that it cannot load; say so rather than

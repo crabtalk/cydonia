@@ -665,11 +665,12 @@ impl ChatSession {
         }
         #[cfg(feature = "desktop")]
         {
+            self.mint_record();
             let Connection::Live(session) = &self.connection else {
                 self.queue.push_front(content);
                 return;
             };
-            session.prompt(&content);
+            session.prompt(&content, self.number);
             self.last_activity = Instant::now();
             self.turn_started = Some(self.last_activity);
             self.tool_started.clear();

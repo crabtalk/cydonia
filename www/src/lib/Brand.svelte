@@ -13,7 +13,7 @@
 	fill="currentColor"
 	aria-hidden="true"
 >
-	<path d={icon.path} />
+	<path d={icon.path} fill-rule={icon.rule} />
 </svg>
 
 <style>

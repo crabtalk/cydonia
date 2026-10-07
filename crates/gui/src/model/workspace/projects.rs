@@ -278,8 +278,11 @@ impl Workspace {
         self.save();
     }
 
+    /// Every archive passes through here, an agent's read back off disk
+    /// included.
     pub(super) fn prune_archived(&mut self, cx: &mut Context<Self>) {
         self.prune_archived_for(self.landing(), cx);
+        self.drop_archived_from_spaces(cx);
     }
 
     pub(super) fn prune_archived_for(&mut self, kind: Option<state::Kind>, cx: &mut Context<Self>) {

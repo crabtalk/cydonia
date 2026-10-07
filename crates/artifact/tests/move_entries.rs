@@ -142,7 +142,8 @@ fn a_card_takes_the_handle_of_the_board_it_lands_on() {
 
     let landed = board::carry_card(&mut from, &mut to, &card, None).unwrap();
 
-    assert_eq!(landed, "PLAN-1");
+    assert_eq!(landed.said, "PLAN-1");
+    assert_eq!(landed.id, card);
     assert!(from.columns.iter().all(|column| column.cards.is_empty()));
     // The lane of the same name, which is not the lane of the same position.
     assert_eq!(to.columns[0].name, "DOING");

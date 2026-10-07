@@ -6,13 +6,12 @@
 pub enum Section {
     General,
     Appearance,
-    Editor,
-    // With Appearance, because the two answer the same question — how the app
-    // meets you — and before the three that answer what it does.
     Shortcuts,
+    Statistics,
     // Before Agents, because it is what decides whether agents matter: with
     // sessions off, nothing installed under Agents can be launched.
     Features,
+    Editor,
     // With Features, which switches it on.
     Browser,
     Agents,
@@ -20,6 +19,9 @@ pub enum Section {
     // same reading that puts Features before it.
     Mcp,
     Performance,
+    // Beside Performance, which also lists what the app holds on disk; listed
+    // only while a backup exists — see [`Section::listed`].
+    Backups,
     // Last, and in a debug build alone — see [`Section::listed`].
     Developer,
 }

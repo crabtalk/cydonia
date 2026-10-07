@@ -4,9 +4,10 @@
 //! project's work, so it travels with the directory rather than living under a
 //! path in the config dir that a rename would orphan.
 //!
-//! One file per board, named for the millisecond it was made. An id rather
-//! than the name: the name is a property, and a file named after it would be a
-//! second copy of it that a refused rename could leave disagreeing.
+//! A directory per board, named for the millisecond it was made, holding one
+//! file per card — see [`crate::project::layout`]. An id rather than the name:
+//! the name is a property, and a directory named after it would be a second
+//! copy of it that a refused rename could leave disagreeing.
 //!
 //! Cards nest inside their column, so a `Vec` position *is* the order and a
 //! move is a remove and an insert. A flat list with an ordinal only earns its
@@ -455,9 +456,10 @@ fn mint(taken: &mut HashSet<String>) -> String {
 
 /// Carry a card from one board to another, which may be in another project.
 ///
-/// The card arrives under a fresh id and a handle off the destination's own
-/// counter, so a card that was `ROAD-12` is `PLAN-3` from here on. Anything
-/// that already said `ROAD-12` still says it.
+/// The card keeps its id, unless the destination already holds it, and takes
+/// a handle off the destination's own counter, so a card that was `ROAD-12`
+/// is `PLAN-3` from here on. Anything that already said `ROAD-12` still says
+/// it.
 ///
 /// Its session is left behind — see [`Card::session`].
 ///
@@ -469,7 +471,7 @@ pub fn carry_card(
     to: &mut Board,
     card: &str,
     column: Option<&str>,
-) -> Option<String> {
+) -> Option<Landed> {
     let source = from.column_of(card)?;
     let (came_from, named) = (source.id.clone(), source.name.clone());
     let landing = column
@@ -482,10 +484,13 @@ pub fn carry_card(
         })
         .or_else(|| to.columns.first().map(|column| column.id.clone()))?;
     let mut card = from.remove_card(card)?;
-    card.id = to.mint_id();
+    if to.taken().contains(&card.id) {
+        card.id = to.mint_id();
+    }
+    card.version = None;
     card.handle = Some(to.take_handle());
     card.session = None;
-    let handle = to.handle_of(&card);
+    let said = to.handle_of(&card).unwrap_or_else(|| card.id.clone());
     let id = card.id.clone();
     match to.column_mut(&landing) {
         Some(column) => column.cards.push(card),
@@ -496,5 +501,15 @@ pub fn carry_card(
             return None;
         }
     }
-    Some(handle.unwrap_or(id))
+    Some(Landed { id, said })
+}
+
+/// Where [`carry_card`] put a card.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Landed {
+    /// Its id on the destination.
+    pub id: String,
+    /// What it is called there — its handle, `PLAN-3`, or its id where the
+    /// board has no key.
+    pub said: String,
 }
