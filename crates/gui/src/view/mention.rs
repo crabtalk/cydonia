@@ -1,6 +1,6 @@
 //! What `@` in an article lists: the open projects' sessions, boards and
 //! articles, linked as `cydonia://<project>#<number>` chips — and the title a
-//! chip of one paints: the kind's mark and the title.
+//! chip of one paints: cydonia's mark and the title.
 
 use crate::{
     model::workspace::{Showing, Workspace},
@@ -17,6 +17,10 @@ use markdown::Preview;
 
 /// Rows the menu lists at most.
 const SHOWN: usize = 20;
+
+/// The mark every `cydonia://` chip paints. Inline chips paint only a glyph's
+/// SVG, in the text colour — a file icon paints nothing there.
+const MARK: Icon = Icon::glyph(include_bytes!("../../assets/mark.svg"));
 
 #[derive(Clone)]
 pub(crate) struct Linkable {
@@ -321,10 +325,7 @@ pub(crate) fn preview(url: &str, cx: &App) -> Option<Preview> {
     let Some(resolved) = crate::model::workspace::references::resolve_in(reference, cx) else {
         return Some(Preview {
             title: Some(SharedString::from(reference.to_owned())),
-            glyph: Some(match crate::assets::mark() {
-                Some(mark) => Icon::file(mark.to_string_lossy().into_owned()),
-                None => bezel::ui::icons::text::Link.into(),
-            }),
+            glyph: Some(MARK),
             ..Preview::default()
         });
     };
@@ -341,7 +342,7 @@ pub(crate) fn preview(url: &str, cx: &App) -> Option<Preview> {
     };
     Some(Preview {
         title: Some(title.into()),
-        glyph: Some(kind_icon(resolved.kind)),
+        glyph: Some(MARK),
         ..Preview::default()
     })
 }
