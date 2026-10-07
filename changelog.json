@@ -3,16 +3,25 @@
     "version": "0.1.27",
     "date": "2026-10-07",
     "nightly": true,
-    "summary": "A statistics page, one directory per board with one folder per card, and backups you can roll back to when a release changes how things are stored.",
+    "summary": "Statistics in settings, one directory per board with one folder per card, and backups you can roll back to when a release changes how things are stored.",
     "new": [
-      "Open a statistics page from the button beside settings: activity heatmap, words written, cards created and done, and token usage priced from LiteLLM's list",
+      "Read activity and token usage in Settings › Statistics: an activity heatmap, words written, cards created and done, and spend over 7, 30 or 90 days, priced from LiteLLM's list",
+      "Count tokens from the logs Claude Code and Codex keep of every session run in the project's directory, whoever started it",
       "Keep each card's pictures in its own folder, and edit cards with the article editor's pictures, mentions and paste",
-      "Back up the files a migration replaces under ~/.local/share/cydonia/backup, and manage, delete or roll back to them in Settings › Backups"
+      "Back up the files a migration replaces under ~/.local/share/cydonia/backup, and manage, delete or roll back to them in Settings › Backups",
+      "Name the current session in the context agents get, and sign messages between sessions with a chip of the sending turn"
     ],
     "changed": [
       "Store each board as a directory, with one folder per card holding its text, properties and pictures, so agents editing different cards no longer clash",
       "Keep a card's id when it moves to another board or project",
-      "Rename .cydonia/entries.db to .cydonia/state.db, which now also holds statistics"
+      "Rename .cydonia/entries.db to .cydonia/state.db, which now also holds statistics",
+      "Switch an agent to the browser tab already at a url instead of opening another",
+      "Build on Bezel 0.2.9 from crates.io"
+    ],
+    "fixed": [
+      "Insert a quote at the composer's caret instead of above the draft",
+      "Run search palette commands on the surface focused when the palette opened",
+      "Take an archived entry out of its spaces wherever it is archived"
     ]
   },
   {
