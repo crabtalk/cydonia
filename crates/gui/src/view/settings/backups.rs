@@ -179,6 +179,10 @@ impl SettingsWindow {
             Ask::Delete => {
                 let _ = artifact::backup::remove(version);
                 self.load_backups();
+                // The section is listed only while a backup exists.
+                if self.backups.is_empty() {
+                    self.show(super::Section::General, cx);
+                }
             }
             Ask::RollBack => self.roll_back(version, cx),
         }

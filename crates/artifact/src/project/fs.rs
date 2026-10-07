@@ -42,10 +42,10 @@ const LEGACY_BOARD: &str = "board.toml";
 /// The project's SQL tables.
 pub const DATA: &str = "data.db";
 
-/// The project's bookkeeping: entry numbers and statistics.
+/// The project's bookkeeping: entry numbers.
 pub const STATE: &str = "state.db";
 
-/// What [`STATE`] was called before it held statistics.
+/// What [`STATE`] was called before.
 const ENTRIES: &str = "entries.db";
 
 /// The release whose files the migrations here replace — the backup they are
@@ -119,51 +119,6 @@ impl Project {
         Ok(state)
     }
 
-    /// Statistics are best effort: a write that lands is never failed by them.
-    #[cfg(feature = "sqlite")]
-    fn record_words(&self, article: &str, old: &str, new: &str) {
-        let (added, removed) = crate::stats::word_delta(old, new);
-        if added == 0 && removed == 0 {
-            return;
-        }
-        if let Ok(stats) = crate::stats::Stats::open(&self.root) {
-            let _ = stats.words(&crate::stats::today(), article, added, removed);
-        }
-    }
-
-    /// Cards in `board` that `before` (the board ahead of this save) lacks are
-    /// created; cards whose status became done are done.
-    #[cfg(feature = "sqlite")]
-    fn record_cards(&self, before: Option<&Board>, board: &Board) {
-        let mut created = Vec::new();
-        let mut done = Vec::new();
-        for card in board.columns.iter().flat_map(|column| &column.cards) {
-            match before.and_then(|before| before.card(&card.id)) {
-                None => created.push(&card.id),
-                Some(was) => {
-                    if card.status == Some(board::Status::Done)
-                        && was.status != Some(board::Status::Done)
-                    {
-                        done.push(&card.id);
-                    }
-                }
-            }
-        }
-        if created.is_empty() && done.is_empty() {
-            return;
-        }
-        let Ok(stats) = crate::stats::Stats::open(&self.root) else {
-            return;
-        };
-        let day = crate::stats::today();
-        for card in created {
-            let _ = stats.card_created(&day, card);
-        }
-        for card in done {
-            let _ = stats.card_done(&day, card);
-        }
-    }
-
     fn boards_dir(&self) -> PathBuf {
         self.cydonia().join(BOARDS)
     }
@@ -229,7 +184,7 @@ impl Project {
         board.name = board::NAMED.to_owned();
         board.mint_ids();
         self.adopt_assets(&mut board);
-        if self.write_board(&mut board, false).is_ok() {
+        if self.write_board(&mut board).is_ok() {
             let _ = crate::backup::note_legacy_board(REPLACED, &self.root, &board.id);
             let _ = std::fs::remove_file(old);
         }
@@ -253,7 +208,7 @@ impl Project {
         board.id = id;
         board.mint_ids();
         self.adopt_assets(&mut board);
-        if self.write_board(&mut board, false).is_ok() {
+        if self.write_board(&mut board).is_ok() {
             let _ = std::fs::remove_file(flat);
         }
     }
@@ -322,7 +277,7 @@ impl Project {
     /// only when this save changes that card. Card files are written before
     /// `board.toml`, and the files of cards it no longer lists are removed
     /// after it.
-    fn write_board(&self, board: &mut Board, record: bool) -> Result<()> {
+    fn write_board(&self, board: &mut Board) -> Result<()> {
         let dir = self.board_dir(component(&board.id)?);
         let file = dir.join(layout::BOARD_FILE);
         let cards_dir = dir.join(layout::CARDS);
@@ -380,10 +335,6 @@ impl Project {
                 written,
             ));
         }
-        #[cfg(feature = "sqlite")]
-        let before = record.then(|| self.read_board_dir(&dir)).flatten();
-        #[cfg(not(feature = "sqlite"))]
-        let _ = record;
         for (_, path, text, properties, _) in &writes {
             if let Some(dir) = path.parent() {
                 std::fs::create_dir_all(dir)?;
@@ -424,10 +375,6 @@ impl Project {
             }
         }
         board.touched = stamp::now();
-        #[cfg(feature = "sqlite")]
-        if record {
-            self.record_cards(before.as_ref(), board);
-        }
         Ok(())
     }
 
@@ -604,7 +551,7 @@ impl super::Project for Project {
     }
 
     fn save_board(&self, board: &mut Board) -> Result<()> {
-        self.write_board(board, true)
+        self.write_board(board)
     }
 
     fn remove_board(&self, id: &str) -> Result<()> {
@@ -691,8 +638,6 @@ impl super::Project for Project {
         let content = article::content(&landing);
         std::fs::write(&content, markdown)?;
         let article = self.describe(&content);
-        #[cfg(feature = "sqlite")]
-        self.record_words(&article.id, "", markdown);
         Ok(article)
     }
 
@@ -702,11 +647,7 @@ impl super::Project for Project {
 
     fn write_article(&self, id: &str, markdown: &str) -> Result<()> {
         let path = self.article_file(id)?;
-        #[cfg(feature = "sqlite")]
-        let old = std::fs::read_to_string(&path).unwrap_or_default();
         std::fs::write(&path, markdown)?;
-        #[cfg(feature = "sqlite")]
-        self.record_words(id, &old, markdown);
         Ok(())
     }
 

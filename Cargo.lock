@@ -2283,7 +2283,6 @@ version = "0.1.27"
 dependencies = [
  "anyhow",
  "cacp",
- "chrono",
  "dirs 6.0.0",
  "notify",
  "regex",

@@ -29,6 +29,4 @@ pub mod search;
 pub mod session;
 pub mod space;
 pub mod stamp;
-#[cfg(feature = "sqlite")]
-pub mod stats;
 pub mod table;

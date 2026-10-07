@@ -22,12 +22,14 @@ const UNPRICED: [&str; 5] = ["opus", "sonnet", "haiku", "fable", "<synthetic>"];
 pub struct Rates {
     pub input: f64,
     pub output: f64,
+    /// The input rate where the price list names none.
     pub cache_read: f64,
+    /// The input rate where the price list names none.
     pub cache_write: f64,
 }
 
 impl Rates {
-    pub fn cost(&self, tokens: &artifact::stats::Tokens) -> f64 {
+    pub fn cost(&self, tokens: &crate::model::statistics::Tokens) -> f64 {
         (tokens.input as f64 * self.input
             + tokens.output as f64 * self.output
             + tokens.cache_read as f64 * self.cache_read
@@ -66,8 +68,8 @@ impl Prices {
                 Rates {
                     input,
                     output,
-                    cache_read: rate("cache_read_input_token_cost").unwrap_or(0.0),
-                    cache_write: rate("cache_creation_input_token_cost").unwrap_or(0.0),
+                    cache_read: rate("cache_read_input_token_cost").unwrap_or(input),
+                    cache_write: rate("cache_creation_input_token_cost").unwrap_or(input),
                 },
             );
         }

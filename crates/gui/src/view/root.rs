@@ -495,9 +495,6 @@ pub struct Cydonia {
     pub(crate) boards: board::Scrolls,
     #[cfg(feature = "desktop")]
     settings_window: Option<WindowHandle<SettingsWindow>>,
-    /// The statistics page, while it is up — see [`Self::toggle_statistics`].
-    #[cfg(feature = "desktop")]
-    pub(crate) statistics: Option<Entity<crate::view::statistics::Statistics>>,
     /// Settings drawn over the window, while they are up.
     #[cfg(not(feature = "desktop"))]
     settings_sheet: Option<Entity<SettingsWindow>>,
@@ -985,16 +982,6 @@ impl Cydonia {
         // where it sits, so filing it now would file it into whatever slid
         // under the index, and it is dropped. The caret follows the document,
         // which is a new editor entity.
-        #[cfg(feature = "desktop")]
-        cx.subscribe(
-            &workspace,
-            |this, _, _: &crate::model::workspace::Opened, cx| {
-                if this.statistics.take().is_some() {
-                    cx.notify();
-                }
-            },
-        )
-        .detach();
         cx.subscribe_in(&workspace, window, |this, _, _: &Reloaded, window, cx| {
             this.drop_stale_edit(cx);
             this.rest_ribbon(cx);
@@ -1043,8 +1030,6 @@ impl Cydonia {
             pressed_pane: None,
             #[cfg(feature = "desktop")]
             settings_window: None,
-            #[cfg(feature = "desktop")]
-            statistics: None,
             #[cfg(not(feature = "desktop"))]
             settings_sheet: None,
             dock: docking::Dock::new(Painter::of(cx), {
@@ -1401,33 +1386,6 @@ impl Cydonia {
         cx: &mut Context<Self>,
     ) {
         self.open_settings(Section::General, cx);
-    }
-
-    /// Put the statistics page over the detail column, or take it away. The
-    /// panes under it are left as they are; opening any entry or space takes
-    /// it away too.
-    #[cfg(feature = "desktop")]
-    pub(crate) fn toggle_statistics(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        match self.statistics.take() {
-            Some(_) => window.focus(&self.focus, cx),
-            None => {
-                let workspace = self.workspace.clone();
-                let page = cx.new(|cx| crate::view::statistics::Statistics::new(workspace, cx));
-                cx.subscribe_in(
-                    &page,
-                    window,
-                    |this, _, _: &crate::view::statistics::Dismiss, window, cx| {
-                        if this.statistics.is_some() {
-                            this.toggle_statistics(window, cx);
-                        }
-                    },
-                )
-                .detach();
-                window.focus(&page.focus_handle(cx), cx);
-                self.statistics = Some(page);
-            }
-        }
-        cx.notify();
     }
 
     pub(crate) fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {

@@ -27,3 +27,11 @@ fn lookup_follows_full_keys_bare_names_and_suffixes() {
     assert!(prices.rates("<synthetic>").is_none());
     assert!(prices.rates("text-embedding").is_none());
 }
+
+#[test]
+fn a_missing_cache_rate_is_the_input_rate() {
+    let prices = Prices::parse(LIST).unwrap();
+    let gpt = prices.rates("gpt-x").unwrap();
+    assert!((gpt.cache_read - 1.0).abs() < 1e-9);
+    assert!((gpt.cache_write - 1.0).abs() < 1e-9);
+}

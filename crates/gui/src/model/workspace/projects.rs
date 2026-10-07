@@ -257,7 +257,6 @@ impl Workspace {
         // no way to open an entry and forget to.
         self.leave_space();
         self.note_landing(project, kind, id, cx);
-        cx.emit(super::Opened);
     }
 
     /// The same, for something that touched an entry without being asked to

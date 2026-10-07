@@ -52,6 +52,8 @@ mod general;
 mod mcp;
 mod performance;
 mod shortcuts;
+#[cfg(feature = "desktop")]
+mod statistics;
 mod theme;
 mod typography;
 
@@ -87,12 +89,13 @@ impl Section {
         matches!(self, Self::Agents)
     }
 
-    const ALL: [Self; 11] = [
+    const ALL: [Self; 12] = [
         Self::General,
         Self::Appearance,
-        Self::Editor,
         Self::Shortcuts,
+        Self::Statistics,
         Self::Features,
+        Self::Editor,
         Self::Browser,
         Self::Agents,
         Self::Mcp,
@@ -118,6 +121,7 @@ impl Section {
         match self {
             Self::Developer => cfg!(debug_assertions) || cfg!(feature = "developer"),
             Self::Backups => artifact::backup::any(),
+            Self::Statistics => cfg!(feature = "desktop"),
             Self::Browser => {
                 cfg!(feature = "desktop")
                     && Feature::Browser.available()
@@ -131,8 +135,8 @@ impl Section {
     /// group has none.
     fn group(self) -> Option<&'static str> {
         match self {
-            Self::General | Self::Appearance | Self::Editor | Self::Shortcuts => None,
-            Self::Features | Self::Browser => Some("Workspace"),
+            Self::General | Self::Appearance | Self::Shortcuts | Self::Statistics => None,
+            Self::Editor | Self::Features | Self::Browser => Some("Workspace"),
             Self::Agents | Self::Mcp => Some("Agents"),
             Self::Performance | Self::Backups | Self::Developer => Some("Advanced"),
         }
@@ -144,6 +148,7 @@ impl Section {
             Self::Appearance => "Appearance",
             Self::Editor => "Editor",
             Self::Shortcuts => "Shortcuts",
+            Self::Statistics => "Statistics",
             Self::Features => "Features",
             Self::Agents => "Agents",
             Self::Mcp => "MCP",
@@ -171,9 +176,12 @@ impl Section {
             Self::Backups => {
                 Some("Files a migration replaced, kept from the release they belong to.")
             }
-            Self::General | Self::Appearance | Self::Editor | Self::Agents | Self::Performance => {
-                None
-            }
+            Self::General
+            | Self::Appearance
+            | Self::Statistics
+            | Self::Editor
+            | Self::Agents
+            | Self::Performance => None,
         }
     }
 
@@ -184,6 +192,7 @@ impl Section {
             Self::Appearance => icons::weather::Sun,
             Self::Editor => icons::text::SquarePen,
             Self::Shortcuts => icons::development::Command,
+            Self::Statistics => icons::charts::ChartColumn,
             Self::Features => icons::account::SlidersHorizontal,
             Self::Agents => icons::development::Bot,
             Self::Mcp => icons::development::Plug,
@@ -248,6 +257,9 @@ pub struct SettingsWindow {
     browser_data: browser::BrowserData,
     /// The field whose dialog is up — see [`SettingsWindow::field_dialog`].
     editing: Option<(Field, Entity<TextField>)>,
+    /// The statistics section's reading.
+    #[cfg(feature = "desktop")]
+    statistics: statistics::Statistics,
     /// The backups section's list, read when the section is shown.
     backups: Vec<artifact::backup::Backup>,
     /// A backup row waiting for its action to be agreed to.
@@ -389,6 +401,8 @@ impl SettingsWindow {
             #[cfg(not(target_os = "linux"))]
             browser_data: Default::default(),
             editing: None,
+            #[cfg(feature = "desktop")]
+            statistics: Default::default(),
             backups: artifact::backup::list(),
             backup_ask: None,
             recording: None,
@@ -398,6 +412,10 @@ impl SettingsWindow {
             error: None,
         };
         this.load(cx);
+        #[cfg(feature = "desktop")]
+        if section == Section::Statistics {
+            this.load_statistics(cx);
+        }
         #[cfg(not(target_os = "linux"))]
         if section == Section::Browser {
             this.load_browser_usage(cx);
@@ -684,6 +702,10 @@ impl SettingsWindow {
         match section {
             Section::Agents => self.load(cx),
             Section::Backups => self.load_backups(),
+            #[cfg(feature = "desktop")]
+            Section::Statistics => self.load_statistics(cx),
+            #[cfg(not(feature = "desktop"))]
+            Section::Statistics => {}
             Section::General
             | Section::Appearance
             | Section::Editor
@@ -849,6 +871,10 @@ impl Render for SettingsWindow {
                                 Section::Appearance => self.appearance_body(cx),
                                 Section::Editor => self.editor_body(cx),
                                 Section::Shortcuts => self.shortcuts_body(cx),
+                                #[cfg(feature = "desktop")]
+                                Section::Statistics => self.statistics_body(cx),
+                                #[cfg(not(feature = "desktop"))]
+                                Section::Statistics => div().into_any_element(),
                                 Section::Features => self.features_body(cx),
                                 Section::Agents => self.agents_body(cx),
                                 Section::Mcp => self.mcp_body(cx),

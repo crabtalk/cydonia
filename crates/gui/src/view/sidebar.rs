@@ -541,7 +541,6 @@ impl Cydonia {
                     .flex_row()
                     .items_center()
                     .justify_end()
-                    .children(self.statistics_button(cx))
                     .children(self.settings_button(settings_chord, cx)),
             )
     }
@@ -557,35 +556,6 @@ impl Cydonia {
     /// Nothing shows here until a bundle is staged and verified, which on most
     /// days is never — see [`crate::model::update`], and the Developer section
     /// for the switch that puts it on screen without one.
-    #[cfg(not(feature = "desktop"))]
-    fn statistics_button(&self, _: &mut Context<Self>) -> Option<Empty> {
-        None
-    }
-
-    /// Toggles the statistics page; pressed while it is up.
-    #[cfg(feature = "desktop")]
-    fn statistics_button(&self, cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
-        let theme = Theme::of(cx).clone();
-        let open = self.statistics.is_some();
-        Some(
-            theme
-                .ghost("statistics")
-                .px(px(8.))
-                .py(px(6.))
-                .when(open, |button| button.bg(theme.element_active))
-                .tooltip(|window, cx| Tooltip::text("Statistics", window, cx))
-                .child(
-                    icons::icon(icons::charts::ChartColumn)
-                        .size(px(13.))
-                        .text_color(match open {
-                            true => theme.text,
-                            false => theme.text_faint,
-                        }),
-                )
-                .on_click(cx.listener(|this, _, window, cx| this.toggle_statistics(window, cx))),
-        )
-    }
-
     /// The gear that opens the settings window.
     fn settings_button(
         &self,

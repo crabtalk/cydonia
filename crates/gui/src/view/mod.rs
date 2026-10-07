@@ -29,8 +29,6 @@ pub mod search;
 pub mod section;
 pub mod settings;
 pub mod sidebar;
-#[cfg(feature = "desktop")]
-pub mod statistics;
 pub mod table;
 
 #[cfg(test)]

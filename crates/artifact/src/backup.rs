@@ -146,14 +146,28 @@ impl Backup {
 }
 
 /// Whether the data directory holds any backup. Cheaper than [`list`]: it
-/// reads one directory and sizes nothing.
+/// stops at the first file and sizes nothing.
 pub fn any() -> bool {
     data_dir()
         .ok()
         .and_then(|dir| std::fs::read_dir(dir.join("backup")).ok())
         .is_some_and(|mut entries| {
-            entries.any(|entry| entry.is_ok_and(|entry| entry.path().is_dir()))
+            entries.any(|entry| entry.is_ok_and(|entry| holds_files(&entry.path())))
         })
+}
+
+/// Whether `dir` is a directory with a file somewhere under it, hidden files
+/// such as `.DS_Store` aside. A backup with none has nothing to give back.
+fn holds_files(dir: &Path) -> bool {
+    std::fs::read_dir(dir).is_ok_and(|entries| {
+        entries.flatten().any(|entry| {
+            let path = entry.path();
+            match path.is_dir() {
+                true => holds_files(&path),
+                false => !entry.file_name().to_string_lossy().starts_with('.'),
+            }
+        })
+    })
 }
 
 /// Every backup in the data directory, most recently taken first.
@@ -167,7 +181,7 @@ pub fn list() -> Vec<Backup> {
     let mut found: Vec<Backup> = entries
         .flatten()
         .map(|entry| entry.path())
-        .filter(|dir| dir.is_dir())
+        .filter(|dir| holds_files(dir))
         .map(|dir| {
             let projects = std::fs::read_dir(dir.join("projects"))
                 .map(|entries| {

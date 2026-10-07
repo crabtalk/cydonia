@@ -30,7 +30,6 @@ pub mod context;
 pub mod mcp;
 pub mod path;
 pub mod serve;
-pub mod spent;
 
 /// Where the fetched catalog and the icons beside it are kept — a cache under
 /// the config directory, not among the files a person edits.

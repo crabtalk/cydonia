@@ -1,6 +1,6 @@
 ---
 name: markdown
-description: Write and edit Cydonia articles using its supported Markdown syntax, image sizing and paths, rich links, and links to sessions, articles and boards. Use for content displayed in Cydonia, not ordinary repository Markdown.
+description: Write Cydonia Markdown — articles, cards and replies in a session — using its supported syntax, image sizing and paths, rich links, and links to sessions, articles and boards. Use for content displayed in Cydonia, not ordinary repository Markdown.
 ---
 
 # Cydonia Markdown

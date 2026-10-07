@@ -6,13 +6,12 @@
 pub enum Section {
     General,
     Appearance,
-    Editor,
-    // With Appearance, because the two answer the same question — how the app
-    // meets you — and before the three that answer what it does.
     Shortcuts,
+    Statistics,
     // Before Agents, because it is what decides whether agents matter: with
     // sessions off, nothing installed under Agents can be launched.
     Features,
+    Editor,
     // With Features, which switches it on.
     Browser,
     Agents,

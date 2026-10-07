@@ -79,9 +79,6 @@ pub enum Event {
     /// under it talking, or the shell that could not start it — so it arrives
     /// off its own task and only approximately in step with the rest.
     Stderr(String),
-    /// What the turn spent — see [`super::spent::spent`]. Sent just ahead of
-    /// [`Event::TurnDone`] when the response carried `usage`.
-    Spent(artifact::stats::Tokens),
     /// The prompt turn settled: its stop reason, or the agent's error.
     TurnDone(Result<StopReason, Error>),
     /// The agent's read loop ended — the process died or closed its stdout.
@@ -486,9 +483,6 @@ impl Session {
                 Some(fork) => fork.lock().await.prompt(request).await,
                 None => conn.prompt(request).await,
             };
-            if let Some(tokens) = result.as_ref().ok().and_then(super::spent::spent) {
-                let _ = tx.send(Event::Spent(tokens));
-            }
             let done = result.map(|response| response.stop_reason);
             let _ = tx.send(Event::TurnDone(done));
         });
