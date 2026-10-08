@@ -1,8 +1,19 @@
 [
   {
+    "version": "0.1.28",
+    "date": "2026-10-08",
+    "nightly": true,
+    "summary": "Color themes: Ayu, Catppuccin, Dracula, Everforest, GitHub, Gruvbox, One, Solarized and Tokyo Night, each in light and dark.",
+    "new": [
+      "Paint the app in a color theme from Settings › Appearance: Ayu, Catppuccin, Dracula, Everforest, GitHub, Gruvbox, One, Solarized or Tokyo Night, each following the light or dark mode, with code and terminal colours to match"
+    ],
+    "changed": [
+      "Hide the hue and intensity sliders while a color theme is picked"
+    ]
+  },
+  {
     "version": "0.1.27",
     "date": "2026-10-07",
-    "nightly": true,
     "summary": "Statistics in settings, one directory per board with one folder per card, and backups you can roll back to when a release changes how things are stored.",
     "new": [
       "Read activity and token usage in Settings › Statistics: an activity heatmap, words written, cards created and done, and spend over 7, 30 or 90 days, priced from LiteLLM's list",

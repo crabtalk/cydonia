@@ -3,7 +3,7 @@ members = ["crates/cydonia", "crates/gui", "crates/demo", "crates/artifact", "cr
 resolver = "3"
 
 [workspace.package]
-version = "0.1.27"
+version = "0.1.28"
 edition = "2024"
 rust-version = "1.95"
 license = "MIT"
@@ -46,6 +46,22 @@ toml_edit = "0.22"
 ureq = "3"
 url = { version = "2", features = ["serde"] }
 web-time = "1"
+
+# TODO: drop once a bezel release carries the theme changes.
+[patch.crates-io]
+bezel = { path = "../bezel/crates/bezel" }
+bezel-agent = { path = "../bezel/crates/agent" }
+bezel-browser = { path = "../bezel/crates/browser" }
+bezel-canvas-core = { path = "../bezel/crates/canvas-core" }
+bezel-editor = { path = "../bezel/crates/editor" }
+bezel-icons = { path = "../bezel/crates/icons" }
+bezel-markdown = { path = "../bezel/crates/markdown" }
+bezel-motion = { path = "../bezel/crates/motion" }
+bezel-syntax = { path = "../bezel/crates/syntax" }
+bezel-syntax-std = { path = "../bezel/crates/syntax-std" }
+bezel-terminal = { path = "../bezel/crates/terminal" }
+bezel-theme = { path = "../bezel/crates/theme" }
+bezel-ui = { path = "../bezel/crates/ui" }
 
 [profile.dev]
 debug = "line-tables-only"

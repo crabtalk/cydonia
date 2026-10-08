@@ -32,4 +32,6 @@ pub mod welcome;
 pub mod workspace;
 
 pub mod fonts;
+pub mod palette;
+pub mod themes;
 pub mod typography;

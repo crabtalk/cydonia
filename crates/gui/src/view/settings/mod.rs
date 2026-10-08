@@ -251,6 +251,8 @@ pub struct SettingsWindow {
     interface_font: typography::FamilyPicker,
     article_font: typography::FamilyPicker,
     mono_font: typography::FamilyPicker,
+    /// The theme family picker, held the same way.
+    theme_family: bezel::gpui::Entity<bezel::ui::combobox::Combobox>,
     /// The applications `Open with` offers, listed off the main thread once.
     apps: apps::Listed,
     #[cfg(not(target_os = "linux"))]
@@ -371,6 +373,7 @@ impl SettingsWindow {
             typography::FamilyPicker::new(typography::Face::Interface, fonts.sans, cx);
         let article_font = typography::FamilyPicker::new(typography::Face::Article, fonts.body, cx);
         let mono_font = typography::FamilyPicker::new(typography::Face::Mono, fonts.mono, cx);
+        let theme_family = Self::theme_family_picker(workspace.read(cx).theme(), cx);
         Self::list_apps(cx);
         let mut this = SettingsWindow {
             drag: Default::default(),
@@ -397,6 +400,7 @@ impl SettingsWindow {
             interface_font,
             article_font,
             mono_font,
+            theme_family,
             apps: Default::default(),
             #[cfg(not(target_os = "linux"))]
             browser_data: Default::default(),

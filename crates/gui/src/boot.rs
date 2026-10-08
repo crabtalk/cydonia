@@ -3,7 +3,7 @@
 
 use crate::{
     memory,
-    model::{fonts, language, settings::Settings, workspace},
+    model::{fonts, language, palette, settings::Settings, workspace},
     view::{article, keymap},
 };
 use bezel::theme::AppExt as _;
@@ -20,24 +20,18 @@ pub fn init(settings: &Settings, cx: &mut App) {
         log_error(&format!("font registration failed: {err:?}"));
     }
     let look = settings.appearance.clone();
-    // Both before the first palette is installed: the builder reads the
-    // families, and `init` is what calls it.
-    fonts::init(fonts::Families {
-        sans: look.ui_font.clone().map(Into::into),
-        body: look.article_font.clone().map(Into::into),
-        mono: look.mono_font.clone().map(Into::into),
-    });
     crate::view::component::file::external::init(settings.open_with.clone());
-    fonts::init_selection(look.selection);
-    fonts::init_caret(look.caret);
-    fonts::init_terminal_caret(look.terminal_caret);
-    cx.set_palette(fonts::palette);
+    fonts::set_terminal_caret(look.terminal_caret);
+    // Before `appearance::init`, which installs the first palette.
+    let inputs = palette::Inputs::of(&look, fonts::Families::of(&look));
+    let themed = inputs.theme.is_some();
+    palette::register(inputs, cx);
     appearance::init(look.mode, cx);
     // Before the window is opened: it reads its background appearance
     // on the way up, and vibrancy is what decides that.
     workspace::apply_caption_style(look.traffic_lights, cx);
     workspace::apply_transparency(look.vibrancy, look.blur, cx);
-    workspace::apply_tint(Tint::new(look.hue, look.chroma), cx);
+    workspace::apply_tint(Tint::new(look.hue, look.chroma), themed, cx);
     cx.set_caret_blink(look.cursor_blink);
     cx.set_caret_shape(look.caret_shape.into());
     cx.set_caret_height(look.caret_height.into());
