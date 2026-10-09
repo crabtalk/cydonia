@@ -1,7 +1,7 @@
 <script>
 	import ShareImage from '$lib/ShareImage.svelte';
 	import DownloadPanel from '$lib/DownloadPanel.svelte';
-	import Demo from '$lib/Demo.svelte';
+	import Media from '$lib/Media.svelte';
 	import Brand from '$lib/Brand.svelte';
 	import Files from '$lib/Files.svelte';
 	import Frame from '$lib/Frame.svelte';
@@ -120,7 +120,7 @@
 
 	<figure class="feature">
 		{#if featureMedia}
-			<Demo media={featureMedia} />
+			<Media media={featureMedia} />
 		{/if}
 		{#if latest}
 			<figcaption>

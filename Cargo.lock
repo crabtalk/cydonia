@@ -2372,21 +2372,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cydonia-demo"
-version = "0.1.28"
-dependencies = [
- "bezel",
- "bezel-gpui-web",
- "bezel-syntax",
- "bezel-syntax-std",
- "console_error_panic_hook",
- "cydonia-artifact",
- "cydonia-gui",
- "wasm-bindgen",
- "web-sys",
-]
-
-[[package]]
 name = "cydonia-gui"
 version = "0.1.28"
 dependencies = [

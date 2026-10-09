@@ -2,7 +2,6 @@
   {
     "version": "0.1.28",
     "date": "2026-10-08",
-    "nightly": true,
     "summary": "Color themes: Ayu, Catppuccin, Dracula, Everforest, GitHub, Gruvbox, One, Solarized and Tokyo Night, each in light and dark.",
     "new": [
       "Paint the app in a color theme from Settings › Appearance: Ayu, Catppuccin, Dracula, Everforest, GitHub, Gruvbox, One, Solarized or Tokyo Night, each following the light or dark mode, with code and terminal colours to match",
