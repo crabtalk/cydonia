@@ -383,3 +383,66 @@ fn a_search_answers_the_article_and_line() {
     ));
     assert!(quoted.contains("line 3"), "{quoted}");
 }
+
+/// `#1:3-4` reads those lines and `#1#set-up` the section under that heading,
+/// each with the lines it is.
+#[test]
+fn a_part_of_an_article_reads_alone() {
+    let scratch = Scratch::new("article-parts");
+    let server = scratch.server();
+    said(server.call(
+        "article_add",
+        json!({
+            "project": scratch.path(),
+            "title": "Guide",
+            "text": "# Guide\n\nIntro.\n\n## Set up\n\nStep one.\n\n## Use\n\nGo.\n",
+        }),
+        None,
+    ));
+
+    let read = server
+        .call(
+            "article_read",
+            json!({ "article": "#1:3-5" }),
+            Some(scratch.path()),
+        )
+        .unwrap_or_else(|_| panic!("lines read failed"));
+    assert_eq!(read.text, "Intro.\n\n## Set up\n");
+    assert_eq!(read.data.unwrap()["lines"], json!({ "from": 3, "to": 5 }));
+
+    let read = server
+        .call(
+            "article_read",
+            json!({ "article": "#1#set-up" }),
+            Some(scratch.path()),
+        )
+        .unwrap_or_else(|_| panic!("section read failed"));
+    assert_eq!(read.text, "## Set up\n\nStep one.\n\n");
+    assert_eq!(read.data.unwrap()["lines"], json!({ "from": 5, "to": 8 }));
+
+    let read = said(server.call(
+        "project_read_entry",
+        json!({ "entry": "#1#use" }),
+        Some(scratch.path()),
+    ));
+    assert_eq!(read, "## Use\n\nGo.\n");
+
+    let why = refused(server.call(
+        "article_read",
+        json!({ "article": "#1#missing" }),
+        Some(scratch.path()),
+    ));
+    assert!(why.contains("guide, set-up, use"), "{why}");
+    let why = refused(server.call(
+        "article_read",
+        json!({ "article": "#1:40" }),
+        Some(scratch.path()),
+    ));
+    assert!(why.contains("last line, 11"), "{why}");
+    let why = invalid(server.call(
+        "article_rewrite",
+        json!({ "article": "#1:3", "text": "gone" }),
+        Some(scratch.path()),
+    ));
+    assert!(why.contains("names part of an entry"), "{why}");
+}

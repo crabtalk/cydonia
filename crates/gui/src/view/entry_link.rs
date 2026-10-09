@@ -2,15 +2,20 @@
 //! [`artifact::reference`] — painted by cydonia rather than as web links.
 //!
 //! A link card is the entry itself: a session is its turns, read only, whole
-//! or the run a reference names, `#43:5-7`; an article or a board is its title, kind and number. A
-//! bookmark-sized card of any of them is that one row.
+//! or the run a reference names, `#43:5-7`; part of an article, `#12:5-7` or
+//! `#12#setup`, is those blocks, read only; a whole article or a board is its
+//! title, kind and number. A bookmark-sized card of any of them is that one
+//! row.
 //!
 //! The link names the entry; deleting the block leaves the entry where it was.
 
 use std::rc::Rc;
 
 use crate::{
-    model::workspace::Showing,
+    model::workspace::{
+        Showing,
+        references::{Part, Passage},
+    },
     view::{
         component::{
             composer::{Composer, ComposerEvent},
@@ -22,7 +27,7 @@ use crate::{
         sidebar::Row,
     },
 };
-use artifact::{reference::Turns, search::Kind};
+use artifact::{reference::Span, search::Kind};
 use bezel::{
     gpui::{
         self, AnyElement, App, Context, MouseButton, SharedString, Window, div, prelude::*, px,
@@ -35,8 +40,8 @@ use bezel::{
 };
 use editor::{SlashAction, SlashAt, SlashItem, SlashRow};
 use markdown::{
-    BlockKind, Form,
-    render::{fence_band, fence_panel},
+    AppExt as _, BlockKind, Form,
+    render::{Editing, fence_band, fence_panel},
 };
 
 pub(crate) const SCHEME: &str = "cydonia://";
@@ -221,7 +226,7 @@ pub(crate) struct Named {
     pub(crate) row: Row,
     pub(crate) kind: Kind,
     pub(crate) number: u64,
-    pub(crate) turns: Option<Turns>,
+    pub(crate) part: Option<Part>,
 }
 
 impl Cydonia {
@@ -235,7 +240,7 @@ impl Cydonia {
             },
             kind: resolved.kind,
             number: resolved.number,
-            turns: resolved.turns,
+            part: resolved.part,
         })
     }
 
@@ -268,16 +273,37 @@ impl Cydonia {
                         showing: Showing::Session(id),
                         ..
                     },
-                turns,
+                part,
                 number,
                 ..
             }) if let Form::Embed(stated) = form => {
                 height = stated;
-                match turns {
-                    None => self.session_whole(id, number, stated, window, cx),
-                    Some(turns) => self.session_excerpt(id, number, turns, stated, window, cx),
+                match part {
+                    Some(Part::Turns(turns)) => {
+                        self.session_excerpt(id, number, turns, stated, window, cx)
+                    }
+                    _ => self.session_whole(id, number, stated, window, cx),
                 }
             }
+            Ok(Named {
+                row,
+                part: Some(Part::Passage(passage)),
+                number,
+                ..
+            }) if let Form::Embed(stated) = form => {
+                height = stated;
+                self.article_excerpt(row, number, passage, stated, window, cx)
+            }
+            Ok(Named {
+                row,
+                part: Some(Part::Card(card)),
+                ..
+            }) => self
+                .located(&row, cx)
+                .and_then(|(project, at)| {
+                    self.card_embed(project, at, &card.id, reference, window, cx)
+                })
+                .unwrap_or_else(|| div().into_any_element()),
             Ok(named) => self.entry_row(named, cx),
             Err(why) => div()
                 .p(px(12.))
@@ -332,6 +358,10 @@ impl Cydonia {
             _ => None,
         };
         let row = named.row.clone();
+        let block = match &named.part {
+            Some(Part::Passage(passage)) => Some(passage.blocks.start),
+            _ => None,
+        };
         div()
             .id("entry-row")
             .px(px(12.))
@@ -375,7 +405,135 @@ impl Cydonia {
                     .text_color(theme.text_faint)
                     .child(format!("{kind} · #{}", named.number)),
             )
-            .on_click(cx.listener(move |this, _, window, cx| this.open_row(&row, window, cx)))
+            .on_click(cx.listener(move |this, _, window, cx| match block {
+                Some(block) => this.open_passage(&row, block, window, cx),
+                None => this.open_row(&row, window, cx),
+            }))
+            .into_any_element()
+    }
+
+    /// Open the article `row` names with block `block` at the top of its pane.
+    pub(crate) fn open_passage(
+        &mut self,
+        row: &Row,
+        block: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_row(row, window, cx);
+        let editor = self
+            .located(row, cx)
+            .and_then(|(project, at)| self.workspace.read(cx).article_in(project, at))
+            .and_then(|article| article.editor.clone());
+        if let Some(editor) = editor {
+            let at = markdown::Selection::at(markdown::Cursor::new(block, markdown::Part::Body, 0));
+            editor.update(cx, |editor, cx| editor.select_to_top(at, cx));
+        }
+    }
+
+    /// Part of an article, read only, the way [`Self::session_excerpt`] embeds
+    /// a run of turns: a header naming the article and the part, which opens
+    /// the article there, over the blocks in a box that scrolls past
+    /// [`TRANSCRIPT_HEIGHT`].
+    fn article_excerpt(
+        &mut self,
+        row: Row,
+        number: u64,
+        passage: Passage,
+        height: Option<u32>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        let title = self.label_of_row(&row, cx);
+        let block = passage.blocks.start;
+        let body = self.passage_body(
+            &row,
+            &passage,
+            height.is_none().then(|| px(TRANSCRIPT_HEIGHT)),
+            window,
+            cx,
+        );
+        let header = fence_band(&theme)
+            .id(SharedString::from(format!(
+                "article-excerpt-head-{number}-{}",
+                passage.source.start
+            )))
+            .gap(px(8.))
+            .cursor_pointer()
+            .hover(|el| el.bg(theme.element_hover))
+            .child(
+                icons::icon(kind_icon(Kind::Article))
+                    .size(px(14.))
+                    .text_color(theme.text_muted),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .text_ellipsis()
+                    .text_style(TextStyle::Subheadline)
+                    .text_color(theme.text)
+                    .child(title),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .text_style(TextStyle::Caption)
+                    .text_color(theme.text_faint)
+                    .child(format!("#{number} · {}", passage.label)),
+            )
+            .on_click(
+                cx.listener(move |this, _, window, cx| this.open_passage(&row, block, window, cx)),
+            );
+        div()
+            .flex()
+            .flex_col()
+            .when(height.is_some(), |el| el.flex_1().min_h_0())
+            .child(header)
+            .child(body)
+            .into_any_element()
+    }
+
+    /// The blocks of `passage`, read only, in a box that scrolls past
+    /// `max_height` where one is given and fills the box it is put in where
+    /// none is.
+    pub(crate) fn passage_body(
+        &self,
+        row: &Row,
+        passage: &Passage,
+        max_height: Option<gpui::Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let base = self
+            .located(row, cx)
+            .and_then(|(project, at)| self.workspace.read(cx).article_in(project, at))
+            .and_then(|article| article.path.parent().map(std::path::Path::to_path_buf));
+        let doc = markdown::parse_with(passage.markdown(), &cx.marks());
+        let editing = Editing {
+            base: base.as_deref(),
+            ..Default::default()
+        };
+        let rendered = nested(cx, |cx| markdown::render_with(&doc, editing, window, cx));
+        let id = SharedString::from(format!("article-excerpt-{}", passage.source.start));
+        let rows = div()
+            .id(SharedString::from(format!("{id}-rows")))
+            .p(px(16.))
+            .child(rendered);
+        div()
+            // The excerpt's wheel stops here, at its ends too, so what is
+            // under it does not scroll with it.
+            .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+            .child(match max_height {
+                Some(height) => scroll::Viewport::new(id, rows.max_h(height), gpui::Axis::Vertical),
+                None => {
+                    scroll::Viewport::new(id, rows.flex_1().min_h_0(), gpui::Axis::Vertical).fill()
+                }
+            })
+            .when(max_height.is_none(), |el| {
+                el.flex_1().min_h_0().flex().flex_col()
+            })
             .into_any_element()
     }
 
@@ -436,7 +594,7 @@ impl Cydonia {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let header = self.session_header(id, number, cx);
-        let all = Turns {
+        let all = Span {
             from: 1,
             to: u64::MAX,
         };
@@ -511,7 +669,7 @@ impl Cydonia {
         &mut self,
         id: u64,
         number: u64,
-        turns: Turns,
+        turns: Span,
         height: Option<u32>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -600,7 +758,7 @@ impl Cydonia {
     pub(crate) fn excerpt_body(
         &mut self,
         id: u64,
-        turns: Turns,
+        turns: Span,
         max_height: Option<gpui::Pixels>,
         window: &mut Window,
         cx: &mut Context<Self>,

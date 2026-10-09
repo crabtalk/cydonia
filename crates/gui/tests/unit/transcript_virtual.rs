@@ -68,7 +68,10 @@ fn long_session_renders_nearby_turns_and_navigates_without_losing_selection(
             assert_eq!(viewport.left(), px(0.));
             assert_eq!(viewport.right(), px(width));
             let (position, _) = chat.transcript.layouts.borrow()[&1999]
-                .position(markdown::Cursor::new(0, markdown::Part::Body, 0))
+                .position(
+                    markdown::Cursor::new(0, markdown::Part::Body, 0),
+                    markdown::Affinity::Downstream,
+                )
                 .unwrap();
             assert_eq!(
                 position.x,

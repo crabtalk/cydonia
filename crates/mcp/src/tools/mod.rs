@@ -24,7 +24,7 @@ use crate::{
     rail,
     tool::{Arg, Args, Trouble},
 };
-use artifact::reference::{Reference, Target};
+use artifact::reference::{Reference, Target, Within};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
@@ -110,13 +110,16 @@ pub fn project_of(args: &Args<'_>, reference: &Reference<'_>) -> Result<PathBuf,
     }
 }
 
-/// The entry number `needle` names in `project`, or nothing when `needle` is
-/// not an entry reference. A reference naming another project, or a run of
-/// turns, is refused.
-pub(crate) fn number_in(project: &Path, needle: &str) -> Result<Option<u64>, Trouble> {
+/// The entry number `needle` names in `project`, and the part of it named
+/// after the number, or nothing when `needle` is not an entry reference. A
+/// reference naming another project is refused.
+pub(crate) fn part_in<'a>(
+    project: &Path,
+    needle: &'a str,
+) -> Result<Option<(u64, Option<Within<'a>>)>, Trouble> {
     let Some(Reference {
         project: named,
-        target: Target::Entry { number, turns },
+        target: Target::Entry { number, within },
     }) = artifact::reference::parse(needle)
     else {
         return Ok(None);
@@ -129,28 +132,39 @@ pub(crate) fn number_in(project: &Path, needle: &str) -> Result<Option<u64>, Tro
             project.display()
         )));
     }
-    if turns.is_some() {
-        return Err(Trouble::Invalid(format!(
-            "{needle} names turns — read them with session_read"
-        )));
-    }
-    Ok(Some(number))
+    Ok(Some((number, within)))
 }
 
-/// The project and entry number `named` refers to, reaching another open
-/// project when it names one.
-pub(crate) fn entry_of(args: &Args<'_>, named: &str) -> Result<(PathBuf, u64), Trouble> {
+/// [`part_in`] for a tool that takes a whole entry: a reference naming part
+/// of one is refused.
+pub(crate) fn number_in(project: &Path, needle: &str) -> Result<Option<u64>, Trouble> {
+    match part_in(project, needle)? {
+        Some((_, Some(_))) => Err(whole(needle)),
+        found => Ok(found.map(|(number, _)| number)),
+    }
+}
+
+/// The refusal for a reference naming part of an entry where a whole one is
+/// wanted.
+pub(crate) fn whole(needle: &str) -> Trouble {
+    Trouble::Invalid(format!(
+        "{needle} names part of an entry, and this takes a whole one such as #12 — \
+read a session's turns with session_read, an article's lines or section with article_read"
+    ))
+}
+
+/// The project, entry number and part `named` refers to, reaching another
+/// open project when it names one.
+pub(crate) fn entry_of<'a>(
+    args: &Args<'_>,
+    named: &'a str,
+) -> Result<(PathBuf, u64, Option<Within<'a>>), Trouble> {
     let invalid = || Trouble::Invalid(format!("{named} is not an entry reference such as #12"));
     let reference = artifact::reference::parse(named).ok_or_else(invalid)?;
-    let Target::Entry { number, turns } = reference.target else {
+    let Target::Entry { number, within } = reference.target else {
         return Err(invalid());
     };
-    if turns.is_some() {
-        return Err(Trouble::Invalid(format!(
-            "{named} names turns — read them with session_read"
-        )));
-    }
-    Ok((project_of(args, &reference)?, number))
+    Ok((project_of(args, &reference)?, number, within))
 }
 
 /// The rail, for a refusal to name — a model that named the wrong directory

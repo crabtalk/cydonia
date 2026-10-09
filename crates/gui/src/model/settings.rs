@@ -162,8 +162,14 @@ pub struct Appearance {
     /// Unset is the system's monospace face.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mono_font: Option<String>,
+    /// The bundled theme family the app is painted in, by name — see
+    /// [`crate::model::themes`]. Unset, or a name no family has, is bezel's
+    /// own palette.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub theme: Option<String>,
     /// The greys' oklch hue in degrees, and how much of it they carry. Zero
-    /// chroma is the shipped neutral, whatever the hue says.
+    /// chroma is the shipped neutral, whatever the hue says. Not applied while
+    /// [`Self::theme`] names a family.
     pub hue: f32,
     pub chroma: f32,
     /// How opaque the tint over the frosted window is — bezel's
@@ -489,6 +495,7 @@ impl Default for Appearance {
             ui_font: None,
             article_font: None,
             mono_font: None,
+            theme: None,
             hue: 0.,
             vibrancy: bezel::theme::Theme::VIBRANCY_ALPHA,
             blur: bezel::theme::Theme::WINDOW_BLUR,

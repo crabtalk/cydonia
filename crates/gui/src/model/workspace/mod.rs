@@ -198,7 +198,7 @@ impl Workspace {
             text_size: look.text_size,
             article_font_size: look.article_font_size,
             mono_font_size: look.mono_font_size,
-            fonts: fonts::families(),
+            fonts: fonts::Families::of(&look),
             tint: Tint::new(look.hue, look.chroma),
             wide_pages: look.wide_pages,
             board_view: look.board_view,
@@ -329,6 +329,7 @@ impl Workspace {
             ui_font: self.fonts.sans.as_ref().map(ToString::to_string),
             article_font: self.fonts.body.as_ref().map(ToString::to_string),
             mono_font: self.fonts.mono.as_ref().map(ToString::to_string),
+            theme: self.settings.appearance.theme.clone(),
             hue: self.tint.hue,
             vibrancy: self.settings.appearance.vibrancy,
             blur: self.settings.appearance.blur,
@@ -482,6 +483,37 @@ impl Workspace {
                 readopt(agents, &mut chat.entry);
             }
         }
+    }
+
+    /// Paint the app in a bundled theme family, or bezel's own palette for
+    /// `None`.
+    pub fn set_theme(&mut self, name: Option<String>, cx: &mut Context<Self>) {
+        self.settings.appearance.theme = name;
+        apply_tint(self.tint, self.themed(), cx);
+        self.apply_palette(cx);
+        self.save_appearance();
+        cx.notify();
+    }
+
+    /// Whether the app is painted in a bundled theme family.
+    pub fn themed(&self) -> bool {
+        self.theme().is_some()
+    }
+
+    pub fn theme(&self) -> Option<&'static bezel::theme::ThemeFamily> {
+        self.settings
+            .appearance
+            .theme
+            .as_deref()
+            .and_then(crate::model::themes::named)
+    }
+
+    /// Rebuild the palette from the appearance settings and the families.
+    fn apply_palette(&self, cx: &mut App) {
+        crate::model::palette::apply(
+            crate::model::palette::Inputs::of(&self.settings.appearance, self.fonts.clone()),
+            cx,
+        );
     }
 
     /// The settings window's choice. bezel repaints on `set_mode`;
@@ -791,7 +823,8 @@ impl Workspace {
 
     pub fn set_terminal_caret(&mut self, on: bool, cx: &mut Context<Self>) {
         self.settings.appearance.terminal_caret = on;
-        crate::model::fonts::set_terminal_caret(on, cx);
+        fonts::set_terminal_caret(on);
+        self.apply_palette(cx);
         self.save_appearance();
         cx.notify();
     }
@@ -856,8 +889,8 @@ impl Workspace {
     /// Set the interface family, the fixed-pitch one, or both. `None` in a
     /// slot is the palette's own face for it.
     pub fn set_fonts(&mut self, fonts: fonts::Families, cx: &mut Context<Self>) {
-        self.fonts = fonts.clone();
-        fonts::set(fonts, cx);
+        self.fonts = fonts;
+        self.apply_palette(cx);
         self.save_appearance();
         cx.notify();
     }
@@ -919,14 +952,14 @@ impl Workspace {
 
     pub fn set_selection(&mut self, value: Option<settings::Paint>, cx: &mut Context<Self>) {
         self.settings.appearance.selection = value;
-        crate::model::fonts::set_selection(value, cx);
+        self.apply_palette(cx);
         self.save_appearance();
         cx.notify();
     }
 
     pub fn set_caret(&mut self, value: Option<settings::Paint>, cx: &mut Context<Self>) {
         self.settings.appearance.caret = value;
-        crate::model::fonts::set_caret(value, cx);
+        self.apply_palette(cx);
         self.save_appearance();
         cx.notify();
     }
@@ -948,7 +981,7 @@ impl Workspace {
 
     pub fn set_tint(&mut self, tint: Tint, cx: &mut Context<Self>) {
         self.tint = tint;
-        apply_tint(tint, cx);
+        apply_tint(tint, self.themed(), cx);
         self.save_appearance();
         cx.notify();
     }
@@ -1011,10 +1044,12 @@ pub fn named<'a>(
         .or_else(|| agents.iter().find(|agent| agent.name == name))
 }
 
-/// Point bezel's tint at the preference. Free rather than a method
-/// because the window reads its background appearance while it is being opened,
-/// which is before there is a workspace to ask.
-pub fn apply_tint(tint: Tint, cx: &mut App) {
+/// Point bezel's tint at the preference, or at none while a theme family is
+/// painted. Free rather than a method because the window reads its background
+/// appearance while it is being opened, which is before there is a workspace
+/// to ask.
+pub fn apply_tint(tint: Tint, themed: bool, cx: &mut App) {
+    let tint = if themed { Tint::NONE } else { tint };
     cx.set_brand(Brand { tint, ..cx.brand() });
 }
 

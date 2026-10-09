@@ -1,9 +1,9 @@
 //! What `@` in an article lists: the open projects' sessions, boards and
 //! articles, linked as `cydonia://<project>#<number>` chips — and the title a
-//! chip of one paints: the kind's mark and the title.
+//! chip of one paints: cydonia's mark and the title.
 
 use crate::{
-    model::workspace::{Showing, Workspace},
+    model::workspace::{Showing, Workspace, references::Part},
     view::{entry_link::link, search::kind_icon, sidebar::Row},
 };
 use artifact::{
@@ -17,6 +17,10 @@ use markdown::Preview;
 
 /// Rows the menu lists at most.
 const SHOWN: usize = 20;
+
+/// The mark every `cydonia://` chip paints. Inline chips paint only a glyph's
+/// SVG, in the text colour — a file icon paints nothing there.
+const MARK: Icon = Icon::glyph(include_bytes!("../../assets/mark.svg"));
 
 #[derive(Clone)]
 pub(crate) struct Linkable {
@@ -314,17 +318,15 @@ fn by_prefix(
 }
 
 /// What a chip linking an entry paints: its title, and its kind's mark. A
-/// run of a session's turns adds the run. A link naming no entry paints the
-/// reference and the app's mark.
+/// run of a session's turns adds the run, and part of an article the lines or
+/// the heading. A card paints its own title and handle. A link naming no entry
+/// paints the reference and the app's mark.
 pub(crate) fn preview(url: &str, cx: &App) -> Option<Preview> {
     let reference = url.strip_prefix(crate::view::entry_link::SCHEME)?;
     let Some(resolved) = crate::model::workspace::references::resolve_in(reference, cx) else {
         return Some(Preview {
             title: Some(SharedString::from(reference.to_owned())),
-            glyph: Some(match crate::assets::mark() {
-                Some(mark) => Icon::file(mark.to_string_lossy().into_owned()),
-                None => bezel::ui::icons::text::Link.into(),
-            }),
+            glyph: Some(MARK),
             ..Preview::default()
         });
     };
@@ -334,14 +336,20 @@ pub(crate) fn preview(url: &str, cx: &App) -> Option<Preview> {
         Kind::Board => "Untitled board",
     };
     let title = untitled(&resolved.title, fallback);
-    let title = match resolved.turns {
-        Some(turns) if turns.from == turns.to => format!("{title} · turn {turns}"),
-        Some(turns) => format!("{title} · turns {turns}"),
+    let title = match resolved.part {
+        Some(Part::Turns(turns)) if turns.from == turns.to => format!("{title} · turn {turns}"),
+        Some(Part::Turns(turns)) => format!("{title} · turns {turns}"),
+        Some(Part::Passage(passage)) => format!("{title} · {}", passage.label),
+        Some(Part::Card(card)) => format!(
+            "{} · {}",
+            crate::view::board::card_title(&card.text),
+            card.handle
+        ),
         None => title,
     };
     Some(Preview {
         title: Some(title.into()),
-        glyph: Some(kind_icon(resolved.kind)),
+        glyph: Some(MARK),
         ..Preview::default()
     })
 }

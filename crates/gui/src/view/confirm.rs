@@ -46,11 +46,7 @@ impl Cydonia {
     /// Raise the question. Delete is the one thing here that cannot be taken
     /// back — Archive, right above it, is the reversible answer.
     pub(crate) fn ask_delete(&mut self, entry: &Row, cx: &mut Context<Self>) {
-        let label = self
-            .showing(cx)
-            .and_then(|pane| self.toolbar(pane, cx))
-            .map(|toolbar| toolbar.title)
-            .unwrap_or_default();
+        let label = self.label_of_row(entry, cx);
         let (goes, note) = self.goes_with(entry, cx);
         self.menu = None;
         self.confirming = Some(Confirming {
@@ -217,12 +213,13 @@ impl Cydonia {
                 showing: Showing::Table(_),
                 ..
             } => {
-                let rows = open
-                    .and_then(|open| open.tables.get(ix))
-                    .map_or(0, |table| table.rows);
+                let table = open.and_then(|open| open.tables.get(ix));
+                let rows = table.map_or(0, |table| table.rows);
                 (
-                    Some(format!(".cydonia/{}", crate::data::FILE)),
-                    format!("Its {rows} rows are dropped; the database stays. {UNDONE}"),
+                    table.map(|table| format!("{} in .cydonia/{}", table.key, crate::data::FILE)),
+                    format!(
+                        "Its {rows} rows are dropped; other tables and the database stay. {UNDONE}"
+                    ),
                 )
             }
             Row::Group(Group::Project(_)) | Row::Archive(_) | Row::Heading(_) => {

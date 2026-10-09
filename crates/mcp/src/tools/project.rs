@@ -5,6 +5,7 @@ use crate::{
     tool::{Answer, Arg, Args, Outcome, Tool, Trouble},
     tools::{PROJECT, entry_of, fields, held, many, root},
 };
+use artifact::reference::Within;
 use serde_json::json;
 use std::path::{Path, PathBuf};
 
@@ -37,7 +38,7 @@ pub static TOOLS: [Tool; 4] = [
     },
     Tool {
         name: "project_read_entry",
-        description: "Read a project entry by its numeric reference (#12). Tables return up to 200 rows with the total count.",
+        description: "Read a project entry by its numeric reference (#12). An article's part reads that part alone: #12:5-7 its lines, #12#setup the section under a heading. Tables return up to 200 rows with the total count.",
         schema: |bound| fields(bound, &[PROJECT, ENTRY]),
         writes: false,
         deletes: false,
@@ -188,18 +189,34 @@ fn entries(args: Args<'_>) -> Outcome {
 
 fn read_entry(args: Args<'_>) -> Outcome {
     let named = args.text(ENTRY)?;
-    let (project, number) = entry_of(&args, named)?;
+    let (project, number, within) = entry_of(&args, named)?;
     let project = project.as_path();
     let entries = artifact::entry::list(project).map_err(|e| Trouble::Refused(e.to_string()))?;
     let entry = entries
         .into_iter()
         .find(|entry| entry.number == number)
         .ok_or_else(|| Trouble::Refused(format!("no entry {named} in this project")))?;
+    if within.is_some() && entry.kind != "article" {
+        return Err(match (entry.kind, within) {
+            ("session", Some(Within::Span(_))) => {
+                Trouble::Invalid(format!("{named} names turns — read them with session_read"))
+            }
+            (kind, _) => Trouble::Invalid(format!(
+                "{named} names part of a {kind}, and only an article's lines or a session's turns can be named"
+            )),
+        });
+    }
     let content =
         artifact::entry::read(project, &entry).map_err(|e| Trouble::Refused(e.to_string()))?;
-    let text = content
-        .get("markdown")
-        .and_then(serde_json::Value::as_str)
+    let markdown = content.get("markdown").and_then(serde_json::Value::as_str);
+    if let (Some(within), Some(markdown)) = (within, markdown) {
+        let (range, lines) = super::article::excerpt(markdown, within, named)?;
+        return Ok(Answer::said(&markdown[range]).with(json!({
+            "entry": entry,
+            "lines": { "from": lines.from, "to": lines.to },
+        })));
+    }
+    let text = markdown
         .map(str::to_owned)
         .unwrap_or_else(|| serde_json::to_string_pretty(&content).unwrap_or_default());
     Ok(Answer::said(text).with(json!({"entry": entry, "content": content})))

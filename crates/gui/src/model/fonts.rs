@@ -3,16 +3,11 @@
 //! Three answers rather than one per surface: a family reaches the app through
 //! `Theme::font_sans`, `Theme::font_body` and `Theme::font_mono`, and every
 //! surface paints from one of those three — chrome from the first, a rendered
-//! document from the second, the terminal grid and code from the third.
-//!
-//! The chosen families live in a process-wide static rather than a gpui global
-//! because bezel takes the palette builder as a bare `fn(Appearance) -> Theme`
-//! ([`bezel::theme::AppExt::set_palette`]) and hands it no context to read one from.
+//! document from the second, the terminal grid and code from the third. The
+//! palette builder in [`crate::model::palette`] writes them.
 
-use bezel::{
-    gpui::{App, Pixels, SharedString, font, px},
-    theme::{Appearance, Glass, SurfaceStyle, Theme},
-};
+use crate::model::settings;
+use bezel::gpui::{App, Pixels, SharedString, font, px};
 use std::sync::{
     RwLock,
     atomic::{AtomicBool, Ordering},
@@ -29,123 +24,26 @@ pub struct Families {
     pub mono: Option<SharedString>,
 }
 
-use crate::model::settings::Paint;
+impl Families {
+    pub fn of(look: &settings::Appearance) -> Self {
+        Self {
+            sans: look.ui_font.clone().map(Into::into),
+            body: look.article_font.clone().map(Into::into),
+            mono: look.mono_font.clone().map(Into::into),
+        }
+    }
+}
 
-static FAMILIES: RwLock<Option<Families>> = RwLock::new(None);
-
-/// The selection wash the reader picked, held beside the families for the same
-/// reason: [`palette`] has no context to read it from.
-static SELECTION: RwLock<Option<Paint>> = RwLock::new(None);
-
-/// The caret colour the reader picked, held the same way.
-static CARET: RwLock<Option<Paint>> = RwLock::new(None);
-
-/// Whether terminals draw the app's caret, colour included.
+/// Whether terminals draw the app's caret's shape and blink. Read by the
+/// terminal view, which has no workspace to ask.
 static TERMINAL_CARET: AtomicBool = AtomicBool::new(false);
-
-fn held() -> Families {
-    FAMILIES
-        .read()
-        .ok()
-        .and_then(|held| held.clone())
-        .unwrap_or_default()
-}
-
-/// The families the app is currently set in.
-pub fn families() -> Families {
-    held()
-}
-
-/// The palette builder to register with [`bezel::theme::AppExt::set_palette`] before
-/// `appearance::init`. Registered rather than installed once: bezel rebuilds
-/// the palette from scratch on every light/dark switch, and a family written
-/// straight onto the theme would last until sunset.
-pub fn palette(appearance: Appearance) -> Theme {
-    let mut theme = Theme::for_appearance(appearance);
-    theme.drop_preview = SurfaceStyle::Glass(Glass::Clear);
-    let families = held();
-    if let Some(sans) = families.sans {
-        theme.font_body = sans.clone();
-        theme.font_sans = sans;
-    }
-    if let Some(body) = families.body {
-        theme.font_body = body;
-    }
-    if let Some(mono) = families.mono {
-        theme.font_mono = mono;
-    }
-    if let Some(color) = SELECTION.read().ok().and_then(|held| *held) {
-        theme.selection = color.solid(&theme);
-    }
-    if let Some(color) = CARET.read().ok().and_then(|held| *held) {
-        theme.caret = color.solid(&theme);
-    }
-    if terminal_caret() {
-        theme.cursor = theme.caret;
-    }
-    theme
-}
-
-/// Record the families without repainting — for startup, before the first
-/// palette is installed.
-pub fn init(families: Families) {
-    if let Ok(mut held) = FAMILIES.write() {
-        *held = Some(families);
-    }
-}
-
-/// Record the families and rebuild the palette under them.
-///
-/// `Theme::install` rather than `appearance::apply`, which returns early when
-/// the resolved appearance has not moved — and it never has here.
-pub fn set(families: Families, cx: &mut App) {
-    init(families);
-    let appearance = Theme::of(cx).appearance;
-    Theme::install(appearance, cx);
-}
-
-/// Record the selection wash without repainting — for startup.
-pub fn init_selection(color: Option<Paint>) {
-    if let Ok(mut held) = SELECTION.write() {
-        *held = color;
-    }
-}
-
-/// Record the selection wash and rebuild the palette under it.
-pub fn set_selection(color: Option<Paint>, cx: &mut App) {
-    init_selection(color);
-    let appearance = Theme::of(cx).appearance;
-    Theme::install(appearance, cx);
-}
-
-/// Record the caret colour without repainting — for startup.
-pub fn init_caret(color: Option<Paint>) {
-    if let Ok(mut held) = CARET.write() {
-        *held = color;
-    }
-}
-
-/// Record the caret colour and rebuild the palette under it.
-pub fn set_caret(color: Option<Paint>, cx: &mut App) {
-    init_caret(color);
-    let appearance = Theme::of(cx).appearance;
-    Theme::install(appearance, cx);
-}
 
 pub fn terminal_caret() -> bool {
     TERMINAL_CARET.load(Ordering::Relaxed)
 }
 
-/// Record whether terminals take the caret without repainting — for startup.
-pub fn init_terminal_caret(on: bool) {
+pub fn set_terminal_caret(on: bool) {
     TERMINAL_CARET.store(on, Ordering::Relaxed);
-}
-
-/// Record whether terminals take the caret and rebuild the palette under it.
-pub fn set_terminal_caret(on: bool, cx: &mut App) {
-    init_terminal_caret(on);
-    let appearance = Theme::of(cx).appearance;
-    Theme::install(appearance, cx);
 }
 
 /// A family the system can set text in.
@@ -200,7 +98,3 @@ pub fn installed(cx: &App) -> Vec<Family> {
     }
     measured
 }
-
-#[cfg(test)]
-#[path = "../../tests/unit/fonts.rs"]
-mod tests;

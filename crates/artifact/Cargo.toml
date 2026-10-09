@@ -20,6 +20,7 @@ sqlite = ["dep:rusqlite"]
 [dependencies]
 anyhow.workspace = true
 notify.workspace = true
+pulldown-cmark.workspace = true
 regex.workspace = true
 rusqlite = { workspace = true, optional = true }
 cacp.workspace = true

@@ -296,7 +296,7 @@ impl State {
         self.list.state.scroll_by(px(step));
         if let (Some((ix, _)), Some(doc), Some(drag)) =
             (self.selection, self.pressed_doc.clone(), self.drag)
-            && let Some(cursor) = self.layouts(ix).hit(drag)
+            && let Some((cursor, _)) = self.layouts(ix).hit(drag)
         {
             self.point(ix, Pointer::Move(cursor), &doc);
         }
@@ -379,7 +379,7 @@ impl State {
 pub(crate) fn turn_link(chat: &ChatSession, from: usize, to: usize) -> Option<String> {
     let number = chat.number?;
     let name = chat.cwd.file_name()?.to_string_lossy();
-    let turns = artifact::reference::Turns {
+    let turns = artifact::reference::Span {
         from: from.min(to) as u64,
         to: from.max(to) as u64,
     };
@@ -563,7 +563,7 @@ fn prose(
                         return;
                     }
                 }
-                let Some(cursor) = layouts.hit(event.position) else {
+                let Some((cursor, _)) = layouts.hit(event.position) else {
                     return;
                 };
                 let Some(text) = doc

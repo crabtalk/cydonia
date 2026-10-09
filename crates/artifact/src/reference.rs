@@ -1,18 +1,21 @@
-//! The written form that names a thing in a project: `[project]#ref[:from[-to]]`.
+//! The written form that names a thing in a project:
+//! `[project]#ref[:from[-to] | #anchor]`.
 //!
-//! | Written          | Names                                   |
-//! | ---------------- | --------------------------------------- |
-//! | `#43`            | entry 43                                |
-//! | `#43:5-7`        | turns 5 to 7 of session #43             |
-//! | `DEV-12`         | card DEV-12                             |
-//! | `foo#43:5`       | turn 5 of session #43 in project `foo`  |
-//! | `foo#DEV-12`     | card DEV-12 in project `foo`            |
+//! | Written          | Names                                        |
+//! | ---------------- | -------------------------------------------- |
+//! | `#43`            | entry 43                                     |
+//! | `#43:5-7`        | turns 5 to 7 of session #43                  |
+//! | `#12:5-7`        | lines 5 to 7 of article #12                  |
+//! | `#12#setup`      | the section under article #12's `setup`      |
+//! | `DEV-12`         | card DEV-12                                  |
+//! | `foo#43:5`       | turn 5 of session #43 in project `foo`       |
+//! | `foo#DEV-12`     | card DEV-12 in project `foo`                 |
 //!
 //! Each form may be written as a link behind a `cydonia://` scheme:
 //! `cydonia://foo#43:5-7`.
 //!
-//! Parsing only. Which directory `foo` is, and whether `#43` is a session, are
-//! the caller's to settle.
+//! Parsing only. Which directory `foo` is, what kind of entry `#43` is, and
+//! whether a span or an anchor fits that kind, are the caller's to settle.
 
 /// A parsed reference.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25,21 +28,34 @@ pub struct Reference<'a> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Target<'a> {
-    /// An entry by its number, and a run of its turns when one is named.
-    Entry { number: u64, turns: Option<Turns> },
+    /// An entry by its number, and the part of it named after the number.
+    Entry {
+        number: u64,
+        within: Option<Within<'a>>,
+    },
     /// A card by its board's key and its number on that board. The key is as
     /// written; keys match case-insensitively.
     Card { key: &'a str, handle: u64 },
 }
 
-/// A run of turns, counted from 1, both ends included. `from <= to`.
+/// The part of an entry a reference names after its number.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Turns {
+pub enum Within<'a> {
+    /// `:5-7` — a session's turns, an article's lines.
+    Span(Span),
+    /// `#setup` — an article's heading, by its anchor (see
+    /// [`crate::article::anchor`]), and the section under it.
+    Heading(&'a str),
+}
+
+/// A run counted from 1, both ends included. `from <= to`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Span {
     pub from: u64,
     pub to: u64,
 }
 
-impl std::fmt::Display for Turns {
+impl std::fmt::Display for Span {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.from == self.to {
             true => write!(f, "{}", self.from),
@@ -67,21 +83,24 @@ pub fn parse(text: &str) -> Option<Reference<'_>> {
         name if name.chars().any(|c| c.is_whitespace() || c == ':') => return None,
         name => Some(name),
     };
-    let target = match rest.split_once(':') {
-        Some((number, turns)) => Target::Entry {
+    let target = if let Some((number, anchor)) = rest.split_once('#') {
+        Target::Entry {
             number: positive(number)?,
-            turns: Some(range(turns)?),
-        },
-        None => match positive(rest) {
-            Some(number) => Target::Entry {
-                number,
-                turns: None,
-            },
-            None => {
-                let (key, handle) = card(rest)?;
-                Target::Card { key, handle }
-            }
-        },
+            within: Some(Within::Heading(heading(anchor)?)),
+        }
+    } else if let Some((number, span)) = rest.split_once(':') {
+        Target::Entry {
+            number: positive(number)?,
+            within: Some(Within::Span(range(span)?)),
+        }
+    } else if let Some(number) = positive(rest) {
+        Target::Entry {
+            number,
+            within: None,
+        }
+    } else {
+        let (key, handle) = card(rest)?;
+        Target::Card { key, handle }
     };
     Some(Reference { project, target })
 }
@@ -132,8 +151,18 @@ fn card(text: &str) -> Option<(&str, u64)> {
     Some((key, positive(handle)?))
 }
 
+/// An anchor as [`crate::article::anchor`] writes one: letters, digits, `-`
+/// and `_`.
+fn heading(text: &str) -> Option<&str> {
+    let anchored = !text.is_empty()
+        && text
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '-' || c == '_');
+    anchored.then_some(text)
+}
+
 /// `5` or `5-7`.
-fn range(text: &str) -> Option<Turns> {
+fn range(text: &str) -> Option<Span> {
     let (from, to) = match text.split_once('-') {
         Some((from, to)) => (positive(from)?, positive(to)?),
         None => {
@@ -141,7 +170,7 @@ fn range(text: &str) -> Option<Turns> {
             (one, one)
         }
     };
-    (from <= to).then_some(Turns { from, to })
+    (from <= to).then_some(Span { from, to })
 }
 
 /// Digits only — no sign, no spaces — and above zero.

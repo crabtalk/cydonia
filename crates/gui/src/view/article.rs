@@ -277,6 +277,54 @@ fn column(wide: bool) -> Div {
     }
 }
 
+/// The band the editor is set in, under the title.
+fn page(editor: &Entity<editor::Editor>, wide: bool, source_offset: f32) -> Div {
+    // Its own height, not the box's share of one: a long document overflows
+    // and scrolls instead of being squashed and clipped, and `min_h_full` is
+    // what leaves the band something to scroll *under* when the document is
+    // short.
+    div()
+        .w_full()
+        .flex_none()
+        .min_h_full()
+        .flex()
+        .justify_center()
+        .cursor(CursorStyle::IBeam)
+        .on_mouse_down(MouseButton::Left, {
+            let editor = editor.clone();
+            move |event, window, cx| {
+                editor.update(cx, |editor, cx| {
+                    editor.press(
+                        event.position,
+                        event.click_count,
+                        event.modifiers,
+                        window,
+                        cx,
+                    )
+                })
+            }
+        })
+        .child(
+            // A page, not a paragraph. The editor's box is only as tall as
+            // the document, and a pane of dead space under a one-line note
+            // reads as something you cannot type in: the band around it is
+            // what makes a click down there or beside it land a caret, and
+            // the I-beam is what says so before the click.
+            column(wide)
+                .px(px(COLUMN_INSET))
+                .pt(px(20.))
+                .pb(px(TAIL))
+                .flex()
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .ml(px(-source_offset))
+                        .child(editor.clone()),
+                ),
+        )
+}
+
 impl Cydonia {
     // ── mutations ────────────────────────────────────────────────
 
@@ -606,53 +654,7 @@ impl Cydonia {
             .flex()
             .flex_col()
             .child(self.header(cover, field, wide, cx))
-            // Its own height, not the box's share of one: a long document
-            // overflows and scrolls instead of being squashed and clipped,
-            // and `min_h_full` is what leaves the band something to scroll
-            // *under* when the document is short.
-            .child(
-                div()
-                    .w_full()
-                    .flex_none()
-                    .min_h_full()
-                    .flex()
-                    .justify_center()
-                    .cursor(CursorStyle::IBeam)
-                    .on_mouse_down(MouseButton::Left, {
-                        let editor = editor.clone();
-                        move |event, window, cx| {
-                            editor.update(cx, |editor, cx| {
-                                editor.press(
-                                    event.position,
-                                    event.click_count,
-                                    event.modifiers,
-                                    window,
-                                    cx,
-                                )
-                            })
-                        }
-                    })
-                    .child(
-                        // A page, not a paragraph. The editor's box is only
-                        // as tall as the document, and a pane of dead space
-                        // under a one-line note reads as something you
-                        // cannot type in: the band around it is what makes
-                        // a click down there or beside it land a caret, and
-                        // the I-beam is what says so before the click.
-                        column(wide)
-                            .px(px(COLUMN_INSET))
-                            .pt(px(20.))
-                            .pb(px(TAIL))
-                            .flex()
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .ml(px(-source_offset))
-                                    .child(editor.clone()),
-                            ),
-                    ),
-            );
+            .child(page(&editor, wide, source_offset));
         Some(
             div()
                 .flex_1()
@@ -696,6 +698,59 @@ impl Cydonia {
                 .children(self.ribbon(on, window, cx))
                 .into_any_element(),
         )
+    }
+
+    /// The article listed at `at` in `project`, as a drawer draws it: the
+    /// document alone, scrolling in the box it is put in. The title is the
+    /// drawer's head row.
+    pub(crate) fn article_peek(
+        &self,
+        project: usize,
+        at: usize,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let article = self.workspace.read(cx).article_in(project, at)?;
+        let editor = article.editor.clone()?;
+        let wide = article.wide(self.workspace.read(cx).wide_pages);
+        let scroll = article.scroll.clone();
+        let source_offset = source_offset(editor.read(cx), cx);
+        Some(
+            div()
+                .relative()
+                .flex_1()
+                .min_h_0()
+                .flex()
+                .flex_col()
+                .child(
+                    div()
+                        .id("article-peek")
+                        .flex_1()
+                        .min_h_0()
+                        .w_full()
+                        .map(|el| scrollbars::scrolls(el, scrollbars::Axes::Vertical))
+                        .track_scroll(&scroll)
+                        .flex()
+                        .flex_col()
+                        .child(page(&editor, wide, source_offset)),
+                )
+                .child(scrollbars::Overlay::new(
+                    "article-peek-bar",
+                    &scroll,
+                    bezel::gpui::Axis::Vertical,
+                ))
+                .into_any_element(),
+        )
+    }
+
+    /// Whether a pane is drawing the article at `path`.
+    pub(crate) fn article_on_screen(&self, path: &Path, cx: &App) -> bool {
+        let workspace = self.workspace.read(cx);
+        self.leaves.iter().any(|leaf| {
+            leaf.pane == Pane::Article
+                && workspace
+                    .article_of(leaf.entry.as_ref())
+                    .is_some_and(|article| article.path == path)
+        })
     }
 
     /// The outline over the pane's bottom right: a dash per heading, longer
@@ -806,7 +861,7 @@ impl Cydonia {
                             markdown::Part::Body,
                             0,
                         ));
-                        editor.update(cx, |editor, cx| editor.select(at, cx));
+                        editor.update(cx, |editor, cx| editor.select_to_top(at, cx));
                         window.focus(&editor.focus_handle(cx), cx);
                     })
                 })

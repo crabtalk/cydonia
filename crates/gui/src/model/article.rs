@@ -29,7 +29,7 @@ use bezel::{
 use editor::{Editor, Mode};
 use markdown::AppExt as _;
 use std::{
-    cell::RefCell,
+    cell::{OnceCell, RefCell},
     ops::Range,
     path::{Path, PathBuf},
     rc::Rc,
@@ -54,6 +54,16 @@ pub const UNNAMED: &str = "Untitled";
 /// Claimed on the title field, so `enter` there moves to the body and stays a
 /// newline in every other field.
 pub const TITLE_CONTEXT: &str = "CydoniaArticleTitle";
+
+/// An article's markdown as it is on disk, and the bytes each of its blocks
+/// was parsed from — what a reference to part of it resolves against.
+#[derive(Default)]
+pub struct Disk {
+    pub text: String,
+    /// One per block, in order, partitioning `text` — see
+    /// [`markdown::ParsedDoc::block_ranges`].
+    pub blocks: Vec<Range<usize>>,
+}
 
 pub struct Article {
     pub number: Option<u64>,
@@ -90,6 +100,9 @@ pub struct Article {
     /// What is on disk. The editor notifies on caret moves too, so without
     /// this every arrow key would rewrite the file.
     saved: String,
+    /// [`Disk`], filled when first asked for and emptied whenever what is on
+    /// disk changes.
+    disk: OnceCell<Rc<Disk>>,
     /// When the document was last written. Held rather than read back per
     /// frame: the sidebar orders on it, and a project of a thousand articles
     /// would be a thousand `stat` calls a frame.
@@ -129,6 +142,7 @@ impl Article {
             reading: Rc::default(),
             mode: Mode::default(),
             saved: String::new(),
+            disk: OnceCell::new(),
             stale: false,
         }
     }
@@ -227,6 +241,7 @@ impl Article {
         .detach();
 
         self.saved = self.store.read_article(&self.id).unwrap_or_default();
+        self.disk = OnceCell::new();
         let scroll = self.scroll.clone();
         let dir = self
             .path
@@ -299,6 +314,7 @@ impl Article {
             let source = editor.read(cx).source();
             if self.saved != source && self.store.write_article(&self.id, &source).is_ok() {
                 self.saved = source;
+                self.disk = OnceCell::new();
                 self.touched = artifact::stamp::now();
                 // The buffer is the file again, whatever landed under it while
                 // it was not — typing on is the third answer to the notice, and
@@ -335,6 +351,7 @@ impl Article {
         // is where it came from.
         if self.editor.is_none() {
             self.title = fresh.title.clone();
+            self.disk = OnceCell::new();
             return false;
         }
         // The echo of our own write, which every save produces. `saved` is what
@@ -380,6 +397,21 @@ impl Article {
         self.pictures = None;
         self.open(text_size, cx);
         self.stale = false;
+    }
+
+    /// The markdown on disk and its blocks: what this process last wrote for an
+    /// open article, and a read of the file for one never opened.
+    pub fn disk(&self) -> Rc<Disk> {
+        self.disk
+            .get_or_init(|| {
+                let text = match self.editor {
+                    Some(_) => self.saved.clone(),
+                    None => self.store.read_article(&self.id).unwrap_or_default(),
+                };
+                let blocks = markdown::parse_ranges(&text).block_ranges;
+                Rc::new(Disk { text, blocks })
+            })
+            .clone()
     }
 
     /// Whether either surface holds something the disk does not. The title is

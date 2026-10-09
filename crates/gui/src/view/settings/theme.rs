@@ -1,6 +1,9 @@
 //! The appearance section: which of the three modes the app paints in.
 
-use crate::model::settings::{Highlight, Paint};
+use crate::model::{
+    settings::{Highlight, Paint},
+    themes,
+};
 use crate::{
     model::workspace::Workspace,
     view::settings::{self, SettingsWindow, Switch},
@@ -9,8 +12,11 @@ use artifact::board::View;
 use bezel::theme::AppExt as _;
 use bezel::ui::color::Swatch;
 use bezel::{
-    gpui::{AnyElement, Context, DragMoveEvent, Empty, div, prelude::*, px},
-    theme::{TextStyle, Theme, Tint, Typeset, appearance::AppearanceMode},
+    gpui::{
+        AnyElement, Context, DragMoveEvent, Empty, Entity, FontWeight, Hsla, div, prelude::*, px,
+    },
+    theme::{TextStyle, Theme, ThemeFamily, Tint, Typeset, appearance::AppearanceMode},
+    ui::combobox::{Combobox, ComboboxEvent},
     ui::widgets::{self, Controls, Scaffolding, SliderDrag},
 };
 
@@ -23,6 +29,9 @@ const HUE_MAX: f32 = 360.;
 
 /// How wide a slider sits in its row.
 const SLIDER_WIDTH: f32 = 160.;
+
+/// The picker's name for bezel's own palette.
+const DEFAULT_THEME: &str = "Default";
 
 const MODES: [AppearanceMode; 3] = [
     AppearanceMode::System,
@@ -41,7 +50,12 @@ impl SettingsWindow {
             .flex()
             .flex_col()
             .gap(px(settings::GROUP_GAP))
-            .child(theme.group_box().child(self.theme_row(cx)))
+            .child(
+                theme
+                    .group_box()
+                    .child(self.theme_row(cx))
+                    .child(self.theme_family_row(cx)),
+            )
             .child(self.colors_group(cx))
             .child(self.typography_group(cx))
             .child(self.families_group(cx))
@@ -110,9 +124,86 @@ impl SettingsWindow {
             )
     }
 
+    /// The bundled theme families, `Default` first for bezel's own palette.
+    pub(super) fn theme_family_picker(
+        current: Option<&'static ThemeFamily>,
+        cx: &mut Context<Self>,
+    ) -> Entity<Combobox> {
+        let families = themes::all();
+        let items = std::iter::once(DEFAULT_THEME.into())
+            .chain(families.iter().map(|family| family.name.clone().into()))
+            .collect();
+        let selected = current
+            .and_then(|current| {
+                families
+                    .iter()
+                    .position(|family| family.name == current.name)
+            })
+            .map_or(0, |ix| ix + 1);
+        let combobox = cx.new(|cx| {
+            Combobox::new(items, DEFAULT_THEME, cx)
+                .with_selection(selected)
+                .with_leading(|item, theme| {
+                    let appearance = theme.appearance;
+                    let shipped = Theme::for_appearance(appearance);
+                    let (bg, ink) = match item.checked_sub(1).and_then(|ix| themes::all().get(ix)) {
+                        Some(family) => {
+                            let variant = family.variant(appearance);
+                            (
+                                variant.get("bg").unwrap_or(shipped.bg),
+                                variant.get("accent").unwrap_or(shipped.accent),
+                            )
+                        }
+                        None => (shipped.bg, shipped.text.alpha(1.)),
+                    };
+                    theme_swatch(theme, bg, ink)
+                })
+        });
+        cx.subscribe(&combobox, |this: &mut Self, _, event, cx| {
+            let ComboboxEvent::Selected(item) = event;
+            let name = item
+                .checked_sub(1)
+                .and_then(|ix| themes::all().get(ix))
+                .map(|family| family.name.clone());
+            this.workspace
+                .update(cx, |workspace, cx| workspace.set_theme(name, cx));
+            cx.notify();
+        })
+        .detach();
+        combobox
+    }
+
+    fn theme_family_row(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let theme = Theme::of(cx).clone();
+        theme
+            .card_row(false)
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .child(theme.row_title("Color theme"))
+                    .child(
+                        div()
+                            .mt(px(4.))
+                            .text_style(TextStyle::Subheadline)
+                            .text_color(theme.text_muted)
+                            .child("Each has a light and a dark variant."),
+                    ),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .w(px(220.))
+                    .child(self.theme_family.clone()),
+            )
+    }
+
     /// What the greys are mixed from, and whether they are see-through.
     fn colors_group(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
+        let themed = self.workspace.read(cx).themed();
         div()
             .flex()
             .flex_col()
@@ -123,8 +214,9 @@ impl SettingsWindow {
                     .group_box()
                     .children(self.vibrancy_row(cx))
                     .children(self.blur_row(cx))
-                    .child(self.hue_row(cx))
-                    .child(self.intensity_row(cx)),
+                    .when(!themed, |group| {
+                        group.child(self.hue_row(cx)).child(self.intensity_row(cx))
+                    }),
             )
             .into_any_element()
     }
@@ -941,3 +1033,23 @@ impl SettingsWindow {
 
 /// Swatches a row of the colour popover holds.
 const SWATCH_COLUMNS: usize = 6;
+
+/// A theme family's face in the picker: "Aa" in its accent on its background,
+/// as the variant for the appearance being painted.
+fn theme_swatch(theme: &Theme, bg: Hsla, ink: Hsla) -> AnyElement {
+    div()
+        .flex_none()
+        .size(px(20.))
+        .rounded_full()
+        .border_1()
+        .border_color(theme.border)
+        .bg(bg)
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_style(TextStyle::Caption2)
+        .font_weight(FontWeight::SEMIBOLD)
+        .text_color(ink)
+        .child("Aa")
+        .into_any_element()
+}

@@ -1515,7 +1515,7 @@ impl Cydonia {
             .child(inner)
     }
 
-    /// What the row is called, for the ghost that follows the pointer.
+    /// What the row is called.
     pub(crate) fn label_of_row(&self, row: &Row, cx: &App) -> String {
         let workspace = self.workspace.read(cx);
         let named = || -> Option<String> {

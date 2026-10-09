@@ -4,7 +4,10 @@
 //! The drawer is the pane's, held on its [`crate::view::leaf::Leaf`]; what it
 //! holds is a [`Peek`].
 
-use crate::view::{board::OpenCard, entry_link::load_history, root::Cydonia, sidebar::Row};
+use crate::{
+    model::workspace::{Showing, references::Part},
+    view::{board::OpenCard, entry_link::load_history, root::Cydonia, sidebar::Row},
+};
 use artifact::space::Member;
 use bezel::{
     gpui::{
@@ -156,21 +159,27 @@ pub(crate) struct Face {
 }
 
 impl Cydonia {
-    /// The drawer `on` shows. A card drawer shows only over the board it is
-    /// on, `board` being the board the pane shows as `(project, index)`.
-    pub(crate) fn drawer_shown(
-        &self,
-        on: Option<&Member>,
-        board: Option<(usize, usize)>,
-        cx: &App,
-    ) -> Option<&Drawer> {
+    /// The drawer `on` shows. A card drawer shows while its card is on its
+    /// board or still being written.
+    pub(crate) fn drawer_shown(&self, on: Option<&Member>, cx: &App) -> Option<&Drawer> {
         let drawer = self.leaf_of(on).drawer.as_ref()?;
         match &drawer.peek {
             Peek::Entry(_) => Some(drawer),
-            Peek::Card(_) => {
-                let (project, at) = board?;
+            Peek::Card(card) => {
+                let (project, at) = self.card_board(card, cx)?;
                 self.drawer_for(project, at, on, cx)
             }
+        }
+    }
+
+    /// Where the board a drawer's card is on is listed, as `(project, index)`.
+    fn card_board(&self, card: &OpenCard, cx: &App) -> Option<(usize, usize)> {
+        let workspace = self.workspace.read(cx);
+        match workspace.showing_of(&card.board)? {
+            (project, Showing::Board(id)) => {
+                Some((project, workspace.projects[project].board_ix(&id)?))
+            }
+            _ => None,
         }
     }
 
@@ -196,7 +205,7 @@ impl Cydonia {
     }
 
     /// Open the entry `reference` names in `on`'s drawer, or put the drawer
-    /// away where it already shows it.
+    /// away where it already shows it. A card opens as its board opens it.
     pub(crate) fn peek(
         &mut self,
         on: Option<&Member>,
@@ -207,6 +216,15 @@ impl Cydonia {
         let Ok(named) = self.named(reference, cx) else {
             return;
         };
+        if let Some(Part::Card(card)) = &named.part {
+            let board = self
+                .located(&named.row, cx)
+                .and_then(|(project, at)| self.workspace.read(cx).board_member(project, at));
+            if let Some(board) = board {
+                self.open_card(on, board, card.id.clone(), window, cx);
+            }
+            return;
+        }
         if self
             .leaf_of(on)
             .drawer
@@ -216,13 +234,36 @@ impl Cydonia {
         {
             return self.close_drawer(on, window, cx);
         }
-        if let Row::Entry {
-            showing: crate::model::workspace::Showing::Session(id),
-            ..
-        } = named.row
-        {
-            self.workspace
-                .update(cx, |workspace, _| load_history(workspace, id));
+        match &named.row {
+            Row::Entry {
+                showing: Showing::Session(id),
+                ..
+            } => {
+                let id = *id;
+                self.workspace
+                    .update(cx, |workspace, _| load_history(workspace, id));
+            }
+            Row::Entry {
+                showing: Showing::Article(_),
+                ..
+            } => {
+                let Some((project, ix)) = self.located(&named.row, cx) else {
+                    return;
+                };
+                // One editor, drawn in one place: an article a pane already
+                // shows is the pane's.
+                let shown = self
+                    .workspace
+                    .read(cx)
+                    .article_in(project, ix)
+                    .is_some_and(|article| self.article_on_screen(&article.path, cx));
+                if shown {
+                    return self.open_row(&named.row, window, cx);
+                }
+                self.workspace
+                    .update(cx, |workspace, cx| workspace.load_article(project, ix, cx));
+            }
+            _ => {}
         }
         let size = self.leaf_of(on).drawer.as_ref().map(|drawer| drawer.size);
         self.drop_drawer(on, cx);
@@ -278,19 +319,18 @@ impl Cydonia {
     pub(crate) fn drawer_layer(
         &mut self,
         on: Option<&Member>,
-        board: Option<(usize, usize)>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
-        let Some(drawer) = self.drawer_shown(on, board, cx) else {
+        let Some(drawer) = self.drawer_shown(on, cx) else {
             return Vec::new();
         };
         let pane_bounds = drawer.pane_bounds.clone();
         let grab = drawer.resize_grab;
         let face = match &drawer.peek {
-            Peek::Card(_) => {
-                board.and_then(|(project, at)| self.card_face(project, at, on, window, cx))
-            }
+            Peek::Card(card) => self
+                .card_board(card, cx)
+                .and_then(|(project, at)| self.card_face(project, at, on, window, cx)),
             Peek::Entry(entry) => {
                 let (reference, list) = (entry.reference.clone(), entry.list.clone());
                 Some(self.entry_face(&reference, &list, window, cx))
@@ -580,7 +620,8 @@ impl Cydonia {
     }
 
     /// What the drawer draws for an entry a link names: a session live or a
-    /// run of its turns, or an article's or a board's row.
+    /// run of its turns, an article's document or part of it, or a board's
+    /// row.
     fn entry_face(
         &mut self,
         text: &str,
@@ -609,7 +650,7 @@ impl Cydonia {
         };
         let session = match &named.row {
             Row::Entry {
-                showing: crate::model::workspace::Showing::Session(id),
+                showing: Showing::Session(id),
                 ..
             } => Some(*id),
             _ => None,
@@ -632,8 +673,8 @@ impl Cydonia {
                 .child(format!("#{}", named.number))
                 .into_any_element(),
         ];
-        let (body, open): (AnyElement, OpenIn) = match (session, named.turns) {
-            (Some(id), None) => (
+        let (body, open): (AnyElement, OpenIn) = match (session, named.part.clone()) {
+            (Some(id), None | Some(Part::Passage(_) | Part::Card(_))) => (
                 self.session_transcript(id, Some(list), window, cx),
                 Rc::new(
                     move |this: &mut Self, window: &mut Window, cx: &mut Context<Self>| {
@@ -641,7 +682,7 @@ impl Cydonia {
                     },
                 ),
             ),
-            (Some(id), Some(turns)) => {
+            (Some(id), Some(Part::Turns(turns))) => {
                 let from = turns.from.saturating_sub(1) as usize;
                 (
                     self.excerpt_body(id, turns, None, window, cx),
@@ -655,10 +696,37 @@ impl Cydonia {
                     ),
                 )
             }
+            (None, Some(Part::Passage(passage))) => {
+                let row = named.row.clone();
+                let block = passage.blocks.start;
+                (
+                    self.passage_body(&row, &passage, None, window, cx),
+                    Rc::new(
+                        move |this: &mut Self, window: &mut Window, cx: &mut Context<Self>| {
+                            this.open_passage(&row, block, window, cx)
+                        },
+                    ),
+                )
+            }
             (None, _) => {
                 let row = named.row.clone();
+                let article = match &row {
+                    Row::Entry {
+                        showing: Showing::Article(_),
+                        ..
+                    } => self.located(&row, cx).filter(|&(project, at)| {
+                        self.workspace
+                            .read(cx)
+                            .article_in(project, at)
+                            .is_some_and(|article| !self.article_on_screen(&article.path, cx))
+                    }),
+                    _ => None,
+                };
+                let body = article
+                    .and_then(|(project, at)| self.article_peek(project, at, cx))
+                    .unwrap_or_else(|| self.entry_row(named, cx));
                 (
-                    self.entry_row(named, cx),
+                    body,
                     Rc::new(
                         move |this: &mut Self, window: &mut Window, cx: &mut Context<Self>| {
                             this.open_row(&row, window, cx)
