@@ -51,7 +51,7 @@ fn x(page: &gpui::Entity<Page>, part: Part, cx: &mut VisualTestContext) -> gpui:
     cx.update(|_, cx| {
         page.read(cx)
             .layouts
-            .position(Cursor::new(0, part, 0))
+            .position(Cursor::new(0, part, 0), markdown::Affinity::Downstream)
             .unwrap()
             .0
             .x

@@ -946,7 +946,7 @@ impl Render for FileView {
                                         let span = this
                                             .preview_layouts
                                             .hit(event.position)
-                                            .map(|cursor| cursor.span(unit, &doc));
+                                            .map(|(cursor, _)| cursor.span(unit, &doc));
                                         this.preview_selection = span.clone().map(|span| {
                                             markdown::Selection::new(span.start, span.end)
                                         });
@@ -959,7 +959,7 @@ impl Render for FileView {
                                 let doc = doc.clone();
                                 move |this, event: &gpui::MouseMoveEvent, _, cx| {
                                     if let Some((unit, pressed)) = this.preview_pressed.clone()
-                                        && let Some(cursor) =
+                                        && let Some((cursor, _)) =
                                             this.preview_layouts.hit(event.position)
                                     {
                                         let (anchor, head) =

@@ -296,7 +296,7 @@ impl State {
         self.list.state.scroll_by(px(step));
         if let (Some((ix, _)), Some(doc), Some(drag)) =
             (self.selection, self.pressed_doc.clone(), self.drag)
-            && let Some(cursor) = self.layouts(ix).hit(drag)
+            && let Some((cursor, _)) = self.layouts(ix).hit(drag)
         {
             self.point(ix, Pointer::Move(cursor), &doc);
         }
@@ -563,7 +563,7 @@ fn prose(
                         return;
                     }
                 }
-                let Some(cursor) = layouts.hit(event.position) else {
+                let Some((cursor, _)) = layouts.hit(event.position) else {
                     return;
                 };
                 let Some(text) = doc
