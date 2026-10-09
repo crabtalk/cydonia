@@ -65,6 +65,19 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Give an article its editor without picking it, for a drawer that shows
+    /// it over another entry's pane.
+    pub fn load_article(&mut self, project: usize, ix: usize, cx: &mut Context<Self>) {
+        let text_size = self.article_font_size();
+        if let Some(article) = self
+            .projects
+            .get_mut(project)
+            .and_then(|open| open.articles.get_mut(ix))
+        {
+            article.open(text_size, cx);
+        }
+    }
+
     /// Move an article, its folder and assets with it, into another open
     /// project. Its buffer is written first, so what moves is what is on
     /// screen. Both projects are read again afterwards.

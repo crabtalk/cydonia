@@ -4,7 +4,10 @@
 //! The drawer is the pane's, held on its [`crate::view::leaf::Leaf`]; what it
 //! holds is a [`Peek`].
 
-use crate::view::{board::OpenCard, entry_link::load_history, root::Cydonia, sidebar::Row};
+use crate::{
+    model::workspace::Showing,
+    view::{board::OpenCard, entry_link::load_history, root::Cydonia, sidebar::Row},
+};
 use artifact::space::Member;
 use bezel::{
     gpui::{
@@ -216,13 +219,36 @@ impl Cydonia {
         {
             return self.close_drawer(on, window, cx);
         }
-        if let Row::Entry {
-            showing: crate::model::workspace::Showing::Session(id),
-            ..
-        } = named.row
-        {
-            self.workspace
-                .update(cx, |workspace, _| load_history(workspace, id));
+        match &named.row {
+            Row::Entry {
+                showing: Showing::Session(id),
+                ..
+            } => {
+                let id = *id;
+                self.workspace
+                    .update(cx, |workspace, _| load_history(workspace, id));
+            }
+            Row::Entry {
+                showing: Showing::Article(_),
+                ..
+            } => {
+                let Some((project, ix)) = self.located(&named.row, cx) else {
+                    return;
+                };
+                // One editor, drawn in one place: an article a pane already
+                // shows is the pane's.
+                let shown = self
+                    .workspace
+                    .read(cx)
+                    .article_in(project, ix)
+                    .is_some_and(|article| self.article_on_screen(&article.path, cx));
+                if shown {
+                    return self.open_row(&named.row, window, cx);
+                }
+                self.workspace
+                    .update(cx, |workspace, cx| workspace.load_article(project, ix, cx));
+            }
+            _ => {}
         }
         let size = self.leaf_of(on).drawer.as_ref().map(|drawer| drawer.size);
         self.drop_drawer(on, cx);
@@ -580,7 +606,7 @@ impl Cydonia {
     }
 
     /// What the drawer draws for an entry a link names: a session live or a
-    /// run of its turns, or an article's or a board's row.
+    /// run of its turns, an article's document, or a board's row.
     fn entry_face(
         &mut self,
         text: &str,
@@ -609,7 +635,7 @@ impl Cydonia {
         };
         let session = match &named.row {
             Row::Entry {
-                showing: crate::model::workspace::Showing::Session(id),
+                showing: Showing::Session(id),
                 ..
             } => Some(*id),
             _ => None,
@@ -657,8 +683,23 @@ impl Cydonia {
             }
             (None, _) => {
                 let row = named.row.clone();
+                let article = match &row {
+                    Row::Entry {
+                        showing: Showing::Article(_),
+                        ..
+                    } => self.located(&row, cx).filter(|&(project, at)| {
+                        self.workspace
+                            .read(cx)
+                            .article_in(project, at)
+                            .is_some_and(|article| !self.article_on_screen(&article.path, cx))
+                    }),
+                    _ => None,
+                };
+                let body = article
+                    .and_then(|(project, at)| self.article_peek(project, at, cx))
+                    .unwrap_or_else(|| self.entry_row(named, cx));
                 (
-                    self.entry_row(named, cx),
+                    body,
                     Rc::new(
                         move |this: &mut Self, window: &mut Window, cx: &mut Context<Self>| {
                             this.open_row(&row, window, cx)
