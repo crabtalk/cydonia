@@ -806,7 +806,7 @@ impl Cydonia {
                             markdown::Part::Body,
                             0,
                         ));
-                        editor.update(cx, |editor, cx| editor.select(at, cx));
+                        editor.update(cx, |editor, cx| editor.select_to_top(at, cx));
                         window.focus(&editor.focus_handle(cx), cx);
                     })
                 })
