@@ -255,16 +255,6 @@ impl Cydonia {
                 }),
             _ => None,
         };
-        let board = match &showing {
-            Some((project, Showing::Board(id))) => self
-                .workspace
-                .read(cx)
-                .projects
-                .get(*project)
-                .and_then(|open| open.board_ix(id))
-                .map(|at| (*project, at)),
-            _ => None,
-        };
         let session = match &showing {
             Some((_, Showing::Session(_))) => self
                 .leaves
@@ -273,7 +263,7 @@ impl Cydonia {
                 .map(|leaf| leaf.composer.clone()),
             _ => None,
         };
-        let drawer = self.drawer_layer(Some(&front), board, window, cx);
+        let drawer = self.drawer_layer(Some(&front), window, cx);
         let pane = div()
             .id(SharedString::from(format!("pane-{key}")))
             // With the context but without this, a pane claims chords that

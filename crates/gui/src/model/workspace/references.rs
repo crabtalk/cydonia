@@ -27,6 +27,8 @@ pub struct Resolved {
 pub enum Part {
     /// A run of a session's turns.
     Turns(Span),
+    /// One of a board's cards.
+    Card(Card),
     /// The blocks of an article a run of its lines or a heading's section
     /// covers.
     Passage(Passage),
@@ -41,6 +43,14 @@ pub struct Passage {
     pub disk: Rc<Disk>,
     /// What the reference named: `lines 5-7`, or the heading's text.
     pub label: String,
+}
+
+#[derive(Clone)]
+pub struct Card {
+    pub id: String,
+    /// `DEV-12`, as the board writes it.
+    pub handle: String,
+    pub text: String,
 }
 
 impl Passage {
@@ -66,11 +76,12 @@ impl Workspace {
         let Some(reference) = reference::parse(text) else {
             return Err(format!("{text} is not a reference"));
         };
-        let Target::Entry { number, within } = reference.target else {
-            return Err(format!("{text} is a card, not an entry"));
-        };
         let Some(project) = self.named_project(reference.project) else {
             return Err(format!("No open project for {text}"));
+        };
+        let (number, within) = match reference.target {
+            Target::Entry { number, within } => (number, within),
+            Target::Card { key, handle } => return card(project, key, handle, text),
         };
         let found = project
             .sessions
@@ -138,6 +149,43 @@ impl Workspace {
             None => self.active_project(),
         }
     }
+}
+
+/// The card `key-handle` names in `project`, as a part of its board. `text`
+/// is the reference, for the refusal.
+fn card(project: &Project, key: &str, handle: u64, text: &str) -> Result<Resolved, String> {
+    let Some(board) = project
+        .boards
+        .iter()
+        .find(|board| board.key.eq_ignore_ascii_case(key))
+    else {
+        return Err(format!("No board has the key {key}"));
+    };
+    let Some(found) = board
+        .columns
+        .iter()
+        .flat_map(|column| column.cards.iter())
+        .find(|card| card.handle == Some(handle))
+    else {
+        return Err(format!("Nothing is {text}"));
+    };
+    let Some(number) = board.number else {
+        return Err(format!("{text} is on a board with no number"));
+    };
+    Ok(Resolved {
+        project: project.path.clone(),
+        showing: Showing::Board(board.id.clone()),
+        kind: Kind::Board,
+        number,
+        part: Some(Part::Card(Card {
+            id: found.id.clone(),
+            handle: board
+                .handle_of(found)
+                .unwrap_or_else(|| format!("{key}-{handle}")),
+            text: found.text.clone(),
+        })),
+        title: board.name.clone(),
+    })
 }
 
 /// The blocks of `disk` a span of lines or a heading names. `text` is the

@@ -319,8 +319,8 @@ fn by_prefix(
 
 /// What a chip linking an entry paints: its title, and its kind's mark. A
 /// run of a session's turns adds the run, and part of an article the lines or
-/// the heading. A link naming no entry paints the
-/// reference and the app's mark.
+/// the heading. A card paints its own title and handle. A link naming no entry
+/// paints the reference and the app's mark.
 pub(crate) fn preview(url: &str, cx: &App) -> Option<Preview> {
     let reference = url.strip_prefix(crate::view::entry_link::SCHEME)?;
     let Some(resolved) = crate::model::workspace::references::resolve_in(reference, cx) else {
@@ -340,6 +340,11 @@ pub(crate) fn preview(url: &str, cx: &App) -> Option<Preview> {
         Some(Part::Turns(turns)) if turns.from == turns.to => format!("{title} · turn {turns}"),
         Some(Part::Turns(turns)) => format!("{title} · turns {turns}"),
         Some(Part::Passage(passage)) => format!("{title} · {}", passage.label),
+        Some(Part::Card(card)) => format!(
+            "{} · {}",
+            crate::view::board::card_title(&card.text),
+            card.handle
+        ),
         None => title,
     };
     Some(Preview {

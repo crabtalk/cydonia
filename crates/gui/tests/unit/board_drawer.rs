@@ -27,7 +27,7 @@ impl Render for BoardView {
         let (board, drawer) = self.0.update(cx, |root, cx| {
             (
                 root.board(0, 0, None, window, cx),
-                root.drawer_layer(None, Some((0, 0)), window, cx),
+                root.drawer_layer(None, window, cx),
             )
         });
         div().size_full().flex().flex_col().child(

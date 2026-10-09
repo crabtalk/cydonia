@@ -159,21 +159,27 @@ pub(crate) struct Face {
 }
 
 impl Cydonia {
-    /// The drawer `on` shows. A card drawer shows only over the board it is
-    /// on, `board` being the board the pane shows as `(project, index)`.
-    pub(crate) fn drawer_shown(
-        &self,
-        on: Option<&Member>,
-        board: Option<(usize, usize)>,
-        cx: &App,
-    ) -> Option<&Drawer> {
+    /// The drawer `on` shows. A card drawer shows while its card is on its
+    /// board or still being written.
+    pub(crate) fn drawer_shown(&self, on: Option<&Member>, cx: &App) -> Option<&Drawer> {
         let drawer = self.leaf_of(on).drawer.as_ref()?;
         match &drawer.peek {
             Peek::Entry(_) => Some(drawer),
-            Peek::Card(_) => {
-                let (project, at) = board?;
+            Peek::Card(card) => {
+                let (project, at) = self.card_board(card, cx)?;
                 self.drawer_for(project, at, on, cx)
             }
+        }
+    }
+
+    /// Where the board a drawer's card is on is listed, as `(project, index)`.
+    fn card_board(&self, card: &OpenCard, cx: &App) -> Option<(usize, usize)> {
+        let workspace = self.workspace.read(cx);
+        match workspace.showing_of(&card.board)? {
+            (project, Showing::Board(id)) => {
+                Some((project, workspace.projects[project].board_ix(&id)?))
+            }
+            _ => None,
         }
     }
 
@@ -199,7 +205,7 @@ impl Cydonia {
     }
 
     /// Open the entry `reference` names in `on`'s drawer, or put the drawer
-    /// away where it already shows it.
+    /// away where it already shows it. A card opens as its board opens it.
     pub(crate) fn peek(
         &mut self,
         on: Option<&Member>,
@@ -210,6 +216,15 @@ impl Cydonia {
         let Ok(named) = self.named(reference, cx) else {
             return;
         };
+        if let Some(Part::Card(card)) = &named.part {
+            let board = self
+                .located(&named.row, cx)
+                .and_then(|(project, at)| self.workspace.read(cx).board_member(project, at));
+            if let Some(board) = board {
+                self.open_card(on, board, card.id.clone(), window, cx);
+            }
+            return;
+        }
         if self
             .leaf_of(on)
             .drawer
@@ -304,19 +319,18 @@ impl Cydonia {
     pub(crate) fn drawer_layer(
         &mut self,
         on: Option<&Member>,
-        board: Option<(usize, usize)>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
-        let Some(drawer) = self.drawer_shown(on, board, cx) else {
+        let Some(drawer) = self.drawer_shown(on, cx) else {
             return Vec::new();
         };
         let pane_bounds = drawer.pane_bounds.clone();
         let grab = drawer.resize_grab;
         let face = match &drawer.peek {
-            Peek::Card(_) => {
-                board.and_then(|(project, at)| self.card_face(project, at, on, window, cx))
-            }
+            Peek::Card(card) => self
+                .card_board(card, cx)
+                .and_then(|(project, at)| self.card_face(project, at, on, window, cx)),
             Peek::Entry(entry) => {
                 let (reference, list) = (entry.reference.clone(), entry.list.clone());
                 Some(self.entry_face(&reference, &list, window, cx))
@@ -660,7 +674,7 @@ impl Cydonia {
                 .into_any_element(),
         ];
         let (body, open): (AnyElement, OpenIn) = match (session, named.part.clone()) {
-            (Some(id), None | Some(Part::Passage(_))) => (
+            (Some(id), None | Some(Part::Passage(_) | Part::Card(_))) => (
                 self.session_transcript(id, Some(list), window, cx),
                 Rc::new(
                     move |this: &mut Self, window: &mut Window, cx: &mut Context<Self>| {

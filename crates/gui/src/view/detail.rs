@@ -751,18 +751,9 @@ impl Cydonia {
                 },
             );
         // The lone pane's drawer, under the band like the pane's body.
-        let lone_board = match showing {
-            Some(Pane::Board) if !arranged => {
-                let workspace = self.workspace.read(cx);
-                workspace
-                    .active
-                    .zip(workspace.active_project().and_then(|open| open.board))
-            }
-            _ => None,
-        };
         let drawer = match arranged {
             true => Vec::new(),
-            false => self.drawer_layer(None, lone_board, window, cx),
+            false => self.drawer_layer(None, window, cx),
         };
         let main = main
             .when(!arranged, |main| {

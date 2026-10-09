@@ -294,6 +294,16 @@ impl Cydonia {
                 height = stated;
                 self.article_excerpt(row, number, passage, stated, window, cx)
             }
+            Ok(Named {
+                row,
+                part: Some(Part::Card(card)),
+                ..
+            }) => self
+                .located(&row, cx)
+                .and_then(|(project, at)| {
+                    self.card_embed(project, at, &card.id, reference, window, cx)
+                })
+                .unwrap_or_else(|| div().into_any_element()),
             Ok(named) => self.entry_row(named, cx),
             Err(why) => div()
                 .p(px(12.))

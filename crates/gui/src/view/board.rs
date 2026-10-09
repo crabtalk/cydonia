@@ -39,7 +39,7 @@ use bezel::{
     },
 };
 use editor::{Editor, EditorEvent};
-use markdown::AppExt as _;
+use markdown::{AppExt as _, render::fence_band};
 use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
@@ -500,6 +500,11 @@ impl Docs {
         self.of(text);
         self.preview(text)
     }
+}
+
+/// The one line a card is listed under.
+pub(crate) fn card_title(text: &str) -> String {
+    list_title(&markdown::parse(text))
 }
 
 fn list_title(doc: &markdown::Doc) -> String {
@@ -1501,7 +1506,7 @@ impl Cydonia {
 
     // ── chrome ───────────────────────────────────────────────────
 
-    fn open_card(
+    pub(crate) fn open_card(
         &mut self,
         on: Option<&Member>,
         board: Member,
@@ -1580,17 +1585,6 @@ impl Cydonia {
             return None;
         }
         Some(drawer)
-    }
-
-    /// The drawer over the board at `board_at`, whatever it holds.
-    fn drawer_over(
-        &self,
-        project: usize,
-        board_at: usize,
-        on: Option<&Member>,
-        cx: &App,
-    ) -> Option<&Drawer> {
-        self.drawer_shown(on, Some((project, board_at)), cx)
     }
 
     fn draft_for(&self, on: Option<&Member>) -> Option<&CardDraft> {
@@ -1857,6 +1851,77 @@ impl Cydonia {
         })
     }
 
+    /// Card `id` of the board at `board_at`, as a link embeds it: its handle,
+    /// its board and its status over the lane's preview of its text. Pressing
+    /// it opens `reference`.
+    pub(crate) fn card_embed(
+        &self,
+        project: usize,
+        board_at: usize,
+        id: &str,
+        reference: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let theme = Theme::of(cx).clone();
+        let board = self.workspace.read(cx).board_in(project, board_at)?;
+        let card = board.card(id)?;
+        let handle = board.handle_of(card).unwrap_or_default();
+        let (name, board_id) = (board.name.clone(), board.id.clone());
+        let (text, status) = (card.text.clone(), card.status);
+        let (doc, shortened) = self.card_docs.preview(&text);
+        let base = self.card_base(project, &board_id, id, cx);
+        let overflow = window.use_keyed_state(
+            SharedString::from(format!("card-embed-overflow-{reference}")),
+            cx,
+            |_, _| false,
+        );
+        let reference = reference.to_owned();
+        Some(
+            div()
+                .id(SharedString::from(format!("card-embed-{reference}")))
+                .flex()
+                .flex_col()
+                .cursor_pointer()
+                .hover(|el| el.bg(theme.element_hover))
+                .child(
+                    fence_band(&theme)
+                        .gap(px(8.))
+                        .child(
+                            div()
+                                .flex_none()
+                                .text_style(TextStyle::Caption)
+                                .font_family(theme.font_mono.clone())
+                                .text_color(theme.text_muted)
+                                .child(handle),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .text_ellipsis()
+                                .text_style(TextStyle::Caption)
+                                .text_color(theme.text_faint)
+                                .child(name),
+                        )
+                        .children(resting(status).map(|status| status_chip(status, &theme))),
+                )
+                .child(div().p(px(12.)).child(card_preview(
+                    &doc,
+                    base.as_deref(),
+                    None,
+                    shortened,
+                    overflow,
+                    window,
+                    cx,
+                )))
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.open_reference(&reference, window, cx)
+                }))
+                .into_any_element(),
+        )
+    }
+
     /// The board, laid out the way the board says — see
     /// [`artifact::board::View`]. Everything either layout shares sits here:
     /// the pane's actions, and the aim a drag leaving every lane clears.
@@ -2031,7 +2096,7 @@ impl Cydonia {
                     bezel::gpui::Axis::Horizontal,
                 )
                 .when(
-                    self.drawer_over(project, board_at, on, cx)
+                    self.drawer_shown(on, cx)
                         .is_some_and(|drawer| drawer.resize_grab.is_some()),
                     |bar| bar.visibility(scrollbars::Visibility::Never),
                 ),
@@ -2177,7 +2242,7 @@ impl Cydonia {
                             .flex_col()
                             .pb(px(BOARD_INSET)
                                 + self
-                                    .drawer_over(project, board_at, on, cx)
+                                    .drawer_shown(on, cx)
                                     .map(|drawer| drawer.bounds.get().size.height)
                                     .unwrap_or_default())
                             .track_scroll(&scroll.down)
@@ -2218,7 +2283,7 @@ impl Cydonia {
                     bezel::gpui::Axis::Vertical,
                 )
                 .when(
-                    self.drawer_over(project, board_at, on, cx)
+                    self.drawer_shown(on, cx)
                         .is_some_and(|drawer| drawer.resize_grab.is_some()),
                     |bar| bar.visibility(scrollbars::Visibility::Never),
                 ),
@@ -2847,7 +2912,7 @@ impl Cydonia {
             rows.push(LaneRow::Add);
         }
         let clearance = self
-            .drawer_over(project, board_at, on, cx)
+            .drawer_shown(on, cx)
             .map(|drawer| drawer.bounds.get().size.height)
             .unwrap_or_default();
         // The foot of the scroll, where `Add a card` sits: each row carries
@@ -2932,7 +2997,7 @@ impl Cydonia {
                         // Centres bezel's 4px thumb in the lane's channel.
                         .margin((LANE_CHANNEL - px(4.)) * 0.5)
                         .when(
-                            self.drawer_over(project, board_at, on, cx)
+                            self.drawer_shown(on, cx)
                                 .is_some_and(|drawer| drawer.resize_grab.is_some()),
                             |bar| bar.visibility(scrollbars::Visibility::Never),
                         ),
