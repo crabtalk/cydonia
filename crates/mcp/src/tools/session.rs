@@ -7,7 +7,7 @@ use crate::{
 };
 use artifact::{
     project::{Project as _, fs},
-    reference::{self, Reference, Target, Turns},
+    reference::{self, Reference, Span, Target, Within},
     search::{self, Block, Kind, Query},
     session::{
         chat::{self, ChatItem, ToolStatus},
@@ -295,7 +295,7 @@ struct Found {
     number: u64,
     title: String,
     record: Record,
-    turns: Option<Turns>,
+    turns: Option<Span>,
 }
 
 /// The session `named` refers to, in whichever project it names.
@@ -306,13 +306,22 @@ fn found(args: &Args<'_>, named: &str) -> Result<Found, Trouble> {
         ))
     })?;
     let Reference {
-        target: Target::Entry { number, turns },
+        target: Target::Entry { number, within },
         ..
     } = reference
     else {
         return Err(Trouble::Refused(format!(
             "{named} is a card, not a session"
         )));
+    };
+    let turns = match within {
+        None => None,
+        Some(Within::Span(turns)) => Some(turns),
+        Some(Within::Heading(_)) => {
+            return Err(Trouble::Invalid(format!(
+                "{named} names a heading, which only an article has"
+            )));
+        }
     };
     let project = project_of(args, &reference)?;
     // Resolved through the registry alone: listing the project's entries would
@@ -349,7 +358,7 @@ fn read(args: Args<'_>) -> Outcome {
             found.number, found.title
         )));
     }
-    let run = asked.unwrap_or(Turns {
+    let run = asked.unwrap_or(Span {
         from: count.saturating_sub(LATEST - 1).max(1),
         to: count,
     });
@@ -359,7 +368,7 @@ fn read(args: Args<'_>) -> Outcome {
             found.number, run.from
         )));
     }
-    let run = Turns {
+    let run = Span {
         from: run.from,
         to: run.to.min(count),
     };
@@ -422,12 +431,14 @@ fn rendered(item: &ChatItem, full: bool) -> Option<String> {
 }
 
 /// `5` or `5-7`, read the way a reference writes its turns.
-fn range(text: &str) -> Result<Turns, Trouble> {
+fn range(text: &str) -> Result<Span, Trouble> {
     match reference::parse(&format!("#1:{text}")) {
         Some(Reference {
-            target: Target::Entry {
-                turns: Some(turns), ..
-            },
+            target:
+                Target::Entry {
+                    within: Some(Within::Span(turns)),
+                    ..
+                },
             ..
         }) => Ok(turns),
         _ => Err(Trouble::Invalid(format!(

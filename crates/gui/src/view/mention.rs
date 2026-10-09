@@ -3,7 +3,7 @@
 //! chip of one paints: cydonia's mark and the title.
 
 use crate::{
-    model::workspace::{Showing, Workspace},
+    model::workspace::{Showing, Workspace, references::Part},
     view::{entry_link::link, search::kind_icon, sidebar::Row},
 };
 use artifact::{
@@ -318,7 +318,8 @@ fn by_prefix(
 }
 
 /// What a chip linking an entry paints: its title, and its kind's mark. A
-/// run of a session's turns adds the run. A link naming no entry paints the
+/// run of a session's turns adds the run, and part of an article the lines or
+/// the heading. A link naming no entry paints the
 /// reference and the app's mark.
 pub(crate) fn preview(url: &str, cx: &App) -> Option<Preview> {
     let reference = url.strip_prefix(crate::view::entry_link::SCHEME)?;
@@ -335,9 +336,10 @@ pub(crate) fn preview(url: &str, cx: &App) -> Option<Preview> {
         Kind::Board => "Untitled board",
     };
     let title = untitled(&resolved.title, fallback);
-    let title = match resolved.turns {
-        Some(turns) if turns.from == turns.to => format!("{title} · turn {turns}"),
-        Some(turns) => format!("{title} · turns {turns}"),
+    let title = match resolved.part {
+        Some(Part::Turns(turns)) if turns.from == turns.to => format!("{title} · turn {turns}"),
+        Some(Part::Turns(turns)) => format!("{title} · turns {turns}"),
+        Some(Part::Passage(passage)) => format!("{title} · {}", passage.label),
         None => title,
     };
     Some(Preview {

@@ -5,10 +5,15 @@
     "nightly": true,
     "summary": "Color themes: Ayu, Catppuccin, Dracula, Everforest, GitHub, Gruvbox, One, Solarized and Tokyo Night, each in light and dark.",
     "new": [
-      "Paint the app in a color theme from Settings › Appearance: Ayu, Catppuccin, Dracula, Everforest, GitHub, Gruvbox, One, Solarized or Tokyo Night, each following the light or dark mode, with code and terminal colours to match"
+      "Paint the app in a color theme from Settings › Appearance: Ayu, Catppuccin, Dracula, Everforest, GitHub, Gruvbox, One, Solarized or Tokyo Night, each following the light or dark mode, with code and terminal colours to match",
+      "Name part of an article in a reference: #12:5-7 for its lines and #12#setup for the section under a heading. It opens with that part at the top, embeds as those blocks, and article_read and project_read_entry read it alone"
     ],
     "changed": [
       "Hide the hue and intensity sliders while a color theme is picked"
+    ],
+    "fixed": [
+      "Put the heading an outline entry jumps to at the top of the pane, whether it was above or below",
+      "Follow a link to a heading in the same article instead of failing to open it"
     ]
   },
   {

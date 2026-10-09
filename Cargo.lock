@@ -2333,6 +2333,7 @@ dependencies = [
  "cacp",
  "dirs 6.0.0",
  "notify",
+ "pulldown-cmark",
  "regex",
  "rusqlite",
  "serde",

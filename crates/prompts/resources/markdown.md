@@ -149,7 +149,9 @@ the entry in the project shown. Spelled like a web link's forms:
 - `"chip"` paints inline as the entry's mark and title.
 - `"embed"` alone on a line is a card of the entry. A session's card is its
   transcript, read only; `cydonia://cydonia#43:5-7` shows turns 5 to 7 alone.
-  An article's or a board's card is its title, kind and number.
+  `cydonia://cydonia#12:5-7` shows lines 5 to 7 of article #12, and
+  `cydonia://cydonia#12#setup` the section under its heading whose anchor is
+  `setup`. A whole article's or a board's card is its title, kind and number.
 
 ## Supported formatting and limits
 

@@ -5,7 +5,7 @@
 //! holds is a [`Peek`].
 
 use crate::{
-    model::workspace::Showing,
+    model::workspace::{Showing, references::Part},
     view::{board::OpenCard, entry_link::load_history, root::Cydonia, sidebar::Row},
 };
 use artifact::space::Member;
@@ -606,7 +606,8 @@ impl Cydonia {
     }
 
     /// What the drawer draws for an entry a link names: a session live or a
-    /// run of its turns, an article's document, or a board's row.
+    /// run of its turns, an article's document or part of it, or a board's
+    /// row.
     fn entry_face(
         &mut self,
         text: &str,
@@ -658,8 +659,8 @@ impl Cydonia {
                 .child(format!("#{}", named.number))
                 .into_any_element(),
         ];
-        let (body, open): (AnyElement, OpenIn) = match (session, named.turns) {
-            (Some(id), None) => (
+        let (body, open): (AnyElement, OpenIn) = match (session, named.part.clone()) {
+            (Some(id), None | Some(Part::Passage(_))) => (
                 self.session_transcript(id, Some(list), window, cx),
                 Rc::new(
                     move |this: &mut Self, window: &mut Window, cx: &mut Context<Self>| {
@@ -667,7 +668,7 @@ impl Cydonia {
                     },
                 ),
             ),
-            (Some(id), Some(turns)) => {
+            (Some(id), Some(Part::Turns(turns))) => {
                 let from = turns.from.saturating_sub(1) as usize;
                 (
                     self.excerpt_body(id, turns, None, window, cx),
@@ -677,6 +678,18 @@ impl Cydonia {
                             if let Some(chat) = this.workspace.read(cx).session(id) {
                                 chat.transcript.reveal_turn(from);
                             }
+                        },
+                    ),
+                )
+            }
+            (None, Some(Part::Passage(passage))) => {
+                let row = named.row.clone();
+                let block = passage.blocks.start;
+                (
+                    self.passage_body(&row, &passage, None, window, cx),
+                    Rc::new(
+                        move |this: &mut Self, window: &mut Window, cx: &mut Context<Self>| {
+                            this.open_passage(&row, block, window, cx)
                         },
                     ),
                 )

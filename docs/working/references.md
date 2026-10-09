@@ -1,6 +1,6 @@
 ---
 title: References
-description: How to name an entry, a card, or a run of turns in a session, in this project or another.
+description: How to name an entry, a card, a run of turns in a session, or part of an article, in this project or another.
 ---
 
 A reference names something in a project in a short form that you and agents can both write.
@@ -12,6 +12,8 @@ A reference names something in a project in a short form that you and agents can
 | `#43` | Entry 43 in this project |
 | `#43:5` | Turn 5 of session #43 |
 | `#43:5-7` | Turns 5 to 7 of session #43 |
+| `#12:5-7` | Lines 5 to 7 of article #12 |
+| `#12#setup` | The section under the heading of article #12 whose anchor is `setup` |
 | `DEV-12` | Card DEV-12 in this project |
 | `cydonia#43` | Entry 43 in the project `cydonia` |
 | `cydonia#43:5-7` | Turns 5 to 7 of session #43 in the project `cydonia` |
@@ -61,6 +63,18 @@ A session is made of turns. Each turn begins with a message sent to the agent an
 - `:5-7` names turns 5, 6 and 7. Both ends are included.
 
 Turns can only be named on a session. `session_read` and `session_search` take and answer them — see [MCP](../agents/mcp.md).
+
+## Lines and headings
+
+On an article, `:5-7` names lines instead of turns, counted from 1 in its markdown as `article_read` answers it. A line range past the last line stops there.
+
+`#setup` after an article's number names a heading by its anchor, and the section under it: from the heading to the next heading at its level or above.
+
+- An anchor is the heading's text as GitHub writes it: lowercased, punctuation dropped except `-` and `_`, each space a `-`. `## Set up` has the anchor `set-up`, so `#12#set-up` names it.
+- A heading whose anchor an earlier heading already has gets `-1`, `-2` and so on.
+- Line numbers move when lines are added above them; an anchor moves only when its heading is renamed.
+
+Opening one shows the article with that part at the top of the pane. Lines and headings can only be named on an article. `article_read` and `project_read_entry` answer that part alone, with its line numbers.
 
 ## Other projects
 

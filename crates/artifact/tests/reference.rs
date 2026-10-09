@@ -1,13 +1,25 @@
 //! The written form of a reference.
 
-use cydonia_artifact::reference::{Partial, Prefix, Reference, Target, Turns, parse, partial};
+use cydonia_artifact::reference::{
+    Partial, Prefix, Reference, Span, Target, Within, parse, partial,
+};
 
 fn entry(project: Option<&str>, number: u64, turns: Option<(u64, u64)>) -> Option<Reference<'_>> {
     Some(Reference {
         project,
         target: Target::Entry {
             number,
-            turns: turns.map(|(from, to)| Turns { from, to }),
+            within: turns.map(|(from, to)| Within::Span(Span { from, to })),
+        },
+    })
+}
+
+fn heading<'a>(project: Option<&'a str>, number: u64, anchor: &'a str) -> Option<Reference<'a>> {
+    Some(Reference {
+        project,
+        target: Target::Entry {
+            number,
+            within: Some(Within::Heading(anchor)),
         },
     })
 }
@@ -34,6 +46,15 @@ fn every_form_in_the_spec_parses() {
     );
     assert_eq!(parse("cydonia://#43"), entry(None, 43, None));
     assert_eq!(parse("cydonia://resources/board"), None);
+    assert_eq!(parse("#12#setup"), heading(None, 12, "setup"));
+    assert_eq!(
+        parse("foo#12#set-up_2"),
+        heading(Some("foo"), 12, "set-up_2")
+    );
+    assert_eq!(
+        parse("cydonia://foo#12#café"),
+        heading(Some("foo"), 12, "café")
+    );
 }
 
 /// A key may end in a digit, so a handle splits at its last dash.
@@ -69,6 +90,12 @@ fn malformed_text_is_not_a_reference() {
         "a#b#43",
         "hello",
         "#+5",
+        "#12#",
+        "#12#Set up",
+        "#12#a:b",
+        "#12#a#b",
+        "#12:5#a",
+        "#DEV-12#a",
     ] {
         assert_eq!(parse(text), None, "{text:?}");
     }
@@ -76,8 +103,8 @@ fn malformed_text_is_not_a_reference() {
 
 #[test]
 fn a_run_writes_back_as_it_was_read() {
-    assert_eq!(Turns { from: 5, to: 5 }.to_string(), "5");
-    assert_eq!(Turns { from: 5, to: 7 }.to_string(), "5-7");
+    assert_eq!(Span { from: 5, to: 5 }.to_string(), "5");
+    assert_eq!(Span { from: 5, to: 7 }.to_string(), "5-7");
 }
 
 fn typed<'a>(project: Option<&'a str>, target: Prefix<'a>) -> Option<Partial<'a>> {

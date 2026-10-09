@@ -17,8 +17,9 @@ use crate::{
     tools::{PROJECT, fields, many, on_the_rail, root, session},
 };
 use artifact::{
-    article::{self, properties::Properties},
+    article::{self, anchor, properties::Properties},
     project::{Project as _, fs},
+    reference::{Span, Within},
     search::{self, Block, Kind, Query},
     stamp,
 };
@@ -118,7 +119,7 @@ pub static TOOLS: [Tool; 12] = [
     },
     Tool {
         name: "article_read",
-        description: "Read one article's markdown. The result includes two directories, relative to the project directory: assets_path, this article's own media directory, which holds its body images and its cover; and article_path, the article's folder. Filesystem access is needed to place a file in either.",
+        description: "Read one article's markdown, or part of it: #12:5-7 reads lines 5 to 7, and #12#setup the section under the heading whose anchor is setup (GitHub's: lowercased, punctuation dropped, spaces as -). A part answers its line numbers. The result includes two directories, relative to the project directory: assets_path, this article's own media directory, which holds its body images and its cover; and article_path, the article's folder. Filesystem access is needed to place a file in either.",
         schema: |bound| fields(bound, &[PROJECT, ARTICLE]),
         writes: false,
         deletes: false,
@@ -330,14 +331,23 @@ fn search(args: Args<'_>) -> Outcome {
 
 fn read(args: Args<'_>) -> Outcome {
     let project = root(&args)?;
-    let found = locate(project, args.text(ARTICLE)?)?;
+    let named = args.text(ARTICLE)?;
+    let (found, part) = located(project, named)?;
     let text = fs::Project::new(project)
         .read_article(&found.id)
         .map_err(|e| Trouble::Refused(format!("{} cannot be read — {e}", found.label())))?;
+    let (text, lines) = match part {
+        None => (text, None),
+        Some(part) => {
+            let (range, lines) = excerpt(&text, part, named)?;
+            (text[range].to_owned(), Some(lines))
+        }
+    };
     Ok(Answer::said(text).with(json!({
         "id": found.id,
         "number": found.number,
         "title": found.title,
+        "lines": lines.map(|lines| json!({ "from": lines.from, "to": lines.to })),
         "assets_path": within(project, &article::assets(&found.content)),
         "article_path": within(project, found.content.parent().unwrap_or(project)),
         "cover_path": article::cover::of(&found.content).map(|cover| within(project, &cover)),
@@ -759,16 +769,25 @@ fn articles(project: &Path) -> Vec<Held> {
 /// refused rather than guessed at — nothing stops two articles sharing one, and
 /// the caller is one `list_articles` away from the ids.
 fn locate(project: &Path, needle: &str) -> Result<Held, Trouble> {
+    match located(project, needle)? {
+        (_, Some(_)) => Err(super::whole(needle)),
+        (held, None) => Ok(held),
+    }
+}
+
+/// [`locate`], with the part of the article a reference names after its
+/// number.
+fn located<'a>(project: &Path, needle: &'a str) -> Result<(Held, Option<Within<'a>>), Trouble> {
     let mut held = articles(project);
-    if let Some(number) = super::number_in(project, needle)? {
+    if let Some((number, within)) = super::part_in(project, needle)? {
         return held
             .iter()
             .position(|article| article.number == Some(number))
-            .map(|at| held.swap_remove(at))
+            .map(|at| (held.swap_remove(at), within))
             .ok_or_else(|| Trouble::Refused(format!("no article {needle} in this project")));
     }
     if let Some(at) = held.iter().position(|article| article.id == needle) {
-        return Ok(held.swap_remove(at));
+        return Ok((held.swap_remove(at), None));
     }
     let titled: Vec<usize> = held
         .iter()
@@ -777,7 +796,7 @@ fn locate(project: &Path, needle: &str) -> Result<Held, Trouble> {
         .map(|(at, _)| at)
         .collect();
     match titled.as_slice() {
-        [at] => Ok(held.swap_remove(*at)),
+        [at] => Ok((held.swap_remove(*at), None)),
         [] => Err(Trouble::Refused(format!(
             "no article {needle} — this project has {}",
             titles(&held)
@@ -786,6 +805,40 @@ fn locate(project: &Path, needle: &str) -> Result<Held, Trouble> {
             "two articles are called {needle} — name the one you mean by its id"
         ))),
     }
+}
+
+/// The bytes of `markdown` a part names, and the lines they are. `named` is
+/// the reference, for the refusal.
+pub(crate) fn excerpt(
+    markdown: &str,
+    within: Within<'_>,
+    named: &str,
+) -> Result<(std::ops::Range<usize>, Span), Trouble> {
+    let range = match within {
+        Within::Span(span) => anchor::lines(markdown, span).ok_or_else(|| {
+            Trouble::Refused(format!(
+                "{named} starts past the article's last line, {}",
+                markdown.lines().count()
+            ))
+        })?,
+        Within::Heading(name) => match anchor::section(markdown, name) {
+            Some((_, range)) => range,
+            None => {
+                let anchors = anchor::headings(markdown)
+                    .into_iter()
+                    .map(|heading| heading.anchor)
+                    .collect::<Vec<_>>();
+                return Err(Trouble::Refused(match anchors.is_empty() {
+                    true => format!("{named} names a heading, and the article has none"),
+                    false => format!(
+                        "{named} names no heading — the article's are {}",
+                        anchors.join(", ")
+                    ),
+                }));
+            }
+        },
+    };
+    Ok((range.clone(), anchor::span_of(markdown, range)))
 }
 
 // ── rendering ────────────────────────────────────────────────────

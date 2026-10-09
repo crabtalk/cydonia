@@ -379,7 +379,7 @@ impl State {
 pub(crate) fn turn_link(chat: &ChatSession, from: usize, to: usize) -> Option<String> {
     let number = chat.number?;
     let name = chat.cwd.file_name()?.to_string_lossy();
-    let turns = artifact::reference::Turns {
+    let turns = artifact::reference::Span {
         from: from.min(to) as u64,
         to: from.max(to) as u64,
     };

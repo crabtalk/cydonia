@@ -55,6 +55,8 @@ Keys are unique within a project, not across projects. `board_search` takes a ke
 
 Eight tools take a list where they take one thing, so a turn that touches several is one call: `project_close` takes several paths, `article_move` several articles, and `board_add_card`, `board_add_column`, `board_remove_card`, `board_remove_column`, `board_move_card` and `board_set_card_status` several cards or columns. Everything else about the call stays singular — one destination, one column, one board. They are all or nothing: every name is resolved before anything is written, so a list with a typo in it changes nothing.
 
+`article_read` and `project_read_entry` take part of an article as well as the whole: `#12:5-7` answers lines 5 to 7, `#12#setup` the section under the heading whose anchor is `setup`, each with the lines it is — see [References](../working/references.md#lines-and-headings). The other article tools take a whole article and refuse a part.
+
 `session_read` and `session_search` take [references](../working/references.md), including a run of turns (`#43:5-7`) and a session in another open project (`cydonia#43`). `session_send` takes a session in the project the call is about (`#43`).
 
 - `session_send` queues a message as another session's next prompt, or starts a new session on a named agent with it. Nothing is waited for or answered back. A message sent from a session starts with `from #42:7`, the sender and the turn it was on.
