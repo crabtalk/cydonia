@@ -12,7 +12,8 @@
 
 ## Files under .cydonia/
 
-- Use Cydonia tools for managed artifacts under .cydonia/.
+- Read and change managed artifacts under .cydonia/ only through Cydonia tools. Never edit, move or delete their files directly.
+- A Cydonia tool that is not offered is switched off in Cydonia's settings. Do not do its work by other means; tell the user it is off.
 - Exception: agents with filesystem access may create an article's own assets/ directory and read or write media files there. Article read and creation results include assets_path, that directory relative to the project directory.
 - In assets/, use unique filenames and preserve existing files unless replacement or removal is requested.
 - This exception does not override read-only settings or filesystem permissions, and does not grant filesystem access to remote clients.

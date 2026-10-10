@@ -770,6 +770,10 @@ fn deleting_is_withheld_until_its_own_switch_is_on() {
         !names.iter().any(|name| name == "board_remove"),
         "and deleting is not: {names:?}"
     );
+    assert!(
+        !names.iter().any(|name| name == "board_remove_card"),
+        "a card is deleted as surely as a board: {names:?}"
+    );
 
     deletes.store(true, std::sync::atomic::Ordering::Relaxed);
     assert!(listed(&server).iter().any(|name| name == "board_remove"));

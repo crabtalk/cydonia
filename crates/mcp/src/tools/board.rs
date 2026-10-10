@@ -275,7 +275,7 @@ pub static TOOLS: [Tool; 16] = [
             schema
         },
         writes: true,
-        deletes: false,
+        deletes: true,
         call: remove_card,
     },
     Tool {
