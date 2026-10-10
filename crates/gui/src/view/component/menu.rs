@@ -77,6 +77,8 @@ pub(crate) enum Menu {
     Card(String),
     /// An article's outline, by the article's file — a space can show several.
     Outline(std::path::PathBuf),
+    /// An article's comments, by the article's file.
+    Comments(std::path::PathBuf),
 }
 
 /// One row of a menu, and what picking it does.

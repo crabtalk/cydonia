@@ -21,6 +21,8 @@ pub mod files;
 
 pub mod divider;
 
+pub mod margin;
+
 pub mod status;
 
 mod image_preview;

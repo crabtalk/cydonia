@@ -14,7 +14,7 @@ pub mod layout;
 pub mod memory;
 
 use crate::{
-    article::{Article, properties::Properties},
+    article::{Article, comments::Comments, properties::Properties},
     board::Board,
     session::record::Record,
 };
@@ -107,7 +107,16 @@ pub trait Project {
     /// An article's markdown.
     fn read_article(&self, id: &str) -> Result<String>;
 
+    /// Write an article's markdown, carrying its comments through the change.
     fn write_article(&self, id: &str, markdown: &str) -> Result<()>;
+
+    /// An article's comments as written, held against the markdown their hash
+    /// names — see [`Comments::carry`].
+    fn comments(&self, id: &str) -> Comments;
+
+    /// Write an article's comments, their ranges into its markdown as it
+    /// stands. No comments takes the file out.
+    fn save_comments(&self, id: &str, comments: &Comments) -> Result<()>;
 
     /// What an article holds beside its markdown. Default for one that has
     /// none.

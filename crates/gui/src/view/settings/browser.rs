@@ -51,7 +51,7 @@ impl SettingsWindow {
 
     /// A segmented control: `(label, selected)` per segment, `pick` called
     /// with the index pressed.
-    fn segments(
+    pub(super) fn segments(
         &self,
         id: &'static str,
         segments: Vec<(&'static str, bool)>,

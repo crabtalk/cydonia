@@ -182,6 +182,9 @@ pub struct Appearance {
     pub wide_pages: bool,
     /// Whether an article offers its floating outline button.
     pub outline: bool,
+    /// How an article's margin shows its comments. A pane too narrow for the
+    /// notes beside the column shows [`Comments::Minimal`] whatever this says.
+    pub comments: Comments,
     /// How a new board is laid out. Every board carries its own answer from the
     /// moment it is made — see [`artifact::board::Board::view`] — so this seeds
     /// one and never steers it afterwards.
@@ -442,6 +445,36 @@ impl CaretShape {
     }
 }
 
+/// How an article's margin shows its comments.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Comments {
+    /// Each note beside its line, a few lines of it.
+    #[default]
+    Full,
+    /// A mark with a count beside each commented line; pressing it opens the
+    /// note.
+    Minimal,
+}
+
+impl Comments {
+    pub const ALL: [Self; 2] = [Self::Full, Self::Minimal];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Full => "Full",
+            Self::Minimal => "Minimal",
+        }
+    }
+
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Full => "full",
+            Self::Minimal => "minimal",
+        }
+    }
+}
+
 /// When overflowing panes show their scrollbars.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -500,6 +533,7 @@ impl Default for Appearance {
             chroma: 0.,
             wide_pages: false,
             outline: true,
+            comments: Comments::default(),
             board_view: artifact::board::View::List,
             indent_project_rows: true,
             settings_sidebar_fits: false,
@@ -1228,6 +1262,7 @@ fn write_appearance(doc: &mut toml_edit::DocumentMut, appearance: &Appearance) -
     held["chroma"] = toml_edit::value(f64::from(appearance.chroma));
     held["wide_pages"] = toml_edit::value(appearance.wide_pages);
     held["outline"] = toml_edit::value(appearance.outline);
+    held["comments"] = toml_edit::value(appearance.comments.key());
     held["board_view"] = toml_edit::value(appearance.board_view.key());
     held["indent_project_rows"] = toml_edit::value(appearance.indent_project_rows);
     held["traffic_lights"] = toml_edit::value(appearance.traffic_lights);

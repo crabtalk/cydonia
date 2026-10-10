@@ -15,6 +15,7 @@
 //! it is opened *in* is the app's, and stays there.
 
 pub mod anchor;
+pub mod comments;
 pub mod cover;
 pub mod properties;
 

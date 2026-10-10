@@ -9,6 +9,7 @@
 use crate::{
     article::{
         Article,
+        comments::Comments,
         properties::{self, Properties},
     },
     board::{Board, key},
@@ -45,6 +46,8 @@ struct Held {
     /// The text of its `properties.toml`, kept whole so keys this crate does
     /// not know about survive a save.
     properties: String,
+    /// Its comments, held against `markdown`.
+    comments: Comments,
     assets: BTreeMap<String, Vec<u8>>,
     touched: u128,
 }
@@ -348,8 +351,25 @@ impl super::Project for Project {
     fn write_article(&self, id: &str, markdown: &str) -> Result<()> {
         let mut state = self.state();
         let held = state.article(id)?;
+        held.comments.remap(&held.markdown, markdown);
         held.markdown = markdown.to_owned();
         held.touched = stamp::now();
+        Ok(())
+    }
+
+    fn comments(&self, id: &str) -> Comments {
+        let mut state = self.state();
+        state
+            .article(id)
+            .map(|held| held.comments.clone())
+            .unwrap_or_default()
+    }
+
+    fn save_comments(&self, id: &str, comments: &Comments) -> Result<()> {
+        let mut state = self.state();
+        let held = state.article(id)?;
+        held.comments = comments.clone();
+        held.comments.stamp(&held.markdown);
         Ok(())
     }
 

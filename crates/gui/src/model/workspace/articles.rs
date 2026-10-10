@@ -165,6 +165,59 @@ impl Workspace {
         }
     }
 
+    /// Open one comment's note in an article's margin, or close the one open.
+    pub fn activate_comment(&mut self, on: &Path, id: Option<u64>, cx: &mut Context<Self>) {
+        if let Some(article) = self.article_at_mut(on) {
+            article.activate_comment(id, cx);
+            cx.notify();
+        }
+    }
+
+    /// The pointer came over one comment's note, or left them all.
+    pub fn hover_comment(&mut self, on: &Path, id: Option<u64>, cx: &mut Context<Self>) {
+        if let Some(article) = self.article_at_mut(on) {
+            article.hover_comment(id, cx);
+            cx.notify();
+        }
+    }
+
+    /// The pointer came over one comment's text in the editor `editor`, or
+    /// left them all.
+    pub fn hover_comment_under(
+        &mut self,
+        editor: EntityId,
+        id: Option<u64>,
+        cx: &mut Context<Self>,
+    ) {
+        let found = self.projects.iter_mut().find_map(|project| {
+            project.articles.iter_mut().find(|article| {
+                article
+                    .editor
+                    .as_ref()
+                    .is_some_and(|held| held.entity_id() == editor)
+            })
+        });
+        if let Some(article) = found {
+            article.hover_comment(id, cx);
+            cx.notify();
+        }
+    }
+
+    /// Resolve one comment, or open it again.
+    pub fn resolve_comment(&mut self, on: &Path, id: u64, resolved: bool, cx: &mut Context<Self>) {
+        if let Some(article) = self.article_at_mut(on) {
+            article.resolve_comment(id, resolved, cx);
+            cx.notify();
+        }
+    }
+
+    pub fn delete_comment(&mut self, on: &Path, id: u64, cx: &mut Context<Self>) {
+        if let Some(article) = self.article_at_mut(on) {
+            article.delete_comment(id, cx);
+            cx.notify();
+        }
+    }
+
     /// Put one document into the other form — see [`Article::set_mode`].
     pub fn set_article_mode(&mut self, on: &Path, mode: Mode, cx: &mut Context<Self>) {
         if let Some(article) = self.article_at_mut(on) {

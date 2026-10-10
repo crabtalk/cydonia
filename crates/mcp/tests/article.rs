@@ -446,3 +446,49 @@ fn a_part_of_an_article_reads_alone() {
     ));
     assert!(why.contains("names part of an entry"), "{why}");
 }
+
+/// A note lands beside the article, on the passage it quotes, and an edit
+/// before the passage carries it along.
+#[test]
+fn a_comment_is_filed_beside_the_article_and_follows_an_edit() {
+    let scratch = Scratch::new("article-comment");
+    let server = scratch.server();
+    let made = server
+        .call(
+            "article_add",
+            json!({ "project": scratch.path(), "title": "Notes", "text": "One line. Two line." }),
+            None,
+        )
+        .unwrap_or_else(|_| panic!("article creation failed"));
+    let id = made.data.unwrap()["id"].as_str().unwrap().to_owned();
+
+    let ambiguous = refused(server.call(
+        "article_comment",
+        json!({ "project": scratch.path(), "article": "Notes", "quote": "line", "note": "?" }),
+        None,
+    ));
+    assert!(ambiguous.contains("2 occurrences"), "{ambiguous}");
+
+    said(server.call(
+        "article_comment",
+        json!({ "project": scratch.path(), "article": "Notes", "quote": "Two line", "note": "Why two?" }),
+        None,
+    ));
+    said(server.call(
+        "article_edit",
+        json!({ "project": scratch.path(), "article": "Notes", "old_string": "One", "new_string": "The first" }),
+        None,
+    ));
+
+    let content = scratch
+        .path()
+        .join(".cydonia/articles")
+        .join(&id)
+        .join("content.md");
+    let text = std::fs::read_to_string(&content).unwrap();
+    let held = artifact::article::comments::read(&content);
+    assert!(held.fits(&text));
+    let comment = &held.comments[0];
+    assert_eq!(&text[comment.range()], "Two line");
+    assert_eq!(comment.note, "Why two?");
+}

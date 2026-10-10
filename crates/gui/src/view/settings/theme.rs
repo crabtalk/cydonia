@@ -426,7 +426,12 @@ impl SettingsWindow {
             }))
             .child(group(
                 "Layout",
-                vec![self.pages_row(cx), self.outline_row(cx), self.wrap_row(cx)],
+                vec![
+                    self.pages_row(cx),
+                    self.outline_row(cx),
+                    self.comments_row(cx),
+                    self.wrap_row(cx),
+                ],
             ))
             .child(group(
                 "Colours",
@@ -465,6 +470,42 @@ impl SettingsWindow {
                     .update(cx, |workspace, cx| workspace.set_outline(!on, cx));
             },
         )
+    }
+
+    pub(super) fn comments_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        use crate::model::settings::Comments;
+        let theme = Theme::of(cx).clone();
+        let current = self.workspace.read(cx).settings.appearance.comments;
+        theme
+            .card_row(false)
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .child(theme.row_title("Comments"))
+                    .child(
+                        div()
+                            .mt(px(4.))
+                            .text_style(TextStyle::Subheadline)
+                            .text_color(theme.text_muted)
+                            .child("Notes beside an article's lines, or a mark to open each one. A narrow pane shows marks."),
+                    ),
+            )
+            .child(self.segments(
+                "article-comments",
+                Comments::ALL
+                    .into_iter()
+                    .map(|value| (value.label(), value == current))
+                    .collect(),
+                cx,
+                |this, ix, cx| {
+                    this.workspace
+                        .update(cx, |workspace, cx| workspace.set_comments(Comments::ALL[ix], cx));
+                },
+            ))
+            .into_any_element()
     }
 
     pub(super) fn wrap_row(&self, cx: &mut Context<Self>) -> AnyElement {

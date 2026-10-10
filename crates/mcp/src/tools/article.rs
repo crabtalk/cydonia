@@ -17,7 +17,7 @@ use crate::{
     tools::{PROJECT, fields, many, on_the_rail, root, session},
 };
 use artifact::{
-    article::{self, anchor, properties::Properties},
+    article::{self, anchor, comments::Comment, properties::Properties},
     project::{Project as _, fs},
     reference::{Span, Within},
     search::{self, Block, Kind, Query},
@@ -100,6 +100,15 @@ const REPLACE_ALL: Arg = Arg {
     about: "Replace every non-overlapping occurrence. Defaults to false, requiring exactly one match.",
 };
 
+const QUOTE: Arg = Arg {
+    name: "quote",
+    about: "The exact text of the article's markdown the note is on, including whitespace. It must occur once; include surrounding text to tell occurrences apart. Must not be empty.",
+};
+const NOTE: Arg = Arg {
+    name: "note",
+    about: "The note, in Cydonia Markdown. Shown in the margin beside the quote, a few lines of it until it is opened.",
+};
+
 const QUERY: Arg = Arg {
     name: "query",
     about: "The text to find, matched case-insensitively.",
@@ -108,7 +117,7 @@ const QUERY: Arg = Arg {
 /// Hits a search answers with, at most.
 const HITS: usize = 20;
 
-pub static TOOLS: [Tool; 12] = [
+pub static TOOLS: [Tool; 13] = [
     Tool {
         name: "article_list",
         description: "List the project's articles, most recently written first.",
@@ -173,6 +182,18 @@ pub static TOOLS: [Tool; 12] = [
         writes: true,
         deletes: false,
         call: edit,
+    },
+    Tool {
+        name: "article_comment",
+        description: "File a note in an article's margin, against a passage of its markdown. The article itself is not changed. The note links back to the turn of the session that filed it.",
+        schema: |bound| {
+            let mut schema = fields(bound, &[PROJECT, ARTICLE, QUOTE, NOTE]);
+            schema["properties"][QUOTE.name]["minLength"] = json!(1);
+            schema
+        },
+        writes: true,
+        deletes: false,
+        call: comment,
     },
     Tool {
         name: "article_set_cover",
@@ -604,6 +625,54 @@ fn edit(args: Args<'_>) -> Outcome {
         Answer::said(format!("{} edited: {count} replacement(s)", found.label()))
             .with(json!({ "id": found.id, "replacements": count })),
     )
+}
+
+fn comment(args: Args<'_>) -> Outcome {
+    let quote = args.text(QUOTE)?;
+    let note = args.text(NOTE)?;
+    if quote.is_empty() {
+        return Err(Trouble::Invalid("quote must not be empty".to_owned()));
+    }
+    let project = root(&args)?;
+    let found = locate(project, args.text(ARTICLE)?)?;
+    let store = fs::Project::new(project);
+    let text = store
+        .read_article(&found.id)
+        .map_err(|e| Trouble::Refused(format!("{} cannot be read — {e}", found.label())))?;
+    let start = match text
+        .match_indices(quote)
+        .map(|(at, _)| at)
+        .collect::<Vec<_>>()[..]
+    {
+        [at] => at,
+        [] => {
+            return Err(Trouble::Refused(
+                "quote was not found; read the article and provide exact text, including whitespace"
+                    .to_owned(),
+            ));
+        }
+        ref many => {
+            return Err(Trouble::Refused(format!(
+                "quote matches {} occurrences; include more surrounding text for a unique match",
+                many.len()
+            )));
+        }
+    };
+    let mut held = store.comments(&found.id);
+    held.carry(None, &text);
+    let id = held.fresh_id(stamp::now() as u64);
+    held.comments.push(Comment::new(
+        id,
+        &text,
+        start..start + quote.len(),
+        note.to_owned(),
+        session::turn_link(&args),
+    ));
+    store
+        .save_comments(&found.id, &held)
+        .map_err(|e| Trouble::Refused(format!("{} cannot be written — {e}", found.label())))?;
+    Ok(Answer::said(format!("{} has a new comment", found.label()))
+        .with(json!({ "id": found.id, "comment": id })))
 }
 
 fn rename(args: Args<'_>) -> Outcome {

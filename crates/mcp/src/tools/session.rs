@@ -234,13 +234,19 @@ fn rename(args: Args<'_>) -> Outcome {
 /// `[cydonia://foo#42:7](cydonia://foo#42:7 "chip")`. Nothing for a caller
 /// that is not a session, or one with no turn on disk yet.
 fn sender(args: &Args<'_>) -> Option<String> {
+    let link = turn_link(args)?;
+    Some(format!("[{link}]({link} \"chip\")"))
+}
+
+/// The turn the calling session is on, `cydonia://foo#42:7`. Nothing for a
+/// caller that is not a session, or one with no turn on disk yet.
+pub(crate) fn turn_link(args: &Args<'_>) -> Option<String> {
     let (at, record) = (args.at()?, args.session()?);
     let store = fs::Project::new(at);
     let turn = chat::turns(&store.session(record)?.items).len();
     let number = store.number("session", record).ok()?;
     let project = at.file_name()?.to_string_lossy();
-    let link = format!("cydonia://{project}#{number}:{turn}");
-    (turn > 0).then(|| format!("[{link}]({link} \"chip\")"))
+    (turn > 0).then(|| format!("cydonia://{project}#{number}:{turn}"))
 }
 
 /// A new session on `agent`, seeded with `message`.

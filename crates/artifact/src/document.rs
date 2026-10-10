@@ -5,7 +5,7 @@
 //! The properties file is edited in place with `toml_edit`, so keys cydonia
 //! does not know about — an agent's, a later version's — survive a write.
 
-use crate::{project::fs, stamp};
+use crate::{article::comments, project::fs, stamp};
 use std::path::{Path, PathBuf};
 
 pub const CONTENT: &str = "content.md";
@@ -37,6 +37,19 @@ pub fn touched(content: &Path) -> u128 {
         path if path.is_file() => written.max(stamp::of(&path)),
         _ => written,
     }
+}
+
+/// Write `text` as the document at `content`, carrying the comments beside it
+/// through the change — see [`crate::article::comments`].
+pub fn write(content: &Path, text: &str) -> std::io::Result<()> {
+    let Ok(held) = std::fs::read_to_string(comments::path(content)) else {
+        return std::fs::write(content, text);
+    };
+    let old = std::fs::read_to_string(content).ok();
+    std::fs::write(content, text)?;
+    let mut held = comments::parse(&held);
+    held.carry(old.as_deref(), text);
+    comments::save(content, text, &held)
 }
 
 // ── properties ───────────────────────────────────────────────────
@@ -114,7 +127,7 @@ pub fn repoint(content: &Path, from: &Path, to: &Path) {
     if !text.contains(from.as_ref()) {
         return;
     }
-    let _ = std::fs::write(content, text.replace(from.as_ref(), to.as_ref()));
+    let _ = write(content, &text.replace(from.as_ref(), to.as_ref()));
 }
 
 /// Bring the pictures the body points at in one project's shared `assets/`
@@ -145,7 +158,7 @@ pub fn carry_assets(content: &Path, from: &Path, to: &Path) {
             let _ = std::fs::copy(&source, &target);
         }
     }
-    let _ = std::fs::write(content, text.replace(here.as_ref(), there.as_ref()));
+    let _ = write(content, &text.replace(here.as_ref(), there.as_ref()));
 }
 
 /// `text` with the pictures it points at in `shared` copied into `own`, and

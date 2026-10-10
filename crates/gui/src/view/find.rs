@@ -25,7 +25,6 @@ use bezel::{
     theme::{TextStyle, Theme, Typeset as _},
     ui::{icons, input::TextField, tooltip::Tooltip, widgets::Buttons as _},
 };
-use editor::{Anchor, AnchorId};
 use markdown::{Annotation, Cursor, Doc, Selection};
 
 actions!(cydonia_find, [FindNext, FindPrev]);
@@ -141,34 +140,23 @@ impl Cydonia {
     }
 
     /// Wash the article's hits in its editor. Run on every paint of the pane,
-    /// so hits follow edits; the anchors are written only when they differ.
-    /// The editor's anchors hold nothing else.
+    /// so hits follow edits; the washes are written only when they differ.
     pub(crate) fn paint_article_find(
         &self,
         editor: &Entity<editor::Editor>,
         on: Option<&Member>,
         cx: &mut App,
     ) {
-        let anchors: Vec<Anchor> = match self.text_query(on, cx) {
+        let washes = match self.text_query(on, cx) {
             Some(query) => {
                 let hits = hits(editor.read(cx).doc(), &query);
                 let current = current(self.leaf_of(on).find_at, hits.len());
-                hits.iter()
-                    .enumerate()
-                    .map(|(ix, hit)| Anchor {
-                        id: AnchorId(ix as u64),
-                        range: *hit,
-                        state: match Some(ix) == current {
-                            true => Annotation::Current,
-                            false => Annotation::Match,
-                        },
-                    })
-                    .collect()
+                annotations(&hits, current.map(|ix| hits[ix]))
             }
             None => Vec::new(),
         };
-        if editor.read(cx).anchors() != anchors.as_slice() {
-            editor.update(cx, |editor, cx| editor.set_anchors(anchors, cx));
+        if editor.read(cx).washes() != washes.as_slice() {
+            editor.update(cx, |editor, cx| editor.set_washes(washes, cx));
         }
     }
 

@@ -4,9 +4,11 @@ use crate::{
     model::{article, workspace::Showing},
     view::{
         component::{
+            margin::{self, MARK_GUTTER, Margin, NOTE_WIDTH, Slot},
             menu::{self, Menu},
             transcript::{MARK_AWAY, MARK_READING, MARK_VISIBLE},
         },
+        entry_link::SCHEME,
         labels::Target,
         leaf::Pane,
         root::{Cydonia, NewArticle},
@@ -22,12 +24,12 @@ use bezel::{
         MouseButton, ObjectFit, PathPromptOptions, SharedString, Window, actions, canvas, div,
         image_cache, img, prelude::*, px, retain_all,
     },
-    motion::{Fade, Painter},
+    motion::{AppExt as _, Fade, Painter},
     theme::{ControlSize, Sizing as _, TextStyle, Theme, Typeset, ink},
     ui::{
         icons,
         input::TextField,
-        menu::Item,
+        menu::{Item, Segment},
         multi_select, popover,
         tooltip::Tooltip,
         widgets::{ButtonStyle, Buttons as _, Content as _, Status as _},
@@ -297,8 +299,22 @@ fn word_count(n: usize) -> String {
     }
 }
 
-/// The band the editor is set in, under the title.
-fn page(editor: &Entity<editor::Editor>, wide: bool, source_offset: f32) -> Div {
+/// How far the editor sits below the top of the band it is set in.
+const PAGE_TOP: f32 = 20.;
+
+/// Called with the comment under a press on the page, or `None` for a press on
+/// none.
+type OnPress = Rc<dyn Fn(Option<u64>, &mut Window, &mut App)>;
+
+/// The band the editor is set in, under the title, with its margin of
+/// comments beside it.
+fn page(
+    editor: &Entity<editor::Editor>,
+    wide: bool,
+    source_offset: f32,
+    margin: Option<AnyElement>,
+    on_press: Option<OnPress>,
+) -> Div {
     // Its own height, not the box's share of one: a long document overflows
     // and scrolls instead of being squashed and clipped, and `min_h_full` is
     // what leaves the band something to scroll *under* when the document is
@@ -317,6 +333,10 @@ fn page(editor: &Entity<editor::Editor>, wide: bool, source_offset: f32) -> Div 
         .on_mouse_down(MouseButton::Left, {
             let editor = editor.clone();
             move |event, window, cx| {
+                if let Some(on_press) = &on_press {
+                    let hit = editor.read(cx).anchor_at(event.position);
+                    on_press(hit.map(|id| id.0), window, cx);
+                }
                 editor.update(cx, |editor, cx| {
                     editor.press(
                         event.position,
@@ -338,7 +358,7 @@ fn page(editor: &Entity<editor::Editor>, wide: bool, source_offset: f32) -> Div 
             column(wide)
                 .min_w_0()
                 .px(px(COLUMN_INSET))
-                .pt(px(20.))
+                .pt(px(PAGE_TOP))
                 .pb(px(TAIL))
                 .flex()
                 .child(
@@ -349,7 +369,16 @@ fn page(editor: &Entity<editor::Editor>, wide: bool, source_offset: f32) -> Div 
                         .child(editor.clone()),
                 ),
         )
-        .child(div().flex_1())
+        .child(
+            div()
+                .flex_1()
+                .relative()
+                .when(margin.is_some(), |el| el.min_w(px(MARK_GUTTER)))
+                .children(
+                    margin
+                        .map(|margin| div().absolute().top_0().left_0().size_full().child(margin)),
+                ),
+        )
 }
 
 impl Cydonia {
@@ -682,7 +711,13 @@ impl Cydonia {
             .flex_col()
             .child(self.header(cover, field, wide, cx))
             .children(self.meta_line(project, at, wide, cx))
-            .child(page(&editor, wide, source_offset));
+            .child(page(
+                &editor,
+                wide,
+                source_offset,
+                self.margin(project, at, &editor, cx),
+                Some(self.on_page_press(path.clone())),
+            ));
         Some(
             div()
                 .flex_1()
@@ -719,11 +754,229 @@ impl Cydonia {
                             bezel::gpui::Axis::Vertical,
                         ))
                         .children(self.search_pill(on, cx))
+                        .children(self.comments_list(project, at, &editor, &path, window, cx))
                         .children(self.outline(&editor, &path, reading, scroll, window, cx)),
                 )
                 // Last, and floated over the document from where the
                 // selection ends — the bar is chrome the page runs under.
                 .children(self.ribbon(on, window, cx))
+                .into_any_element(),
+        )
+    }
+
+    /// A press on the page opens the comment under it, and a press on none
+    /// closes the one open.
+    fn on_page_press(&self, path: PathBuf) -> OnPress {
+        let workspace = self.workspace.downgrade();
+        Rc::new(move |hit, _, cx| {
+            workspace
+                .update(cx, |workspace, cx| {
+                    let Some(article) = workspace.article_at_mut(&path) else {
+                        return;
+                    };
+                    let open = article.active_comment;
+                    // A resolved comment's text is washed but has no note.
+                    let hit = hit.filter(|id| {
+                        article
+                            .comments
+                            .comments
+                            .iter()
+                            .any(|comment| comment.id == *id && !comment.resolved)
+                    });
+                    if hit != open {
+                        workspace.activate_comment(&path, hit, cx);
+                    }
+                })
+                .ok();
+        })
+    }
+
+    /// The comments beside the page: nothing for an article with none open.
+    /// Resolved ones are not shown.
+    fn margin(
+        &self,
+        project: usize,
+        at: usize,
+        editor: &Entity<editor::Editor>,
+        cx: &Context<Self>,
+    ) -> Option<AnyElement> {
+        let workspace = self.workspace.read(cx);
+        let article = workspace.article_in(project, at)?;
+        let shown: Vec<_> = article
+            .comments
+            .comments
+            .iter()
+            .filter(|comment| !comment.resolved)
+            .cloned()
+            .collect();
+        if shown.is_empty() {
+            return None;
+        }
+        let notes = editor
+            .read(cx)
+            .anchor_tops()
+            .into_iter()
+            .filter(|(id, _)| shown.iter().any(|comment| comment.id == id.0))
+            .map(|(id, top)| (id.0, top + px(PAGE_TOP)))
+            .collect();
+        let notes_wanted =
+            workspace.settings.appearance.comments == crate::model::settings::Comments::Full;
+        let note = Note {
+            comments: Rc::new(shown),
+            open: article.active_comment,
+            hovered: article.hovered_comment,
+            path: article.path.clone(),
+            root: cx.entity().downgrade(),
+        };
+        let build: margin::Build = Rc::new(move |slot, window, cx| note.build(slot, window, cx));
+        Some(
+            Margin::new(
+                notes,
+                article.active_comment,
+                notes_wanted,
+                build,
+                article.margin.clone(),
+                cx.reduced_motion(),
+            )
+            .into_any_element(),
+        )
+    }
+
+    /// Every comment on the article, open and resolved, from a button over the
+    /// pane's top right, under how the margin shows them. Nothing for an
+    /// article with none.
+    fn comments_list(
+        &self,
+        project: usize,
+        at: usize,
+        editor: &Entity<editor::Editor>,
+        path: &Path,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        use crate::model::settings::Comments;
+        let workspace = self.workspace.read(cx);
+        let comments = workspace.article_in(project, at)?.comments.comments.clone();
+        if comments.is_empty() {
+            return None;
+        }
+        let shown = workspace.settings.appearance.comments;
+        let theme = Theme::of(cx).clone();
+        let menu = Menu::Comments(path.to_owned());
+        let card = (self.menu.as_ref() == Some(&menu)).then(|| {
+            let modes = Comments::ALL;
+            let switch: (Item, menu::Act) = (
+                Item::segmented(
+                    [
+                        Segment::new(icons::layout::PanelRight, Comments::Full.label()),
+                        Segment::new(icons::social::MessageCircle, Comments::Minimal.label()),
+                    ],
+                    modes
+                        .iter()
+                        .position(|mode| *mode == shown)
+                        .unwrap_or_default(),
+                ),
+                Box::new(move |this, path, _, cx| {
+                    if let Some(mode) = path.first().and_then(|at| modes.get(*at)) {
+                        this.workspace
+                            .update(cx, |workspace, cx| workspace.set_comments(*mode, cx));
+                    }
+                }),
+            );
+            let row = |comment: &artifact::article::comments::Comment| {
+                let quote = comment
+                    .quote
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let note = comment.note.lines().next().unwrap_or_default().to_owned();
+                let icon = match comment.resolved {
+                    true => icons::glyph::Check,
+                    false => icons::social::MessageCircle,
+                };
+                let (id, resolved, path, editor) = (
+                    comment.id,
+                    comment.resolved,
+                    path.to_owned(),
+                    editor.clone(),
+                );
+                menu::row(
+                    Item::action(format!("“{quote}”"))
+                        .with_description(note)
+                        .with_icon(icon),
+                    move |this, window, cx| {
+                        this.workspace.update(cx, |workspace, cx| {
+                            if resolved {
+                                workspace.resolve_comment(&path, id, false, cx);
+                            }
+                            workspace.activate_comment(&path, Some(id), cx);
+                        });
+                        let start = editor
+                            .read(cx)
+                            .anchors()
+                            .iter()
+                            .find(|anchor| anchor.id.0 == id)
+                            .map(|anchor| anchor.range.ordered().0);
+                        if let Some(start) = start {
+                            editor.update(cx, |editor, cx| {
+                                editor.select_to_top(markdown::Selection::at(start), cx)
+                            });
+                            window.focus(&editor.focus_handle(cx), cx);
+                        }
+                    },
+                )
+            };
+            let open: Vec<_> = comments.iter().filter(|c| !c.resolved).map(row).collect();
+            let mut resolved: Vec<_> = comments.iter().filter(|c| c.resolved).map(row).collect();
+            if !resolved.is_empty() {
+                let heading: menu::Act = Box::new(|_, _, _, _| {});
+                resolved.insert(0, (Item::Heading("Resolved".into()), heading));
+            }
+            let rows = menu::sections([vec![switch], open, resolved]);
+            let id = SharedString::from(format!("comments-card-{}", path.display()));
+            let card = self
+                .menu_panel(id.clone(), rows, window, cx)
+                .max_w(px(OUTLINE_MAX_WIDTH))
+                .max_h(px(OUTLINE_MAX_HEIGHT));
+            popover::anchored_menu_below_end(id, card.into_any_element(), None)
+        });
+        let open = comments.iter().filter(|comment| !comment.resolved).count();
+        let trigger = theme
+            .ghost(SharedString::from(format!("comments-{}", path.display())))
+            .relative()
+            .px(px(8.))
+            .py(px(4.))
+            .gap(px(4.))
+            .rounded_md()
+            .child(
+                icons::icon(icons::social::MessageCircle)
+                    .size(px(14.))
+                    .text_color(theme.text_muted),
+            )
+            .when(open > 0, |el| {
+                el.child(
+                    div()
+                        .text_style(TextStyle::Caption)
+                        .text_color(theme.text_muted)
+                        .child(open.to_string()),
+                )
+            })
+            .tooltip(|window, cx| Tooltip::text("Comments", window, cx))
+            .on_click({
+                let menu = menu.clone();
+                cx.listener(move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.toggle_menu(menu.clone(), cx);
+                })
+            })
+            .children(card);
+        Some(
+            div()
+                .absolute()
+                .occlude()
+                .top(px(12.))
+                .right(px(16.))
+                .child(self.menu_press(trigger, menu, cx))
                 .into_any_element(),
         )
     }
@@ -759,7 +1012,7 @@ impl Cydonia {
                         .track_scroll(&scroll)
                         .flex()
                         .flex_col()
-                        .child(page(&editor, wide, source_offset)),
+                        .child(page(&editor, wide, source_offset, None, None)),
                 )
                 .child(scrollbars::Overlay::new(
                     "article-peek-bar",
@@ -1205,5 +1458,227 @@ impl Cydonia {
         .on_click(cx.listener(move |this, _, window, cx| {
             this.open_article(project, ix, window, cx);
         }))
+    }
+}
+
+/// What the margin builds its notes and marks from.
+struct Note {
+    comments: Rc<Vec<artifact::article::comments::Comment>>,
+    open: Option<u64>,
+    /// The comment whose note or text the pointer is over.
+    hovered: Option<u64>,
+    path: PathBuf,
+    root: gpui::WeakEntity<Cydonia>,
+}
+
+impl Note {
+    fn build(&self, slot: Slot, window: &mut Window, cx: &mut App) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        match slot {
+            Slot::Note(id) => {
+                let Some(comment) = self.comments.iter().find(|comment| comment.id == id) else {
+                    return div().into_any_element();
+                };
+                let open = self.open == Some(id);
+                let lit = open || self.hovered == Some(id);
+                let rule = match (lit, comment.detached()) {
+                    (true, _) => theme.accent,
+                    (false, true) => theme.text_faint,
+                    (false, false) => theme.warning.opacity(0.6),
+                };
+                self.hovered(
+                    // Occluding: the page under it would take the press and put
+                    // the caret there.
+                    div()
+                        .id(("comment", id))
+                        .occlude()
+                        .w_full()
+                        .pl(px(10.))
+                        .border_l_2()
+                        .border_color(rule)
+                        .cursor_pointer()
+                        .child(self.body(comment, open, &theme, window, cx)),
+                    id,
+                )
+                .on_click(self.toggle(id))
+                .into_any_element()
+            }
+            Slot::Open(id) => {
+                let Some(comment) = self.comments.iter().find(|comment| comment.id == id) else {
+                    return div().into_any_element();
+                };
+                self.hovered(
+                    div()
+                        .id(("comment-open", id))
+                        .occlude()
+                        .w(px(NOTE_WIDTH))
+                        .child(
+                            popover::popover_card(&theme)
+                                .child(self.body(comment, true, &theme, window, cx)),
+                        ),
+                    id,
+                )
+                .into_any_element()
+            }
+            Slot::Mark { first, count } => {
+                let tint = match self.open == Some(first) || self.hovered == Some(first) {
+                    true => theme.accent,
+                    false => theme.text_muted,
+                };
+                theme
+                    .ghost(("comment-mark", first))
+                    .occlude()
+                    .w(px(MARK_GUTTER))
+                    .h(px(24.))
+                    .justify_center()
+                    .gap(px(2.))
+                    .child(
+                        icons::icon(icons::social::MessageCircle)
+                            .size(px(14.))
+                            .text_color(tint),
+                    )
+                    .when(count > 1, |el| {
+                        el.child(
+                            div()
+                                .text_style(TextStyle::Caption)
+                                .text_color(tint)
+                                .child(count.to_string()),
+                        )
+                    })
+                    .on_click(self.toggle(first))
+                    .into_any_element()
+            }
+        }
+    }
+
+    /// The quote, the note, and while it is open what can be done with it.
+    fn body(
+        &self,
+        comment: &artifact::article::comments::Comment,
+        open: bool,
+        theme: &Theme,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> gpui::Stateful<Div> {
+        let id = comment.id;
+        let quote = comment
+            .quote
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        let note = match open {
+            true => div()
+                .text_style(TextStyle::Callout)
+                .child(markdown::markdown(&comment.note, window, cx)),
+            false => div()
+                .text_style(TextStyle::Callout)
+                .text_color(theme.text_muted)
+                .line_clamp(3)
+                .child(comment.note.clone()),
+        };
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(2.))
+            .child(
+                div()
+                    .flex()
+                    .gap(px(6.))
+                    .text_style(TextStyle::Caption)
+                    .text_color(theme.text_faint)
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .child(format!("“{quote}”")),
+                    )
+                    .when(comment.detached(), |el| el.child("Outdated")),
+            )
+            .child(note)
+            .when(open, |el| el.child(self.actions(comment, theme)))
+            .id(("comment-body", id))
+    }
+
+    fn actions(&self, comment: &artifact::article::comments::Comment, theme: &Theme) -> Div {
+        let id = comment.id;
+        let path = self.path.clone();
+        let root = self.root.clone();
+        let button = |icon, key: &'static str, label: &'static str| {
+            theme
+                .icon_button(icon, ButtonStyle::Ghost, None)
+                .id((key, id))
+                .tooltip(move |window, cx| Tooltip::text(label, window, cx))
+        };
+        div()
+            .flex()
+            .gap(px(2.))
+            .pt(px(4.))
+            .children(comment.turn.clone().map(|turn| {
+                let root = root.clone();
+                button(
+                    icons::social::MessageCircle,
+                    "comment-turn",
+                    "Open the turn",
+                )
+                .on_click(move |_, window, cx| {
+                    let Some(reference) = turn.strip_prefix(SCHEME) else {
+                        return;
+                    };
+                    root.update(cx, |root, cx| root.open_reference(reference, window, cx))
+                        .ok();
+                })
+            }))
+            .child({
+                let (root, path) = (root.clone(), path.clone());
+                button(icons::glyph::Check, "comment-resolve", "Resolve").on_click(
+                    move |_, _, cx| {
+                        root.update(cx, |root, cx| {
+                            root.workspace.update(cx, |workspace, cx| {
+                                workspace.resolve_comment(&path, id, true, cx)
+                            })
+                        })
+                        .ok();
+                    },
+                )
+            })
+            .child(
+                button(icons::files::Trash, "comment-delete", "Delete").on_click(
+                    move |_, _, cx| {
+                        root.update(cx, |root, cx| {
+                            root.workspace
+                                .update(cx, |workspace, cx| workspace.delete_comment(&path, id, cx))
+                        })
+                        .ok();
+                    },
+                ),
+            )
+    }
+
+    /// Washes its text while the pointer is over it.
+    fn hovered(&self, el: gpui::Stateful<Div>, id: u64) -> gpui::Stateful<Div> {
+        let (root, path) = (self.root.clone(), self.path.clone());
+        el.on_hover(move |hovered, _, cx| {
+            let id = hovered.then_some(id);
+            root.update(cx, |root, cx| {
+                root.workspace
+                    .update(cx, |workspace, cx| workspace.hover_comment(&path, id, cx))
+            })
+            .ok();
+        })
+    }
+
+    /// Opens the note, or closes it when it is the one open.
+    fn toggle(&self, id: u64) -> impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static {
+        let (root, path, open) = (self.root.clone(), self.path.clone(), self.open);
+        move |_, _, cx| {
+            let id = (open != Some(id)).then_some(id);
+            root.update(cx, |root, cx| {
+                root.workspace.update(cx, |workspace, cx| {
+                    workspace.activate_comment(&path, id, cx)
+                })
+            })
+            .ok();
+        }
     }
 }

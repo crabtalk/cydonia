@@ -7,7 +7,7 @@
 
 use anyhow::Result;
 use artifact::{
-    article::{Article, properties::Properties},
+    article::{Article, comments::Comments, properties::Properties},
     board::Board,
     project::{Project, Watching, fs, memory},
     session::record::Record,
@@ -156,6 +156,14 @@ impl Project for Store {
 
     fn write_article(&self, id: &str, markdown: &str) -> Result<()> {
         each!(self, store => store.write_article(id, markdown))
+    }
+
+    fn comments(&self, id: &str) -> Comments {
+        each!(self, store => store.comments(id))
+    }
+
+    fn save_comments(&self, id: &str, comments: &Comments) -> Result<()> {
+        each!(self, store => store.save_comments(id, comments))
     }
 
     fn properties(&self, id: &str) -> Properties {

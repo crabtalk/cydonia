@@ -16,17 +16,20 @@ use crate::model::{
     store::{self, Store},
     workspace::Workspace,
 };
-use crate::view::component::file::pictures::Pictures;
+use crate::view::component::{file::pictures::Pictures, margin::Glide};
 use artifact::project::Project as _;
 use artifact::{
     article as layout,
-    article::properties::{self, Properties},
+    article::{
+        comments::{Comment, Comments},
+        properties::{self, Properties},
+    },
 };
 use bezel::{
     gpui::{App, AppContext as _, Context, Entity, ScrollHandle},
     ui::input::{Shape, TextField},
 };
-use editor::{Editor, EditorEvent, Mode};
+use editor::{Anchor, AnchorId, Editor, EditorEvent, Mode};
 use markdown::AppExt as _;
 use std::{
     cell::{OnceCell, RefCell},
@@ -129,6 +132,18 @@ pub struct Article {
     /// between the buffer and the disk, and reopening the app ends it by
     /// reading the disk.
     pub stale: bool,
+    /// The notes in its margin, held against [`Article::saved`] while it is
+    /// open.
+    pub comments: Comments,
+    /// The comment whose note is open, pressed in the margin or on its text.
+    pub active_comment: Option<u64>,
+    /// The comment whose note, or whose text, the pointer is over.
+    pub hovered_comment: Option<u64>,
+    /// Where the margin's notes are gliding, held across frames.
+    pub margin: Rc<RefCell<Glide>>,
+    /// The newest comment id read from the file. One there above it was filed
+    /// since, and a write here keeps it.
+    known_comment: u64,
 }
 
 impl Article {
@@ -156,6 +171,11 @@ impl Article {
             disk: OnceCell::new(),
             words: OnceCell::new(),
             stale: false,
+            comments: Comments::default(),
+            active_comment: None,
+            hovered_comment: None,
+            margin: Rc::default(),
+            known_comment: 0,
         }
     }
 
@@ -285,6 +305,10 @@ impl Article {
         // `Changed` rather than every notify: a selection drag and the caret
         // blink notify too, and each write serializes the whole document.
         cx.subscribe(&editor, move |workspace, editor, event, cx| {
+            if let EditorEvent::AnchorHovered(over) = event {
+                workspace.hover_comment_under(editor.entity_id(), over.map(|id| id.0), cx);
+                return;
+            }
             if !matches!(event, EditorEvent::Changed) {
                 return;
             }
@@ -306,6 +330,182 @@ impl Article {
         self.field = Some(field);
         self.editor = Some(editor);
         self.pictures = Some(pictures);
+        self.comments = self.store.comments(&self.id);
+        self.comments.carry(None, &self.saved);
+        self.know_comments();
+        self.place_comments(cx);
+    }
+
+    fn know_comments(&mut self) {
+        let newest = self
+            .comments
+            .comments
+            .iter()
+            .map(|comment| comment.id)
+            .max();
+        self.known_comment = self.known_comment.max(newest.unwrap_or_default());
+    }
+
+    /// Write the comments beside `text`, the markdown on disk, with any filed
+    /// there since they were read. Answers whether any were.
+    fn save_comments(&mut self, text: &str) -> bool {
+        let mut file = self.store.comments(&self.id);
+        file.carry(None, text);
+        let arrived: Vec<Comment> = file
+            .comments
+            .into_iter()
+            .filter(|comment| {
+                comment.id > self.known_comment
+                    && !self
+                        .comments
+                        .comments
+                        .iter()
+                        .any(|held| held.id == comment.id)
+            })
+            .collect();
+        let any = !arrived.is_empty();
+        self.comments.comments.extend(arrived);
+        self.know_comments();
+        let _ = self.store.save_comments(&self.id, &self.comments);
+        any
+    }
+
+    /// Hand the comments' ranges to the editor, which carries them through
+    /// edits from here on.
+    fn place_comments(&self, cx: &mut App) {
+        self.place_comments_over(&self.saved.clone(), cx);
+    }
+
+    /// [`Article::place_comments`] with the ranges into `text`, the markdown
+    /// the editor's document is.
+    fn place_comments_over(&self, text: &str, cx: &mut App) {
+        let Some(editor) = &self.editor else { return };
+        let anchors = self
+            .comments
+            .comments
+            .iter()
+            .map(|comment| (AnchorId(comment.id), comment.range(), self.wash(comment)))
+            .collect();
+        editor.update(cx, |editor, cx| {
+            editor.set_source_anchors(text, anchors, cx)
+        });
+    }
+
+    /// Repaint the comments' washes over the ranges the editor holds.
+    fn restate_comments(&self, cx: &mut App) {
+        let Some(editor) = &self.editor else { return };
+        let anchors: Vec<Anchor> = editor
+            .read(cx)
+            .anchors()
+            .iter()
+            .map(|anchor| Anchor {
+                state: self
+                    .comments
+                    .comments
+                    .iter()
+                    .find(|comment| comment.id == anchor.id.0)
+                    .map_or(anchor.state, |comment| self.wash(comment)),
+                ..anchor.clone()
+            })
+            .collect();
+        if editor.read(cx).anchors() != anchors.as_slice() {
+            editor.update(cx, |editor, cx| editor.set_anchors(anchors, cx));
+        }
+    }
+
+    fn wash(&self, comment: &Comment) -> markdown::Annotation {
+        if comment.resolved {
+            markdown::Annotation::Resolved
+        } else if [self.active_comment, self.hovered_comment].contains(&Some(comment.id)) {
+            markdown::Annotation::Active
+        } else {
+            markdown::Annotation::Open
+        }
+    }
+
+    /// Take the editor's ranges into the comments, which hold them against
+    /// `source`, what was just written, and write them beside it.
+    fn write_comments(&mut self, source: &str, cx: &mut App) {
+        let Some(editor) = &self.editor else { return };
+        // None held, none to lose: one filed meanwhile arrives through the
+        // watch.
+        if self.comments.comments.is_empty() {
+            return;
+        }
+        let (placed, ranges) = editor.read(cx).source_with_anchors();
+        for comment in &mut self.comments.comments {
+            if let Some(range) = ranges
+                .iter()
+                .find(|(id, _)| id.0 == comment.id)
+                .and_then(|(_, range)| range.clone())
+            {
+                comment.start = range.start;
+                comment.end = range.end;
+            }
+        }
+        self.comments.stamp(&placed);
+        self.comments.carry(Some(&placed), source);
+        if self.save_comments(source) {
+            self.place_comments_over(source, cx);
+        }
+    }
+
+    /// Read the comments again, for a file that moved beside a document that
+    /// did not. Answers whether they changed.
+    fn reread_comments(&mut self, cx: &mut App) -> bool {
+        let mut fresh = self.store.comments(&self.id);
+        fresh.carry(None, &self.saved);
+        if fresh == self.comments {
+            return false;
+        }
+        self.comments = fresh;
+        self.know_comments();
+        self.place_comments(cx);
+        true
+    }
+
+    /// Open one comment's note, or close the one open.
+    pub fn activate_comment(&mut self, id: Option<u64>, cx: &mut App) {
+        self.active_comment = id;
+        self.restate_comments(cx);
+    }
+
+    pub fn hover_comment(&mut self, id: Option<u64>, cx: &mut App) {
+        // A resolved comment's text is washed but has no note.
+        let id = id.filter(|id| {
+            self.comments
+                .comments
+                .iter()
+                .any(|comment| comment.id == *id && !comment.resolved)
+        });
+        if self.hovered_comment != id {
+            self.hovered_comment = id;
+            self.restate_comments(cx);
+        }
+    }
+
+    /// Mark one comment resolved, or open again.
+    pub fn resolve_comment(&mut self, id: u64, resolved: bool, cx: &mut App) {
+        let Some(comment) = self.comments.comments.iter_mut().find(|c| c.id == id) else {
+            return;
+        };
+        comment.resolved = resolved;
+        if resolved && self.active_comment == Some(id) {
+            self.active_comment = None;
+        }
+        match self.save_comments(&self.saved.clone()) {
+            true => self.place_comments(cx),
+            false => self.restate_comments(cx),
+        }
+    }
+
+    pub fn delete_comment(&mut self, id: u64, cx: &mut App) {
+        self.comments.comments.retain(|comment| comment.id != id);
+        if self.active_comment == Some(id) {
+            self.active_comment = None;
+        }
+        self.save_comments(&self.saved.clone());
+        self.place_comments(cx);
     }
 
     /// Best effort, like every other write here: a document that cannot be
@@ -314,7 +514,7 @@ impl Article {
     /// Each surface writes its own file, so typing in the body never touches
     /// the properties and naming the page never touches the markdown. Answers
     /// whether the title moved, which is what the caller repaints on.
-    pub fn write(&mut self, cx: &App) -> bool {
+    pub fn write(&mut self, cx: &mut App) -> bool {
         let renamed = match &self.field {
             Some(field) => {
                 let title = field.read(cx).content().to_string();
@@ -331,6 +531,7 @@ impl Article {
         if let Some(editor) = &self.editor {
             let source = editor.read(cx).source();
             if self.saved != source && self.store.write_article(&self.id, &source).is_ok() {
+                self.write_comments(&source, cx);
                 self.saved = source;
                 self.forget_disk();
                 self.touched = artifact::stamp::now();
@@ -345,7 +546,7 @@ impl Article {
 
     /// Keep the buffer and write it over what landed on disk — the pane's other
     /// way out of the notice. The same write a keystroke makes, said out loud.
-    pub fn keep(&mut self, cx: &App) {
+    pub fn keep(&mut self, cx: &mut App) {
         self.write(cx);
         self.stale = false;
     }
@@ -379,6 +580,7 @@ impl Article {
         // nothing new.
         let disk = self.store.read_article(&self.id).unwrap_or_default();
         if disk == self.saved && fresh.title == self.title {
+            self.reread_comments(cx);
             return false;
         }
         if self.edited(cx) {
@@ -416,7 +618,18 @@ impl Article {
         self.field = None;
         self.editor = None;
         self.pictures = None;
+        let old = std::mem::take(&mut self.saved);
         self.open(text_size, cx);
+        // Through the change from what was written here, where the file still
+        // holds the comments against it.
+        let mut held = self.store.comments(&self.id);
+        held.carry(Some(&old), &self.saved);
+        if held != self.comments {
+            self.comments = held;
+            self.know_comments();
+            let _ = self.store.save_comments(&self.id, &self.comments);
+            self.place_comments(cx);
+        }
         self.stale = false;
     }
 

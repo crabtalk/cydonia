@@ -13,7 +13,7 @@ use super::layout;
 #[cfg(feature = "sqlite")]
 use crate::entry;
 use crate::{
-    article::{self, Article, properties::Properties},
+    article::{self, Article, comments::Comments, properties::Properties},
     board::{self, Board, key},
     document, id,
     session::record::Record,
@@ -662,8 +662,20 @@ impl super::Project for Project {
     }
 
     fn write_article(&self, id: &str, markdown: &str) -> Result<()> {
-        let path = self.article_file(id)?;
-        std::fs::write(&path, markdown)?;
+        document::write(&self.article_file(id)?, markdown)?;
+        Ok(())
+    }
+
+    fn comments(&self, id: &str) -> Comments {
+        self.article_file(id)
+            .map(|content| article::comments::read(&content))
+            .unwrap_or_default()
+    }
+
+    fn save_comments(&self, id: &str, comments: &Comments) -> Result<()> {
+        let content = self.article_file(id)?;
+        let text = std::fs::read_to_string(&content)?;
+        article::comments::save(&content, &text, comments)?;
         Ok(())
     }
 
@@ -802,7 +814,7 @@ fn cover_url(_: &Path) -> Option<Url> {
 
 /// What a file held, as the version a save is checked against: a hash of the
 /// bytes, so every build of cydonia reading one file agrees on it.
-fn version(bytes: &[u8]) -> String {
+pub(crate) fn version(bytes: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     Sha256::digest(bytes)
         .iter()
