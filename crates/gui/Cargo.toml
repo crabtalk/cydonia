@@ -41,6 +41,7 @@ terminal = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
 toml.workspace = true
 toml_edit.workspace = true
+unicode-segmentation.workspace = true
 ureq = { workspace = true, optional = true }
 url.workspace = true
 web-time.workspace = true
@@ -74,15 +75,15 @@ desktop = [
 developer = []
 
 [dev-dependencies]
-syntax-std = { version = "0.2.5", package = "bezel-syntax-std" }
-gpui = { version = "0.3.14", package = "bezel-gpui", features = ["test-support"] }
+syntax-std = { version = "0.2.12", package = "bezel-syntax-std" }
+gpui = { version = "0.3.19", package = "bezel-gpui", features = ["test-support"] }
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 # Headless UI tests do not require the Metal compiler toolchain.
-gpui_platform = { version = "0.3.11", package = "bezel-gpui-platform", features = ["runtime_shaders"] }
+gpui_platform = { version = "0.3.19", package = "bezel-gpui-platform", features = ["runtime_shaders"] }
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
-gpui_platform = { version = "0.3.13", package = "bezel-gpui-platform", features = ["wayland", "x11"], optional = true }
+gpui_platform = { version = "0.3.19", package = "bezel-gpui-platform", features = ["wayland", "x11"], optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 libc = "0.2"

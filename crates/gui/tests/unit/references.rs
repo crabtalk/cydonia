@@ -1,10 +1,12 @@
 //! Part of an article a reference names, as the blocks its editor numbers,
-//! and the card a handle names.
+//! the card a handle names, and the entry a number names.
 
-use super::{Part, card, passage};
-use crate::model::{article::Disk, project::Project};
+use super::{Part, card, entry, passage};
+use crate::data::{ColType, Column, Data};
+use crate::model::{article::Disk, project::Project, workspace::Showing};
 use artifact::project::{Project as _, fs};
 use artifact::reference::{Span, Within};
+use artifact::search::Kind;
 use std::rc::Rc;
 
 const TEXT: &str = "# Guide\n\nIntro.\n\n## Set up\n\nStep one.\n\n- a\n- b\n\n## Use\n\nGo.\n";
@@ -67,5 +69,30 @@ fn a_handle_names_its_card_on_the_keyed_board() {
     assert_eq!(named.handle, format!("DEV-{handle}"));
     assert!(card(&project, "DEV", 99, "DEV-99").is_err());
     assert!(card(&project, "ROAD", handle, "ROAD-2").is_err());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_number_names_a_table() {
+    let dir = std::env::temp_dir().join(format!("cydonia-references-table-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let column = Column {
+        name: "Name".to_owned(),
+        kind: ColType::Text,
+    };
+    let key = Data::open(&dir)
+        .unwrap()
+        .create("Prices", None, &[column], None)
+        .unwrap()
+        .key;
+    let project = Project::new(dir.clone());
+    let number = project.tables[0].number.unwrap();
+
+    let (kind, showing, title) = entry(&project, number).unwrap();
+    assert_eq!(kind, Kind::Table);
+    assert_eq!(showing, Showing::Table(key));
+    assert_eq!(title, "Prices");
+    assert!(entry(&project, number + 1).is_none());
     let _ = std::fs::remove_dir_all(&dir);
 }

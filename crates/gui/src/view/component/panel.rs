@@ -128,8 +128,12 @@ pub struct Panel {
     restore_pending: Option<persistence::SavedPanel>,
     /// The press on the strip's [`chrome::grip`].
     drag: titlebar::DragState,
-    /// Which switchable tabs the settings allow, pushed in by the root.
+    /// Which switchable tabs may be open: the settings' word, pushed in by
+    /// the root, within [`Self::offers`].
     tabs: PanelTabs,
+    /// Which switchable tabs this panel holds at all, whatever the settings
+    /// say.
+    offers: PanelTabs,
     /// Whose settings the panel's files read.
     workspace: WeakEntity<Workspace>,
     /// The root's, which paints [`changes_toggle`] on the header too.
@@ -157,6 +161,7 @@ impl Panel {
             restore_pending: None,
             drag: Default::default(),
             tabs: PanelTabs::default(),
+            offers: PanelTabs::default(),
             workspace: WeakEntity::new_invalid(),
             toggle: Painter::of(cx),
         }
@@ -165,6 +170,11 @@ impl Panel {
     /// Take the settings' word on which tabs may be open, closing the ones
     /// that may not.
     pub(crate) fn set_tabs(&mut self, tabs: PanelTabs, cx: &mut Context<Self>) {
+        let tabs = PanelTabs {
+            review: tabs.review && self.offers.review,
+            files: tabs.files && self.offers.files,
+            browser: tabs.browser && self.offers.browser,
+        };
         if self.tabs == tabs {
             return;
         }
@@ -196,6 +206,15 @@ impl Panel {
         cx.notify();
     }
 
+    /// Point the panel at `cwd`: where a terminal opened from now on starts.
+    /// Tabs already open keep the directory they were opened in.
+    fn retarget(&mut self, cwd: PathBuf) {
+        if self.cwd != cwd {
+            self.project_root = cwd.canonicalize().unwrap_or(cwd.clone());
+            self.cwd = cwd;
+        }
+    }
+
     /// Whether the files tree's toggle is drawn, and if so which way it faces.
     fn files_state(&self) -> Option<bool> {
         self.tabs.files.then_some(self.files_open)
@@ -216,9 +235,12 @@ impl Panel {
     /// The launch view's line naming what the settings have switched off.
     fn switched_off(&self) -> Option<String> {
         let off: Vec<&str> = [
-            (self.tabs.review, "Review"),
-            (self.tabs.files, "Files"),
-            (self.tabs.browser || cfg!(target_os = "linux"), "Browser"),
+            (self.tabs.review || !self.offers.review, "Review"),
+            (self.tabs.files || !self.offers.files, "Files"),
+            (
+                self.tabs.browser || !self.offers.browser || cfg!(target_os = "linux"),
+                "Browser",
+            ),
         ]
         .into_iter()
         .filter_map(|(on, name)| (!on).then_some(name))
@@ -557,7 +579,7 @@ pub(crate) fn close_all_browsers(cx: &mut gpui::App) -> std::io::Result<()> {
             continue;
         };
         let _ = handle.update(cx, |root, _, cx| {
-            for panel in root.right_panels.values() {
+            for panel in root.right_panels.values().chain(&root.library_panel) {
                 panel.update(cx, |panel, cx| panel.close_browsers(cx));
             }
             root.save_panel_layout(cx);
@@ -1017,33 +1039,37 @@ impl Cydonia {
         self.save_panel_layout(cx);
         cx.notify();
     }
-    pub(crate) fn open_session_file(
+    /// Open `path` in a file tab in the panel for the directory in front, at
+    /// `line` where one is given, putting the panel up. `false` where no tab
+    /// could be opened: no directory in front, or file tabs switched off.
+    pub(crate) fn open_file_in_panel(
         &mut self,
-        link: &super::transcript::links::OpenSessionFile,
+        path: PathBuf,
+        line: Option<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
-        if self.showing(cx) != Some(Pane::Chat)
-            || self.workspace.read(cx).active_id() != Some(link.session)
-        {
-            return;
+    ) -> bool {
+        if !self.workspace.read(cx).settings.features.panel.files {
+            return false;
         }
         self.set_changes_open(true, cx);
         self.sync_changes(cx);
-        if let Some(panel) = self.changes.clone() {
-            panel.update(cx, |panel, cx| {
-                panel.restore_tabs(window, cx);
-                panel.open_file(link.path.clone(), cx);
-                if let Some(line) = link.line
-                    && let Some(tab) = panel.front()
-                    && let Content::File(file) = &tab.content
-                {
-                    file.update(cx, |file, cx| file.go_to_line(line, cx));
-                }
-                panel.focus(window, cx);
-            });
-        }
+        let Some(panel) = self.changes.clone() else {
+            return false;
+        };
+        panel.update(cx, |panel, cx| {
+            panel.restore_tabs(window, cx);
+            panel.open_file(path, cx);
+            if let Some(line) = line
+                && let Some(tab) = panel.front()
+                && let Content::File(file) = &tab.content
+            {
+                file.update(cx, |file, cx| file.go_to_line(line, cx));
+            }
+            panel.focus(window, cx);
+        });
         cx.notify();
+        true
     }
 
     pub(crate) fn toggle_files(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1161,7 +1187,10 @@ impl Cydonia {
         });
         self.changes = here
             .filter(|_| self.changes_open)
-            .map(|cwd| self.right_panel(cwd, cx));
+            .map(|cwd| match self.library.is_some() {
+                true => self.library_panel(cwd, cx),
+                false => self.right_panel(cwd, cx),
+            });
         let tabs = self.workspace.read(cx).settings.features.panel;
         if let Some(panel) = &self.changes {
             panel.update(cx, |panel, cx| panel.set_tabs(tabs, cx));
@@ -1199,13 +1228,50 @@ impl Cydonia {
         if let Some(panel) = self.right_panels.get(&cwd) {
             return panel.clone();
         }
+        let restore = persistence::saved_panel(&cwd);
+        let panel = self.new_panel(cwd.clone(), restore, PanelTabs::default(), cx);
+        self.right_panels.insert(cwd, panel.clone());
+        panel
+    }
+
+    /// The library's right panel: one panel whichever directory is in front,
+    /// holding terminals and browser tabs only. Its terminals open in the
+    /// directory in front when they are opened.
+    ///
+    /// Not saved across launches.
+    fn library_panel(&mut self, cwd: PathBuf, cx: &mut Context<Self>) -> Entity<Panel> {
+        let panel = match &self.library_panel {
+            Some(panel) => panel.clone(),
+            None => {
+                let offers = PanelTabs {
+                    review: false,
+                    files: false,
+                    browser: true,
+                };
+                let panel = self.new_panel(cwd.clone(), None, offers, cx);
+                self.library_panel = Some(panel.clone());
+                panel
+            }
+        };
+        panel.update(cx, |panel, _| panel.retarget(cwd));
+        panel
+    }
+
+    fn new_panel(
+        &mut self,
+        cwd: PathBuf,
+        restore: Option<persistence::SavedPanel>,
+        offers: PanelTabs,
+        cx: &mut Context<Self>,
+    ) -> Entity<Panel> {
         let toggle = Painter::of(cx);
         let panel = cx.new(|cx| {
             let mut panel = Panel::new(cwd.clone(), cx);
             panel.toggle = toggle;
-            panel.restore_pending = persistence::saved_panel(&cwd);
+            panel.restore_pending = restore;
             panel.project_root = cwd.canonicalize().unwrap_or(cwd.clone());
             panel.workspace = self.workspace.downgrade();
+            panel.offers = offers;
             panel
         });
         cx.subscribe(&panel, |this, _, event: &DesktopOnly, cx| {
@@ -1218,7 +1284,6 @@ impl Cydonia {
         .detach();
         let tabs = self.workspace.read(cx).settings.features.panel;
         panel.update(cx, |panel, cx| panel.set_tabs(tabs, cx));
-        self.right_panels.insert(cwd, panel.clone());
         panel
     }
 

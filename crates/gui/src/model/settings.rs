@@ -53,6 +53,10 @@ pub struct Settings {
     /// beside the switches above.
     #[serde(default = "paste_images_in_source")]
     pub paste_images_in_source: bool,
+    /// Whether a session opened in a drawer carries a composer to reply in.
+    /// Bare, beside the switches above.
+    #[serde(default = "drawer_composer")]
+    pub drawer_composer: bool,
     /// How the interface is painted. The first table, so the bare keys above
     /// keep belonging to the document rather than to it.
     #[serde(default)]
@@ -162,14 +166,12 @@ pub struct Appearance {
     /// Unset is the system's monospace face.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mono_font: Option<String>,
-    /// The bundled theme family the app is painted in, by name — see
-    /// [`crate::model::themes`]. Unset, or a name no family has, is bezel's
-    /// own palette.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub theme: Option<String>,
+    /// The bundled theme family each appearance is painted in.
+    #[serde(skip_serializing_if = "Themes::is_empty")]
+    pub theme: Themes,
     /// The greys' oklch hue in degrees, and how much of it they carry. Zero
-    /// chroma is the shipped neutral, whatever the hue says. Not applied while
-    /// [`Self::theme`] names a family.
+    /// chroma is the shipped neutral, whatever the hue says. Not applied to an
+    /// appearance [`Self::theme`] paints in a family.
     pub hue: f32,
     pub chroma: f32,
     /// How opaque the tint over the frosted window is — bezel's
@@ -495,7 +497,7 @@ impl Default for Appearance {
             ui_font: None,
             article_font: None,
             mono_font: None,
-            theme: None,
+            theme: Themes::default(),
             hue: 0.,
             vibrancy: bezel::theme::Theme::VIBRANCY_ALPHA,
             blur: bezel::theme::Theme::WINDOW_BLUR,
@@ -552,6 +554,68 @@ impl Appearance {
             .take()
             .filter(|name| !name.trim().is_empty());
         self.mono_font = self.mono_font.take().filter(|name| !name.trim().is_empty());
+        for slot in [&mut self.theme.light, &mut self.theme.dark] {
+            *slot = slot.take().filter(|name| !name.trim().is_empty());
+        }
+    }
+}
+
+/// The theme family each appearance is painted in, by name — see
+/// [`crate::model::themes`]. Unset, or a name no family has a variant for that
+/// appearance under, is bezel's own palette.
+///
+/// Written as `theme = { light = "GitHub", dark = "Lobster" }`. A bare string
+/// names both.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(from = "ThemesForm")]
+pub struct Themes {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub light: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dark: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum ThemesForm {
+    Both(String),
+    Split {
+        #[serde(default)]
+        light: Option<String>,
+        #[serde(default)]
+        dark: Option<String>,
+    },
+}
+
+impl From<ThemesForm> for Themes {
+    fn from(form: ThemesForm) -> Self {
+        match form {
+            ThemesForm::Both(name) => Self {
+                light: Some(name.clone()),
+                dark: Some(name),
+            },
+            ThemesForm::Split { light, dark } => Self { light, dark },
+        }
+    }
+}
+
+impl Themes {
+    pub fn is_empty(&self) -> bool {
+        self.light.is_none() && self.dark.is_none()
+    }
+
+    pub fn get(&self, appearance: bezel::theme::Appearance) -> Option<&str> {
+        match appearance {
+            bezel::theme::Appearance::Light => self.light.as_deref(),
+            bezel::theme::Appearance::Dark => self.dark.as_deref(),
+        }
+    }
+
+    pub fn set(&mut self, appearance: bezel::theme::Appearance, name: Option<String>) {
+        match appearance {
+            bezel::theme::Appearance::Light => self.light = name,
+            bezel::theme::Appearance::Dark => self.dark = name,
+        }
     }
 }
 
@@ -638,8 +702,6 @@ pub struct Browsing {
     pub home: String,
     /// Where a search from the address field goes: `%s` is the query.
     pub search: String,
-    /// Where an http(s) link clicked in an article or a transcript opens.
-    pub links: Links,
     /// Whether agents are offered the browser tools that read pages.
     pub agents_read: bool,
     /// Whether agents are offered the browser tools that click and type.
@@ -651,27 +713,6 @@ pub struct Browsing {
     /// Whether pages keep cookies and storage across restarts. Off builds
     /// each page in memory. Read when a page is built.
     pub keep_signed_in: bool,
-}
-
-/// Where a web link opens.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Links {
-    /// The system's default browser.
-    #[default]
-    System,
-    /// A browser tab in the right panel. The system browser where the build
-    /// has none or the tab is switched off.
-    Panel,
-}
-
-impl Links {
-    pub fn key(self) -> &'static str {
-        match self {
-            Self::System => "system",
-            Self::Panel => "panel",
-        }
-    }
 }
 
 impl bezel::gpui::Global for Browsing {}
@@ -689,7 +730,6 @@ impl Default for Browsing {
         Self {
             home: "https://duckduckgo.com".to_owned(),
             search: SEARCH_ENGINES[0].1.to_owned(),
-            links: Links::default(),
             agents_read: true,
             agents_act: true,
             agents_blocked: Vec::new(),
@@ -888,6 +928,10 @@ fn paste_images_in_source() -> bool {
     true
 }
 
+fn drawer_composer() -> bool {
+    true
+}
+
 /// The launchers that resolve a package name on every run. An installed
 /// agent's command is a path to an unpacked executable, which resolves nothing.
 const RUNNERS: [&str; 3] = ["npx", "bunx", "pnpx"];
@@ -930,6 +974,7 @@ impl Default for Settings {
             notify_turns: notify_turns(),
             download_web_images: download_web_images(),
             paste_images_in_source: paste_images_in_source(),
+            drawer_composer: drawer_composer(),
             appearance: Appearance::default(),
             shortcuts: Shortcuts::default(),
             features: Features::default(),
@@ -1173,6 +1218,20 @@ fn write_appearance(doc: &mut toml_edit::DocumentMut, appearance: &Appearance) -
             }
         }
     }
+    if appearance.theme.is_empty() {
+        held.remove("theme");
+    } else {
+        let mut theme = toml_edit::InlineTable::new();
+        for (key, name) in [
+            ("light", &appearance.theme.light),
+            ("dark", &appearance.theme.dark),
+        ] {
+            if let Some(name) = name {
+                theme.insert(key, name.as_str().into());
+            }
+        }
+        held["theme"] = toml_edit::value(theme);
+    }
     held["hue"] = toml_edit::value(f64::from(appearance.hue));
     held["vibrancy"] = toml_edit::value(f64::from(appearance.vibrancy));
     held["blur"] = toml_edit::value(f64::from(appearance.blur));
@@ -1312,6 +1371,14 @@ pub fn set_notify_turns(on: bool) -> Result<()> {
 pub fn set_download_web_images(on: bool) -> Result<()> {
     edit(|doc| {
         doc["download_web_images"] = toml_edit::value(on);
+        Ok(true)
+    })
+}
+
+/// Switch the composer under a drawer's session on or off in the file.
+pub fn set_drawer_composer(on: bool) -> Result<()> {
+    edit(|doc| {
+        doc["drawer_composer"] = toml_edit::value(on);
         Ok(true)
     })
 }

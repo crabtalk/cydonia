@@ -34,6 +34,21 @@ pub(crate) enum Menu {
     Project(std::path::PathBuf),
     /// The `···` on an entry's row, whichever kind it is.
     Entry(Row),
+    /// The `···` on an entry's row in the library. Its own key: the same entry
+    /// has a sidebar row, and one key would open both menus.
+    Library(Row),
+    /// The library's tabs, as a select in a narrow bar.
+    LibraryTab,
+    /// The library's project picker.
+    LibraryProject,
+    /// The library selection's `Move to`.
+    LibraryMove,
+    /// The library's Status heading.
+    LibraryStatus,
+    /// The library's Agent heading.
+    LibraryAgent,
+    /// The label picker, by what it acts on.
+    Labels(crate::view::labels::Target),
     /// The `···` in the pane header. Its own key rather than `Entry` of what
     /// the header is showing: that entry has a row in the sidebar too, and a
     /// key naming the entry would have one click open both of them.
@@ -92,6 +107,22 @@ pub(crate) fn submenu(
         }
     });
     (item, act)
+}
+
+/// Groups of rows, one after another with a separator between each two. Empty
+/// groups are dropped, so no separator stands at an end or beside another.
+pub(crate) fn sections(groups: impl IntoIterator<Item = Vec<(Item, Act)>>) -> Vec<(Item, Act)> {
+    let mut rows = Vec::new();
+    for group in groups.into_iter().filter(|group| !group.is_empty()) {
+        if !rows.is_empty() {
+            // A hit names a row by its position, so the separator holds one
+            // too, with nothing behind it.
+            let nothing: Act = Box::new(|_, _, _, _| {});
+            rows.push((Item::Separator, nothing));
+        }
+        rows.extend(group);
+    }
+    rows
 }
 
 impl Cydonia {

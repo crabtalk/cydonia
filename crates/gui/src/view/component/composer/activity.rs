@@ -122,9 +122,12 @@ impl Composer {
         cx.notify();
     }
 
+    /// The turn's activity. `ruled` draws the line between it and the field
+    /// under it, through the capsule's padding.
     pub(super) fn activity_row(
         &self,
         theme: &Theme,
+        ruled: bool,
         right_inset: f32,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
@@ -139,13 +142,15 @@ impl Composer {
                 .flex_col()
                 .min_w_0()
                 // Extend the divider through the capsule's padding, keeping content inset.
-                .ml(px(-12.))
-                .mr(px(-right_inset))
-                .pl(px(12.))
-                .pr(px(right_inset))
-                .pb(px(6.))
-                .border_b_1()
-                .border_color(theme.border.opacity(0.7))
+                .when(ruled, |row| {
+                    row.ml(px(-12.))
+                        .mr(px(-right_inset))
+                        .pl(px(12.))
+                        .pr(px(right_inset))
+                        .pb(px(6.))
+                        .border_b_1()
+                        .border_color(theme.border.opacity(0.7))
+                })
                 .child(
                     div()
                         .id("composer-activity")

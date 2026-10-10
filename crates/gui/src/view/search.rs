@@ -5,7 +5,8 @@
 //! A query also lists the menu bar's commands, matched by name or by the chord
 //! bound to them; an empty one lists the commands run last. A query starting
 //! with `>` lists commands alone, and one starting with a kind's prefix,
-//! `s:`, `a:` or `b:`, that kind's entries alone.
+//! `s:`, `a:` or `b:`, that kind's entries alone. A label's prefix, `l:` and
+//! the label, after it or alone, lists the entries carrying that label.
 //!
 //! A query lists the entries `@` would for it first — see
 //! [`crate::view::mention::rank`] — then the ones it is found in.
@@ -285,7 +286,7 @@ impl Search {
         let content = self.field.read(cx).content();
         match content.trim_start().starts_with(COMMAND_PREFIX) {
             true => None,
-            false => Query::literal(mention::kind_prefix(content).1),
+            false => Query::literal(mention::prefixes(content).2),
         }
     }
 
@@ -297,6 +298,11 @@ impl Search {
             Some(Filter::Commands) => None,
             None => mention::kind_prefix(self.field.read(cx).content()).0,
         }
+    }
+
+    /// The label the query's prefix names — see [`mention::label_prefix`].
+    fn label(&self, cx: &App) -> Option<String> {
+        mention::prefixes(self.field.read(cx).content()).1
     }
 }
 
@@ -460,10 +466,14 @@ impl Cydonia {
     /// dropped with its task.
     fn refresh_search(&mut self, cx: &mut Context<Self>) {
         self.match_commands(cx);
+        let label = self.search.label(cx);
         let Some(query) = self.search.query(cx) else {
             self.search.task = None;
             self.search.searching = false;
-            self.search.hits = self.recent_hits(cx);
+            self.search.hits = match label {
+                Some(_) => self.named_hits(cx),
+                None => self.recent_hits(cx),
+            };
             self.search.limit = RECENT;
             self.search.selected = 0;
             cx.notify();
@@ -491,6 +501,11 @@ impl Cydonia {
                     .ranked_hits(found, cx)
                     .into_iter()
                     .filter(|hit| !hits.iter().any(|held| held.row == hit.row))
+                    .filter(|hit| {
+                        label
+                            .as_ref()
+                            .is_none_or(|label| this.carries(&hit.row, label, cx))
+                    })
                     .collect();
                 hits.extend(ranked);
                 this.search.hits = hits;
@@ -514,6 +529,18 @@ impl Cydonia {
             .into_iter()
             .map(|row| Hit { row, snippet: None })
             .collect()
+    }
+
+    /// Whether the entry `row` names carries `label`.
+    fn carries(&self, row: &Row, label: &str, cx: &App) -> bool {
+        let Row::Entry { project, showing } = row else {
+            return false;
+        };
+        let workspace = self.workspace.read(cx);
+        workspace
+            .project_at(project)
+            .and_then(|at| workspace.labels_of(at, showing))
+            .is_some_and(|labels| labels.iter().any(|held| held == label))
     }
 
     /// The entries the field's query names — see [`mention::rank`].
@@ -556,6 +583,8 @@ impl Cydonia {
                             .find(|chat| chat.record.as_deref() == Some(found.id.as_str()))?;
                         (Showing::Session(chat.id), chat.touched())
                     }
+                    // The text search reads no tables.
+                    Kind::Table => return None,
                 };
                 let row = Row::Entry {
                     project: open.path.clone(),
@@ -1267,6 +1296,7 @@ pub(crate) fn kind_icon(kind: Kind) -> Icon {
         Kind::Session => icons::social::MessageCircle.into(),
         Kind::Board => icons::development::SquareKanban.into(),
         Kind::Article => icons::files::FileText.into(),
+        Kind::Table => icons::files::Table2.into(),
     }
 }
 
@@ -1276,7 +1306,7 @@ fn kind_of(row: &Row) -> Option<Kind> {
             Showing::Session(_) => Some(Kind::Session),
             Showing::Board(_) => Some(Kind::Board),
             Showing::Article(_) => Some(Kind::Article),
-            Showing::Table(_) => None,
+            Showing::Table(_) => Some(Kind::Table),
         },
         _ => None,
     }

@@ -75,6 +75,7 @@ impl Project {
                         if board.id.is_empty() {
                             board.id = stem.to_owned();
                         }
+                        board.created = stamp::named(stem);
                         state.boards.insert(board.id.clone(), board);
                     }
                     ["sessions", file] => {
@@ -185,7 +186,9 @@ impl State {
             title: properties.title,
             archived: properties.archived,
             touched: held.touched,
+            created: stamp::named(id),
             cover: None,
+            labels: properties.labels,
         }
     }
 }
@@ -219,6 +222,7 @@ impl super::Project for Project {
     fn create_board(&self, name: &str, key: &str) -> Result<Board> {
         let mut state = self.state();
         let mut board = Board::new(id::mint(), name);
+        board.created = stamp::named(&board.id);
         board.key = match key::normalize(key) {
             Some(key) => key,
             None => {

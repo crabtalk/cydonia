@@ -81,6 +81,7 @@ pub enum Kind {
     Article,
     Board,
     Session,
+    Table,
 }
 
 impl Kind {
@@ -91,6 +92,7 @@ impl Kind {
             Self::Article => "article",
             Self::Board => "board",
             Self::Session => "session",
+            Self::Table => "table",
         }
     }
 }
@@ -308,7 +310,8 @@ pub fn disk(project: &fs::Project, kinds: &[Kind], query: &Query, found: &Sender
                     found,
                 )
             }
-            Kind::Board => true,
+            // Boards are read whole above; tables are not searched.
+            Kind::Board | Kind::Table => true,
         }
     });
 }

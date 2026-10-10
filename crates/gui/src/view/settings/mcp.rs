@@ -52,7 +52,7 @@ impl Door {
             Self::Delete => (
                 icons::files::Trash,
                 "Agents may delete",
-                "Offers the tools that delete an article or a board. Archiving needs only Edit.",
+                "Offers the tools that delete an article, a board or a card. Archiving needs only Edit.",
             ),
         }
     }

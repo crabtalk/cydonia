@@ -52,8 +52,11 @@ fn every_bundled_theme_names_only_tokens() {
     assert!(!themes::all().is_empty());
     for family in themes::all() {
         for appearance in [Appearance::Dark, Appearance::Light] {
+            let Some(variant) = family.variant(appearance) else {
+                continue;
+            };
             let mut theme = Theme::for_appearance(appearance);
-            let unknown = family.variant(appearance).apply(&mut theme);
+            let unknown = variant.apply(&mut theme);
             assert!(
                 unknown.is_empty(),
                 "{} {appearance:?}: {unknown:?}",
@@ -64,19 +67,40 @@ fn every_bundled_theme_names_only_tokens() {
 }
 
 #[test]
-fn a_named_theme_reaches_the_palette_and_an_unknown_one_is_the_default() {
+fn each_appearance_takes_its_own_theme_and_a_missing_variant_is_the_default() {
     let look = settings::Appearance {
-        theme: Some("gruvbox".into()),
+        theme: settings::Themes {
+            light: Some("gruvbox".into()),
+            dark: Some("Lobster".into()),
+        },
         ..settings::Appearance::default()
     };
+    let inputs = Inputs::of(&look, Families::default());
     let gruvbox = themes::named("Gruvbox").unwrap();
-    let theme = build(&Inputs::of(&look, Families::default()), Appearance::Light);
-    assert_eq!(Some(theme.bg), gruvbox.light.get("bg"));
+    let light = build(&inputs, Appearance::Light);
+    assert_eq!(Some(light.bg), gruvbox.light.as_ref().unwrap().get("bg"));
+    let dark = build(&inputs, Appearance::Dark);
+    assert_eq!(dark.family.as_deref(), Some("Lobster"));
 
+    // Lobster has no light variant.
     let look = settings::Appearance {
-        theme: Some("no such theme".into()),
+        theme: settings::Themes {
+            light: Some("Lobster".into()),
+            dark: Some("no such theme".into()),
+        },
         ..settings::Appearance::default()
     };
-    let theme = build(&Inputs::of(&look, Families::default()), Appearance::Dark);
-    assert_eq!(theme.bg, Theme::dark().bg);
+    let inputs = Inputs::of(&look, Families::default());
+    assert_eq!(build(&inputs, Appearance::Light).bg, Theme::light().bg);
+    assert_eq!(build(&inputs, Appearance::Dark).bg, Theme::dark().bg);
+}
+
+#[test]
+fn a_bare_theme_name_paints_both_appearances() {
+    let both: settings::Appearance = toml::from_str(r#"theme = "Nord""#).unwrap();
+    assert_eq!(both.theme.light.as_deref(), Some("Nord"));
+    assert_eq!(both.theme.dark.as_deref(), Some("Nord"));
+    let split: settings::Appearance = toml::from_str(r#"theme = { dark = "Lobster" }"#).unwrap();
+    assert_eq!(split.theme.light, None);
+    assert_eq!(split.theme.dark.as_deref(), Some("Lobster"));
 }

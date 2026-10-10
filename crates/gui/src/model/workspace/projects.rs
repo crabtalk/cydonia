@@ -38,6 +38,9 @@ impl Workspace {
                         Change::Rename { session, title } => {
                             workspace.retitle_record(&session, title, cx)
                         }
+                        Change::Label { session, labels } => {
+                            workspace.label_record(&session, labels, cx)
+                        }
                         Change::Start {
                             project,
                             agent,

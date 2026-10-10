@@ -53,6 +53,8 @@ Start with a kind's prefix to list that kind alone:
 
 `@s:review` lists the sessions matching `review`. A prefix comes first and a turn range after a number, so `@s:#43` and `#43:5` do not collide.
 
+`l:` and a label lists the entries carrying that label, in every open project: `l:research` lists them all, `l:research plan` those matching `plan`. It follows a kind's prefix when there is one, as in `a:l:research`.
+
 The search palette also lists the commands that match, and the entries whose text contains what you typed.
 
 ## Turns

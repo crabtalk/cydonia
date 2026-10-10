@@ -20,7 +20,9 @@ fn article(cover: Option<&str>) -> Article {
         title: "Roadmap".into(),
         archived: false,
         touched: 1_757_000_000_000,
+        created: None,
         cover: cover.map(|file| Url::from_file_path(file).expect("absolute")),
+        labels: Vec::new(),
     }
 }
 

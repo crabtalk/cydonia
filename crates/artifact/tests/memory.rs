@@ -87,6 +87,7 @@ fn properties_round_trip_and_clear() {
         title: "Renamed".into(),
         archived: true,
         full_width: None,
+        labels: vec!["research".into()],
     };
     store.save_properties("1790089015001", &wanted).unwrap();
     assert_eq!(store.properties("1790089015001"), wanted);
@@ -131,4 +132,11 @@ fn a_number_resolves_only_under_its_own_kind() {
 fn nothing_is_watched() {
     let store = memory::Project::new();
     assert!(store.watch(|| {}).is_none());
+}
+
+#[test]
+fn a_seeded_entry_was_created_at_the_stamp_it_is_named_for() {
+    let store = seeded();
+    assert_eq!(store.boards()[0].created, Some(1790266971001));
+    assert_eq!(store.articles()[0].created, Some(1790089015001));
 }

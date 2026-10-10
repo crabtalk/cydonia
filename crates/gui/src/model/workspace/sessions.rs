@@ -222,7 +222,7 @@ impl Workspace {
         }
     }
 
-    fn project_of(&self, id: u64) -> Option<usize> {
+    pub(super) fn project_of(&self, id: u64) -> Option<usize> {
         self.projects
             .iter()
             .position(|project| project.session(id).is_some())

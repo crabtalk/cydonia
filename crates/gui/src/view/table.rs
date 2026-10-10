@@ -562,6 +562,70 @@ impl Cydonia {
             .into_any_element()
     }
 
+    /// A table's rows, read only — what a drawer shows of one. Nothing until
+    /// its page has been read; see [`Cydonia::hold_drawn_tables`].
+    pub(crate) fn table_peek(
+        &self,
+        project: usize,
+        at: usize,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let theme = Theme::of(cx).clone();
+        let page = self.workspace.read(cx).page_in(project, at)?;
+        let declared: Vec<table::Column> = page
+            .columns
+            .iter()
+            .map(|column| {
+                let shape = table::Column::new(column.name.clone(), table::Width::Flex(1.));
+                match column.kind {
+                    ColType::Number => shape.align_end(),
+                    _ => shape,
+                }
+            })
+            .collect();
+        let headings = declared
+            .iter()
+            .map(|column| table::header_cell(&theme, column, None).cursor_default());
+        let mut body = table::table(&theme).child(table::header(&theme).children(headings));
+        for (n, record) in page.rows.iter().enumerate() {
+            let cells = (0..declared.len())
+                .map(|ix| {
+                    div()
+                        .w_full()
+                        .truncate()
+                        .line_height(px(LINE))
+                        .child(record.cells.get(ix).map(text).unwrap_or_default())
+                        .into_any_element()
+                })
+                .collect();
+            body = body.child(table::row(&theme, &declared, n == 0, false, cells));
+        }
+        let count = match page.total as usize == page.rows.len() {
+            true => format!("{} rows", page.total),
+            false => format!("{} of {} rows", page.rows.len(), page.total),
+        };
+        Some(
+            div()
+                .id("table-peek")
+                .flex_1()
+                .min_h_0()
+                .map(|el| scrollbars::scrolls(el, scrollbars::Axes::Vertical))
+                .px(px(16.))
+                .py(px(12.))
+                .flex()
+                .flex_col()
+                .gap(px(8.))
+                .child(body)
+                .child(
+                    div()
+                        .text_style(TextStyle::Subheadline)
+                        .text_color(theme.text_faint)
+                        .child(count),
+                )
+                .into_any_element(),
+        )
+    }
+
     /// One table in the sidebar, under the project that holds it.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn table_row(
@@ -643,7 +707,7 @@ fn glyph(kind: ColType) -> &'static [u8] {
 
 /// One value as it reads in a cell. An empty cell is drawn as nothing rather
 /// than as `null` — a blank is what absence looks like in a grid.
-fn text(value: &Value) -> String {
+pub(crate) fn text(value: &Value) -> String {
     match value {
         Value::Null => String::new(),
         Value::String(s) => s.clone(),

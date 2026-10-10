@@ -293,6 +293,9 @@ pub struct Composer {
     /// of them open the window's own panels, which a space divides the room
     /// for — see [`crate::view::arrangement`].
     tools: bool,
+    /// Whether there is a field to type into. Off, the composer is the turn's
+    /// activity alone, with Stop while one runs.
+    input: bool,
     activity: Option<Activity>,
     activity_open: bool,
     activity_frame: std::rc::Rc<std::cell::RefCell<bezel::agent::orbs::engine::Frame>>,
@@ -371,6 +374,7 @@ impl Composer {
             streaming: false,
             last_asked: None,
             tools: true,
+            input: true,
             activity: None,
             activity_open: false,
             activity_frame: Default::default(),
@@ -471,6 +475,13 @@ impl Composer {
     pub fn set_tools(&mut self, tools: bool, cx: &mut Context<Self>) {
         if self.tools != tools {
             self.tools = tools;
+            cx.notify();
+        }
+    }
+
+    pub fn set_input(&mut self, input: bool, cx: &mut Context<Self>) {
+        if self.input != input {
+            self.input = input;
             cx.notify();
         }
     }
@@ -1436,7 +1447,33 @@ impl Composer {
             .into_any_element()
     }
 
-    fn body(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    /// The turn's activity alone, and Stop while it runs: the composer with
+    /// no field. Nothing between turns.
+    fn status(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        let Some(row) = self.activity_row(&theme, false, root::COMPOSER_INSET, cx) else {
+            return div().into_any_element();
+        };
+        div()
+            .w_full()
+            .rounded(px(root::composer_height() / 2.))
+            .py(px(root::COMPOSER_INSET))
+            .pl(px(12.))
+            .pr(px(root::COMPOSER_INSET))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(root::COMPOSER_INSET))
+            .child(div().flex_1().min_w_0().child(row))
+            .children(self.streaming.then(|| self.button(&theme, cx)).flatten())
+            .surface(&theme, SURFACE)
+            .into_any_element()
+    }
+
+    fn body(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        if !self.input {
+            return self.status(cx);
+        }
         let theme = Theme::of(cx).clone();
         let picker = self.picker(&theme, window, cx);
         let tray = self.tray(&theme, cx);
@@ -1490,7 +1527,7 @@ impl Composer {
                                     .flex()
                                     .flex_col()
                                     .gap(px(root::COMPOSER_INSET))
-                                    .children(self.activity_row(&theme, right_inset, cx))
+                                    .children(self.activity_row(&theme, true, right_inset, cx))
                                     .children(tray)
                                     .child(
                                         div()
@@ -1516,6 +1553,7 @@ impl Composer {
                     .children(self.tools.then(|| self.tools(&theme, window, cx))),
             )
             .children(self.lightbox(window, cx))
+            .into_any_element()
     }
 
     /// The picture opened from its thumb, as large as the window allows.

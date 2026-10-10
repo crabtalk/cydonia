@@ -474,6 +474,8 @@ pub struct Cydonia {
     pub(crate) drag: bezel::ui::titlebar::DragState,
     pub(crate) right_panels:
         std::collections::HashMap<std::path::PathBuf, Entity<super::component::panel::Panel>>,
+    /// The right panel while the library is up — see [`Cydonia::library_panel`].
+    pub(crate) library_panel: Option<Entity<super::component::panel::Panel>>,
     /// The buffer each card's orb paints into, by card id — see
     /// [`board::Marks`].
     pub(crate) card_marks: board::Marks,
@@ -524,6 +526,11 @@ pub struct Cydonia {
     /// front before it rather than on a neighbour in the strip — see
     /// [`Cydonia::close_pane`]. Runtime only, for the same reason `fronts` is.
     pub(crate) tab_history: Vec<Member>,
+    /// The library, while it stands over the panes — see
+    /// [`super::library`].
+    pub(crate) library: Option<super::library::Library>,
+    /// The label picker, while one is open — see [`super::labels`].
+    pub(crate) picker: Option<super::labels::Picker>,
     /// The board identity panel, while it is open — see [`header::BoardInfo`].
     pub(crate) info: Option<info::BoardInfo>,
     /// The board that has been asked for and not yet made — see
@@ -773,6 +780,7 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
+        self.library = None;
         // A space names entries by the file they have, so one with no file yet
         // — a session that has had no turn — is in none of them.
         let held = member.as_ref().and_then(|member| {
@@ -1022,6 +1030,7 @@ impl Cydonia {
             changes: None,
             drag: Default::default(),
             right_panels: Default::default(),
+            library_panel: None,
             boards: Default::default(),
             card_marks: Default::default(),
             card_docs: Default::default(),
@@ -1058,6 +1067,8 @@ impl Cydonia {
             tab_history: Vec::new(),
             confirming: None,
             desktop_only: None,
+            library: None,
+            picker: None,
             info: None,
             making: None,
             info_pressed: false,
@@ -1331,6 +1342,7 @@ impl Cydonia {
     /// the spot it points at belongs to the board being navigated away from.
     pub(crate) fn select_project(&mut self, ix: usize, cx: &mut Context<Self>) {
         self.commit(cx);
+        self.library = None;
         self.workspace
             .update(cx, |workspace, cx| workspace.select_project(ix, cx));
         self.land(cx);
@@ -1538,13 +1550,10 @@ impl Cydonia {
     /// chat, which under the shipped defaults is itself switched off.
     pub(crate) fn showing(&self, cx: &App) -> Option<Pane> {
         // A pane in a space is whatever its entry is, whether or not it has
-        // been focused yet: `leaf.pane` is only written by the focus.
+        // been focused yet: `leaf.pane` is only written by the focus. A leaf
+        // is one tab, so its entry is what it shows.
         if let Some(entry) = &self.leaf().entry
-            && let Some((_, showing)) = {
-                let workspace = self.workspace.read(cx);
-                let front = self.front_of(entry, &workspace.stack_of(entry));
-                workspace.showing_of(&front)
-            }
+            && let Some((_, showing)) = self.workspace.read(cx).showing_of(entry)
         {
             return Some(match showing {
                 Showing::Session(_) => Pane::Chat,
@@ -1614,6 +1623,7 @@ impl Render for Cydonia {
         self.sync_leaves(window, cx);
         self.sync_changes(cx);
         self.publish_shown(cx);
+        self.hold_drawn_tables(cx);
         let theme = Theme::of(cx).clone();
         let root = div()
             .key_context("Cydonia")
@@ -1665,7 +1675,6 @@ impl Render for Cydonia {
             }))
             .on_action(cx.listener(|this, _: &ZoomPane, _, cx| this.zoom_focused_pane(cx)))
             .on_action(cx.listener(Self::toggle_changes))
-            .on_action(cx.listener(Self::open_session_file))
             .on_action(cx.listener(Self::copy_selection))
             .on_action(cx.listener(Self::commit_cell_action))
             .on_action(cx.listener(Self::dismiss_cell))

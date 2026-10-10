@@ -15,6 +15,7 @@ fn entry(project: &str, active: bool, number: u64, title: &str, key: Option<&str
         active,
         number,
         key: key.map(str::to_owned),
+        labels: Vec::new(),
         agent: None,
         archived: false,
         kind: match key {
@@ -117,4 +118,15 @@ fn a_kind_prefix_lists_that_kind_alone() {
     assert_eq!(rank("a:12", &held()), vec![2, 0]);
     assert!(rank("s:", &held()).is_empty());
     assert_eq!(kind_prefix("x:12"), (None, "x:12"));
+}
+
+#[test]
+fn a_label_prefix_lists_the_entries_carrying_it_in_every_project() {
+    let mut held = held();
+    held[1].labels = vec!["q3".into()];
+    held[4].labels = vec!["q3".into(), "research".into()];
+    assert_eq!(rank("l:Q3", &held), vec![1, 4]);
+    assert_eq!(rank("l:q3 input", &held), vec![4]);
+    assert_eq!(rank("a:l:research", &held), vec![4]);
+    assert_eq!(label_prefix("l: x"), (None, "l: x"));
 }

@@ -19,8 +19,10 @@ pub struct Inputs {
     pub caret: Option<Paint>,
     /// Terminals take the caret's colour as their cursor.
     pub terminal_caret: bool,
-    /// `None` is bezel's own palette.
-    pub theme: Option<&'static ThemeFamily>,
+    /// The family each appearance is painted in. `None`, or a family with no
+    /// variant for the appearance, is bezel's own palette.
+    pub light: Option<&'static ThemeFamily>,
+    pub dark: Option<&'static ThemeFamily>,
 }
 
 impl Inputs {
@@ -30,17 +32,25 @@ impl Inputs {
             selection: look.selection,
             caret: look.caret,
             terminal_caret: look.terminal_caret,
-            theme: look.theme.as_deref().and_then(themes::named),
+            light: look.theme.light.as_deref().and_then(themes::named),
+            dark: look.theme.dark.as_deref().and_then(themes::named),
+        }
+    }
+
+    fn family(&self, appearance: Appearance) -> Option<&'static ThemeFamily> {
+        match appearance {
+            Appearance::Light => self.light,
+            Appearance::Dark => self.dark,
         }
     }
 }
 
 /// The palette for `appearance` under `inputs`.
 pub fn build(inputs: &Inputs, appearance: Appearance) -> Theme {
-    let mut theme = match inputs.theme {
-        Some(family) => family.theme(appearance),
-        None => Theme::for_appearance(appearance),
-    };
+    let mut theme = inputs
+        .family(appearance)
+        .and_then(|family| family.theme(appearance))
+        .unwrap_or_else(|| Theme::for_appearance(appearance));
     theme.drop_preview = SurfaceStyle::Glass(Glass::Clear);
     let families = &inputs.families;
     if let Some(sans) = &families.sans {

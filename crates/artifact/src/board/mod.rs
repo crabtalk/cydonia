@@ -77,6 +77,10 @@ pub struct Board {
     /// into the record, which would be a second copy able to disagree.
     #[serde(skip)]
     pub touched: u128,
+    /// When it was made, where the backend holding it knows. Never written
+    /// into the record, as with [`Board::touched`].
+    #[serde(skip)]
+    pub created: Option<u128>,
     /// What the backend held when this copy was read, as the backend spells
     /// it. A save carrying one is refused with [`crate::project::Stale`] when
     /// the backend has moved on since. `None` for a board not read from a
@@ -98,6 +102,9 @@ pub struct Board {
     /// coming back as somebody else's.
     #[serde(default)]
     pub next_handle: u64,
+    /// Its labels, normalised — see [`crate::label`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub labels: Vec<String>,
     /// How the pane lays this board out — see [`View`].
     ///
     /// Ahead of the columns: TOML takes no value after a table, so a scalar
@@ -117,12 +124,14 @@ impl Board {
             number: None,
             version: None,
             touched: stamp::now(),
+            created: None,
             archived: false,
             name: name.to_owned(),
             // Filled by whoever knows what the neighbouring boards have taken
             // — see [`key::derive`]. Empty until then, the way the ids are.
             key: String::new(),
             next_handle: FIRST,
+            labels: Vec::new(),
             view: View::default(),
             columns: Vec::new(),
         }
@@ -430,6 +439,7 @@ impl Board {
     pub fn adopt(&mut self, fresh: Self) -> bool {
         if toml::to_string_pretty(self).ok() == toml::to_string_pretty(&fresh).ok() {
             self.touched = fresh.touched;
+            self.created = fresh.created;
             self.number = fresh.number;
             return false;
         }

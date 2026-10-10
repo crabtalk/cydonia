@@ -2,15 +2,17 @@
 
 use crate::{
     memory,
-    model::article,
+    model::{article, workspace::Showing},
     view::{
         component::{
             menu::{self, Menu},
             transcript::{MARK_AWAY, MARK_READING, MARK_VISIBLE},
         },
+        labels::Target,
         leaf::Pane,
         root::{Cydonia, NewArticle},
         sidebar::{self, Row},
+        stamp,
     },
 };
 use artifact::space::Member;
@@ -27,8 +29,9 @@ use bezel::{
         icons,
         input::TextField,
         menu::Item,
-        popover,
-        widgets::{ButtonStyle, Buttons as _, Status as _},
+        multi_select, popover,
+        tooltip::Tooltip,
+        widgets::{ButtonStyle, Buttons as _, Content as _, Status as _},
     },
 };
 use editor::AppExt as _;
@@ -274,6 +277,26 @@ fn column(wide: bool) -> Div {
     match wide {
         true => band,
         false => band.max_w(px(CONTENT_MAX_WIDTH)),
+    }
+}
+
+/// The hover group of the line under the title, which shows its empty labels
+/// prompt.
+const META_GROUP: &str = "article-meta";
+
+/// `n` words, as a reader counts them out.
+fn word_count(n: usize) -> String {
+    let digits = n.to_string();
+    let mut grouped = String::new();
+    for (ix, digit) in digits.chars().enumerate() {
+        if ix > 0 && (digits.len() - ix).is_multiple_of(3) {
+            grouped.push(',');
+        }
+        grouped.push(digit);
+    }
+    match n {
+        1 => "1 word".to_owned(),
+        _ => format!("{grouped} words"),
     }
 }
 
@@ -654,6 +677,7 @@ impl Cydonia {
             .flex()
             .flex_col()
             .child(self.header(cover, field, wide, cx))
+            .children(self.meta_line(project, at, wide, cx))
             .child(page(&editor, wide, source_offset));
         Some(
             div()
@@ -740,17 +764,6 @@ impl Cydonia {
                 ))
                 .into_any_element(),
         )
-    }
-
-    /// Whether a pane is drawing the article at `path`.
-    pub(crate) fn article_on_screen(&self, path: &Path, cx: &App) -> bool {
-        let workspace = self.workspace.read(cx);
-        self.leaves.iter().any(|leaf| {
-            leaf.pane == Pane::Article
-                && workspace
-                    .article_of(leaf.entry.as_ref())
-                    .is_some_and(|article| article.path == path)
-        })
     }
 
     /// The outline over the pane's bottom right: a dash per heading, longer
@@ -970,9 +983,102 @@ impl Cydonia {
                         .pl(px(COLUMN_INSET + cx.editor_layout().text_inset))
                         .pr(px(COLUMN_INSET))
                         .pt(px(20.))
+                        .font_family(Theme::of(cx).font_body.clone())
                         .child(field),
                 ),
             )
+    }
+
+    /// The line under the title: the page's labels, and how long it is and
+    /// when it last changed. Hovering the date shows when it was made.
+    fn meta_line(
+        &self,
+        project: usize,
+        at: usize,
+        wide: bool,
+        cx: &Context<Self>,
+    ) -> Option<AnyElement> {
+        let workspace = self.workspace.read(cx);
+        let open = workspace.projects.get(project)?;
+        let article = open.articles.get(at)?;
+        let target = Target::Page(Row::Entry {
+            project: open.path.clone(),
+            showing: Showing::Article(article.id.clone()),
+        });
+        let labels = article.labels.clone();
+        let edited = format!("Edited {}", stamp::full(article.touched));
+        let about = match article.words() {
+            Some(words) => format!("{} · {edited}", word_count(words)),
+            None => edited,
+        };
+        let created = article
+            .created
+            .map(|created| SharedString::from(format!("Created {}", stamp::full(created))));
+        let theme = Theme::of(cx).clone();
+        let chips = div()
+            .id("article-labels")
+            .relative()
+            .min_w_0()
+            .flex()
+            .flex_row()
+            .flex_wrap()
+            .items_center()
+            .gap(px(4.))
+            .cursor_pointer()
+            .on_click(cx.listener({
+                let target = target.clone();
+                move |this, _, window, cx| {
+                    cx.stop_propagation();
+                    this.toggle_labels(target.clone(), None, window, cx);
+                }
+            }))
+            .children(
+                labels
+                    .iter()
+                    .map(|label| theme.chip(label.clone(), multi_select::tint(&theme, label))),
+            )
+            .when(labels.is_empty(), |chips| {
+                chips.child(
+                    div()
+                        .invisible()
+                        .group_hover(META_GROUP, |el| el.visible())
+                        .text_style(TextStyle::Callout)
+                        .text_color(theme.text_faint)
+                        .child("Add label"),
+                )
+            })
+            .children(self.label_picker(&target));
+        let chips = self.menu_press(chips, Menu::Labels(target), cx);
+        let about = div()
+            .id("article-about")
+            .flex_none()
+            .text_style(TextStyle::Caption)
+            .text_color(theme.text_muted)
+            .child(about)
+            .when_some(created, |about, created| {
+                about.tooltip(move |window, cx| Tooltip::text(created.clone(), window, cx))
+            });
+        Some(
+            div()
+                .w_full()
+                .flex_none()
+                .flex()
+                .justify_center()
+                .child(
+                    column(wide)
+                        .group(META_GROUP)
+                        .pl(px(COLUMN_INSET + cx.editor_layout().text_inset))
+                        .pr(px(COLUMN_INSET))
+                        .pt(px(8.))
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(12.))
+                        .child(div().flex_1().min_w_0().child(chips))
+                        .child(about),
+                )
+                .into_any_element(),
+        )
     }
 
     /// The picture across the top of a page that has one.

@@ -339,7 +339,11 @@ impl Workspace {
     /// Every write to a board goes through here, named by the board: the
     /// window can have two on screen, and the project's own selection answers
     /// for at most one of them.
-    fn with_board<T>(&mut self, id: &str, mut edit: impl FnMut(&mut Board) -> T) -> Option<T> {
+    pub(super) fn with_board<T>(
+        &mut self,
+        id: &str,
+        mut edit: impl FnMut(&mut Board) -> T,
+    ) -> Option<T> {
         for open in &mut self.projects {
             if !open.load_board(id) {
                 return None;

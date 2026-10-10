@@ -8,13 +8,3 @@
 # the day it ships without sending each of those asks to the origin.
 /changelog.json
   Cache-Control: public, max-age=900
-
-# The demo page is always revalidated; it names the build of the JS and wasm it
-# loads in their query strings (scripts/stamp-demo.mjs).
-/demo/
-  Cache-Control: no-cache
-/demo/index.html
-  Cache-Control: no-cache
-
-/demo/cydonia_demo*
-  Cache-Control: public, max-age=31536000, immutable

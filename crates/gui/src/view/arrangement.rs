@@ -15,7 +15,7 @@ use crate::{
         },
         leaf::Pane,
         root::Cydonia,
-        sidebar::Dragged,
+        sidebar::{Dragged, Row},
     },
 };
 use artifact::space::{Axis as Split, Member, Node, Side, Space};
@@ -351,6 +351,44 @@ impl Cydonia {
             .or_else(|| stack.first())
             .unwrap_or(pane)
             .clone()
+    }
+
+    /// Whether a pane draws the entry `row` names: the front tab of a pane of
+    /// the open space, or the single pane.
+    pub(crate) fn on_screen(&self, row: &Row, cx: &App) -> bool {
+        let Row::Entry { project, showing } = row else {
+            return false;
+        };
+        // The library stands over every pane.
+        if self.library.is_some() {
+            return false;
+        }
+        let workspace = self.workspace.read(cx);
+        if let Some(space) = workspace.active_space() {
+            let Some(at) = workspace.project_at(project) else {
+                return false;
+            };
+            return space.panes().iter().any(|pane| {
+                let front = self.front_of(pane, &workspace.stack_of(pane));
+                workspace
+                    .showing_of(&front)
+                    .is_some_and(|(open, shown)| open == at && &shown == showing)
+            });
+        }
+        let Some(open) = workspace
+            .active_project()
+            .filter(|open| &open.path == project)
+        else {
+            return false;
+        };
+        let Some(ix) = open.ix_of(showing) else {
+            return false;
+        };
+        match (self.showing(cx), showing) {
+            (Some(Pane::Article), Showing::Article(_)) => open.article == Some(ix),
+            (Some(Pane::Board), Showing::Board(_)) => open.board == Some(ix),
+            _ => false,
+        }
     }
 
     /// Move `moving` to `to`'s place in their pane's strip. `false`, and
@@ -830,7 +868,7 @@ impl Cydonia {
             .and_then(|space| space.zoomed())
             .is_some_and(|at| at == *entry);
 
-        let mut rows = vec![menu::row(
+        let zoom = vec![menu::row(
             match zoomed {
                 true => Item::action("Restore").with_icon(icons::arrows::Shrink),
                 false => Item::action("Expand").with_icon(icons::arrows::Expand),
@@ -843,6 +881,7 @@ impl Cydonia {
         // Only the ways this pane can actually go: a move with nothing across
         // the seam is a row that does nothing, and a menu of those teaches
         // that the menu does nothing.
+        let mut moves = Vec::new();
         for (side, label, icon) in [
             (Side::Left, "Move left", icons::arrows::ArrowLeft),
             (Side::Right, "Move right", icons::arrows::ArrowRight),
@@ -858,11 +897,12 @@ impl Cydonia {
                 continue;
             }
             let on = entry.clone();
-            rows.push(menu::row(
+            moves.push(menu::row(
                 Item::action(label).with_icon(icon),
                 move |this, window, cx| this.move_pane(&on, side, window, cx),
             ));
         }
+        let rows = menu::sections([zoom, moves]);
         let id = SharedString::from(format!("pane-menu-card-{key}"));
         Some(popover::anchored_menu_below(
             id.clone(),
@@ -1073,6 +1113,7 @@ impl Cydonia {
     /// Open a space: the window is arranged by it until another entry is
     /// opened on its own.
     pub(crate) fn open_space(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+        self.library = None;
         self.workspace.update(cx, |workspace, cx| {
             workspace.open_space(ix, cx);
         });

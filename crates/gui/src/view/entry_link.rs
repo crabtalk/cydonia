@@ -9,7 +9,7 @@
 //!
 //! The link names the entry; deleting the block leaves the entry where it was.
 
-use std::rc::Rc;
+use std::{path::Path, rc::Rc};
 
 use crate::{
     model::workspace::{
@@ -52,6 +52,10 @@ const TRANSCRIPT_HEIGHT: f32 = 320.;
 const CARD_WIDTH: f32 = 720.;
 /// How many of a session's last turns the link picker previews.
 pub(crate) const PREVIEW_TURNS: usize = 3;
+/// How many of an article's first blocks its hover card shows.
+const HOVER_BLOCKS: usize = 6;
+/// The tallest a hover card's content stands; past it the content is cut.
+const HOVER_HEIGHT: f32 = 240.;
 
 /// The link a reference is written as.
 pub(crate) fn link(reference: &str) -> String {
@@ -78,6 +82,13 @@ pub(crate) fn card(url: &str, form: Form, window: &mut Window, cx: &mut App) -> 
     }
     let root = window.root::<Cydonia>().flatten()?;
     Some(root.update(cx, |root, cx| root.entry_card(&reference, form, window, cx)))
+}
+
+/// The hover card cydonia installs at boot: its own links, and nothing else.
+pub(crate) fn hover(url: &str, window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+    let reference = url.strip_prefix(SCHEME)?.to_owned();
+    let root = window.root::<Cydonia>().flatten()?;
+    Some(root.update(cx, |root, cx| root.entry_hover(&reference, window, cx)))
 }
 
 /// How deep the drawing is inside sessions drawn in another entry or a
@@ -145,30 +156,40 @@ fn nested_row(url: &str, cx: &App) -> AnyElement {
                 .text_color(theme.text)
                 .child(title),
         )
-        .on_click(move |_, window, cx| open_link(&url, window, cx))
+        .on_click(move |_, window, cx| open_link(&url, None, window, cx))
         .into_any_element()
 }
 
-/// Opens a link clicked in an article or a transcript: an http(s) link in a
-/// panel tab where Settings says so and the window can take one, else in the
-/// system browser. Installed as markdown's link handler.
-pub fn open_link(url: &str, window: &mut Window, cx: &mut App) {
+/// Opens a link clicked in an article or a transcript: a web link in the
+/// system browser, a file in the file manager. With shift held, a web link
+/// opens in a panel browser tab and a file in a panel file tab, where the
+/// window can take one. A relative path is a file under `base`. Installed as
+/// markdown's link handler.
+pub fn open_link(url: &str, base: Option<&Path>, window: &mut Window, cx: &mut App) {
+    let Some(Some(root)) = window.root::<Cydonia>() else {
+        cx.open_url(url);
+        return;
+    };
     if let Some(reference) = url.strip_prefix(SCHEME) {
-        if let Some(Some(root)) = window.root::<Cydonia>() {
-            root.update(cx, |root, cx| root.open_reference(reference, window, cx));
+        root.update(cx, |root, cx| root.open_reference(reference, window, cx));
+        return;
+    }
+    let shift = window.modifiers().shift;
+    if let Some((path, line)) = crate::model::file_url::target(base, url) {
+        let opened = shift
+            && root.update(cx, |root, cx| {
+                root.open_file_in_panel(path.clone(), line, window, cx)
+            });
+        if !opened {
+            root.update(cx, |root, cx| root.reveal_path(path, cx));
         }
         return;
     }
     #[cfg(not(target_os = "linux"))]
     {
-        use crate::model::settings::{Browsing, Links};
-        let panel = cx
-            .try_global::<Browsing>()
-            .is_some_and(|browsing| browsing.links == Links::Panel);
         let web = url.starts_with("https://") || url.starts_with("http://");
-        if panel
-            && web
-            && let Some(Some(root)) = window.root::<Cydonia>()
+        if web
+            && shift
             && root.update(cx, |root, cx| {
                 root.open_in_panel(url.to_owned(), window, cx)
             })
@@ -335,6 +356,7 @@ impl Cydonia {
             Kind::Session => "Session",
             Kind::Article => "Article",
             Kind::Board => "Board",
+            Kind::Table => "Table",
         };
         let columns = match &named.row {
             Row::Entry {
@@ -444,9 +466,6 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let theme = Theme::of(cx).clone();
-        let title = self.label_of_row(&row, cx);
-        let block = passage.blocks.start;
         let body = self.passage_body(
             &row,
             &passage,
@@ -454,7 +473,33 @@ impl Cydonia {
             window,
             cx,
         );
-        let header = fence_band(&theme)
+        let header = self.article_header(row, number, &passage, cx);
+        div()
+            .flex()
+            .flex_col()
+            .when(height.is_some(), |el| el.flex_1().min_h_0())
+            .child(header)
+            .child(body)
+            .into_any_element()
+    }
+
+    /// An article excerpt's band: its mark, title, number and what part of it
+    /// this is. Pressing it opens the article at the passage.
+    fn article_header(
+        &self,
+        row: Row,
+        number: u64,
+        passage: &Passage,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        let title = self.label_of_row(&row, cx);
+        let block = passage.blocks.start;
+        let named = match passage.label.as_str() {
+            "" => format!("#{number}"),
+            label => format!("#{number} · {label}"),
+        };
+        fence_band(&theme)
             .id(SharedString::from(format!(
                 "article-excerpt-head-{number}-{}",
                 passage.source.start
@@ -481,18 +526,104 @@ impl Cydonia {
                     .flex_none()
                     .text_style(TextStyle::Caption)
                     .text_color(theme.text_faint)
-                    .child(format!("#{number} · {}", passage.label)),
+                    .child(named),
             )
             .on_click(
                 cx.listener(move |this, _, window, cx| this.open_passage(&row, block, window, cx)),
-            );
+            )
+            .into_any_element()
+    }
+
+    /// What hovering a link to `reference` shows: an article's opening blocks
+    /// or the passage it names, a card's text, and otherwise the entry's row.
+    fn entry_hover(
+        &mut self,
+        reference: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        let body = match self.named(reference, cx) {
+            Ok(Named {
+                row,
+                part: Some(Part::Card(card)),
+                ..
+            }) => self
+                .located(&row, cx)
+                .and_then(|(project, at)| {
+                    self.card_embed(project, at, &card.id, reference, window, cx)
+                })
+                .unwrap_or_else(|| div().into_any_element()),
+            Ok(Named {
+                row,
+                part: Some(Part::Passage(passage)),
+                number,
+                ..
+            }) => self.article_hover(row, number, passage, window, cx),
+            Ok(Named {
+                row,
+                kind: Kind::Article,
+                number,
+                part: None,
+            }) => match self.opening(&row, cx) {
+                Some(passage) => self.article_hover(row, number, passage, window, cx),
+                None => self.entry_row(
+                    Named {
+                        row,
+                        kind: Kind::Article,
+                        number,
+                        part: None,
+                    },
+                    cx,
+                ),
+            },
+            Ok(named) => self.entry_row(named, cx),
+            Err(why) => div()
+                .p(px(12.))
+                .text_style(TextStyle::Callout)
+                .text_color(theme.text_faint)
+                .child(why)
+                .into_any_element(),
+        };
+        fence_panel(&theme)
+            .w_full()
+            .flex()
+            .flex_col()
+            .child(body)
+            .into_any_element()
+    }
+
+    fn article_hover(
+        &mut self,
+        row: Row,
+        number: u64,
+        passage: Passage,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let body = self.passage_body(&row, &passage, Some(px(HOVER_HEIGHT)), window, cx);
+        let header = self.article_header(row, number, &passage, cx);
         div()
             .flex()
             .flex_col()
-            .when(height.is_some(), |el| el.flex_1().min_h_0())
             .child(header)
             .child(body)
             .into_any_element()
+    }
+
+    /// An article's first [`HOVER_BLOCKS`] blocks, as a passage. `None` for an
+    /// empty article or one not found.
+    fn opening(&self, row: &Row, cx: &App) -> Option<Passage> {
+        let (project, at) = self.located(row, cx)?;
+        let disk = self.workspace.read(cx).article_in(project, at)?.disk();
+        let count = disk.blocks.len().min(HOVER_BLOCKS);
+        let end = disk.blocks.get(count.checked_sub(1)?)?.end;
+        Some(Passage {
+            blocks: 0..count,
+            source: 0..end,
+            disk,
+            label: String::new(),
+        })
     }
 
     /// The blocks of `passage`, read only, in a box that scrolls past
@@ -614,17 +745,20 @@ impl Cydonia {
             .into_any_element()
     }
 
-    /// Session `id`'s transcript with the composer that sends to it, filling
-    /// the box it is put in. Scrolled by `list` where one is given, else by
-    /// the session's own.
+    /// Session `id`'s transcript over its footer, filling the box it is put
+    /// in. Without `reply` the composer has no field, and shows the turn's
+    /// activity alone. Scrolled by `list` where one is given, else by the
+    /// session's own.
     pub(crate) fn session_transcript(
         &mut self,
         id: u64,
         list: Option<&bezel::ui::list::VariableList<usize>>,
+        reply: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let composer = self.session_composer(id, window, cx);
+        composer.update(cx, |composer, cx| composer.set_input(reply, cx));
         let root = cx.entity().downgrade();
         let transcript = self.workspace.update(cx, |workspace, cx| {
             workspace.session(id).map(|chat| {
@@ -642,7 +776,6 @@ impl Cydonia {
                 )
             })
         });
-        let dropped = composer.clone();
         div()
             .id(SharedString::from(format!("session-card-transcript-{id}")))
             .relative()
@@ -651,8 +784,11 @@ impl Cydonia {
             // The transcript's wheel stops here, at its ends too, so what is
             // under it does not scroll with it.
             .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
-            .on_drop(move |paths: &gpui::ExternalPaths, _, cx| {
-                dropped.update(cx, |composer, cx| composer.drop_paths(paths, cx));
+            .when(reply, |el| {
+                let dropped = composer.clone();
+                el.on_drop(move |paths: &gpui::ExternalPaths, _, cx| {
+                    dropped.update(cx, |composer, cx| composer.drop_paths(paths, cx));
+                })
             })
             .flex()
             .flex_col()

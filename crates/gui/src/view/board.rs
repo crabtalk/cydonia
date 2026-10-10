@@ -477,7 +477,7 @@ impl Docs {
             .clone()
     }
 
-    fn title(&self, text: &str) -> SharedString {
+    pub(crate) fn title(&self, text: &str) -> SharedString {
         self.of(text);
         let mut docs = self.0.borrow_mut();
         let cached = docs.get_mut(text).unwrap();
@@ -1245,7 +1245,7 @@ impl Cydonia {
 
     /// The `···` on a card: what the row of glyphs underneath should not carry,
     /// because it cannot be undone.
-    fn card_menu(
+    pub(crate) fn card_menu(
         &self,
         on: &str,
         card: &str,
@@ -2542,33 +2542,16 @@ impl Cydonia {
                     .items_center()
                     .gap(px(6.))
                     .cursor_pointer()
-                    .child(
-                        icons::icon(if folded {
-                            icons::arrows::ChevronRight
+                    .children(Self::lane_title(
+                        folded,
+                        name,
+                        if shown == held {
+                            held.to_string()
                         } else {
-                            icons::arrows::ChevronDown
-                        })
-                        .size(px(12.))
-                        .text_color(theme.text_faint),
-                    )
-                    .child(
-                        div()
-                            .min_w_0()
-                            .text_ellipsis()
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(theme.text_muted)
-                            .child(name),
-                    )
-                    .child(
-                        div()
-                            .flex_none()
-                            .text_color(theme.text_faint)
-                            .child(if shown == held {
-                                held.to_string()
-                            } else {
-                                format!("{shown}/{held}")
-                            }),
-                    )
+                            format!("{shown}/{held}")
+                        },
+                        &theme,
+                    ))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.workspace.update(cx, |workspace, cx| {
                             workspace.toggle_column_collapsed(&folding.0, &folding.1, cx)
@@ -2610,6 +2593,179 @@ impl Cydonia {
                     cx,
                 )),
             )
+    }
+
+    /// What a list row says about its card: its handle, its title, its status
+    /// and its run.
+    fn list_row_cells(
+        &self,
+        handle: Option<String>,
+        text: &str,
+        status: Option<Status>,
+        working: Option<Working>,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        let theme = Theme::of(cx).clone();
+        let mut cells = vec![
+            // What to call this card out loud, in the mono face for the reason
+            // the delete dialog sets a path there. Ahead of the text and at a
+            // width of its own, so the lines under one another start together.
+            div()
+                .flex_none()
+                .w(px(LIST_HANDLE_WIDTH))
+                .text_style(TextStyle::Caption)
+                .font_family(theme.font_mono.clone())
+                .text_color(theme.text_faint)
+                .child(handle.unwrap_or_default())
+                .into_any_element(),
+            div()
+                .flex_1()
+                .min_w_0()
+                .text_style(TextStyle::Callout)
+                .text_color(theme.text)
+                .text_ellipsis()
+                .child(self.card_docs.title(text))
+                .into_any_element(),
+        ];
+        cells.extend(resting(status).map(|status| status_chip(status, &theme)));
+        // On show, not behind a hover — a card's run is what you look at the
+        // board to see, and hiding it would mean hunting for the one that is
+        // working.
+        cells.extend(working.map(|at| self.card_orb(at, cx)));
+        cells
+    }
+
+    /// A lane's heading in the list: the chevron saying whether it is folded,
+    /// its name and its count.
+    fn lane_title(folded: bool, name: String, count: String, theme: &Theme) -> [AnyElement; 3] {
+        [
+            icons::icon(if folded {
+                icons::arrows::ChevronRight
+            } else {
+                icons::arrows::ChevronDown
+            })
+            .size(px(12.))
+            .text_color(theme.text_faint)
+            .into_any_element(),
+            div()
+                .min_w_0()
+                .text_ellipsis()
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(theme.text_muted)
+                .child(name)
+                .into_any_element(),
+            div()
+                .flex_none()
+                .text_color(theme.text_faint)
+                .child(count)
+                .into_any_element(),
+        ]
+    }
+
+    /// The board listed at `board_at` in `project` as a drawer draws it: its
+    /// lanes as the list's groups, read only, scrolled by `scroll`. Pressing a
+    /// card opens it in `on`'s drawer.
+    pub(crate) fn board_peek(
+        &self,
+        project: usize,
+        board_at: usize,
+        on: Option<&Member>,
+        scroll: &ScrollHandle,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let theme = Theme::of(cx).clone();
+        let member = self.workspace.read(cx).board_member(project, board_at)?;
+        let board = self.workspace.read(cx).board_in(project, board_at)?;
+        let lanes: Vec<(String, bool)> = board
+            .columns
+            .iter()
+            .map(|column| (column.id.clone(), column.collapsed))
+            .collect();
+        let mut rows = Vec::new();
+        for (lane, folded) in lanes {
+            let Some((name, held, cards)) = self.lane_cards(project, board_at, &lane, "", cx)
+            else {
+                continue;
+            };
+            rows.push(
+                div()
+                    .flex_none()
+                    .h(px(LIST_HEADING_HEIGHT))
+                    .px(px(BOARD_INSET))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(6.))
+                    .text_style(TextStyle::Subheadline)
+                    .children(Self::lane_title(folded, name, held.to_string(), &theme))
+                    .into_any_element(),
+            );
+            if folded {
+                continue;
+            }
+            for id in cards {
+                let Some((handle, text, status, working)) = self
+                    .workspace
+                    .read(cx)
+                    .board_in(project, board_at)
+                    .and_then(|board| {
+                        let card = board.card(&id)?;
+                        let chat = self.card_session(card, cx);
+                        Some((
+                            board.handle_of(card),
+                            card.text.clone(),
+                            card.status,
+                            self.card_working(card, chat),
+                        ))
+                    })
+                else {
+                    continue;
+                };
+                let (pane, board) = (on.cloned(), member.clone());
+                rows.push(
+                    theme
+                        .ghost(SharedString::from(format!("board-peek-row-{id}")))
+                        .flex_none()
+                        .h(px(LIST_ROW_HEIGHT))
+                        .px(px(BOARD_INSET))
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(8.))
+                        .border_b_1()
+                        .border_color(theme.border.opacity(0.3))
+                        .children(self.list_row_cells(handle, &text, status, working, cx))
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            cx.stop_propagation();
+                            this.open_card(pane.as_ref(), board.clone(), id.clone(), window, cx);
+                        }))
+                        .into_any_element(),
+                );
+            }
+        }
+        Some(
+            div()
+                .relative()
+                .flex_1()
+                .min_h_0()
+                .flex()
+                .flex_col()
+                .child(
+                    scroll::pane("board-peek", Axes::Vertical)
+                        .size_full()
+                        .flex()
+                        .flex_col()
+                        .pb(px(BOARD_INSET))
+                        .track_scroll(scroll)
+                        .children(rows),
+                )
+                .child(scrollbars::Overlay::new(
+                    "board-peek-bar",
+                    scroll,
+                    bezel::gpui::Axis::Vertical,
+                ))
+                .into_any_element(),
+        )
     }
 
     /// A fixed-height title row; the drawer holds the full card.
@@ -2761,32 +2917,7 @@ impl Cydonia {
                 })
             })
             .children(reveal)
-            // What to call this card out loud, in the mono face for the reason
-            // the delete dialog sets a path there. Ahead of the text and at a
-            // width of its own, so the lines under one another start together.
-            .child(
-                div()
-                    .flex_none()
-                    .w(px(LIST_HANDLE_WIDTH))
-                    .text_style(TextStyle::Caption)
-                    .font_family(theme.font_mono.clone())
-                    .text_color(theme.text_faint)
-                    .child(handle.unwrap_or_default()),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .text_style(TextStyle::Callout)
-                    .text_color(theme.text)
-                    .text_ellipsis()
-                    .child(self.card_docs.title(&text)),
-            )
-            .children(resting(status).map(|status| status_chip(status, &theme)))
-            // On show, not behind a hover — a card's run is what you look at
-            // the board to see, and hiding it would mean hunting for the one
-            // that is working.
-            .children(working.map(|at| self.card_orb(at, cx)))
+            .children(self.list_row_cells(handle, &text, status, working, cx))
             .when(actions, |row| {
                 row.child(
                     div()

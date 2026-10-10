@@ -39,7 +39,7 @@ A client added by hand reaches every project the app has open, and names one per
 
 | Area | Tools |
 | --- | --- |
-| Projects | `project_open`, `project_close`, `project_entries`, `project_read_entry` |
+| Projects | `project_open`, `project_close`, `project_entries`, `project_read_entry`, `project_label_entry` |
 | Articles | `article_list`, `article_read`, `article_add`, `article_edit`, `article_rewrite`, `article_rename`, `article_move`, `article_set_cover`, `article_archive`, `article_remove` |
 | Boards | `board_list`, `board_search`, `board_read`, `board_add`, `board_rename`, `board_archive`, `board_remove`, `board_add_column`, `board_rename_column`, `board_move_column`, `board_remove_column`, `board_add_card`, `board_rewrite_card`, `board_move_card`, `board_remove_card`, `board_set_card_status` |
 | Sessions | `session_send`, `session_read`, `session_search`, `session_rename` |

@@ -20,7 +20,9 @@ pub mod history;
 pub mod hotkey;
 pub mod info;
 pub mod keymap;
+pub mod labels;
 pub mod leaf;
+pub mod library;
 pub mod lights;
 pub mod mention;
 pub mod menubar;
@@ -29,6 +31,7 @@ pub mod search;
 pub mod section;
 pub mod settings;
 pub mod sidebar;
+pub mod stamp;
 pub mod table;
 
 #[cfg(test)]

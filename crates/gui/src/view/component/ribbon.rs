@@ -40,6 +40,7 @@ use bezel::{
 };
 use editor::{Editor, Formatting, Mode};
 use markdown::{BlockKind, Mark};
+use std::path::Path;
 
 actions!(cydonia_ribbon, [ConfirmLink, DismissLink]);
 
@@ -280,6 +281,7 @@ impl Cydonia {
             .trim()
             .to_string();
         if let Some(editor) = self.open_editor(cx) {
+            let url = typed_link(&url, editor.read(cx).base());
             editor.update(cx, |editor, cx| {
                 if let Some(old) = linking.replacing {
                     editor.toggle_mark(Mark::Link(old), cx);
@@ -563,3 +565,27 @@ pub(crate) fn floated(id: &'static str, at: Point<Pixels>, content: AnyElement) 
     .priority(1)
     .into_any_element()
 }
+
+/// What the URL field files for `typed`. A bare host, `example.com`, gets
+/// `https://`; a relative path is kept where it names a file under `base`.
+fn typed_link(typed: &str, base: Option<&Path>) -> String {
+    let kept = typed.is_empty()
+        || url::Url::parse(typed).is_ok()
+        || ["#", "/", "./", "../", "~/"]
+            .iter()
+            .any(|start| typed.starts_with(start))
+        || base
+            .and_then(crate::model::file_url::from_dir)
+            .and_then(|base| base.join(typed).ok())
+            .and_then(|url| crate::model::file_url::to_path(&url))
+            .is_some_and(|path| path.exists());
+    let host = typed.split(['/', '?', '#']).next().unwrap_or_default();
+    match kept || !host.contains('.') || typed.contains(char::is_whitespace) {
+        true => typed.to_owned(),
+        false => format!("https://{typed}"),
+    }
+}
+
+#[cfg(test)]
+#[path = "../../../tests/unit/ribbon_links.rs"]
+mod tests;
