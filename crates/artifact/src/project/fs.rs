@@ -15,7 +15,7 @@ use crate::entry;
 use crate::{
     article::{self, Article, properties::Properties},
     board::{self, Board, key},
-    document, id,
+    document, id, label,
     session::record::Record,
     space::Kind,
     stamp,
@@ -672,6 +672,15 @@ impl super::Project for Project {
         Ok(())
     }
 
+    fn labels(&self) -> String {
+        std::fs::read_to_string(self.cydonia().join(label::FILE)).unwrap_or_default()
+    }
+
+    fn save_labels(&self, text: &str) -> Result<()> {
+        std::fs::write(self.init()?.join(label::FILE), text)?;
+        Ok(())
+    }
+
     fn asset(&self, id: &str, name: &str) -> Result<Vec<u8>> {
         let content = self.article_file(id)?;
         Ok(std::fs::read(
@@ -764,7 +773,7 @@ pub fn ours(dir: &Path, path: &Path) -> bool {
         return true;
     };
     let head = head.as_os_str().to_string_lossy();
-    if head == article::DIR || head == BOARDS {
+    if head == article::DIR || head == BOARDS || head == label::FILE {
         return true;
     }
     // The database, and the log a commit actually lands in — it runs in WAL,

@@ -6,6 +6,7 @@ pub mod browse;
 #[cfg(not(target_os = "linux"))]
 pub mod browser;
 pub mod changes;
+pub mod color;
 pub mod composer;
 pub mod menu;
 pub mod meter;

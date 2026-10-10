@@ -132,3 +132,12 @@ fn an_entry_was_created_at_the_stamp_it_is_named_for() {
         board.id.parse().ok()
     );
 }
+
+#[test]
+fn the_labels_file_round_trips() {
+    let scratch = Scratch::new("project-labels");
+    let store = scratch.store();
+    assert_eq!(store.labels(), "");
+    store.save_labels("[bug]\ncolor = \"red\"\n").unwrap();
+    assert_eq!(store.labels(), "[bug]\ncolor = \"red\"\n");
+}

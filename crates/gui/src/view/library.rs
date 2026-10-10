@@ -354,6 +354,22 @@ impl Cydonia {
         self.put_up_library(Library::shelved(shelf, cx), window, cx);
     }
 
+    /// Put the library up on the articles in `project` carrying `label`.
+    pub(crate) fn library_on_label(
+        &mut self,
+        project: PathBuf,
+        label: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let library = Library {
+            project: Some(project),
+            labels: vec![label],
+            ..Library::new(cx)
+        };
+        self.put_up_library(library, window, cx);
+    }
+
     fn put_up_library(&mut self, library: Library, window: &mut Window, cx: &mut Context<Self>) {
         self.commit(cx);
         self.library = Some(library);

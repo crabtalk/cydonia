@@ -6,11 +6,13 @@ use crate::model::{
 };
 use crate::{
     model::workspace::Workspace,
-    view::settings::{self, SettingsWindow, Switch},
+    view::{
+        component::color,
+        settings::{self, SettingsWindow, Switch},
+    },
 };
 use artifact::board::View;
 use bezel::theme::AppExt as _;
-use bezel::ui::color::Swatch;
 use bezel::{
     gpui::{
         AnyElement, Context, DragMoveEvent, Empty, Entity, FontWeight, Hsla, div, prelude::*, px,
@@ -748,8 +750,6 @@ impl SettingsWindow {
             .map(|paint| paint.solid(&theme))
             .or(system)
             .unwrap_or_default();
-        let selected =
-            current.and_then(|current| paints.iter().position(|paint| *paint == current));
         // Down lands before the trigger's click opens the card, so the picker
         // is in place, at the colour shown, by the card's first frame.
         let ready = cx.listener(move |this, _: &bezel::gpui::MouseDownEvent, _, cx| {
@@ -784,65 +784,37 @@ impl SettingsWindow {
             cx,
         );
         let card = (self.picker.get() == Some(&id)).then(|| {
-            let swatches: Vec<Swatch> = paints
-                .iter()
-                .map(|paint| Swatch::fixed(paint.key(), paint.solid(&theme)))
-                .collect();
-            let presets =
-                theme.swatch_picker((id, 0usize), &swatches, selected, Some(SWATCH_COLUMNS), {
-                    let paints = paints.clone();
-                    cx.listener(move |this, ix: &usize, _, cx| {
-                        let paint = paints[*ix];
-                        this.workspace
-                            .update(cx, |workspace, cx| set(workspace, Some(paint), cx));
-                        if let Some(custom) = this.custom.as_ref().filter(|custom| custom.id == id)
-                        {
-                            let color = paint.solid(Theme::of(cx));
-                            custom
-                                .picker
-                                .update(cx, |picker, cx| picker.set_color(color, cx));
-                        }
-                        popover::close_popup(this, cx, |this: &mut Self| &mut this.picker);
-                    })
-                });
             let custom = self
                 .custom
                 .as_ref()
                 .filter(|custom| custom.id == id)
                 .map(|custom| custom.picker.clone());
-            let reset = system.map(|_| {
-                popover::menu_row(&theme, current.is_none(), None)
-                    .id((id, 1usize))
-                    .cursor_pointer()
-                    .hover(|row| row.bg(theme.element_hover))
-                    .child("Default")
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.workspace
-                            .update(cx, |workspace, cx| set(workspace, None, cx));
-                        popover::close_popup(this, cx, |this: &mut Self| &mut this.picker);
-                    }))
-            });
+            let card = color::card(
+                &theme,
+                id,
+                paints,
+                current,
+                custom,
+                system.map(|_| "Default"),
+                move |this: &mut Self, paint, _, cx| {
+                    this.workspace
+                        .update(cx, |workspace, cx| set(workspace, paint, cx));
+                    if let Some(paint) = paint
+                        && let Some(custom) = this.custom.as_ref().filter(|custom| custom.id == id)
+                    {
+                        let color = paint.solid(Theme::of(cx));
+                        custom
+                            .picker
+                            .update(cx, |picker, cx| picker.set_color(color, cx));
+                    }
+                    popover::close_popup(this, cx, |this: &mut Self| &mut this.picker);
+                },
+                cx,
+            );
             popover::anchored_menu_below_end(
                 bezel::gpui::SharedString::from(format!("{id}-swatches")),
-                popover::dismiss_on_out(
-                    popover::popover_card(&theme)
-                        .flex()
-                        .flex_col()
-                        .child(
-                            // As wide as the preset grid; the picker fills it.
-                            div()
-                                .p(px(popover::MENU_ROW_INSET))
-                                .flex()
-                                .flex_col()
-                                .gap(px(popover::MENU_ROW_INSET))
-                                .child(presets)
-                                .children(custom),
-                        )
-                        .children(reset),
-                    |this: &mut Self| &mut this.picker,
-                    cx,
-                )
-                .into_any_element(),
+                popover::dismiss_on_out(card, |this: &mut Self| &mut this.picker, cx)
+                    .into_any_element(),
                 self.picker.closing_since(),
             )
         });
@@ -1028,9 +1000,6 @@ impl SettingsWindow {
             .into_any_element()
     }
 }
-
-/// Swatches a row of the colour popover holds.
-const SWATCH_COLUMNS: usize = 6;
 
 /// A theme family's face in the picker: "Aa" in its accent on its background,
 /// as the variant for the appearance being painted.

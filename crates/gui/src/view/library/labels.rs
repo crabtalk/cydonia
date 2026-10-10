@@ -7,7 +7,7 @@ use bezel::{
     gpui::{AnyElement, Context, Div, SharedString, Stateful, div, prelude::*, px},
     theme::{TextStyle, Theme, Typeset},
     ui::{
-        multi_select, table,
+        table,
         widgets::{ButtonStyle, Buttons, Content},
     },
 };
@@ -25,6 +25,10 @@ impl Cydonia {
         let theme = Theme::of(cx).clone();
         let Some(labels) = labels else {
             return div().into_any_element();
+        };
+        let project = match row {
+            Row::Entry { project, .. } => self.workspace.read(cx).project_at(project),
+            _ => None,
         };
         let target = Target::Cell(row.clone());
         let cell = div()
@@ -45,11 +49,9 @@ impl Cydonia {
                     this.toggle_labels(target.clone(), None, window, cx);
                 }
             }))
-            .children(
-                labels
-                    .iter()
-                    .map(|label| theme.chip(label.clone(), multi_select::tint(&theme, label))),
-            )
+            .children(labels.iter().map(|label| {
+                theme.chip(label.clone(), self.label_tint(project, label, &theme, cx))
+            }))
             .when(labels.is_empty(), |cell| {
                 cell.child(
                     div()

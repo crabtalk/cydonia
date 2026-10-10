@@ -3,12 +3,16 @@
 
 use crate::view::{component::menu::Menu, root::Cydonia, sidebar::Row};
 use bezel::{
-    gpui::{AnyElement, App, Context, Entity, Pixels, Point, Subscription, Window, prelude::*, px},
+    gpui::{
+        AnyElement, App, Context, Entity, Hsla, Pixels, Point, Subscription, Window, prelude::*, px,
+    },
+    theme::Theme,
     ui::{
-        multi_select::{Check, Choice, MultiSelect, MultiSelectEvent},
+        multi_select::{self, Check, Choice, MultiSelect, MultiSelectEvent},
         popover,
     },
 };
+use std::collections::BTreeMap;
 
 /// What an open label picker acts on.
 #[derive(Clone, PartialEq, Eq)]
@@ -47,9 +51,30 @@ impl Cydonia {
         }
         let choices = self.label_choices(&target, cx);
         let creates = target != Target::Heading;
+        // Read now rather than per frame: the picker paints off a function,
+        // and the workspace is not somewhere it can reach.
+        let project = match &target {
+            Target::Cell(Row::Entry { project, .. }) | Target::Page(Row::Entry { project, .. }) => {
+                self.workspace.read(cx).project_at(project)
+            }
+            _ => None,
+        };
+        let paints: BTreeMap<String, _> = {
+            let workspace = self.workspace.read(cx);
+            choices
+                .iter()
+                .filter_map(|choice| {
+                    let paint = workspace.label_paint(project, &choice.name)?;
+                    Some((choice.name.to_string(), paint))
+                })
+                .collect()
+        };
         let select = cx.new(|cx| {
             let select = MultiSelect::new(choices, cx)
-                .with_manage()
+                .with_tint(move |name, theme| match paints.get(name) {
+                    Some(paint) => paint.solid(theme),
+                    None => multi_select::tint(theme, name),
+                })
                 .with_width(px(200.), px(280.));
             match creates {
                 true => select.with_create(|text| artifact::label::normalize(text).map(Into::into)),
@@ -67,6 +92,23 @@ impl Cydonia {
         });
     }
 
+    /// The colour `name`'s chip is painted on an entry in the project at
+    /// `project`: the one a labels file gives it — see
+    /// [`crate::model::workspace::Workspace::label_paint`] — or one read off
+    /// the name.
+    pub(crate) fn label_tint(
+        &self,
+        project: Option<usize>,
+        name: &str,
+        theme: &Theme,
+        cx: &App,
+    ) -> Hsla {
+        match self.workspace.read(cx).label_paint(project, name) {
+            Some(paint) => paint.solid(theme),
+            None => multi_select::tint(theme, name),
+        }
+    }
+
     /// The picker, anchored under its trigger, while `target`'s is open.
     pub(crate) fn label_picker(&self, target: &Target) -> Option<AnyElement> {
         if self.menu.as_ref() != Some(&Menu::Labels(target.clone())) {
@@ -82,6 +124,18 @@ impl Cydonia {
         })
     }
 
+    /// Keep the library's label filter on a label renamed from `from`.
+    pub(crate) fn follow_label_rename(&mut self, from: &str, to: &str) {
+        if let Some(library) = &mut self.library {
+            for label in &mut library.labels {
+                if label == from {
+                    *label = to.to_owned();
+                }
+            }
+            library.labels = artifact::label::normalize_all(&library.labels);
+        }
+    }
+
     fn label_event(&mut self, event: &MultiSelectEvent, cx: &mut Context<Self>) {
         let Some(target) = self.picker.as_ref().map(|picker| picker.target.clone()) else {
             return;
@@ -89,29 +143,9 @@ impl Cydonia {
         match event {
             MultiSelectEvent::Toggled { name, on } => self.apply_label(&target, name, *on, cx),
             MultiSelectEvent::Created(name) => self.apply_label(&target, name, true, cx),
-            MultiSelectEvent::Renamed { from, to } => {
-                self.workspace
-                    .update(cx, |workspace, cx| workspace.rename_label(from, to, cx));
-                if let Some(library) = &mut self.library {
-                    for label in &mut library.labels {
-                        if label == from.as_ref() {
-                            *label = to.to_string();
-                        }
-                    }
-                    library.labels = artifact::label::normalize_all(&library.labels);
-                }
-            }
-            MultiSelectEvent::Deleted(name) => {
-                let count = self
-                    .workspace
-                    .read(cx)
-                    .label_counts()
-                    .get(name.as_ref())
-                    .copied()
-                    .unwrap_or_default();
-                self.ask_delete_label(name.to_string(), count, cx);
-                return;
-            }
+            // The picker has no manage pane: renaming and deleting are the
+            // labels modal's — see [`crate::view::label_list`].
+            MultiSelectEvent::Renamed { .. } | MultiSelectEvent::Deleted(_) => return,
             MultiSelectEvent::Dismissed => {
                 if matches!(self.menu, Some(Menu::Labels(_))) {
                     self.menu = None;

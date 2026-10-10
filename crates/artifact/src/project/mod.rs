@@ -127,6 +127,14 @@ pub trait Project {
 
     fn put_asset(&self, id: &str, name: &str, bytes: &[u8]) -> Result<()>;
 
+    // ── labels ───────────────────────────────────────────────────────
+
+    /// The text of this project's [`crate::label::FILE`], empty where there
+    /// is none.
+    fn labels(&self) -> String;
+
+    fn save_labels(&self, text: &str) -> Result<()>;
+
     // ── changes ──────────────────────────────────────────────────────
 
     /// Call `knock` whenever something this backend reads back changes under
