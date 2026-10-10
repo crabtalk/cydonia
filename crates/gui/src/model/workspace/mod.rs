@@ -650,16 +650,6 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Where a web link clicked in an article or a transcript opens.
-    pub fn set_browser_links(&mut self, links: settings::Links, cx: &mut Context<Self>) {
-        if settings::set_browser("links", links.key()).is_err() {
-            return;
-        }
-        self.settings.browser.links = links;
-        cx.set_global(self.settings.browser.clone());
-        cx.notify();
-    }
-
     /// Offer agents the browser tools that read pages, or withhold them.
     pub fn set_browser_agents_read(&mut self, on: bool, cx: &mut Context<Self>) {
         if settings::set_browser("agents_read", on).is_err() {

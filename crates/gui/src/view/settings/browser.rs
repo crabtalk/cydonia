@@ -2,7 +2,7 @@
 //! `[browser]`.
 
 use crate::{
-    model::settings::{Links, SEARCH_ENGINES},
+    model::settings::SEARCH_ENGINES,
     view::{
         component::browser,
         settings::{self, SettingsWindow, Switch},
@@ -32,7 +32,6 @@ impl SettingsWindow {
             .child(
                 theme
                     .group_box()
-                    .child(self.links_row(cx))
                     .child(self.engine_row(cx))
                     .child(self.home_row(cx)),
             )
@@ -47,49 +46,6 @@ impl SettingsWindow {
                 self.workspace.read(cx).settings.browser.keep_signed_in,
                 |group| group.child(self.clear_row(cx)),
             ))
-            .into_any_element()
-    }
-
-    fn links_row(&self, cx: &mut Context<Self>) -> AnyElement {
-        let theme = Theme::of(cx).clone();
-        let links = self.workspace.read(cx).settings.browser.links;
-        const CHOICES: [(Links, &str); 2] = [
-            (Links::Panel, "Browser tab"),
-            (Links::System, "System browser"),
-        ];
-        theme
-            .card_row(true)
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .child(theme.row_title("Open web links in"))
-                    .child(
-                        div()
-                            .mt(px(4.))
-                            .truncate()
-                            .text_style(TextStyle::Subheadline)
-                            .text_color(theme.text_muted)
-                            .child("Links clicked in articles and sessions."),
-                    ),
-            )
-            .child(
-                self.segments(
-                    "browser-links",
-                    CHOICES
-                        .iter()
-                        .map(|(choice, label)| (*label, *choice == links))
-                        .collect(),
-                    cx,
-                    |this, ix, cx| {
-                        let links = CHOICES[ix].0;
-                        this.workspace
-                            .update(cx, |workspace, cx| workspace.set_browser_links(links, cx));
-                    },
-                ),
-            )
             .into_any_element()
     }
 

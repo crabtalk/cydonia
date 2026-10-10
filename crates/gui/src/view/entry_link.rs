@@ -9,7 +9,10 @@
 //!
 //! The link names the entry; deleting the block leaves the entry where it was.
 
-use std::rc::Rc;
+use std::{
+    path::{Path, PathBuf},
+    rc::Rc,
+};
 
 use crate::{
     model::workspace::{
@@ -156,30 +159,32 @@ fn nested_row(url: &str, cx: &App) -> AnyElement {
                 .text_color(theme.text)
                 .child(title),
         )
-        .on_click(move |_, window, cx| open_link(&url, window, cx))
+        .on_click(move |_, window, cx| open_link(&url, None, window, cx))
         .into_any_element()
 }
 
-/// Opens a link clicked in an article or a transcript: an http(s) link in a
-/// panel tab where Settings says so and the window can take one, else in the
-/// system browser. Installed as markdown's link handler.
-pub fn open_link(url: &str, window: &mut Window, cx: &mut App) {
+/// Opens a link clicked in an article or a transcript: a web link in the
+/// system browser, or with shift held in a panel tab where the window can take
+/// one; a `file://` URL or a path in the file manager, a relative one against
+/// `base`. Installed as markdown's link handler.
+pub fn open_link(url: &str, base: Option<&Path>, window: &mut Window, cx: &mut App) {
+    let Some(Some(root)) = window.root::<Cydonia>() else {
+        cx.open_url(url);
+        return;
+    };
     if let Some(reference) = url.strip_prefix(SCHEME) {
-        if let Some(Some(root)) = window.root::<Cydonia>() {
-            root.update(cx, |root, cx| root.open_reference(reference, window, cx));
-        }
+        root.update(cx, |root, cx| root.open_reference(reference, window, cx));
+        return;
+    }
+    if let Some(path) = local_path(url, base) {
+        root.update(cx, |root, cx| root.reveal_path(path, cx));
         return;
     }
     #[cfg(not(target_os = "linux"))]
     {
-        use crate::model::settings::{Browsing, Links};
-        let panel = cx
-            .try_global::<Browsing>()
-            .is_some_and(|browsing| browsing.links == Links::Panel);
         let web = url.starts_with("https://") || url.starts_with("http://");
-        if panel
-            && web
-            && let Some(Some(root)) = window.root::<Cydonia>()
+        if web
+            && window.modifiers().shift
             && root.update(cx, |root, cx| {
                 root.open_in_panel(url.to_owned(), window, cx)
             })
@@ -188,6 +193,30 @@ pub fn open_link(url: &str, window: &mut Window, cx: &mut App) {
         }
     }
     cx.open_url(url);
+}
+
+/// The file a link names on this machine. A relative path without a `base`
+/// names none.
+fn local_path(url: &str, base: Option<&Path>) -> Option<PathBuf> {
+    if let Some(rest) = url.strip_prefix("~/") {
+        return Some(dirs::home_dir()?.join(rest));
+    }
+    let parsed = match url::Url::parse(url) {
+        Ok(parsed) => parsed,
+        Err(url::ParseError::RelativeUrlWithoutBase) => {
+            let base = match base {
+                Some(base) => base,
+                None if url.starts_with('/') => Path::new("/"),
+                None => return None,
+            };
+            crate::model::file_url::from_dir(base)?.join(url).ok()?
+        }
+        Err(_) => return None,
+    };
+    match parsed.scheme() {
+        "file" => crate::model::file_url::to_path(&parsed),
+        _ => None,
+    }
 }
 
 /// The slash menu: the editor's blocks, then a session already running.

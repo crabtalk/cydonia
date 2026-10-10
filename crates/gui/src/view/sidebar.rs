@@ -1978,7 +1978,7 @@ impl Cydonia {
     /// Show `path` in the file manager. Best effort and off the main thread:
     /// opening it is a process, and a file manager that will not come to the
     /// front is not worth blocking a frame over.
-    fn reveal_path(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+    pub(crate) fn reveal_path(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         if cfg!(not(feature = "desktop")) {
             self.desktop_only("Showing it in the file manager", cx);
             return;
