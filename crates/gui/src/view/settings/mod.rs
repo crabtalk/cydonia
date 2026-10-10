@@ -12,17 +12,19 @@
 use crate::{agent::Listing, model::update, view::root::traffic_lights};
 use crate::{model::workspace::Workspace, view::root::HEADER_HEIGHT};
 use bezel::ui::scroll as scrollbars;
+#[cfg(not(target_os = "linux"))]
+use bezel::{gpui::Focusable as _, ui::widgets::ButtonStyle};
 use bezel::{
     gpui::{
-        AnyElement, App, Context, ElementId, Entity, Focusable as _, Render, SharedString, Window,
-        div, prelude::*, px,
+        AnyElement, App, Context, ElementId, Entity, Render, SharedString, Window, div, prelude::*,
+        px,
     },
     motion::{Fade, Painter},
     theme::{TextStyle, Theme, Typeset},
     ui::{
         icons,
         input::{Shape, TextField},
-        widgets::{ButtonStyle, Buttons, Content, Controls, Layout, Scaffolding},
+        widgets::{Buttons, Content, Controls, Layout, Scaffolding},
     },
 };
 #[cfg(feature = "desktop")]
@@ -259,6 +261,7 @@ pub struct SettingsWindow {
     #[cfg(not(target_os = "linux"))]
     browser_data: browser::BrowserData,
     /// The field whose dialog is up — see [`SettingsWindow::field_dialog`].
+    #[cfg(not(target_os = "linux"))]
     editing: Option<(Field, Entity<TextField>)>,
     /// The statistics section's reading.
     #[cfg(feature = "desktop")]
@@ -413,6 +416,7 @@ impl SettingsWindow {
             apps: Default::default(),
             #[cfg(not(target_os = "linux"))]
             browser_data: Default::default(),
+            #[cfg(not(target_os = "linux"))]
             editing: None,
             #[cfg(feature = "desktop")]
             statistics: Default::default(),
@@ -564,38 +568,36 @@ impl SettingsWindow {
     }
 }
 
+/// How wide a [`Field`]'s dialog stands over the settings body.
+#[cfg(not(target_os = "linux"))]
+const DIALOG_WIDTH: f32 = 320.;
+
 /// A value typed into a dialog rather than switched on its row.
+#[cfg(not(target_os = "linux"))]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Field {
-    CoverMemory,
-    #[cfg(not(target_os = "linux"))]
     BrowserHome,
-    #[cfg(not(target_os = "linux"))]
     BrowserBlocked,
 }
 
+#[cfg(not(target_os = "linux"))]
 impl Field {
     fn title(self) -> &'static str {
         match self {
-            Self::CoverMemory => "Cover memory",
-            #[cfg(not(target_os = "linux"))]
             Self::BrowserHome => "Home page",
-            #[cfg(not(target_os = "linux"))]
             Self::BrowserBlocked => "Sites agents may not use",
         }
     }
 
     fn note(self) -> &'static str {
         match self {
-            Self::CoverMemory => "In megabytes.",
-            #[cfg(not(target_os = "linux"))]
             Self::BrowserHome => "The address a new browser tab opens on.",
-            #[cfg(not(target_os = "linux"))]
             Self::BrowserBlocked => "Hosts, separated by commas. A host covers its subdomains.",
         }
     }
 }
 
+#[cfg(not(target_os = "linux"))]
 impl SettingsWindow {
     /// Put `field` in a dialog, seeded with `current`.
     pub(super) fn edit_field(
@@ -615,16 +617,13 @@ impl SettingsWindow {
         cx.notify();
     }
 
-    fn save_field(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn save_field(&mut self, cx: &mut Context<Self>) {
         let Some((field, input)) = self.editing.take() else {
             return;
         };
         let typed = input.read(cx).content().to_owned();
         match field {
-            Field::CoverMemory => self.save_cover_memory(&typed, window, cx),
-            #[cfg(not(target_os = "linux"))]
             Field::BrowserHome => self.save_browser_home(&typed, cx),
-            #[cfg(not(target_os = "linux"))]
             Field::BrowserBlocked => self.save_browser_blocked(&typed, cx),
         }
         cx.notify();
@@ -652,7 +651,7 @@ impl SettingsWindow {
                 .child(
                     div()
                         .id("field-dialog")
-                        .w(px(performance::DIALOG_WIDTH))
+                        .w(px(DIALOG_WIDTH))
                         .flex()
                         .flex_col()
                         .gap(px(LABEL_GAP))
@@ -690,9 +689,9 @@ impl SettingsWindow {
                                     theme
                                         .button("Save", ButtonStyle::Prominent, None)
                                         .id("field-save")
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.save_field(window, cx)
-                                        })),
+                                        .on_click(
+                                            cx.listener(|this, _, _, cx| this.save_field(cx)),
+                                        ),
                                 ),
                         ),
                 )
@@ -913,8 +912,9 @@ impl Render for SettingsWindow {
                     }),
             )
             .children(strip)
-            .children(self.field_dialog(cx))
             .children(self.trust_dialog(cx));
+        #[cfg(not(target_os = "linux"))]
+        let root = root.children(self.field_dialog(cx));
         #[cfg(feature = "desktop")]
         return bezel::ui::window::frame(root, window, cx);
         #[cfg(not(feature = "desktop"))]

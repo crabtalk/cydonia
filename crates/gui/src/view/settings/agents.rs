@@ -31,9 +31,7 @@ use tokio::sync::mpsc;
 /// at Subheadline, so the values start on one line down the table.
 const LABEL_WIDTH: f32 = 72.;
 
-/// How wide the dialog stands. Wider than the app's other one — see
-/// [`super::performance::DIALOG_WIDTH`] — because this one carries a table and
-/// that one carries a number.
+/// How wide the dialog stands.
 const DIALOG_WIDTH: f32 = 400.;
 
 /// A URL as an address: the scheme is noise, and so is a trailing slash.

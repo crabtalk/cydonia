@@ -2,7 +2,6 @@
 //! window: fonts, the palette, markdown's hooks, the cover cache and the keymap.
 
 use crate::{
-    memory,
     model::{fonts, language, palette, settings::Settings, workspace},
     view::{article, keymap},
 };
@@ -67,7 +66,6 @@ pub fn init(settings: &Settings, cx: &mut App) {
     #[cfg(not(feature = "desktop"))]
     cx.set_link_preview(crate::view::mention::preview);
     cx.set_link_handler(crate::view::entry_link::open_link);
-    memory::init(settings.cover_memory * 1_000_000, cx);
     // Every chord in the app, bezel's included — see
     // [`crate::view::keymap`]. One call rather than an `init` per
     // surface, because the reader can move some of them and moving one

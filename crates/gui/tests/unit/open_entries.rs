@@ -103,8 +103,6 @@ fn making_an_entry_inside_a_space_lands_on_it(cx: &mut gpui::TestAppContext) {
     let scratch = Scratch::new("making");
     cx.update(|cx| {
         Theme::install(bezel::theme::Appearance::Light, cx);
-        // A new article is given a cover, which goes through the image cache.
-        crate::memory::init(0, cx);
     });
     let window = cx.add_window(|window, cx| {
         Cydonia::new(Settings::default(), state::State::default(), window, cx)

@@ -1,7 +1,6 @@
 //! The article pane: one document, and the sidebar row that opens it.
 
 use crate::{
-    memory,
     model::{article, workspace::Showing},
     view::{
         component::{
@@ -20,8 +19,8 @@ use bezel::ui::scroll as scrollbars;
 use bezel::{
     gpui::{
         self, AnyElement, App, Context, CursorStyle, Div, Entity, Focusable as _, KeyBinding,
-        MouseButton, ObjectFit, PathPromptOptions, SharedString, Window, actions, canvas, div, img,
-        prelude::*, px,
+        MouseButton, ObjectFit, PathPromptOptions, SharedString, Window, actions, canvas, div,
+        image_cache, img, prelude::*, px, retain_all,
     },
     motion::{Fade, Painter},
     theme::{ControlSize, Sizing as _, TextStyle, Theme, Typeset, ink},
@@ -306,12 +305,16 @@ fn page(editor: &Entity<editor::Editor>, wide: bool, source_offset: f32) -> Div 
     // and scrolls instead of being squashed and clipped, and `min_h_full` is
     // what leaves the band something to scroll *under* when the document is
     // short.
+    // The source gutter hangs left of the column by `source_offset`; the left
+    // spacer never narrows past the part of it the inset does not hold, so a
+    // pane too narrow to centre the column with the gutter in it shifts the
+    // column right instead of clipping the line numbers.
+    let hang = (source_offset - COLUMN_INSET).max(0.);
     div()
         .w_full()
         .flex_none()
         .min_h_full()
         .flex()
-        .justify_center()
         .cursor(CursorStyle::IBeam)
         .on_mouse_down(MouseButton::Left, {
             let editor = editor.clone();
@@ -327,6 +330,7 @@ fn page(editor: &Entity<editor::Editor>, wide: bool, source_offset: f32) -> Div 
                 })
             }
         })
+        .child(div().flex_1().min_w(px(hang)))
         .child(
             // A page, not a paragraph. The editor's box is only as tall as
             // the document, and a pane of dead space under a one-line note
@@ -334,6 +338,7 @@ fn page(editor: &Entity<editor::Editor>, wide: bool, source_offset: f32) -> Div 
             // what makes a click down there or beside it land a caret, and
             // the I-beam is what says so before the click.
             column(wide)
+                .min_w_0()
                 .px(px(COLUMN_INSET))
                 .pt(px(20.))
                 .pb(px(TAIL))
@@ -346,6 +351,7 @@ fn page(editor: &Entity<editor::Editor>, wide: bool, source_offset: f32) -> Div 
                         .child(editor.clone()),
                 ),
         )
+        .child(div().flex_1())
 }
 
 impl Cydonia {
@@ -1091,12 +1097,16 @@ impl Cydonia {
             .h(px(COVER_HEIGHT))
             .overflow_hidden()
             .child(
-                img(cover)
-                    .size_full()
-                    .object_fit(ObjectFit::Cover)
-                    // Off gpui's own asset cache, which never lets a decoded
-                    // cover go. See [`crate::memory`].
-                    .image_cache(&memory::covers(cx)),
+                // Off gpui's own asset cache, which never lets a decoded
+                // picture go. This one is the element's: it is released, with
+                // its frame and textures, the first frame the band is not
+                // drawn.
+                image_cache(retain_all(SharedString::from(format!(
+                    "cover-{}",
+                    cover.display()
+                ))))
+                .size_full()
+                .child(img(cover).size_full().object_fit(ObjectFit::Cover)),
             )
             .child(self.cover_controls(cx))
     }

@@ -12,7 +12,6 @@
 use crate::{agent, model::update};
 use crate::{
     data::{ColType, Column, Data, Edit, Page, Table},
-    memory,
     model::{
         article::{self, Article},
         fonts,
@@ -27,7 +26,7 @@ use artifact::board::Board;
 use bezel::theme::AppExt as _;
 use bezel::ui::AppExt as _;
 use bezel::{
-    gpui::{App, ClipboardItem, Context, EntityId, EventEmitter, Window},
+    gpui::{App, ClipboardItem, Context, EntityId, EventEmitter},
     theme::{Brand, Tint, Vibrancy, appearance::AppearanceMode},
     ui::icons::Icon,
 };
@@ -85,8 +84,6 @@ pub struct Resident {
     /// Articles holding an open [`editor::Editor`]. Built on first open and
     /// never dropped, so this only climbs.
     pub editors: usize,
-    /// Covers decoded and held. Bounded — see [`crate::memory`].
-    pub covers: usize,
     pub sessions: usize,
     /// Transcript entries across every one of them, read back whole at launch.
     pub items: usize,
@@ -768,22 +765,8 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Move the cover ceiling. Written through to `settings.toml` first, for
-    /// the reason [`Self::set_feature`] is, then applied to the cache
-    /// that is already holding pictures under the old one.
-    pub fn set_cover_memory(&mut self, mb: u64, window: &mut Window, cx: &mut Context<Self>) {
-        if settings::set_cover_memory(mb).is_err() {
-            return;
-        }
-        self.settings.cover_memory = mb;
-        memory::covers(cx).update(cx, |covers, cx| {
-            covers.set_limit(mb * 1_000_000, window, cx);
-        });
-        cx.notify();
-    }
-
     /// Move the watch's bounce. Written through to `settings.toml` first, for
-    /// the reason [`Self::set_cover_memory`] is, and clamped on the way in for
+    /// the reason [`Self::set_feature`] is, and clamped on the way in for
     /// the reason [`crate::model::watch::bounce`] clamps on the way out.
     ///
     /// Nothing is re-armed. The pump reads the interval on each pass, so the
@@ -995,7 +978,7 @@ impl Workspace {
     /// What this process is holding, counted off the state itself rather than
     /// tracked alongside it — a tally kept in parallel is a tally that can
     /// disagree with what is actually resident.
-    pub fn resident(&self, cx: &App) -> Resident {
+    pub fn resident(&self) -> Resident {
         let articles = || self.projects.iter().flat_map(|project| &project.articles);
         let sessions = || self.projects.iter().flat_map(|project| &project.sessions);
         Resident {
@@ -1004,7 +987,6 @@ impl Workspace {
             editors: articles()
                 .filter(|article| article.editor.is_some())
                 .count(),
-            covers: memory::covers(cx).read(cx).len(),
             sessions: sessions().count(),
             items: sessions().map(|chat| chat.items.len()).sum(),
         }

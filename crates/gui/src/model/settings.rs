@@ -1,7 +1,7 @@
 //! Auto-generated settings — written with defaults on first run, read on
 //! launch. Editable, but never requires user maintenance.
 
-use crate::{memory, model::watch};
+use crate::model::watch;
 use anyhow::{Context, Result};
 use bezel::theme::{TextStyle, appearance::AppearanceMode};
 use serde::{Deserialize, Serialize};
@@ -12,14 +12,10 @@ const FILE: &str = "settings.toml";
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Settings {
-    /// The ceiling decoded covers run under, in megabytes. A bare key, so it
-    /// is declared above `features`: one written after that table would belong
-    /// to it.
-    #[serde(default = "cover_memory")]
-    pub cover_memory: u64,
     /// How long a project's `.cydonia/` has to go quiet before the watch
-    /// re-reads it, in milliseconds — see [`crate::model::watch`]. Bare, so it
-    /// belongs above `features` for the reason above.
+    /// re-reads it, in milliseconds — see [`crate::model::watch`]. A bare key,
+    /// so it is declared above `features`: one written after that table would
+    /// belong to it.
     ///
     /// Read through [`watch::bounce`] and never used raw: this file is edited
     /// by hand, and the ends of the range are what a hand cannot reach past.
@@ -898,11 +894,6 @@ pub struct Agent {
     pub env: BTreeMap<String, String>,
 }
 
-/// What the cover ceiling is when the file does not say.
-fn cover_memory() -> u64 {
-    memory::DEFAULT_LIMIT / 1_000_000
-}
-
 /// And the watch's bounce, which the watch itself owns.
 fn watch_bounce() -> u64 {
     watch::BOUNCE
@@ -968,7 +959,6 @@ impl Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            cover_memory: cover_memory(),
             watch_bounce: watch_bounce(),
             auto_update: auto_update(),
             notify_turns: notify_turns(),
@@ -1331,14 +1321,6 @@ pub fn set_browser(key: &str, value: impl Into<toml_edit::Value>) -> Result<()> 
     let value = value.into();
     edit(|doc| {
         table(doc, "browser")?[key] = toml_edit::value(value);
-        Ok(true)
-    })
-}
-
-/// Move the cover ceiling in the file, in megabytes.
-pub fn set_cover_memory(mb: u64) -> Result<()> {
-    edit(|doc| {
-        doc["cover_memory"] = toml_edit::value(mb as i64);
         Ok(true)
     })
 }

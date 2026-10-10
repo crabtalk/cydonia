@@ -129,7 +129,6 @@ fn a_second_project_gets_a_panel_of_its_own(cx: &mut gpui::TestAppContext) {
     let (one, two) = (scratch.project("one"), scratch.project("two"));
     cx.update(|cx| {
         Theme::install(bezel::theme::Appearance::Light, cx);
-        crate::memory::init(64 * 1024 * 1024, cx);
     });
     let window = cx.add_window(|window, cx| {
         Cydonia::new(Settings::default(), state::State::default(), window, cx)
