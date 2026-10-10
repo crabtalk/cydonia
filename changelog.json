@@ -1,9 +1,9 @@
 [
   {
     "version": "0.1.29",
-    "date": "2026-10-09",
+    "date": "2026-10-10",
     "nightly": true,
-    "summary": "Labels on articles, boards and sessions. A color theme for light and one for dark, and 18 more themes: Absolutely, Codex, Linear, Lobster, Material, Matrix, Monokai, Night Owl, Nord, Notion, Oscurange, Proof, Raycast, Rosé Pine, Sentry, Temple, Vercel and VS Code Plus.",
+    "summary": "Labels on articles, boards and sessions, and a Library tab for each. A color theme for light and one for dark, and 18 more themes: Absolutely, Codex, Linear, Lobster, Material, Matrix, Monokai, Night Owl, Nord, Notion, Oscurange, Proof, Raycast, Rosé Pine, Sentry, Temple, Vercel and VS Code Plus.",
     "new": [
       "Pick the light theme and the dark theme separately in Settings › Appearance, each listing the themes that come in that mode",
       "Paint the app in Absolutely, Codex, Linear, Lobster, Material, Matrix, Monokai, Night Owl, Nord, Notion, Oscurange, Proof, Raycast, Rosé Pine, Sentry, Temple, Vercel or VS Code Plus",
@@ -11,16 +11,22 @@
       "Label articles, boards and sessions from the Library's Labels column, or a whole selection at once with Label, and filter the Library by label from the column's heading. Labels are shared by every open project, and a label's ··· renames or deletes it everywhere",
       "Search for the entries carrying a label with l:, as in l:research",
       "List only a project's entries carrying one label in the sidebar, from Filter by label in the project's menu",
-      "Agents set an entry's labels with project_label_entry, and project_entries lists them"
+      "Agents set an entry's labels with project_label_entry, and project_entries lists them",
+      "List articles, boards and sessions in their own Library tabs, each with the columns its kind has, such as a session's Agent and Status, and filter or sort from a column's heading",
+      "Read an article's labels, word count and when it was last edited on the line under its title, hover the date for when it was created, and add a label there",
+      "Open terminals and browser tabs in the Library's right panel, starting in the directory of the pane before it"
     ],
     "changed": [
       "Show the hue and intensity sliders while either mode is painted in Cydonia's own colors, and tint only that mode",
-      "Show the Library's project filter above the list, where clicking it takes it off, instead of in the Project heading"
+      "Run window commands like cmd-j while the Library is open",
+      "Size menus with described rows, and the Library's label picker, to their contents",
+      "Build on Bezel 0.2.12 from crates.io"
     ],
     "fixed": [
       "Remember the color theme across restarts",
       "Keep a list or a code block inside a quote quoted",
-      "Select text in a long article without the selection lagging behind the pointer"
+      "Select text in a long article without the selection lagging behind the pointer",
+      "Use cmd-e on an article that is not the first tab in a space"
     ]
   },
   {
