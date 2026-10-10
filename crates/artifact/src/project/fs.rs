@@ -164,6 +164,7 @@ impl Project {
             board.id = stem(dir);
         }
         board.touched = touched;
+        board.created = stamp::named(&stem(dir));
         board.version = Some(version(body.as_bytes()));
         Some(board)
     }
@@ -452,8 +453,10 @@ impl Project {
 
     fn describe(&self, content: &Path) -> Article {
         let properties = article::properties::all(content);
+        let id = article::id_of(content);
         Article {
-            id: article::id_of(content),
+            created: stamp::named(&id),
+            id,
             title: properties.title,
             archived: properties.archived,
             touched: article::touched(content),
@@ -534,6 +537,7 @@ impl super::Project for Project {
         let dir = self.init()?.join(BOARDS);
         std::fs::create_dir_all(&dir)?;
         let mut board = Board::new(free_board(&dir, stamp::now()), name);
+        board.created = stamp::named(&board.id);
         board.key = match key::normalize(key) {
             Some(key) => key,
             // Nothing given, so it is derived from the name — against what the
@@ -834,6 +838,7 @@ fn read_flat_board(path: &Path) -> Option<Board> {
     let body = std::fs::read_to_string(path).ok()?;
     let mut board: Board = toml::from_str(&body).ok()?;
     board.touched = stamp::of(path);
+    board.created = stamp::named(&stem(path));
     if board.id.is_empty() {
         board.id = stem(path);
     }

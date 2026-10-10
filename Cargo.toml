@@ -43,6 +43,7 @@ terminal = { version = "0.2.11", package = "bezel-terminal" }
 tokio = { version = "1", features = ["net", "process", "rt-multi-thread", "sync", "time"] }
 toml = "0.8"
 toml_edit = "0.22"
+unicode-segmentation = "1"
 ureq = "3"
 url = { version = "2", features = ["serde"] }
 web-time = "1"

@@ -118,3 +118,17 @@ fn place_is_an_articles_directory_and_a_boards_directory() {
     assert_eq!(store.place(Kind::Board, "missing"), None);
     assert_eq!(store.place(Kind::Table, &board.id), None);
 }
+
+#[test]
+fn an_entry_was_created_at_the_stamp_it_is_named_for() {
+    let scratch = Scratch::new("project-created");
+    let store = scratch.store();
+    let article = store.create_article("").unwrap();
+    let board = store.create_board("Plans", "").unwrap();
+    assert_eq!(article.created, article.id.parse().ok());
+    assert_eq!(store.articles()[0].created, article.id.parse().ok());
+    assert_eq!(
+        store.board(&board.id).unwrap().created,
+        board.id.parse().ok()
+    );
+}

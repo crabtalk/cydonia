@@ -41,6 +41,7 @@ terminal = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
 toml.workspace = true
 toml_edit.workspace = true
+unicode-segmentation.workspace = true
 ureq = { workspace = true, optional = true }
 url.workspace = true
 web-time.workspace = true

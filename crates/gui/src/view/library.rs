@@ -1,6 +1,6 @@
-//! The library: every entry and card of every open project in one list, with
-//! tabs by kind, a search, a sort and a project picker on its headings, and a
-//! selection to act on together.
+//! The library: every open project's entries, one kind a tab with that kind's
+//! columns, with a search, a sort and filters on its headings, and a selection
+//! to act on together.
 //!
 //! The window's rather than a pane's: it stands over the detail column in
 //! place of whatever the panes show, and is put away by going to any entry —
@@ -13,6 +13,7 @@ use crate::{
         confirm::Doomed,
         root::Cydonia,
         sidebar::{self, Row},
+        stamp,
     },
 };
 use bezel::{
@@ -31,14 +32,9 @@ use bezel::{
         widgets::{ButtonStyle, Buttons, Controls},
     },
 };
-use chrono::Datelike as _;
 use std::{cell::Cell, collections::HashSet, ops::Range, path::PathBuf, rc::Rc};
 
 mod labels;
-pub(crate) use labels::Target;
-
-/// How far back [`Tab::Recent`] reaches, in milliseconds.
-const RECENT: u128 = 7 * 24 * 60 * 60 * 1000;
 
 /// The search field's width, and what the bar puts between its parts.
 const SEARCH: f32 = 240.;
@@ -51,117 +47,197 @@ const ROW: f32 = 40.;
 /// The hover group a row's checkbox and `···` are revealed by.
 const ROW_GROUP: &str = "library-row";
 
-/// The columns, in the order [`Cydonia::library_row`] fills them.
-const NAME: usize = 1;
-const PROJECT: usize = 3;
-const PLACE: usize = 4;
-const LABELS: usize = 5;
-const EDITED: usize = 6;
-
-/// Which listing the library is on.
+/// Which kind the library is listing. One kind a tab, so each lists the
+/// columns its kind has.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Tab {
-    All,
-    Recent,
-    Sessions,
     Articles,
     Boards,
-    Cards,
     Tables,
-    Archived,
+    Sessions,
 }
 
 impl Tab {
-    const ALL: [Self; 8] = [
-        Self::All,
-        Self::Recent,
-        Self::Sessions,
-        Self::Articles,
-        Self::Boards,
-        Self::Cards,
-        Self::Tables,
-        Self::Archived,
-    ];
+    const ALL: [Self; 4] = [Self::Articles, Self::Boards, Self::Tables, Self::Sessions];
 
     fn label(self) -> &'static str {
         match self {
-            Self::All => "All",
-            Self::Recent => "Recent",
-            Self::Sessions => "Sessions",
             Self::Articles => "Articles",
             Self::Boards => "Boards",
-            Self::Cards => "Cards",
             Self::Tables => "Tables",
-            Self::Archived => "Archived",
+            Self::Sessions => "Sessions",
         }
     }
 
-    /// The kind a tab lists alone, for the tabs that list one.
-    fn kind(self) -> Option<Kind> {
+    fn icon(self) -> Icon {
         match self {
-            Self::Sessions => Some(Kind::Session),
-            Self::Articles => Some(Kind::Article),
-            Self::Boards => Some(Kind::Board),
-            Self::Cards => Some(Kind::Card),
-            Self::Tables => Some(Kind::Table),
-            Self::All | Self::Recent | Self::Archived => None,
+            Self::Articles => icons::files::FileText.into(),
+            Self::Boards => icons::development::SquareKanban.into(),
+            Self::Tables => icons::files::Table2.into(),
+            Self::Sessions => icons::social::MessageCircle.into(),
         }
     }
 
     /// Whether the kind this tab lists is switched on.
     fn shown(self, features: &Features) -> bool {
-        match self.kind() {
-            Some(Kind::Session) => features.sessions,
-            Some(Kind::Board | Kind::Card) => features.boards,
-            Some(Kind::Table) => features.tables,
-            Some(Kind::Article) | None => true,
+        match self {
+            Self::Articles => true,
+            Self::Boards => features.boards,
+            Self::Tables => features.tables,
+            Self::Sessions => features.sessions,
         }
     }
 
-    fn keeps(self, listing: &Listing, now: u128) -> bool {
+    /// The columns, in order. The first three and Project are every tab's.
+    fn fields(self) -> &'static [Field] {
+        use Field::*;
         match self {
-            Self::All => !listing.archived,
-            Self::Recent => !listing.archived && now.saturating_sub(listing.touched) < RECENT,
-            Self::Archived => listing.archived,
-            _ => !listing.archived && self.kind() == Some(listing.kind),
+            Self::Articles => &[
+                Check, Name, Ref, Project, Labels, Created, Edited, Status, Actions,
+            ],
+            Self::Boards => &[Check, Name, Ref, Project, Edited, Status, Actions],
+            Self::Tables => &[Check, Name, Ref, Project, Created, Edited, Status, Actions],
+            Self::Sessions => &[Check, Name, Ref, Project, Agent, Edited, Status, Actions],
+        }
+    }
+
+    /// `n` of what this tab lists, as a count reads: `1 article`, `3 boards`.
+    fn count(self, n: usize, archived: bool) -> String {
+        let noun = match (self, n) {
+            (Self::Articles, 1) => "article",
+            (Self::Articles, _) => "articles",
+            (Self::Boards, 1) => "board",
+            (Self::Boards, _) => "boards",
+            (Self::Tables, 1) => "table",
+            (Self::Tables, _) => "tables",
+            (Self::Sessions, 1) => "session",
+            (Self::Sessions, _) => "sessions",
+        };
+        match archived {
+            true => format!("{n} archived {noun}"),
+            false => format!("{n} {noun}"),
+        }
+    }
+
+    /// Whether this tab shows labels, and so is filtered and labelled by them.
+    fn labelled(self) -> bool {
+        self.fields().contains(&Field::Labels)
+    }
+}
+
+/// One column of the library, by what it shows.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Field {
+    Check,
+    Name,
+    /// `#12`, or a board's key.
+    Ref,
+    Project,
+    Labels,
+    Created,
+    Edited,
+    /// The agent a session runs on.
+    Agent,
+    /// Whether it is archived.
+    Status,
+    Actions,
+}
+
+impl Field {
+    /// Its heading and width. A flexible column's weight is the least width
+    /// it reads at, so at the table's least width each is exactly that.
+    fn column(self) -> table::Column {
+        let (title, width) = match self {
+            Self::Check => ("", table::Width::Fixed(px(40.))),
+            Self::Name => ("Name", table::Width::Flex(240.)),
+            Self::Ref => ("Ref", table::Width::Fixed(px(88.))),
+            Self::Project => ("Project", table::Width::Flex(140.)),
+            Self::Labels => ("Labels", table::Width::Flex(160.)),
+            Self::Created => ("Created", table::Width::Fixed(px(120.))),
+            Self::Edited => ("Edited", table::Width::Fixed(px(120.))),
+            Self::Agent => ("Agent", table::Width::Flex(140.)),
+            Self::Status => ("Status", table::Width::Fixed(px(100.))),
+            Self::Actions => ("", table::Width::Fixed(px(44.))),
+        };
+        table::Column::new(title, width)
+    }
+
+    fn sortable(self) -> bool {
+        matches!(
+            self,
+            Self::Name | Self::Ref | Self::Project | Self::Created | Self::Edited | Self::Agent
+        )
+    }
+}
+
+/// Which of a tab's entries are listed, by whether they are put away.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Status {
+    Active,
+    Archived,
+    All,
+}
+
+impl Status {
+    const ALL: [Self; 3] = [Self::Active, Self::Archived, Self::All];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Active => "Active",
+            Self::Archived => "Archived",
+            Self::All => "All",
+        }
+    }
+
+    fn keeps(self, archived: bool) -> bool {
+        match self {
+            Self::Active => !archived,
+            Self::Archived => archived,
+            Self::All => true,
         }
     }
 }
 
-/// One line of the library, by what it stands for.
-#[derive(Clone, PartialEq, Eq, Hash)]
-pub(crate) enum Item {
-    Entry(Row),
-    /// A card, by its board's project and id, and its own id.
-    Card {
-        project: PathBuf,
-        board: String,
-        card: String,
-    },
+/// What the listings are ordered by.
+#[derive(Clone, Copy, PartialEq)]
+struct Order {
+    field: Field,
+    ascending: bool,
+}
+
+impl Order {
+    /// Newest first, which every tab has.
+    const EDITED: Self = Self {
+        field: Field::Edited,
+        ascending: false,
+    };
 }
 
 /// What the library was narrowed to — what going back to it puts back.
 #[derive(Clone, PartialEq)]
 pub(crate) struct Shelf {
     tab: Tab,
+    status: Status,
     project: Option<PathBuf>,
+    agent: Option<String>,
     labels: Vec<String>,
-    sort: table::Sort,
+    order: Order,
     query: String,
 }
 
 /// What the library is showing, while it is up.
 pub(crate) struct Library {
     tab: Tab,
+    status: Status,
     /// The one project listed, by its path, or every open one.
     project: Option<PathBuf>,
+    /// The one agent whose sessions are listed, by name, or every one.
+    agent: Option<String>,
     /// The labels listed, any one of them; every listing while empty.
-    labels: Vec<String>,
-    /// The label picker, while one is open.
-    picker: Option<labels::Picker>,
-    sort: table::Sort,
+    pub(crate) labels: Vec<String>,
+    order: Order,
     query: Entity<TextField>,
-    selected: HashSet<Item>,
+    selected: HashSet<Row>,
     scroll: UniformListScrollHandle,
     /// How wide the bar was laid out last frame, and the tabs laid out in a
     /// row the last time they were: the tabs give way to a select when the
@@ -180,9 +256,11 @@ impl Library {
     pub(crate) fn shelf(&self, cx: &App) -> Shelf {
         Shelf {
             tab: self.tab,
+            status: self.status,
             project: self.project.clone(),
+            agent: self.agent.clone(),
             labels: self.labels.clone(),
-            sort: self.sort,
+            order: self.order,
             query: self.query.read(cx).content().to_string(),
         }
     }
@@ -195,9 +273,11 @@ impl Library {
             .update(cx, |field, cx| field.set_content(shelf.query, cx));
         Self {
             tab: shelf.tab,
+            status: shelf.status,
             project: shelf.project,
+            agent: shelf.agent,
             labels: shelf.labels,
-            sort: shelf.sort,
+            order: shelf.order,
             ..library
         }
     }
@@ -217,14 +297,12 @@ impl Library {
         })
         .detach();
         Self {
-            tab: Tab::All,
+            tab: Tab::Articles,
+            status: Status::Active,
             project: None,
+            agent: None,
             labels: Vec::new(),
-            picker: None,
-            sort: table::Sort {
-                column: EDITED,
-                ascending: false,
-            },
+            order: Order::EDITED,
             query,
             selected: HashSet::new(),
             scroll: UniformListScrollHandle::new(),
@@ -234,41 +312,21 @@ impl Library {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Kind {
-    Session,
-    Board,
-    Article,
-    Table,
-    Card,
-}
-
-impl Kind {
-    fn icon(self) -> Icon {
-        match self {
-            Self::Session => icons::social::MessageCircle.into(),
-            Self::Board => icons::development::SquareKanban.into(),
-            Self::Article => icons::files::FileText.into(),
-            Self::Table => icons::files::Table2.into(),
-            Self::Card => icons::text::StickyNote.into(),
-        }
-    }
-}
-
 /// One listing as it is drawn, read off the workspace for the frame.
 struct Listing {
-    item: Item,
-    kind: Kind,
+    row: Row,
     title: SharedString,
-    /// `#12` for an entry, the handle for a card.
     reference: Option<SharedString>,
+    /// What [`Listing::reference`] counts, where it is a number: what Ref
+    /// sorts on, so `#9` comes before `#10`.
+    number: Option<u64>,
     project: SharedString,
-    /// The space an entry is arranged in, or the board and lane a card is on.
-    place: Option<SharedString>,
-    /// Milliseconds.
+    agent: Option<SharedString>,
+    /// Milliseconds, as are [`Listing::created`].
     touched: u128,
+    created: Option<u128>,
     archived: bool,
-    /// `None` for what carries no labels: a table, a card.
+    /// `None` where the tab shows none.
     labels: Option<Vec<String>>,
 }
 
@@ -329,122 +387,105 @@ impl Cydonia {
             .into_any_element()
     }
 
-    /// Every entry and card of every open project, with what a switch hides
-    /// left out.
+    /// Every entry of the tab's kind in every open project, or the one picked,
+    /// with what a switch hides left out.
     fn listings(&self, cx: &App) -> Vec<Listing> {
+        let Some(library) = &self.library else {
+            return Vec::new();
+        };
         let workspace = self.workspace.read(cx);
         let features = &workspace.settings.features;
         let mut out = Vec::new();
-        let picked = self
-            .library
-            .as_ref()
-            .and_then(|library| library.project.as_ref());
-        for (at, open) in workspace.projects.iter().enumerate() {
-            if picked.is_some_and(|picked| *picked != open.path) {
+        for open in &workspace.projects {
+            if library
+                .project
+                .as_ref()
+                .is_some_and(|picked| *picked != open.path)
+            {
                 continue;
             }
             let project = SharedString::from(open.name());
-            let row = |showing: Showing| Row::Entry {
-                project: open.path.clone(),
-                showing,
-            };
-            let space = |showing: Showing| {
-                let member = workspace.member_of(at, showing)?;
-                let ix = workspace.space_holding(&member)?;
-                Some(SharedString::from(workspace.spaces[ix].label().to_owned()))
-            };
             let number = |number: Option<u64>| number.map(|n| SharedString::from(format!("#{n}")));
-            let mut entry = |kind,
-                             showing: Showing,
-                             title: String,
-                             n,
-                             touched,
-                             archived,
-                             labels: Option<&[String]>| {
-                let row = row(showing.clone());
+            let entry = |showing: Showing, title: String, reference, touched, archived| {
+                let row = Row::Entry {
+                    project: open.path.clone(),
+                    showing,
+                };
                 if !sidebar::shown(&row, features) {
-                    return;
+                    return None;
                 }
-                out.push(Listing {
-                    item: Item::Entry(row),
-                    kind,
+                Some(Listing {
+                    row,
                     title: title.into(),
-                    reference: number(n),
+                    reference,
+                    number: None,
                     project: project.clone(),
-                    place: space(showing),
+                    agent: None,
                     touched,
+                    created: None,
                     archived,
-                    labels: labels.map(<[String]>::to_vec),
-                });
+                    labels: None,
+                })
             };
-            for chat in &open.sessions {
-                entry(
-                    Kind::Session,
-                    Showing::Session(chat.id),
-                    chat.label(),
-                    chat.number,
-                    chat.touched(),
-                    chat.closed,
-                    Some(&chat.labels),
-                );
-            }
-            for article in &open.articles {
-                entry(
-                    Kind::Article,
-                    Showing::Article(article.id.clone()),
-                    article.label().to_owned(),
-                    article.number,
-                    article.touched,
-                    article.archived,
-                    Some(&article.labels),
-                );
-            }
-            for board in &open.boards {
-                entry(
-                    Kind::Board,
-                    Showing::Board(board.id.clone()),
-                    board.label().to_owned(),
-                    board.number,
-                    board.touched,
-                    board.archived,
-                    Some(&board.labels),
-                );
-            }
-            for table in &open.tables {
-                entry(
-                    Kind::Table,
-                    Showing::Table(table.key.clone()),
-                    table.name.clone(),
-                    table.number,
+            match library.tab {
+                Tab::Articles => {
+                    for article in &open.articles {
+                        if let Some(mut listing) = entry(
+                            Showing::Article(article.id.clone()),
+                            article.label().to_owned(),
+                            number(article.number),
+                            article.touched,
+                            article.archived,
+                        ) {
+                            listing.number = article.number;
+                            listing.created = article.created;
+                            listing.labels = Some(article.labels.clone());
+                            out.push(listing);
+                        }
+                    }
+                }
+                Tab::Boards => {
+                    for board in &open.boards {
+                        out.extend(entry(
+                            Showing::Board(board.id.clone()),
+                            board.label().to_owned(),
+                            Some(board.key.clone().into()),
+                            board.touched,
+                            board.archived,
+                        ));
+                    }
+                }
+                Tab::Tables => {
                     // The store keeps seconds; every other stamp is milliseconds.
-                    table.updated_at.unwrap_or(table.created_at).max(0) as u128 * 1000,
-                    table.archived,
-                    None,
-                );
-            }
-            if !features.boards {
-                continue;
-            }
-            // An archived board's cards are not held in memory, so only the
-            // boards still in hand list theirs.
-            for board in open.boards.iter().filter(|board| !board.archived) {
-                for column in &board.columns {
-                    for card in &column.cards {
-                        out.push(Listing {
-                            item: Item::Card {
-                                project: open.path.clone(),
-                                board: board.id.clone(),
-                                card: card.id.clone(),
-                            },
-                            kind: Kind::Card,
-                            title: self.card_docs.title(&card.text),
-                            reference: board.handle_of(card).map(SharedString::from),
-                            project: project.clone(),
-                            place: Some(format!("{} › {}", board.label(), column.name).into()),
-                            touched: board.touched,
-                            archived: false,
-                            labels: None,
-                        });
+                    let ms = |seconds: i64| seconds.max(0) as u128 * 1000;
+                    for table in &open.tables {
+                        if let Some(mut listing) = entry(
+                            Showing::Table(table.key.clone()),
+                            table.name.clone(),
+                            number(table.number),
+                            ms(table.updated_at.unwrap_or(table.created_at)),
+                            table.archived,
+                        ) {
+                            listing.number = table.number;
+                            listing.created = Some(ms(table.created_at));
+                            out.push(listing);
+                        }
+                    }
+                }
+                Tab::Sessions => {
+                    for chat in &open.sessions {
+                        if let Some(mut listing) = entry(
+                            Showing::Session(chat.id),
+                            chat.label(),
+                            number(chat.number),
+                            chat.touched(),
+                            chat.closed,
+                        ) {
+                            listing.number = chat.number;
+                            listing.agent = Some(chat.entry.name.clone().into());
+                            listing.labels = Some(chat.labels.clone());
+                            out.push(listing);
+                        }
                     }
                 }
             }
@@ -453,16 +494,30 @@ impl Cydonia {
     }
 
     /// What the open tab, the query and the sort leave, in order.
-    fn library_listings(&self, cx: &App) -> Vec<Listing> {
+    ///
+    /// With how many the tab holds before the search and the label filter, to
+    /// say how many those hide.
+    fn library_listings(&self, cx: &App) -> (Vec<Listing>, usize) {
         let Some(library) = &self.library else {
-            return Vec::new();
+            return (Vec::new(), 0);
         };
-        let now = artifact::stamp::now();
-        let mut listings: Vec<Listing> = self
+        let labelled = library.tab.labelled();
+        let held: Vec<Listing> = self
             .listings(cx)
             .into_iter()
-            .filter(|listing| library.tab.keeps(listing, now))
-            .filter(|listing| labels::passes(listing.labels.as_deref(), &library.labels))
+            .filter(|listing| library.status.keeps(listing.archived))
+            .filter(|listing| {
+                library.agent.is_none()
+                    || !library.tab.fields().contains(&Field::Agent)
+                    || listing.agent.as_deref() == library.agent.as_deref()
+            })
+            .collect();
+        let total = held.len();
+        let mut listings: Vec<Listing> = held
+            .into_iter()
+            .filter(|listing| {
+                !labelled || labels::passes(listing.labels.as_deref(), &library.labels)
+            })
             .collect();
         let query = library.query.read(cx).content().trim().to_owned();
         if !query.is_empty() {
@@ -483,14 +538,27 @@ impl Cydonia {
                 .map(|(_, listing)| listing)
                 .collect();
         }
-        let sort = library.sort;
+        let sort = library.order;
         let folded =
             |text: &Option<SharedString>| text.as_deref().unwrap_or_default().to_lowercase();
         listings.sort_by(|a, b| {
-            let order = match sort.column {
-                NAME => a.title.to_lowercase().cmp(&b.title.to_lowercase()),
-                PROJECT => a.project.cmp(&b.project),
-                PLACE => folded(&a.place).cmp(&folded(&b.place)),
+            // Nothing to name it by yet — a session before its first turn —
+            // is last whichever way the column runs.
+            if sort.field == Field::Ref {
+                let missing = a.reference.is_none().cmp(&b.reference.is_none());
+                if missing.is_ne() {
+                    return missing;
+                }
+            }
+            let order = match sort.field {
+                Field::Ref => match (a.number, b.number) {
+                    (Some(a), Some(b)) => a.cmp(&b),
+                    _ => folded(&a.reference).cmp(&folded(&b.reference)),
+                },
+                Field::Name => a.title.to_lowercase().cmp(&b.title.to_lowercase()),
+                Field::Project => a.project.cmp(&b.project),
+                Field::Agent => folded(&a.agent).cmp(&folded(&b.agent)),
+                Field::Created => a.created.cmp(&b.created),
                 _ => a.touched.cmp(&b.touched),
             };
             match sort.ascending {
@@ -498,7 +566,7 @@ impl Cydonia {
                 false => order.reverse(),
             }
         });
-        listings
+        (listings, total)
     }
 
     // ── state ────────────────────────────────────────────────────
@@ -506,6 +574,27 @@ impl Cydonia {
     fn library_tab(&mut self, tab: Tab, cx: &mut Context<Self>) {
         if let Some(library) = &mut self.library {
             library.tab = tab;
+            library.selected.clear();
+            // An order by a column the tab does not have would be one nobody
+            // can see or undo.
+            if !tab.fields().contains(&library.order.field) {
+                library.order = Order::EDITED;
+            }
+            cx.notify();
+        }
+    }
+
+    fn library_agent(&mut self, agent: Option<String>, cx: &mut Context<Self>) {
+        if let Some(library) = &mut self.library {
+            library.agent = agent;
+            library.selected.clear();
+            cx.notify();
+        }
+    }
+
+    fn library_status(&mut self, status: Status, cx: &mut Context<Self>) {
+        if let Some(library) = &mut self.library {
+            library.status = status;
             library.selected.clear();
             cx.notify();
         }
@@ -519,53 +608,53 @@ impl Cydonia {
         }
     }
 
-    fn library_sort_by(&mut self, column: usize, ascending: bool, cx: &mut Context<Self>) {
+    fn library_sort_by(&mut self, field: Field, ascending: bool, cx: &mut Context<Self>) {
         if let Some(library) = &mut self.library {
-            library.sort = table::Sort { column, ascending };
+            library.order = Order { field, ascending };
             cx.notify();
         }
     }
 
-    fn library_sort(&mut self, column: usize, cx: &mut Context<Self>) {
+    /// A press on `field`'s heading: the sorted column reverses, any other
+    /// starts ascending.
+    fn library_sort(&mut self, field: Field, cx: &mut Context<Self>) {
         if let Some(library) = &mut self.library {
-            library.sort = table::next_sort(Some(library.sort), column);
+            library.order = Order {
+                field,
+                ascending: library.order.field != field || !library.order.ascending,
+            };
             cx.notify();
         }
     }
 
-    fn library_select(&mut self, item: Item, cx: &mut Context<Self>) {
+    fn library_select(&mut self, row: Row, cx: &mut Context<Self>) {
         if let Some(library) = &mut self.library {
-            if !library.selected.remove(&item) {
-                library.selected.insert(item);
+            if !library.selected.remove(&row) {
+                library.selected.insert(row);
             }
             cx.notify();
         }
     }
 
     /// Take the selection, leaving none.
-    fn take_selected(&mut self) -> Vec<Item> {
+    fn take_selected(&mut self) -> Vec<Row> {
         self.library
             .as_mut()
             .map(|library| library.selected.drain().collect())
             .unwrap_or_default()
     }
 
-    /// The entries in the selection, cards left out.
-    fn selected_rows(&self) -> Vec<Row> {
+    /// The entries in the selection.
+    pub(crate) fn selected_rows(&self) -> Vec<Row> {
         self.library
             .iter()
-            .flat_map(|library| &library.selected)
-            .filter_map(|item| match item {
-                Item::Entry(row) => Some(row.clone()),
-                Item::Card { .. } => None,
-            })
+            .flat_map(|library| library.selected.iter().cloned())
             .collect()
     }
 
     // ── acting on the selection ──────────────────────────────────
 
-    /// Put every selected entry away, or bring every one back. A card has no
-    /// archive of its own and is passed over.
+    /// Put every selected entry away, or bring every one back.
     fn archive_selected(&mut self, archived: bool, window: &mut Window, cx: &mut Context<Self>) {
         let rows = self.selected_rows();
         self.take_selected();
@@ -602,60 +691,23 @@ impl Cydonia {
         cx.notify();
     }
 
-    /// Put every selected entry into the space with this id, or into a new one
-    /// for `None`. A session that has had no turn has no file for a space to
-    /// name, and stays out.
-    fn gather_selected(&mut self, space: Option<String>, cx: &mut Context<Self>) {
-        let members: Vec<_> = self
-            .selected_rows()
-            .iter()
-            .filter_map(|row| self.member_of_row(row, cx))
-            .collect();
-        self.take_selected();
-        self.workspace.update(cx, |workspace, cx| {
-            workspace.gather(space.as_deref(), &members, cx)
-        });
-        cx.notify();
-    }
-
     /// Ask before deleting everything selected.
     fn delete_selected(&mut self, cx: &mut Context<Self>) {
         let doomed = self
             .take_selected()
             .into_iter()
-            .map(|item| match item {
-                Item::Entry(row) => Doomed::Entry(row),
-                Item::Card { board, card, .. } => Doomed::Card(board, card),
-            })
+            .map(Doomed::Entry)
             .collect();
         self.ask_delete_many(doomed, cx);
     }
 
-    /// Open what a listing stands for in the drawer over the library. A session before its first turn has no
-    /// number to name it by, and opens where it lives, which puts the library
-    /// away.
-    fn open_item(&mut self, item: &Item, window: &mut Window, cx: &mut Context<Self>) {
-        match item {
-            Item::Entry(row) => match self.drawn_reference(row, cx) {
-                Some(reference) => self.peek(None, &reference, window, cx),
-                None => self.open_row(row, window, cx),
-            },
-            Item::Card {
-                project,
-                board,
-                card,
-            } => {
-                let member = {
-                    let workspace = self.workspace.read(cx);
-                    workspace.project_at(project).and_then(|at| {
-                        let ix = workspace.projects[at].board_ix(board)?;
-                        workspace.board_member(at, ix)
-                    })
-                };
-                if let Some(member) = member {
-                    self.open_card(None, member, card.clone(), window, cx);
-                }
-            }
+    /// Open a listing's entry in the drawer over the library. A session before
+    /// its first turn has no number to name it by, and opens where it lives,
+    /// which puts the library away.
+    fn open_listing(&mut self, row: &Row, window: &mut Window, cx: &mut Context<Self>) {
+        match self.drawn_reference(row, cx) {
+            Some(reference) => self.peek(None, &reference, window, cx),
+            None => self.open_row(row, window, cx),
         }
     }
 
@@ -692,9 +744,25 @@ impl Cydonia {
             return div().into_any_element();
         };
         let selected = !library.selected.is_empty();
-        let listings = Rc::new(self.library_listings(cx));
+        let (listings, total) = self.library_listings(cx);
+        let archived = library.status == Status::Archived;
+        let count = match listings.len() == total {
+            true => library.tab.count(total, archived),
+            false => format!(
+                "{} of {}",
+                listings.len(),
+                library.tab.count(total, archived)
+            ),
+        };
+        // Unarchive where everything selected that is listed is put away.
+        let mut picked = listings
+            .iter()
+            .filter(|listing| library.selected.contains(&listing.row))
+            .peekable();
+        let unarchive = picked.peek().is_some() && picked.all(|listing| listing.archived);
+        let listings = Rc::new(listings);
         let bar = match selected {
-            true => self.library_selection_bar(window, cx),
+            true => self.library_selection_bar(unarchive, window, cx),
             false => self.library_bar(window, cx),
         };
         let filters = self.filter_strip(cx);
@@ -730,6 +798,13 @@ impl Cydonia {
             )
             .children(filters)
             .child(body)
+            .child(
+                div()
+                    .flex_none()
+                    .text_style(TextStyle::Caption)
+                    .text_color(theme.text_muted)
+                    .child(count),
+            )
             .into_any_element()
     }
 
@@ -850,23 +925,19 @@ impl Cydonia {
 
     /// What the selection can be done to, in the bar's place while there is
     /// one.
-    fn library_selection_bar(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+    fn library_selection_bar(
+        &self,
+        unarchive: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
         let theme = Theme::of(cx).clone();
         let Some(library) = &self.library else {
             return div();
         };
         let count = library.selected.len();
-        let rows = self.selected_rows();
-        let archived = library.tab == Tab::Archived;
-        let articles = rows.iter().any(|row| {
-            matches!(
-                row,
-                Row::Entry {
-                    showing: Showing::Article(_),
-                    ..
-                }
-            )
-        });
+        let articles = library.tab == Tab::Articles;
+        let labelled = library.tab.labelled();
         let projects = self.workspace.read(cx).projects.len();
         div()
             .flex_1()
@@ -881,38 +952,28 @@ impl Cydonia {
                     .text_color(theme.text)
                     .child(format!("{count} selected")),
             )
-            .when(!rows.is_empty(), |bar| {
-                bar.child(
-                    theme
-                        .button(
-                            match archived {
-                                true => "Unarchive",
-                                false => "Archive",
-                            },
-                            ButtonStyle::Ghost,
-                            None,
-                        )
-                        .id("library-archive")
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.archive_selected(!archived, window, cx)
-                        })),
-                )
-            })
+            .child(
+                theme
+                    .button(
+                        match unarchive {
+                            true => "Unarchive",
+                            false => "Archive",
+                        },
+                        ButtonStyle::Ghost,
+                        None,
+                    )
+                    .id("library-archive")
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.archive_selected(!unarchive, window, cx)
+                    })),
+            )
             .when(articles && projects > 1, |bar| {
                 bar.child(
                     self.library_trigger("library-move", "Move to", Menu::LibraryMove, cx)
                         .children(self.move_menu(window, cx)),
                 )
             })
-            .when(!rows.is_empty(), |bar| {
-                bar.child(
-                    self.library_trigger("library-space", "Add to space", Menu::LibrarySpace, cx)
-                        .children(self.space_menu(window, cx)),
-                )
-            })
-            .when(self.selection_labelled(cx), |bar| {
-                bar.child(self.label_button(cx))
-            })
+            .when(labelled, |bar| bar.child(self.label_button(cx)))
             .child(
                 theme
                     .button("Delete", ButtonStyle::Ghost, None)
@@ -954,24 +1015,25 @@ impl Cydonia {
         self.menu_press(button, menu, cx)
     }
 
-    /// The Project heading: the one project listed, or every open one, and
-    /// the menu that picks it and sorts by it.
-    fn project_heading(
+    /// A heading that opens `menu`, drawn under it as `card` while it is
+    /// open: a filter on the column, and its sort where it has one.
+    fn heading_picker(
         &self,
         column: &table::Column,
         sorted: Option<bool>,
-        window: &mut Window,
+        id: &'static str,
+        menu: Menu,
+        card: Option<AnyElement>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = Theme::of(cx).clone();
-        let menu = Menu::LibraryProject;
         let cell = table::header_cell(&theme, column, sorted)
             .child(
                 icons::icon(icons::arrows::ChevronDown)
                     .size(px(11.))
                     .text_color(theme.text_muted),
             )
-            .id(("library-heading", PROJECT))
+            .id(id)
             .relative()
             .on_click(cx.listener({
                 let menu = menu.clone();
@@ -981,8 +1043,32 @@ impl Cydonia {
                 }
             }));
         self.menu_press(cell, menu, cx)
-            .children(self.library_project_menu(window, cx))
+            .children(card)
             .into_any_element()
+    }
+
+    /// The menu under a sortable heading's picker: its two sorts, then a line.
+    fn sorts(&self, field: Field) -> Vec<(MenuItem, menu::Act)> {
+        let sorted = self
+            .library
+            .as_ref()
+            .filter(|library| library.order.field == field)
+            .map(|library| library.order.ascending);
+        vec![
+            menu::row(
+                MenuItem::action("Sort A → Z")
+                    .with_icon(icons::arrows::ArrowDownAZ)
+                    .checked(sorted == Some(true)),
+                move |this, _, cx| this.library_sort_by(field, true, cx),
+            ),
+            menu::row(
+                MenuItem::action("Sort Z → A")
+                    .with_icon(icons::arrows::ArrowDownZA)
+                    .checked(sorted == Some(false)),
+                move |this, _, cx| this.library_sort_by(field, false, cx),
+            ),
+            menu::row(MenuItem::Separator, |_, _, _| {}),
+        ]
     }
 
     fn library_project_menu(
@@ -997,28 +1083,13 @@ impl Cydonia {
             return None;
         };
         let picked = library.project.clone();
-        let sorted = (library.sort.column == PROJECT).then_some(library.sort.ascending);
-        let mut rows = vec![
-            menu::row(
-                MenuItem::action("Sort A → Z")
-                    .with_icon(icons::arrows::ArrowDownAZ)
-                    .checked(sorted == Some(true)),
-                |this, _, cx| this.library_sort_by(PROJECT, true, cx),
-            ),
-            menu::row(
-                MenuItem::action("Sort Z → A")
-                    .with_icon(icons::arrows::ArrowDownZA)
-                    .checked(sorted == Some(false)),
-                |this, _, cx| this.library_sort_by(PROJECT, false, cx),
-            ),
-            menu::row(MenuItem::Separator, |_, _, _| {}),
-            menu::row(
-                MenuItem::action("All projects")
-                    .with_icon(icons::files::Folders)
-                    .checked(picked.is_none()),
-                |this, _, cx| this.library_project(None, cx),
-            ),
-        ];
+        let mut rows = self.sorts(Field::Project);
+        rows.push(menu::row(
+            MenuItem::action("All projects")
+                .with_icon(icons::files::Folders)
+                .checked(picked.is_none()),
+            |this, _, cx| this.library_project(None, cx),
+        ));
         rows.extend(self.workspace.read(cx).projects.iter().map(|open| {
             let path = open.path.clone();
             menu::row(
@@ -1062,24 +1133,57 @@ impl Cydonia {
         ))
     }
 
-    /// The spaces a selection can join, and a new one.
-    fn space_menu(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if self.menu != Some(Menu::LibrarySpace) {
+    /// The agents a session in an open project runs on, to list one's alone.
+    fn agent_menu(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if self.menu != Some(Menu::LibraryAgent) {
             return None;
         }
-        let mut rows = vec![menu::row(
-            MenuItem::action("New space").with_icon(icons::math::Plus),
-            |this, _, cx| this.gather_selected(None, cx),
-        )];
-        rows.extend(self.workspace.read(cx).spaces.iter().map(|space| {
-            let id = space.id.clone();
+        let picked = self.library.as_ref()?.agent.clone();
+        let mut names: Vec<String> = self
+            .workspace
+            .read(cx)
+            .projects
+            .iter()
+            .flat_map(|open| &open.sessions)
+            .map(|chat| chat.entry.name.clone())
+            .collect();
+        names.sort();
+        names.dedup();
+        let mut rows = self.sorts(Field::Agent);
+        rows.push(menu::row(
+            MenuItem::action("All agents").checked(picked.is_none()),
+            |this, _, cx| this.library_agent(None, cx),
+        ));
+        rows.extend(names.into_iter().map(|name| {
+            let checked = picked.as_ref() == Some(&name);
             menu::row(
-                MenuItem::action(space.label().to_owned())
-                    .with_icon(icons::layout::LayoutDashboard),
-                move |this, _, cx| this.gather_selected(Some(id.clone()), cx),
+                MenuItem::action(name.clone()).checked(checked),
+                move |this, _, cx| this.library_agent(Some(name.clone()), cx),
             )
         }));
-        let id = SharedString::from("library-space-menu");
+        let id = SharedString::from("library-agent-menu");
+        Some(popover::anchored_menu_below(
+            id.clone(),
+            self.menu_card(id, rows, window, cx),
+            None,
+        ))
+    }
+
+    fn status_menu(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if self.menu != Some(Menu::LibraryStatus) {
+            return None;
+        }
+        let picked = self.library.as_ref()?.status;
+        let rows = Status::ALL
+            .into_iter()
+            .map(|status| {
+                menu::row(
+                    MenuItem::action(status.label()).checked(status == picked),
+                    move |this, _, cx| this.library_status(status, cx),
+                )
+            })
+            .collect();
+        let id = SharedString::from("library-status-menu");
         Some(popover::anchored_menu_below(
             id.clone(),
             self.menu_card(id, rows, window, cx),
@@ -1098,25 +1202,58 @@ impl Cydonia {
         let Some(library) = &self.library else {
             return div().into_any_element();
         };
-        let (sort, scroll) = (library.sort, library.scroll.clone());
-        let columns = Rc::new(columns());
+        let (order, scroll, tab) = (library.order, library.scroll.clone(), library.tab);
+        let fields = tab.fields();
+        let columns: Rc<Vec<table::Column>> =
+            Rc::new(fields.iter().map(|field| field.column()).collect());
         let width = least(&columns);
-        let headings: Vec<AnyElement> = columns
+        let headings: Vec<AnyElement> = fields
             .iter()
+            .zip(columns.iter())
             .enumerate()
-            .map(|(ix, column)| {
-                let sortable = matches!(ix, NAME | PROJECT | PLACE | EDITED);
-                let sorted = (sortable && sort.column == ix).then_some(sort.ascending);
-                if ix == PROJECT {
-                    return self.project_heading(column, sorted, window, cx);
-                }
-                if ix == LABELS {
-                    return self.labels_heading(column, cx);
+            .map(|(ix, (&field, column))| {
+                let sorted = (field.sortable() && order.field == field).then_some(order.ascending);
+                match field {
+                    Field::Project => {
+                        let card = self.library_project_menu(window, cx);
+                        return self.heading_picker(
+                            column,
+                            sorted,
+                            "library-heading-project",
+                            Menu::LibraryProject,
+                            card,
+                            cx,
+                        );
+                    }
+                    Field::Agent => {
+                        let card = self.agent_menu(window, cx);
+                        return self.heading_picker(
+                            column,
+                            sorted,
+                            "library-heading-agent",
+                            Menu::LibraryAgent,
+                            card,
+                            cx,
+                        );
+                    }
+                    Field::Status => {
+                        let card = self.status_menu(window, cx);
+                        return self.heading_picker(
+                            column,
+                            None,
+                            "library-heading-status",
+                            Menu::LibraryStatus,
+                            card,
+                            cx,
+                        );
+                    }
+                    Field::Labels => return self.labels_heading(column, cx),
+                    _ => {}
                 }
                 let cell = table::header_cell(&theme, column, sorted).id(("library-heading", ix));
-                match sortable {
+                match field.sortable() {
                     true => cell
-                        .on_click(cx.listener(move |this, _, _, cx| this.library_sort(ix, cx)))
+                        .on_click(cx.listener(move |this, _, _, cx| this.library_sort(field, cx)))
                         .into_any_element(),
                     false => cell.cursor_default().into_any_element(),
                 }
@@ -1127,7 +1264,7 @@ impl Cydonia {
             listings.len(),
             cx.processor(move |this, range: Range<usize>, window, cx| {
                 range
-                    .map(|ix| this.library_row(&listings[ix], ix, &columns, window, cx))
+                    .map(|ix| this.library_row(&listings[ix], ix, tab, &columns, window, cx))
                     .collect::<Vec<_>>()
             }),
         )
@@ -1155,7 +1292,7 @@ impl Cydonia {
         let theme = Theme::of(cx).clone();
         let (checked, any) = self.library.as_ref().map_or((false, false), |library| {
             (
-                library.selected.contains(&listing.item),
+                library.selected.contains(&listing.row),
                 !library.selected.is_empty(),
             )
         });
@@ -1167,16 +1304,15 @@ impl Cydonia {
                 el.invisible().group_hover(ROW_GROUP, |el| el.visible())
             })
             .on_click(cx.listener({
-                let item = listing.item.clone();
+                let row = listing.row.clone();
                 move |this, _, _, cx| {
                     cx.stop_propagation();
-                    this.library_select(item.clone(), cx);
+                    this.library_select(row.clone(), cx);
                 }
             }))
     }
 
-    /// A listing's `···`: the sidebar's menu for an entry, the board's for a
-    /// card.
+    /// A listing's `···`: the sidebar's menu for its entry.
     fn library_actions(
         &self,
         listing: &Listing,
@@ -1185,36 +1321,22 @@ impl Cydonia {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let id = SharedString::from(format!("library-menu-{ix}"));
-        match &listing.item {
-            Item::Entry(row) => {
-                let menu = Menu::Library(row.clone());
-                self.menu_button(
-                    id,
-                    Some(ROW_GROUP),
-                    icons::layout::Ellipsis,
-                    menu.clone(),
-                    cx,
-                )
-                .children(self.entry_menu(menu, row, listing.archived, window, cx))
-                .into_any_element()
-            }
-            Item::Card { board, card, .. } => self
-                .menu_button(
-                    id,
-                    Some(ROW_GROUP),
-                    icons::layout::Ellipsis,
-                    Menu::Card(card.clone()),
-                    cx,
-                )
-                .children(self.card_menu(board, card, window, cx))
-                .into_any_element(),
-        }
+        let menu = Menu::Library(listing.row.clone());
+        self.menu_button(
+            id,
+            Some(ROW_GROUP),
+            icons::layout::Ellipsis,
+            menu.clone(),
+            cx,
+        )
+        .children(self.entry_menu(menu, &listing.row, listing.archived, window, cx))
+        .into_any_element()
     }
 
-    fn is_selected(&self, item: &Item) -> bool {
+    fn is_selected(&self, row: &Row) -> bool {
         self.library
             .as_ref()
-            .is_some_and(|library| library.selected.contains(item))
+            .is_some_and(|library| library.selected.contains(row))
     }
 
     /// One line of the list.
@@ -1222,12 +1344,13 @@ impl Cydonia {
         &self,
         listing: &Listing,
         ix: usize,
+        tab: Tab,
         columns: &[table::Column],
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = Theme::of(cx).clone();
-        let checked = self.is_selected(&listing.item);
+        let checked = self.is_selected(&listing.row);
         let muted = |text: Option<SharedString>| {
             div()
                 .min_w_0()
@@ -1236,52 +1359,66 @@ impl Cydonia {
                 .child(text.unwrap_or_default())
                 .into_any_element()
         };
-        let name = div()
-            .min_w_0()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(8.))
-            .child(
-                icons::icon(listing.kind.icon())
-                    .size(px(14.))
-                    .flex_none()
-                    .text_color(sidebar::tint(false, listing.archived, &theme)),
-            )
-            .child(
-                div()
-                    .min_w_0()
-                    .truncate()
-                    .text_color(match listing.archived {
-                        true => theme.text_faint,
-                        false => theme.text,
-                    })
-                    .child(listing.title.clone()),
-            )
-            .into_any_element();
-        let reference = div()
-            .text_style(TextStyle::Caption)
-            .text_color(theme.text_faint)
-            .child(listing.reference.clone().unwrap_or_default())
-            .into_any_element();
-        let cells = vec![
-            self.library_check(listing, ix, cx).into_any_element(),
-            name,
-            reference,
-            muted(Some(listing.project.clone())),
-            muted(listing.place.clone()),
-            self.label_cell(&listing.item, listing.labels.as_deref(), ix, cx),
-            muted(Some(edited(listing.touched).into())),
-            self.library_actions(listing, ix, window, cx),
-        ];
+        let name = || {
+            div()
+                .min_w_0()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(8.))
+                .child(
+                    icons::icon(tab.icon())
+                        .size(px(14.))
+                        .flex_none()
+                        .text_color(sidebar::tint(false, listing.archived, &theme)),
+                )
+                .child(
+                    div()
+                        .min_w_0()
+                        .truncate()
+                        .text_color(match listing.archived {
+                            true => theme.text_faint,
+                            false => theme.text,
+                        })
+                        .child(listing.title.clone()),
+                )
+                .into_any_element()
+        };
+        let cells = tab
+            .fields()
+            .iter()
+            .map(|field| match field {
+                Field::Check => self.library_check(listing, ix, cx).into_any_element(),
+                Field::Name => name(),
+                Field::Ref => div()
+                    .text_style(TextStyle::Caption)
+                    .text_color(theme.text_faint)
+                    .child(listing.reference.clone().unwrap_or_default())
+                    .into_any_element(),
+                Field::Project => muted(Some(listing.project.clone())),
+                Field::Labels => self.label_cell(&listing.row, listing.labels.as_deref(), ix, cx),
+                Field::Created => muted(listing.created.map(|at| stamp::coarse(at).into())),
+                Field::Edited => muted(Some(stamp::coarse(listing.touched).into())),
+                Field::Agent => muted(listing.agent.clone()),
+                Field::Status => muted(Some(
+                    match listing.archived {
+                        true => Status::Archived,
+                        false => Status::Active,
+                    }
+                    .label()
+                    .into(),
+                )),
+                Field::Actions => self.library_actions(listing, ix, window, cx),
+            })
+            .collect();
         table::row(&theme, columns, ix == 0, checked, cells)
             .h(px(ROW))
             .id(("library-row", ix))
             .group(ROW_GROUP)
             .cursor_pointer()
             .on_click(cx.listener({
-                let item = listing.item.clone();
-                move |this, _, window, cx| this.open_item(&item, window, cx)
+                let row = listing.row.clone();
+                move |this, _, window, cx| this.open_listing(&row, window, cx)
             }))
             .into_any_element()
     }
@@ -1302,22 +1439,6 @@ fn measure(into: Rc<Cell<Pixels>>) -> impl IntoElement {
     .size_full()
 }
 
-/// The columns, declared once for the heading and every row. A flexible
-/// column's weight is the least width it reads at, so at the table's least
-/// width each is exactly that.
-fn columns() -> Vec<table::Column> {
-    vec![
-        table::Column::new("", table::Width::Fixed(px(40.))),
-        table::Column::new("Name", table::Width::Flex(240.)),
-        table::Column::new("Ref", table::Width::Fixed(px(88.))),
-        table::Column::new("Project", table::Width::Flex(140.)),
-        table::Column::new("Location", table::Width::Flex(180.)),
-        table::Column::new("Labels", table::Width::Flex(160.)),
-        table::Column::new("Edited", table::Width::Fixed(px(120.))),
-        table::Column::new("", table::Width::Fixed(px(44.))),
-    ]
-}
-
 /// The narrowest `columns` are laid out at; a pane narrower scrolls the table
 /// sideways.
 fn least(columns: &[table::Column]) -> f32 {
@@ -1328,24 +1449,4 @@ fn least(columns: &[table::Column]) -> f32 {
             table::Width::Flex(least) => least,
         })
         .sum()
-}
-
-/// When something was last written, as coarse as still says something: the
-/// time today, the day this year, the date before that.
-fn edited(touched: u128) -> String {
-    let Some(at) = i64::try_from(touched)
-        .ok()
-        .filter(|ms| *ms > 0)
-        .and_then(chrono::DateTime::from_timestamp_millis)
-    else {
-        return String::new();
-    };
-    let at = at.with_timezone(&chrono::Local);
-    let now = chrono::Local::now();
-    let format = match () {
-        _ if at.date_naive() == now.date_naive() => "%-I:%M %p",
-        _ if at.year() == now.year() => "%b %-d",
-        _ => "%b %-d, %Y",
-    };
-    at.format(format).to_string()
 }

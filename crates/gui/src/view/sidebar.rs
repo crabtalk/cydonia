@@ -2414,10 +2414,6 @@ impl Cydonia {
         if self.menu.as_ref() != Some(&at) {
             return None;
         }
-        let put = match archived {
-            true => Item::action("Unarchive").with_icon(icons::files::ArchiveRestore),
-            false => Item::action("Archive").with_icon(icons::files::Archive),
-        };
         // `../desktop`'s rule for what a `···` may carry: only commands with no
         // affordance on the object. An article's title is the head of its own
         // page and a board's name in the band opens its identity panel, so
@@ -2427,33 +2423,6 @@ impl Cydonia {
             showing_of(entry),
             Some(Showing::Article(_) | Showing::Board(_))
         );
-        let mut rows = vec![menu::row(put, {
-            let entry = entry.clone();
-            move |this, window, cx| this.archive_entry(&entry, !archived, window, cx)
-        })];
-        // Above archive, and only for an entry still in hand: what is put away
-        // is not held at the top of anything.
-        if !archived && showing_of(entry).is_some() {
-            let pinned = self.pinned(entry, cx);
-            let pin = match pinned {
-                true => Item::action("Unpin").with_icon(icons::navigation::PinOff),
-                false => Item::action("Pin to top").with_icon(icons::navigation::Pin),
-            };
-            let entry = entry.clone();
-            rows.insert(
-                0,
-                menu::row(pin, move |this, _, cx| this.pin_entry(&entry, !pinned, cx)),
-            );
-        }
-        if named {
-            rows.insert(
-                0,
-                menu::row(Item::action("Rename").with_icon(icons::text::SquarePen), {
-                    let entry = entry.clone();
-                    move |this, window, cx| this.rename_entry(&entry, window, cx)
-                }),
-            );
-        }
         // A page's measure and how it is being read: the open page's, since
         // [`Self::set_full_width`] and [`Self::plain_text`] are about the one
         // the window is showing. A row's menu names an entry that may not be
@@ -2465,16 +2434,44 @@ impl Cydonia {
             Menu::Tab(tab) => self.leaf().entry.as_ref() == Some(tab),
             _ => true,
         };
+
+        // ── how the open page is shown ──
+        let mut shown: Vec<(Item, menu::Act)> = Vec::new();
         if matches!(showing_of(entry), Some(Showing::Article(_))) && page {
             let plain_chord = keymap::label(
                 Command::PlainText,
                 &self.workspace.read(cx).settings.shortcuts,
             )
             .unwrap_or_default();
+            // The markdown itself, for the times the document is in the way of
+            // it. Above the width, which is about the page rather than what is
+            // being edited on it.
+            shown.push(menu::row(
+                Item::action("Plain text")
+                    .with_icon(icons::text::Code)
+                    .with_keystroke(plain_chord)
+                    .checked(self.plain_text(cx).unwrap_or_default()),
+                move |this, window, cx| this.toggle_plain_text(&TogglePlainText, window, cx),
+            ));
             // The page the focused pane is on, which is what these rows act on
             // — see [`Cydonia::pane_doc`].
             let held = self.pane_doc(cx).and_then(|article| article.full_width);
             let wide = held.unwrap_or(self.workspace.read(cx).wide_pages);
+            shown.push(menu::row(
+                Item::action("Full width")
+                    .with_icon(icons::layout::UnfoldHorizontal)
+                    .checked(wide),
+                move |this, _, cx| this.set_full_width(Some(!wide), cx),
+            ));
+            // Only for a page carrying a measure of its own. On every other
+            // page it is already what is happening, and a row that undoes
+            // nothing is a row nobody can read the point of.
+            if held.is_some() {
+                shown.push(menu::row(
+                    Item::action("Use default width").with_icon(icons::layout::Columns2),
+                    move |this, _, cx| this.set_full_width(None, cx),
+                ));
+            }
             // Only where there is none. A page that has one is changed from
             // the picture itself, which is on screen and has nowhere else it
             // could mean — see `article::cover_controls`.
@@ -2482,49 +2479,69 @@ impl Cydonia {
                 .pane_doc(cx)
                 .is_some_and(|article| article.cover.is_none())
             {
-                rows.insert(
-                    0,
-                    menu::row(
-                        Item::action("Add cover").with_icon(icons::files::ImagePlus),
-                        move |this, _, cx| this.shuffle_cover(cx),
-                    ),
-                );
+                shown.push(menu::row(
+                    Item::action("Add cover").with_icon(icons::files::ImagePlus),
+                    move |this, _, cx| this.shuffle_cover(cx),
+                ));
             }
-            // Only for a page carrying a measure of its own. On every other
-            // page it is already what is happening, and a row that undoes
-            // nothing is a row nobody can read the point of.
-            if held.is_some() {
-                rows.insert(
-                    0,
-                    menu::row(
-                        Item::action("Use default width").with_icon(icons::layout::Columns2),
-                        move |this, _, cx| this.set_full_width(None, cx),
-                    ),
-                );
-            }
-            rows.insert(
-                0,
-                menu::row(
-                    Item::action("Full width")
-                        .with_icon(icons::layout::UnfoldHorizontal)
-                        .checked(wide),
-                    move |this, _, cx| this.set_full_width(Some(!wide), cx),
-                ),
-            );
-            // The markdown itself, for the times the document is in the way of
-            // it. Above the width, which is about the page rather than what is
-            // being edited on it.
-            rows.insert(
-                0,
-                menu::row(
-                    Item::action("Plain text")
-                        .with_icon(icons::text::Code)
-                        .with_keystroke(plain_chord)
-                        .checked(self.plain_text(cx).unwrap_or_default()),
-                    move |this, window, cx| this.toggle_plain_text(&TogglePlainText, window, cx),
-                ),
-            );
         }
+        if let Some(Showing::Board(_)) = showing_of(entry)
+            && !matches!(at, Menu::Entry(_) | Menu::Library(_))
+            && let Some((project, ix)) = self.located(entry, cx)
+            && let Some((id, view)) = self
+                .workspace
+                .read(cx)
+                .board_in(project, ix)
+                .map(|board| (board.id.clone(), board.view))
+        {
+            let views = [View::Lanes, View::List];
+            let item = Item::segmented(
+                [
+                    Segment::new(icons::development::SquareKanban, "Lanes"),
+                    Segment::new(icons::layout::LayoutList, "List"),
+                ],
+                views.iter().position(|at| *at == view).unwrap_or_default(),
+            );
+            let act: menu::Act = Box::new(move |this, path, _, cx| {
+                if let Some(view) = path.first().and_then(|at| views.get(*at)) {
+                    this.set_board_view(&id, *view, cx);
+                }
+            });
+            shown.push((item, act));
+        }
+
+        // ── the entry itself ──
+        let mut held: Vec<(Item, menu::Act)> = Vec::new();
+        if named {
+            held.push(menu::row(
+                Item::action("Rename").with_icon(icons::text::SquarePen),
+                {
+                    let entry = entry.clone();
+                    move |this, window, cx| this.rename_entry(&entry, window, cx)
+                },
+            ));
+        }
+        // Only for an entry still in hand: what is put away is not held at
+        // the top of anything.
+        if !archived && showing_of(entry).is_some() {
+            let pinned = self.pinned(entry, cx);
+            let pin = match pinned {
+                true => Item::action("Unpin").with_icon(icons::navigation::PinOff),
+                false => Item::action("Pin to top").with_icon(icons::navigation::Pin),
+            };
+            let entry = entry.clone();
+            held.push(menu::row(pin, move |this, _, cx| {
+                this.pin_entry(&entry, !pinned, cx)
+            }));
+        }
+        let put = match archived {
+            true => Item::action("Unarchive").with_icon(icons::files::ArchiveRestore),
+            false => Item::action("Archive").with_icon(icons::files::Archive),
+        };
+        held.push(menu::row(put, {
+            let entry = entry.clone();
+            move |this, window, cx| this.archive_entry(&entry, !archived, window, cx)
+        }));
         // Into any other open project, the folder and its pictures with it.
         if let Some(Showing::Article(_)) = showing_of(entry)
             && let Some((project, ix)) = self.located(entry, cx)
@@ -2548,70 +2565,47 @@ impl Cydonia {
                 })
                 .collect();
             if !targets.is_empty() {
-                rows.push(menu::submenu(
+                held.push(menu::submenu(
                     "Move to",
                     icons::arrows::ArrowRightLeft,
                     targets,
                 ));
             }
         }
-        if let Some(path) = self.place_of(entry, cx) {
-            rows.extend(on_disk(path));
-        }
+
+        // ── where it is on disk ──
+        let disk: Vec<(Item, menu::Act)> = self
+            .place_of(entry, cx)
+            .map(|path| on_disk(path).into_iter().collect())
+            .unwrap_or_default();
+
+        // ── the tab it is open in ──
+        let mut tab_rows: Vec<(Item, menu::Act)> = Vec::new();
         if let Menu::Tab(tab) = &at {
             let tab = tab.clone();
-            rows.push(menu::row(
+            tab_rows.push(menu::row(
                 Item::action("Close tab").with_icon(icons::notifications::X),
                 move |this, window, cx| this.close_pane(&tab, window, cx),
             ));
         }
-        rows.push(menu::row(
+
+        // Alone, so it is never the row beside the one meant.
+        let delete = vec![menu::row(
             Item::action("Delete").with_icon(icons::files::Trash),
             {
                 let entry = entry.clone();
                 move |this, _, cx| this.ask_delete(&entry, cx)
             },
-        ));
-        if let Some(Showing::Board(_)) = showing_of(entry)
-            && !matches!(at, Menu::Entry(_) | Menu::Library(_))
-            && let Some((project, ix)) = self.located(entry, cx)
-            && let Some((id, view)) = self
-                .workspace
-                .read(cx)
-                .board_in(project, ix)
-                .map(|board| (board.id.clone(), board.view))
-        {
-            let views = [View::Lanes, View::List];
-            let item = Item::segmented(
-                [
-                    Segment::new(icons::development::SquareKanban, "Lanes"),
-                    Segment::new(icons::layout::LayoutList, "List"),
-                ],
-                views.iter().position(|at| *at == view).unwrap_or_default(),
-            );
-            let act: menu::Act = Box::new(move |this, path, _, cx| {
-                if let Some(view) = path.first().and_then(|at| views.get(*at)) {
-                    this.set_board_view(&id, *view, cx);
-                }
-            });
-            rows.insert(0, (item, act));
-        }
+        )];
+        let rows = menu::sections([shown, held, disk, tab_rows, delete]);
         let id = SharedString::from("header-menu-card");
+        let card = self.menu_card(id.clone(), rows, window, cx);
         // A right press carries a point, and the card stands at it. From a
         // button — the `···`, the pin — there is none, and the card drops
         // right-aligned to the trigger, whose affordance is at the row's end.
         Some(match self.menu_point(&at) {
-            Some(point) => popover::menu_at(
-                id.clone(),
-                point,
-                self.menu_card(id, rows, window, cx),
-                None,
-            ),
-            None => popover::anchored_menu_below_end(
-                id.clone(),
-                self.menu_card(id, rows, window, cx),
-                None,
-            ),
+            Some(point) => popover::menu_at(id, point, card, None),
+            None => popover::anchored_menu_below_end(id, card, None),
         })
     }
 

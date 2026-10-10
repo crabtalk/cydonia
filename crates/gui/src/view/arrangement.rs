@@ -868,7 +868,7 @@ impl Cydonia {
             .and_then(|space| space.zoomed())
             .is_some_and(|at| at == *entry);
 
-        let mut rows = vec![menu::row(
+        let zoom = vec![menu::row(
             match zoomed {
                 true => Item::action("Restore").with_icon(icons::arrows::Shrink),
                 false => Item::action("Expand").with_icon(icons::arrows::Expand),
@@ -881,6 +881,7 @@ impl Cydonia {
         // Only the ways this pane can actually go: a move with nothing across
         // the seam is a row that does nothing, and a menu of those teaches
         // that the menu does nothing.
+        let mut moves = Vec::new();
         for (side, label, icon) in [
             (Side::Left, "Move left", icons::arrows::ArrowLeft),
             (Side::Right, "Move right", icons::arrows::ArrowRight),
@@ -896,11 +897,12 @@ impl Cydonia {
                 continue;
             }
             let on = entry.clone();
-            rows.push(menu::row(
+            moves.push(menu::row(
                 Item::action(label).with_icon(icon),
                 move |this, window, cx| this.move_pane(&on, side, window, cx),
             ));
         }
+        let rows = menu::sections([zoom, moves]);
         let id = SharedString::from(format!("pane-menu-card-{key}"));
         Some(popover::anchored_menu_below(
             id.clone(),

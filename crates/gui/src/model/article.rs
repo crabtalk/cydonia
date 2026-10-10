@@ -103,10 +103,16 @@ pub struct Article {
     /// [`Disk`], filled when first asked for and emptied whenever what is on
     /// disk changes.
     disk: OnceCell<Rc<Disk>>,
+    /// How many words [`Article::saved`] holds, filled when first asked for
+    /// and emptied with [`Article::disk`]. Read every frame the page is on.
+    words: OnceCell<usize>,
     /// When the document was last written. Held rather than read back per
     /// frame: the sidebar orders on it, and a project of a thousand articles
     /// would be a thousand `stat` calls a frame.
     pub touched: u128,
+    /// When it was made, where the backend knows — see
+    /// [`layout::Article::created`].
+    pub created: Option<u128>,
     /// Put away: listed under the divider rather than gone. Cached beside
     /// [`Article::touched`], and for the same reason.
     pub archived: bool,
@@ -134,6 +140,7 @@ impl Article {
             cover: held.cover.as_ref().and_then(file_url::to_path),
             title: properties.title,
             touched: held.touched,
+            created: held.created,
             archived: properties.archived,
             full_width: properties.full_width,
             labels: properties.labels,
@@ -147,6 +154,7 @@ impl Article {
             mode: Mode::default(),
             saved: String::new(),
             disk: OnceCell::new(),
+            words: OnceCell::new(),
             stale: false,
         }
     }
@@ -252,7 +260,7 @@ impl Article {
         .detach();
 
         self.saved = self.store.read_article(&self.id).unwrap_or_default();
-        self.disk = OnceCell::new();
+        self.forget_disk();
         let scroll = self.scroll.clone();
         let dir = self
             .path
@@ -330,7 +338,7 @@ impl Article {
             let source = editor.read(cx).source();
             if self.saved != source && self.store.write_article(&self.id, &source).is_ok() {
                 self.saved = source;
-                self.disk = OnceCell::new();
+                self.forget_disk();
                 self.touched = artifact::stamp::now();
                 // The buffer is the file again, whatever landed under it while
                 // it was not — typing on is the third answer to the notice, and
@@ -364,11 +372,12 @@ impl Article {
         self.full_width = fresh.full_width;
         self.labels = fresh.labels.clone();
         self.touched = fresh.touched;
+        self.created = fresh.created;
         // Never opened: the label is the whole of what is held, and the file
         // is where it came from.
         if self.editor.is_none() {
             self.title = fresh.title.clone();
-            self.disk = OnceCell::new();
+            self.forget_disk();
             return false;
         }
         // The echo of our own write, which every save produces. `saved` is what
@@ -419,6 +428,21 @@ impl Article {
 
     /// The markdown on disk and its blocks: what this process last wrote for an
     /// open article, and a read of the file for one never opened.
+    /// The words in the open document as last saved: each run of letters or
+    /// digits, and each CJK character on its own. `None` while it is not open.
+    pub fn words(&self) -> Option<usize> {
+        self.editor.as_ref()?;
+        Some(*self.words.get_or_init(|| {
+            unicode_segmentation::UnicodeSegmentation::unicode_words(self.saved.as_str()).count()
+        }))
+    }
+
+    /// Drop what is derived from the file: it has changed.
+    fn forget_disk(&mut self) {
+        self.disk = OnceCell::new();
+        self.words = OnceCell::new();
+    }
+
     pub fn disk(&self) -> Rc<Disk> {
         self.disk
             .get_or_init(|| {
@@ -506,6 +530,7 @@ impl From<&Article> for layout::Article {
             title: article.title.clone(),
             archived: article.archived,
             touched: article.touched,
+            created: article.created,
             cover: article.cover.as_deref().and_then(file_url::from_path),
             labels: article.labels.clone(),
         }

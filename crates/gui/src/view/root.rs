@@ -529,6 +529,8 @@ pub struct Cydonia {
     /// The library, while it stands over the panes — see
     /// [`super::library`].
     pub(crate) library: Option<super::library::Library>,
+    /// The label picker, while one is open — see [`super::labels`].
+    pub(crate) picker: Option<super::labels::Picker>,
     /// The board identity panel, while it is open — see [`header::BoardInfo`].
     pub(crate) info: Option<info::BoardInfo>,
     /// The board that has been asked for and not yet made — see
@@ -1066,6 +1068,7 @@ impl Cydonia {
             confirming: None,
             desktop_only: None,
             library: None,
+            picker: None,
             info: None,
             making: None,
             info_pressed: false,

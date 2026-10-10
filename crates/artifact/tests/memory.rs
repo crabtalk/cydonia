@@ -133,3 +133,10 @@ fn nothing_is_watched() {
     let store = memory::Project::new();
     assert!(store.watch(|| {}).is_none());
 }
+
+#[test]
+fn a_seeded_entry_was_created_at_the_stamp_it_is_named_for() {
+    let store = seeded();
+    assert_eq!(store.boards()[0].created, Some(1790266971001));
+    assert_eq!(store.articles()[0].created, Some(1790089015001));
+}

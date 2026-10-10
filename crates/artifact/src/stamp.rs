@@ -31,6 +31,12 @@ pub fn fresh() -> u128 {
     }
 }
 
+/// The stamp a backend named an entry for, read back out of that name. `None`
+/// for a name that is not one.
+pub fn named(name: &str) -> Option<u128> {
+    name.parse().ok()
+}
+
 /// When a file was last written, as the same stamp ids carry — the key entries
 /// are listed by, so the one you touched last is the one on top.
 pub fn of(path: &Path) -> u128 {

@@ -46,6 +46,9 @@ pub struct Article {
     /// When it last changed, as the same millisecond stamp ids carry — what
     /// the sidebar orders on.
     pub touched: u128,
+    /// When it was made, where the backend holding it knows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created: Option<u128>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cover: Option<Url>,
     /// Its labels — see [`crate::label`].
