@@ -631,6 +631,8 @@ checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
 [[package]]
 name = "bezel"
 version = "0.2.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9929f79b541fd14cce2acee53ee5f07ce66f00a803ce86062d50f1842aa36690"
 dependencies = [
  "bezel-agent",
  "bezel-gpui",
@@ -644,6 +646,8 @@ dependencies = [
 [[package]]
 name = "bezel-agent"
 version = "0.2.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9742e6500a9a371d1e118880376705dac0efdf8c8ddf94d520886094be6eb2fd"
 dependencies = [
  "bezel-gpui",
  "bezel-theme",
@@ -653,6 +657,8 @@ dependencies = [
 [[package]]
 name = "bezel-browser"
 version = "0.2.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0efe740861b5671ab6f5035ea28f7bd2ee7ad73cc8a3662cb56cffd259393d39"
 dependencies = [
  "async-channel",
  "bezel-gpui",
@@ -679,6 +685,8 @@ dependencies = [
 [[package]]
 name = "bezel-canvas-core"
 version = "0.2.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "941fb7108c28242e4b998be26b5ebd336cd1d4f6a7735ce0c736b1ad1b976d4e"
 dependencies = [
  "bezel-gpui",
  "bezel-theme",
@@ -690,6 +698,8 @@ dependencies = [
 [[package]]
 name = "bezel-chart"
 version = "0.2.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "17557bf841aa35468c7a31160070d4e7effced0d68dce8aa0fe6879036460dd1"
 dependencies = [
  "bezel-gpui",
  "bezel-theme",
@@ -699,6 +709,8 @@ dependencies = [
 [[package]]
 name = "bezel-editor"
 version = "0.2.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3f0ba2fd85e1847891c4b1c14cb557b166ee04d766c7d6ac46d2333dec4e9745"
 dependencies = [
  "bezel-gpui",
  "bezel-icons",
@@ -1042,6 +1054,8 @@ dependencies = [
 [[package]]
 name = "bezel-icons"
 version = "0.2.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "50071436794c415b3d89fbd7743047f61171e00f9f44ddb002f0d88edf2e0b60"
 dependencies = [
  "bezel-gpui",
 ]
@@ -1049,6 +1063,8 @@ dependencies = [
 [[package]]
 name = "bezel-markdown"
 version = "0.2.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cc5469b849a24b56ec45fc89e26ae245fd573ccd9d92c71e507c2fbe28eb95f5"
 dependencies = [
  "bezel-canvas-core",
  "bezel-chart",
@@ -1062,6 +1078,8 @@ dependencies = [
 [[package]]
 name = "bezel-motion"
 version = "0.2.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f0bfec648fb5c32194dbea1af439a9ae4f19065cc7a1b6f9366b856a1252fe34"
 dependencies = [
  "bezel-gpui",
  "web-time",
@@ -1070,6 +1088,8 @@ dependencies = [
 [[package]]
 name = "bezel-syntax"
 version = "0.2.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c57fc8129bdd70c97c8722f04dcffed1dba1331c6dddc4db0f33d44672b34cd1"
 dependencies = [
  "bezel-theme",
  "tree-sitter",
@@ -1080,6 +1100,8 @@ dependencies = [
 [[package]]
 name = "bezel-syntax-std"
 version = "0.2.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9a316eeb207abc7b69a5dfce6dc980cab4dfa89c526061e0058925b90f29ec0f"
 dependencies = [
  "bezel-syntax",
  "tree-sitter-bash",
@@ -1094,6 +1116,8 @@ dependencies = [
 [[package]]
 name = "bezel-terminal"
 version = "0.2.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1f919707b185f413c1200192134bd58f9a0ae34d4e69096f2dfbfaec923fb7ed"
 dependencies = [
  "alacritty_terminal",
  "bezel-gpui",
@@ -1106,6 +1130,8 @@ dependencies = [
 [[package]]
 name = "bezel-theme"
 version = "0.2.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a5c85ab790995dd56b1e1bbcf87dc2f9dcb3c515c3450bad7fedf10c79e5f716"
 dependencies = [
  "bezel-gpui",
  "objc",
@@ -1117,6 +1143,8 @@ dependencies = [
 [[package]]
 name = "bezel-ui"
 version = "0.2.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8f63da15881154e2b8f0824da10c56a08a3224af22e28a5d4af402b17e5f7e2c"
 dependencies = [
  "bezel-gpui",
  "bezel-icons",
