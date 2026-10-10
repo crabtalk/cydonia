@@ -474,6 +474,8 @@ pub struct Cydonia {
     pub(crate) drag: bezel::ui::titlebar::DragState,
     pub(crate) right_panels:
         std::collections::HashMap<std::path::PathBuf, Entity<super::component::panel::Panel>>,
+    /// The right panel while the library is up — see [`Cydonia::library_panel`].
+    pub(crate) library_panel: Option<Entity<super::component::panel::Panel>>,
     /// The buffer each card's orb paints into, by card id — see
     /// [`board::Marks`].
     pub(crate) card_marks: board::Marks,
@@ -1026,6 +1028,7 @@ impl Cydonia {
             changes: None,
             drag: Default::default(),
             right_panels: Default::default(),
+            library_panel: None,
             boards: Default::default(),
             card_marks: Default::default(),
             card_docs: Default::default(),
@@ -1544,13 +1547,10 @@ impl Cydonia {
     /// chat, which under the shipped defaults is itself switched off.
     pub(crate) fn showing(&self, cx: &App) -> Option<Pane> {
         // A pane in a space is whatever its entry is, whether or not it has
-        // been focused yet: `leaf.pane` is only written by the focus.
+        // been focused yet: `leaf.pane` is only written by the focus. A leaf
+        // is one tab, so its entry is what it shows.
         if let Some(entry) = &self.leaf().entry
-            && let Some((_, showing)) = {
-                let workspace = self.workspace.read(cx);
-                let front = self.front_of(entry, &workspace.stack_of(entry));
-                workspace.showing_of(&front)
-            }
+            && let Some((_, showing)) = self.workspace.read(cx).showing_of(entry)
         {
             return Some(match showing {
                 Showing::Session(_) => Pane::Chat,

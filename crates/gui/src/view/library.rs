@@ -274,20 +274,34 @@ struct Listing {
 
 impl Cydonia {
     /// Put the library up, or take it down.
-    pub(crate) fn toggle_library(&mut self, cx: &mut Context<Self>) {
-        self.commit(cx);
-        self.library = match self.library.take() {
-            Some(_) => None,
-            None => Some(Library::new(cx)),
-        };
-        cx.notify();
+    pub(crate) fn toggle_library(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        match self.library.is_some() {
+            true => {
+                self.commit(cx);
+                self.library = None;
+                cx.notify();
+            }
+            false => self.put_up_library(Library::new(cx), window, cx),
+        }
     }
 
     /// Put the library up narrowed as `shelf` says — where the history goes
     /// back to it.
-    pub(crate) fn open_library(&mut self, shelf: Shelf, cx: &mut Context<Self>) {
+    pub(crate) fn open_library(
+        &mut self,
+        shelf: Shelf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.put_up_library(Library::shelved(shelf, cx), window, cx);
+    }
+
+    fn put_up_library(&mut self, library: Library, window: &mut Window, cx: &mut Context<Self>) {
         self.commit(cx);
-        self.library = Some(Library::shelved(shelf, cx));
+        self.library = Some(library);
+        // The panes under it are not drawn, and a focus left in one reaches
+        // none of the window's commands.
+        window.focus(&self.focus, cx);
         cx.notify();
     }
 
@@ -311,7 +325,7 @@ impl Cydonia {
                     .text_color(tone)
                     .child("Library"),
             )
-            .on_click(cx.listener(|this, _, _, cx| this.toggle_library(cx)))
+            .on_click(cx.listener(|this, _, window, cx| this.toggle_library(window, cx)))
             .into_any_element()
     }
 

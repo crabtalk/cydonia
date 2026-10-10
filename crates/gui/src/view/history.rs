@@ -235,8 +235,8 @@ impl Cydonia {
                     self.open_row(&row, window, cx);
                     self.restore(&next, cx);
                 }
-                (None, Some(Position::Library(shelf))) => self.open_library(shelf, cx),
-                (None, _) if self.library.is_none() => self.toggle_library(cx),
+                (None, Some(Position::Library(shelf))) => self.open_library(shelf, window, cx),
+                (None, _) if self.library.is_none() => self.toggle_library(window, cx),
                 (None, _) => {}
             }
             cx.notify();
