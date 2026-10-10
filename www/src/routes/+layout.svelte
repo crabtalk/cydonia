@@ -49,8 +49,11 @@
 			Cydonia
 		</a>
 
-		<nav>
+		<nav class="pages">
 			<a class="docs" href="{base}/docs/">Docs</a>
+		</nav>
+
+		<nav class="actions">
 			<span class="icons">
 				<a href={repo} aria-label="Cydonia on GitHub"><Brand icon={siGithub} size={15} /></a>
 				<a href={discord} target="_blank" rel="noreferrer" aria-label="Cydonia on Discord">
@@ -199,8 +202,15 @@
 		display: flex;
 		align-items: center;
 		gap: 20px;
-		margin-left: auto;
 		font-size: 14.5px;
+	}
+
+	.pages {
+		margin-left: 28px;
+	}
+
+	.actions {
+		margin-left: auto;
 	}
 
 	.docs {
@@ -221,7 +231,6 @@
 		display: flex;
 		align-items: center;
 		gap: 2px;
-		margin-left: -8px;
 		padding-right: 12px;
 		border-right: 1px solid var(--line);
 		color: var(--muted);

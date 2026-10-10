@@ -1,5 +1,6 @@
 <script>
 	import { Braces, ChevronDown, Database, File, FileText, Folder, FolderOpen } from 'lucide-static';
+	import { SvelteSet } from 'svelte/reactivity';
 
 	/** Each root carries `name`, `extra` and `files`; each file `path`,
 	    `lines` as token rows from `highlight`, and an optional `note`. */
@@ -13,10 +14,33 @@
 	const root = $derived(roots[current]);
 	const file = $derived(root.files[selected]);
 
+	// Directories this deep start collapsed: `boards/<id>/cards/` and below.
+	const FOLDED_DEPTH = 2;
+
+	const foldedOf = (root) => {
+		const out = new Set();
+		for (const { path } of root.files) {
+			const parts = path.split('/');
+			for (let depth = FOLDED_DEPTH; depth < parts.length - 1; depth++) {
+				out.add(parts.slice(0, depth + 1).join('/'));
+			}
+		}
+		return out;
+	};
+
+	const folded = new SvelteSet(foldedOf(roots[0]));
+
 	function pick(index) {
 		current = index;
 		selected = 0;
 		open = false;
+		folded.clear();
+		for (const key of foldedOf(roots[index])) folded.add(key);
+	}
+
+	function toggle(key) {
+		if (folded.has(key)) folded.delete(key);
+		else folded.add(key);
 	}
 
 	const icons = { md: FileText, toml: File, json: Braces, db: Database };
@@ -36,7 +60,11 @@
 				out.push({ key, name, depth, index: leaf ? index : -1 });
 			});
 		});
-		return out;
+		// A row under a folded directory is hidden; the directory itself shows.
+		return out.filter((row) => {
+			const parts = row.key.split('/');
+			return !parts.slice(0, -1).some((_, i) => folded.has(parts.slice(0, i + 1).join('/')));
+		});
 	});
 </script>
 
@@ -74,9 +102,10 @@
 			{#each rows as row (row.key)}
 				<li>
 					{#if row.index < 0}
-						<span class="row dir" style="--depth: {row.depth}">
-							<span aria-hidden="true">{@html FolderOpen}</span>{row.name}
-						</span>
+						<button type="button" class="row dir" style="--depth: {row.depth}"
+							aria-expanded={!folded.has(row.key)} onclick={() => toggle(row.key)}>
+							<span aria-hidden="true">{@html folded.has(row.key) ? Folder : FolderOpen}</span>{row.name}
+						</button>
 					{:else}
 						<button type="button" class="row" style="--depth: {row.depth}"
 							aria-current={selected === row.index} onclick={() => (selected = row.index)}>
@@ -120,9 +149,20 @@
 		flex: none;
 	}
 
+	/* The viewer sets the row's height; the tree fills it and scrolls past it. */
 	.tree {
-		padding: 0 0 12px;
+		display: flex;
+		flex-direction: column;
+		height: 0;
+		min-height: 100%;
 		border-right: 1px solid var(--line);
+	}
+
+	.tree > ul {
+		flex: 1;
+		min-height: 0;
+		padding-bottom: 12px;
+		overflow-y: auto;
 	}
 
 	.root,
@@ -304,6 +344,7 @@
 		}
 
 		.tree {
+			height: auto;
 			border-right: 0;
 			border-bottom: 1px solid var(--line);
 		}

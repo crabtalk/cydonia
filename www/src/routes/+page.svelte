@@ -105,9 +105,8 @@
 		<div class="hero-actions">
 			<p class="agents">
 				{#each agents as agent (agent.name)}
-					<span>
-						{#if agent.icon}<Brand icon={agent.icon} size={13} />{/if}
-						{agent.name}
+					<span role="img" aria-label={agent.name} title={agent.name}>
+						<Brand icon={agent.icon} size={16} />
 					</span>
 				{/each}
 				<span>and any <a href={acp}>ACP</a> agent</span>
@@ -131,7 +130,6 @@
 					<a href="{base}{releasePath(latest.version)}">
 						What’s new in {latest.version} <span aria-hidden="true">→</span>
 					</a>
-					<span class="facts">pure rust · no account, no telemetry</span>
 				</div>
 			</figcaption>
 		{/if}
@@ -300,10 +298,6 @@
 		}
 	}
 
-	.facts {
-		color: var(--faint);
-	}
-
 	.agents {
 		display: flex;
 		flex-wrap: wrap;
@@ -322,7 +316,10 @@
 		gap: 6px;
 	}
 
+	/* The logos on one line, the sentence on its own below them. */
 	.agents span:last-child {
+		flex-basis: 100%;
+		justify-content: inherit;
 		color: var(--faint);
 	}
 

@@ -65,18 +65,15 @@
 		spawn(Math.round((cols * rows) / 40));
 		draw();
 
-		const scheme = matchMedia('(prefers-color-scheme: dark)');
 		const restyle = () => {
 			size();
 			draw();
 		};
 		addEventListener('resize', restyle);
-		scheme.addEventListener('change', restyle);
 		const timer = still ? 0 : setInterval(tick, TICK);
 		return () => {
 			clearInterval(timer);
 			removeEventListener('resize', restyle);
-			scheme.removeEventListener('change', restyle);
 		};
 	});
 </script>

@@ -6,7 +6,7 @@
 export const roots = [
 	{
 		name: '.cydonia',
-		extra: ['entries.db'],
+		extra: ['state.db'],
 		files: [
 			{
 				path: 'articles/1790089015001/content.md',
@@ -31,25 +31,46 @@ last Tuesday and took p99 from 80ms to 4s for everyone.
 archived = false`
 			},
 			{
-				path: 'boards/1790266971001.toml',
-				text: `name = "Roadmap"
+				path: 'boards/1790266971001/board.toml',
+				text: `id = "1790266971001"
+archived = false
+name = "Roadmap"
 key = "ROAD"
-next_handle = 4
+next_handle = 3
+view = "list"
 
 [[columns]]
+id = "1790266971002"
 name = "TODO"
+collapsed = false
+cards = [
+    "1790252301417",
+    "1790252301418",
+]`
+			},
+			{
+				path: 'boards/1790266971001/cards/1790252301417/content.md',
+				text: `Token bucket middleware
 
-[[columns.cards]]
-handle = 1
-text = "Token bucket middleware"
+- One bucket per API key, kept in Redis
+- 600 requests a minute by default
+- Answer 429 with \`Retry-After\``
+			},
+			{
+				path: 'boards/1790266971001/cards/1790252301417/properties.toml',
+				text: `handle = 1
+session = "1790252287183"`
+			},
+			{
+				path: 'boards/1790266971001/cards/1790252301418/content.md',
+				text: `Decide: webhooks and the bucket
 
-[[columns.cards]]
-handle = 2
-text = "429 with Retry-After"
-
-[[columns.cards]]
-handle = 3
-text = "Decide: webhooks and the bucket"`
+Do webhook deliveries count against the caller's limit?`
+			},
+			{
+				path: 'boards/1790266971001/cards/1790252301418/properties.toml',
+				text: `handle = 2
+session = "1790252287183"`
 			},
 			{
 				path: 'sessions/1790252287183.json',
@@ -60,8 +81,8 @@ text = "Decide: webhooks and the bucket"`
   "items": [
     { "User": "Draft a rate limiting plan and put the work on ROAD" },
     { "Tool": "article_add Rate limiting plan" },
-    { "Tool": "board_add_card ROAD ×3" },
-    { "Agent": "The plan is in the article; three cards are on ROAD." }
+    { "Tool": "board_add_card ROAD ×2" },
+    { "Agent": "The plan is in the article; two cards are on ROAD." }
   ]
 }`
 			}
@@ -188,14 +209,14 @@ enabled = false`
 	}
 ];
 
-/** Every root with each file as token rows, painted by Shiki with both themes
-    as `--shiki-light` and `--shiki-dark`. Build time only. */
+/** Every root with each file as token rows, painted by Shiki as
+    `--shiki-dark`. Build time only. */
 export async function highlight() {
 	const { codeToTokens } = await import('shiki');
 	const paint = async ({ path, text, note }) => {
 		const { tokens } = await codeToTokens(text, {
 			lang: path.split('.').pop(),
-			themes: { light: 'github-light', dark: 'github-dark' },
+			themes: { dark: 'github-dark' },
 			defaultColor: false
 		});
 		const lines = tokens.map((line) =>

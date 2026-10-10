@@ -2,7 +2,6 @@
   {
     "version": "0.1.29",
     "date": "2026-10-10",
-    "nightly": true,
     "summary": "Labels on articles, boards and sessions, and a Library tab for each. A color theme for light and one for dark, and 18 more themes: Absolutely, Codex, Linear, Lobster, Material, Matrix, Monokai, Night Owl, Nord, Notion, Oscurange, Proof, Raycast, Rosé Pine, Sentry, Temple, Vercel and VS Code Plus.",
     "new": [
       "Pick the light theme and the dark theme separately in Settings › Appearance, each listing the themes that come in that mode",
