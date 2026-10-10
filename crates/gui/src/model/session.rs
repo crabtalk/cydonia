@@ -333,6 +333,11 @@ impl ChatSession {
         }
     }
 
+    /// Whether the transcript is in memory, rather than left on disk.
+    pub fn history_loaded(&self) -> bool {
+        !self.history_unloaded
+    }
+
     pub fn load_history(&mut self) -> bool {
         if !self.history_unloaded {
             return true;

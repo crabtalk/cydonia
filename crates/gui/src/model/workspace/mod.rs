@@ -84,8 +84,10 @@ pub struct Resident {
     /// Articles holding an open [`editor::Editor`]. Built on first open and
     /// never dropped, so this only climbs.
     pub editors: usize,
+    /// Sessions whose transcript is in memory. A closed one's is dropped once
+    /// its file matches, and read back when it is opened.
     pub sessions: usize,
-    /// Transcript entries across every one of them, read back whole at launch.
+    /// Transcript entries across those sessions.
     pub items: usize,
 }
 
@@ -980,7 +982,12 @@ impl Workspace {
     /// disagree with what is actually resident.
     pub fn resident(&self) -> Resident {
         let articles = || self.projects.iter().flat_map(|project| &project.articles);
-        let sessions = || self.projects.iter().flat_map(|project| &project.sessions);
+        let sessions = || {
+            self.projects
+                .iter()
+                .flat_map(|project| &project.sessions)
+                .filter(|chat| chat.history_loaded())
+        };
         Resident {
             projects: self.projects.len(),
             articles: articles().count(),
