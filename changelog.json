@@ -13,7 +13,8 @@
     ],
     "fixed": [
       "Remember the color theme across restarts",
-      "Keep a list or a code block inside a quote quoted"
+      "Keep a list or a code block inside a quote quoted",
+      "Select text in a long article without the selection lagging behind the pointer"
     ]
   },
   {

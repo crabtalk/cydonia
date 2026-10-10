@@ -26,7 +26,7 @@ use bezel::{
     gpui::{App, AppContext as _, Context, Entity, ScrollHandle},
     ui::input::{Shape, TextField},
 };
-use editor::{Editor, Mode};
+use editor::{Editor, EditorEvent, Mode};
 use markdown::AppExt as _;
 use std::{
     cell::{OnceCell, RefCell},
@@ -263,7 +263,12 @@ impl Article {
         );
         language::ensure(fences(editor.read(cx)), cx);
         let mut source_digits = self.saved.split('\n').count().to_string().len();
-        cx.observe(&editor, move |workspace, editor, cx| {
+        // `Changed` rather than every notify: a selection drag and the caret
+        // blink notify too, and each write serializes the whole document.
+        cx.subscribe(&editor, move |workspace, editor, event, cx| {
+            if !matches!(event, EditorEvent::Changed) {
+                return;
+            }
             workspace.write_article(editor.entity_id(), cx);
             // On every change rather than on open alone: a fence is usually
             // tagged after it is made, and the grammar is wanted the moment it
