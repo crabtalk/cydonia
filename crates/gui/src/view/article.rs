@@ -959,6 +959,7 @@ impl Cydonia {
                         .pl(px(COLUMN_INSET + cx.editor_layout().text_inset))
                         .pr(px(COLUMN_INSET))
                         .pt(px(20.))
+                        .font_family(Theme::of(cx).font_body.clone())
                         .child(field),
                 ),
             )
