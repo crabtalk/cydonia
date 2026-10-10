@@ -88,6 +88,35 @@ impl Workspace {
         out
     }
 
+    /// List only the entries of the project at `project` carrying `label`, or
+    /// every one of them for `None`.
+    pub fn set_project_label(
+        &mut self,
+        project: usize,
+        label: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(open) = self.projects.get_mut(project) {
+            open.label = label;
+            cx.notify();
+        }
+    }
+
+    /// The labels the project at `project` carries, with how many of its
+    /// entries carry each, in name order.
+    pub fn project_label_counts(&self, project: usize) -> BTreeMap<String, usize> {
+        let mut counts = BTreeMap::new();
+        for (at, showing) in self.labelled() {
+            if at != project {
+                continue;
+            }
+            for label in self.labels_of(at, &showing).unwrap_or_default() {
+                *counts.entry(label.clone()).or_default() += 1;
+            }
+        }
+        counts
+    }
+
     /// Every label carried in any open project, with how many entries carry
     /// it, in name order.
     pub fn label_counts(&self) -> BTreeMap<String, usize> {
@@ -115,6 +144,11 @@ impl Workspace {
     }
 
     fn relabel(&mut self, from: &str, to: Option<String>, cx: &mut Context<Self>) {
+        for open in &mut self.projects {
+            if open.label.as_deref() == Some(from) {
+                open.label = to.clone();
+            }
+        }
         for (at, showing) in self.labelled() {
             let Some(held) = self.labels_of(at, &showing) else {
                 continue;

@@ -704,6 +704,9 @@ impl Cydonia {
                             Row::Heading(_) | Row::Archive(_) => {
                                 this.sidebar_sort.fixed(item, el).into_any_element()
                             }
+                            _ if this.narrowed(&row, cx) => {
+                                this.sidebar_sort.fixed(item, el).into_any_element()
+                            }
                             _ => this.sidebar_sort.handle(item, el).into_any_element(),
                         }
                     })
@@ -954,6 +957,10 @@ impl Cydonia {
                     })),
             )
             .child(label)
+            .children(match &group {
+                Group::Project(path) => self.label_filter_chip(path, cx),
+                Group::Space(_) => None,
+            })
             // Ahead of the `+`, which is the one that gets pressed: sorting
             // and the rest are settled once and left alone.
             .child(
@@ -1037,7 +1044,7 @@ impl Cydonia {
         // switch hides it hides here — the entries stay in the project and in
         // memory, and turning it back on lists them again with nothing to
         // rescan.
-        entries.retain(|entry| shown(&entry.row, features));
+        entries.retain(|entry| shown(&entry.row, features) && !self.filtered_out(&entry.row, cx));
         let split = entries.iter().position(|entry| entry.archived);
         let mut entries = entries.into_iter().map(|entry| entry.row);
         let mut rows: Vec<Row> = entries.by_ref().take(split.unwrap_or(usize::MAX)).collect();
@@ -1166,19 +1173,65 @@ impl Cydonia {
                 .project_at(path)
                 .map(|ix| self.entries(ix, cx))
                 .unwrap_or_default(),
-            Group::Space(id) => {
-                let Some(ix) = workspace.space_ix(id) else {
-                    return Vec::new();
-                };
-                let space = &workspace.spaces[ix];
-                workspace
-                    .listed_members(space)
-                    .iter()
-                    .filter(|member| workspace.space_holding(member) == Some(ix))
-                    .filter_map(|member| self.row_of_member(member, cx))
-                    .collect()
-            }
+            Group::Space(id) => self
+                .space_rows(id, cx)
+                .into_iter()
+                .filter(|row| !self.filtered_out(row, cx))
+                .collect(),
         }
+    }
+
+    /// The rows a space holds, before any project's label filter.
+    fn space_rows(&self, id: &str, cx: &App) -> Vec<Row> {
+        let workspace = self.workspace.read(cx);
+        let Some(ix) = workspace.space_ix(id) else {
+            return Vec::new();
+        };
+        let space = &workspace.spaces[ix];
+        workspace
+            .listed_members(space)
+            .iter()
+            .filter(|member| workspace.space_holding(member) == Some(ix))
+            .filter_map(|member| self.row_of_member(member, cx))
+            .collect()
+    }
+
+    /// Whether `row` is an entry its project's label filter leaves out.
+    fn filtered_out(&self, row: &Row, cx: &App) -> bool {
+        let Row::Entry { project, showing } = row else {
+            return false;
+        };
+        let workspace = self.workspace.read(cx);
+        let Some(at) = workspace.project_at(project) else {
+            return false;
+        };
+        let Some(label) = &workspace.projects[at].label else {
+            return false;
+        };
+        !workspace
+            .labels_of(at, showing)
+            .is_some_and(|labels| labels.contains(label))
+    }
+
+    /// Whether `row` is an entry of a project listed by a label. Such a list
+    /// leaves rows out, so its rows are not dragged.
+    fn narrowed(&self, row: &Row, cx: &App) -> bool {
+        let Row::Entry { project, .. } = row else {
+            return false;
+        };
+        let workspace = self.workspace.read(cx);
+        workspace
+            .project_at(project)
+            .is_some_and(|at| workspace.projects[at].label.is_some())
+    }
+
+    /// Whether every row a space holds is left out by a label filter.
+    fn emptied(&self, group: &Group, cx: &App) -> bool {
+        let Group::Space(id) = group else {
+            return false;
+        };
+        let rows = self.space_rows(id, cx);
+        !rows.is_empty() && rows.iter().all(|row| self.filtered_out(row, cx))
     }
 
     /// Whether a group's rows are folded away under it.
@@ -1275,7 +1328,7 @@ impl Cydonia {
                     };
                     let members: Vec<_> = members
                         .into_iter()
-                        .filter(|row| matches.contains(row))
+                        .filter(|row| matches.contains(row) && !self.filtered_out(row, cx))
                         .collect();
                     if !members.is_empty() {
                         rows.push(Row::Group(group));
@@ -1294,6 +1347,9 @@ impl Cydonia {
                 continue;
             }
             for group in groups {
+                if self.emptied(&group, cx) {
+                    continue;
+                }
                 let open = !self.folded(&group, cx);
                 let members = open.then(|| self.members(&group, cx));
                 rows.push(Row::Group(group));
@@ -1934,6 +1990,64 @@ impl Cydonia {
         ))
     }
 
+    /// The label a project's list is narrowed to, on its heading, with a ×
+    /// that lists every entry again.
+    fn label_filter_chip(&self, path: &Path, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let workspace = self.workspace.read(cx);
+        let ix = workspace.project_at(path)?;
+        let label = workspace.projects[ix].label.clone()?;
+        let theme = Theme::of(cx).clone();
+        Some(
+            theme
+                .tag(label)
+                .self_center()
+                .flex_none()
+                .id(SharedString::from(format!("group-label-{ix}")))
+                .cursor_pointer()
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.workspace.update(cx, |workspace, cx| {
+                        workspace.set_project_label(ix, None, cx)
+                    });
+                }))
+                .into_any_element(),
+        )
+    }
+
+    /// The project menu's "Filter by label": the labels its entries carry,
+    /// one at a time. Nothing for a project with none.
+    fn label_filter_menu(&self, ix: usize, cx: &App) -> Option<(Item, menu::Act)> {
+        let workspace = self.workspace.read(cx);
+        let counts = workspace.project_label_counts(ix);
+        let picked = workspace.projects.get(ix)?.label.clone();
+        if counts.is_empty() && picked.is_none() {
+            return None;
+        }
+        let pick = |label: Option<String>, item: Item| {
+            menu::row(item, move |this, _, cx| {
+                let label = label.clone();
+                this.workspace.update(cx, |workspace, cx| {
+                    workspace.set_project_label(ix, label, cx)
+                });
+            })
+        };
+        let mut rows = vec![pick(None, Item::action("None").checked(picked.is_none()))];
+        rows.extend(counts.into_iter().map(|(label, count)| {
+            let item = Item::action(label.clone())
+                .checked(picked.as_deref() == Some(label.as_str()))
+                .with_description(match count {
+                    1 => "1 entry".to_owned(),
+                    n => format!("{n} entries"),
+                });
+            pick(Some(label), item)
+        }));
+        Some(menu::submenu(
+            "Filter by label",
+            icons::text::ListFilter,
+            rows,
+        ))
+    }
+
     /// What a press on the heading opens. Removing closes the tab — the
     /// directory and everything in it stays where it is.
     fn project_menu(
@@ -1967,6 +2081,7 @@ impl Cydonia {
                 by("Manual", state::Sort::Manual),
             ],
         )];
+        rows.extend(self.label_filter_menu(ix, cx));
         rows.extend(on_disk(path.to_path_buf()));
         rows.push(menu::row(
             Item::action("Remove project").with_icon(icons::files::FolderMinus),

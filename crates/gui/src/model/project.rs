@@ -58,6 +58,9 @@ pub struct Project {
     /// Whether it shows what is under the archived divider. Folded away by
     /// default: what was put away is not what you came back for.
     pub archive_open: bool,
+    /// The one label the sidebar lists this project's entries by, or every
+    /// entry. Runtime only: a relaunch lists them all.
+    pub label: Option<String>,
     /// The watch on this project's `.cydonia/`, once it is up. Held here so
     /// closing the project drops it, which is what takes the watch down.
     pub watch: Option<Watch>,
@@ -81,6 +84,7 @@ impl Project {
             held: Default::default(),
             expanded: true,
             archive_open: false,
+            label: None,
             watch: None,
         };
         this.reload_tables();

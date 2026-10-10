@@ -10,6 +10,7 @@
       "Hover a link to an article to read its opening, or the lines or section it names, and a link to a card to read the card; a session or board link shows its title, kind and number",
       "Label articles, boards and sessions from the Library's Labels column, or a whole selection at once with Label, and filter the Library by label from the column's heading. Labels are shared by every open project, and a label's ··· renames or deletes it everywhere",
       "Search for the entries carrying a label with l:, as in l:research",
+      "List only a project's entries carrying one label in the sidebar, from Filter by label in the project's menu",
       "Agents set an entry's labels with project_label_entry, and project_entries lists them"
     ],
     "changed": [

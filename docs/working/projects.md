@@ -30,6 +30,8 @@ In the Library:
 - A label's `···` in the picker renames or deletes it on every entry carrying it. Renaming onto a label already in use merges the two.
 - While a project or label filter is on, it shows above the list; click it to take it off.
 
+In the sidebar, a project's menu has Filter by label, which lists only the project's entries carrying one label. The label shows on the project's heading until you click it, and entries cannot be dragged while it is on. Relaunching lists every entry again.
+
 Agents set an entry's labels with `project_label_entry`, and `project_entries` lists them.
 
 ## Arranging the sidebar
