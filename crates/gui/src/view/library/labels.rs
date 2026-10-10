@@ -45,7 +45,9 @@ impl Cydonia {
         let choices = self.label_choices(&target, cx);
         let creates = target != Target::Heading;
         let select = cx.new(|cx| {
-            let select = MultiSelect::new(choices, cx).with_manage();
+            let select = MultiSelect::new(choices, cx)
+                .with_manage()
+                .with_width(px(200.), px(280.));
             match creates {
                 true => select.with_create(|text| artifact::label::normalize(text).map(Into::into)),
                 false => select,

@@ -36,6 +36,10 @@ pub fn init(settings: &Settings, cx: &mut App) {
     cx.set_caret_height(look.caret_height.into());
     cx.set_inactive_caret(crate::model::settings::inactive_caret(look.hollow_caret));
     cx.set_base_text_size(look.text_size);
+    cx.set_menu_width(ui::menu::MenuWidth {
+        described: ui::menu::Described::Fit(bezel::gpui::px(280.)),
+        ..cx.menu_width()
+    });
     workspace::apply_wrap_code(look.wrap_code, cx);
     cx.set_source_style(article::source_style);
     cx.set_marks(article::marks());
