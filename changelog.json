@@ -3,14 +3,18 @@
     "version": "0.1.29",
     "date": "2026-10-09",
     "nightly": true,
-    "summary": "A color theme for light and one for dark, and 18 more themes: Absolutely, Codex, Linear, Lobster, Material, Matrix, Monokai, Night Owl, Nord, Notion, Oscurange, Proof, Raycast, Rosé Pine, Sentry, Temple, Vercel and VS Code Plus.",
+    "summary": "Labels on articles, boards and sessions. A color theme for light and one for dark, and 18 more themes: Absolutely, Codex, Linear, Lobster, Material, Matrix, Monokai, Night Owl, Nord, Notion, Oscurange, Proof, Raycast, Rosé Pine, Sentry, Temple, Vercel and VS Code Plus.",
     "new": [
       "Pick the light theme and the dark theme separately in Settings › Appearance, each listing the themes that come in that mode",
       "Paint the app in Absolutely, Codex, Linear, Lobster, Material, Matrix, Monokai, Night Owl, Nord, Notion, Oscurange, Proof, Raycast, Rosé Pine, Sentry, Temple, Vercel or VS Code Plus",
-      "Hover a link to an article to read its opening, or the lines or section it names, and a link to a card to read the card; a session or board link shows its title, kind and number"
+      "Hover a link to an article to read its opening, or the lines or section it names, and a link to a card to read the card; a session or board link shows its title, kind and number",
+      "Label articles, boards and sessions from the Library's Labels column, or a whole selection at once with Label, and filter the Library by label from the column's heading. Labels are shared by every open project, and a label's ··· renames or deletes it everywhere",
+      "Search for the entries carrying a label with l:, as in l:research",
+      "Agents set an entry's labels with project_label_entry, and project_entries lists them"
     ],
     "changed": [
-      "Show the hue and intensity sliders while either mode is painted in Cydonia's own colors, and tint only that mode"
+      "Show the hue and intensity sliders while either mode is painted in Cydonia's own colors, and tint only that mode",
+      "Show the Library's project filter above the list, where clicking it takes it off, instead of in the Project heading"
     ],
     "fixed": [
       "Remember the color theme across restarts",

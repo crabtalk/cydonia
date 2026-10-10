@@ -55,6 +55,7 @@ const ICON_RETRIES: u32 = 6;
 // scope — see the note at the head of each.
 mod articles;
 mod boards;
+mod labels;
 mod spaces;
 pub use spaces::Showing;
 mod order;

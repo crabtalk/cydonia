@@ -458,6 +458,7 @@ impl Project {
             archived: properties.archived,
             touched: article::touched(content),
             cover: cover_url(content),
+            labels: properties.labels,
         }
     }
 

@@ -5,7 +5,10 @@ use crate::{
     tool::{Answer, Arg, Args, Outcome, Tool, Trouble},
     tools::{PROJECT, entry_of, fields, held, many, root},
 };
-use artifact::reference::Within;
+use artifact::{
+    project::{Project as _, fs},
+    reference::Within,
+};
 use serde_json::json;
 use std::path::{Path, PathBuf};
 
@@ -27,10 +30,15 @@ const ENTRY: Arg = Arg {
     about: "The project entry reference: #12, foo#12 for another open project, or the link cydonia://foo#12.",
 };
 
-pub static TOOLS: [Tool; 4] = [
+const LABELS: Arg = Arg {
+    name: "labels",
+    about: "Every label the entry should carry, replacing what it had: a name or a list of names, empty to take them all off.",
+};
+
+pub static TOOLS: [Tool; 5] = [
     Tool {
         name: "project_entries",
-        description: "List articles, boards, tables, and saved chats with stable project-wide numeric references, including archived entries.",
+        description: "List articles, boards, tables, and saved chats with stable project-wide numeric references and their labels, including archived entries.",
         schema: |bound| fields(bound, &[PROJECT]),
         writes: false,
         deletes: false,
@@ -43,6 +51,26 @@ pub static TOOLS: [Tool; 4] = [
         writes: false,
         deletes: false,
         call: read_entry,
+    },
+    Tool {
+        name: "project_label_entry",
+        description: "Set the labels an article, board or saved chat carries. Names are lowercased, \
+            with spaces as -, and shared across projects. Tables carry no labels.",
+        schema: |bound| {
+            let mut schema = fields(bound, &[PROJECT, ENTRY]);
+            schema["properties"][LABELS.name] = json!({
+                "anyOf": [
+                    { "type": "string" },
+                    { "type": "array", "items": { "type": "string" } }
+                ],
+                "description": LABELS.about,
+            });
+            schema["required"] = json!([ENTRY.name, LABELS.name]);
+            schema
+        },
+        writes: true,
+        deletes: false,
+        call: label_entry,
     },
     Tool {
         name: "project_open",
@@ -174,10 +202,14 @@ fn entries(args: Args<'_>) -> Outcome {
             .iter()
             .map(|entry| {
                 format!(
-                    "#{} [{}] {}{}",
+                    "#{} [{}] {}{}{}",
                     entry.number,
                     entry.kind,
                     entry.title,
+                    match entry.labels.is_empty() {
+                        true => String::new(),
+                        false => format!(" · labels: {}", entry.labels.join(", ")),
+                    },
                     if entry.archived { " — archived" } else { "" }
                 )
             })
@@ -185,6 +217,78 @@ fn entries(args: Args<'_>) -> Outcome {
             .join("\n")
     };
     Ok(Answer::said(text).with(json!({"entries": entries})))
+}
+
+fn label_entry(args: Args<'_>) -> Outcome {
+    let named = args.text(ENTRY)?;
+    let wrong = || {
+        Trouble::Invalid(format!(
+            "{} is required, as a string or a list of strings",
+            LABELS.name
+        ))
+    };
+    let labels = match args.value(LABELS) {
+        Some(serde_json::Value::String(one)) => vec![one.as_str()],
+        Some(serde_json::Value::Array(many)) => many
+            .iter()
+            .map(|value| value.as_str().ok_or_else(wrong))
+            .collect::<Result<_, _>>()?,
+        _ => return Err(wrong()),
+    };
+    let labels = artifact::label::normalize_all(labels);
+    let (project, number, within) = entry_of(&args, named)?;
+    if within.is_some() {
+        return Err(Trouble::Invalid(format!(
+            "{named} names part of an entry, and labels go on the whole of one"
+        )));
+    }
+    let entries = artifact::entry::list(&project).map_err(|e| Trouble::Refused(e.to_string()))?;
+    let entry = entries
+        .into_iter()
+        .find(|entry| entry.number == number)
+        .ok_or_else(|| Trouble::Refused(format!("no entry {named} in this project")))?;
+    let store = fs::Project::new(&project);
+    let refused =
+        |e: &dyn std::fmt::Display| Trouble::Refused(format!("{named} cannot be written — {e}"));
+    match entry.kind {
+        "article" => {
+            let mut properties = store.properties(&entry.id);
+            properties.labels = labels.clone();
+            store
+                .save_properties(&entry.id, &properties)
+                .map_err(|e| refused(&e))?;
+        }
+        "board" => {
+            let mut board = store
+                .board(&entry.id)
+                .ok_or_else(|| Trouble::Refused(format!("{named} no longer exists")))?;
+            board.labels = labels.clone();
+            store.save_board(&mut board).map_err(|e| refused(&e))?;
+        }
+        // An open project's sessions are the app's to write: a file written
+        // under it would be overwritten by the app's next save.
+        "session" if rail::is_open(&project) => rail::ask(Change::Label {
+            session: entry.id.clone(),
+            labels: labels.clone(),
+        })?,
+        "session" => {
+            let mut record = store
+                .session(&entry.id)
+                .ok_or_else(|| Trouble::Refused(format!("{named} no longer exists")))?;
+            record.labels = labels.clone();
+            store.save_session(&record).map_err(|e| refused(&e))?;
+        }
+        kind => {
+            return Err(Trouble::Refused(format!(
+                "{named} is a {kind}, and only articles, boards and saved chats carry labels"
+            )));
+        }
+    }
+    let said = match labels.is_empty() {
+        true => format!("#{number} {} has no labels", entry.title),
+        false => format!("#{number} {} labelled {}", entry.title, labels.join(", ")),
+    };
+    Ok(Answer::said(said).with(json!({"number": number, "labels": labels})))
 }
 
 fn read_entry(args: Args<'_>) -> Outcome {

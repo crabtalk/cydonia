@@ -18,6 +18,9 @@ const ARCHIVED: &str = "archived";
 /// Absent for a page that has never been told either way.
 const FULL_WIDTH: &str = "full_width";
 
+/// The article's labels — see [`crate::label`].
+const LABELS: &str = "labels";
+
 /// Where this article's properties live — beside its content, in the directory
 /// that is the article.
 pub fn path(content: &Path) -> Option<PathBuf> {
@@ -35,6 +38,7 @@ pub struct Properties {
     pub title: String,
     pub archived: bool,
     pub full_width: Option<bool>,
+    pub labels: Vec<String>,
 }
 
 /// Read the whole file once and answer with all of it.
@@ -103,6 +107,16 @@ pub fn parse(text: &str) -> Properties {
             .and_then(|archived| archived.as_bool())
             .unwrap_or_default(),
         full_width: doc.get(FULL_WIDTH).and_then(|wide| wide.as_bool()),
+        labels: doc
+            .get(LABELS)
+            .and_then(|labels| labels.as_array())
+            .map(|labels| {
+                labels
+                    .iter()
+                    .filter_map(|label| label.as_str().map(str::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default(),
     }
 }
 
@@ -113,7 +127,7 @@ pub fn apply(text: &str, properties: &Properties) -> Option<String> {
     document::apply(text, &fields(properties))
 }
 
-fn fields(properties: &Properties) -> [(&'static str, Option<toml_edit::Item>); 3] {
+fn fields(properties: &Properties) -> [(&'static str, Option<toml_edit::Item>); 4] {
     [
         (
             TITLE,
@@ -124,6 +138,18 @@ fn fields(properties: &Properties) -> [(&'static str, Option<toml_edit::Item>); 
             properties.archived.then(|| toml_edit::value(true)),
         ),
         (FULL_WIDTH, properties.full_width.map(toml_edit::value)),
+        (
+            LABELS,
+            (!properties.labels.is_empty()).then(|| {
+                toml_edit::value(
+                    properties
+                        .labels
+                        .iter()
+                        .map(String::as_str)
+                        .collect::<toml_edit::Array>(),
+                )
+            }),
+        ),
     ]
 }
 

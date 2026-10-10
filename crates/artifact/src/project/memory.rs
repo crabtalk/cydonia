@@ -186,6 +186,7 @@ impl State {
             archived: properties.archived,
             touched: held.touched,
             cover: None,
+            labels: properties.labels,
         }
     }
 }

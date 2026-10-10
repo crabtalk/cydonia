@@ -41,6 +41,12 @@ pub enum Change {
         session: String,
         title: String,
     },
+    /// The labels the session filed under `session` carries, replacing what
+    /// it had. Normalised.
+    Label {
+        session: String,
+        labels: Vec<String>,
+    },
     /// A new session in `project` on the agent `settings.toml` names `agent`,
     /// with `message` as its first prompt.
     Start {

@@ -48,6 +48,9 @@ pub struct Article {
     pub touched: u128,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cover: Option<Url>,
+    /// Its labels — see [`crate::label`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub labels: Vec<String>,
 }
 
 /// Where a project's articles live, and what the document is called inside the

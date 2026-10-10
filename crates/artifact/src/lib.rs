@@ -23,6 +23,7 @@ pub mod board;
 pub mod document;
 pub mod entry;
 pub mod id;
+pub mod label;
 pub mod project;
 pub mod reference;
 pub mod search;

@@ -34,6 +34,9 @@ use bezel::{
 use chrono::Datelike as _;
 use std::{cell::Cell, collections::HashSet, ops::Range, path::PathBuf, rc::Rc};
 
+mod labels;
+pub(crate) use labels::Target;
+
 /// How far back [`Tab::Recent`] reaches, in milliseconds.
 const RECENT: u128 = 7 * 24 * 60 * 60 * 1000;
 
@@ -52,7 +55,8 @@ const ROW_GROUP: &str = "library-row";
 const NAME: usize = 1;
 const PROJECT: usize = 3;
 const PLACE: usize = 4;
-const EDITED: usize = 5;
+const LABELS: usize = 5;
+const EDITED: usize = 6;
 
 /// Which listing the library is on.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -141,6 +145,7 @@ pub(crate) enum Item {
 pub(crate) struct Shelf {
     tab: Tab,
     project: Option<PathBuf>,
+    labels: Vec<String>,
     sort: table::Sort,
     query: String,
 }
@@ -150,6 +155,10 @@ pub(crate) struct Library {
     tab: Tab,
     /// The one project listed, by its path, or every open one.
     project: Option<PathBuf>,
+    /// The labels listed, any one of them; every listing while empty.
+    labels: Vec<String>,
+    /// The label picker, while one is open.
+    picker: Option<labels::Picker>,
     sort: table::Sort,
     query: Entity<TextField>,
     selected: HashSet<Item>,
@@ -162,11 +171,17 @@ pub(crate) struct Library {
 }
 
 impl Library {
+    /// Stop filtering on `name`, a label that is gone.
+    pub(crate) fn drop_label_filter(&mut self, name: &str) {
+        self.labels.retain(|label| label != name);
+    }
+
     /// What this library is narrowed to.
     pub(crate) fn shelf(&self, cx: &App) -> Shelf {
         Shelf {
             tab: self.tab,
             project: self.project.clone(),
+            labels: self.labels.clone(),
             sort: self.sort,
             query: self.query.read(cx).content().to_string(),
         }
@@ -181,6 +196,7 @@ impl Library {
         Self {
             tab: shelf.tab,
             project: shelf.project,
+            labels: shelf.labels,
             sort: shelf.sort,
             ..library
         }
@@ -203,6 +219,8 @@ impl Library {
         Self {
             tab: Tab::All,
             project: None,
+            labels: Vec::new(),
+            picker: None,
             sort: table::Sort {
                 column: EDITED,
                 ascending: false,
@@ -250,6 +268,8 @@ struct Listing {
     /// Milliseconds.
     touched: u128,
     archived: bool,
+    /// `None` for what carries no labels: a table, a card.
+    labels: Option<Vec<String>>,
 }
 
 impl Cydonia {
@@ -320,7 +340,13 @@ impl Cydonia {
                 Some(SharedString::from(workspace.spaces[ix].label().to_owned()))
             };
             let number = |number: Option<u64>| number.map(|n| SharedString::from(format!("#{n}")));
-            let mut entry = |kind, showing: Showing, title: String, n, touched, archived| {
+            let mut entry = |kind,
+                             showing: Showing,
+                             title: String,
+                             n,
+                             touched,
+                             archived,
+                             labels: Option<&[String]>| {
                 let row = row(showing.clone());
                 if !sidebar::shown(&row, features) {
                     return;
@@ -334,6 +360,7 @@ impl Cydonia {
                     place: space(showing),
                     touched,
                     archived,
+                    labels: labels.map(<[String]>::to_vec),
                 });
             };
             for chat in &open.sessions {
@@ -344,6 +371,7 @@ impl Cydonia {
                     chat.number,
                     chat.touched(),
                     chat.closed,
+                    Some(&chat.labels),
                 );
             }
             for article in &open.articles {
@@ -354,6 +382,7 @@ impl Cydonia {
                     article.number,
                     article.touched,
                     article.archived,
+                    Some(&article.labels),
                 );
             }
             for board in &open.boards {
@@ -364,6 +393,7 @@ impl Cydonia {
                     board.number,
                     board.touched,
                     board.archived,
+                    Some(&board.labels),
                 );
             }
             for table in &open.tables {
@@ -375,6 +405,7 @@ impl Cydonia {
                     // The store keeps seconds; every other stamp is milliseconds.
                     table.updated_at.unwrap_or(table.created_at).max(0) as u128 * 1000,
                     table.archived,
+                    None,
                 );
             }
             if !features.boards {
@@ -398,6 +429,7 @@ impl Cydonia {
                             place: Some(format!("{} › {}", board.label(), column.name).into()),
                             touched: board.touched,
                             archived: false,
+                            labels: None,
                         });
                     }
                 }
@@ -416,6 +448,7 @@ impl Cydonia {
             .listings(cx)
             .into_iter()
             .filter(|listing| library.tab.keeps(listing, now))
+            .filter(|listing| labels::passes(listing.labels.as_deref(), &library.labels))
             .collect();
         let query = library.query.read(cx).content().trim().to_owned();
         if !query.is_empty() {
@@ -650,6 +683,7 @@ impl Cydonia {
             true => self.library_selection_bar(window, cx),
             false => self.library_bar(window, cx),
         };
+        let filters = self.filter_strip(cx);
         let body = match listings.is_empty() {
             true => div()
                 .flex_1()
@@ -680,6 +714,7 @@ impl Cydonia {
                     .items_center()
                     .child(bar),
             )
+            .children(filters)
             .child(body)
             .into_any_element()
     }
@@ -861,6 +896,9 @@ impl Cydonia {
                         .children(self.space_menu(window, cx)),
                 )
             })
+            .when(self.selection_labelled(cx), |bar| {
+                bar.child(self.label_button(cx))
+            })
             .child(
                 theme
                     .button("Delete", ButtonStyle::Ghost, None)
@@ -912,18 +950,8 @@ impl Cydonia {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = Theme::of(cx).clone();
-        let workspace = self.workspace.read(cx);
-        let mut shape = column.clone();
-        if let Some(at) = self
-            .library
-            .as_ref()
-            .and_then(|library| library.project.as_ref())
-            .and_then(|path| workspace.project_at(path))
-        {
-            shape.label = workspace.projects[at].name().into();
-        }
         let menu = Menu::LibraryProject;
-        let cell = table::header_cell(&theme, &shape, sorted)
+        let cell = table::header_cell(&theme, column, sorted)
             .child(
                 icons::icon(icons::arrows::ChevronDown)
                     .size(px(11.))
@@ -1067,6 +1095,9 @@ impl Cydonia {
                 let sorted = (sortable && sort.column == ix).then_some(sort.ascending);
                 if ix == PROJECT {
                     return self.project_heading(column, sorted, window, cx);
+                }
+                if ix == LABELS {
+                    return self.labels_heading(column, cx);
                 }
                 let cell = table::header_cell(&theme, column, sorted).id(("library-heading", ix));
                 match sortable {
@@ -1225,6 +1256,7 @@ impl Cydonia {
             reference,
             muted(Some(listing.project.clone())),
             muted(listing.place.clone()),
+            self.label_cell(&listing.item, listing.labels.as_deref(), ix, cx),
             muted(Some(edited(listing.touched).into())),
             self.library_actions(listing, ix, window, cx),
         ];
@@ -1266,6 +1298,7 @@ fn columns() -> Vec<table::Column> {
         table::Column::new("Ref", table::Width::Fixed(px(88.))),
         table::Column::new("Project", table::Width::Flex(140.)),
         table::Column::new("Location", table::Width::Flex(180.)),
+        table::Column::new("Labels", table::Width::Flex(160.)),
         table::Column::new("Edited", table::Width::Fixed(px(120.))),
         table::Column::new("", table::Width::Fixed(px(44.))),
     ]

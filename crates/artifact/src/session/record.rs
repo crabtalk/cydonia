@@ -51,6 +51,9 @@ pub struct Record {
     /// still going on, and typing into it brings it back.
     #[serde(default)]
     pub closed: bool,
+    /// Its labels, normalised — see [`crate::label`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub labels: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fork: Option<ForkOrigin>,
     /// Items before this index have not reached the agent's session yet, and
@@ -116,6 +119,7 @@ impl Record {
                 .unwrap_or_default()
                 .as_secs(),
             closed: false,
+            labels: self.labels.clone(),
             fork: Some(ForkOrigin::new(self.id.clone(), title)),
             replay: Some(before),
             draft: draft.clone(),

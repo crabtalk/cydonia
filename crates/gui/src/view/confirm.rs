@@ -28,6 +28,8 @@ pub(crate) enum Doomed {
     Turn(u64, usize),
     /// Several at once — what the library's selection deletes.
     Many(Vec<Doomed>),
+    /// A label, off every entry in every open project carrying it.
+    Label(String),
 }
 
 /// A delete that has been asked for and not yet agreed to.
@@ -86,12 +88,34 @@ impl Cydonia {
             Doomed::Card(board, card) => self.delete_card(board, card, cx),
             Doomed::Column(board, column) => self.drop_column(board, column, cx),
             Doomed::Turn(id, at) => self.rewind(*id, *at, window, cx),
+            Doomed::Label(name) => {
+                self.workspace
+                    .update(cx, |workspace, cx| workspace.delete_label(name, cx));
+                if let Some(library) = &mut self.library {
+                    library.drop_label_filter(name);
+                }
+            }
             Doomed::Many(all) => {
                 for doomed in all {
                     self.delete_doomed(doomed, window, cx);
                 }
             }
         }
+    }
+
+    /// The same for a label, carried by `count` entries.
+    pub(crate) fn ask_delete_label(&mut self, name: String, count: usize, cx: &mut Context<Self>) {
+        self.menu = None;
+        self.confirming = Some(Confirming {
+            label: format!("the label \u{201c}{name}\u{201d}"),
+            doomed: Doomed::Label(name),
+            goes: None,
+            note: match count {
+                1 => "It comes off the 1 entry carrying it. This cannot be undone.".to_owned(),
+                n => format!("It comes off the {n} entries carrying it. This cannot be undone."),
+            },
+        });
+        cx.notify();
     }
 
     /// The same for one card, which has no file of its own to quote — it lives

@@ -34,6 +34,7 @@ fn properties_save_keeps_unknown_keys() {
         title: "Rate limiting plan".into(),
         archived: true,
         full_width: Some(false),
+        labels: vec!["q3".into(), "research".into()],
     };
     store.save_properties(&made.id, &wanted).unwrap();
     assert_eq!(store.properties(&made.id), wanted);

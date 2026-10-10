@@ -200,6 +200,8 @@ pub struct ChatSession {
     written: bool,
     /// Whether the user archived it. Typing into it clears this.
     pub closed: bool,
+    /// Its labels, normalised — see [`artifact::label`].
+    pub labels: Vec<String>,
     pub streaming: bool,
     pub(crate) last_activity: Instant,
     pub(crate) turn_started: Option<Instant>,
@@ -275,6 +277,7 @@ impl ChatSession {
             written: false,
             number: None,
             closed: false,
+            labels: Vec::new(),
             streaming: false,
             last_activity: Instant::now(),
             turn_started: None,
@@ -319,6 +322,7 @@ impl ChatSession {
             written: true,
             number: record.number,
             closed: record.closed,
+            labels: record.labels,
             streaming: false,
             last_activity: Instant::now(),
             turn_started: None,
@@ -405,6 +409,7 @@ impl ChatSession {
                 .unwrap_or_default()
                 .as_secs(),
             closed: self.closed,
+            labels: self.labels.clone(),
             items: self.items.clone(),
             fork: self.fork.clone(),
             replay: self.replay,

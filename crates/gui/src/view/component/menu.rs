@@ -45,6 +45,8 @@ pub(crate) enum Menu {
     LibraryMove,
     /// The library selection's `Add to space`.
     LibrarySpace,
+    /// The library's label picker, by what it acts on.
+    LibraryLabels(crate::view::library::Target),
     /// The `···` in the pane header. Its own key rather than `Entry` of what
     /// the header is showing: that entry has a row in the sidebar too, and a
     /// key naming the entry would have one click open both of them.

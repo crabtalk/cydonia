@@ -431,6 +431,7 @@ pub fn bind_all(shortcuts: &Shortcuts, cx: &mut App) {
     // command below win a chord one of them holds.
     cx.bind_keys(input::bindings());
     cx.bind_keys(combobox::bindings());
+    cx.bind_keys(bezel::ui::multi_select::bindings());
     cx.bind_keys(bezel::ui::menu::bindings());
     cx.bind_keys(focus::bindings());
     cx.bind_keys(editor::keys::bindings());

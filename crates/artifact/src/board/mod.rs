@@ -98,6 +98,9 @@ pub struct Board {
     /// coming back as somebody else's.
     #[serde(default)]
     pub next_handle: u64,
+    /// Its labels, normalised — see [`crate::label`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub labels: Vec<String>,
     /// How the pane lays this board out — see [`View`].
     ///
     /// Ahead of the columns: TOML takes no value after a table, so a scalar
@@ -123,6 +126,7 @@ impl Board {
             // — see [`key::derive`]. Empty until then, the way the ids are.
             key: String::new(),
             next_handle: FIRST,
+            labels: Vec::new(),
             view: View::default(),
             columns: Vec::new(),
         }

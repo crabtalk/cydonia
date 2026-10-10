@@ -18,6 +18,20 @@ project's entries with `project_entries` and read one with `project_read_entry`;
 the article and board tools accept `#12` wherever they take an entry. See
 [MCP](../agents/mcp.md).
 
+## Labels
+
+Articles, boards and saved sessions carry labels, several each. A label is lowercase, with spaces written as `-`, so `Q3 Plan` and `q3-plan` are one label. Labels are shared by every open project, and a label exists while at least one entry carries it.
+
+In the Library:
+
+- The Labels column shows each entry's labels. Click a cell to add, create or remove them.
+- The Labels heading filters the list to entries carrying any of the labels picked.
+- With entries selected, Label applies a label to all of them or takes it off. A dash marks a label only some of them carry.
+- A label's `···` in the picker renames or deletes it on every entry carrying it. Renaming onto a label already in use merges the two.
+- While a project or label filter is on, it shows above the list; click it to take it off.
+
+Agents set an entry's labels with `project_label_entry`, and `project_entries` lists them.
+
 ## Arranging the sidebar
 
 Entries list where you left them rather than by what was written to last, so an

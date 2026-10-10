@@ -41,6 +41,8 @@ pub(crate) struct Linkable {
     pub(crate) agent: Option<String>,
     pub(crate) archived: bool,
     pub(crate) kind: Kind,
+    /// Its labels — see [`artifact::label`].
+    pub(crate) labels: Vec<String>,
     /// The sidebar's row for it.
     pub(crate) row: Row,
 }
@@ -86,6 +88,7 @@ pub(crate) fn read(workspace: &Workspace) -> Linkables {
                     number,
                     key: None,
                     agent: None,
+                    labels: Vec::new(),
                     row,
                 }
             };
@@ -94,6 +97,7 @@ pub(crate) fn read(workspace: &Workspace) -> Linkables {
             Some(Linkable {
                 agent: Some(chat.entry.name.clone()),
                 archived: chat.closed,
+                labels: chat.labels.clone(),
                 ..linkable(
                     workspace
                         .agent_icon(&chat.entry.name)
@@ -111,6 +115,7 @@ pub(crate) fn read(workspace: &Workspace) -> Linkables {
             Some(Linkable {
                 archived: article.archived,
                 kind: Kind::Article,
+                labels: article.labels.clone(),
                 ..linkable(
                     kind_icon(Kind::Article),
                     untitled(&article.title, "Untitled article"),
@@ -132,6 +137,7 @@ pub(crate) fn read(workspace: &Workspace) -> Linkables {
                 key,
                 archived: board.archived,
                 kind: Kind::Board,
+                labels: board.labels.clone(),
                 ..linkable(
                     kind_icon(Kind::Board),
                     untitled(&board.name, "Untitled board"),
@@ -176,7 +182,9 @@ pub(crate) fn source(query: &str, cx: &App) -> Vec<Mention> {
 
 /// What `query` lists, as positions in `held`, best first. An empty query
 /// lists the active project, archived entries last. A query opening with a
-/// kind's prefix — see [`kind_prefix`] — lists that kind alone.
+/// kind's prefix — see [`kind_prefix`] — lists that kind alone, and one
+/// naming a label — see [`label_prefix`] — the entries carrying it alone. A
+/// label with nothing after it lists every entry carrying it.
 ///
 /// Each entry is placed by its best match: an exact reference — see
 /// [`references`] — then a title starting with the query, then a reference
@@ -185,12 +193,44 @@ pub(crate) fn source(query: &str, cx: &App) -> Vec<Mention> {
 /// entries follow every other match but an exact reference. Within a place
 /// the active project leads; ties keep the most recently touched first.
 pub(crate) fn rank(query: &str, held: &[Linkable]) -> Vec<usize> {
-    let (kind, query) = kind_prefix(query);
-    let mut rows = rank_all(query, held);
+    let (kind, label, query) = prefixes(query);
+    let mut rows = match (&label, query.trim().is_empty()) {
+        (Some(_), true) => {
+            let mut rows: Vec<usize> = (0..held.len()).collect();
+            rows.sort_by_key(|&ix| held[ix].archived);
+            rows
+        }
+        _ => rank_all(query, held),
+    };
     if let Some(kind) = kind {
         rows.retain(|&ix| held[ix].kind == kind);
     }
+    if let Some(label) = label {
+        rows.retain(|&ix| held[ix].labels.contains(&label));
+    }
     rows
+}
+
+/// A query's kind prefix, then its label prefix, and the query after both.
+pub(crate) fn prefixes(query: &str) -> (Option<Kind>, Option<String>, &str) {
+    let (kind, query) = kind_prefix(query);
+    let (label, query) = label_prefix(query);
+    (kind, label, query)
+}
+
+/// The label a query opens with, `l:` in either case and the word after it,
+/// normalised, and the query after it.
+pub(crate) fn label_prefix(query: &str) -> (Option<String>, &str) {
+    let query = query.trim_start();
+    if query.get(..2).map(str::to_ascii_lowercase).as_deref() != Some("l:") {
+        return (None, query);
+    }
+    let rest = &query[2..];
+    let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
+    match artifact::label::normalize(&rest[..end]) {
+        Some(label) => (Some(label), &rest[end..]),
+        None => (None, query),
+    }
 }
 
 /// The kind a query opens with, `s:`, `a:` or `b:` in either case, and the

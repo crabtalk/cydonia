@@ -205,3 +205,54 @@ fn a_project_that_is_not_open_cannot_be_named() {
     assert!(why.contains("does not have"), "{why}");
     assert!(!elsewhere.path().join(".cydonia").exists());
 }
+
+#[test]
+fn labels_are_set_normalised_and_listed_with_the_entries() {
+    let scratch = Scratch::new("entry-labels");
+    let server = scratch.server();
+    let board = scratch.store_create("Roadmap", "ROAD").unwrap();
+    let board_ref = format!("#{}", board.number.unwrap());
+    let added = server
+        .call(
+            "article_add",
+            json!({"project": scratch.path(), "title": "Draft", "text": "hello"}),
+            None,
+        )
+        .unwrap_or_else(|_| panic!("tool call failed"));
+    let article_ref = format!("#{}", added.data.unwrap()["number"].as_u64().unwrap());
+    said(server.call(
+        "project_label_entry",
+        json!({"entry": article_ref, "labels": ["Q3 Plan", "research", "q3-plan"]}),
+        Some(scratch.path()),
+    ));
+    said(server.call(
+        "project_label_entry",
+        json!({"entry": board_ref, "labels": "research"}),
+        Some(scratch.path()),
+    ));
+    let catalog = server
+        .call("project_entries", json!({"project": scratch.path()}), None)
+        .unwrap_or_else(|_| panic!("tool call failed"));
+    assert!(catalog.text.contains(&format!(
+        "{article_ref} [article] Draft · labels: q3-plan, research"
+    )));
+    assert!(
+        catalog
+            .text
+            .contains(&format!("{board_ref} [board] Roadmap · labels: research"))
+    );
+    said(server.call(
+        "project_label_entry",
+        json!({"entry": article_ref, "labels": []}),
+        Some(scratch.path()),
+    ));
+    let catalog = server
+        .call("project_entries", json!({"project": scratch.path()}), None)
+        .unwrap_or_else(|_| panic!("tool call failed"));
+    assert!(
+        catalog
+            .text
+            .contains(&format!("{article_ref} [article] Draft"))
+    );
+    assert!(!catalog.text.contains("Draft · labels"));
+}

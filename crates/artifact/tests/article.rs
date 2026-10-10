@@ -21,6 +21,7 @@ fn article(cover: Option<&str>) -> Article {
         archived: false,
         touched: 1_757_000_000_000,
         cover: cover.map(|file| Url::from_file_path(file).expect("absolute")),
+        labels: Vec::new(),
     }
 }
 

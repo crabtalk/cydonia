@@ -87,6 +87,7 @@ fn properties_round_trip_and_clear() {
         title: "Renamed".into(),
         archived: true,
         full_width: None,
+        labels: vec!["research".into()],
     };
     store.save_properties("1790089015001", &wanted).unwrap();
     assert_eq!(store.properties("1790089015001"), wanted);

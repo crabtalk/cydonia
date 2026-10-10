@@ -115,6 +115,8 @@ pub struct Entry {
     pub id: String,
     pub title: String,
     pub archived: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub labels: Vec<String>,
 }
 
 /// A backend's boards, articles and sessions as entries, in no order.
@@ -127,6 +129,7 @@ pub fn catalog(store: &impl Project) -> Result<Vec<Entry>> {
             kind: "board",
             id: board.id,
             archived: board.archived,
+            labels: board.labels,
         });
     }
     for article in store.articles() {
@@ -136,6 +139,7 @@ pub fn catalog(store: &impl Project) -> Result<Vec<Entry>> {
             id: article.id,
             title: article.title,
             archived: article.archived,
+            labels: article.labels,
         });
     }
     for session in store.sessions() {
@@ -145,6 +149,7 @@ pub fn catalog(store: &impl Project) -> Result<Vec<Entry>> {
             id: session.id,
             title: session.name.unwrap_or(session.title),
             archived: session.closed,
+            labels: session.labels,
         });
     }
     Ok(entries)
@@ -195,6 +200,7 @@ pub fn list(project: &Path) -> Result<Vec<Entry>> {
                 id,
                 title,
                 archived,
+                labels: Vec::new(),
             });
         }
     }

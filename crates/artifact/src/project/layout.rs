@@ -32,6 +32,8 @@ struct Disk {
     key: String,
     #[serde(default)]
     next_handle: u64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    labels: Vec<String>,
     #[serde(default)]
     view: View,
     #[serde(default)]
@@ -57,6 +59,7 @@ pub fn board_toml(board: &Board) -> Result<String, toml::ser::Error> {
         name: board.name.clone(),
         key: board.key.clone(),
         next_handle: board.next_handle,
+        labels: board.labels.clone(),
         view: board.view,
         columns: board
             .columns
@@ -137,6 +140,7 @@ pub fn assemble(body: &str, mut cards: Vec<Card>) -> Option<Board> {
     board.archived = disk.archived;
     board.key = disk.key;
     board.next_handle = disk.next_handle;
+    board.labels = disk.labels;
     board.view = disk.view;
     for column in disk.columns {
         board.columns.push(Column {

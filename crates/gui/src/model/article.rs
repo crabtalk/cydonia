@@ -115,6 +115,9 @@ pub struct Article {
     /// see [`Article::wide`]. Cached like [`Article::archived`]: the frame
     /// reads it, and a frame is not somewhere to open a file.
     pub full_width: Option<bool>,
+    /// Its labels, normalised — see [`artifact::label`]. Cached like
+    /// [`Article::archived`].
+    pub labels: Vec<String>,
     /// The file moved under an open document that has edits of its own — see
     /// [`Article::adopt`]. Runtime only: what it marks is a disagreement
     /// between the buffer and the disk, and reopening the app ends it by
@@ -133,6 +136,7 @@ impl Article {
             touched: held.touched,
             archived: properties.archived,
             full_width: properties.full_width,
+            labels: properties.labels,
             id: held.id,
             store,
             field: None,
@@ -153,6 +157,7 @@ impl Article {
             title: self.title.clone(),
             archived: self.archived,
             full_width: self.full_width,
+            labels: self.labels.clone(),
         }
     }
 
@@ -169,6 +174,12 @@ impl Article {
 
     pub fn archive(&mut self, archived: bool) {
         self.archived = archived;
+        let _ = self.store.save_properties(&self.id, &self.properties());
+    }
+
+    /// Give the article exactly these labels.
+    pub fn set_labels(&mut self, labels: Vec<String>) {
+        self.labels = labels;
         let _ = self.store.save_properties(&self.id, &self.properties());
     }
 
@@ -351,6 +362,7 @@ impl Article {
         self.cover = fresh.cover.clone();
         self.archived = fresh.archived;
         self.full_width = fresh.full_width;
+        self.labels = fresh.labels.clone();
         self.touched = fresh.touched;
         // Never opened: the label is the whole of what is held, and the file
         // is where it came from.
@@ -392,6 +404,7 @@ impl Article {
         }
         self.archived = held.archived;
         self.full_width = held.full_width;
+        self.labels = held.labels;
         let text_size = self
             .editor
             .as_ref()
@@ -494,6 +507,7 @@ impl From<&Article> for layout::Article {
             archived: article.archived,
             touched: article.touched,
             cover: article.cover.as_deref().and_then(file_url::from_path),
+            labels: article.labels.clone(),
         }
     }
 }
