@@ -72,6 +72,13 @@ impl Store {
         }
     }
 
+    pub fn files(&self, dir: &Path) -> bool {
+        match self {
+            Store::Fs(store) => store.files(dir),
+            Store::Memory(_) => false,
+        }
+    }
+
     pub fn place(&self, kind: Kind, id: &str) -> Option<PathBuf> {
         match self {
             Store::Fs(store) => store.place(kind, id),

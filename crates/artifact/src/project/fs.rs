@@ -431,6 +431,17 @@ impl Project {
         content.is_file().then(|| self.describe(content))
     }
 
+    /// Whether `dir` is the folder of a document filed here: an article's, or
+    /// a card's on one of its boards.
+    pub fn files(&self, dir: &Path) -> bool {
+        let Some(parent) = dir.parent() else {
+            return false;
+        };
+        parent == article::dir(&self.root)
+            || (parent.file_name().is_some_and(|name| name == layout::CARDS)
+                && parent.parent().and_then(Path::parent) == Some(self.boards_dir().as_path()))
+    }
+
     /// Where an entry is on disk: an article's directory, a board's or a
     /// session's file. `None` for one that is not there, and for a table,
     /// whose rows are in the project's database.

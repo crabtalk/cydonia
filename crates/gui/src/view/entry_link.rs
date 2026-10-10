@@ -34,7 +34,7 @@ use bezel::{
     },
     theme::{TextStyle, Theme, Typeset},
     ui::{
-        icons, scroll,
+        icons, popover, scroll, surface,
         widgets::{ButtonStyle, Buttons},
     },
 };
@@ -163,7 +163,8 @@ fn nested_row(url: &str, cx: &App) -> AnyElement {
 /// Opens a link clicked in an article or a transcript: a web link in the
 /// system browser, a file in the file manager. With shift held, a web link
 /// opens in a panel browser tab and a file in a panel file tab, where the
-/// window can take one. A relative path is a file under `base`. Installed as
+/// window can take one. A relative path in an article or a card is a file
+/// under its project's directory, and elsewhere under `base`. Installed as
 /// markdown's link handler.
 pub fn open_link(url: &str, base: Option<&Path>, window: &mut Window, cx: &mut App) {
     let Some(Some(root)) = window.root::<Cydonia>() else {
@@ -175,6 +176,16 @@ pub fn open_link(url: &str, base: Option<&Path>, window: &mut Window, cx: &mut A
         return;
     }
     let shift = window.modifiers().shift;
+    let project = base.and_then(|base| {
+        root.read(cx)
+            .workspace
+            .read(cx)
+            .projects
+            .iter()
+            .find(|project| project.store().files(base))
+            .map(|project| project.path.clone())
+    });
+    let base = project.as_deref().or(base);
     if let Some((path, line)) = crate::model::file_url::target(base, url) {
         let opened = shift
             && root.update(cx, |root, cx| {
@@ -585,12 +596,15 @@ impl Cydonia {
                 .child(why)
                 .into_any_element(),
         };
-        fence_panel(&theme)
-            .w_full()
-            .flex()
-            .flex_col()
-            .child(body)
-            .into_any_element()
+        surface::popover(
+            Theme::surface_radius(),
+            popover::popover_card_flush(&theme)
+                .w_full()
+                .flex()
+                .flex_col()
+                .child(body),
+        )
+        .into_any_element()
     }
 
     fn article_hover(
