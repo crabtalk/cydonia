@@ -635,12 +635,19 @@ impl Cydonia {
         // Nothing to send to: no session at all, or one whose agent has gone
         // from settings.toml, leaving nothing to reconnect it to.
         let live = self.workspace.read(cx).reachable();
-        let showing = self.showing(cx);
-        let arranged = self.workspace.read(cx).active_space().is_some();
+        // The library stands in for every pane, and is framed as a lone one:
+        // the band over it, the drawer a card opens in, and no composer.
+        let library = self.library.is_some();
+        let showing = self.showing(cx).filter(|_| !library);
+        let arranged = self.workspace.read(cx).active_space().is_some() && !library;
         let active = self.workspace.read(cx).active_id();
         // A space arranges several entries, so it draws its own panes. One
         // entry open on its own is the single pane below.
-        let body = match self.panes(window, cx) {
+        let panes = match library {
+            true => Some(self.library_view(window, cx)),
+            false => self.panes(window, cx),
+        };
+        let body = match panes {
             Some(panes) => panes,
             None => match showing {
                 None => self.launch(window, cx),

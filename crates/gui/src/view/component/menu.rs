@@ -34,6 +34,15 @@ pub(crate) enum Menu {
     Project(std::path::PathBuf),
     /// The `···` on an entry's row, whichever kind it is.
     Entry(Row),
+    /// The `···` on an entry's row in the library. Its own key: the same entry
+    /// has a sidebar row, and one key would open both menus.
+    Library(Row),
+    /// The library's project picker.
+    LibraryProject,
+    /// The library selection's `Move to`.
+    LibraryMove,
+    /// The library selection's `Add to space`.
+    LibrarySpace,
     /// The `···` in the pane header. Its own key rather than `Entry` of what
     /// the header is showing: that entry has a row in the sidebar too, and a
     /// key naming the entry would have one click open both of them.

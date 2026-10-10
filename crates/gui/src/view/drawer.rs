@@ -41,7 +41,8 @@ pub enum Peek {
     Entry(Entry),
 }
 
-/// An entry opened from a `cydonia://` link.
+/// An entry opened from a `cydonia://` link, or from the library.
+#[derive(Clone)]
 pub struct Entry {
     /// The reference as the link wrote it, `project#12` or `project#12:5-7`.
     pub(crate) reference: String,
@@ -204,6 +205,27 @@ impl Cydonia {
         }
     }
 
+    /// Hold the rows of every table a drawer shows, so its preview has a page
+    /// to draw — see [`crate::model::project::Project::hold_pages`].
+    pub(crate) fn hold_drawn_tables(&mut self, cx: &mut Context<Self>) {
+        let held: Vec<(std::path::PathBuf, String)> = {
+            let workspace = self.workspace.read(cx);
+            self.leaves
+                .iter()
+                .filter_map(|leaf| leaf.drawer.as_ref()?.entry())
+                .filter_map(|entry| {
+                    let resolved = workspace.resolve(&entry.reference).ok()?;
+                    match resolved.showing {
+                        Showing::Table(key) => Some((resolved.project, key)),
+                        _ => None,
+                    }
+                })
+                .collect()
+        };
+        self.workspace
+            .update(cx, |workspace, _| workspace.hold_pages(&held));
+    }
+
     /// Open the entry `reference` names in `on`'s drawer, or put the drawer
     /// away where it already shows it. A card opens as its board opens it.
     pub(crate) fn peek(
@@ -333,9 +355,8 @@ impl Cydonia {
                 .card_board(card, cx)
                 .and_then(|(project, at)| self.card_face(project, at, on, window, cx)),
             Peek::Entry(entry) => {
-                let (reference, list) = (entry.reference.clone(), entry.list.clone());
-                let scroll = drawer.scroll.clone();
-                Some(self.entry_face(&reference, &list, on, &scroll, window, cx))
+                let (entry, scroll) = (entry.clone(), drawer.scroll.clone());
+                Some(self.entry_face(&entry, on, &scroll, window, cx))
             }
         };
         let Some(face) = face else {
@@ -626,15 +647,14 @@ impl Cydonia {
     /// cards. An article or a board a pane shows is its row.
     fn entry_face(
         &mut self,
-        text: &str,
-        list: &bezel::ui::list::VariableList<usize>,
+        entry: &Entry,
         on: Option<&Member>,
         scroll: &ScrollHandle,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Face {
         let theme = Theme::of(cx).clone();
-        let named = match self.named(text, cx) {
+        let named = match self.named(&entry.reference, cx) {
             Ok(named) => named,
             Err(why) => {
                 return Face {
@@ -679,7 +699,13 @@ impl Cydonia {
         ];
         let (body, open): (AnyElement, OpenIn) = match (session, named.part.clone()) {
             (Some(id), None | Some(Part::Passage(_) | Part::Card(_))) => (
-                self.session_transcript(id, Some(list), window, cx),
+                self.session_transcript(
+                    id,
+                    Some(&entry.list),
+                    self.workspace.read(cx).settings.drawer_composer,
+                    window,
+                    cx,
+                ),
                 Rc::new(
                     move |this: &mut Self, window: &mut Window, cx: &mut Context<Self>| {
                         this.select_session(id, window, cx)
@@ -716,7 +742,7 @@ impl Cydonia {
                 let row = named.row.clone();
                 let peek = match &row {
                     Row::Entry {
-                        showing: Showing::Article(_) | Showing::Board(_),
+                        showing: Showing::Article(_) | Showing::Board(_) | Showing::Table(_),
                         ..
                     } if !self.on_screen(&row, cx) => self.located(&row, cx),
                     _ => None,
@@ -727,6 +753,10 @@ impl Cydonia {
                             showing: Showing::Board(_),
                             ..
                         } => self.board_peek(project, at, on, scroll, cx),
+                        Row::Entry {
+                            showing: Showing::Table(_),
+                            ..
+                        } => self.table_peek(project, at, cx),
                         _ => self.article_peek(project, at, cx),
                     })
                     .unwrap_or_else(|| self.entry_row(named, cx));

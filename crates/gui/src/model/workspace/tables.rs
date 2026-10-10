@@ -228,6 +228,19 @@ impl Workspace {
         Some(done)
     }
 
+    /// Hold the pages of the tables drawn outside the table pane, by project
+    /// path and key, letting go of every other held page.
+    pub fn hold_pages(&mut self, held: &[(PathBuf, String)]) {
+        for open in &mut self.projects {
+            open.hold_pages(
+                held.iter()
+                    .filter(|(path, _)| *path == open.path)
+                    .map(|(_, key)| key.clone())
+                    .collect(),
+            );
+        }
+    }
+
     /// The rows of one table, wherever it is open.
     pub fn page_at(&self, key: &str) -> Option<&Page> {
         if !self.settings.features.tables {

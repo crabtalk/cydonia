@@ -524,6 +524,9 @@ pub struct Cydonia {
     /// front before it rather than on a neighbour in the strip — see
     /// [`Cydonia::close_pane`]. Runtime only, for the same reason `fronts` is.
     pub(crate) tab_history: Vec<Member>,
+    /// The library, while it stands over the panes — see
+    /// [`super::library`].
+    pub(crate) library: Option<super::library::Library>,
     /// The board identity panel, while it is open — see [`header::BoardInfo`].
     pub(crate) info: Option<info::BoardInfo>,
     /// The board that has been asked for and not yet made — see
@@ -773,6 +776,7 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
+        self.library = None;
         // A space names entries by the file they have, so one with no file yet
         // — a session that has had no turn — is in none of them.
         let held = member.as_ref().and_then(|member| {
@@ -1058,6 +1062,7 @@ impl Cydonia {
             tab_history: Vec::new(),
             confirming: None,
             desktop_only: None,
+            library: None,
             info: None,
             making: None,
             info_pressed: false,
@@ -1331,6 +1336,7 @@ impl Cydonia {
     /// the spot it points at belongs to the board being navigated away from.
     pub(crate) fn select_project(&mut self, ix: usize, cx: &mut Context<Self>) {
         self.commit(cx);
+        self.library = None;
         self.workspace
             .update(cx, |workspace, cx| workspace.select_project(ix, cx));
         self.land(cx);
@@ -1614,6 +1620,7 @@ impl Render for Cydonia {
         self.sync_leaves(window, cx);
         self.sync_changes(cx);
         self.publish_shown(cx);
+        self.hold_drawn_tables(cx);
         let theme = Theme::of(cx).clone();
         let root = div()
             .key_context("Cydonia")

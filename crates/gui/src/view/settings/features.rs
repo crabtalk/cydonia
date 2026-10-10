@@ -105,12 +105,51 @@ impl SettingsWindow {
                         ),
                     ),
             )
+            .children(self.drawer_group(cx))
             .when(
                 // Only macOS lists the applications to choose among.
                 external::LISTS && Feature::Files.on(&self.workspace.read(cx).settings.features),
                 |body| body.child(self.apps_group(cx)),
             )
             .into_any_element()
+    }
+
+    /// What a drawer shows of a session. Only with sessions on: a drawer
+    /// holds a session only where there are sessions.
+    fn drawer_group(&self, cx: &Context<Self>) -> Option<AnyElement> {
+        let settings = &self.workspace.read(cx).settings;
+        if !settings.features.sessions {
+            return None;
+        }
+        let on = settings.drawer_composer;
+        let theme = Theme::of(cx).clone();
+        Some(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(super::LABEL_GAP))
+                .child(theme.field_label("Drawer"))
+                .child(
+                    theme.group_box().child(
+                        self.switch_row(
+                            Switch::new(
+                                "drawer-composer",
+                                "Reply to sessions",
+                                "A composer under a session opened in a drawer.",
+                                on,
+                            )
+                            .first(true),
+                            cx,
+                            move |this, cx| {
+                                this.workspace.update(cx, |workspace, cx| {
+                                    workspace.set_drawer_composer(!on, cx)
+                                });
+                            },
+                        ),
+                    ),
+                )
+                .into_any_element(),
+        )
     }
 
     /// `offset` keeps the element ids of the second group clear of the first's.

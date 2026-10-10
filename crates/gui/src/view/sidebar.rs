@@ -195,7 +195,7 @@ fn project_of(row: &Row) -> Option<&Path> {
 /// Whether the kind a row names is switched on. Articles have no switch, and
 /// neither do the two rows that are not entries — a project heading and the
 /// line its archive folds under stand whatever is listed beneath them.
-fn shown(row: &Row, features: &Features) -> bool {
+pub(crate) fn shown(row: &Row, features: &Features) -> bool {
     match showing_of(row) {
         Some(Showing::Session(_)) => features.sessions,
         Some(Showing::Board(_)) => features.boards,
@@ -507,6 +507,7 @@ impl Cydonia {
                     .child(chrome::grip("sidebar-grip", &self.drag, window)),
             )
             .child(self.search_row(cx))
+            .child(self.library_entry(cx))
             .child(
                 div()
                     .relative()
@@ -1553,6 +1554,10 @@ impl Cydonia {
     /// [`Light`]. In a space, the focused pane's entry is the lit one and the
     /// others it shows are [`Light::Shown`]; on one entry alone, that entry.
     pub(crate) fn light_of(&self, row: &Row, cx: &App) -> Light {
+        // The library stands over every pane, so no row is what is on screen.
+        if self.library.is_some() {
+            return Light::Off;
+        }
         let workspace = self.workspace.read(cx);
         let Some(space) = workspace.active_space() else {
             return match self.in_front(row, cx) {
@@ -1699,7 +1704,7 @@ impl Cydonia {
     }
 
     /// What a space would name this row, so it can be dragged into one.
-    fn member_of_row(&self, row: &Row, cx: &App) -> Option<Member> {
+    pub(crate) fn member_of_row(&self, row: &Row, cx: &App) -> Option<Member> {
         let Row::Entry { project, showing } = row else {
             return None;
         };
@@ -2341,7 +2346,7 @@ impl Cydonia {
         // on whatever else was open.
         // A tab's menu has them only while its tab is the one focused.
         let page = match &at {
-            Menu::Entry(_) => false,
+            Menu::Entry(_) | Menu::Library(_) => false,
             Menu::Tab(tab) => self.leaf().entry.as_ref() == Some(tab),
             _ => true,
         };
@@ -2453,7 +2458,7 @@ impl Cydonia {
             },
         ));
         if let Some(Showing::Board(_)) = showing_of(entry)
-            && !matches!(at, Menu::Entry(_))
+            && !matches!(at, Menu::Entry(_) | Menu::Library(_))
             && let Some((project, ix)) = self.located(entry, cx)
             && let Some((id, view)) = self
                 .workspace
@@ -2507,16 +2512,11 @@ impl Cydonia {
         let landing_project = match (entry, located) {
             (
                 Row::Entry {
-                    showing: Showing::Session(id),
+                    showing: Showing::Session(_),
                     ..
                 },
                 Some((project, _)),
-            ) if self.showing(cx) == Some(Pane::Chat)
-                && self.workspace.read(cx).active == Some(project)
-                && self.workspace.read(cx).active_id() == Some(*id) =>
-            {
-                Some(project)
-            }
+            ) if self.in_front(entry, cx) => Some(project),
             _ => None,
         };
         let member = self.member_of_row(entry, cx);
@@ -2602,7 +2602,7 @@ impl Cydonia {
     /// Put an entry away, or bring it back. Where the flag lives is each
     /// kind's own business — a board's file, an article's properties, a row in
     /// the store — and the sidebar asks for it the same way.
-    fn archive_entry(
+    pub(crate) fn archive_entry(
         &mut self,
         entry: &Row,
         archived: bool,
@@ -2698,11 +2698,15 @@ impl Cydonia {
         true
     }
 
-    /// Whether the pane in front is on this entry.
+    /// Whether the pane in front is on this entry. Never while the library
+    /// stands over the panes.
     fn in_front(&self, entry: &Row, cx: &App) -> bool {
         let Row::Entry { showing, .. } = entry else {
             return false;
         };
+        if self.library.is_some() {
+            return false;
+        }
         let Some((project, ix)) = self.located(entry, cx) else {
             return false;
         };

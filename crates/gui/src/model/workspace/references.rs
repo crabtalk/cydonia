@@ -83,38 +83,7 @@ impl Workspace {
             Target::Entry { number, within } => (number, within),
             Target::Card { key, handle } => return card(project, key, handle, text),
         };
-        let found = project
-            .sessions
-            .iter()
-            .find(|chat| chat.number == Some(number))
-            .map(|chat| (Kind::Session, Showing::Session(chat.id), chat.title.clone()))
-            .or_else(|| {
-                project
-                    .articles
-                    .iter()
-                    .find(|article| article.number == Some(number))
-                    .map(|article| {
-                        (
-                            Kind::Article,
-                            Showing::Article(article.id.clone()),
-                            article.title.clone(),
-                        )
-                    })
-            })
-            .or_else(|| {
-                project
-                    .boards
-                    .iter()
-                    .find(|board| board.number == Some(number))
-                    .map(|board| {
-                        (
-                            Kind::Board,
-                            Showing::Board(board.id.clone()),
-                            board.name.clone(),
-                        )
-                    })
-            });
-        let Some((kind, showing, title)) = found else {
+        let Some((kind, showing, title)) = entry(project, number) else {
             return Err(format!("Nothing is {text}"));
         };
         let part = match (within, &showing) {
@@ -149,6 +118,55 @@ impl Workspace {
             None => self.active_project(),
         }
     }
+}
+
+/// The entry `number` names in `project`: its kind, what shows it, and its
+/// own title.
+fn entry(project: &Project, number: u64) -> Option<(Kind, Showing, String)> {
+    project
+        .sessions
+        .iter()
+        .find(|chat| chat.number == Some(number))
+        .map(|chat| (Kind::Session, Showing::Session(chat.id), chat.title.clone()))
+        .or_else(|| {
+            project
+                .articles
+                .iter()
+                .find(|article| article.number == Some(number))
+                .map(|article| {
+                    (
+                        Kind::Article,
+                        Showing::Article(article.id.clone()),
+                        article.title.clone(),
+                    )
+                })
+        })
+        .or_else(|| {
+            project
+                .boards
+                .iter()
+                .find(|board| board.number == Some(number))
+                .map(|board| {
+                    (
+                        Kind::Board,
+                        Showing::Board(board.id.clone()),
+                        board.name.clone(),
+                    )
+                })
+        })
+        .or_else(|| {
+            project
+                .tables
+                .iter()
+                .find(|table| table.number == Some(number))
+                .map(|table| {
+                    (
+                        Kind::Table,
+                        Showing::Table(table.key.clone()),
+                        table.name.clone(),
+                    )
+                })
+        })
 }
 
 /// The card `key-handle` names in `project`, as a part of its board. `text`

@@ -21,6 +21,7 @@ pub mod hotkey;
 pub mod info;
 pub mod keymap;
 pub mod leaf;
+pub mod library;
 pub mod lights;
 pub mod mention;
 pub mod menubar;

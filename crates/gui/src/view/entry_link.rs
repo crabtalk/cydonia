@@ -375,6 +375,7 @@ impl Cydonia {
             Kind::Session => "Session",
             Kind::Article => "Article",
             Kind::Board => "Board",
+            Kind::Table => "Table",
         };
         let columns = match &named.row {
             Row::Entry {
@@ -763,17 +764,18 @@ impl Cydonia {
             .into_any_element()
     }
 
-    /// Session `id`'s transcript with the composer that sends to it, filling
-    /// the box it is put in. Scrolled by `list` where one is given, else by
-    /// the session's own.
+    /// Session `id`'s transcript, with the composer that sends to it for
+    /// `reply`, filling the box it is put in. Scrolled by `list` where one is
+    /// given, else by the session's own.
     pub(crate) fn session_transcript(
         &mut self,
         id: u64,
         list: Option<&bezel::ui::list::VariableList<usize>>,
+        reply: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let composer = self.session_composer(id, window, cx);
+        let composer = reply.then(|| self.session_composer(id, window, cx));
         let root = cx.entity().downgrade();
         let transcript = self.workspace.update(cx, |workspace, cx| {
             workspace.session(id).map(|chat| {
@@ -791,7 +793,9 @@ impl Cydonia {
                 )
             })
         });
-        let dropped = composer.clone();
+        let footer = composer
+            .clone()
+            .map(|composer| self.session_footer(Some(id), composer, None, cx));
         div()
             .id(SharedString::from(format!("session-card-transcript-{id}")))
             .relative()
@@ -800,13 +804,15 @@ impl Cydonia {
             // The transcript's wheel stops here, at its ends too, so what is
             // under it does not scroll with it.
             .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
-            .on_drop(move |paths: &gpui::ExternalPaths, _, cx| {
-                dropped.update(cx, |composer, cx| composer.drop_paths(paths, cx));
+            .when_some(composer, |el, dropped| {
+                el.on_drop(move |paths: &gpui::ExternalPaths, _, cx| {
+                    dropped.update(cx, |composer, cx| composer.drop_paths(paths, cx));
+                })
             })
             .flex()
             .flex_col()
             .children(transcript)
-            .child(self.session_footer(Some(id), composer, None, cx))
+            .children(footer)
             .into_any_element()
     }
 

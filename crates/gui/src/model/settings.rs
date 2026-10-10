@@ -53,6 +53,10 @@ pub struct Settings {
     /// beside the switches above.
     #[serde(default = "paste_images_in_source")]
     pub paste_images_in_source: bool,
+    /// Whether a session opened in a drawer carries a composer to reply in.
+    /// Bare, beside the switches above.
+    #[serde(default = "drawer_composer")]
+    pub drawer_composer: bool,
     /// How the interface is painted. The first table, so the bare keys above
     /// keep belonging to the document rather than to it.
     #[serde(default)]
@@ -924,6 +928,10 @@ fn paste_images_in_source() -> bool {
     true
 }
 
+fn drawer_composer() -> bool {
+    true
+}
+
 /// The launchers that resolve a package name on every run. An installed
 /// agent's command is a path to an unpacked executable, which resolves nothing.
 const RUNNERS: [&str; 3] = ["npx", "bunx", "pnpx"];
@@ -966,6 +974,7 @@ impl Default for Settings {
             notify_turns: notify_turns(),
             download_web_images: download_web_images(),
             paste_images_in_source: paste_images_in_source(),
+            drawer_composer: drawer_composer(),
             appearance: Appearance::default(),
             shortcuts: Shortcuts::default(),
             features: Features::default(),
@@ -1362,6 +1371,14 @@ pub fn set_notify_turns(on: bool) -> Result<()> {
 pub fn set_download_web_images(on: bool) -> Result<()> {
     edit(|doc| {
         doc["download_web_images"] = toml_edit::value(on);
+        Ok(true)
+    })
+}
+
+/// Switch the composer under a drawer's session on or off in the file.
+pub fn set_drawer_composer(on: bool) -> Result<()> {
+    edit(|doc| {
+        doc["drawer_composer"] = toml_edit::value(on);
         Ok(true)
     })
 }

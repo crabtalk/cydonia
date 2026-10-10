@@ -477,7 +477,7 @@ impl Docs {
             .clone()
     }
 
-    fn title(&self, text: &str) -> SharedString {
+    pub(crate) fn title(&self, text: &str) -> SharedString {
         self.of(text);
         let mut docs = self.0.borrow_mut();
         let cached = docs.get_mut(text).unwrap();
@@ -1245,7 +1245,7 @@ impl Cydonia {
 
     /// The `···` on a card: what the row of glyphs underneath should not carry,
     /// because it cannot be undone.
-    fn card_menu(
+    pub(crate) fn card_menu(
         &self,
         on: &str,
         card: &str,

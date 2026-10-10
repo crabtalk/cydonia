@@ -359,6 +359,10 @@ impl Cydonia {
         let Row::Entry { project, showing } = row else {
             return false;
         };
+        // The library stands over every pane.
+        if self.library.is_some() {
+            return false;
+        }
         let workspace = self.workspace.read(cx);
         if let Some(space) = workspace.active_space() {
             let Some(at) = workspace.project_at(project) else {
@@ -1107,6 +1111,7 @@ impl Cydonia {
     /// Open a space: the window is arranged by it until another entry is
     /// opened on its own.
     pub(crate) fn open_space(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+        self.library = None;
         self.workspace.update(cx, |workspace, cx| {
             workspace.open_space(ix, cx);
         });

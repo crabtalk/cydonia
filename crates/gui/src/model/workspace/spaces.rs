@@ -205,6 +205,41 @@ impl Workspace {
         Some(at)
     }
 
+    /// Put `members` into the space with this id, as tabs of the pane its
+    /// first entry is in, or into a new space over the first of them for
+    /// `None`. Each leaves whatever other space it was in. Answers the
+    /// space's index.
+    pub fn gather(
+        &mut self,
+        space: Option<&str>,
+        members: &[Member],
+        cx: &mut Context<Self>,
+    ) -> Option<usize> {
+        let keep = match space {
+            Some(id) => id.to_owned(),
+            None => {
+                let made = store::create("", members.first()?.clone())?;
+                let id = made.id.clone();
+                self.spaces.insert(0, made);
+                self.space = self.space.map(|open| open + 1);
+                id
+            }
+        };
+        for member in members {
+            // By id, because an eviction can take a space with it.
+            self.evict_from_spaces(member, &keep, cx);
+            let at = self.space_ix(&keep)?;
+            let space = &mut self.spaces[at];
+            let target = space.entries().into_iter().next()?;
+            if target != *member && space.stack(&target, member) {
+                store::save(space);
+            }
+        }
+        self.save();
+        cx.notify();
+        self.space_ix(&keep)
+    }
+
     /// Move a tab to where `to` sits in the strip of the pane holding both.
     pub fn reorder_tab(&mut self, moving: &Member, to: &Member, cx: &mut Context<Self>) {
         self.edit_space(cx, |space| space.reorder(moving, to));

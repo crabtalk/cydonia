@@ -138,7 +138,7 @@ impl Cydonia {
         // A space draws no band, so there is no field here to be the one
         // place — the sidebar row draws it instead. Without this the field
         // would be nowhere: the row stands down for a band that is not there.
-        if self.arranged(cx) {
+        if self.arranged(cx) || self.library.is_some() {
             return None;
         }
         let at = self.renaming.as_ref()?;
@@ -153,7 +153,14 @@ impl Cydonia {
     /// on the other edge the same way.
     pub(crate) fn pane_header(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
-        let toolbar = self.showing(cx).and_then(|pane| self.toolbar(pane, cx));
+        let toolbar = match self.library.is_some() {
+            true => Some(Toolbar {
+                title: "Library".to_owned(),
+                number: None,
+                entry: None,
+            }),
+            false => self.showing(cx).and_then(|pane| self.toolbar(pane, cx)),
+        };
         // The lights belong to the window, not a pane, so their clearance is
         // taken here and nowhere a pane can see it.
         let inset = match self.sidebar_open {

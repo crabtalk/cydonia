@@ -729,6 +729,14 @@ impl Workspace {
         cx.notify();
     }
 
+    pub fn set_drawer_composer(&mut self, on: bool, cx: &mut Context<Self>) {
+        if settings::set_drawer_composer(on).is_err() {
+            return;
+        }
+        self.settings.drawer_composer = on;
+        cx.notify();
+    }
+
     pub fn set_download_web_images(&mut self, on: bool, cx: &mut Context<Self>) {
         if settings::set_download_web_images(on).is_err() {
             return;

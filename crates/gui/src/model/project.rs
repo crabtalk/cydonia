@@ -50,6 +50,9 @@ pub struct Project {
     /// By key rather than one slot: a space can stand two tables side by
     /// side, and one page between them would draw the same rows in both.
     pub pages: HashMap<String, Page>,
+    /// Tables drawn somewhere other than the table pane — a drawer — by key.
+    /// Their pages are read alongside the open table's.
+    held: std::collections::BTreeSet<String>,
     /// Whether the sidebar shows what is under this project's heading.
     pub expanded: bool,
     /// Whether it shows what is under the archived divider. Folded away by
@@ -75,6 +78,7 @@ impl Project {
             tables: Vec::new(),
             table: None,
             pages: HashMap::new(),
+            held: Default::default(),
             expanded: true,
             archive_open: false,
             watch: None,
@@ -253,14 +257,15 @@ impl Project {
         self.pages.get(key)
     }
 
-    /// Read the rows for the open table. Any other page is dropped: a page is
-    /// a window on a table nobody is looking at.
+    /// Read the rows for the open table and the held ones. Any other page is
+    /// dropped: a page is a window on a table nobody is looking at.
     pub fn reload_page(&mut self) {
         let wanted: Vec<String> = self
             .table
             .and_then(|ix| self.tables.get(ix))
             .map(|table| table.key.clone())
             .into_iter()
+            .chain(self.held.iter().cloned())
             .collect();
         self.pages.retain(|key, _| wanted.contains(key));
         let Some(data) = self.data.as_ref() else {
@@ -271,6 +276,15 @@ impl Project {
             if let Ok(page) = data.read(&key, None, false, PAGE, 0) {
                 self.pages.insert(key, page);
             }
+        }
+    }
+
+    /// Hold the pages of these tables beside the open one's, read now when the
+    /// set changes.
+    pub fn hold_pages(&mut self, held: std::collections::BTreeSet<String>) {
+        if self.held != held {
+            self.held = held;
+            self.reload_page();
         }
     }
 

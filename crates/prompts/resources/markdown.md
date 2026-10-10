@@ -1,6 +1,6 @@
 ---
 name: markdown
-description: Write Cydonia Markdown — articles, cards and replies in a session — using its supported syntax, image sizing and paths, rich links, and links to sessions, articles and boards. Use for content displayed in Cydonia, not ordinary repository Markdown.
+description: Write Cydonia Markdown — articles, cards and replies in a session — using its supported syntax, image sizing and paths, rich links, and links to sessions, articles, boards and tables. Use for content displayed in Cydonia, not ordinary repository Markdown.
 ---
 
 # Cydonia Markdown
@@ -133,8 +133,8 @@ The spelling controls whether a link stays text or becomes a rich preview:
 
 ## Links to entries
 
-`cydonia://<project>#<number>` links a session, an article or a board in
-Cydonia, and `cydonia://<project>#<KEY-N>` a board's card. `<project>` is the
+`cydonia://<project>#<number>` links a session, an article, a board or a
+table in Cydonia, and `cydonia://<project>#<KEY-N>` a board's card. `<project>` is the
 project directory's name; `cydonia://#43` names the entry in the project
 shown. Spelled like a web link's forms:
 
@@ -155,8 +155,8 @@ shown. Spelled like a web link's forms:
   transcript, read only; `cydonia://cydonia#43:5-7` shows turns 5 to 7 alone.
   `cydonia://cydonia#12:5-7` shows lines 5 to 7 of article #12, and
   `cydonia://cydonia#12#setup` the section under its heading whose anchor is
-  `setup`. A whole article's or a board's card is its title, kind and number.
-  A board card's card is its handle, board and status over its text.
+  `setup`. A whole article's, board's or table's card is its title, kind and
+  number. A board card's card is its handle, board and status over its text.
 
 ## Supported formatting and limits
 

@@ -556,6 +556,8 @@ impl Cydonia {
                             .find(|chat| chat.record.as_deref() == Some(found.id.as_str()))?;
                         (Showing::Session(chat.id), chat.touched())
                     }
+                    // The text search reads no tables.
+                    Kind::Table => return None,
                 };
                 let row = Row::Entry {
                     project: open.path.clone(),
@@ -1267,6 +1269,7 @@ pub(crate) fn kind_icon(kind: Kind) -> Icon {
         Kind::Session => icons::social::MessageCircle.into(),
         Kind::Board => icons::development::SquareKanban.into(),
         Kind::Article => icons::files::FileText.into(),
+        Kind::Table => icons::files::Table2.into(),
     }
 }
 
@@ -1276,7 +1279,7 @@ fn kind_of(row: &Row) -> Option<Kind> {
             Showing::Session(_) => Some(Kind::Session),
             Showing::Board(_) => Some(Kind::Board),
             Showing::Article(_) => Some(Kind::Article),
-            Showing::Table(_) => None,
+            Showing::Table(_) => Some(Kind::Table),
         },
         _ => None,
     }

@@ -26,6 +26,8 @@ pub(crate) enum Doomed {
     Column(String, String),
     /// A session's last turn, by the session and the item its message is.
     Turn(u64, usize),
+    /// Several at once — what the library's selection deletes.
+    Many(Vec<Doomed>),
 }
 
 /// A delete that has been asked for and not yet agreed to.
@@ -56,6 +58,40 @@ impl Cydonia {
             note,
         });
         cx.notify();
+    }
+
+    /// The same for several entries and cards at once.
+    pub(crate) fn ask_delete_many(&mut self, doomed: Vec<Doomed>, cx: &mut Context<Self>) {
+        if doomed.is_empty() {
+            return;
+        }
+        let label = match doomed.len() {
+            1 => "1 item".to_owned(),
+            n => format!("{n} items"),
+        };
+        self.menu = None;
+        self.confirming = Some(Confirming {
+            doomed: Doomed::Many(doomed),
+            label,
+            goes: None,
+            note: "Every file goes with them. This cannot be undone.".to_owned(),
+        });
+        cx.notify();
+    }
+
+    /// Carry out a delete that has been agreed to.
+    fn delete_doomed(&mut self, doomed: &Doomed, window: &mut Window, cx: &mut Context<Self>) {
+        match doomed {
+            Doomed::Entry(entry) => self.delete_entry(entry, window, cx),
+            Doomed::Card(board, card) => self.delete_card(board, card, cx),
+            Doomed::Column(board, column) => self.drop_column(board, column, cx),
+            Doomed::Turn(id, at) => self.rewind(*id, *at, window, cx),
+            Doomed::Many(all) => {
+                for doomed in all {
+                    self.delete_doomed(doomed, window, cx);
+                }
+            }
+        }
     }
 
     /// The same for one card, which has no file of its own to quote — it lives
@@ -305,20 +341,7 @@ impl Cydonia {
                                         .id("delete-confirm")
                                         .on_click(cx.listener(move |this, _, window, cx| {
                                             this.confirming = None;
-                                            match &doomed {
-                                                Doomed::Entry(entry) => {
-                                                    this.delete_entry(entry, window, cx)
-                                                }
-                                                Doomed::Card(board, card) => {
-                                                    this.delete_card(board, card, cx)
-                                                }
-                                                Doomed::Column(board, column) => {
-                                                    this.drop_column(board, column, cx)
-                                                }
-                                                Doomed::Turn(id, at) => {
-                                                    this.rewind(*id, *at, window, cx)
-                                                }
-                                            }
+                                            this.delete_doomed(&doomed, window, cx);
                                         })),
                                 ),
                         ),
