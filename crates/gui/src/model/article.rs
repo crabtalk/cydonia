@@ -294,13 +294,7 @@ impl Article {
             // is named.
             language::ensure(fences(editor.read(cx)), cx);
             if editor.read(cx).mode() == Mode::Source {
-                let digits = editor
-                    .read(cx)
-                    .source()
-                    .split('\n')
-                    .count()
-                    .to_string()
-                    .len();
+                let digits = editor.read(cx).source_lines().to_string().len();
                 if digits != source_digits {
                     source_digits = digits;
                     cx.notify();

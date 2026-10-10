@@ -254,9 +254,7 @@ fn source_offset(editor: &editor::Editor, cx: &App) -> f32 {
         / 10.;
     let text_size = cx.typography().scaled(size / base).body.size();
     let digits = editor
-        .source()
-        .split('\n')
-        .count()
+        .source_lines()
         .to_string()
         .len()
         .max(style.gutter_min_digits);
