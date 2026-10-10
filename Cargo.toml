@@ -3,7 +3,7 @@ members = ["crates/cydonia", "crates/gui", "crates/artifact", "crates/mcp", "cra
 resolver = "3"
 
 [workspace.package]
-version = "0.1.28"
+version = "0.1.29"
 edition = "2024"
 rust-version = "1.95"
 license = "MIT"
@@ -56,3 +56,19 @@ lto = "fat"
 codegen-units = 1
 strip = "symbols"
 
+
+# TODO: drop once a bezel release carries per-variant theme families.
+[patch.crates-io]
+bezel = { path = "../bezel/crates/bezel" }
+bezel-agent = { path = "../bezel/crates/agent" }
+bezel-browser = { path = "../bezel/crates/browser" }
+bezel-canvas-core = { path = "../bezel/crates/canvas-core" }
+bezel-editor = { path = "../bezel/crates/editor" }
+bezel-icons = { path = "../bezel/crates/icons" }
+bezel-markdown = { path = "../bezel/crates/markdown" }
+bezel-motion = { path = "../bezel/crates/motion" }
+bezel-syntax = { path = "../bezel/crates/syntax" }
+bezel-syntax-std = { path = "../bezel/crates/syntax-std" }
+bezel-terminal = { path = "../bezel/crates/terminal" }
+bezel-theme = { path = "../bezel/crates/theme" }
+bezel-ui = { path = "../bezel/crates/ui" }

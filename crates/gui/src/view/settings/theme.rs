@@ -15,7 +15,7 @@ use bezel::{
     gpui::{
         AnyElement, Context, DragMoveEvent, Empty, Entity, FontWeight, Hsla, div, prelude::*, px,
     },
-    theme::{TextStyle, Theme, ThemeFamily, Tint, Typeset, appearance::AppearanceMode},
+    theme::{Appearance, TextStyle, Theme, ThemeFamily, Tint, Typeset, appearance::AppearanceMode},
     ui::combobox::{Combobox, ComboboxEvent},
     ui::widgets::{self, Controls, Scaffolding, SliderDrag},
 };
@@ -54,7 +54,8 @@ impl SettingsWindow {
                 theme
                     .group_box()
                     .child(self.theme_row(cx))
-                    .child(self.theme_family_row(cx)),
+                    .child(self.theme_family_row(Appearance::Light, cx))
+                    .child(self.theme_family_row(Appearance::Dark, cx)),
             )
             .child(self.colors_group(cx))
             .child(self.typography_group(cx))
@@ -124,12 +125,17 @@ impl SettingsWindow {
             )
     }
 
-    /// The bundled theme families, `Default` first for bezel's own palette.
+    /// The bundled theme families with a variant for `appearance`, `Default`
+    /// first for bezel's own palette.
     pub(super) fn theme_family_picker(
+        appearance: Appearance,
         current: Option<&'static ThemeFamily>,
         cx: &mut Context<Self>,
     ) -> Entity<Combobox> {
-        let families = themes::all();
+        let families: Vec<&'static ThemeFamily> = themes::all()
+            .iter()
+            .filter(|family| family.variant(appearance).is_some())
+            .collect();
         let items = std::iter::once(DEFAULT_THEME.into())
             .chain(families.iter().map(|family| family.name.clone().into()))
             .collect();
@@ -140,70 +146,62 @@ impl SettingsWindow {
                     .position(|family| family.name == current.name)
             })
             .map_or(0, |ix| ix + 1);
+        let shipped = Theme::for_appearance(appearance);
+        let faces: Vec<(Hsla, Hsla)> = std::iter::once((shipped.bg, shipped.text.alpha(1.)))
+            .chain(families.iter().filter_map(|family| {
+                let theme = family.theme(appearance)?;
+                Some((theme.bg, theme.accent))
+            }))
+            .collect();
         let combobox = cx.new(|cx| {
             Combobox::new(items, DEFAULT_THEME, cx)
                 .with_selection(selected)
-                .with_leading(|item, theme| {
-                    let appearance = theme.appearance;
-                    let shipped = Theme::for_appearance(appearance);
-                    let (bg, ink) = match item.checked_sub(1).and_then(|ix| themes::all().get(ix)) {
-                        Some(family) => {
-                            let variant = family.variant(appearance);
-                            (
-                                variant.get("bg").unwrap_or(shipped.bg),
-                                variant.get("accent").unwrap_or(shipped.accent),
-                            )
-                        }
-                        None => (shipped.bg, shipped.text.alpha(1.)),
-                    };
+                .with_leading(move |item, theme| {
+                    let (bg, ink) = faces.get(item).copied().unwrap_or(faces[0]);
                     theme_swatch(theme, bg, ink)
                 })
         });
-        cx.subscribe(&combobox, |this: &mut Self, _, event, cx| {
+        cx.subscribe(&combobox, move |this: &mut Self, _, event, cx| {
             let ComboboxEvent::Selected(item) = event;
             let name = item
                 .checked_sub(1)
-                .and_then(|ix| themes::all().get(ix))
+                .and_then(|ix| families.get(ix))
                 .map(|family| family.name.clone());
-            this.workspace
-                .update(cx, |workspace, cx| workspace.set_theme(name, cx));
+            this.workspace.update(cx, |workspace, cx| {
+                workspace.set_theme(appearance, name, cx)
+            });
             cx.notify();
         })
         .detach();
         combobox
     }
 
-    fn theme_family_row(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    fn theme_family_row(
+        &self,
+        appearance: Appearance,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
+        let (title, picker) = match appearance {
+            Appearance::Light => ("Light theme", self.light_theme.clone()),
+            Appearance::Dark => ("Dark theme", self.dark_theme.clone()),
+        };
         theme
             .card_row(false)
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .child(theme.row_title("Color theme"))
-                    .child(
-                        div()
-                            .mt(px(4.))
-                            .text_style(TextStyle::Subheadline)
-                            .text_color(theme.text_muted)
-                            .child("Each has a light and a dark variant."),
-                    ),
-            )
-            .child(
-                div()
-                    .flex_none()
-                    .w(px(220.))
-                    .child(self.theme_family.clone()),
-            )
+            .child(div().flex_1().min_w_0().child(theme.row_title(title)))
+            .child(div().flex_none().w(px(220.)).child(picker))
     }
 
     /// What the greys are mixed from, and whether they are see-through.
     fn colors_group(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
-        let themed = self.workspace.read(cx).themed();
+        // The tint reaches only an appearance painted in bezel's own palette.
+        let tinted = {
+            let workspace = self.workspace.read(cx);
+            [Appearance::Light, Appearance::Dark]
+                .into_iter()
+                .any(|appearance| workspace.theme(appearance).is_none())
+        };
         div()
             .flex()
             .flex_col()
@@ -214,7 +212,7 @@ impl SettingsWindow {
                     .group_box()
                     .children(self.vibrancy_row(cx))
                     .children(self.blur_row(cx))
-                    .when(!themed, |group| {
+                    .when(tinted, |group| {
                         group.child(self.hue_row(cx)).child(self.intensity_row(cx))
                     }),
             )

@@ -485,27 +485,32 @@ impl Workspace {
         }
     }
 
-    /// Paint the app in a bundled theme family, or bezel's own palette for
-    /// `None`.
-    pub fn set_theme(&mut self, name: Option<String>, cx: &mut Context<Self>) {
-        self.settings.appearance.theme = name;
-        apply_tint(self.tint, self.themed(), cx);
+    /// Paint `appearance` in a bundled theme family, or bezel's own palette
+    /// for `None`.
+    pub fn set_theme(
+        &mut self,
+        appearance: bezel::theme::Appearance,
+        name: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        self.settings.appearance.theme.set(appearance, name);
         self.apply_palette(cx);
         self.save_appearance();
         cx.notify();
     }
 
-    /// Whether the app is painted in a bundled theme family.
-    pub fn themed(&self) -> bool {
-        self.theme().is_some()
-    }
-
-    pub fn theme(&self) -> Option<&'static bezel::theme::ThemeFamily> {
+    /// The family `appearance` is painted in, if it names one with a variant
+    /// for it.
+    pub fn theme(
+        &self,
+        appearance: bezel::theme::Appearance,
+    ) -> Option<&'static bezel::theme::ThemeFamily> {
         self.settings
             .appearance
             .theme
-            .as_deref()
+            .get(appearance)
             .and_then(crate::model::themes::named)
+            .filter(|family| family.variant(appearance).is_some())
     }
 
     /// Rebuild the palette from the appearance settings and the families.
@@ -981,7 +986,7 @@ impl Workspace {
 
     pub fn set_tint(&mut self, tint: Tint, cx: &mut Context<Self>) {
         self.tint = tint;
-        apply_tint(tint, self.themed(), cx);
+        apply_tint(tint, cx);
         self.save_appearance();
         cx.notify();
     }
@@ -1044,12 +1049,10 @@ pub fn named<'a>(
         .or_else(|| agents.iter().find(|agent| agent.name == name))
 }
 
-/// Point bezel's tint at the preference, or at none while a theme family is
-/// painted. Free rather than a method because the window reads its background
-/// appearance while it is being opened, which is before there is a workspace
-/// to ask.
-pub fn apply_tint(tint: Tint, themed: bool, cx: &mut App) {
-    let tint = if themed { Tint::NONE } else { tint };
+/// Point bezel's tint at the preference. Free rather than a method because the
+/// window reads its background appearance while it is being opened, which is
+/// before there is a workspace to ask.
+pub fn apply_tint(tint: Tint, cx: &mut App) {
     cx.set_brand(Brand { tint, ..cx.brand() });
 }
 

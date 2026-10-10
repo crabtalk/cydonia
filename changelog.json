@@ -1,5 +1,22 @@
 [
   {
+    "version": "0.1.29",
+    "date": "2026-10-09",
+    "nightly": true,
+    "summary": "A color theme for light and one for dark, and 18 more themes: Absolutely, Codex, Linear, Lobster, Material, Matrix, Monokai, Night Owl, Nord, Notion, Oscurange, Proof, Raycast, Rosé Pine, Sentry, Temple, Vercel and VS Code Plus.",
+    "new": [
+      "Pick the light theme and the dark theme separately in Settings › Appearance, each listing the themes that come in that mode",
+      "Paint the app in Absolutely, Codex, Linear, Lobster, Material, Matrix, Monokai, Night Owl, Nord, Notion, Oscurange, Proof, Raycast, Rosé Pine, Sentry, Temple, Vercel or VS Code Plus"
+    ],
+    "changed": [
+      "Show the hue and intensity sliders while either mode is painted in Cydonia's own colors, and tint only that mode"
+    ],
+    "fixed": [
+      "Remember the color theme across restarts",
+      "Keep a list or a code block inside a quote quoted"
+    ]
+  },
+  {
     "version": "0.1.28",
     "date": "2026-10-08",
     "summary": "Color themes: Ayu, Catppuccin, Dracula, Everforest, GitHub, Gruvbox, One, Solarized and Tokyo Night, each in light and dark.",

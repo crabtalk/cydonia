@@ -162,14 +162,12 @@ pub struct Appearance {
     /// Unset is the system's monospace face.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mono_font: Option<String>,
-    /// The bundled theme family the app is painted in, by name — see
-    /// [`crate::model::themes`]. Unset, or a name no family has, is bezel's
-    /// own palette.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub theme: Option<String>,
+    /// The bundled theme family each appearance is painted in.
+    #[serde(skip_serializing_if = "Themes::is_empty")]
+    pub theme: Themes,
     /// The greys' oklch hue in degrees, and how much of it they carry. Zero
-    /// chroma is the shipped neutral, whatever the hue says. Not applied while
-    /// [`Self::theme`] names a family.
+    /// chroma is the shipped neutral, whatever the hue says. Not applied to an
+    /// appearance [`Self::theme`] paints in a family.
     pub hue: f32,
     pub chroma: f32,
     /// How opaque the tint over the frosted window is — bezel's
@@ -495,7 +493,7 @@ impl Default for Appearance {
             ui_font: None,
             article_font: None,
             mono_font: None,
-            theme: None,
+            theme: Themes::default(),
             hue: 0.,
             vibrancy: bezel::theme::Theme::VIBRANCY_ALPHA,
             blur: bezel::theme::Theme::WINDOW_BLUR,
@@ -552,6 +550,68 @@ impl Appearance {
             .take()
             .filter(|name| !name.trim().is_empty());
         self.mono_font = self.mono_font.take().filter(|name| !name.trim().is_empty());
+        for slot in [&mut self.theme.light, &mut self.theme.dark] {
+            *slot = slot.take().filter(|name| !name.trim().is_empty());
+        }
+    }
+}
+
+/// The theme family each appearance is painted in, by name — see
+/// [`crate::model::themes`]. Unset, or a name no family has a variant for that
+/// appearance under, is bezel's own palette.
+///
+/// Written as `theme = { light = "GitHub", dark = "Lobster" }`. A bare string
+/// names both.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(from = "ThemesForm")]
+pub struct Themes {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub light: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dark: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum ThemesForm {
+    Both(String),
+    Split {
+        #[serde(default)]
+        light: Option<String>,
+        #[serde(default)]
+        dark: Option<String>,
+    },
+}
+
+impl From<ThemesForm> for Themes {
+    fn from(form: ThemesForm) -> Self {
+        match form {
+            ThemesForm::Both(name) => Self {
+                light: Some(name.clone()),
+                dark: Some(name),
+            },
+            ThemesForm::Split { light, dark } => Self { light, dark },
+        }
+    }
+}
+
+impl Themes {
+    pub fn is_empty(&self) -> bool {
+        self.light.is_none() && self.dark.is_none()
+    }
+
+    pub fn get(&self, appearance: bezel::theme::Appearance) -> Option<&str> {
+        match appearance {
+            bezel::theme::Appearance::Light => self.light.as_deref(),
+            bezel::theme::Appearance::Dark => self.dark.as_deref(),
+        }
+    }
+
+    pub fn set(&mut self, appearance: bezel::theme::Appearance, name: Option<String>) {
+        match appearance {
+            bezel::theme::Appearance::Light => self.light = name,
+            bezel::theme::Appearance::Dark => self.dark = name,
+        }
     }
 }
 
@@ -1172,6 +1232,20 @@ fn write_appearance(doc: &mut toml_edit::DocumentMut, appearance: &Appearance) -
                 held.remove(key);
             }
         }
+    }
+    if appearance.theme.is_empty() {
+        held.remove("theme");
+    } else {
+        let mut theme = toml_edit::InlineTable::new();
+        for (key, name) in [
+            ("light", &appearance.theme.light),
+            ("dark", &appearance.theme.dark),
+        ] {
+            if let Some(name) = name {
+                theme.insert(key, name.as_str().into());
+            }
+        }
+        held["theme"] = toml_edit::value(theme);
     }
     held["hue"] = toml_edit::value(f64::from(appearance.hue));
     held["vibrancy"] = toml_edit::value(f64::from(appearance.vibrancy));

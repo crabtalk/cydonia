@@ -10,6 +10,7 @@ fn formatting(marks: Vec<Mark>) -> Formatting {
         mode: Mode::Blocks,
         marks,
         block: Some("Text".into()),
+        quote: None,
         fenceable: false,
     }
 }

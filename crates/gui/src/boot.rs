@@ -24,14 +24,13 @@ pub fn init(settings: &Settings, cx: &mut App) {
     fonts::set_terminal_caret(look.terminal_caret);
     // Before `appearance::init`, which installs the first palette.
     let inputs = palette::Inputs::of(&look, fonts::Families::of(&look));
-    let themed = inputs.theme.is_some();
     palette::register(inputs, cx);
     appearance::init(look.mode, cx);
     // Before the window is opened: it reads its background appearance
     // on the way up, and vibrancy is what decides that.
     workspace::apply_caption_style(look.traffic_lights, cx);
     workspace::apply_transparency(look.vibrancy, look.blur, cx);
-    workspace::apply_tint(Tint::new(look.hue, look.chroma), themed, cx);
+    workspace::apply_tint(Tint::new(look.hue, look.chroma), cx);
     cx.set_caret_blink(look.cursor_blink);
     cx.set_caret_shape(look.caret_shape.into());
     cx.set_caret_height(look.caret_height.into());
