@@ -46,6 +46,11 @@ pub fn init(settings: &Settings, cx: &mut App) {
     cx.set_mark_paint(article::mark_paint);
     article::set_search(look.search);
     cx.set_find_paint(article::find_paint);
+    cx.set_mermaid_zoom(markdown::mermaid::Zoom {
+        min: 0.1,
+        max: 4.0,
+        ..Default::default()
+    });
     // The whole catalogue, not the cached subset: the fence picker lists
     // what this list holds, and a picker that offered only what had already
     // been downloaded could not be used to ask for anything else. Naming a
