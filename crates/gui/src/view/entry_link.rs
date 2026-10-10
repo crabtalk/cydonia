@@ -745,9 +745,10 @@ impl Cydonia {
             .into_any_element()
     }
 
-    /// Session `id`'s transcript, with the composer that sends to it for
-    /// `reply`, filling the box it is put in. Scrolled by `list` where one is
-    /// given, else by the session's own.
+    /// Session `id`'s transcript over its footer, filling the box it is put
+    /// in. Without `reply` the composer has no field, and shows the turn's
+    /// activity alone. Scrolled by `list` where one is given, else by the
+    /// session's own.
     pub(crate) fn session_transcript(
         &mut self,
         id: u64,
@@ -756,7 +757,8 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let composer = reply.then(|| self.session_composer(id, window, cx));
+        let composer = self.session_composer(id, window, cx);
+        composer.update(cx, |composer, cx| composer.set_input(reply, cx));
         let root = cx.entity().downgrade();
         let transcript = self.workspace.update(cx, |workspace, cx| {
             workspace.session(id).map(|chat| {
@@ -774,9 +776,6 @@ impl Cydonia {
                 )
             })
         });
-        let footer = composer
-            .clone()
-            .map(|composer| self.session_footer(Some(id), composer, None, cx));
         div()
             .id(SharedString::from(format!("session-card-transcript-{id}")))
             .relative()
@@ -785,7 +784,8 @@ impl Cydonia {
             // The transcript's wheel stops here, at its ends too, so what is
             // under it does not scroll with it.
             .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
-            .when_some(composer, |el, dropped| {
+            .when(reply, |el| {
+                let dropped = composer.clone();
                 el.on_drop(move |paths: &gpui::ExternalPaths, _, cx| {
                     dropped.update(cx, |composer, cx| composer.drop_paths(paths, cx));
                 })
@@ -793,7 +793,7 @@ impl Cydonia {
             .flex()
             .flex_col()
             .children(transcript)
-            .children(footer)
+            .child(self.session_footer(Some(id), composer, None, cx))
             .into_any_element()
     }
 

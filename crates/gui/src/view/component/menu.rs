@@ -37,6 +37,8 @@ pub(crate) enum Menu {
     /// The `···` on an entry's row in the library. Its own key: the same entry
     /// has a sidebar row, and one key would open both menus.
     Library(Row),
+    /// The library's tabs, as a select in a narrow bar.
+    LibraryTab,
     /// The library's project picker.
     LibraryProject,
     /// The library selection's `Move to`.

@@ -1,10 +1,10 @@
-//! Back and forward through the entries the window has been on: one history
-//! for the window, across projects and spaces.
+//! Back and forward through the entries the window has been on, and the
+//! library: one history for the window, across projects and spaces.
 //!
 //! It follows the entry in focus, not how it got there — a row in the sidebar,
 //! a search hit, a link in an article, a press on another pane of a space.
 //! Going back is going to that entry, wherever it is shown now, scrolled to
-//! where it was left.
+//! where it was left; or to the library, narrowed as it was left.
 
 use artifact::space::Member;
 use bezel::{
@@ -21,6 +21,7 @@ use bezel::{
 use crate::{
     model::workspace::Showing,
     view::{
+        library::Shelf,
         root::{Cydonia, GoBack, GoForward},
         sidebar::Row,
     },
@@ -29,15 +30,22 @@ use crate::{
 /// Entries kept behind and ahead, at most.
 const KEPT: usize = 100;
 
-/// Where an entry was left: the entry, and how far into it.
+/// What the window was on.
+#[derive(Clone, PartialEq)]
+enum Place {
+    Entry(Member),
+    Library,
+}
+
+/// Where the window was left: what it was on, and how far into it.
 #[derive(Clone)]
 struct Stop {
-    member: Member,
+    place: Place,
     at: Option<Position>,
 }
 
-/// How far into an entry, by kind.
-#[derive(Clone, Copy)]
+/// How far into an entry, by kind, or what the library was narrowed to.
+#[derive(Clone)]
 enum Position {
     Transcript(ListOffset),
     Article(Point<Pixels>),
@@ -45,14 +53,15 @@ enum Position {
         across: Point<Pixels>,
         down: Point<Pixels>,
     },
+    Library(Shelf),
 }
 
 #[derive(Default)]
 pub(crate) struct History {
     back: Vec<Stop>,
     forward: Vec<Stop>,
-    /// The entry in focus when the window last looked.
-    seen: Option<Member>,
+    /// What the window was on when it last looked.
+    seen: Option<Place>,
     /// Set while back or forward is moving the focus, so the move is not
     /// recorded as a new step.
     stepping: bool,
@@ -69,16 +78,23 @@ impl History {
 }
 
 impl Cydonia {
-    /// The entry in focus: the focused pane's in a space, the single pane's
-    /// otherwise.
-    fn focused_member(&self, cx: &Context<Self>) -> Option<Member> {
-        self.leaf().entry.clone().or_else(|| self.lone_member(cx))
+    /// What the window is on: the library while it is up, else the entry in
+    /// focus — the focused pane's in a space, the single pane's otherwise.
+    fn focused_place(&self, cx: &Context<Self>) -> Option<Place> {
+        if self.library.is_some() {
+            return Some(Place::Library);
+        }
+        self.leaf()
+            .entry
+            .clone()
+            .or_else(|| self.lone_member(cx))
+            .map(Place::Entry)
     }
 
-    /// Note the entry in focus, and step the history when it changed. Called
-    /// on every render, which every change of focus ends in.
+    /// Note what the window is on, and step the history when it changed.
+    /// Called on every render, which every change of focus ends in.
     pub(crate) fn track_history(&mut self, cx: &Context<Self>) {
-        let now = self.focused_member(cx);
+        let now = self.focused_place(cx);
         let history = &mut self.history;
         // Spent on the first look after a step, whether or not it moved.
         let stepping = std::mem::take(&mut history.stepping);
@@ -98,8 +114,22 @@ impl Cydonia {
         }
     }
 
-    /// `member` as it is now, with how far into it it is scrolled.
-    fn stop_at(&self, member: Member, cx: &Context<Self>) -> Stop {
+    /// `place` as it is now: how far into an entry it is scrolled, or what the
+    /// library is narrowed to.
+    fn stop_at(&self, place: Place, cx: &Context<Self>) -> Stop {
+        let member = match place {
+            Place::Entry(member) => member,
+            Place::Library => {
+                let at = self
+                    .library
+                    .as_ref()
+                    .map(|library| Position::Library(library.shelf(cx)));
+                return Stop {
+                    place: Place::Library,
+                    at,
+                };
+            }
+        };
         let workspace = self.workspace.read(cx);
         let at = workspace
             .showing_of(&member)
@@ -122,16 +152,19 @@ impl Cydonia {
                     Showing::Table(_) => return None,
                 })
             });
-        Stop { member, at }
+        Stop {
+            place: Place::Entry(member),
+            at,
+        }
     }
 
     /// Put the entry `stop` names back where it was left.
     fn restore(&self, stop: &Stop, cx: &Context<Self>) {
-        let Some(at) = stop.at else {
+        let (Place::Entry(member), Some(at)) = (&stop.place, &stop.at) else {
             return;
         };
         let workspace = self.workspace.read(cx);
-        let Some((project, showing)) = workspace.showing_of(&stop.member) else {
+        let Some((project, showing)) = workspace.showing_of(member) else {
             return;
         };
         let Some(open) = workspace.projects.get(project) else {
@@ -140,18 +173,18 @@ impl Cydonia {
         match (showing, at) {
             (Showing::Session(id), Position::Transcript(top)) => {
                 if let Some(chat) = open.session(id) {
-                    chat.transcript.scroll_to_top(top);
+                    chat.transcript.scroll_to_top(*top);
                 }
             }
             (Showing::Article(id), Position::Article(offset)) => {
                 if let Some(ix) = open.article_ix(&id) {
-                    open.articles[ix].scroll.set_offset(offset);
+                    open.articles[ix].scroll.set_offset(*offset);
                 }
             }
             (Showing::Board(id), Position::Board { across, down }) => {
                 let scroll = self.boards.of(&id);
-                scroll.across.set_offset(across);
-                scroll.down.set_offset(down);
+                scroll.across.set_offset(*across);
+                scroll.down.set_offset(*down);
             }
             _ => {}
         }
@@ -170,8 +203,9 @@ impl Cydonia {
         self.step_history(false, window, cx);
     }
 
-    /// Go to the nearest entry `back` (or forward) that still exists, moving
-    /// the one in focus onto the other side. Entries gone since are dropped.
+    /// Go to the nearest place `back` (or forward) that still exists, moving
+    /// the one the window is on onto the other side. Entries gone since are
+    /// dropped.
     fn step_history(&mut self, back: bool, window: &mut Window, cx: &mut Context<Self>) {
         loop {
             let next = match back {
@@ -181,8 +215,12 @@ impl Cydonia {
             let Some(next) = next else {
                 return;
             };
-            let Some(row) = self.row_of(&next.member, cx) else {
-                continue;
+            let row = match &next.place {
+                Place::Entry(member) => match self.row_of(member, cx) {
+                    Some(row) => Some(row),
+                    None => continue,
+                },
+                Place::Library => None,
             };
             if let Some(left) = self.history.seen.clone() {
                 let stop = self.stop_at(left, cx);
@@ -192,8 +230,15 @@ impl Cydonia {
                 }
             }
             self.history.stepping = true;
-            self.open_row(&row, window, cx);
-            self.restore(&next, cx);
+            match (row, next.at.clone()) {
+                (Some(row), _) => {
+                    self.open_row(&row, window, cx);
+                    self.restore(&next, cx);
+                }
+                (None, Some(Position::Library(shelf))) => self.open_library(shelf, cx),
+                (None, _) if self.library.is_none() => self.toggle_library(cx),
+                (None, _) => {}
+            }
             cx.notify();
             return;
         }

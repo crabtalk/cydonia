@@ -17,23 +17,29 @@ use crate::{
 };
 use bezel::{
     gpui::{
-        AnyElement, App, Context, Div, Entity, SharedString, Stateful, UniformListScrollHandle,
-        Window, div, prelude::*, px, uniform_list,
+        self, AnyElement, App, Context, Div, Entity, Pixels, SharedString, Stateful,
+        UniformListScrollHandle, Window, div, prelude::*, px, uniform_list,
     },
     theme::{TextStyle, Theme, Typeset},
     ui::{
         icons::{self, Icon},
         input::{FieldEvent, TextField},
         menu::Item as MenuItem,
-        popover, table, tabs,
+        popover,
+        scroll::{self as scrollbars, Axes},
+        table, tabs,
         widgets::{ButtonStyle, Buttons, Controls},
     },
 };
 use chrono::Datelike as _;
-use std::{collections::HashSet, ops::Range, path::PathBuf, rc::Rc};
+use std::{cell::Cell, collections::HashSet, ops::Range, path::PathBuf, rc::Rc};
 
 /// How far back [`Tab::Recent`] reaches, in milliseconds.
 const RECENT: u128 = 7 * 24 * 60 * 60 * 1000;
+
+/// The search field's width, and what the bar puts between its parts.
+const SEARCH: f32 = 240.;
+const BAR_GAP: f32 = 12.;
 
 /// Every list row is drawn at this height: the list lays them out at one
 /// extent.
@@ -130,6 +136,15 @@ pub(crate) enum Item {
     },
 }
 
+/// What the library was narrowed to — what going back to it puts back.
+#[derive(Clone, PartialEq)]
+pub(crate) struct Shelf {
+    tab: Tab,
+    project: Option<PathBuf>,
+    sort: table::Sort,
+    query: String,
+}
+
 /// What the library is showing, while it is up.
 pub(crate) struct Library {
     tab: Tab,
@@ -139,9 +154,38 @@ pub(crate) struct Library {
     query: Entity<TextField>,
     selected: HashSet<Item>,
     scroll: UniformListScrollHandle,
+    /// How wide the bar was laid out last frame, and the tabs laid out in a
+    /// row the last time they were: the tabs give way to a select when the
+    /// two do not fit beside the search.
+    bar: Rc<Cell<Pixels>>,
+    strip: Rc<Cell<Pixels>>,
 }
 
 impl Library {
+    /// What this library is narrowed to.
+    pub(crate) fn shelf(&self, cx: &App) -> Shelf {
+        Shelf {
+            tab: self.tab,
+            project: self.project.clone(),
+            sort: self.sort,
+            query: self.query.read(cx).content().to_string(),
+        }
+    }
+
+    /// A library narrowed as `shelf` says.
+    fn shelved(shelf: Shelf, cx: &mut Context<Cydonia>) -> Self {
+        let library = Self::new(cx);
+        library
+            .query
+            .update(cx, |field, cx| field.set_content(shelf.query, cx));
+        Self {
+            tab: shelf.tab,
+            project: shelf.project,
+            sort: shelf.sort,
+            ..library
+        }
+    }
+
     fn new(cx: &mut Context<Cydonia>) -> Self {
         let query = cx.new(|cx| {
             TextField::new(cx)
@@ -166,6 +210,8 @@ impl Library {
             query,
             selected: HashSet::new(),
             scroll: UniformListScrollHandle::new(),
+            bar: Rc::new(Cell::new(px(0.))),
+            strip: Rc::new(Cell::new(px(0.))),
         }
     }
 }
@@ -214,6 +260,14 @@ impl Cydonia {
             Some(_) => None,
             None => Some(Library::new(cx)),
         };
+        cx.notify();
+    }
+
+    /// Put the library up narrowed as `shelf` says — where the history goes
+    /// back to it.
+    pub(crate) fn open_library(&mut self, shelf: Shelf, cx: &mut Context<Self>) {
+        self.commit(cx);
+        self.library = Some(Library::shelved(shelf, cx));
         cx.notify();
     }
 
@@ -594,7 +648,7 @@ impl Cydonia {
         let listings = Rc::new(self.library_listings(cx));
         let bar = match selected {
             true => self.library_selection_bar(window, cx),
-            false => self.library_bar(cx),
+            false => self.library_bar(window, cx),
         };
         let body = match listings.is_empty() {
             true => div()
@@ -632,18 +686,32 @@ impl Cydonia {
 
     /// The tabs and the search: what the library is narrowed to while nothing
     /// is selected.
-    fn library_bar(&self, cx: &mut Context<Self>) -> Div {
+    fn library_bar(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let theme = Theme::of(cx).clone();
         let Some(library) = &self.library else {
             return div();
         };
         let tab = library.tab;
+        let (bar, strip) = (library.bar.clone(), library.strip.clone());
         let features = &self.workspace.read(cx).settings.features;
-        let tabs = div().flex().flex_row().items_center().gap(px(2.)).children(
-            Tab::ALL
-                .into_iter()
-                .filter(|at| at.shown(features))
-                .map(|at| {
+        let shown: Vec<Tab> = Tab::ALL
+            .into_iter()
+            .filter(|at| at.shown(features))
+            .collect();
+        // Measured while the tabs are a row, and kept while they are not: the
+        // row is what has to fit for it to come back. A row never measured is
+        // drawn, so that it is.
+        let wide = f32::from(strip.get());
+        let fits = wide == 0. || f32::from(bar.get()) >= wide + BAR_GAP + SEARCH;
+        let tabs = match fits {
+            true => div()
+                .flex_none()
+                .relative()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(2.))
+                .children(shown.into_iter().map(|at| {
                     let state = match at == tab {
                         true => tabs::State::Focused,
                         false => tabs::State::Resting,
@@ -655,10 +723,13 @@ impl Cydonia {
                         state,
                     )
                     .on_click(cx.listener(move |this, _, _, cx| this.library_tab(at, cx)))
-                }),
-        );
+                }))
+                .child(measure(strip))
+                .into_any_element(),
+            false => self.tab_picker(tab, shown, window, cx).into_any_element(),
+        };
         let search = div()
-            .w(px(240.))
+            .w(px(SEARCH))
             .flex_none()
             .flex()
             .flex_row()
@@ -679,13 +750,53 @@ impl Cydonia {
         div()
             .flex_1()
             .min_w_0()
+            .relative()
             .flex()
             .flex_row()
             .items_center()
-            .gap(px(12.))
+            .gap(px(BAR_GAP))
             .child(tabs)
             .child(div().flex_1())
             .child(search)
+            .child(measure(bar))
+    }
+
+    /// The tabs as a select, for a bar too narrow to hold them in a row.
+    fn tab_picker(
+        &self,
+        tab: Tab,
+        shown: Vec<Tab>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let theme = Theme::of(cx).clone();
+        let menu = Menu::LibraryTab;
+        let trigger = theme
+            .select_trigger(tab.label())
+            .flex_none()
+            .id("library-tab")
+            .relative()
+            .on_click(cx.listener({
+                let menu = menu.clone();
+                move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.toggle_menu(menu.clone(), cx);
+                }
+            }));
+        let card = (self.menu == Some(Menu::LibraryTab)).then(|| {
+            let rows = shown
+                .into_iter()
+                .map(|at| {
+                    menu::row(
+                        MenuItem::action(at.label()).checked(at == tab),
+                        move |this, _, cx| this.library_tab(at, cx),
+                    )
+                })
+                .collect();
+            let id = SharedString::from("library-tab-menu");
+            popover::anchored_menu_below(id.clone(), self.menu_card(id, rows, window, cx), None)
+        });
+        self.menu_press(trigger, menu, cx).children(card)
     }
 
     /// What the selection can be done to, in the bar's place while there is
@@ -947,6 +1058,7 @@ impl Cydonia {
         };
         let (sort, scroll) = (library.sort, library.scroll.clone());
         let columns = Rc::new(columns());
+        let width = least(&columns);
         let headings: Vec<AnyElement> = columns
             .iter()
             .enumerate()
@@ -977,11 +1089,18 @@ impl Cydonia {
         .track_scroll(&scroll)
         .flex_1()
         .min_h_0();
-        table::table(&theme)
+        div()
+            .id("library-table")
             .flex_1()
             .min_h_0()
-            .child(table::header(&theme).flex_none().children(headings))
-            .child(rows)
+            .map(|el| scrollbars::scrolls(el, Axes::Horizontal))
+            .child(
+                table::table(&theme)
+                    .h_full()
+                    .min_w(px(width))
+                    .child(table::header(&theme).flex_none().children(headings))
+                    .child(rows),
+            )
             .into_any_element()
     }
 
@@ -1122,17 +1241,46 @@ impl Cydonia {
     }
 }
 
-/// The columns, declared once for the heading and every row.
+/// Write the width its parent is laid out at into `into`, and draw again when
+/// that moved. The parent must be `relative`.
+fn measure(into: Rc<Cell<Pixels>>) -> impl IntoElement {
+    gpui::canvas(
+        move |bounds, window, _| {
+            if into.replace(bounds.size.width) != bounds.size.width {
+                window.on_next_frame(|window, _| window.refresh());
+            }
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .size_full()
+}
+
+/// The columns, declared once for the heading and every row. A flexible
+/// column's weight is the least width it reads at, so at the table's least
+/// width each is exactly that.
 fn columns() -> Vec<table::Column> {
     vec![
         table::Column::new("", table::Width::Fixed(px(40.))),
-        table::Column::new("Name", table::Width::Flex(3.)),
+        table::Column::new("Name", table::Width::Flex(240.)),
         table::Column::new("Ref", table::Width::Fixed(px(88.))),
-        table::Column::new("Project", table::Width::Flex(1.)),
-        table::Column::new("Location", table::Width::Flex(1.5)),
+        table::Column::new("Project", table::Width::Flex(140.)),
+        table::Column::new("Location", table::Width::Flex(180.)),
         table::Column::new("Edited", table::Width::Fixed(px(120.))),
         table::Column::new("", table::Width::Fixed(px(44.))),
     ]
+}
+
+/// The narrowest `columns` are laid out at; a pane narrower scrolls the table
+/// sideways.
+fn least(columns: &[table::Column]) -> f32 {
+    columns
+        .iter()
+        .map(|column| match column.width {
+            table::Width::Fixed(width) => f32::from(width),
+            table::Width::Flex(least) => least,
+        })
+        .sum()
 }
 
 /// When something was last written, as coarse as still says something: the
