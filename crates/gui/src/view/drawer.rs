@@ -234,6 +234,17 @@ impl Cydonia {
         {
             return self.close_drawer(on, window, cx);
         }
+        // An article or a board a pane already shows opens in that pane.
+        let paned = matches!(
+            &named.row,
+            Row::Entry {
+                showing: Showing::Article(_) | Showing::Board(_),
+                ..
+            }
+        );
+        if paned && self.on_screen(&named.row, cx) {
+            return self.open_row(&named.row, window, cx);
+        }
         match &named.row {
             Row::Entry {
                 showing: Showing::Session(id),
@@ -250,16 +261,6 @@ impl Cydonia {
                 let Some((project, ix)) = self.located(&named.row, cx) else {
                     return;
                 };
-                // One editor, drawn in one place: an article a pane already
-                // shows is the pane's.
-                let shown = self
-                    .workspace
-                    .read(cx)
-                    .article_in(project, ix)
-                    .is_some_and(|article| self.article_on_screen(&article.path, cx));
-                if shown {
-                    return self.open_row(&named.row, window, cx);
-                }
                 self.workspace
                     .update(cx, |workspace, cx| workspace.load_article(project, ix, cx));
             }
@@ -333,7 +334,8 @@ impl Cydonia {
                 .and_then(|(project, at)| self.card_face(project, at, on, window, cx)),
             Peek::Entry(entry) => {
                 let (reference, list) = (entry.reference.clone(), entry.list.clone());
-                Some(self.entry_face(&reference, &list, window, cx))
+                let scroll = drawer.scroll.clone();
+                Some(self.entry_face(&reference, &list, on, &scroll, window, cx))
             }
         };
         let Some(face) = face else {
@@ -621,11 +623,13 @@ impl Cydonia {
 
     /// What the drawer draws for an entry a link names: a session live or a
     /// run of its turns, an article's document or part of it, or a board's
-    /// row.
+    /// cards. An article or a board a pane shows is its row.
     fn entry_face(
         &mut self,
         text: &str,
         list: &bezel::ui::list::VariableList<usize>,
+        on: Option<&Member>,
+        scroll: &ScrollHandle,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Face {
@@ -710,20 +714,21 @@ impl Cydonia {
             }
             (None, _) => {
                 let row = named.row.clone();
-                let article = match &row {
+                let peek = match &row {
                     Row::Entry {
-                        showing: Showing::Article(_),
+                        showing: Showing::Article(_) | Showing::Board(_),
                         ..
-                    } => self.located(&row, cx).filter(|&(project, at)| {
-                        self.workspace
-                            .read(cx)
-                            .article_in(project, at)
-                            .is_some_and(|article| !self.article_on_screen(&article.path, cx))
-                    }),
+                    } if !self.on_screen(&row, cx) => self.located(&row, cx),
                     _ => None,
                 };
-                let body = article
-                    .and_then(|(project, at)| self.article_peek(project, at, cx))
+                let body = peek
+                    .and_then(|(project, at)| match &row {
+                        Row::Entry {
+                            showing: Showing::Board(_),
+                            ..
+                        } => self.board_peek(project, at, on, scroll, cx),
+                        _ => self.article_peek(project, at, cx),
+                    })
                     .unwrap_or_else(|| self.entry_row(named, cx));
                 (
                     body,

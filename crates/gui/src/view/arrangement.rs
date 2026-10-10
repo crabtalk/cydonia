@@ -15,7 +15,7 @@ use crate::{
         },
         leaf::Pane,
         root::Cydonia,
-        sidebar::Dragged,
+        sidebar::{Dragged, Row},
     },
 };
 use artifact::space::{Axis as Split, Member, Node, Side, Space};
@@ -351,6 +351,40 @@ impl Cydonia {
             .or_else(|| stack.first())
             .unwrap_or(pane)
             .clone()
+    }
+
+    /// Whether a pane draws the entry `row` names: the front tab of a pane of
+    /// the open space, or the single pane.
+    pub(crate) fn on_screen(&self, row: &Row, cx: &App) -> bool {
+        let Row::Entry { project, showing } = row else {
+            return false;
+        };
+        let workspace = self.workspace.read(cx);
+        if let Some(space) = workspace.active_space() {
+            let Some(at) = workspace.project_at(project) else {
+                return false;
+            };
+            return space.panes().iter().any(|pane| {
+                let front = self.front_of(pane, &workspace.stack_of(pane));
+                workspace
+                    .showing_of(&front)
+                    .is_some_and(|(open, shown)| open == at && &shown == showing)
+            });
+        }
+        let Some(open) = workspace
+            .active_project()
+            .filter(|open| &open.path == project)
+        else {
+            return false;
+        };
+        let Some(ix) = open.ix_of(showing) else {
+            return false;
+        };
+        match (self.showing(cx), showing) {
+            (Some(Pane::Article), Showing::Article(_)) => open.article == Some(ix),
+            (Some(Pane::Board), Showing::Board(_)) => open.board == Some(ix),
+            _ => false,
+        }
     }
 
     /// Move `moving` to `to`'s place in their pane's strip. `false`, and

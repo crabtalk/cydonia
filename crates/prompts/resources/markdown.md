@@ -143,6 +143,8 @@ shown. Spelled like a web link's forms:
 
 [cydonia://cydonia#12](cydonia://cydonia#12 "chip")
 
+[cydonia://cydonia#DEV-12](cydonia://cydonia#DEV-12 "chip")
+
 [cydonia://cydonia#43](cydonia://cydonia#43 "embed")
 ```
 

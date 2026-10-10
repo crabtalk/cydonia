@@ -742,17 +742,6 @@ impl Cydonia {
         )
     }
 
-    /// Whether a pane is drawing the article at `path`.
-    pub(crate) fn article_on_screen(&self, path: &Path, cx: &App) -> bool {
-        let workspace = self.workspace.read(cx);
-        self.leaves.iter().any(|leaf| {
-            leaf.pane == Pane::Article
-                && workspace
-                    .article_of(leaf.entry.as_ref())
-                    .is_some_and(|article| article.path == path)
-        })
-    }
-
     /// The outline over the pane's bottom right: a dash per heading, longer
     /// the higher the heading, and above it while open the menu of headings.
     /// Picking one puts the caret at its start.
