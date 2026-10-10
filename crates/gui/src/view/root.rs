@@ -27,7 +27,7 @@ use crate::{
             meter,
             ribbon::Ribbon,
         },
-        confirm, create, info, label_list,
+        confirm, create, info,
         leaf::{Leaf, Pane},
         menubar::CloseWindow,
         section::Section,
@@ -531,8 +531,6 @@ pub struct Cydonia {
     pub(crate) library: Option<super::library::Library>,
     /// The label picker, while one is open — see [`super::labels`].
     pub(crate) picker: Option<super::labels::Picker>,
-    /// The labels modal, while it is up — see [`label_list`].
-    pub(crate) labelling: Option<label_list::Labelling>,
     /// The board identity panel, while it is open — see [`header::BoardInfo`].
     pub(crate) info: Option<info::BoardInfo>,
     /// The board that has been asked for and not yet made — see
@@ -1071,7 +1069,6 @@ impl Cydonia {
             desktop_only: None,
             library: None,
             picker: None,
-            labelling: None,
             info: None,
             making: None,
             info_pressed: false,
@@ -1684,8 +1681,6 @@ impl Render for Cydonia {
             .on_action(cx.listener(Self::commit_name))
             .on_action(cx.listener(Self::commit_info))
             .on_action(cx.listener(Self::dismiss_info))
-            .on_action(cx.listener(Self::commit_label))
-            .on_action(cx.listener(Self::dismiss_label))
             .on_action(cx.listener(Self::make_board))
             .on_action(cx.listener(Self::dismiss_new_board))
             .on_action(cx.listener(Self::dismiss_name))
@@ -1729,8 +1724,6 @@ impl Render for Cydonia {
             )
             // Over every column and every floating control: nothing behind it
             // is answerable while it is asking.
-            // Under the delete question, which a label's Delete asks over it.
-            .children(self.labels_modal(window, cx))
             .children(self.confirm_delete(cx))
             .children(self.search_palette(window, cx))
             .children(self.settings_sheet(cx))

@@ -2082,13 +2082,6 @@ impl Cydonia {
             ],
         )];
         rows.extend(self.label_filter_menu(ix, cx));
-        rows.push(menu::row(
-            Item::action("Labels…").with_icon(icons::glyph::Tag),
-            {
-                let path = path.to_path_buf();
-                move |this, _, cx| this.open_labels(path.clone(), cx)
-            },
-        ));
         rows.extend(on_disk(path.to_path_buf()));
         rows.push(menu::row(
             Item::action("Remove project").with_icon(icons::files::FolderMinus),

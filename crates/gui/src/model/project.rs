@@ -61,9 +61,6 @@ pub struct Project {
     /// The one label the sidebar lists this project's entries by, or every
     /// entry. Runtime only: a relaunch lists them all.
     pub label: Option<String>,
-    /// The labels registered here, by name, as the project's
-    /// [`artifact::label::FILE`] has them.
-    pub labels: std::collections::BTreeMap<String, artifact::label::Label>,
     /// The watch on this project's `.cydonia/`, once it is up. Held here so
     /// closing the project drops it, which is what takes the watch down.
     pub watch: Option<Watch>,
@@ -88,10 +85,8 @@ impl Project {
             expanded: true,
             archive_open: false,
             label: None,
-            labels: Default::default(),
             watch: None,
         };
-        this.reload_labels();
         this.reload_tables();
         this.unload_boards(None);
         this
@@ -145,26 +140,11 @@ impl Project {
         if self.data.is_none() {
             self.data = Data::attach(&self.path);
         }
-        self.reload_labels();
         let articles = self.reload_articles(cx);
         let boards = self.reload_boards();
         let before = self.shape();
         self.reload_tables();
         articles || boards || before != self.shape()
-    }
-
-    fn reload_labels(&mut self) {
-        self.labels = artifact::label::read(&self.store().labels());
-    }
-
-    /// Rewrite this project's labels file through `change`, and read it back.
-    pub fn edit_labels(&mut self, change: impl FnOnce(&str) -> String) {
-        let store = self.store();
-        let text = store.labels();
-        let changed = change(&text);
-        if changed != text && store.save_labels(&changed).is_ok() {
-            self.reload_labels();
-        }
     }
 
     /// What the table pane addresses by position: which tables there are, and

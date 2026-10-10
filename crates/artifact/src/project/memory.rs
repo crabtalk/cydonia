@@ -12,7 +12,7 @@ use crate::{
         properties::{self, Properties},
     },
     board::{Board, key},
-    id, label,
+    id,
     session::record::Record,
     stamp,
 };
@@ -37,8 +37,6 @@ struct State {
     numbers: HashMap<(String, String), u64>,
     /// Every number issued, with the id it is on, or `None` once retired.
     issued: BTreeMap<u64, (String, Option<String>)>,
-    /// The text of `labels.toml`.
-    labels: String,
 }
 
 #[derive(Default)]
@@ -92,7 +90,6 @@ impl Project {
                         }
                         state.sessions.insert(record.id.clone(), record);
                     }
-                    [file] if *file == label::FILE => state.labels = text(),
                     ["articles", article, "content.md"] => {
                         state
                             .articles
@@ -369,15 +366,6 @@ impl super::Project for Project {
         let held = state.article(id)?;
         held.properties = properties::apply(&held.properties, properties).unwrap_or_default();
         held.touched = stamp::now();
-        Ok(())
-    }
-
-    fn labels(&self) -> String {
-        self.state().labels.clone()
-    }
-
-    fn save_labels(&self, text: &str) -> Result<()> {
-        self.state().labels = text.to_owned();
         Ok(())
     }
 

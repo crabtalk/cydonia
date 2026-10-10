@@ -20,7 +20,6 @@ pub mod history;
 pub mod hotkey;
 pub mod info;
 pub mod keymap;
-pub mod label_list;
 pub mod labels;
 pub mod leaf;
 pub mod library;

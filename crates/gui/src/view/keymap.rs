@@ -449,7 +449,6 @@ pub fn bind_all(shortcuts: &Shortcuts, cx: &mut App) {
     cx.bind_keys(composer::bindings());
     cx.bind_keys(create::bindings());
     cx.bind_keys(info::bindings());
-    cx.bind_keys(super::label_list::bindings());
     cx.bind_keys(ribbon::bindings());
     cx.bind_keys(table::bindings());
     #[cfg(feature = "desktop")]

@@ -47,10 +47,6 @@ pub(crate) enum Menu {
     LibraryStatus,
     /// The library's Agent heading.
     LibraryAgent,
-    /// The labels modal's project picker.
-    Labelling,
-    /// The colour card of the labels modal's form.
-    LabelColor,
     /// The label picker, by what it acts on.
     Labels(crate::view::labels::Target),
     /// The `···` in the pane header. Its own key rather than `Entry` of what

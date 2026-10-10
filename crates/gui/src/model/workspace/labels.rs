@@ -2,7 +2,6 @@
 //! holds its own; the set of labels is whatever the entries carry.
 
 use super::{Showing, Workspace};
-use crate::model::settings::Paint;
 use bezel::gpui::Context;
 use std::collections::BTreeMap;
 
@@ -122,78 +121,12 @@ impl Workspace {
     /// it, in name order.
     pub fn label_counts(&self) -> BTreeMap<String, usize> {
         let mut counts = BTreeMap::new();
-        for open in &self.projects {
-            for name in open.labels.keys() {
-                counts.entry(name.clone()).or_default();
-            }
-        }
         for (at, showing) in self.labelled() {
             for label in self.labels_of(at, &showing).unwrap_or_default() {
                 *counts.entry(label.clone()).or_default() += 1;
             }
         }
         counts
-    }
-
-    /// The labels the project at `project` lists — every one its file
-    /// registers, and every one an entry there carries — with how many of its
-    /// entries carry each.
-    pub fn labels_in(&self, project: usize) -> BTreeMap<String, usize> {
-        let mut counts: BTreeMap<String, usize> = self
-            .projects
-            .get(project)
-            .map(|open| open.labels.keys().map(|name| (name.clone(), 0)).collect())
-            .unwrap_or_default();
-        for (at, showing) in self.labelled() {
-            if at != project {
-                continue;
-            }
-            for label in self.labels_of(at, &showing).unwrap_or_default() {
-                *counts.entry(label.clone()).or_default() += 1;
-            }
-        }
-        counts
-    }
-
-    /// File `name` in the project at `project` as `label` says, renamed from
-    /// `was` first — on every entry carrying it, in every open project, the
-    /// way a rename anywhere else is. `None` for `was` makes a new one.
-    /// Answers the name it was filed under, normalised.
-    pub fn save_label(
-        &mut self,
-        project: usize,
-        was: Option<&str>,
-        name: &str,
-        label: artifact::label::Label,
-        cx: &mut Context<Self>,
-    ) -> Result<String, &'static str> {
-        let name = artifact::label::normalize(name).ok_or("A label needs a name")?;
-        if was != Some(name.as_str()) && self.labels_in(project).contains_key(&name) {
-            return Err("There is a label by that name already");
-        }
-        if let Some(was) = was.filter(|was| *was != name) {
-            self.rename_label(was, &name, cx);
-        }
-        let open = self
-            .projects
-            .get_mut(project)
-            .ok_or("That project is closed")?;
-        open.edit_labels(|text| artifact::label::save(text, &name, &label));
-        cx.notify();
-        Ok(name)
-    }
-
-    /// The colour `name` is given: in the project at `project` first, then in
-    /// the one in front, then in the first open project that gives it one.
-    pub fn label_paint(&self, project: Option<usize>, name: &str) -> Option<Paint> {
-        project
-            .into_iter()
-            .chain(self.active)
-            .chain(0..self.projects.len())
-            .find_map(|at| {
-                let color = self.projects.get(at)?.labels.get(name)?.color.as_deref()?;
-                Paint::parse(color)
-            })
     }
 
     /// Rename `from` to `to` on every entry carrying it. Onto a label already
@@ -214,14 +147,6 @@ impl Workspace {
         for open in &mut self.projects {
             if open.label.as_deref() == Some(from) {
                 open.label = to.clone();
-            }
-            // Only where the file has the label: a project that never
-            // coloured it is not given a file for nothing.
-            if open.labels.contains_key(from) {
-                open.edit_labels(|text| match &to {
-                    Some(to) => artifact::label::rename(text, from, to),
-                    None => artifact::label::remove(text, from),
-                });
             }
         }
         for (at, showing) in self.labelled() {

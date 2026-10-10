@@ -29,7 +29,7 @@ use bezel::{
         icons,
         input::TextField,
         menu::Item,
-        popover,
+        multi_select, popover,
         tooltip::Tooltip,
         widgets::{ButtonStyle, Buttons as _, Content as _, Status as _},
     },
@@ -1032,12 +1032,11 @@ impl Cydonia {
                     this.toggle_labels(target.clone(), None, window, cx);
                 }
             }))
-            .children(labels.iter().map(|label| {
-                theme.chip(
-                    label.clone(),
-                    self.label_tint(Some(project), label, &theme, cx),
-                )
-            }))
+            .children(
+                labels
+                    .iter()
+                    .map(|label| theme.chip(label.clone(), multi_select::tint(&theme, label))),
+            )
             .when(labels.is_empty(), |chips| {
                 chips.child(
                     div()

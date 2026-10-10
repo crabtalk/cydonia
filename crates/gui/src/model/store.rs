@@ -163,14 +163,6 @@ impl Project for Store {
         each!(self, store => store.remove_article(id))
     }
 
-    fn labels(&self) -> String {
-        each!(self, store => store.labels())
-    }
-
-    fn save_labels(&self, text: &str) -> Result<()> {
-        each!(self, store => store.save_labels(text))
-    }
-
     fn asset(&self, id: &str, name: &str) -> Result<Vec<u8>> {
         each!(self, store => store.asset(id, name))
     }
