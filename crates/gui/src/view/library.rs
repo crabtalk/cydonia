@@ -1132,12 +1132,6 @@ impl Cydonia {
             }),
         )
         .track_scroll(&scroll)
-        // TODO(crabtalk/zed#11): drop once bezel-gpui no longer remaps a wheel onto the
-        // other axis by default. `UniformList` has no builder for it.
-        .map(|mut list| {
-            list.interactivity().base_style.restrict_scroll_to_axis = Some(true);
-            list
-        })
         .flex_1()
         .min_h_0();
         div()
