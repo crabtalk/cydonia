@@ -6,7 +6,8 @@
     "summary": "A color theme for light and one for dark, and 18 more themes: Absolutely, Codex, Linear, Lobster, Material, Matrix, Monokai, Night Owl, Nord, Notion, Oscurange, Proof, Raycast, Rosé Pine, Sentry, Temple, Vercel and VS Code Plus.",
     "new": [
       "Pick the light theme and the dark theme separately in Settings › Appearance, each listing the themes that come in that mode",
-      "Paint the app in Absolutely, Codex, Linear, Lobster, Material, Matrix, Monokai, Night Owl, Nord, Notion, Oscurange, Proof, Raycast, Rosé Pine, Sentry, Temple, Vercel or VS Code Plus"
+      "Paint the app in Absolutely, Codex, Linear, Lobster, Material, Matrix, Monokai, Night Owl, Nord, Notion, Oscurange, Proof, Raycast, Rosé Pine, Sentry, Temple, Vercel or VS Code Plus",
+      "Hover a link to an article to read its opening, or the lines or section it names, and a link to a card to read the card; a session or board link shows its title, kind and number"
     ],
     "changed": [
       "Show the hue and intensity sliders while either mode is painted in Cydonia's own colors, and tint only that mode"
