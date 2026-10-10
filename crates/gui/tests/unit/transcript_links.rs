@@ -1,46 +1,3 @@
-use super::resolve;
-use std::path::{Path, PathBuf};
-
-#[test]
-fn local_links_resolve_against_the_session_project() {
-    let cwd = Path::new("/work/project");
-    for (href, expected, line) in [
-        (
-            "src/routes/next/+page.svelte",
-            "/work/project/src/routes/next/+page.svelte",
-            None,
-        ),
-        ("./src/main.rs:42", "/work/project/src/main.rs", Some(42)),
-        ("src/main.rs:42:7", "/work/project/src/main.rs", Some(42)),
-        ("/other/main.rs#L12", "/other/main.rs", Some(12)),
-        ("src/main.rs#L12-L20", "/work/project/src/main.rs", Some(12)),
-        ("../shared/a.rs", "/work/shared/a.rs", None),
-        ("file:///work/my%20file.rs#L3", "/work/my file.rs", Some(3)),
-        ("docs/my%20file.md", "/work/project/docs/my file.md", None),
-    ] {
-        assert_eq!(
-            resolve(cwd, href),
-            Some((PathBuf::from(expected), line)),
-            "{href}"
-        );
-    }
-}
-
-#[test]
-fn external_links_and_anchors_are_not_file_requests() {
-    for href in [
-        "https://example.com/a:80",
-        "http://example.com",
-        "mailto:user@example.com",
-        "cydonia://session/context",
-        "#heading",
-        "//example.com/file",
-        "",
-    ] {
-        assert_eq!(resolve(Path::new("/work/project"), href), None, "{href}");
-    }
-}
-
 use crate::model::{
     project::Project,
     session::ChatSession,
@@ -50,10 +7,23 @@ use crate::model::{
 };
 use bezel::{gpui, theme::Theme};
 use gpui::{div, prelude::*};
+use markdown::AppExt as _;
+use std::{
+    path::{Path, PathBuf},
+    sync::Mutex,
+};
+
+static OPENED: Mutex<Vec<(String, Option<PathBuf>)>> = Mutex::new(Vec::new());
+
+fn record(url: &str, base: Option<&Path>, _: &mut gpui::Window, _: &mut gpui::App) {
+    OPENED
+        .lock()
+        .unwrap()
+        .push((url.to_owned(), base.map(Path::to_path_buf)));
+}
 
 struct LinkedTranscript {
     workspace: gpui::Entity<Workspace>,
-    opened: Vec<super::OpenSessionFile>,
     focus: gpui::FocusHandle,
     _observe: gpui::Subscription,
 }
@@ -65,7 +35,7 @@ impl gpui::Render for LinkedTranscript {
         cx: &mut gpui::Context<Self>,
     ) -> impl gpui::IntoElement {
         let prose = self.workspace.update(cx, |workspace, cx| {
-            super::super::prose(
+            super::prose(
                 workspace.session(1).unwrap(),
                 0,
                 "Read [source](src/main.rs:12).",
@@ -73,19 +43,18 @@ impl gpui::Render for LinkedTranscript {
                 cx,
             )
         });
-        div()
-            .size_full()
-            .track_focus(&self.focus)
-            .on_action(cx.listener(|this, action: &super::OpenSessionFile, _, _| {
-                this.opened.push(action.clone())
-            }))
-            .child(prose)
+        div().size_full().track_focus(&self.focus).child(prose)
     }
 }
 
 #[gpui::test]
-fn clicking_a_session_file_link_dispatches_an_internal_open(cx: &mut gpui::TestAppContext) {
-    cx.update(|cx| Theme::install(bezel::theme::Appearance::Light, cx));
+fn a_clicked_session_link_reaches_the_handler_with_the_session_folder(
+    cx: &mut gpui::TestAppContext,
+) {
+    cx.update(|cx| {
+        Theme::install(bezel::theme::Appearance::Light, cx);
+        cx.set_link_handler(record);
+    });
     let window = cx.add_window(|window, cx| {
         let workspace = cx.new(|cx| Workspace::new(Settings::default(), State::default(), cx));
         workspace.update(cx, |workspace, _| {
@@ -115,7 +84,6 @@ fn clicking_a_session_file_link_dispatches_an_internal_open(cx: &mut gpui::TestA
         window.focus(&focus, cx);
         LinkedTranscript {
             workspace,
-            opened: vec![],
             focus,
             _observe: observe,
         }
@@ -141,16 +109,11 @@ fn clicking_a_session_file_link_dispatches_an_internal_open(cx: &mut gpui::TestA
     visual.run_until_parked();
     visual.simulate_mouse_up(point, gpui::MouseButton::Left, gpui::Modifiers::default());
     visual.run_until_parked();
-    window
-        .update(&mut visual, |view, _, _| {
-            assert_eq!(
-                view.opened,
-                vec![super::OpenSessionFile {
-                    session: 1,
-                    path: PathBuf::from("/work/project/src/main.rs"),
-                    line: Some(12)
-                }]
-            );
-        })
-        .unwrap();
+    assert_eq!(
+        *OPENED.lock().unwrap(),
+        [(
+            "src/main.rs:12".to_owned(),
+            Some(PathBuf::from("/work/project"))
+        )]
+    );
 }

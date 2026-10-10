@@ -38,7 +38,6 @@ use markdown::{
 };
 mod follow;
 pub(crate) mod gallery;
-pub(crate) mod links;
 use std::{
     cell::{Cell, RefCell},
     collections::{HashMap, HashSet, hash_map::DefaultHasher},
@@ -481,6 +480,7 @@ fn prose(
         chat.transcript.dragging_in(ix),
         markdown::Editing {
             annotations: &washes,
+            base: Some(&chat.cwd),
             ..Default::default()
         },
         window,
@@ -560,62 +560,7 @@ fn prose(
                             chat.transcript.open_preview(images, at, window, cx);
                         }
                         cx.stop_propagation();
-                        return;
                     }
-                }
-                let Some((cursor, _)) = layouts.hit(event.position) else {
-                    return;
-                };
-                let Some(text) = doc
-                    .blocks
-                    .get(cursor.block)
-                    .and_then(|block| block.text_at(cursor.part))
-                else {
-                    return;
-                };
-                for span in &text.marks {
-                    let markdown::Mark::Link(href) = &span.mark else {
-                        continue;
-                    };
-                    let selection = Selection::new(
-                        markdown::Cursor {
-                            offset: span.range.start,
-                            ..cursor
-                        },
-                        markdown::Cursor {
-                            offset: span.range.end,
-                            ..cursor
-                        },
-                    );
-                    if !layouts
-                        .rects(selection)
-                        .iter()
-                        .any(|bounds| bounds.contains(&event.position))
-                    {
-                        continue;
-                    }
-                    let Some((path, line)) = links::resolve(&cwd, href) else {
-                        continue;
-                    };
-                    let clicked = workspace
-                        .session(id)
-                        .and_then(|chat| chat.transcript.selection(ix))
-                        .is_some_and(|selection| {
-                            selection.is_collapsed() && selection.head == cursor
-                        });
-                    workspace.with_session(id, cx, |chat| chat.transcript.release());
-                    cx.stop_propagation();
-                    if clicked {
-                        window.dispatch_action(
-                            Box::new(links::OpenSessionFile {
-                                session: id,
-                                path,
-                                line,
-                            }),
-                            cx,
-                        );
-                    }
-                    return;
                 }
             },
         ))
@@ -2037,3 +1982,7 @@ mod virtual_tests;
 #[cfg(test)]
 #[path = "../../../tests/unit/transcript_scrollbar.rs"]
 mod scrollbar_tests;
+
+#[cfg(test)]
+#[path = "../../../tests/unit/transcript_links.rs"]
+mod link_tests;

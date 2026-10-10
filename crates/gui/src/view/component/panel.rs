@@ -1017,33 +1017,37 @@ impl Cydonia {
         self.save_panel_layout(cx);
         cx.notify();
     }
-    pub(crate) fn open_session_file(
+    /// Open `path` in a file tab in the panel for the directory in front, at
+    /// `line` where one is given, putting the panel up. `false` where no tab
+    /// could be opened: no directory in front, or file tabs switched off.
+    pub(crate) fn open_file_in_panel(
         &mut self,
-        link: &super::transcript::links::OpenSessionFile,
+        path: PathBuf,
+        line: Option<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
-        if self.showing(cx) != Some(Pane::Chat)
-            || self.workspace.read(cx).active_id() != Some(link.session)
-        {
-            return;
+    ) -> bool {
+        if !self.workspace.read(cx).settings.features.panel.files {
+            return false;
         }
         self.set_changes_open(true, cx);
         self.sync_changes(cx);
-        if let Some(panel) = self.changes.clone() {
-            panel.update(cx, |panel, cx| {
-                panel.restore_tabs(window, cx);
-                panel.open_file(link.path.clone(), cx);
-                if let Some(line) = link.line
-                    && let Some(tab) = panel.front()
-                    && let Content::File(file) = &tab.content
-                {
-                    file.update(cx, |file, cx| file.go_to_line(line, cx));
-                }
-                panel.focus(window, cx);
-            });
-        }
+        let Some(panel) = self.changes.clone() else {
+            return false;
+        };
+        panel.update(cx, |panel, cx| {
+            panel.restore_tabs(window, cx);
+            panel.open_file(path, cx);
+            if let Some(line) = line
+                && let Some(tab) = panel.front()
+                && let Content::File(file) = &tab.content
+            {
+                file.update(cx, |file, cx| file.go_to_line(line, cx));
+            }
+            panel.focus(window, cx);
+        });
         cx.notify();
+        true
     }
 
     pub(crate) fn toggle_files(&mut self, window: &mut Window, cx: &mut Context<Self>) {

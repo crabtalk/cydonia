@@ -1672,7 +1672,6 @@ impl Render for Cydonia {
             }))
             .on_action(cx.listener(|this, _: &ZoomPane, _, cx| this.zoom_focused_pane(cx)))
             .on_action(cx.listener(Self::toggle_changes))
-            .on_action(cx.listener(Self::open_session_file))
             .on_action(cx.listener(Self::copy_selection))
             .on_action(cx.listener(Self::commit_cell_action))
             .on_action(cx.listener(Self::dismiss_cell))

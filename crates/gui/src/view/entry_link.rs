@@ -9,10 +9,7 @@
 //!
 //! The link names the entry; deleting the block leaves the entry where it was.
 
-use std::{
-    path::{Path, PathBuf},
-    rc::Rc,
-};
+use std::{path::Path, rc::Rc};
 
 use crate::{
     model::workspace::{
@@ -164,9 +161,10 @@ fn nested_row(url: &str, cx: &App) -> AnyElement {
 }
 
 /// Opens a link clicked in an article or a transcript: a web link in the
-/// system browser, or with shift held in a panel tab where the window can take
-/// one; a `file://` URL or a path in the file manager, a relative one against
-/// `base`. Installed as markdown's link handler.
+/// system browser, a file in the file manager. With shift held, a web link
+/// opens in a panel browser tab and a file in a panel file tab, where the
+/// window can take one. A relative path is a file under `base`. Installed as
+/// markdown's link handler.
 pub fn open_link(url: &str, base: Option<&Path>, window: &mut Window, cx: &mut App) {
     let Some(Some(root)) = window.root::<Cydonia>() else {
         cx.open_url(url);
@@ -176,15 +174,22 @@ pub fn open_link(url: &str, base: Option<&Path>, window: &mut Window, cx: &mut A
         root.update(cx, |root, cx| root.open_reference(reference, window, cx));
         return;
     }
-    if let Some(path) = local_path(url, base) {
-        root.update(cx, |root, cx| root.reveal_path(path, cx));
+    let shift = window.modifiers().shift;
+    if let Some((path, line)) = crate::model::file_url::target(base, url) {
+        let opened = shift
+            && root.update(cx, |root, cx| {
+                root.open_file_in_panel(path.clone(), line, window, cx)
+            });
+        if !opened {
+            root.update(cx, |root, cx| root.reveal_path(path, cx));
+        }
         return;
     }
     #[cfg(not(target_os = "linux"))]
     {
         let web = url.starts_with("https://") || url.starts_with("http://");
         if web
-            && window.modifiers().shift
+            && shift
             && root.update(cx, |root, cx| {
                 root.open_in_panel(url.to_owned(), window, cx)
             })
@@ -193,30 +198,6 @@ pub fn open_link(url: &str, base: Option<&Path>, window: &mut Window, cx: &mut A
         }
     }
     cx.open_url(url);
-}
-
-/// The file a link names on this machine. A relative path without a `base`
-/// names none.
-fn local_path(url: &str, base: Option<&Path>) -> Option<PathBuf> {
-    if let Some(rest) = url.strip_prefix("~/") {
-        return Some(dirs::home_dir()?.join(rest));
-    }
-    let parsed = match url::Url::parse(url) {
-        Ok(parsed) => parsed,
-        Err(url::ParseError::RelativeUrlWithoutBase) => {
-            let base = match base {
-                Some(base) => base,
-                None if url.starts_with('/') => Path::new("/"),
-                None => return None,
-            };
-            crate::model::file_url::from_dir(base)?.join(url).ok()?
-        }
-        Err(_) => return None,
-    };
-    match parsed.scheme() {
-        "file" => crate::model::file_url::to_path(&parsed),
-        _ => None,
-    }
 }
 
 /// The slash menu: the editor's blocks, then a session already running.
