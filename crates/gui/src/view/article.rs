@@ -4,7 +4,7 @@ use crate::{
     model::{article, workspace::Showing},
     view::{
         component::{
-            margin::{self, MARK_GUTTER, Margin, NOTE_WIDTH, Slot},
+            margin::{self, MARK_GUTTER, Margin, NOTE_INSET, NOTE_WIDTH, Slot},
             menu::{self, Menu},
             transcript::{MARK_AWAY, MARK_READING, MARK_VISIBLE},
         },
@@ -69,7 +69,7 @@ pub fn bindings() -> Vec<KeyBinding> {
 
 /// The column the document is set in, matching the transcript's. Off, for a
 /// page that reads wide under [`article::Article::wide`], the pane's own width
-/// is the measure — see [`column`].
+/// is the measure — see [`Band`].
 const CONTENT_MAX_WIDTH: f32 = 720.;
 
 /// How tall the cover band is, with a picture in it or without: half the 5:2 a
@@ -269,14 +269,65 @@ fn source_offset(editor: &editor::Editor, cx: &App) -> f32 {
     }
 }
 
-/// The box the page is set in: the reading column, or the pane itself. The
-/// title and the document both take it, since two boxes made conditional apart
-/// drift apart the first time one of them is touched.
-fn column(wide: bool) -> Div {
-    let band = div().w_full();
-    match wide {
-        true => band,
-        false => band.max_w(px(CONTENT_MAX_WIDTH)),
+/// The narrowest column notes are set beside. A pane with no room for one and
+/// a note's margin beside it gets marks.
+const NOTES_MIN_COLUMN: f32 = 480.;
+
+/// Where the page is set across the pane: the reading column, or the pane
+/// itself, and the least room either side of it. The title, the line under it
+/// and the document all take one, since rows laid out apart drift apart the
+/// first time one of them is touched.
+#[derive(Debug, Clone, Copy)]
+struct Band {
+    wide: bool,
+    /// The least room left of the column: the part of the source gutter its
+    /// inset does not hold. A pane too narrow to centre the column with the
+    /// gutter in it shifts the column right instead of clipping the line
+    /// numbers.
+    hang: f32,
+    /// The least room right of the column: the comment margin's. The column
+    /// moves left to make it, and narrows once it reaches the pane's edge.
+    margin: f32,
+}
+
+impl Band {
+    fn new(wide: bool, source_offset: f32) -> Self {
+        Self {
+            wide,
+            hang: (source_offset - COLUMN_INSET).max(0.),
+            margin: 0.,
+        }
+    }
+
+    /// The band with room for a margin of comments: a note's where `notes` and
+    /// `width`, the pane's, holds one beside a column of [`NOTES_MIN_COLUMN`],
+    /// and a mark's otherwise. A `width` of zero — the pane before its first
+    /// layout — counts as room.
+    fn commented(self, notes: bool, width: f32) -> Self {
+        let note = NOTE_INSET + NOTE_WIDTH;
+        let fits = width <= 0. || width >= self.hang + NOTES_MIN_COLUMN + note;
+        Self {
+            margin: if notes && fits { note } else { MARK_GUTTER },
+            ..self
+        }
+    }
+
+    /// A row across the pane: the column, as `column` sets it, with `beside`
+    /// filling the room right of it.
+    fn row(self, column: impl FnOnce(Div) -> Div, beside: Option<AnyElement>) -> Div {
+        let band = div().w_full().min_w_0();
+        let band = match self.wide {
+            true => band,
+            false => band.max_w(px(CONTENT_MAX_WIDTH)),
+        };
+        div()
+            .w_full()
+            .flex()
+            .child(div().flex_1().min_w(px(self.hang)))
+            .child(column(band))
+            .child(div().flex_1().relative().min_w(px(self.margin)).children(
+                beside.map(|beside| div().absolute().top_0().left_0().size_full().child(beside)),
+            ))
     }
 }
 
@@ -306,7 +357,7 @@ type OnPress = Rc<dyn Fn(Option<u64>, &mut Window, &mut App)>;
 /// comments beside it.
 fn page(
     editor: &Entity<editor::Editor>,
-    wide: bool,
+    band: Band,
     source_offset: f32,
     margin: Option<AnyElement>,
     on_press: Option<OnPress>,
@@ -315,44 +366,14 @@ fn page(
     // and scrolls instead of being squashed and clipped, and `min_h_full` is
     // what leaves the band something to scroll *under* when the document is
     // short.
-    // The source gutter hangs left of the column by `source_offset`; the left
-    // spacer never narrows past the part of it the inset does not hold, so a
-    // pane too narrow to centre the column with the gutter in it shifts the
-    // column right instead of clipping the line numbers.
-    let hang = (source_offset - COLUMN_INSET).max(0.);
-    div()
-        .w_full()
-        .flex_none()
-        .min_h_full()
-        .flex()
-        .cursor(CursorStyle::IBeam)
-        .on_mouse_down(MouseButton::Left, {
-            let editor = editor.clone();
-            move |event, window, cx| {
-                if let Some(on_press) = &on_press {
-                    let hit = editor.read(cx).anchor_at(event.position);
-                    on_press(hit.map(|id| id.0), window, cx);
-                }
-                editor.update(cx, |editor, cx| {
-                    editor.press(
-                        event.position,
-                        event.click_count,
-                        event.modifiers,
-                        window,
-                        cx,
-                    )
-                })
-            }
-        })
-        .child(div().flex_1().min_w(px(hang)))
-        .child(
-            // A page, not a paragraph. The editor's box is only as tall as
-            // the document, and a pane of dead space under a one-line note
-            // reads as something you cannot type in: the band around it is
-            // what makes a click down there or beside it land a caret, and
-            // the I-beam is what says so before the click.
-            column(wide)
-                .min_w_0()
+    band.row(
+        // A page, not a paragraph. The editor's box is only as tall as
+        // the document, and a pane of dead space under a one-line note
+        // reads as something you cannot type in: the band around it is
+        // what makes a click down there or beside it land a caret, and
+        // the I-beam is what says so before the click.
+        |column| {
+            column
                 .px(px(COLUMN_INSET))
                 .pt(px(PAGE_TOP))
                 .pb(px(TAIL))
@@ -363,18 +384,31 @@ fn page(
                         .min_w_0()
                         .ml(px(-source_offset))
                         .child(editor.clone()),
-                ),
-        )
-        .child(
-            div()
-                .flex_1()
-                .relative()
-                .when(margin.is_some(), |el| el.min_w(px(MARK_GUTTER)))
-                .children(
-                    margin
-                        .map(|margin| div().absolute().top_0().left_0().size_full().child(margin)),
-                ),
-        )
+                )
+        },
+        margin,
+    )
+    .flex_none()
+    .min_h_full()
+    .cursor(CursorStyle::IBeam)
+    .on_mouse_down(MouseButton::Left, {
+        let editor = editor.clone();
+        move |event, window, cx| {
+            if let Some(on_press) = &on_press {
+                let hit = editor.read(cx).anchor_at(event.position);
+                on_press(hit.map(|id| id.0), window, cx);
+            }
+            editor.update(cx, |editor, cx| {
+                editor.press(
+                    event.position,
+                    event.click_count,
+                    event.modifiers,
+                    window,
+                    cx,
+                )
+            })
+        }
+    })
 }
 
 impl Cydonia {
@@ -693,6 +727,30 @@ impl Cydonia {
             true => f32::from(article.composer.get()) + crate::view::root::COMPOSER_BOTTOM,
             false => 0.,
         };
+        let margin = self.margin(project, at, &editor, cx);
+        let notes = self.workspace.read(cx).settings.appearance.comments
+            == crate::model::settings::Comments::Full;
+        let band = Band::new(wide, source_offset);
+        let band = match margin.is_some() {
+            true => band.commented(notes, f32::from(scroll.bounds().size.width)),
+            false => band,
+        };
+        // The band is set from the pane's width as it last laid out: a pane
+        // since resized across the line between notes and marks is laid out
+        // again.
+        let watch = margin.is_some().then(|| {
+            let scroll = scroll.clone();
+            canvas(
+                move |_, window, _| {
+                    let width = f32::from(scroll.bounds().size.width);
+                    if band.commented(notes, width).margin != band.margin {
+                        window.refresh();
+                    }
+                },
+                |_, _, _, _| {},
+            )
+            .absolute()
+        });
         let document = div()
             .id("article")
             .on_action(cx.listener(Self::leave_title))
@@ -713,14 +771,15 @@ impl Cydonia {
             .track_scroll(&article.scroll)
             .flex()
             .flex_col()
-            .child(self.header(cover, field, wide, cx))
-            .children(self.meta_line(project, at, wide, cx))
+            .children(watch)
+            .child(self.header(cover, field, band, cx))
+            .children(self.meta_line(project, at, band, cx))
             .child(
                 page(
                     &editor,
-                    wide,
+                    band,
                     source_offset,
-                    self.margin(project, at, &editor, cx),
+                    margin,
                     Some(self.on_page_press(path.clone())),
                 )
                 .pb(px(covered)),
@@ -1027,7 +1086,13 @@ impl Cydonia {
                         .track_scroll(&scroll)
                         .flex()
                         .flex_col()
-                        .child(page(&editor, wide, source_offset, None, None)),
+                        .child(page(
+                            &editor,
+                            Band::new(wide, source_offset),
+                            source_offset,
+                            None,
+                            None,
+                        )),
                 )
                 .child(scrollbars::Overlay::new(
                     "article-peek-bar",
@@ -1236,7 +1301,7 @@ impl Cydonia {
         &self,
         cover: Option<PathBuf>,
         field: Entity<TextField>,
-        wide: bool,
+        band: Band,
         cx: &Context<Self>,
     ) -> impl IntoElement + use<> {
         // The band only where there is a picture in it. A page with no cover
@@ -1249,16 +1314,17 @@ impl Cydonia {
             .flex()
             .flex_col()
             .children(cover.map(|cover| self.cover_band(cover, cx)))
-            .child(
-                div().w_full().flex().justify_center().child(
-                    column(wide)
+            .child(band.row(
+                |column| {
+                    column
                         .pl(px(COLUMN_INSET + cx.editor_layout().text_inset))
                         .pr(px(COLUMN_INSET))
                         .pt(px(20.))
                         .font_family(Theme::of(cx).font_body.clone())
-                        .child(field),
-                ),
-            )
+                        .child(field)
+                },
+                None,
+            ))
     }
 
     /// The line under the title: the page's labels, and how long it is and
@@ -1267,7 +1333,7 @@ impl Cydonia {
         &self,
         project: usize,
         at: usize,
-        wide: bool,
+        band: Band,
         cx: &Context<Self>,
     ) -> Option<AnyElement> {
         let workspace = self.workspace.read(cx);
@@ -1307,13 +1373,9 @@ impl Cydonia {
                 about.tooltip(move |window, cx| Tooltip::text(created.clone(), window, cx))
             });
         Some(
-            div()
-                .w_full()
-                .flex_none()
-                .flex()
-                .justify_center()
-                .child(
-                    column(wide)
+            band.row(
+                |column| {
+                    column
                         .group(META_GROUP)
                         .pl(px(COLUMN_INSET + cx.editor_layout().text_inset))
                         .pr(px(COLUMN_INSET))
@@ -1323,9 +1385,12 @@ impl Cydonia {
                         .items_center()
                         .gap(px(12.))
                         .child(div().flex_1().min_w_0().child(chips))
-                        .child(about),
-                )
-                .into_any_element(),
+                        .child(about)
+                },
+                None,
+            )
+            .flex_none()
+            .into_any_element(),
         )
     }
 
