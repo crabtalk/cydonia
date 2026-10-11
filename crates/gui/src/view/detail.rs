@@ -1,16 +1,13 @@
 //! The detail column and its floating plan, permission, and composer controls.
 
+use crate::view::kit::menu::{self, Menu};
 use crate::{
     model::{
         session::{ChatSession, Choice, Command, Usage},
         workspace::{Showing, Workspace},
     },
     view::{
-        component::{
-            composer,
-            menu::{self, Menu},
-            ribbon, transcript,
-        },
+        component::{composer, ribbon, transcript},
         kit::new::{self, New},
         window::root::{self, Cydonia, NewArticle, NewBoard, NewSession, NewTable},
         window::section::Section,
@@ -29,6 +26,7 @@ use bezel::{
     motion::{Fade, Painter},
     theme::{TextStyle, Theme, Typeset},
     ui::{
+        context_menu::Place,
         floating,
         icons::{self, Icon},
         keys,
@@ -1185,6 +1183,22 @@ impl Cydonia {
     /// project that is open. The kinds are listed rather than named in a hint,
     /// because a list can be clicked — and only the kinds that are switched on
     /// are listed, so under the shipped defaults this is one line.
+    /// The agents a new session can run on, from the front door's session
+    /// row.
+    fn launch_rows(&mut self, _: &mut Window, cx: &mut Context<Self>) -> Vec<(Item, menu::Act)> {
+        new::offered(self.workspace.read(cx))
+            .agents
+            .into_iter()
+            .enumerate()
+            .map(|(at, (name, icon))| {
+                menu::row(
+                    Item::action(name).with_icon(icon),
+                    move |this, window, cx| this.pick_agent(at, window, cx),
+                )
+            })
+            .collect()
+    }
+
     fn nothing_open(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let workspace = self.workspace.read(cx);
@@ -1203,35 +1217,21 @@ impl Cydonia {
         // nothing on this screen would say which.
         let session = New::Session(None);
         if offered.sessions && offered.agents.len() > 1 {
-            let picks: Vec<_> = offered
-                .agents
-                .into_iter()
-                .enumerate()
-                .map(|(at, (name, icon))| {
-                    menu::row(
-                        Item::action(name).with_icon(icon),
-                        move |this, window, cx| this.pick_agent(at, window, cx),
-                    )
-                })
-                .collect();
             let trigger = self.make_row(
                 "session",
                 session.label(),
                 session.icon(),
                 keys::shortcut(&NewSession, window),
                 cx,
-                move |this, at, _, cx| this.toggle_menu_at(Menu::Launch, at, cx),
+                move |this, at, window, cx| {
+                    let place = at.map_or(Place::Below, Place::At);
+                    this.toggle_menu(Menu::Launch, place, Self::launch_rows, window, cx)
+                },
             );
             rows.push(
-                self.menu_press(trigger, Menu::Launch, cx)
+                self.menu_trigger(trigger, Menu::Launch, cx)
                     .relative()
-                    .children((self.menu == Some(Menu::Launch)).then(|| {
-                        let card = self.menu_card("launch-menu", picks, window, cx);
-                        match self.menu_point(&Menu::Launch) {
-                            Some(point) => popover::menu_at("launch-menu", point, card, None),
-                            None => popover::anchored_menu_below("launch-menu", card, None),
-                        }
-                    }))
+                    .children(self.menu_here(&Menu::Launch, "launch-menu", window, cx))
                     .into_any_element(),
             );
         } else if offered.sessions {
@@ -1312,7 +1312,7 @@ impl Cydonia {
             .children(chord.map(|chord| popover::kbd_hint(&theme, chord)))
             // The press carries where it landed, for a row whose menu stands
             // at the pointer. `None` off the keyboard, which has no point to
-            // it — see [`Cydonia::toggle_menu_at`].
+            // it.
             .on_click(
                 cx.listener(move |this, click: &gpui::ClickEvent, window, cx| {
                     make(this, click.mouse_position(), window, cx)

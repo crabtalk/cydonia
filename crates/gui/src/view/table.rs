@@ -6,7 +6,7 @@
 use crate::{
     data::ColType,
     view::{
-        component::menu::{self, Menu},
+        kit::menu::{self, Menu},
         sidebar::{self, Renaming, Row},
         window::root::{Cydonia, NewTable},
     },
@@ -21,6 +21,7 @@ use bezel::{
     },
     theme::{TextStyle, Theme, Typeset},
     ui::{
+        context_menu::Place,
         icons,
         input::{Shape, TextField},
         menu::Item,
@@ -470,9 +471,16 @@ impl Cydonia {
                     Some("grid-head"),
                     icons::layout::Ellipsis,
                     Menu::Column(ix),
+                    Place::Below,
+                    Box::new(move |_, _, _| Self::column_rows(ix, kind)),
                     cx,
                 )
-                .children(self.column_menu(ix, kind, window, cx)),
+                .children(self.menu_here(
+                    &Menu::Column(ix),
+                    SharedString::from(format!("column-menu-{ix}")),
+                    window,
+                    cx,
+                )),
             )
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.edit_cell(Cell::Head(ix), window, cx);
@@ -481,16 +489,7 @@ impl Cydonia {
     }
 
     /// What the `···` does to a column: what it holds, and whether it stays.
-    fn column_menu(
-        &self,
-        ix: usize,
-        kind: ColType,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        if self.menu != Some(Menu::Column(ix)) {
-            return None;
-        }
+    fn column_rows(ix: usize, kind: ColType) -> Vec<(Item, menu::Act)> {
         let mut rows: Vec<_> = ColType::ALL
             .iter()
             .map(|declared| {
@@ -507,12 +506,7 @@ impl Cydonia {
             Item::action("Delete column").with_icon(icons::files::Trash),
             move |this, _, cx| this.delete_column(ix, cx),
         ));
-        Some(self.menu_below(
-            SharedString::from(format!("column-menu-{ix}")),
-            rows,
-            window,
-            cx,
-        ))
+        rows
     }
 
     /// One value: what is stored, or the field when it is being written.

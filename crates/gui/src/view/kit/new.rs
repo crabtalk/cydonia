@@ -4,7 +4,7 @@
 use crate::{
     model::workspace::Workspace,
     view::{
-        component::menu::{self, Act},
+        kit::menu::{self, Act},
         window::root::Cydonia,
     },
 };

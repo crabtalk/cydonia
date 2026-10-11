@@ -82,7 +82,7 @@ impl Cydonia {
     ) {
         self.commit(cx);
         // One editor at a time, as [`Cydonia::open_info`] keeps it.
-        self.menu = None;
+        self.close_menu(cx);
         self.renaming = None;
         self.info = None;
         let workspace = self.workspace.clone();

@@ -11,12 +11,13 @@
 //! the keyboard actually sends. While a row is recording the app answers to
 //! nothing at all — see [`SettingsWindow::record`].
 
-#[cfg(feature = "desktop")]
-use crate::view::keymap::hotkey;
 use crate::{
     model::{settings::Shortcuts, workspace::Workspace},
     view::{
-        keymap::{self, Chord, Command, Menu},
+        keymap::{
+            self, Chord, Command, Menu,
+            hotkey::{self, Hotkey as _},
+        },
         settings::{self, SettingsWindow, Switch, group, labelled},
     },
 };
@@ -128,7 +129,7 @@ impl SettingsWindow {
             .shortcuts
             .activate()
             .map(str::to_owned);
-        let refused = hotkey::refused(cx);
+        let refused = hotkey::Here::refused(cx);
         let blurb = match refused.clone() {
             Some(why) => why,
             None if held.is_some() => SharedString::from("Brings cydonia forward from anywhere."),
@@ -416,21 +417,5 @@ impl SettingsWindow {
 pub(super) fn restore(workspace: &Entity<Workspace>, cx: &mut App) {
     let shortcuts = workspace.read(cx).settings.shortcuts.clone();
     keymap::rebind(&shortcuts, cx);
-    hotkey::apply(shortcuts.activate(), cx);
-}
-
-/// No system-wide chord without the `desktop` feature: the page cannot hear a
-/// key while it is not in front.
-#[cfg(not(feature = "desktop"))]
-mod hotkey {
-    use bezel::gpui::{App, SharedString};
-
-    pub fn refused(cx: &App) -> Option<SharedString> {
-        let _ = cx;
-        Some("A browser tab cannot answer a chord while it is in the background.".into())
-    }
-
-    pub fn apply(chord: Option<&str>, cx: &mut App) {
-        let _ = (chord, cx);
-    }
+    hotkey::Here::apply(shortcuts.activate(), cx);
 }

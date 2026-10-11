@@ -5,6 +5,7 @@ pub mod form;
 pub mod icon;
 pub mod labels;
 pub mod link;
+pub mod menu;
 pub mod new;
 pub mod stamp;
 pub mod text;

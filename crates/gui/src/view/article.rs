@@ -2,13 +2,13 @@
 
 pub mod thread;
 
+use crate::view::kit::menu::{self, Menu};
 use crate::{
     model::palette::Washes,
     model::{article, workspace::Showing},
     view::{
         component::{
             margin::{self, MARK_GUTTER, Margin, NOTE_INSET, NOTE_WIDTH, Slot},
-            menu::{self, Menu},
             transcript::{MARK_AWAY, MARK_READING, MARK_VISIBLE},
         },
         kit::labels::Target,
@@ -31,6 +31,7 @@ use bezel::{
     motion::{AppExt as _, Fade, Painter},
     theme::{ControlSize, Sizing as _, TextStyle, Theme, Typeset, ink},
     ui::{
+        context_menu::Place,
         icons,
         input::TextField,
         menu::{Item, Segment},
@@ -186,6 +187,25 @@ fn outline_items(headings: &[(usize, u8, String)]) -> Vec<Item> {
             Item::action(text.clone())
                 .with_icon(heading_icon(*level))
                 .indented(usize::from(level - top))
+        })
+        .collect()
+}
+
+/// The outline menu's rows with what each does: put the caret at the start
+/// of its heading.
+fn outline_rows(editor: &Entity<editor::Editor>, cx: &App) -> Vec<(Item, menu::Act)> {
+    let headings = headings(editor.read(cx));
+    headings
+        .iter()
+        .zip(outline_items(&headings))
+        .map(|(&(ix, _, _), item)| {
+            let editor = editor.clone();
+            menu::row(item, move |_, window, cx| {
+                let at =
+                    markdown::Selection::at(markdown::Cursor::new(ix, markdown::Part::Body, 0));
+                editor.update(cx, |editor, cx| editor.select_to_top(at, cx));
+                window.focus(&editor.focus_handle(cx), cx);
+            })
         })
         .collect()
 }
@@ -523,45 +543,47 @@ impl Cydonia {
     pub(crate) fn toggle_outline(
         &mut self,
         _: &ToggleOutline,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let Some(article) = self.pane_doc(cx) else {
             return;
         };
+        let Some(editor) = article.editor.clone() else {
+            return;
+        };
         let path = article.path.clone();
         let at = article.reading.borrow().at;
-        let items = article
-            .editor
-            .as_ref()
-            .map(|editor| outline_items(&headings(editor.read(cx))))
-            .unwrap_or_default();
-        self.toggle_outline_menu(Menu::Outline(path), at, &items, cx);
+        self.toggle_outline_menu(path, editor, at, window, cx);
     }
 
     /// Open or shut an outline's menu, opening it lit on the heading being
     /// read.
     fn toggle_outline_menu(
         &mut self,
-        menu: Menu,
+        path: PathBuf,
+        editor: Entity<editor::Editor>,
         at: Option<usize>,
-        items: &[Item],
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.toggle_menu(menu.clone(), cx);
+        let menu = Menu::Outline(path);
         self.outline_hovered = false;
-        if self.menu.as_ref() == Some(&menu) {
-            self.light_outline(at, items);
+        let rows =
+            move |_: &mut Self, _: &mut Window, cx: &mut Context<Self>| outline_rows(&editor, cx);
+        self.toggle_menu(menu.clone(), Place::AboveEnd, rows, window, cx);
+        if self.menu_open(&menu) {
+            self.light_outline(at);
         }
     }
 
     /// Light the outline menu's row for the heading at `at`, or none.
-    fn light_outline(&mut self, at: Option<usize>, items: &[Item]) {
+    fn light_outline(&mut self, at: Option<usize>) {
         match at {
             Some(at) => {
-                self.menu_cursor.point_at(items, &[at]);
+                self.menu.point_at(&[at]);
             }
-            None => self.menu_cursor.clear(),
+            None => self.menu.clear_cursor(),
         }
     }
 
@@ -900,6 +922,90 @@ impl Cydonia {
         )
     }
 
+    /// The comments menu's rows: how the margin shows them, then every
+    /// comment, open ones first.
+    fn comments_rows(
+        &self,
+        project: usize,
+        at: usize,
+        editor: &Entity<editor::Editor>,
+        path: &Path,
+        cx: &App,
+    ) -> Vec<(Item, menu::Act)> {
+        use crate::model::settings::Comments;
+        let workspace = self.workspace.read(cx);
+        let Some(article) = workspace.article_in(project, at) else {
+            return Vec::new();
+        };
+        let comments = &article.comments.comments;
+        let shown = workspace.settings.appearance.comments;
+        let modes = Comments::ALL;
+        let switch: (Item, menu::Act) = (
+            Item::segmented(
+                [
+                    Segment::new(icons::layout::PanelRight, Comments::Full.label()),
+                    Segment::new(icons::social::MessageCircle, Comments::Minimal.label()),
+                ],
+                modes
+                    .iter()
+                    .position(|mode| *mode == shown)
+                    .unwrap_or_default(),
+            ),
+            Box::new(move |this, path, _, cx| {
+                if let Some(mode) = path.first().and_then(|at| modes.get(*at)) {
+                    this.workspace
+                        .update(cx, |workspace, cx| workspace.set_comments(*mode, cx));
+                }
+            }),
+        );
+        let row = |comment: &artifact::article::comments::Comment| {
+            let quote = artifact::text::one_line(&comment.quote);
+            let note = comment.note.lines().next().unwrap_or_default().to_owned();
+            let icon = match comment.resolved {
+                true => icons::glyph::Check,
+                false => icons::social::MessageCircle,
+            };
+            let (id, resolved, path, editor) = (
+                comment.id,
+                comment.resolved,
+                path.to_owned(),
+                editor.clone(),
+            );
+            menu::row(
+                Item::action(format!("“{quote}”"))
+                    .with_description(note)
+                    .with_icon(icon),
+                move |this, window, cx| {
+                    this.workspace.update(cx, |workspace, cx| {
+                        if resolved {
+                            workspace.resolve_comment(&path, id, false, cx);
+                        }
+                        workspace.activate_comment(&path, Some(id), cx);
+                    });
+                    let start = editor
+                        .read(cx)
+                        .anchors()
+                        .iter()
+                        .find(|anchor| anchor.id.0 == id)
+                        .map(|anchor| anchor.range.ordered().0);
+                    if let Some(start) = start {
+                        editor.update(cx, |editor, cx| {
+                            editor.select_to_top(markdown::Selection::at(start), cx)
+                        });
+                        window.focus(&editor.focus_handle(cx), cx);
+                    }
+                },
+            )
+        };
+        let open: Vec<_> = comments.iter().filter(|c| !c.resolved).map(row).collect();
+        let mut resolved: Vec<_> = comments.iter().filter(|c| c.resolved).map(row).collect();
+        if !resolved.is_empty() {
+            let heading: menu::Act = Box::new(|_, _, _, _| {});
+            resolved.insert(0, (Item::Heading("Resolved".into()), heading));
+        }
+        menu::sections([vec![switch], open, resolved])
+    }
+
     /// Every comment on the article, open and resolved, from a button over the
     /// pane's top right, under how the margin shows them. Nothing for an
     /// article with none.
@@ -912,88 +1018,28 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        use crate::model::settings::Comments;
         let workspace = self.workspace.read(cx);
         let comments = workspace.article_in(project, at)?.comments.comments.clone();
         if comments.is_empty() {
             return None;
         }
-        let shown = workspace.settings.appearance.comments;
         let theme = Theme::of(cx).clone();
         let menu = Menu::Comments(path.to_owned());
-        let card = (self.menu.as_ref() == Some(&menu)).then(|| {
-            let modes = Comments::ALL;
-            let switch: (Item, menu::Act) = (
-                Item::segmented(
-                    [
-                        Segment::new(icons::layout::PanelRight, Comments::Full.label()),
-                        Segment::new(icons::social::MessageCircle, Comments::Minimal.label()),
-                    ],
-                    modes
-                        .iter()
-                        .position(|mode| *mode == shown)
-                        .unwrap_or_default(),
-                ),
-                Box::new(move |this, path, _, cx| {
-                    if let Some(mode) = path.first().and_then(|at| modes.get(*at)) {
-                        this.workspace
-                            .update(cx, |workspace, cx| workspace.set_comments(*mode, cx));
-                    }
-                }),
-            );
-            let row = |comment: &artifact::article::comments::Comment| {
-                let quote = artifact::text::one_line(&comment.quote);
-                let note = comment.note.lines().next().unwrap_or_default().to_owned();
-                let icon = match comment.resolved {
-                    true => icons::glyph::Check,
-                    false => icons::social::MessageCircle,
-                };
-                let (id, resolved, path, editor) = (
-                    comment.id,
-                    comment.resolved,
-                    path.to_owned(),
-                    editor.clone(),
-                );
-                menu::row(
-                    Item::action(format!("“{quote}”"))
-                        .with_description(note)
-                        .with_icon(icon),
-                    move |this, window, cx| {
-                        this.workspace.update(cx, |workspace, cx| {
-                            if resolved {
-                                workspace.resolve_comment(&path, id, false, cx);
-                            }
-                            workspace.activate_comment(&path, Some(id), cx);
-                        });
-                        let start = editor
-                            .read(cx)
-                            .anchors()
-                            .iter()
-                            .find(|anchor| anchor.id.0 == id)
-                            .map(|anchor| anchor.range.ordered().0);
-                        if let Some(start) = start {
-                            editor.update(cx, |editor, cx| {
-                                editor.select_to_top(markdown::Selection::at(start), cx)
-                            });
-                            window.focus(&editor.focus_handle(cx), cx);
-                        }
-                    },
-                )
-            };
-            let open: Vec<_> = comments.iter().filter(|c| !c.resolved).map(row).collect();
-            let mut resolved: Vec<_> = comments.iter().filter(|c| c.resolved).map(row).collect();
-            if !resolved.is_empty() {
-                let heading: menu::Act = Box::new(|_, _, _, _| {});
-                resolved.insert(0, (Item::Heading("Resolved".into()), heading));
-            }
-            let rows = menu::sections([vec![switch], open, resolved]);
-            let id = SharedString::from(format!("comments-card-{}", path.display()));
-            let card = self
-                .menu_panel(id.clone(), rows, window, cx)
-                .max_w(px(OUTLINE_MAX_WIDTH))
-                .max_h(px(OUTLINE_MAX_HEIGHT));
-            popover::anchored_menu_below_end(id, card.into_any_element(), None)
-        });
+        let id = SharedString::from(format!("comments-card-{}", path.display()));
+        let card = self
+            .menu
+            .showing(&menu)
+            .then(|| {
+                self.menu
+                    .card(id.clone(), |this| &mut this.menu, window, cx)
+            })
+            .flatten()
+            .map(|card| {
+                let card = card
+                    .max_w(px(OUTLINE_MAX_WIDTH))
+                    .max_h(px(OUTLINE_MAX_HEIGHT));
+                self.menu.place(id.clone(), card)
+            });
         let open = comments.iter().filter(|comment| !comment.resolved).count();
         let trigger = theme
             .ghost(SharedString::from(format!("comments-{}", path.display())))
@@ -1017,10 +1063,14 @@ impl Cydonia {
             })
             .tooltip(|window, cx| Tooltip::text("Comments", window, cx))
             .on_click({
-                let menu = menu.clone();
-                cx.listener(move |this, _, _, cx| {
+                let (menu, path, editor) = (menu.clone(), path.to_owned(), editor.clone());
+                cx.listener(move |this, _, window, cx| {
                     cx.stop_propagation();
-                    this.toggle_menu(menu.clone(), cx);
+                    let (path, editor) = (path.clone(), editor.clone());
+                    let rows = move |this: &mut Self, _: &mut Window, cx: &mut Context<Self>| {
+                        this.comments_rows(project, at, &editor, &path, cx)
+                    };
+                    this.toggle_menu(menu.clone(), Place::BelowEnd, rows, window, cx);
                 })
             })
             .children(card);
@@ -1030,7 +1080,7 @@ impl Cydonia {
                 .occlude()
                 .top(px(12.))
                 .right(px(16.))
-                .child(self.menu_press(trigger, menu, cx))
+                .child(self.menu_trigger(trigger, menu, cx))
                 .into_any_element(),
         )
     }
@@ -1106,11 +1156,9 @@ impl Cydonia {
             return None;
         }
         let headings = headings(read);
-        let items = outline_items(&headings);
         let top = headings.iter().map(|(_, level, _)| *level).min()?;
         let theme = Theme::of(cx).clone();
         let menu = Menu::Outline(path.to_owned());
-        let open = self.menu.as_ref() == Some(&menu);
         let now = reading.borrow().clone();
         let tone = |ordinal: usize| {
             ink(if now.at == Some(ordinal) {
@@ -1131,7 +1179,6 @@ impl Cydonia {
                 let editor = editor.clone();
                 let reading = reading.clone();
                 let menu = menu.clone();
-                let items = items.clone();
                 move |_, window, cx| {
                     let next = reading_of(editor.read(cx).layouts(), &starts, blocks, &scroll);
                     let Some(next) = next else {
@@ -1144,11 +1191,11 @@ impl Cydonia {
                     *reading.borrow_mut() = next;
                     // After the frame: the root is not to be updated while it
                     // is being painted.
-                    let (root, menu, items) = (root.clone(), menu.clone(), items.clone());
+                    let (root, menu) = (root.clone(), menu.clone());
                     window.defer(cx, move |_, cx| {
                         let _ = root.update(cx, |this, cx| {
-                            if this.menu.as_ref() == Some(&menu) && !this.outline_hovered {
-                                this.light_outline(at, &items);
+                            if this.menu_open(&menu) && !this.outline_hovered {
+                                this.light_outline(at);
                                 cx.notify();
                             }
                         });
@@ -1179,40 +1226,30 @@ impl Cydonia {
                             .bg(tone(ordinal))
                     }),
             );
-        let card = open.then(|| {
-            let rows = headings
-                .iter()
-                .zip(items.iter().cloned())
-                .map(|(&(ix, _, _), item)| {
-                    let editor = editor.clone();
-                    menu::row(item, move |_, window, cx| {
-                        let at = markdown::Selection::at(markdown::Cursor::new(
-                            ix,
-                            markdown::Part::Body,
-                            0,
-                        ));
-                        editor.update(cx, |editor, cx| editor.select_to_top(at, cx));
-                        window.focus(&editor.focus_handle(cx), cx);
-                    })
-                })
-                .collect();
-            let id = SharedString::from(format!("outline-card-{}", path.display()));
-            let items = items.clone();
-            let reading = reading.clone();
-            let card = self
-                .menu_panel(id.clone(), rows, window, cx)
-                .id(SharedString::from(format!("{id}-hover")))
-                .max_w(px(OUTLINE_MAX_WIDTH))
-                .max_h(px(OUTLINE_MAX_HEIGHT))
-                .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
-                    this.outline_hovered = *hovered;
-                    if !hovered {
-                        this.light_outline(reading.borrow().at, &items);
-                        cx.notify();
-                    }
-                }));
-            popover::anchored_menu_above_end(id, card.into_any_element(), None)
-        });
+        let id = SharedString::from(format!("outline-card-{}", path.display()));
+        let card = self
+            .menu
+            .showing(&menu)
+            .then(|| {
+                self.menu
+                    .card(id.clone(), |this| &mut this.menu, window, cx)
+            })
+            .flatten()
+            .map(|card| {
+                let reading = reading.clone();
+                let card = card
+                    .id(SharedString::from(format!("{id}-hover")))
+                    .max_w(px(OUTLINE_MAX_WIDTH))
+                    .max_h(px(OUTLINE_MAX_HEIGHT))
+                    .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
+                        this.outline_hovered = *hovered;
+                        if !hovered {
+                            this.light_outline(reading.borrow().at);
+                            cx.notify();
+                        }
+                    }));
+                self.menu.place(id.clone(), card)
+            });
         let trigger = theme
             .ghost(SharedString::from(format!("outline-{}", path.display())))
             .relative()
@@ -1220,11 +1257,11 @@ impl Cydonia {
             .rounded_md()
             .child(dashes)
             .on_click({
-                let menu = menu.clone();
+                let (path, editor) = (path.to_owned(), editor.clone());
                 let at = now.at;
-                cx.listener(move |this, _, _, cx| {
+                cx.listener(move |this, _, window, cx| {
                     cx.stop_propagation();
-                    this.toggle_outline_menu(menu.clone(), at, &items, cx);
+                    this.toggle_outline_menu(path.clone(), editor.clone(), at, window, cx);
                 })
             })
             .children(card);
@@ -1235,7 +1272,7 @@ impl Cydonia {
                 .bottom(px(16.))
                 .right(px(16.))
                 .child(watch)
-                .child(self.menu_press(trigger, menu, cx))
+                .child(self.menu_trigger(trigger, menu, cx))
                 .into_any_element(),
         )
     }

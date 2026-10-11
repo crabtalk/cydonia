@@ -18,9 +18,10 @@ use bezel::{
     motion::{Fade, Painter},
     theme::{TextStyle, Theme, Typeset},
     ui::{
+        context_menu::{ContextMenu, Place},
         icons,
-        menu::{self, Cursor, Hit, Item},
-        popover, tabs,
+        menu::Item,
+        tabs,
         titlebar::{self, CaptionSide},
         tooltip::Tooltip,
         widgets::{ButtonStyle, Buttons as _},
@@ -120,8 +121,8 @@ pub struct Panel {
     /// so the order is arithmetic the strip can do without a window.
     contents: HashMap<usize, Tab>,
     next_id: usize,
-    menu: bool,
-    cursor: Cursor,
+    /// The `+` menu.
+    menu: ContextMenu<Self>,
     closing: Option<usize>,
     focus_pending: bool,
     restore_pending: Option<persistence::SavedPanel>,
@@ -153,8 +154,7 @@ impl Panel {
             reorder: tabs::Reorder::new(Painter::of(cx)),
             contents: HashMap::new(),
             next_id: 0,
-            menu: false,
-            cursor: Cursor::default(),
+            menu: ContextMenu::default(),
             closing: None,
             focus_pending: false,
             restore_pending: None,
@@ -541,7 +541,6 @@ impl Panel {
     }
 
     fn choose(&mut self, launch: Launch, window: &mut Window, cx: &mut Context<Self>) {
-        self.menu = false;
         match launch {
             Launch::Review => self.review(cx),
             Launch::Terminal => self.terminal(window, cx),
@@ -550,6 +549,27 @@ impl Panel {
             Launch::Files => self.files(window, cx),
         }
         cx.notify();
+    }
+
+    /// The `+` menu: a row per kind of tab, and what choosing one opens.
+    #[allow(clippy::type_complexity)]
+    fn launch_menu(
+        &mut self,
+        window: &mut Window,
+        _: &mut Context<Self>,
+    ) -> (
+        Vec<Item>,
+        impl Fn(&mut Self, &[usize], &mut Window, &mut Context<Self>) + use<>,
+    ) {
+        let launchers = self.launchers();
+        let items = Self::items(&launchers, window);
+        let choose =
+            move |this: &mut Self, path: &[usize], window: &mut Window, cx: &mut Context<Self>| {
+                if let Some(launch) = path.first().and_then(|ix| launchers.get(*ix)) {
+                    this.choose(*launch, window, cx);
+                }
+            };
+        (items, choose)
     }
 
     fn items(launchers: &[Launch], window: &Window) -> Vec<Item> {
@@ -612,33 +632,9 @@ impl Render for Panel {
         let theme = Theme::of(cx).clone();
         let right = chrome::has(CaptionSide::Right, window, cx);
         let launchers = self.launchers();
-        let items = Self::items(&launchers, window);
-        let rows = items.clone();
-        let chosen = launchers.clone();
-        let popup = self.menu.then(|| {
-            menu::card(
-                &theme,
-                "panel-menu",
-                &items,
-                &self.cursor,
-                window,
-                cx,
-                move |this, hit, window, cx| {
-                    match hit {
-                        Hit::Point(path) => {
-                            this.cursor.point_at(&rows, &path);
-                        }
-                        Hit::Choose(path) => {
-                            if let Some(launch) = path.first().and_then(|ix| chosen.get(*ix)) {
-                                this.choose(*launch, window, cx);
-                            }
-                        }
-                        Hit::Dismiss => this.menu = false,
-                    }
-                    cx.notify();
-                },
-            )
-        });
+        let popup = self
+            .menu
+            .render("panel-menu", |this| &mut this.menu, window, cx);
         let active_file = self.front().and_then(|tab| {
             if let Content::File(file) = &tab.content {
                 Some(file.clone())
@@ -909,19 +905,22 @@ impl Render for Panel {
                                     .id("panel-add")
                                     .flex_none()
                                     .tooltip(|window, cx| Tooltip::text("New tab", window, cx))
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.menu = !this.menu;
-                                        this.cursor.clear();
-                                        cx.notify();
-                                    })),
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        ContextMenu::toggle(
+                                            this,
+                                            |this| &mut this.menu,
+                                            (),
+                                            Place::Below,
+                                            Self::launch_menu,
+                                            window,
+                                            cx,
+                                        );
+                                    }))
+                                    .map(|el| {
+                                        ContextMenu::trigger(el, |this| &mut this.menu, (), cx)
+                                    }),
                             )
-                            .children(popup.map(|popup| {
-                                popover::anchored_menu_below(
-                                    "panel-menu",
-                                    popup.into_any_element(),
-                                    None,
-                                )
-                            })),
+                            .children(popup),
                     )
                     .child(chrome::grip("panel-grip", &self.drag, window))
                     .child(changes_toggle("Hide right panel", self.toggle, &theme))

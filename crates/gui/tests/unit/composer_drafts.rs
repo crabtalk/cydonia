@@ -108,9 +108,14 @@ fn agent_icon_closes_its_open_popover_and_can_open_it_again(cx: &mut TestAppCont
         visual.simulate_click(point, gpui::Modifiers::default());
         visual.run_until_parked();
         assert_eq!(
-            composer.read_with(&visual, |composer, _| composer.menu),
+            composer.read_with(&visual, |composer, _| composer.menu.is_open()),
             open
         );
+        // Past the closing menu's exit, as the pause between two clicks is.
+        visual
+            .executor()
+            .advance_clock(std::time::Duration::from_secs(1));
+        visual.run_until_parked();
     }
 }
 

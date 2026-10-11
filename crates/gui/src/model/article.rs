@@ -11,6 +11,7 @@
 //! disagreeing — and a path already handed to an agent is not one we can
 //! rewrite the way a vault rewrites its own links.
 
+use crate::model::language::Grammars as _;
 use crate::model::{
     cover, file_url, language,
     store::{self, Store},
@@ -305,7 +306,7 @@ impl Article {
             },
             cx,
         );
-        language::ensure(fences(editor.read(cx)), cx);
+        language::Here::ensure(fences(editor.read(cx)), cx);
         let mut source_digits = self.saved.split('\n').count().to_string().len();
         // `Changed` rather than every notify: a selection drag and the caret
         // blink notify too, and each write serializes the whole document.
@@ -321,7 +322,7 @@ impl Article {
             // On every change rather than on open alone: a fence is usually
             // tagged after it is made, and the grammar is wanted the moment it
             // is named.
-            language::ensure(fences(editor.read(cx)), cx);
+            language::Here::ensure(fences(editor.read(cx)), cx);
             if editor.read(cx).mode() == Mode::Source {
                 let digits = editor.read(cx).source_lines().to_string().len();
                 if digits != source_digits {

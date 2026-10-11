@@ -2,9 +2,7 @@
 //! selection's Label button — each opens [`crate::view::kit::labels`]'s picker.
 
 use super::ROW_GROUP;
-use crate::view::{
-    component::menu::Menu, kit::labels::Target, sidebar::Row, window::root::Cydonia,
-};
+use crate::view::{kit::labels::Target, sidebar::Row, window::root::Cydonia};
 use bezel::{
     gpui::{AnyElement, Context, Div, SharedString, Stateful, div, prelude::*, px},
     theme::Theme,
@@ -59,10 +57,10 @@ impl Cydonia {
             .relative()
             .on_click(cx.listener(|this, _, window, cx| {
                 cx.stop_propagation();
-                this.toggle_labels(Target::Heading, None, window, cx);
+                this.toggle_labels(Target::Heading, window, cx);
             }))
             .children(self.label_picker(&Target::Heading));
-        self.menu_press(cell, Menu::Labels(Target::Heading), cx)
+        self.labels_trigger(cell, Target::Heading, cx)
             .into_any_element()
     }
 
@@ -75,10 +73,10 @@ impl Cydonia {
             .relative()
             .on_click(cx.listener(|this, _, window, cx| {
                 cx.stop_propagation();
-                this.toggle_labels(Target::Selection, None, window, cx);
+                this.toggle_labels(Target::Selection, window, cx);
             }))
             .children(self.label_picker(&Target::Selection));
-        self.menu_press(button, Menu::Labels(Target::Selection), cx)
+        self.labels_trigger(button, Target::Selection, cx)
     }
 
     /// The filters on, each a pill that takes it off. Nothing while none is.

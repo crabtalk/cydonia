@@ -33,7 +33,7 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.menu = None;
+        self.close_menu(cx);
         self.toggle_modal(window, cx, |_, cx| Notice {
             what,
             focus: cx.focus_handle(),

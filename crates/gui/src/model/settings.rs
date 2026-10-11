@@ -1158,37 +1158,56 @@ pub fn load() -> Result<Settings> {
     Ok(settings)
 }
 
-/// Read `settings.toml`, hand it to `change`, and write it back when `change`
-/// says there is something to write.
-///
-/// Edited with `toml_edit` rather than re-serialised: the file is meant to be
-/// opened and changed by hand, and a round trip through a value tree would
-/// silently delete every comment in it.
+/// Where this build keeps the settings document.
 #[cfg(feature = "desktop")]
-fn edit(change: impl FnOnce(&mut toml_edit::DocumentMut) -> Result<bool>) -> Result<()> {
-    let path = path()?;
-    let body = std::fs::read_to_string(&path).unwrap_or_default();
-    let mut doc: toml_edit::DocumentMut =
-        body.parse().context("settings.toml is not valid toml")?;
-    if !change(&mut doc)? {
-        return Ok(());
-    }
-    std::fs::write(&path, doc.to_string())?;
-    Ok(())
+type Here = OnDisk;
+#[cfg(not(feature = "desktop"))]
+type Here = InMemory;
+
+/// The settings document, edited in place.
+trait Document {
+    /// Hand the document to `change`, and keep the result when `change` says
+    /// there is something to keep.
+    fn edit(change: impl FnOnce(&mut toml_edit::DocumentMut) -> Result<bool>) -> Result<()>;
 }
 
-/// The same without the `desktop` feature, which has no config directory:
-/// the document is held for as long as the process runs.
-#[cfg(not(feature = "desktop"))]
-fn edit(change: impl FnOnce(&mut toml_edit::DocumentMut) -> Result<bool>) -> Result<()> {
-    static HELD: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
-    let mut held = HELD.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    let mut doc: toml_edit::DocumentMut =
-        held.parse().context("settings.toml is not valid toml")?;
-    if change(&mut doc)? {
-        *held = doc.to_string();
+/// `settings.toml` in the config directory, edited with `toml_edit` so the
+/// comments in it survive.
+#[cfg(feature = "desktop")]
+struct OnDisk;
+
+#[cfg(feature = "desktop")]
+impl Document for OnDisk {
+    fn edit(change: impl FnOnce(&mut toml_edit::DocumentMut) -> Result<bool>) -> Result<()> {
+        let path = path()?;
+        let body = std::fs::read_to_string(&path).unwrap_or_default();
+        let mut doc: toml_edit::DocumentMut =
+            body.parse().context("settings.toml is not valid toml")?;
+        if !change(&mut doc)? {
+            return Ok(());
+        }
+        std::fs::write(&path, doc.to_string())?;
+        Ok(())
     }
-    Ok(())
+}
+
+/// A document held for as long as the process runs: this build has no config
+/// directory.
+#[cfg(not(feature = "desktop"))]
+struct InMemory;
+
+#[cfg(not(feature = "desktop"))]
+impl Document for InMemory {
+    fn edit(change: impl FnOnce(&mut toml_edit::DocumentMut) -> Result<bool>) -> Result<()> {
+        static HELD: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+        let mut held = HELD.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut doc: toml_edit::DocumentMut =
+            held.parse().context("settings.toml is not valid toml")?;
+        if change(&mut doc)? {
+            *held = doc.to_string();
+        }
+        Ok(())
+    }
 }
 
 /// One named table of the document, made if it is not there. Put in explicitly
@@ -1266,7 +1285,7 @@ impl Opener {
 
 /// Write one of `[open_with]`'s tables whole.
 pub fn set_opener(opens: Opens, opener: &Opener) -> Result<()> {
-    edit(|doc| {
+    Here::edit(|doc| {
         let open_with = table(doc, "open_with")?;
         let item = open_with[opens.key()].or_insert(toml_edit::table());
         let Some(held) = item.as_table_mut() else {
@@ -1297,7 +1316,7 @@ pub fn set_opener(opens: Opens, opener: &Opener) -> Result<()> {
 /// any of them can move in a frame. Key by key through [`table`] all the same,
 /// so a comment somebody wrote beside one of them survives the write.
 pub fn set_appearance(appearance: &Appearance) -> Result<()> {
-    edit(|doc| {
+    Here::edit(|doc| {
         write_appearance(doc, appearance)?;
         Ok(true)
     })
@@ -1385,7 +1404,7 @@ fn write_appearance(doc: &mut toml_edit::DocumentMut, appearance: &Appearance) -
 
 /// Switch a feature on or off in the file.
 pub fn set_feature(feature: Feature, on: bool) -> Result<()> {
-    edit(|doc| {
+    Here::edit(|doc| {
         let features = table(doc, "features")?;
         let held = match feature.in_panel() {
             true => {
@@ -1411,7 +1430,7 @@ pub fn set_feature(feature: Feature, on: bool) -> Result<()> {
 /// table says what differs, and a command sitting on its default differs in
 /// nothing.
 pub fn set_shortcut(key: &str, chord: Option<&str>) -> Result<()> {
-    edit(|doc| {
+    Here::edit(|doc| {
         let held = table(doc, "shortcuts")?;
         match chord {
             Some(chord) => held[key] = toml_edit::value(chord),
@@ -1425,7 +1444,7 @@ pub fn set_shortcut(key: &str, chord: Option<&str>) -> Result<()> {
 
 /// Enable Emacs word shortcuts without replacing the platform defaults.
 pub fn set_emacs_shortcuts(on: bool) -> Result<()> {
-    edit(|doc| {
+    Here::edit(|doc| {
         let held = table(doc, "shortcuts")?;
         if on {
             held["emacs"] = toml_edit::value(true);
@@ -1439,7 +1458,7 @@ pub fn set_emacs_shortcuts(on: bool) -> Result<()> {
 /// One key of one table, written to the file.
 fn set_key(table_name: &str, key: &str, value: impl Into<toml_edit::Value>) -> Result<()> {
     let value = value.into();
-    edit(|doc| {
+    Here::edit(|doc| {
         table(doc, table_name)?[key] = toml_edit::value(value);
         Ok(true)
     })
@@ -1447,7 +1466,7 @@ fn set_key(table_name: &str, key: &str, value: impl Into<toml_edit::Value>) -> R
 
 /// Move the watch's bounce in the file, in milliseconds.
 pub fn set_watch_bounce(ms: u64) -> Result<()> {
-    edit(|doc| {
+    Here::edit(|doc| {
         doc["watch_bounce"] = toml_edit::value(ms as i64);
         Ok(true)
     })
@@ -1455,7 +1474,7 @@ pub fn set_watch_bounce(ms: u64) -> Result<()> {
 
 /// Switch the release check on or off in the file.
 pub fn set_auto_update(on: bool) -> Result<()> {
-    edit(|doc| {
+    Here::edit(|doc| {
         doc["auto_update"] = toml_edit::value(on);
         Ok(true)
     })
@@ -1463,7 +1482,7 @@ pub fn set_auto_update(on: bool) -> Result<()> {
 
 /// Switch the finished-turn notification on or off in the file.
 pub fn set_notify_turns(on: bool) -> Result<()> {
-    edit(|doc| {
+    Here::edit(|doc| {
         doc["notify_turns"] = toml_edit::value(on);
         Ok(true)
     })
@@ -1471,7 +1490,7 @@ pub fn set_notify_turns(on: bool) -> Result<()> {
 
 /// Switch downloading pasted web pictures on or off in the file.
 pub fn set_download_web_images(on: bool) -> Result<()> {
-    edit(|doc| {
+    Here::edit(|doc| {
         doc["download_web_images"] = toml_edit::value(on);
         Ok(true)
     })
@@ -1479,7 +1498,7 @@ pub fn set_download_web_images(on: bool) -> Result<()> {
 
 /// Switch the composer under a drawer's session on or off in the file.
 pub fn set_drawer_composer(on: bool) -> Result<()> {
-    edit(|doc| {
+    Here::edit(|doc| {
         doc["drawer_composer"] = toml_edit::value(on);
         Ok(true)
     })
@@ -1487,7 +1506,7 @@ pub fn set_drawer_composer(on: bool) -> Result<()> {
 
 /// Switch pasting pictures in source mode on or off in the file.
 pub fn set_paste_images_in_source(on: bool) -> Result<()> {
-    edit(|doc| {
+    Here::edit(|doc| {
         doc["paste_images_in_source"] = toml_edit::value(on);
         Ok(true)
     })
@@ -1504,7 +1523,7 @@ pub fn set_paste_images_in_source(on: bool) -> Result<()> {
 /// Recorded before the install runs, not after: what is being agreed to is the
 /// fetch, and an install that fails is one that was still allowed to try.
 pub fn trust_agent(id: &str, mark: &str) -> Result<()> {
-    edit(|doc| {
+    Here::edit(|doc| {
         let held = table(doc, "trusted_agents")?;
         if held.get(id).and_then(|held| held.as_str()) == Some(mark) {
             return Ok(false);
@@ -1515,7 +1534,7 @@ pub fn trust_agent(id: &str, mark: &str) -> Result<()> {
 }
 
 pub fn put_agent(agent: &Agent, supersedes: Option<&str>) -> Result<()> {
-    edit(|doc| {
+    Here::edit(|doc| {
         // A freshly generated file serialises no agents as `agents = []`, which
         // toml_edit will not convert to an array of tables.
         if doc
@@ -1586,7 +1605,7 @@ pub fn put_agent(agent: &Agent, supersedes: Option<&str>) -> Result<()> {
 
 /// Drop the entry installed from registry agent `id`.
 pub fn remove_agent(id: &str) -> Result<()> {
-    edit(|doc| {
+    Here::edit(|doc| {
         let Some(agents) = doc
             .get_mut("agents")
             .and_then(|a| a.as_array_of_tables_mut())

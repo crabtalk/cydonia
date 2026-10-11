@@ -64,7 +64,7 @@ impl Cydonia {
         self.commit(cx);
         // One editor at a time, and before the lookup: a rename left in flight
         // would otherwise outlive a board that has gone.
-        self.menu = None;
+        self.close_menu(cx);
         self.renaming = None;
         let Some((name, key)) = self
             .workspace

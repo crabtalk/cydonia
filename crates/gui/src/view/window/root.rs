@@ -1,6 +1,7 @@
 //! Root view: the window's grid, the state the chrome owns, and the frame
 //! the sidebar and the chat column are hung in.
 
+use crate::view::kit::menu::Menu;
 use crate::view::window::lights::{self, Lights};
 #[cfg(feature = "desktop")]
 use crate::{
@@ -22,7 +23,6 @@ use crate::{
         board::info,
         component::{
             composer::{Composer, ComposerEvent},
-            menu::Menu,
             meter,
             ribbon::Ribbon,
         },
@@ -47,11 +47,11 @@ use bezel::{
     motion::{Fade, Painter},
     theme::{TextStyle, Theme, Typeset, appearance},
     ui::{
+        context_menu::ContextMenu,
         docking, drag,
         floating::Floating,
         icons,
         input::{FieldEvent, TextField},
-        menu::Cursor,
         stats::Stats,
         tabs,
         widgets::{ButtonStyle, Buttons, Content, SplitDrag},
@@ -547,18 +547,15 @@ pub struct Cydonia {
     /// [`crate::view::library`].
     pub(crate) library: Option<crate::view::library::Library>,
     /// The label picker, while one is open — see [`crate::view::kit::labels`].
-    pub(crate) picker: Option<crate::view::kit::labels::Picker>,
+    pub(crate) picker: bezel::ui::popover::Popup<crate::view::kit::labels::Picker>,
     /// The board identity panel, while it is open — see [`header::BoardInfo`].
     pub(crate) info: Option<info::BoardInfo>,
     /// Whether the press now being handled landed on the name of the board
-    /// whose panel is open — read by [`Cydonia::toggle_info`] and nothing else,
-    /// the way [`Cydonia::menu_pressed`] is read by `toggle_menu`.
+    /// whose panel is open — read by [`Cydonia::toggle_info`] and nothing else.
     pub(crate) info_pressed: bool,
-    pub(crate) menu: Option<Menu>,
-    /// Where the open menu's card stands, when it was opened by a press with a
-    /// point to it rather than from a trigger — see
-    /// [`Cydonia::toggle_menu_at`].
-    pub(crate) menu_point: Option<gpui::Point<gpui::Pixels>>,
+    /// The menu that is up, of every menu the window's screens open — see
+    /// [`crate::view::kit::menu`].
+    pub(crate) menu: ContextMenu<Cydonia, Menu>,
     pub(crate) sidebar_hovered: Option<Menu>,
     /// The space pane whose bar the pointer is over, by its key: its `+` and
     /// `···` take room in the bar only there. See [`Self::sidebar_hovered`].
@@ -566,13 +563,6 @@ pub struct Cydonia {
     /// The list row the pointer is over, by card id: its actions are drawn
     /// only there. See [`Self::sidebar_hovered`].
     pub(crate) list_hovered: Option<String>,
-    /// Which of the open menu's rows is live. Held here rather than in the
-    /// card, which is rebuilt every frame: the pointer moves the cursor, and
-    /// a cursor made afresh each paint would light nothing.
-    pub(crate) menu_cursor: Cursor,
-    /// Whether the press now being handled landed on the open menu's own
-    /// trigger — read by [`Cydonia::toggle_menu`] and nothing else.
-    pub(crate) menu_pressed: bool,
     /// Whether the pointer is over an open outline menu. Off it, the menu's
     /// lit row follows the heading being read.
     pub(crate) outline_hovered: bool,
@@ -1069,16 +1059,13 @@ impl Cydonia {
             tab_history: Vec::new(),
             modals: cx.new(|_| ModalLayer::default()),
             library: None,
-            picker: None,
+            picker: Default::default(),
             info: None,
             info_pressed: false,
-            menu: None,
-            menu_point: None,
+            menu: ContextMenu::default(),
             sidebar_hovered: None,
             pane_hovered: None,
             list_hovered: None,
-            menu_cursor: Cursor::default(),
-            menu_pressed: false,
             outline_hovered: false,
             renaming: None,
             name_field,

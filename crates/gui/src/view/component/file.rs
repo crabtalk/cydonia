@@ -1,5 +1,6 @@
 //! Small text-file buffers with explicit saves and external-change detection.
 
+use crate::model::language::{Grammars as _, Installable as _};
 use crate::model::{
     disk::{Files as _, Here},
     typography,
@@ -219,7 +220,7 @@ impl FileView {
         Self {
             root,
             focus: cx.focus_handle(),
-            language: crate::model::language::of(&path),
+            language: crate::model::language::Here::of(&path),
             path,
             field,
             saved: String::new(),
@@ -376,7 +377,7 @@ impl FileView {
             .map_or(crate::model::language::Status::Missing, |spec| {
                 spec.status()
             });
-        let language = crate::model::language::of(&self.path);
+        let language = crate::model::language::Here::of(&self.path);
         if self.language != language {
             self.language = language;
             self.grammar_status = None;

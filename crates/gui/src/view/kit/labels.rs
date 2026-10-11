@@ -1,11 +1,11 @@
 //! The label picker: one entry's labels, the library's filter, or its
 //! selection's, opened from whichever trigger names it.
 
-use crate::view::{component::menu::Menu, sidebar::Row, window::root::Cydonia};
+use crate::view::{sidebar::Row, window::root::Cydonia};
 use bezel::{
     gpui::{
-        AnyElement, App, Context, Div, Entity, Pixels, Point, Stateful, Subscription, Window, div,
-        prelude::*, px,
+        AnyElement, App, Context, Div, Entity, Stateful, StatefulInteractiveElement, Subscription,
+        Window, div, prelude::*, px,
     },
     theme::{TextStyle, Theme, Typeset},
     ui::{
@@ -36,20 +36,19 @@ pub(crate) struct Picker {
 }
 
 impl Cydonia {
-    /// Open the label picker on `target`, or shut it. `at` is where it is to
-    /// stand, as [`Cydonia::toggle_menu_at`] takes it.
+    /// Open the label picker on `target`, or shut it when the press that led
+    /// here found it open — see [`Self::labels_trigger`].
     pub(crate) fn toggle_labels(
         &mut self,
         target: Target,
-        at: Option<Point<Pixels>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let menu = Menu::Labels(target.clone());
-        self.toggle_menu_at(menu.clone(), at, cx);
-        if self.menu != Some(menu) {
+        if self.picker.take_press_was_open() {
+            popover::close_popup(self, cx, |this: &mut Self| &mut this.picker);
             return;
         }
+        self.close_menu(cx);
         let choices = self.label_choices(&target, cx);
         let creates = target != Target::Heading;
         let select = cx.new(|cx| {
@@ -67,11 +66,28 @@ impl Cydonia {
             window,
             |this, _, event: &MultiSelectEvent, window, cx| this.label_event(event, window, cx),
         );
-        self.picker = Some(Picker {
+        self.picker.open(Picker {
             target,
             select,
             _events: events,
         });
+        cx.notify();
+    }
+
+    /// `el`, noting each press for `target`'s picker, so a press on the
+    /// trigger of the picker that is open shuts it rather than reopening it.
+    pub(crate) fn labels_trigger<E: StatefulInteractiveElement>(
+        &self,
+        el: E,
+        target: Target,
+        cx: &Context<Self>,
+    ) -> E {
+        popover::trigger_press_matching(
+            el,
+            |this: &mut Self| &mut this.picker,
+            move |picker| picker.target == target,
+            cx,
+        )
     }
 
     /// `labels` as chips in `trigger`, which a press opens the picker from.
@@ -91,7 +107,7 @@ impl Cydonia {
                 let target = target.clone();
                 move |this, _, window, cx| {
                     cx.stop_propagation();
-                    this.toggle_labels(target.clone(), None, window, cx);
+                    this.toggle_labels(target.clone(), window, cx);
                 }
             }))
             .children(
@@ -110,20 +126,17 @@ impl Cydonia {
                 )
             })
             .children(self.label_picker(&target));
-        self.menu_press(chips, Menu::Labels(target), cx)
+        self.labels_trigger(chips, target, cx)
     }
 
     /// The picker, anchored under its trigger, while `target`'s is open.
     pub(crate) fn label_picker(&self, target: &Target) -> Option<AnyElement> {
-        if self.menu.as_ref() != Some(&Menu::Labels(target.clone())) {
-            return None;
-        }
-        let picker = self.picker.as_ref()?;
+        let picker = self.picker.get()?;
         (picker.target == *target).then(|| {
             popover::anchored_menu_below(
                 "library-labels",
                 picker.select.clone().into_any_element(),
-                None,
+                self.picker.closing_since(),
             )
         })
     }
@@ -134,7 +147,7 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(target) = self.picker.as_ref().map(|picker| picker.target.clone()) else {
+        let Some(target) = self.picker.as_open().map(|picker| picker.target.clone()) else {
             return;
         };
         match event {
@@ -164,15 +177,12 @@ impl Cydonia {
                 return;
             }
             MultiSelectEvent::Dismissed => {
-                if matches!(self.menu, Some(Menu::Labels(_))) {
-                    self.menu = None;
-                }
-                cx.notify();
+                popover::close_popup(self, cx, |this: &mut Self| &mut this.picker);
                 return;
             }
         }
         let choices = self.label_choices(&target, cx);
-        if let Some(picker) = &self.picker {
+        if let Some(picker) = self.picker.as_open() {
             picker
                 .select
                 .update(cx, |select, cx| select.set_choices(choices, cx));

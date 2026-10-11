@@ -1,6 +1,7 @@
 //! What every front end does between having its settings and opening its first
 //! window: fonts, the palette, markdown's hooks, the cover cache and the keymap.
 
+use crate::model::language::Grammars as _;
 use crate::{
     model::{fonts, language, palette, settings::Settings, workspace},
     view::{article, keymap},
@@ -57,8 +58,8 @@ pub fn init(settings: &Settings, cx: &mut App) {
     // what this list holds, and a picker that offered only what had already
     // been downloaded could not be used to ask for anything else. Naming a
     // language that is not cached is what fetches it — see
-    // [`crate::model::language::ensure`].
-    cx.set_highlighter(language::highlight, language::offerable());
+    // [`crate::model::language::Here::ensure`].
+    cx.set_highlighter(language::Here::highlight, language::Here::offerable());
     #[cfg(feature = "desktop")]
     crate::model::link::init(cx);
     cx.set_link_preview(crate::view::kit::link::preview);

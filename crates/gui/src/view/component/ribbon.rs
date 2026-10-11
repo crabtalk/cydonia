@@ -14,13 +14,8 @@
 //! then bold, italic, strikethrough, code, a highlight (`==text==`,
 //! [`editor::HIGHLIGHT_MARK`]) and a link.
 
-use crate::view::{
-    component::{
-        composer,
-        menu::{self, Menu},
-    },
-    window::root::Cydonia,
-};
+use crate::view::kit::menu::{self, Menu};
+use crate::view::{component::composer, window::root::Cydonia};
 use artifact::reference;
 use artifact::space::Member;
 use bezel::{
@@ -31,6 +26,7 @@ use bezel::{
     motion,
     theme::{TextStyle, Theme, Typeset},
     ui::{
+        context_menu::Place,
         icons::{self, Icon},
         input::TextField,
         menu::Item,
@@ -679,26 +675,25 @@ impl Cydonia {
                     .size(px(12.))
                     .text_color(theme.text_faint),
             )
-            .on_click(cx.listener(|this, _, _, cx| {
-                cx.stop_propagation();
-                this.toggle_menu(Menu::Turn, cx);
+            .on_click(cx.listener({
+                let current = current.clone();
+                move |this, _, window, cx| {
+                    cx.stop_propagation();
+                    let current = current.clone();
+                    let rows = move |_: &mut Self, _: &mut Window, _: &mut Context<Self>| {
+                        Self::turn_rows(current)
+                    };
+                    this.toggle_menu(Menu::Turn, Place::Below, rows, window, cx);
+                }
             }))
-            .children(self.turn_menu(current, window, cx));
-        self.menu_press(button, Menu::Turn, cx)
+            .children(self.menu_here(&Menu::Turn, "ribbon-turn-card", window, cx));
+        self.menu_trigger(button, Menu::Turn, cx)
     }
 
     /// Every block the run could be turned into — the editor's own vocabulary,
     /// which is what the slash menu and the gutter handle both offer.
-    fn turn_menu(
-        &self,
-        current: Option<SharedString>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        if self.menu.as_ref() != Some(&Menu::Turn) {
-            return None;
-        }
-        let rows = editor::turns()
+    fn turn_rows(current: Option<SharedString>) -> Vec<(Item, menu::Act)> {
+        editor::turns()
             .into_iter()
             .map(|(label, kind)| {
                 let checked = current.as_ref() == Some(&label);
@@ -706,8 +701,7 @@ impl Cydonia {
                     this.turn_blocks(kind.clone(), cx);
                 })
             })
-            .collect();
-        Some(self.menu_below(SharedString::from("ribbon-turn-card"), rows, window, cx))
+            .collect()
     }
 }
 

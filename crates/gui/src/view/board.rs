@@ -3,13 +3,12 @@
 
 pub mod info;
 
+use crate::model::language::Grammars as _;
+use crate::view::kit::menu::{self, Menu};
 use crate::{
     model::session::ChatSession,
     view::{
-        component::{
-            menu::{self, Menu},
-            transcript,
-        },
+        component::transcript,
         kit::text::CardTitle,
         pane::drawer::{Drawer, Face, Peek},
         pane::leaf::Leaf,
@@ -32,6 +31,7 @@ use bezel::{
     },
     theme::{TextStyle, Theme, Typeset},
     ui::{
+        context_menu,
         drag::{self, Carried},
         icons,
         input::{self, Shape, TextField},
@@ -1187,16 +1187,7 @@ impl Cydonia {
 
     /// The `···` on a card: what the row of glyphs underneath should not carry,
     /// because it cannot be undone.
-    pub(crate) fn card_menu(
-        &self,
-        on: &str,
-        card: &str,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        if self.menu.as_ref() != Some(&Menu::Card(card.to_owned())) {
-            return None;
-        }
+    fn card_rows(&self, on: &str, card: &str, cx: &App) -> Vec<(Item, menu::Act)> {
         let (copied, doomed) = (card.to_owned(), card.to_owned());
         let (from, held) = (on.to_owned(), on.to_owned());
         // The card at rest is a rendered document, not a run of text somebody
@@ -1241,12 +1232,23 @@ impl Cydonia {
             Item::action("Delete").with_icon(icons::files::Trash),
             move |this, window, cx| this.ask_delete_card(&held, &doomed, window, cx),
         ));
-        Some(self.menu_below(
-            SharedString::from(format!("card-menu-card-{card}")),
-            rows,
-            window,
-            cx,
-        ))
+        rows
+    }
+
+    /// What [`Self::menu_button`] builds a card's menu with.
+    fn card_menu_rows(on: String, card: String) -> menu::Rows {
+        Box::new(move |this, _, cx| this.card_rows(&on, &card, cx))
+    }
+
+    /// The card's menu, while it is up.
+    pub(crate) fn card_menu(
+        &self,
+        card: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let id = SharedString::from(format!("card-menu-card-{card}"));
+        self.menu_here(&Menu::Card(card.to_owned()), id, window, cx)
     }
 
     /// The session a card was dispatched to, while it is still open — a card
@@ -1591,12 +1593,15 @@ impl Cydonia {
             |editor| editor.with_text_size(text_size).with_scroll(scroll),
             cx,
         );
-        crate::model::language::ensure(crate::model::article::fences(editor.read(cx)), cx);
+        crate::model::language::Here::ensure(crate::model::article::fences(editor.read(cx)), cx);
         let shown = editor.read(cx).source();
         let (held_on, held_board, held_card) = (on.cloned(), board.clone(), card.clone());
         let subscription = cx.subscribe(&editor, move |this, editor, event: &EditorEvent, cx| {
             if let EditorEvent::Changed = event {
-                crate::model::language::ensure(crate::model::article::fences(editor.read(cx)), cx);
+                crate::model::language::Here::ensure(
+                    crate::model::article::fences(editor.read(cx)),
+                    cx,
+                );
                 this.save_card(held_on.as_ref(), &held_board, &held_card, cx);
             }
         });
@@ -2521,16 +2526,18 @@ impl Cydonia {
                     Some("list-group"),
                     icons::layout::Ellipsis,
                     Menu::Lane(id.to_owned()),
+                    context_menu::Place::Below,
+                    Box::new({
+                        let (id, board, on) = (id.to_owned(), board.to_owned(), on.cloned());
+                        move |this, _, _| {
+                            this.lane_rows(&id, held, at, lanes, View::List, &board, on.as_ref())
+                        }
+                    }),
                     cx,
                 )
-                .children(self.lane_menu(
-                    id,
-                    held,
-                    at,
-                    lanes,
-                    View::List,
-                    board,
-                    on,
+                .children(self.menu_here(
+                    &Menu::Lane(id.to_owned()),
+                    SharedString::from(format!("lane-menu-{id}")),
                     window,
                     cx,
                 )),
@@ -2823,7 +2830,7 @@ impl Cydonia {
         // differently in prepaint and paint.
         let actions = selected
             || self.list_hovered.as_deref() == Some(id)
-            || self.menu.as_ref() == Some(&Menu::Card(id.to_owned()));
+            || self.menu_open(&Menu::Card(id.to_owned()));
         let hovered_id = id.to_owned();
         let row = div()
             .id(SharedString::from(format!("list-row-{id}")))
@@ -2885,9 +2892,11 @@ impl Cydonia {
                         None,
                         icons::layout::Ellipsis,
                         Menu::Card(id.to_owned()),
+                        context_menu::Place::Below,
+                        Self::card_menu_rows(on_board.clone(), id.to_owned()),
                         cx,
                     )
-                    .children(self.card_menu(&on_board, id, window, cx)),
+                    .children(self.card_menu(id, window, cx)),
                 )
             })
             .on_click(cx.listener(move |this, _, window, cx| {
@@ -3311,16 +3320,18 @@ impl Cydonia {
                     Some("column"),
                     icons::layout::Ellipsis,
                     Menu::Lane(id.to_owned()),
+                    context_menu::Place::Below,
+                    Box::new({
+                        let (id, board, on) = (id.to_owned(), board.to_owned(), on.cloned());
+                        move |this, _, _| {
+                            this.lane_rows(&id, held, at, lanes, View::Lanes, &board, on.as_ref())
+                        }
+                    }),
                     cx,
                 )
-                .children(self.lane_menu(
-                    id,
-                    held,
-                    at,
-                    lanes,
-                    View::Lanes,
-                    board,
-                    on,
+                .children(self.menu_here(
+                    &Menu::Lane(id.to_owned()),
+                    SharedString::from(format!("lane-menu-{id}")),
                     window,
                     cx,
                 )),
@@ -3339,7 +3350,7 @@ impl Cydonia {
     /// decides is only what to call it: that order runs across the lanes and
     /// down the list, so the same step is left in one and up in the other.
     #[allow(clippy::too_many_arguments)]
-    fn lane_menu(
+    fn lane_rows(
         &self,
         id: &str,
         count: usize,
@@ -3348,12 +3359,7 @@ impl Cydonia {
         view: View,
         board: &str,
         pane: Option<&Member>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        if self.menu != Some(Menu::Lane(id.to_owned())) {
-            return None;
-        }
+    ) -> Vec<(Item, menu::Act)> {
         // What each direction is called, and the arrow that stands for it. The
         // step and the new lane are the same two directions, said the way the
         // space reads.
@@ -3443,12 +3449,7 @@ impl Cydonia {
         rows.push(menu::row(drop, move |this, window, cx| {
             this.ask_delete_column(&on_board, &dropped, window, cx)
         }));
-        Some(self.menu_below(
-            SharedString::from(format!("lane-menu-{id}")),
-            rows,
-            window,
-            cx,
-        ))
+        rows
     }
 
     /// Step a lane one place, and keep the menu on it: moving twice is two
@@ -3620,9 +3621,11 @@ impl Cydonia {
                             Some("card"),
                             icons::layout::Ellipsis,
                             Menu::Card(id.to_owned()),
+                            context_menu::Place::Below,
+                            Self::card_menu_rows(on_board.clone(), id.to_owned()),
                             cx,
                         )
-                        .children(self.card_menu(&on_board, id, window, cx)),
+                        .children(self.card_menu(id, window, cx)),
                     ),
             )
             .when(truncated, |el| {

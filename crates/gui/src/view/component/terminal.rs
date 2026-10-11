@@ -13,7 +13,12 @@ use bezel::{
     motion,
     theme::{TextStyle, Theme, Typeset},
     ui::{
-        AppExt as _, context_menu::ContextMenu, icons, input, menu::Item, tabs, tooltip::Tooltip,
+        AppExt as _,
+        context_menu::{ContextMenu, Place},
+        icons, input,
+        menu::Item,
+        tabs,
+        tooltip::Tooltip,
     },
 };
 use futures::{SinkExt, StreamExt, channel::mpsc};
@@ -326,7 +331,7 @@ pub struct Terminal {
     /// The blink, alive only while focused on a blinking cursor.
     blink: Option<Task<()>>,
     /// The right-click menu, while the program is not reporting the mouse.
-    menu: ContextMenu,
+    menu: ContextMenu<Self>,
     _pump: Option<Task<()>>,
 }
 
@@ -538,7 +543,18 @@ impl Terminal {
                 cx.read_from_clipboard().is_some(),
             ),
         ];
-        self.menu.open(at, items, window, cx);
+        self.menu.open(
+            (),
+            Place::At(at),
+            items,
+            |this, path, window, cx| match path {
+                [0] => this.copy(&input::Copy, window, cx),
+                [1] => this.paste(&input::Paste, window, cx),
+                _ => {}
+            },
+            window,
+            cx,
+        );
     }
 
     fn copy(&mut self, _: &input::Copy, _: &mut Window, cx: &mut Context<Self>) {
@@ -776,17 +792,10 @@ impl Render for Terminal {
                     .on_action(cx.listener(Self::copy))
                     .on_action(cx.listener(Self::paste))
                     .on_drop(cx.listener(Self::drop_paths))
-                    .children(self.menu.render(
-                        "terminal-menu",
-                        |this| &mut this.menu,
-                        |this, path, window, cx| match path {
-                            [0] => this.copy(&input::Copy, window, cx),
-                            [1] => this.paste(&input::Paste, window, cx),
-                            _ => {}
-                        },
-                        window,
-                        cx,
-                    ))
+                    .children(
+                        self.menu
+                            .render("terminal-menu", |this| &mut this.menu, window, cx),
+                    )
                     .on_mouse_down(
                         gpui::MouseButton::Left,
                         cx.listener(|this, event: &gpui::MouseDownEvent, window, cx| {

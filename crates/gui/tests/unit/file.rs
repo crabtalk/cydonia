@@ -126,7 +126,7 @@ fn source_uses_full_viewport_and_scrolls_long_files(cx: &mut gpui::TestAppContex
 /// `Changed` the field emits either way.
 #[gpui::test]
 fn source_files_are_coloured_and_recoloured(cx: &mut gpui::TestAppContext) {
-    crate::model::language::paintable();
+    crate::model::language::Here::paintable();
     syntax_std::install();
     let file = Temp::named(".rs");
     std::fs::write(&file.0, "fn main() { let x = 1; }\n").unwrap();
@@ -184,7 +184,7 @@ fn a_named_but_unpainted_language_reports_itself(cx: &mut gpui::TestAppContext) 
 /// Nothing to report for a file that paints, or for a name that names nothing.
 #[gpui::test]
 fn a_painted_or_unknown_file_reports_nothing(cx: &mut gpui::TestAppContext) {
-    crate::model::language::paintable();
+    crate::model::language::Here::paintable();
     syntax_std::install();
     let painted = Temp::named(".rs");
     let view = cx.new(|cx| FileView::new(painted.0.clone(), WeakEntity::new_invalid(), cx));

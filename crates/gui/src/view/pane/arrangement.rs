@@ -4,14 +4,11 @@
 //! The tree is [`artifact::space::Node`] — see there for what the shape
 //! means. This is only how it lands on the window.
 
+use crate::view::kit::menu::{self, Menu};
 use crate::{
     model::workspace::Showing,
     view::{
-        component::{
-            divider,
-            menu::{self, Menu},
-            panel::changes_toggle,
-        },
+        component::{divider, panel::changes_toggle},
         kit::new::{self, New},
         sidebar::{Dragged, Row},
         window::chrome,
@@ -28,7 +25,8 @@ use bezel::{
     motion::Painter,
     theme::Theme,
     ui::{
-        docking, icons, menu::Item, tabs, titlebar::CaptionSide, tooltip::Tooltip, widgets::Content,
+        context_menu::Place, docking, icons, menu::Item, tabs, titlebar::CaptionSide,
+        tooltip::Tooltip, widgets::Content,
     },
 };
 
@@ -698,9 +696,19 @@ impl Cydonia {
                     Some("pane-bar"),
                     icons::math::Plus,
                     Menu::PaneAdd(key.clone()),
+                    Place::Below,
+                    Box::new({
+                        let pane = pane.clone();
+                        move |this, _, cx| this.pane_add_rows(&pane, project, cx)
+                    }),
                     cx,
                 )
-                .children(self.pane_add_menu(pane, project, window, cx))
+                .children(self.menu_here(
+                    &Menu::PaneAdd(key.clone()),
+                    SharedString::from(format!("pane-add-card-{key}")),
+                    window,
+                    cx,
+                ))
             }))
             .child(chrome::grip(
                 SharedString::from(format!("pane-grip-{key}")),
@@ -713,9 +721,19 @@ impl Cydonia {
                     Some("pane"),
                     icons::layout::Ellipsis,
                     Menu::Pane(key.clone()),
+                    Place::Below,
+                    Box::new({
+                        let pane = pane.clone();
+                        move |this, _, cx| this.pane_rows(&pane, cx)
+                    }),
                     cx,
                 )
-                .children(self.pane_menu(pane, window, cx)),
+                .children(self.menu_here(
+                    &Menu::Pane(key.clone()),
+                    SharedString::from(format!("pane-menu-card-{key}")),
+                    window,
+                    cx,
+                )),
             )
             // The band's right-panel button, on the pane at the window's top
             // right — which is `last` only while the panel is down.
@@ -797,20 +815,20 @@ impl Cydonia {
                 MouseButton::Right,
                 cx.listener({
                     let menu = Menu::Tab(tab.clone());
-                    move |this, press: &bezel::gpui::MouseDownEvent, _, cx| {
-                        this.toggle_menu_at(menu.clone(), Some(press.position), cx);
+                    let entry = toolbar
+                        .as_ref()
+                        .and_then(|toolbar| toolbar.entry.as_ref())
+                        .map(|entry| (entry.row.clone(), entry.archived));
+                    move |this, press: &bezel::gpui::MouseDownEvent, window, cx| {
+                        let Some((row, archived)) = entry.clone() else {
+                            return;
+                        };
+                        let rows = Self::entry_menu_rows(menu.clone(), row, archived);
+                        this.toggle_menu(menu.clone(), Place::At(press.position), rows, window, cx);
                     }
                 }),
             )
-            .children(toolbar.and_then(|toolbar| toolbar.entry).and_then(|entry| {
-                self.entry_menu(
-                    Menu::Tab(tab.clone()),
-                    &entry.row,
-                    entry.archived,
-                    window,
-                    cx,
-                )
-            }))
+            .children(self.entry_menu(&Menu::Tab(tab.clone()), window, cx))
             .child(
                 tabs::close(theme, key, tabs::Close::OnHover)
                     .tooltip(move |window, cx| Tooltip::text("Close tab", window, cx))
@@ -833,16 +851,7 @@ impl Cydonia {
     /// click from the moves would also be a delete nobody meant.
     ///
     /// Closing is not here either: it keeps the button on the bar.
-    fn pane_menu(
-        &self,
-        entry: &Member,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        let key = key_of(entry);
-        if self.menu.as_ref() != Some(&Menu::Pane(key.clone())) {
-            return None;
-        }
+    fn pane_rows(&self, entry: &Member, cx: &App) -> Vec<(Item, menu::Act)> {
         let zoomed = self
             .arrangement(cx)
             .and_then(|space| space.zoomed())
@@ -882,13 +891,7 @@ impl Cydonia {
                 move |this, window, cx| this.move_pane(&on, side, window, cx),
             ));
         }
-        let rows = menu::sections([zoom, moves]);
-        Some(self.menu_below(
-            SharedString::from(format!("pane-menu-card-{key}")),
-            rows,
-            window,
-            cx,
-        ))
+        menu::sections([zoom, moves])
     }
 
     /// Exchange a pane with the one across the seam, and keep the focus on it
@@ -1142,27 +1145,11 @@ impl Cydonia {
 
     /// What the `+` in a pane's bar starts: the sidebar's `+` for the
     /// project of the pane's front tab, landing as a tab of the pane.
-    fn pane_add_menu(
-        &self,
-        pane: &Member,
-        project: usize,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        let key = key_of(pane);
-        if self.menu.as_ref() != Some(&Menu::PaneAdd(key.clone())) {
-            return None;
-        }
-        let rows = new::rows(new::offered(self.workspace.read(cx)), |kind| {
+    fn pane_add_rows(&self, pane: &Member, project: usize, cx: &App) -> Vec<(Item, menu::Act)> {
+        new::rows(new::offered(self.workspace.read(cx)), |kind| {
             let pane = pane.clone();
             Box::new(move |this, window, cx| this.new_in_pane(&pane, project, kind, window, cx))
-        });
-        Some(self.menu_below(
-            SharedString::from(format!("pane-add-card-{key}")),
-            rows,
-            window,
-            cx,
-        ))
+        })
     }
 
     /// Make an entry in `project` and open it as the front tab of `pane`.

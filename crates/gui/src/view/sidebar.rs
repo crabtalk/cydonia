@@ -6,15 +6,13 @@ use crate::model::state;
 #[cfg(feature = "desktop")]
 use crate::model::update;
 use crate::model::workspace::Showing;
+use crate::view::kit::menu::{self, Menu};
 use crate::view::window::section::Section;
 use crate::{
     model::{session::ChatSession, settings::Features},
     view::{
         article::TogglePlainText,
-        component::{
-            menu::{self, Menu},
-            transcript,
-        },
+        component::transcript,
         keymap::{self, Command},
         kit::new::{self, New},
         window::chrome,
@@ -24,6 +22,7 @@ use crate::{
 use artifact::board::View;
 use artifact::kind::Kind;
 use artifact::space::Member;
+use bezel::ui::context_menu;
 use bezel::ui::scroll as scrollbars;
 use bezel::ui::widgets::Content;
 use bezel::{
@@ -40,7 +39,6 @@ use bezel::{
         icons::{self, Icon},
         input::Case,
         menu::{Item, Segment},
-        popover,
         surface::Surfaced as _,
         titlebar::CaptionSide,
         tooltip::Tooltip,
@@ -876,7 +874,7 @@ impl Cydonia {
         // revealed by the row's hover, and the pointer leaves the row the
         // moment it reaches the card — which took the `+` away from under a
         // menu standing open beside it.
-        let held = self.menu.as_ref() == Some(&menu) || (add.is_some() && self.menu == add);
+        let held = self.menu_open(&menu) || add.as_ref().is_some_and(|add| self.menu_open(add));
         let reveal = (!held).then_some("group-head");
         let renaming = space_id
             .as_ref()
@@ -965,7 +963,14 @@ impl Cydonia {
                     SharedString::from(format!("group-menu-{key}")),
                     reveal,
                     icons::layout::Ellipsis,
-                    menu,
+                    menu.clone(),
+                    context_menu::Place::Below,
+                    match &group {
+                        Group::Project(path) => Self::project_menu_rows(path.clone()),
+                        Group::Space(_) => {
+                            Self::entry_menu_rows(menu, Row::Group(group.clone()), false)
+                        }
+                    },
                     cx,
                 )
                 // On the trigger, not the row: the card pins to the bottom
@@ -985,6 +990,11 @@ impl Cydonia {
                         reveal,
                         icons::math::Plus,
                         Menu::Add(path.clone()),
+                        context_menu::Place::Below,
+                        Box::new({
+                            let path = path.clone();
+                            move |this, _, cx| this.add_rows(&path, cx)
+                        }),
                         cx,
                     )
                     .children(self.add_menu(path, window, cx)),
@@ -1007,13 +1017,19 @@ impl Cydonia {
         // A space's opens from the row around it, as an entry's does.
         let head = match &group {
             Group::Project(path) => self
-                .menu_press(head, Menu::Project(path.clone()), cx)
+                .menu_trigger(head, Menu::Project(path.clone()), cx)
                 .on_mouse_down(
                     MouseButton::Right,
                     cx.listener({
-                        let menu = Menu::Project(path.clone());
-                        move |this, press: &gpui::MouseDownEvent, _, cx| {
-                            this.toggle_menu_at(menu.clone(), Some(press.position), cx);
+                        let path = path.clone();
+                        move |this, press: &gpui::MouseDownEvent, window, cx| {
+                            this.toggle_menu(
+                                Menu::Project(path.clone()),
+                                context_menu::Place::At(press.position),
+                                Self::project_menu_rows(path.clone()),
+                                window,
+                                cx,
+                            );
                         }
                     }),
                 ),
@@ -1517,7 +1533,6 @@ impl Cydonia {
             row,
             Row::Group(Group::Project(_)) | Row::Archive(_) | Row::Heading(_)
         );
-        let archived = self.archived_of(row, cx);
         div()
             .id(SharedString::from(format!("sidebar-hover-{}", key_of(row))))
             .when(entry, |el| {
@@ -1536,16 +1551,23 @@ impl Cydonia {
                     MouseButton::Right,
                     cx.listener({
                         let row = row.clone();
-                        move |this, press: &gpui::MouseDownEvent, _, cx| {
-                            this.toggle_menu_at(Menu::Entry(row.clone()), Some(press.position), cx);
+                        move |this, press: &gpui::MouseDownEvent, window, cx| {
+                            let at = Menu::Entry(row.clone());
+                            let archived = this.archived_of(&row, cx);
+                            let rows = Self::entry_menu_rows(at.clone(), row.clone(), archived);
+                            this.toggle_menu(
+                                at,
+                                context_menu::Place::At(press.position),
+                                rows,
+                                window,
+                                cx,
+                            );
                         }
                     }),
                 )
                 .children(
                     (!self.pinned(row, cx))
-                        .then(|| {
-                            self.entry_menu(Menu::Entry(row.clone()), row, archived, window, cx)
-                        })
+                        .then(|| self.entry_menu(&Menu::Entry(row.clone()), window, cx))
                         .flatten(),
                 )
             })
@@ -1895,18 +1917,12 @@ impl Cydonia {
     /// With more than one agent installed the session row asks which, since
     /// the one `⌘N` would pick is whoever the project last talked to — which
     /// leaves every other agent with no way in.
-    fn add_menu(
-        &self,
-        path: &Path,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        if !matches!(&self.menu, Some(Menu::Add(at)) if at == path) {
-            return None;
-        }
+    fn add_rows(&self, path: &Path, cx: &App) -> Vec<(Item, menu::Act)> {
         let workspace = self.workspace.read(cx);
-        let ix = workspace.project_at(path)?;
-        let rows = new::rows(new::offered(workspace), |kind| {
+        let Some(ix) = workspace.project_at(path) else {
+            return Vec::new();
+        };
+        new::rows(new::offered(workspace), |kind| {
             Box::new(move |this, window, cx| match kind {
                 New::Session(at) => {
                     this.select_project(ix, cx);
@@ -1919,13 +1935,19 @@ impl Cydonia {
                 New::Article => this.new_article(ix, window, cx),
                 New::Table => this.new_table(ix, window, cx),
             })
-        });
-        Some(self.menu_below(
-            SharedString::from(format!("add-menu-{ix}")),
-            rows,
-            window,
-            cx,
-        ))
+        })
+    }
+
+    /// The `+` menu of the project at `path`, while it is up.
+    fn add_menu(
+        &self,
+        path: &Path,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let ix = self.workspace.read(cx).project_at(path)?;
+        let id = SharedString::from(format!("add-menu-{ix}"));
+        self.menu_here(&Menu::Add(path.to_path_buf()), id, window, cx)
     }
 
     /// The label a project's list is narrowed to, on its heading, with a ×
@@ -1988,16 +2010,10 @@ impl Cydonia {
 
     /// What a press on the heading opens. Removing closes the tab — the
     /// directory and everything in it stays where it is.
-    fn project_menu(
-        &self,
-        path: &Path,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        if !matches!(&self.menu, Some(Menu::Project(at)) if at == path) {
-            return None;
-        }
-        let ix = self.workspace.read(cx).project_at(path)?;
+    fn project_rows(&self, path: &Path, cx: &App) -> Vec<(Item, menu::Act)> {
+        let Some(ix) = self.workspace.read(cx).project_at(path) else {
+            return Vec::new();
+        };
         let sort = self.workspace.read(cx).sort_of(ix);
         let by = |label: &'static str, mode: state::Sort| {
             menu::row(
@@ -2025,12 +2041,26 @@ impl Cydonia {
             Item::action("Remove project").with_icon(icons::files::FolderMinus),
             move |this, _, cx| this.close_project(ix, cx),
         ));
+        rows
+    }
+
+    /// What [`Self::menu_button`] and a right press build the heading's menu
+    /// with.
+    fn project_menu_rows(path: PathBuf) -> menu::Rows {
+        Box::new(move |this, _, cx| this.project_rows(&path, cx))
+    }
+
+    /// The heading's menu, while it is up: at the pointer from a right press,
+    /// under the `···` from the button.
+    fn project_menu(
+        &self,
+        path: &Path,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let ix = self.workspace.read(cx).project_at(path)?;
         let id = SharedString::from(format!("project-menu-{ix}"));
-        let card = self.menu_card(id.clone(), rows, window, cx);
-        Some(match self.menu_point(&Menu::Project(path.to_path_buf())) {
-            Some(point) => popover::menu_at(id, point, card, None),
-            None => popover::anchored_menu_below(id, card, None),
-        })
+        self.menu_here(&Menu::Project(path.to_path_buf()), id, window, cx)
     }
 
     /// Show `path` in the file manager. Best effort and off the main thread:
@@ -2223,20 +2253,29 @@ impl Cydonia {
             // The glyph alone turns over; the button is the same button either
             // way, so a press during the frame the hover is still travelling
             // opens the menu rather than falling through to the row.
-            let open = self.menu.as_ref() == Some(&at);
+            let open = self.menu_open(&at);
             let mark = match open || self.sidebar_hovered.as_ref() == Some(&at) {
                 true => icons::layout::Ellipsis,
                 false => icons::navigation::Pin,
             };
+            let rows = Self::entry_menu_rows(at.clone(), entry.clone(), archived);
             return self
-                .menu_button(id, None, mark, at.clone(), cx)
+                .menu_button(
+                    id,
+                    None,
+                    mark,
+                    at.clone(),
+                    context_menu::Place::BelowEnd,
+                    rows,
+                    cx,
+                )
                 // On the trigger, so the card hangs under the `···` rather
                 // than off the left edge of the row it is mounted on. A row
                 // with no button of its own draws it from the wrapper, where
                 // a right press is all there is to anchor to.
-                .children(self.entry_menu(at, entry, archived, window, cx));
+                .children(self.entry_menu(&at, window, cx));
         }
-        let held = matches!(&self.menu, Some(Menu::Entry(at)) if at == entry);
+        let held = matches!(self.menu.key(), Some(Menu::Entry(at)) if at == entry);
         let entry = entry.clone();
         let mark = match archived {
             true => icons::files::ArchiveRestore,
@@ -2337,17 +2376,13 @@ impl Cydonia {
     /// on the row. What a row still carries of its own is the press in
     /// passing — archive for an unpinned row, the pin for a pinned one, which
     /// opens this rather than acting. See [`Self::archive_button`].
-    pub(crate) fn entry_menu(
+    pub(crate) fn entry_rows(
         &self,
-        at: Menu,
+        at: &Menu,
         entry: &Row,
         archived: bool,
-        window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        if self.menu.as_ref() != Some(&at) {
-            return None;
-        }
+    ) -> Vec<(Item, menu::Act)> {
         // `../desktop`'s rule for what a `···` may carry: only commands with no
         // affordance on the object. An article's title is the head of its own
         // page and a board's name in the band opens its identity panel, so
@@ -2363,7 +2398,7 @@ impl Cydonia {
         // it, so these are the band's alone — on the wrong row they would act
         // on whatever else was open.
         // A tab's menu has them only while its tab is the one focused.
-        let page = match &at {
+        let page = match at {
             Menu::Entry(_) | Menu::Library(_) => false,
             Menu::Tab(tab) => self.leaf().entry.as_ref() == Some(tab),
             _ => true,
@@ -2515,7 +2550,7 @@ impl Cydonia {
 
         // ── the tab it is open in ──
         let mut tab_rows: Vec<(Item, menu::Act)> = Vec::new();
-        if let Menu::Tab(tab) = &at {
+        if let Menu::Tab(tab) = at {
             let tab = tab.clone();
             tab_rows.push(menu::row(
                 Item::action("Close tab").with_icon(icons::notifications::X),
@@ -2531,16 +2566,24 @@ impl Cydonia {
                 move |this, window, cx| this.ask_delete(&entry, window, cx)
             },
         )];
-        let rows = menu::sections([shown, held, disk, tab_rows, delete]);
-        let id = SharedString::from("header-menu-card");
-        let card = self.menu_card(id.clone(), rows, window, cx);
-        // A right press carries a point, and the card stands at it. From a
-        // button — the `···`, the pin — there is none, and the card drops
-        // right-aligned to the trigger, whose affordance is at the row's end.
-        Some(match self.menu_point(&at) {
-            Some(point) => popover::menu_at(id, point, card, None),
-            None => popover::anchored_menu_below_end(id, card, None),
-        })
+        menu::sections([shown, held, disk, tab_rows, delete])
+    }
+
+    /// The menu [`Self::entry_rows`] opens, while `at` is the one up. A right
+    /// press opens it at the pointer; a button — the `···`, the pin — below
+    /// its own right edge, where the row's affordance is.
+    pub(crate) fn entry_menu(
+        &self,
+        at: &Menu,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        self.menu_here(at, "header-menu-card", window, cx)
+    }
+
+    /// What [`Self::menu_button`] builds an entry's menu with.
+    pub(crate) fn entry_menu_rows(at: Menu, entry: Row, archived: bool) -> menu::Rows {
+        Box::new(move |this, _, cx| this.entry_rows(&at, &entry, archived, cx))
     }
 
     /// Drop an entry, file and all. Deleting the session on screen lands on

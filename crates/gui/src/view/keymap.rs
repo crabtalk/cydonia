@@ -16,7 +16,6 @@
 //! because the menu bar holds its own copy of every equivalent — see
 //! [`menubar::refresh`].
 
-#[cfg(feature = "desktop")]
 pub mod hotkey;
 
 use crate::{

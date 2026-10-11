@@ -8,7 +8,8 @@
 
 use crate::model::workspace::Showing;
 use crate::view::{
-    component::{menu::Menu, panel::changes_toggle},
+    component::panel::changes_toggle,
+    kit::menu::Menu,
     sidebar::{Renaming, Row},
     window::chrome,
     window::root::{self, Cydonia},
@@ -18,7 +19,7 @@ use bezel::{
     gpui::{AnyElement, App, Context, FontWeight, SharedString, Window, div, prelude::*, px},
     motion::Painter,
     theme::{TextStyle, Theme, Typeset},
-    ui::{icons, titlebar::CaptionSide},
+    ui::{context_menu::Place, icons, titlebar::CaptionSide},
 };
 /// What a pane puts in the band.
 pub(crate) struct Toolbar {
@@ -237,12 +238,12 @@ impl Cydonia {
                                 None,
                                 icons::layout::Ellipsis,
                                 Menu::Header,
+                                Place::BelowEnd,
+                                Self::entry_menu_rows(Menu::Header, entry.row, entry.archived),
                                 cx,
                             )
                             .children(self.entry_menu(
-                                Menu::Header,
-                                &entry.row,
-                                entry.archived,
+                                &Menu::Header,
                                 window,
                                 cx,
                             ))

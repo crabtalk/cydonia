@@ -30,7 +30,7 @@ struct Asset {
     sha256: String,
 }
 
-use super::Status;
+use super::{Installable, Status};
 
 /// A grammar the catalogue can install.
 #[derive(Deserialize)]
@@ -56,23 +56,20 @@ fn catalog() -> &'static [Spec] {
     })
 }
 
-impl Spec {
-    /// The grammar under this catalogue name.
-    pub fn named(name: &str) -> Option<&'static Self> {
+impl Installable for Spec {
+    fn named(name: &str) -> Option<&'static Self> {
         catalog().iter().find(|spec| spec.name == name)
     }
 
-    /// The grammar a fence's label means, following aliases: a fence tagged
-    /// `rs` or `sh` names a grammar under another name.
-    pub fn resolve(label: &str) -> Option<&'static Self> {
+    fn resolve(label: &str) -> Option<&'static Self> {
         let label = label.trim().to_ascii_lowercase();
         catalog()
             .iter()
             .find(|spec| spec.name == label || spec.aliases.contains(&label))
     }
 
-    pub fn status(&self) -> Status {
-        super::installed();
+    fn status(&self) -> Status {
+        super::installed::installed();
         states()
             .lock()
             .unwrap()
@@ -81,9 +78,8 @@ impl Spec {
             .unwrap_or(Status::Missing)
     }
 
-    /// Called only by the user's Install/Retry action. Concurrent views share one download.
-    pub fn start_install(&'static self) {
-        super::installed();
+    fn start_install(&'static self) {
+        super::installed::installed();
         let spec = self;
         if !begin_install(spec) {
             return;
@@ -107,7 +103,7 @@ impl Spec {
 }
 
 /// Every language the catalogue can install, cached or not — what the fence
-/// picker offers. [`super::paintable`] is the cached subset.
+/// picker offers. [`super::Grammars::paintable`] is the cached subset.
 pub fn names() -> Vec<&'static str> {
     catalog().iter().map(|spec| spec.name.as_str()).collect()
 }

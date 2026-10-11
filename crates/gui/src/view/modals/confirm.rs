@@ -156,7 +156,7 @@ impl Cydonia {
 
     /// Put `confirm` up, closing any menu it was asked from.
     fn ask(&mut self, confirm: Confirm, window: &mut Window, cx: &mut Context<Self>) {
-        self.menu = None;
+        self.close_menu(cx);
         self.toggle_modal(window, cx, |_, _| confirm);
     }
 

@@ -9,7 +9,7 @@
 use crate::{
     model::{settings::Features, workspace::Showing},
     view::{
-        component::menu::{self, Menu},
+        kit::menu::{self, Menu},
         kit::{icon::kind_icon, stamp},
         modals::confirm::Doomed,
         sidebar::{self, Row},
@@ -24,6 +24,7 @@ use bezel::{
     },
     theme::{TextStyle, Theme, Typeset},
     ui::{
+        context_menu::Place,
         icons::{self, Icon},
         input::{FieldEvent, TextField},
         menu::Item as MenuItem,
@@ -843,25 +844,25 @@ impl Cydonia {
             .relative()
             .on_click(cx.listener({
                 let menu = menu.clone();
-                move |this, _, _, cx| {
+                move |this, _, window, cx| {
                     cx.stop_propagation();
-                    this.toggle_menu(menu.clone(), cx);
+                    let shown = shown.clone();
+                    let rows = move |_: &mut Self, _: &mut Window, _: &mut Context<Self>| {
+                        shown
+                            .into_iter()
+                            .map(|at| {
+                                menu::row(
+                                    MenuItem::action(at.label()).checked(at == tab),
+                                    move |this, _, cx| this.library_tab(at, cx),
+                                )
+                            })
+                            .collect()
+                    };
+                    this.toggle_menu(menu.clone(), Place::Below, rows, window, cx);
                 }
             }));
-        let card = (self.menu == Some(Menu::LibraryTab)).then(|| {
-            let rows = shown
-                .into_iter()
-                .map(|at| {
-                    menu::row(
-                        MenuItem::action(at.label()).checked(at == tab),
-                        move |this, _, cx| this.library_tab(at, cx),
-                    )
-                })
-                .collect();
-            let id = SharedString::from("library-tab-menu");
-            popover::anchored_menu_below(id.clone(), self.menu_card(id, rows, window, cx), None)
-        });
-        self.menu_press(trigger, menu, cx).children(card)
+        let card = self.menu_here(&menu, "library-tab-menu", window, cx);
+        self.menu_trigger(trigger, menu, cx).children(card)
     }
 
     /// What the selection can be done to, in the bar's place while there is
@@ -911,7 +912,12 @@ impl Cydonia {
             .when(articles && projects > 1, |bar| {
                 bar.child(
                     self.library_trigger("library-move", "Move to", Menu::LibraryMove, cx)
-                        .children(self.move_menu(window, cx)),
+                        .children(self.menu_here(
+                            &Menu::LibraryMove,
+                            "library-move-menu",
+                            window,
+                            cx,
+                        )),
                 )
             })
             .when(labelled, |bar| bar.child(self.label_button(cx)))
@@ -946,25 +952,51 @@ impl Cydonia {
             .button(label, ButtonStyle::Ghost, None)
             .id(id)
             .relative()
-            .on_click(cx.listener({
-                let menu = menu.clone();
-                move |this, _, _, cx| {
-                    cx.stop_propagation();
-                    this.toggle_menu(menu.clone(), cx);
-                }
-            }));
-        self.menu_press(button, menu, cx)
+            .on_click(self.open_library_menu(menu.clone(), cx));
+        self.menu_trigger(button, menu, cx)
     }
 
-    /// A heading that opens `menu`, drawn under it as `card` while it is
-    /// open: a filter on the column, and its sort where it has one.
+    /// A click that opens the library's `menu` under what was pressed.
+    fn open_library_menu(
+        &self,
+        menu: Menu,
+        cx: &Context<Self>,
+    ) -> impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static {
+        cx.listener(move |this, _, window, cx| {
+            cx.stop_propagation();
+            let key = menu.clone();
+            this.toggle_menu(
+                menu.clone(),
+                Place::Below,
+                move |this, _, cx| this.library_rows(&key, cx),
+                window,
+                cx,
+            );
+        })
+    }
+
+    /// The rows of the library's `menu`.
+    fn library_rows(&self, menu: &Menu, cx: &App) -> Vec<(MenuItem, menu::Act)> {
+        match menu {
+            Menu::LibraryProject => self.library_project_rows(cx),
+            Menu::LibraryMove => self.move_rows(cx),
+            Menu::LibraryAgent => self.agent_rows(cx),
+            Menu::LibraryStatus => self.status_rows(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// A heading that opens `menu` under itself, its card's id `card`: a
+    /// filter on the column, and its sort where it has one.
+    #[allow(clippy::too_many_arguments)]
     fn heading_picker(
         &self,
         column: &table::Column,
         sorted: Option<bool>,
         id: &'static str,
         menu: Menu,
-        card: Option<AnyElement>,
+        card: &'static str,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = Theme::of(cx).clone();
@@ -976,14 +1008,9 @@ impl Cydonia {
             )
             .id(id)
             .relative()
-            .on_click(cx.listener({
-                let menu = menu.clone();
-                move |this, _, _, cx| {
-                    cx.stop_propagation();
-                    this.toggle_menu(menu.clone(), cx);
-                }
-            }));
-        self.menu_press(cell, menu, cx)
+            .on_click(self.open_library_menu(menu.clone(), cx));
+        let card = self.menu_here(&menu, card, window, cx);
+        self.menu_trigger(cell, menu, cx)
             .children(card)
             .into_any_element()
     }
@@ -1012,16 +1039,9 @@ impl Cydonia {
         ]
     }
 
-    fn library_project_menu(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        if self.menu != Some(Menu::LibraryProject) {
-            return None;
-        }
+    fn library_project_rows(&self, cx: &App) -> Vec<(MenuItem, menu::Act)> {
         let Some(library) = &self.library else {
-            return None;
+            return Vec::new();
         };
         let picked = library.project.clone();
         let mut rows = self.sorts(Field::Project);
@@ -1040,16 +1060,12 @@ impl Cydonia {
                 move |this, _, cx| this.library_project(Some(path.clone()), cx),
             )
         }));
-        Some(self.menu_below(SharedString::from("library-project-menu"), rows, window, cx))
+        rows
     }
 
     /// The projects a selection's articles can move into.
-    fn move_menu(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if self.menu != Some(Menu::LibraryMove) {
-            return None;
-        }
-        let rows = self
-            .workspace
+    fn move_rows(&self, cx: &App) -> Vec<(MenuItem, menu::Act)> {
+        self.workspace
             .read(cx)
             .projects
             .iter()
@@ -1060,16 +1076,15 @@ impl Cydonia {
                     move |this, _, cx| this.move_selected(to, cx),
                 )
             })
-            .collect();
-        Some(self.menu_below(SharedString::from("library-move-menu"), rows, window, cx))
+            .collect()
     }
 
     /// The agents a session in an open project runs on, to list one's alone.
-    fn agent_menu(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if self.menu != Some(Menu::LibraryAgent) {
-            return None;
-        }
-        let picked = self.library.as_ref()?.agent.clone();
+    fn agent_rows(&self, cx: &App) -> Vec<(MenuItem, menu::Act)> {
+        let Some(library) = &self.library else {
+            return Vec::new();
+        };
+        let picked = library.agent.clone();
         let mut names: Vec<String> = self
             .workspace
             .read(cx)
@@ -1092,15 +1107,15 @@ impl Cydonia {
                 move |this, _, cx| this.library_agent(Some(name.clone()), cx),
             )
         }));
-        Some(self.menu_below(SharedString::from("library-agent-menu"), rows, window, cx))
+        rows
     }
 
-    fn status_menu(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if self.menu != Some(Menu::LibraryStatus) {
-            return None;
-        }
-        let picked = self.library.as_ref()?.status;
-        let rows = Status::ALL
+    fn status_rows(&self) -> Vec<(MenuItem, menu::Act)> {
+        let Some(library) = &self.library else {
+            return Vec::new();
+        };
+        let picked = library.status;
+        Status::ALL
             .into_iter()
             .map(|status| {
                 menu::row(
@@ -1108,8 +1123,7 @@ impl Cydonia {
                     move |this, _, cx| this.library_status(status, cx),
                 )
             })
-            .collect();
-        Some(self.menu_below(SharedString::from("library-status-menu"), rows, window, cx))
+            .collect()
     }
 
     /// The listings as rows under one heading.
@@ -1136,35 +1150,35 @@ impl Cydonia {
                 let sorted = (field.sortable() && order.field == field).then_some(order.ascending);
                 match field {
                     Field::Project => {
-                        let card = self.library_project_menu(window, cx);
                         return self.heading_picker(
                             column,
                             sorted,
                             "library-heading-project",
                             Menu::LibraryProject,
-                            card,
+                            "library-project-menu",
+                            window,
                             cx,
                         );
                     }
                     Field::Agent => {
-                        let card = self.agent_menu(window, cx);
                         return self.heading_picker(
                             column,
                             sorted,
                             "library-heading-agent",
                             Menu::LibraryAgent,
-                            card,
+                            "library-agent-menu",
+                            window,
                             cx,
                         );
                     }
                     Field::Status => {
-                        let card = self.status_menu(window, cx);
                         return self.heading_picker(
                             column,
                             None,
                             "library-heading-status",
                             Menu::LibraryStatus,
-                            card,
+                            "library-status-menu",
+                            window,
                             cx,
                         );
                     }
@@ -1243,14 +1257,17 @@ impl Cydonia {
     ) -> AnyElement {
         let id = SharedString::from(format!("library-menu-{ix}"));
         let menu = Menu::Library(listing.row.clone());
+        let rows = Self::entry_menu_rows(menu.clone(), listing.row.clone(), listing.archived);
         self.menu_button(
             id,
             Some(ROW_GROUP),
             icons::layout::Ellipsis,
             menu.clone(),
+            Place::BelowEnd,
+            rows,
             cx,
         )
-        .children(self.entry_menu(menu, &listing.row, listing.archived, window, cx))
+        .children(self.entry_menu(&menu, window, cx))
         .into_any_element()
     }
 

@@ -16,199 +16,39 @@
 //! nothing here ships on by default: [`crate::model::settings::Shortcuts`]
 //! holds no `activate` until somebody asks for one.
 
-use crate::{
-    model::{settings, state},
-    view::{
-        keymap::Chord,
-        window::root::{self, Cydonia},
-    },
-};
-use bezel::gpui::{App, Global, SharedString, Task};
-use futures::StreamExt;
-use global_hotkey::{
-    GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState,
-    hotkey::{Code, HotKey, Modifiers},
-};
-use std::str::FromStr;
+use bezel::gpui::{App, SharedString};
 
-/// What the app is holding from the system, and what went wrong getting it.
-struct Held {
-    /// `None` where the system would not give us a manager at all — a build
-    /// with no event loop on the main thread, which is not this one, but the
-    /// call returns a `Result` and an app that unwrapped it would die at
-    /// launch over a shortcut.
-    manager: Option<GlobalHotKeyManager>,
-    /// What is registered right now, so it can be handed back before the next
-    /// one is taken.
-    key: Option<HotKey>,
-    refused: Option<SharedString>,
-    /// The task turning presses into activations. Held so it lives as long as
-    /// the app rather than until the end of [`apply`].
-    _pump: Task<()>,
+#[cfg(feature = "desktop")]
+mod system;
+
+/// Where this build holds the activate chord.
+#[cfg(feature = "desktop")]
+pub type Here = system::System;
+#[cfg(not(feature = "desktop"))]
+pub type Here = Unheld;
+
+/// The activate chord, held outside the app.
+pub trait Hotkey {
+    /// Hold `chord`, letting go of whatever was held before. `None` lets go
+    /// and takes nothing.
+    fn apply(chord: Option<&str>, cx: &mut App);
+
+    /// Why the chord in the file is not being held, when it is not.
+    fn refused(cx: &App) -> Option<SharedString>;
 }
 
-impl Global for Held {}
+/// No chord held: a browser tab cannot hear a key while it is not in front.
+#[cfg(not(feature = "desktop"))]
+pub struct Unheld;
 
-/// Hold `chord`, letting go of whatever was held before. `None` lets go and
-/// takes nothing.
-///
-/// Called at launch and again whenever the row in Settings moves, so it has to
-/// be the whole transaction rather than a register: the old key stays live
-/// until it is explicitly given back.
-pub fn apply(chord: Option<&str>, cx: &mut App) {
-    if !cx.has_global::<Held>() {
-        install(cx);
-    }
-    let wanted = chord
-        .and_then(Chord::parse)
-        .and_then(|chord| chord.hotkey());
-    let refused = match (chord, wanted.as_ref()) {
-        // Said, and not a chord this platform can hold. A trackpad-era key
-        // like `fn` has no Carbon code, and neither has a two-stroke sequence.
-        (Some(_), None) => Some(SharedString::from("Not a chord the system can hold.")),
-        _ => None,
-    };
-    let held = cx.global_mut::<Held>();
-    let Some(manager) = held.manager.as_ref() else {
-        held.refused = Some(SharedString::from("The system refused the shortcut."));
-        return;
-    };
-    if let Some(key) = held.key.take() {
-        let _ = manager.unregister(key);
-    }
-    held.refused = refused;
-    let Some(wanted) = wanted else {
-        return;
-    };
-    match manager.register(wanted) {
-        Ok(()) => held.key = Some(wanted),
-        // Almost always another app that got there first — the registration is
-        // desktop-wide and first come, first served.
-        Err(_) => held.refused = Some(SharedString::from("Another app is already holding it.")),
-    }
-}
-
-/// Why the chord in the file is not being held, when it is not.
-///
-/// Silence is not the same as success and this cannot tell you which you have:
-/// a chord the system claimed for itself registers without complaint and then
-/// never arrives. What is reported is only what registration knew.
-pub fn refused(cx: &App) -> Option<SharedString> {
-    cx.try_global::<Held>()?.refused.clone()
-}
-
-/// Take the manager and start draining its events.
-///
-/// Once per launch. The handler runs on the thread the system delivers on, so
-/// it does no more than post — the activation happens back on the app's own
-/// turn, where there is a window to bring forward.
-fn install(cx: &mut App) {
-    let (tx, mut rx) = futures::channel::mpsc::unbounded();
-    GlobalHotKeyEvent::set_event_handler(Some(move |event: GlobalHotKeyEvent| {
-        // Press and release both arrive; acting on the release would fire the
-        // second time a held key let go.
-        if event.state() == HotKeyState::Pressed {
-            let _ = tx.unbounded_send(());
-        }
-    }));
-    let pump = cx.spawn(async move |cx| {
-        while rx.next().await.is_some() {
-            cx.update(activate);
-        }
-    });
-    cx.set_global(Held {
-        manager: GlobalHotKeyManager::new().ok(),
-        key: None,
-        refused: None,
-        _pump: pump,
-    });
-}
-
-/// Bring the app forward, opening a window if ⌘W left it with none — the same
-/// door the Dock opens, and the reason this is more than `activate_window`.
-fn activate(cx: &mut App) {
-    cx.activate(true);
-    if let Some(handle) = cx
-        .windows()
-        .into_iter()
-        .find_map(|window| window.downcast::<Cydonia>())
-    {
-        let _ = handle.update(cx, |_, window, _| window.activate_window());
-        return;
-    }
-    let Ok(settings) = settings::load() else {
-        return;
-    };
-    let _ = root::open(settings, state::restore(), cx);
-}
-
-impl Chord {
-    /// Whether the system could hold this chord at all.
-    pub fn holdable(&self) -> bool {
-        self.hotkey().is_some()
+#[cfg(not(feature = "desktop"))]
+impl Hotkey for Unheld {
+    fn apply(chord: Option<&str>, cx: &mut App) {
+        let _ = (chord, cx);
     }
 
-    /// The chord as the system wants it, or nothing where the two vocabularies
-    /// do not meet. One keystroke only, with a modifier.
-    fn hotkey(&self) -> Option<HotKey> {
-        let [stroke] = self.strokes() else {
-            return None;
-        };
-        let mut modifiers = Modifiers::empty();
-        modifiers.set(Modifiers::CONTROL, stroke.modifiers.control);
-        modifiers.set(Modifiers::ALT, stroke.modifiers.alt);
-        modifiers.set(Modifiers::SHIFT, stroke.modifiers.shift);
-        modifiers.set(Modifiers::SUPER, stroke.modifiers.platform);
-        if modifiers.is_empty() {
-            return None;
-        }
-        Some(HotKey::new(Some(modifiers), code(&stroke.key)?))
+    fn refused(cx: &App) -> Option<SharedString> {
+        let _ = cx;
+        Some("A browser tab cannot answer a chord while it is in the background.".into())
     }
-}
-
-/// gpui's name for a key, as the W3C code the system is addressed in.
-fn code(key: &str) -> Option<Code> {
-    let named = match key {
-        "space" => "Space",
-        "enter" => "Enter",
-        "escape" => "Escape",
-        "tab" => "Tab",
-        "backspace" => "Backspace",
-        "delete" => "Delete",
-        "up" => "ArrowUp",
-        "down" => "ArrowDown",
-        "left" => "ArrowLeft",
-        "right" => "ArrowRight",
-        "home" => "Home",
-        "end" => "End",
-        "pageup" => "PageUp",
-        "pagedown" => "PageDown",
-        "insert" => "Insert",
-        "," => "Comma",
-        "." => "Period",
-        "/" => "Slash",
-        ";" => "Semicolon",
-        "'" => "Quote",
-        "[" => "BracketLeft",
-        "]" => "BracketRight",
-        "\\" => "Backslash",
-        "-" => "Minus",
-        "=" => "Equal",
-        "`" => "Backquote",
-        // A letter, a digit or a function key, all of which the code is spelled
-        // out of rather than listed.
-        key => return spelled(key),
-    };
-    Code::from_str(named).ok()
-}
-
-/// The three families whose codes follow from the key itself.
-fn spelled(key: &str) -> Option<Code> {
-    let spelling = match key.as_bytes() {
-        [letter @ b'a'..=b'z'] => format!("Key{}", letter.to_ascii_uppercase() as char),
-        [digit @ b'0'..=b'9'] => format!("Digit{}", *digit as char),
-        [b'f', ..] if key[1..].parse::<u8>().is_ok() => key.to_uppercase(),
-        _ => return None,
-    };
-    Code::from_str(&spelling).ok()
 }

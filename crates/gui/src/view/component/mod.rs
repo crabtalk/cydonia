@@ -6,7 +6,6 @@ pub mod browse;
 pub mod browser;
 pub mod changes;
 pub mod composer;
-pub mod menu;
 pub mod meter;
 pub mod ribbon;
 #[cfg(feature = "desktop")]

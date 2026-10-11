@@ -25,7 +25,7 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.menu = None;
+        self.close_menu(cx);
         let workspace = self.workspace.clone();
         self.toggle_modal(window, cx, |_, cx| Sheet {
             page: crate::view::settings::embed(workspace, section, cx),
