@@ -6,7 +6,7 @@ use std::os::unix::process::ExitStatusExt;
 fn application_and_file_paths_are_passed_as_literal_arguments() {
     let app = Path::new("/Applications/Visual Studio Code.app");
     let file = Path::new("/work/a file;$(echo ignored).rs");
-    let command = open_command(file, &Target::Application(app.to_path_buf()));
+    let command = Current::open_command(file, &Target::Application(app.to_path_buf()));
     assert_eq!(command.get_program(), "/usr/bin/open");
     assert_eq!(
         command.get_args().collect::<Vec<_>>(),
@@ -44,7 +44,7 @@ fn command_output_and_launch_errors_are_preserved() {
 fn terminal_opens_the_containing_directory_and_folder_reveals_the_file() {
     let path = Path::new("/work/my project/src/main.rs");
     let args = |target| {
-        open_command(path, &target)
+        Current::open_command(path, &target)
             .get_args()
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect::<Vec<_>>()

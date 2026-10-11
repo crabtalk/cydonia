@@ -34,11 +34,6 @@ use bezel::{
 use editor::Mention;
 use std::{collections::HashMap, sync::Arc};
 
-actions!(
-    cydonia_composer,
-    [Send, CommandNext, CommandPrevious, CommandDismiss]
-);
-
 /// Claimed on top of `TextField`/`TextArea`, so `enter` sends here and stays a
 /// newline in every other multi-line field.
 const KEY_CONTEXT: &str = "CydoniaComposer";
@@ -60,6 +55,7 @@ const PICKER_HEIGHT: f32 = 320.;
 
 /// The side of a picture waiting in the composer.
 const THUMB: f32 = 64.;
+
 const THUMB_RADIUS: f32 = 8.;
 
 /// The side of a thumb's remove button, which sits centred on its corner.
@@ -67,6 +63,11 @@ const REMOVE: f32 = 14.;
 
 /// How much of the window an opened picture may take, either way.
 const PREVIEW_SHARE: f32 = 0.8;
+
+actions!(
+    cydonia_composer,
+    [Send, CommandNext, CommandPrevious, CommandDismiss]
+);
 
 fn picture(attachment: &Attachment) -> gpui::Img {
     match attachment {

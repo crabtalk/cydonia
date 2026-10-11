@@ -11,6 +11,7 @@ use crate::{
             menu::{self, Menu},
             transcript,
         },
+        kit::text::CardTitle,
         pane::drawer::{Drawer, Face, Peek},
         pane::leaf::Leaf,
         sidebar::Renaming,
@@ -50,11 +51,6 @@ use std::{
     rc::Rc,
 };
 
-actions!(
-    cydonia_board,
-    [CommitCard, DismissCard, FindCard, DismissFind]
-);
-
 /// Claimed on top of `TextField`, so `enter` files the card here and stays a
 /// newline in every other multi-line field.
 const KEY_CONTEXT: &str = "CydoniaCard";
@@ -64,15 +60,6 @@ const KEY_CONTEXT: &str = "CydoniaCard";
 pub(crate) const FIND_CONTEXT: &str = "CydoniaBoardFind";
 
 const COLUMN_WIDTH: f32 = 272.;
-
-/// Keep one neighbouring lane ready on either side of the viewport.
-fn visible_lanes(offset: Pixels, width: Pixels, count: usize) -> std::ops::Range<usize> {
-    let left = (-f32::from(offset) - BOARD_INSET).max(0.);
-    let right = (left + f32::from(width)).max(0.);
-    let start = (left / COLUMN_WIDTH).floor() as usize;
-    let end = (right / COLUMN_WIDTH).ceil() as usize;
-    start.saturating_sub(1).min(count)..end.saturating_add(1).min(count)
-}
 
 /// What the board holds itself off the window's edges by, and how far short of
 /// the foot a lane's bar stops — the session's bar clears its composer the same
@@ -87,23 +74,14 @@ const LANE_CHANNEL: Pixels = px(18.);
 /// How far past a lane's viewport cards are measured ahead of being shown.
 const LANE_OVERDRAW: f32 = 200.;
 
-/// Fixed group and row heights keep list virtualization aligned.
+/// A list heading's height. List virtualization assumes fixed heights.
 const LIST_HEADING_HEIGHT: f32 = 36.;
+
 const LIST_ROW_HEIGHT: f32 = 36.;
-/// Fixed-height rows need only two neighbours beyond each viewport edge.
-fn visible_list_rows(top: Pixels, height: Pixels, count: usize) -> std::ops::Range<usize> {
-    if top + height < px(-2. * LIST_ROW_HEIGHT) {
-        return 0..0;
-    }
-    let start = (f32::from(top).max(0.) / LIST_ROW_HEIGHT).floor() as usize;
-    let end = (f32::from(top + height).max(0.) / LIST_ROW_HEIGHT).ceil() as usize;
-    start.saturating_sub(2).min(count)..end.saturating_add(2).min(count)
-}
 
 const LIST_HANDLE_WIDTH: f32 = 64.;
 
-/// How much of a card is shown before it is cut off. A card is a card: what
-/// does not fit in this much of a lane is read by opening it.
+/// How much of a card a lane shows before it is cut off.
 const CARD_MAX_HEIGHT: f32 = 140.;
 
 /// How wide a list row in flight is drawn; a longer title ends in `…`.
@@ -113,13 +91,7 @@ const CARD_MAX_HEIGHT: f32 = 140.;
 const HELD_ROW_WIDTH: f32 = 360.;
 
 /// Where the card editor would start scrolling inside itself. Set past any
-/// card worth a lane, which is to say never: a scroll box inside a scrolling
-/// column is two wheels for one gesture, and a run dragged into the half that
-/// is not showing cannot be reached. The lane is the scroller, and the editor
-/// grows until the lane has to move — which is where GitHub's boards draw the
-/// same line.
-///
-/// A number rather than no cap, because [`Shape::Grow`] takes one.
+/// card's length: the lane scrolls, and the editor grows.
 const CARD_EDITOR_MAX_ROWS: usize = 512;
 
 /// What the document ladder is brought down to on a card — `Callout` over
@@ -127,6 +99,37 @@ const CARD_EDITOR_MAX_ROWS: usize = 512;
 /// string. Every role moves together, so a `#` heading on a card still reads
 /// as a heading, in a lane 272 wide rather than on a page.
 const CARD_TEXT_SCALE: f32 = TextStyle::Callout.size() / TextStyle::Body.size();
+
+const STATUS_CHIP_HEIGHT: f32 = 16.;
+
+/// When this window opened, for the one orb with nothing better to count from
+/// — see [`Cydonia::card_working`].
+static SINCE: std::sync::LazyLock<web_time::Instant> =
+    std::sync::LazyLock::new(web_time::Instant::now);
+
+actions!(
+    cydonia_board,
+    [CommitCard, DismissCard, FindCard, DismissFind]
+);
+
+/// Keep one neighbouring lane ready on either side of the viewport.
+fn visible_lanes(offset: Pixels, width: Pixels, count: usize) -> std::ops::Range<usize> {
+    let left = (-f32::from(offset) - BOARD_INSET).max(0.);
+    let right = (left + f32::from(width)).max(0.);
+    let start = (left / COLUMN_WIDTH).floor() as usize;
+    let end = (right / COLUMN_WIDTH).ceil() as usize;
+    start.saturating_sub(1).min(count)..end.saturating_add(1).min(count)
+}
+
+/// Fixed-height rows need only two neighbours beyond each viewport edge.
+fn visible_list_rows(top: Pixels, height: Pixels, count: usize) -> std::ops::Range<usize> {
+    if top + height < px(-2. * LIST_ROW_HEIGHT) {
+        return 0..0;
+    }
+    let start = (f32::from(top).max(0.) / LIST_ROW_HEIGHT).floor() as usize;
+    let end = (f32::from(top + height).max(0.) / LIST_ROW_HEIGHT).ceil() as usize;
+    start.saturating_sub(2).min(count)..end.saturating_add(2).min(count)
+}
 
 pub fn bindings() -> Vec<KeyBinding> {
     let ctx = Some(KEY_CONTEXT);
@@ -181,8 +184,6 @@ pub fn field(cx: &mut App) -> Entity<TextField> {
 fn resting(status: Option<Status>) -> Option<Status> {
     status.filter(|status| *status != Status::Busy)
 }
-
-const STATUS_CHIP_HEIGHT: f32 = 16.;
 
 /// How the work on a card is going, said in a word — see
 /// [`artifact::board::Status`]. Written by whoever is doing the work, which is
@@ -488,7 +489,7 @@ impl Docs {
         let cached = docs.get_mut(text).unwrap();
         cached
             .title
-            .get_or_insert_with(|| list_title(&cached.full).into())
+            .get_or_insert_with(|| cached.full.title().into())
             .clone()
     }
 
@@ -505,64 +506,6 @@ impl Docs {
         self.of(text);
         self.preview(text)
     }
-}
-
-/// The one line a card is listed under.
-pub(crate) fn card_title(text: &str) -> String {
-    list_title(&markdown::parse(text))
-}
-
-fn list_title(doc: &markdown::Doc) -> String {
-    use markdown::BlockKind;
-    for block in &doc.blocks {
-        let candidate = match &block.kind {
-            BlockKind::Image { alt, .. } => {
-                if alt.text.trim().is_empty() {
-                    "Image".into()
-                } else {
-                    alt.text.clone()
-                }
-            }
-            BlockKind::Bookmark { url, .. } => url.clone(),
-            BlockKind::Table { header, rows, .. } => header
-                .iter()
-                .chain(rows.iter().flatten())
-                .find(|cell| !cell.text.trim().is_empty())
-                .map(|cell| cell.text.clone())
-                .unwrap_or_else(|| "Table".into()),
-            BlockKind::Rule => continue,
-            BlockKind::Code { code, .. } => code
-                .text
-                .lines()
-                .find(|line| !line.trim().is_empty())
-                .unwrap_or("Code")
-                .to_owned(),
-            _ => block
-                .text_at(markdown::Part::Body)
-                .map(|text| text.text.clone())
-                .unwrap_or_default(),
-        };
-        let mut title = String::new();
-        let mut length = 0;
-        for word in candidate.split_whitespace() {
-            if !title.is_empty() {
-                title.push(' ');
-                length += 1;
-            }
-            for ch in word.chars() {
-                if length >= 512 {
-                    title.push('…');
-                    return title;
-                }
-                title.push(ch);
-                length += 1;
-            }
-        }
-        if !title.is_empty() {
-            return title;
-        }
-    }
-    "Untitled card".into()
 }
 
 /// Bound layout and syntax highlighting for the 140px lane preview only.
@@ -631,11 +574,6 @@ struct Working {
     since: std::time::Duration,
     frame: Rc<RefCell<Frame>>,
 }
-
-/// When this window opened, for the one orb with nothing better to count from
-/// — see [`Cydonia::card_working`].
-static SINCE: std::sync::LazyLock<web_time::Instant> =
-    std::sync::LazyLock::new(web_time::Instant::now);
 
 /// One list and one follow per lane, minted the first time the lane is drawn.
 ///

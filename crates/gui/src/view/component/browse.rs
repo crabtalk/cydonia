@@ -35,24 +35,6 @@ const SETTLE: Duration = Duration::from_secs(10);
 
 const STEP: Duration = Duration::from_millis(100);
 
-#[derive(Deserialize)]
-struct Page {
-    url: String,
-    title: String,
-    text: String,
-    #[serde(default)]
-    truncated: bool,
-    elements: Vec<Element>,
-}
-
-#[derive(Deserialize)]
-struct Element {
-    i: usize,
-    tag: String,
-    kind: Option<String>,
-    name: String,
-}
-
 const FIND: &str = r#"const found = (() => {
   const pick = 'a[href], button, input, select, textarea, summary, [role=button], [role=link], [role=tab], [role=checkbox], [role=menuitem], [role=textbox], [contenteditable=""], [contenteditable=true], [onclick]';
   const out = [];
@@ -128,6 +110,24 @@ const SCROLL: &str = r#"(() => { try {
   }
   return 'ok';
 } catch (e) { return String(e); } })()"#;
+
+#[derive(Deserialize)]
+struct Page {
+    url: String,
+    title: String,
+    text: String,
+    #[serde(default)]
+    truncated: bool,
+    elements: Vec<Element>,
+}
+
+#[derive(Deserialize)]
+struct Element {
+    i: usize,
+    tag: String,
+    kind: Option<String>,
+    name: String,
+}
 
 fn script(js: &str) -> String {
     js.replace("$FIND", FIND)

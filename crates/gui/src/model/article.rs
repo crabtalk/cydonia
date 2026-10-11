@@ -39,15 +39,6 @@ use std::{
     rc::Rc,
 };
 
-/// Which of an article's headings the pane is on, counted among the headings
-/// from 0: the one whose section holds the first block on screen, and every
-/// one whose section has a block on screen.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Reading {
-    pub at: Option<usize>,
-    pub shown: Range<usize>,
-}
-
 /// What articles were called before they were named for their age, and what an
 /// unnamed one was called among them.
 const UNTITLED: &str = "untitled";
@@ -58,6 +49,15 @@ pub const UNNAMED: &str = "Untitled";
 /// Claimed on the title field, so `enter` there moves to the body and stays a
 /// newline in every other field.
 pub const TITLE_CONTEXT: &str = "CydoniaArticleTitle";
+
+/// Which of an article's headings the pane is on, counted among the headings
+/// from 0: the one whose section holds the first block on screen, and every
+/// one whose section has a block on screen.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Reading {
+    pub at: Option<usize>,
+    pub shown: Range<usize>,
+}
 
 /// An article's markdown as it is on disk, and the bytes each of its blocks
 /// was parsed from — what a reference to part of it resolves against.
@@ -697,12 +697,12 @@ impl Article {
             self.replace_cover(None);
             return;
         };
-        let seed = cover::seed(&self.path, self.cover.as_deref());
+        let seed = cover::Seed::next(&self.path, self.cover.as_deref());
         let to = source
             .extension()
             .and_then(|ext| ext.to_str())
             .map(str::to_ascii_lowercase)
-            .and_then(|ext| cover::path(&self.path, seed, &ext));
+            .and_then(|ext| seed.path(&self.path, &ext));
         if let Some(to) = to.filter(|to| artifact::article::cover::import(source, to).is_ok()) {
             self.replace_cover(Some(to));
         }
@@ -711,11 +711,11 @@ impl Article {
     /// A fresh generated cover. Adding one and shuffling are the same act —
     /// the first cover an article is given is already a throw.
     pub fn shuffle_cover(&mut self) {
-        let seed = cover::seed(&self.path, self.cover.as_deref());
-        let Some(to) = cover::path(&self.path, seed, "svg") else {
+        let seed = cover::Seed::next(&self.path, self.cover.as_deref());
+        let Some(to) = seed.path(&self.path, "svg") else {
             return;
         };
-        if std::fs::write(&to, cover::svg(seed)).is_ok() {
+        if std::fs::write(&to, seed.svg()).is_ok() {
             self.replace_cover(Some(to));
         }
     }

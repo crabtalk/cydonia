@@ -18,9 +18,12 @@
 
 use crate::{
     model::{settings, state},
-    view::window::root::{self, Cydonia},
+    view::{
+        keymap::Chord,
+        window::root::{self, Cydonia},
+    },
 };
-use bezel::gpui::{App, Global, Keystroke, SharedString, Task};
+use bezel::gpui::{App, Global, SharedString, Task};
 use futures::StreamExt;
 use global_hotkey::{
     GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState,
@@ -56,7 +59,9 @@ pub fn apply(chord: Option<&str>, cx: &mut App) {
     if !cx.has_global::<Held>() {
         install(cx);
     }
-    let wanted = chord.and_then(translate);
+    let wanted = chord
+        .and_then(Chord::parse)
+        .and_then(|chord| chord.hotkey());
     let refused = match (chord, wanted.as_ref()) {
         // Said, and not a chord this platform can hold. A trackpad-era key
         // like `fn` has no Carbon code, and neither has a two-stroke sequence.
@@ -137,36 +142,28 @@ fn activate(cx: &mut App) {
     let _ = root::open(settings, state::restore(), cx);
 }
 
-/// Whether the system could hold `chord` at all — asked by the settings row
-/// before it writes one, so a chord that could never be registered is refused
-/// where it is pressed rather than reported once it is in the file.
-pub fn holdable(chord: &str) -> bool {
-    translate(chord).is_some()
-}
+impl Chord {
+    /// Whether the system could hold this chord at all.
+    pub fn holdable(&self) -> bool {
+        self.hotkey().is_some()
+    }
 
-/// A gpui chord as the system wants it, or nothing where the two vocabularies
-/// do not meet.
-///
-/// One keystroke only. A sequence is something an app can dispatch because it
-/// can hold the first key and wait; the system registers a single combination
-/// and has nowhere to put the waiting.
-fn translate(chord: &str) -> Option<HotKey> {
-    if chord.split_whitespace().count() != 1 {
-        return None;
+    /// The chord as the system wants it, or nothing where the two vocabularies
+    /// do not meet. One keystroke only, with a modifier.
+    fn hotkey(&self) -> Option<HotKey> {
+        let [stroke] = self.strokes() else {
+            return None;
+        };
+        let mut modifiers = Modifiers::empty();
+        modifiers.set(Modifiers::CONTROL, stroke.modifiers.control);
+        modifiers.set(Modifiers::ALT, stroke.modifiers.alt);
+        modifiers.set(Modifiers::SHIFT, stroke.modifiers.shift);
+        modifiers.set(Modifiers::SUPER, stroke.modifiers.platform);
+        if modifiers.is_empty() {
+            return None;
+        }
+        Some(HotKey::new(Some(modifiers), code(&stroke.key)?))
     }
-    let stroke = Keystroke::parse(chord.trim()).ok()?;
-    let mut modifiers = Modifiers::empty();
-    modifiers.set(Modifiers::CONTROL, stroke.modifiers.control);
-    modifiers.set(Modifiers::ALT, stroke.modifiers.alt);
-    modifiers.set(Modifiers::SHIFT, stroke.modifiers.shift);
-    modifiers.set(Modifiers::SUPER, stroke.modifiers.platform);
-    // Every one of these is an app-wide key with no window to be in. Without a
-    // modifier it would be that key, everywhere, for every application on the
-    // desktop — which is not a shortcut, it is a broken keyboard.
-    if modifiers.is_empty() {
-        return None;
-    }
-    Some(HotKey::new(Some(modifiers), code(&stroke.key)?))
 }
 
 /// gpui's name for a key, as the W3C code the system is addressed in.

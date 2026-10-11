@@ -7,7 +7,7 @@
 //! point the config directory somewhere of their own.
 
 use super::*;
-use crate::model::spaces as store;
+use crate::model::spaces::Shelf;
 use crate::model::workspace::Showing;
 use crate::model::{settings::Settings, state};
 use artifact::kind::Kind;
@@ -121,7 +121,7 @@ fn a_space_is_written_beside_the_config(cx: &mut gpui::TestAppContext) {
         workspace.active_space().expect("open").id.clone()
     });
 
-    let read = store::read(&id).expect("on disk");
+    let read = Shelf::read(&id).expect("on disk");
     assert_eq!(read.entries().len(), 2);
     assert!(
         !scratch.0.join("one/.cydonia/spaces").exists(),
@@ -155,7 +155,7 @@ fn a_space_can_span_projects(cx: &mut gpui::TestAppContext) {
         space.id.clone()
     });
 
-    let read = store::read(&id).expect("on disk");
+    let read = Shelf::read(&id).expect("on disk");
     let projects: Vec<_> = read
         .entries()
         .into_iter()
@@ -250,7 +250,7 @@ fn closing_down_to_one_pane_closes_the_space(cx: &mut gpui::TestAppContext) {
         assert_eq!(workspace.projects[0].board, Some(0));
         id
     });
-    assert!(store::read(&id).is_none(), "the file goes too");
+    assert!(Shelf::read(&id).is_none(), "the file goes too");
 }
 
 /// Moving a pane exchanges it with the one across the seam and is written back.
@@ -273,7 +273,7 @@ fn moving_a_pane_swaps_it_and_is_written(cx: &mut gpui::TestAppContext) {
         workspace.active_space().expect("open").id.clone()
     });
 
-    assert_eq!(store::read(&id).expect("on disk").entries(), vec![b, a]);
+    assert_eq!(Shelf::read(&id).expect("on disk").entries(), vec![b, a]);
 }
 
 /// Archiving a space is archiving what it arranges, and the arrangement goes
@@ -304,7 +304,7 @@ fn a_space_is_dropped_by_the_id_it_was_named_with(cx: &mut gpui::TestAppContext)
         id
     });
 
-    assert!(store::read(&id).is_none(), "the file goes too");
+    assert!(Shelf::read(&id).is_none(), "the file goes too");
 }
 
 /// An entry is in one space at a time, and that holds for the pane dropped
@@ -356,7 +356,7 @@ fn a_rename_is_written(cx: &mut gpui::TestAppContext) {
         id
     });
 
-    assert_eq!(store::read(&id).expect("on disk").name, "Auth work");
+    assert_eq!(Shelf::read(&id).expect("on disk").name, "Auth work");
 }
 
 /// A member whose entry has gone leaves the space, so no pane is left on a

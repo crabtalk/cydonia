@@ -37,6 +37,10 @@ const MARK: &str = "media-";
 /// of a retina screenshot is megabytes of prompt.
 pub const LONG_EDGE: u32 = 1568;
 
+/// The most a picture fetched off the web may weigh.
+#[cfg(feature = "desktop")]
+const FETCH_LIMIT: u64 = 25 * 1024 * 1024;
+
 /// A picture picked in the composer, held until the message is sent — the
 /// composer does not know which project the session it feeds is in.
 #[derive(Clone)]
@@ -132,10 +136,6 @@ fn paste(
     let lines: Vec<String> = urls.iter().map(|url| format!("![]({url})")).collect();
     Some(PasteContent::Literal(lines.join("\n")))
 }
-
-/// The most a picture fetched off the web may weigh.
-#[cfg(feature = "desktop")]
-const FETCH_LIMIT: u64 = 25 * 1024 * 1024;
 
 /// The picture at `url`: refused past [`FETCH_LIMIT`], after thirty seconds,
 /// or for bytes that are no picture format.

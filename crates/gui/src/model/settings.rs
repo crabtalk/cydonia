@@ -10,6 +10,34 @@ use std::{collections::BTreeMap, path::PathBuf};
 /// What the file is called inside [`dir`].
 const FILE: &str = "settings.toml";
 
+/// What the body size may be set to, in points: the ladder's smallest measured
+/// role to Title3's. Applied when settings are read as well as by the control.
+pub const TEXT_SIZE: (f32, f32) = (11., 17.);
+
+/// What content text may be set to, in points.
+pub const CONTENT_TEXT_SIZE: (f32, f32) = (8., 40.);
+
+/// Monospace text, where nothing else has been said — the terminal's size.
+pub const MONO_TEXT_SIZE: f32 = 13.;
+
+/// The range [`Appearance::vibrancy`] is held to: how opaque the tint over
+/// the frosted window may be.
+pub const VIBRANCY: (f32, f32) = (0.5, 0.95);
+
+/// The range [`Appearance::blur`] is held to, in native filter pixels.
+pub const BLUR: (f32, f32) = (0., 120.);
+
+/// The engines Settings offers, by name, as [`Browsing::search`] templates.
+pub const SEARCH_ENGINES: [(&str, &str); 4] = [
+    ("DuckDuckGo", "https://duckduckgo.com/?q=%s"),
+    ("Google", "https://www.google.com/search?q=%s"),
+    ("Bing", "https://www.bing.com/search?q=%s"),
+    ("Kagi", "https://kagi.com/search?q=%s"),
+];
+
+/// The launchers that resolve a package name on every run.
+const RUNNERS: [&str; 3] = ["npx", "bunx", "pnpx"];
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Settings {
     /// How long a project's `.cydonia/` has to go quiet before the watch
@@ -93,25 +121,6 @@ pub struct Settings {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub agents: Vec<Agent>,
 }
-
-/// What the body size may be set to, in points: the ladder's smallest measured
-/// role to Title3's, so bezel's fixed chrome heights hold at either end. Read
-/// on the way in as well as by the control, because a size out of range paints
-/// an interface nobody can read the settings window to fix.
-pub const TEXT_SIZE: (f32, f32) = (11., 17.);
-
-/// Content sizes have a wider range than interface chrome.
-pub const CONTENT_TEXT_SIZE: (f32, f32) = (8., 40.);
-
-/// Monospace text, where nothing else has been said — the terminal's size.
-pub const MONO_TEXT_SIZE: f32 = 13.;
-
-/// The range [`Appearance::vibrancy`] is held to: how opaque the tint over
-/// the frosted window may be.
-pub const VIBRANCY: (f32, f32) = (0.5, 0.95);
-
-/// The range [`Appearance::blur`] is held to, in native filter pixels.
-pub const BLUR: (f32, f32) = (0., 120.);
 
 pub fn clamp_content_text_size(points: f32) -> f32 {
     if points.is_finite() {
@@ -713,6 +722,28 @@ pub struct Mcp {
     pub delete: bool,
 }
 
+/// Each setter writes its key to the file, then changes the field; a failed
+/// write leaves both as they were.
+impl Mcp {
+    pub fn set_serve(&mut self, on: bool) -> Result<()> {
+        set_key("mcp", "serve", on)?;
+        self.serve = on;
+        Ok(())
+    }
+
+    pub fn set_write(&mut self, on: bool) -> Result<()> {
+        set_key("mcp", "write", on)?;
+        self.write = on;
+        Ok(())
+    }
+
+    pub fn set_delete(&mut self, on: bool) -> Result<()> {
+        set_key("mcp", "delete", on)?;
+        self.delete = on;
+        Ok(())
+    }
+}
+
 impl Default for Mcp {
     fn default() -> Self {
         Self {
@@ -747,13 +778,46 @@ pub struct Browsing {
 
 impl bezel::gpui::Global for Browsing {}
 
-/// The engines Settings offers, by name, as [`Browsing::search`] templates.
-pub const SEARCH_ENGINES: [(&str, &str); 4] = [
-    ("DuckDuckGo", "https://duckduckgo.com/?q=%s"),
-    ("Google", "https://www.google.com/search?q=%s"),
-    ("Bing", "https://www.bing.com/search?q=%s"),
-    ("Kagi", "https://kagi.com/search?q=%s"),
-];
+/// Each setter writes its key to the file, then changes the field; a failed
+/// write leaves both as they were.
+impl Browsing {
+    pub fn set_home(&mut self, home: String) -> Result<()> {
+        set_key("browser", "home", home.as_str())?;
+        self.home = home;
+        Ok(())
+    }
+
+    pub fn set_search(&mut self, search: String) -> Result<()> {
+        set_key("browser", "search", search.as_str())?;
+        self.search = search;
+        Ok(())
+    }
+
+    pub fn set_agents_read(&mut self, on: bool) -> Result<()> {
+        set_key("browser", "agents_read", on)?;
+        self.agents_read = on;
+        Ok(())
+    }
+
+    pub fn set_agents_act(&mut self, on: bool) -> Result<()> {
+        set_key("browser", "agents_act", on)?;
+        self.agents_act = on;
+        Ok(())
+    }
+
+    pub fn set_agents_blocked(&mut self, hosts: Vec<String>) -> Result<()> {
+        let list: toml_edit::Array = hosts.iter().map(String::as_str).collect();
+        set_key("browser", "agents_blocked", list)?;
+        self.agents_blocked = hosts;
+        Ok(())
+    }
+
+    pub fn set_keep_signed_in(&mut self, on: bool) -> Result<()> {
+        set_key("browser", "keep_signed_in", on)?;
+        self.keep_signed_in = on;
+        Ok(())
+    }
+}
 
 impl Default for Browsing {
     fn default() -> Self {
@@ -976,10 +1040,6 @@ fn paste_images_in_source() -> bool {
 fn drawer_composer() -> bool {
     true
 }
-
-/// The launchers that resolve a package name on every run. An installed
-/// agent's command is a path to an unpacked executable, which resolves nothing.
-const RUNNERS: [&str; 3] = ["npx", "bunx", "pnpx"];
 
 impl Agent {
     /// Whether every npm package this entry names carries an exact version.
@@ -1376,19 +1436,11 @@ pub fn set_emacs_shortcuts(on: bool) -> Result<()> {
     })
 }
 
-/// Write one key of `[mcp]`.
-pub fn set_mcp(key: &str, on: bool) -> Result<()> {
-    edit(|doc| {
-        table(doc, "mcp")?[key] = toml_edit::value(on);
-        Ok(true)
-    })
-}
-
-/// Write one key of `[browser]`.
-pub fn set_browser(key: &str, value: impl Into<toml_edit::Value>) -> Result<()> {
+/// One key of one table, written to the file.
+fn set_key(table_name: &str, key: &str, value: impl Into<toml_edit::Value>) -> Result<()> {
     let value = value.into();
     edit(|doc| {
-        table(doc, "browser")?[key] = toml_edit::value(value);
+        table(doc, table_name)?[key] = toml_edit::value(value);
         Ok(true)
     })
 }

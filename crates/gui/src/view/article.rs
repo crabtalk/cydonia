@@ -3,6 +3,7 @@
 pub mod thread;
 
 use crate::{
+    model::palette::Washes,
     model::{article, workspace::Showing},
     view::{
         component::{
@@ -47,28 +48,6 @@ use std::{
     rc::Rc,
 };
 
-actions!(
-    cydonia_article,
-    [LeaveTitle, ToggleOutline, TogglePlainText]
-);
-
-/// `enter` and `down` in the title move to the content. Bound on the field's
-/// own context, which is the only thing deep enough to beat the field itself.
-///
-/// [`TogglePlainText`] is not here: it is a command a person may move, so it
-/// is bound from [`crate::view::keymap`] with the rest of them. What it does
-/// to the editor is the same either way — the View menu carries it, so AppKit
-/// takes the chord before the window is offered it and the editor's own `⌘E`,
-/// inline code, is never reached. That is why the ribbon's code button
-/// advertises no chord; see [`crate::view::component::ribbon::keystroke`].
-pub fn bindings() -> Vec<KeyBinding> {
-    let ctx = Some(article::TITLE_CONTEXT);
-    vec![
-        KeyBinding::new("enter", LeaveTitle, ctx),
-        KeyBinding::new("down", LeaveTitle, ctx),
-    ]
-}
-
 /// The column the document is set in, matching the transcript's. Off, for a
 /// page that reads wide under [`article::Article::wide`], the pane's own width
 /// is the measure — see [`Band`].
@@ -108,6 +87,42 @@ const OUTLINE_MAX_WIDTH: f32 = 280.;
 
 /// The tallest the outline's menu is drawn; its rows scroll past it.
 const OUTLINE_MAX_HEIGHT: f32 = 320.;
+
+/// The narrowest column notes are set beside. A pane with no room for one and
+/// a note's margin beside it gets marks.
+const NOTES_MIN_COLUMN: f32 = 480.;
+
+/// The hover group of the line under the title, which shows its empty labels
+/// prompt.
+const META_GROUP: &str = "article-meta";
+
+/// How far the editor sits below the top of the band it is set in.
+const PAGE_TOP: f32 = 20.;
+
+/// How tall an open comment's note grows before it scrolls.
+const NOTE_MAX_HEIGHT: f32 = 320.;
+
+actions!(
+    cydonia_article,
+    [LeaveTitle, ToggleOutline, TogglePlainText]
+);
+
+/// `enter` and `down` in the title move to the content. Bound on the field's
+/// own context, which is the only thing deep enough to beat the field itself.
+///
+/// [`TogglePlainText`] is not here: it is a command a person may move, so it
+/// is bound from [`crate::view::keymap`] with the rest of them. What it does
+/// to the editor is the same either way — the View menu carries it, so AppKit
+/// takes the chord before the window is offered it and the editor's own `⌘E`,
+/// inline code, is never reached. That is why the ribbon's code button
+/// advertises no chord; see [`crate::view::component::ribbon::keystroke`].
+pub fn bindings() -> Vec<KeyBinding> {
+    let ctx = Some(article::TITLE_CONTEXT);
+    vec![
+        KeyBinding::new("enter", LeaveTitle, ctx),
+        KeyBinding::new("down", LeaveTitle, ctx),
+    ]
+}
 
 /// The first dash drawn, so that the one at `at` sits mid-column, held at
 /// either end of an outline longer than [`OUTLINE_DASHES`].
@@ -203,42 +218,19 @@ pub fn marks() -> markdown::Marks {
     markdown::Marks::new().with(editor::HIGHLIGHT_MARK, "==")
 }
 
-/// The colour [`mark_paint`] washes a highlight in. Global because a painter
-/// is a bare `fn`.
-static HIGHLIGHT: std::sync::RwLock<crate::model::settings::Paint> = std::sync::RwLock::new(
-    crate::model::settings::Paint::Named(crate::model::settings::Highlight::Yellow),
-);
-
-/// Paint every highlight in `color` from the next frame on.
-pub fn set_highlight(color: crate::model::settings::Paint) {
-    if let Ok(mut held) = HIGHLIGHT.write() {
-        *held = color;
-    }
-}
-
-/// How [`marks`] paint: every highlight in the colour [`set_highlight`] chose.
+/// How [`marks`] paint: every highlight in [`Washes::highlight`].
 pub fn mark_paint(name: &str, theme: &Theme) -> Option<markdown::MarkPaint> {
-    let color = HIGHLIGHT.read().ok().map(|held| *held)?;
+    let color = Washes::current().highlight;
     (name == editor::HIGHLIGHT_MARK).then(|| markdown::MarkPaint {
         background: Some(color.solid(theme)),
         ..Default::default()
     })
 }
 
-/// The find wash's colour; unset keeps [`markdown::default_find`].
-static SEARCH: std::sync::RwLock<Option<crate::model::settings::Paint>> =
-    std::sync::RwLock::new(None);
-
-pub fn set_search(color: Option<crate::model::settings::Paint>) {
-    if let Ok(mut held) = SEARCH.write() {
-        *held = color;
-    }
-}
-
-/// How find matches paint: the current match in the colour [`set_search`]
-/// chose, the rest at half its opacity.
+/// How find matches paint: the current match in [`Washes::find`], the rest
+/// at half its opacity.
 pub fn find_paint(theme: &Theme) -> (bezel::gpui::Hsla, bezel::gpui::Hsla) {
-    let Some(color) = SEARCH.read().ok().and_then(|held| *held) else {
+    let Some(color) = Washes::current().find else {
         return markdown::default_find(theme);
     };
     let solid = color.solid(theme);
@@ -270,10 +262,6 @@ fn source_offset(editor: &editor::Editor, cx: &App) -> f32 {
         0.
     }
 }
-
-/// The narrowest column notes are set beside. A pane with no room for one and
-/// a note's margin beside it gets marks.
-const NOTES_MIN_COLUMN: f32 = 480.;
 
 /// Where the page is set across the pane: the reading column, or the pane
 /// itself, and the least room either side of it. The title, the line under it
@@ -333,10 +321,6 @@ impl Band {
     }
 }
 
-/// The hover group of the line under the title, which shows its empty labels
-/// prompt.
-const META_GROUP: &str = "article-meta";
-
 /// `n` words, as a reader counts them out.
 fn word_count(n: usize) -> String {
     match n {
@@ -344,12 +328,6 @@ fn word_count(n: usize) -> String {
         _ => format!("{} words", grouped(n as u64)),
     }
 }
-
-/// How far the editor sits below the top of the band it is set in.
-const PAGE_TOP: f32 = 20.;
-
-/// How tall an open comment's note grows before it scrolls.
-const NOTE_MAX_HEIGHT: f32 = 320.;
 
 /// Called with the comment under a press on the page, or `None` for a press on
 /// none.

@@ -45,9 +45,8 @@ pub fn init(settings: &Settings, cx: &mut App) {
     markdown::AppExt::set_link_card(cx, crate::view::kit::link::card);
     markdown::AppExt::set_link_hover(cx, crate::view::kit::link::hover);
     editor::AppExt::set_mention_source(cx, '@', crate::view::kit::link::mention::source);
-    article::set_highlight(look.highlight);
+    crate::model::palette::Washes::of(&look).install();
     cx.set_mark_paint(article::mark_paint);
-    article::set_search(look.search);
     cx.set_find_paint(article::find_paint);
     cx.set_mermaid_zoom(markdown::mermaid::Zoom {
         min: 0.1,
@@ -62,9 +61,7 @@ pub fn init(settings: &Settings, cx: &mut App) {
     cx.set_highlighter(language::highlight, language::offerable());
     #[cfg(feature = "desktop")]
     crate::model::link::init(cx);
-    // Without the web fetch, cydonia's own links are the only ones described.
-    #[cfg(not(feature = "desktop"))]
-    cx.set_link_preview(crate::view::kit::link::mention::preview);
+    cx.set_link_preview(crate::view::kit::link::preview);
     cx.set_link_handler(crate::view::kit::link::open_link);
     // Every chord in the app, bezel's included — see
     // [`crate::view::keymap`]. One call rather than an `init` per

@@ -39,6 +39,9 @@ const MODES: [AppearanceMode; 3] = [
     AppearanceMode::Dark,
 ];
 
+/// Swatches a row of the colour popover holds.
+const SWATCH_COLUMNS: usize = 6;
+
 impl SettingsWindow {
     /// The whole page: the mode it paints in, then the colours it mixes and the
     /// size it reads at.
@@ -991,9 +994,6 @@ impl SettingsWindow {
             .into_any_element()
     }
 }
-
-/// Swatches a row of the colour popover holds.
-const SWATCH_COLUMNS: usize = 6;
 
 /// A theme family's face in the picker: "Aa" in its accent on its background,
 /// as the variant for the appearance being painted.

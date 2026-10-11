@@ -43,27 +43,12 @@ use editor::{Editor, Formatting, Mode};
 use markdown::{BlockKind, Mark};
 use std::path::Path;
 
-actions!(
-    cydonia_ribbon,
-    [ConfirmLink, DismissLink, ConfirmAsk, DismissAsk]
-);
-
 /// Claimed on the ribbon's URL field, so `enter` files the link and `escape`
 /// drops it. Everywhere else those two stay a newline and nothing.
 pub const LINK_CONTEXT: &str = "CydoniaArticleLink";
 
 /// Claimed on the ribbon's question field, the same way.
 pub const ASK_CONTEXT: &str = "CydoniaArticleAsk";
-
-pub fn bindings() -> Vec<KeyBinding> {
-    let (link, ask) = (Some(LINK_CONTEXT), Some(ASK_CONTEXT));
-    vec![
-        KeyBinding::new("enter", ConfirmLink, link),
-        KeyBinding::new("escape", DismissLink, link),
-        KeyBinding::new("enter", ConfirmAsk, ask),
-        KeyBinding::new("escape", DismissAsk, ask),
-    ]
-}
 
 /// How far the bar stands off the line it belongs to.
 const GAP: f32 = 8.;
@@ -79,6 +64,21 @@ const QUESTION_QUOTE: usize = 60;
 /// wider: the bar is anchored to a word, and one that outgrew the column would
 /// stop reading as that word's bar.
 const FIELD_WIDTH: f32 = 240.;
+
+actions!(
+    cydonia_ribbon,
+    [ConfirmLink, DismissLink, ConfirmAsk, DismissAsk]
+);
+
+pub fn bindings() -> Vec<KeyBinding> {
+    let (link, ask) = (Some(LINK_CONTEXT), Some(ASK_CONTEXT));
+    vec![
+        KeyBinding::new("enter", ConfirmLink, link),
+        KeyBinding::new("escape", DismissLink, link),
+        KeyBinding::new("enter", ConfirmAsk, ask),
+        KeyBinding::new("escape", DismissAsk, ask),
+    ]
+}
 
 /// The ribbon's own state, hung on [`Cydonia`].
 pub(crate) struct Ribbon {

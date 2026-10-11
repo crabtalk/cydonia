@@ -32,17 +32,6 @@ use bezel::{
     },
 };
 
-/// What a seam carries while it is dragged: the split it divides, by its path
-/// from the root, and which of that split's children it sits after.
-///
-/// The path rather than a node id: the tree is rebuilt from the file on every
-/// change, so nothing in it has an identity that outlives a drag.
-#[derive(Clone, Debug)]
-pub struct SeamDrag {
-    pub path: Vec<usize>,
-    pub at: usize,
-}
-
 /// The least of a split a pane may be squeezed to. A pane thinner than this
 /// has nothing left to grab it by.
 const MIN_SHARE: f64 = 0.08;
@@ -55,6 +44,17 @@ const TAB_INSET: f32 = 8.;
 
 /// Between the controls in a pane's bar.
 const BAR_GAP: f32 = 2.;
+
+/// What a seam carries while it is dragged: the split it divides, by its path
+/// from the root, and which of that split's children it sits after.
+///
+/// The path rather than a node id: the tree is rebuilt from the file on every
+/// change, so nothing in it has an identity that outlives a drag.
+#[derive(Clone, Debug)]
+pub struct SeamDrag {
+    pub path: Vec<usize>,
+    pub at: usize,
+}
 
 impl Cydonia {
     /// The space the window is arranged by, taken whole: the tree is walked

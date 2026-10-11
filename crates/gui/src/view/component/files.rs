@@ -1,5 +1,6 @@
 //! Project-root file navigation, loaded off the UI thread.
 
+use crate::model::disk::{Files as _, Here};
 use bezel::{
     gpui::{
         self, Context, Entity, EventEmitter, Focusable, Render, Subscription, Task,
@@ -41,7 +42,7 @@ fn scan(
         rows: &mut Vec<Entry>,
     ) -> anyhow::Result<()> {
         let mut entries = Vec::new();
-        for entry in crate::model::disk::read_dir(path)? {
+        for entry in Here::read_dir(path)? {
             if *remaining == 0 {
                 break;
             }

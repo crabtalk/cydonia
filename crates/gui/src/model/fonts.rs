@@ -13,6 +13,16 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
+/// Whether terminals draw the app's caret's shape and blink. Read by the
+/// terminal view, which has no workspace to ask.
+static TERMINAL_CARET: AtomicBool = AtomicBool::new(false);
+
+/// The size the probe measures at.
+const PROBE: Pixels = px(64.);
+
+/// The installed font families, measured once per process.
+static INSTALLED: RwLock<Option<Vec<Family>>> = RwLock::new(None);
+
 /// What the reader picked, or nothing where they have not. Nothing keeps the
 /// palette's own faces, which differ per platform.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -34,10 +44,6 @@ impl Families {
     }
 }
 
-/// Whether terminals draw the app's caret's shape and blink. Read by the
-/// terminal view, which has no workspace to ask.
-static TERMINAL_CARET: AtomicBool = AtomicBool::new(false);
-
 pub fn terminal_caret() -> bool {
     TERMINAL_CARET.load(Ordering::Relaxed)
 }
@@ -54,14 +60,6 @@ pub struct Family {
     /// declared: the platform list carries no such flag.
     pub mono: bool,
 }
-
-/// The size the probe measures at. Any size answers the question — advances
-/// scale linearly — and a large one keeps two near-equal widths apart.
-const PROBE: Pixels = px(64.);
-
-/// Measured once per process — the set of installed families does not move
-/// under a running app often enough to pay for it on every settings window.
-static INSTALLED: RwLock<Option<Vec<Family>>> = RwLock::new(None);
 
 /// Every family installed on this machine, mono ones marked.
 ///

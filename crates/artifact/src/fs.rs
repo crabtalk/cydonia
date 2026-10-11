@@ -9,6 +9,9 @@ use std::{
 /// What a temporary file of [`save`]'s ends in.
 const PART: &str = ".part";
 
+/// The temporary files [`save`] has made in this process.
+static NEXT: AtomicUsize = AtomicUsize::new(0);
+
 /// Whether `path` is a temporary file [`save`] writes before renaming it.
 pub fn is_temporary(path: &Path) -> bool {
     path.file_name()
@@ -16,13 +19,21 @@ pub fn is_temporary(path: &Path) -> bool {
         .is_some_and(|name| name.starts_with('.') && name.ends_with(PART))
 }
 
-/// The temporary files [`save`] has made in this process.
-static NEXT: AtomicUsize = AtomicUsize::new(0);
-
 /// Write `contents` to `path` through a temporary file beside it, renamed over
 /// it: a reader sees the old contents or the new, never part of either. The
 /// directory is made where it is missing.
 pub fn save(path: &Path, contents: impl AsRef<[u8]>) -> io::Result<()> {
+    save_checked(path, contents, || Ok(()))
+}
+
+/// [`save`], with `check` run after the temporary is written and before the
+/// rename; an error from it leaves `path` as it was. A file already at `path`
+/// keeps its permissions.
+pub fn save_checked(
+    path: &Path,
+    contents: impl AsRef<[u8]>,
+    check: impl FnOnce() -> io::Result<()>,
+) -> io::Result<()> {
     let dir = path
         .parent()
         .ok_or_else(|| io::Error::other("a file to save has a directory"))?;
@@ -35,8 +46,12 @@ pub fn save(path: &Path, contents: impl AsRef<[u8]>) -> io::Result<()> {
     ));
     let written = (|| {
         let mut file = std::fs::File::create(&temporary)?;
+        if let Ok(metadata) = std::fs::metadata(path) {
+            file.set_permissions(metadata.permissions())?;
+        }
         file.write_all(contents.as_ref())?;
         file.sync_all()?;
+        check()?;
         std::fs::rename(&temporary, path)
     })();
     if written.is_err() {

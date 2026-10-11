@@ -12,8 +12,9 @@ use std::{
     sync::Arc,
 };
 
-type Spans = Vec<(Range<usize>, HighlightKind)>;
 const LINE_LIMIT: usize = 4096;
+
+type Spans = Vec<(Range<usize>, HighlightKind)>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {

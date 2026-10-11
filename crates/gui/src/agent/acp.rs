@@ -64,6 +64,14 @@ const SERVER: &str = "cydonia";
 /// stdin outlives every handle this side can drop.
 const SHUTDOWN_GRACE: Duration = Duration::from_millis(250);
 
+// A GPUI (or any multi-threaded) frontend holds `Session` in its UI state
+// and moves `Event` — reply included — across executor threads.
+const _: () = {
+    const fn assert_send<T: Send>() {}
+    assert_send::<Session>();
+    assert_send::<Event>();
+};
+
 /// The runtime every connection runs on, started on first use.
 pub fn runtime() -> &'static Runtime {
     static RUNTIME: OnceLock<Runtime> = OnceLock::new();
@@ -627,14 +635,6 @@ impl Drop for Frontend {
         let _ = self.0.send(Event::Closed);
     }
 }
-
-// A GPUI (or any multi-threaded) frontend holds `Session` in its UI state
-// and moves `Event` — reply included — across executor threads.
-const _: () = {
-    const fn assert_send<T: Send>() {}
-    assert_send::<Session>();
-    assert_send::<Event>();
-};
 
 fn loopback_bypass(existing: [Option<String>; 2]) -> String {
     let mut entries = Vec::new();

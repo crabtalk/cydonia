@@ -24,13 +24,16 @@ use bezel::{
 use browser::{ConsoleMessage, DataStore, WebView, WebViewEvent};
 use std::collections::{HashMap, VecDeque};
 
-actions!(cydonia_browser, [Go, Reload, HardReload]);
-
 /// Claimed on the address field, so `enter` loads what it holds.
 const ADDRESS_CONTEXT: &str = "CydoniaAddress";
 
 /// Claimed on the whole tab, the address field included.
 const CONTEXT: &str = "CydoniaBrowser";
+
+/// Messages a tab's log keeps; older ones are dropped.
+const LOG_LIMIT: usize = 500;
+
+actions!(cydonia_browser, [Go, Reload, HardReload]);
 
 /// What a new tab opens on: the home page in Settings.
 pub fn home(cx: &App) -> String {
@@ -54,9 +57,6 @@ pub fn bindings() -> Vec<KeyBinding> {
 struct Pages(HashMap<u64, Entity<WebView>>);
 
 impl Global for Pages {}
-
-/// Messages a tab's log keeps; older ones are dropped.
-const LOG_LIMIT: usize = 500;
 
 /// What each live page has logged, by tab id, oldest first.
 #[derive(Default)]

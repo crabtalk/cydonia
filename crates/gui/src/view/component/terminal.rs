@@ -37,6 +37,14 @@ const CONTEXT: &str = "CydoniaTerminal";
 /// Half the cursor's blink period, the text caret's own.
 const BLINK: Duration = Duration::from_millis(500);
 
+/// How often a selection drag held past the grid's top or bottom edge
+/// scrolls the scrollback.
+const EDGE_SCROLL_TICK: Duration = Duration::from_millis(50);
+
+/// Most lines one edge-scroll tick moves, however far past the edge the
+/// pointer is.
+const EDGE_SCROLL_MAX_LINES: i32 = 12;
+
 /// The app's caret as a terminal cursor, when terminals take it.
 fn caret_override(cx: &App) -> Option<CursorStyle> {
     if !fonts::terminal_caret() {
@@ -52,13 +60,6 @@ fn caret_override(cx: &App) -> Option<CursorStyle> {
         blinking: cx.caret_blink(),
     })
 }
-
-/// How often a selection drag held past the grid's top or bottom edge
-/// scrolls the scrollback.
-const EDGE_SCROLL_TICK: Duration = Duration::from_millis(50);
-/// Most lines one edge-scroll tick moves, however far past the edge the
-/// pointer is.
-const EDGE_SCROLL_MAX_LINES: i32 = 12;
 
 /// Paths as a shell reads them: each single-quoted where it needs to be,
 /// joined by spaces, with a trailing space so the next word starts clean.
@@ -1126,7 +1127,7 @@ impl Render for TerminalPanel {
             .on_action(cx.listener(|this, _: &super::panel::PrevTab, window, cx| {
                 this.cycle(-1, window, cx);
             }))
-            .bg(crate::view::window::root::content_bg(&theme))
+            .bg(theme.window_bg())
             .child(
                 div()
                     .h(px(40.))

@@ -14,10 +14,10 @@ use bezel::{
     ui::{input::TextField, popover},
 };
 
-actions!(cydonia_header, [CommitInfo, DismissInfo]);
-
 /// Claimed on the panel's fields, so `enter` files it.
 const INFO_CONTEXT: &str = "CydoniaBoardInfo";
+
+actions!(cydonia_header, [CommitInfo, DismissInfo]);
 
 pub fn bindings() -> Vec<KeyBinding> {
     vec![

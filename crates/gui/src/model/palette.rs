@@ -9,6 +9,43 @@ use bezel::{
     gpui::App,
     theme::{AppExt as _, Appearance, Glass, SurfaceStyle, Theme, ThemeFamily},
 };
+use std::sync::RwLock;
+
+/// The colours an article's marks are washed in. Read by markdown's painters,
+/// which are bare `fn`s, so the current ones are held in a static.
+#[derive(Debug, Clone, Copy)]
+pub struct Washes {
+    pub highlight: Paint,
+    /// The find wash; `None` keeps [`markdown::default_find`].
+    pub find: Option<Paint>,
+}
+
+static WASHES: RwLock<Washes> = RwLock::new(Washes {
+    highlight: Paint::Named(settings::Highlight::Yellow),
+    find: None,
+});
+
+impl Washes {
+    pub fn of(look: &settings::Appearance) -> Self {
+        Self {
+            highlight: look.highlight,
+            find: look.search,
+        }
+    }
+
+    /// Make these the ones painted from the next frame on.
+    pub fn install(self) {
+        if let Ok(mut held) = WASHES.write() {
+            *held = self;
+        }
+    }
+
+    pub fn current() -> Self {
+        WASHES
+            .read()
+            .map_or_else(|poisoned| *poisoned.into_inner(), |held| *held)
+    }
+}
 
 /// What the palette builder reads. Captured by the builder bezel reruns on
 /// every light/dark switch, so a change takes a fresh [`apply`].

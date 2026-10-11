@@ -56,6 +56,27 @@ use std::{
     time::Duration,
 };
 
+/// The wash a row paints. With 1px either side it is [`ROW_HEIGHT`], the
+/// pitch of headings and rows alike.
+const ROW_PILL: f32 = 30.;
+
+/// What a row puts between its mark, its name and the button at the end.
+const ROW_GAP: f32 = 8.;
+
+/// The button at the end of a row, at its full size: the height of the row's
+/// `···` icon button, which it swaps with. It is laid out at no width until the
+/// pointer arrives — see [`Cydonia::archive_button`].
+const BUTTON_SIZE: f32 = Theme::BUTTON_HEIGHT;
+
+pub(crate) const ROW_HEIGHT: f32 = ROW_PILL + 2.;
+
+/// How far the pinned heading's glass runs past the band it is seen in, and is
+/// clipped away.
+const PINNED_BLEED: f32 = 20.;
+
+/// One step in from the row above, for each level a row is under.
+const INDENT_STEP: f32 = 14.;
+
 /// What the sidebar needs of a session to draw its row, read out of the model
 /// before the row is built: a turn in flight puts a thinking orb in the mark's
 /// place, and the orb leases the frame clock, which wants the app mutably.
@@ -319,36 +340,6 @@ pub(crate) fn key_of(entry: &Row) -> String {
         }
     }
 }
-
-/// The wash a row paints, and — with the 1px either side of it that used to be
-/// the column's gap — the pitch the list lays every row out at. One height for
-/// headings and rows alike, because the list lays every row at one extent.
-const ROW_PILL: f32 = 30.;
-
-/// What a row puts between its mark, its name and the button at the end.
-const ROW_GAP: f32 = 8.;
-
-/// The button at the end of a row, at its full size. Named because the button
-/// is laid out at no width until the pointer arrives — see
-/// [`Cydonia::archive_button`]. It swaps with the row's `···`, which is a
-/// [`bezel::ui::widgets::Buttons::icon_button`], so it stands at that height.
-const BUTTON_SIZE: f32 = Theme::BUTTON_HEIGHT;
-
-pub(crate) const ROW_HEIGHT: f32 = ROW_PILL + 2.;
-
-/// How far the pinned heading's glass runs past the band it is seen in, and is
-/// clipped away.
-///
-/// A lens bends what is behind it within [`bezel::theme::SurfaceSpec::rim`] of
-/// its own edge, and lights the edge itself. On a bar one row tall that is the
-/// whole of it: two bands and two hairlines, reading as a line ruled along the
-/// top and the bottom. Run the glass out past the clip and only its middle —
-/// the flat blur — is left in view.
-const PINNED_BLEED: f32 = 20.;
-
-/// Shared row styling keeps selection backgrounds full-width when indented.
-/// One step in from the row above, for each level a row is under.
-const INDENT_STEP: f32 = 14.;
 
 pub(crate) fn row(
     id: impl Into<gpui::ElementId>,

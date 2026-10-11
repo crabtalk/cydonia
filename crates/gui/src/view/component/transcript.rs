@@ -15,7 +15,6 @@ use crate::{
     },
 };
 use artifact::{
-    reference,
     search::Query,
     session::chat::{ChatItem, ToolStatus},
     text::{clip, one_line},
@@ -101,6 +100,59 @@ const ORB_LEASE: Duration = Duration::from_millis(300);
 /// The still frame an orb holds where motion is turned off — the engine's own
 /// convention, and a pose rather than the empty t = 0 arrangement.
 const ORB_STILL: f32 = 0.6;
+
+/// How far a title's head — the word that names the call — may run before the
+/// rest of the line has to start truncating.
+pub const HEAD_MAX: usize = 24;
+
+/// How long a one-lined title may run before the row's ellipsis is the only
+/// way to read it, and the full text is worth opening for.
+const TITLE_MAX: usize = 72;
+
+/// What a turn in flight is called while it has nothing to show yet; [`verb`]
+/// picks one per turn.
+const WORKING: [&str; 40] = [
+    "Thinking",
+    "Brewing",
+    "Cultivating",
+    "Simmering",
+    "Percolating",
+    "Distilling",
+    "Weaving",
+    "Conjuring",
+    "Steeping",
+    "Fermenting",
+    "Crystallizing",
+    "Synthesizing",
+    "Composing",
+    "Pondering",
+    "Unraveling",
+    "Forging",
+    "Kindling",
+    "Gathering",
+    "Polishing",
+    "Assembling",
+    "Decoding",
+    "Untangling",
+    "Refining",
+    "Shaping",
+    "Hatching",
+    "Coalescing",
+    "Contemplating",
+    "Illuminating",
+    "Molding",
+    "Calibrating",
+    "Churning",
+    "Marinating",
+    "Incubating",
+    "Digesting",
+    "Sprouting",
+    "Condensing",
+    "Mulling",
+    "Concocting",
+    "Ruminating",
+    "Orchestrating",
+];
 
 /// Where a session's scrollback sits and which of its zones are open — view
 /// state, per session, so switching back finds the transcript as it was left.
@@ -377,21 +429,6 @@ impl State {
         }));
         self.list.scroll_to(ix);
     }
-}
-
-/// The link to turns `from..=to` of a session, from 1: `cydonia://<project>#43:5-7`.
-/// Nothing for a session without a number yet.
-pub(crate) fn turn_link(chat: &ChatSession, from: usize, to: usize) -> Option<String> {
-    let number = chat.number?;
-    let name = reference::project_name(&chat.cwd)?;
-    let turns = reference::Span {
-        from: from.min(to) as u64,
-        to: from.max(to) as u64,
-    };
-    Some(
-        reference::Reference::entry(Some(&name), number, Some(reference::Within::Span(turns)))
-            .link(),
-    )
 }
 
 /// Text available for selection and copying.
@@ -1639,14 +1676,6 @@ fn thought(chat: &ChatSession, ix: usize, text: &str, cx: &mut Context<Workspace
         .into_any_element()
 }
 
-/// How far a title's head — the word that names the call — may run before the
-/// rest of the line has to start truncating.
-pub const HEAD_MAX: usize = 24;
-
-/// How long a one-lined title may run before the row's ellipsis is the only
-/// way to read it, and the full text is worth opening for.
-const TITLE_MAX: usize = 72;
-
 /// A tool's title, as a row one line tall can take it: the head that names the
 /// call, the rest that truncates beside it, and the whole text when the one
 /// line lost something — a shell script arrives as its own title, newlines and
@@ -1769,55 +1798,6 @@ fn process(
         })
         .into_any_element()
 }
-
-/// What a turn in flight is called while it has nothing to show yet.
-///
-/// Taken from `../desktop`, which settled this first.
-///
-/// A list rather than one word, and long enough that the same one twice reads
-/// as chance. Which one a turn gets is [`verb`]'s business.
-const WORKING: [&str; 40] = [
-    "Thinking",
-    "Brewing",
-    "Cultivating",
-    "Simmering",
-    "Percolating",
-    "Distilling",
-    "Weaving",
-    "Conjuring",
-    "Steeping",
-    "Fermenting",
-    "Crystallizing",
-    "Synthesizing",
-    "Composing",
-    "Pondering",
-    "Unraveling",
-    "Forging",
-    "Kindling",
-    "Gathering",
-    "Polishing",
-    "Assembling",
-    "Decoding",
-    "Untangling",
-    "Refining",
-    "Shaping",
-    "Hatching",
-    "Coalescing",
-    "Contemplating",
-    "Illuminating",
-    "Molding",
-    "Calibrating",
-    "Churning",
-    "Marinating",
-    "Incubating",
-    "Digesting",
-    "Sprouting",
-    "Condensing",
-    "Mulling",
-    "Concocting",
-    "Ruminating",
-    "Orchestrating",
-];
 
 /// Which word a turn gets: the question's own hash.
 ///

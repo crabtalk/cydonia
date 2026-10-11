@@ -421,7 +421,9 @@ fn a_missing_grammar_asks_before_downloading_and_can_be_dismissed(cx: &mut gpui:
     visual.run_until_parked();
     assert!(visual.debug_bounds("install-grammar").is_some());
     assert_eq!(
-        crate::model::language::status("json"),
+        crate::model::language::Spec::named("json")
+            .unwrap()
+            .status(),
         crate::model::language::Status::Missing
     );
     let dismiss = visual.debug_bounds("dismiss-grammar").unwrap().center();
@@ -429,7 +431,9 @@ fn a_missing_grammar_asks_before_downloading_and_can_be_dismissed(cx: &mut gpui:
     visual.run_until_parked();
     assert!(visual.debug_bounds("install-grammar").is_none());
     assert_eq!(
-        crate::model::language::status("json"),
+        crate::model::language::Spec::named("json")
+            .unwrap()
+            .status(),
         crate::model::language::Status::Missing
     );
 }

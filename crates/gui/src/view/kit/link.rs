@@ -60,15 +60,10 @@ const HOVER_BLOCKS: usize = 6;
 /// The tallest a hover card's content stands; past it the content is cut.
 const HOVER_HEIGHT: f32 = 240.;
 
-/// The link a reference is written as.
-pub(crate) fn link(reference: &str) -> String {
-    format!("{SCHEME}{reference}")
-}
-
-/// The card a reference is written into.
-fn embed(reference: &str) -> BlockKind {
+/// The card a link is written into.
+fn embed(url: &str) -> BlockKind {
     BlockKind::Bookmark {
-        url: link(reference),
+        url: url.to_owned(),
         form: Form::Embed(None),
     }
 }
@@ -85,6 +80,18 @@ pub(crate) fn card(url: &str, form: Form, window: &mut Window, cx: &mut App) -> 
     }
     let root = window.root::<Cydonia>().flatten()?;
     Some(root.update(cx, |root, cx| root.entry_card(&reference, form, window, cx)))
+}
+
+/// The link preview cydonia installs at boot: its own links, then web pages.
+/// Without the `desktop` feature web pages are not fetched.
+pub(crate) fn preview(url: &str, cx: &App) -> Option<markdown::Preview> {
+    if url.starts_with(SCHEME) {
+        return mention::preview(url, cx);
+    }
+    #[cfg(feature = "desktop")]
+    return crate::model::link::preview(url);
+    #[cfg(not(feature = "desktop"))]
+    None
 }
 
 /// The hover card cydonia installs at boot: its own links, and nothing else.
@@ -225,7 +232,7 @@ pub(crate) fn slash_items() -> Vec<SlashItem> {
                 Rc::new(move |_, linked: Linked, _, cx| {
                     at.editor
                         .update(cx, |editor, cx| {
-                            editor.place_block(at.block, embed(&linked.reference), cx)
+                            editor.place_block(at.block, embed(&linked.url), cx)
                         })
                         .ok();
                 }),

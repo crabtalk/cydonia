@@ -30,8 +30,6 @@ use bezel::{
 };
 use serde_json::Value;
 
-actions!(cydonia_table, [CommitCell, DismissCell]);
-
 /// Claimed on top of `TextField`, so `enter` files the cell here and stays a
 /// newline in every other field.
 const KEY_CONTEXT: &str = "CydoniaCell";
@@ -44,6 +42,8 @@ const LINE: f32 = 18.;
 /// The column the row actions sit in — the trash on a row, the `+` on the
 /// header. Declared with the data columns so both halves line up.
 const ACTIONS: f32 = 44.;
+
+actions!(cydonia_table, [CommitCell, DismissCell]);
 
 pub fn bindings() -> Vec<KeyBinding> {
     let ctx = Some(KEY_CONTEXT);

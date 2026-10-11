@@ -42,6 +42,16 @@ use bezel::{
     ui::{combobox, focus, input, keys},
 };
 
+const NATIVE: bool = cfg!(target_os = "macos");
+
+/// The context an app-wide chord is bound in. Off macOS the secondary modifier
+/// is `ctrl`, and a shell reads every `ctrl` letter, so there a focused
+/// terminal keeps the keystroke.
+pub(crate) const GLOBAL: Option<&str> = match NATIVE {
+    true => None,
+    false => Some("!CydoniaTerminal"),
+};
+
 /// One command whose chord is the reader's to choose.
 ///
 /// Named rather than reached as a field, so the settings section can list them
@@ -297,16 +307,6 @@ impl Command {
     }
 }
 
-const NATIVE: bool = cfg!(target_os = "macos");
-
-/// The context an app-wide chord is bound in. Off macOS the secondary modifier
-/// is `ctrl`, and a shell reads every `ctrl` letter, so there a focused
-/// terminal keeps the keystroke.
-pub(crate) const GLOBAL: Option<&str> = match NATIVE {
-    true => None,
-    false => Some("!CydoniaTerminal"),
-};
-
 /// `mac` on macOS, `other` everywhere else.
 pub(crate) const fn platform(mac: &'static str, other: &'static str) -> &'static str {
     match NATIVE {
@@ -326,30 +326,50 @@ pub(crate) const fn platform(mac: &'static str, other: &'static str) -> &'static
 pub fn chord(command: Command, shortcuts: &Shortcuts) -> Option<&str> {
     match shortcuts.get(command.key()) {
         Some("") => None,
-        Some(chord) if parses(chord) => Some(chord),
+        Some(chord) if Chord::parse(chord).is_some() => Some(chord),
         Some(_) | None => command.default(),
     }
 }
 
-/// Whether `chord` is one gpui can bind. Asked before it reaches
-/// [`KeyBinding::new`], which panics on what it cannot parse — and this file
-/// is written by hand.
-pub fn parses(chord: &str) -> bool {
-    let mut strokes = chord.split_whitespace().peekable();
-    strokes.peek().is_some() && strokes.all(|stroke| Keystroke::parse(stroke).is_ok())
-}
+/// A chord as the keymap file writes it: one or more keystrokes, separated by
+/// spaces. Equal chords name the same keystrokes: `secondary-b` and `ctrl-b`
+/// are one chord off macOS.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Chord(Vec<Keystroke>);
 
-/// How a chord is written on screen: `cmd-shift-b` as ⇧⌘B.
-pub fn glyphs(chord: &str) -> Option<SharedString> {
-    let strokes = chord
-        .split_whitespace()
-        .map(|stroke| {
-            Keystroke::parse(stroke).ok().map(|stroke| {
-                KeybindingKeystroke::new_with_mapper(stroke, false, &DummyKeyboardMapper)
+impl Chord {
+    /// Nothing where any stroke does not parse, or there is none.
+    /// [`KeyBinding::new`] panics on a chord that does not parse.
+    pub fn parse(text: &str) -> Option<Self> {
+        let strokes = text
+            .split_whitespace()
+            .map(|stroke| Keystroke::parse(stroke).ok())
+            .collect::<Option<Vec<_>>>()?;
+        (!strokes.is_empty()).then_some(Self(strokes))
+    }
+
+    pub fn strokes(&self) -> &[Keystroke] {
+        &self.0
+    }
+
+    /// Without the `desktop` feature nothing is held system-wide, so any chord
+    /// passes.
+    #[cfg(not(feature = "desktop"))]
+    pub fn holdable(&self) -> bool {
+        true
+    }
+
+    /// How the chord is written on screen: `cmd-shift-b` as ⇧⌘B.
+    pub fn glyphs(&self) -> SharedString {
+        let strokes = self
+            .0
+            .iter()
+            .map(|stroke| {
+                KeybindingKeystroke::new_with_mapper(stroke.clone(), false, &DummyKeyboardMapper)
             })
-        })
-        .collect::<Option<Vec<_>>>()?;
-    (!strokes.is_empty()).then(|| keys::format(&strokes))
+            .collect::<Vec<_>>();
+        keys::format(&strokes)
+    }
 }
 
 /// How a command's chord is written on screen right now, for a control that
@@ -359,7 +379,7 @@ pub fn glyphs(chord: &str) -> Option<SharedString> {
 /// from the chord that fires: a control with its chord typed beside it goes on
 /// saying ⌘B long after ⌘B was moved.
 pub fn label(command: Command, shortcuts: &Shortcuts) -> Option<SharedString> {
-    glyphs(chord(command, shortcuts)?)
+    Some(Chord::parse(chord(command, shortcuts)?)?.glyphs())
 }
 
 /// The commands that already answer to `chord`, minus `mine`.
@@ -367,25 +387,14 @@ pub fn label(command: Command, shortcuts: &Shortcuts) -> Option<SharedString> {
 /// One chord on two commands is not an error the keymap reports — the later
 /// binding simply wins and the earlier one goes quiet — so the section has to
 /// ask before it writes.
-pub fn claimed(wanted: &str, mine: Command, shortcuts: &Shortcuts) -> Vec<Command> {
+pub fn claimed(wanted: &Chord, mine: Command, shortcuts: &Shortcuts) -> Vec<Command> {
     Command::ALL
         .into_iter()
         .filter(|&command| {
-            command != mine && chord(command, shortcuts).is_some_and(|chord| same(chord, wanted))
+            command != mine
+                && chord(command, shortcuts).and_then(Chord::parse).as_ref() == Some(wanted)
         })
         .collect()
-}
-
-/// Whether two chords name the same keystrokes: `secondary-b` and `ctrl-b`
-/// are one chord off macOS.
-fn same(a: &str, b: &str) -> bool {
-    let strokes = |chord: &str| {
-        chord
-            .split_whitespace()
-            .map(|stroke| Keystroke::parse(stroke).ok())
-            .collect::<Option<Vec<_>>>()
-    };
-    a == b || strokes(a).is_some_and(|a| strokes(b) == Some(a))
 }
 
 /// Optional word shortcuts, scoped to editable text.

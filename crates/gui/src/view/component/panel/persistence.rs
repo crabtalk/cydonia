@@ -6,6 +6,10 @@ use bezel::gpui::App;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+/// How long a drag stands still before its width is written down. A resize is
+/// a burst of moves, and the file is rewritten whole each time.
+const SETTLE: std::time::Duration = std::time::Duration::from_millis(400);
+
 #[derive(Clone, Serialize, Deserialize)]
 enum SavedTab {
     Review,
@@ -196,10 +200,6 @@ impl Panel {
         }
     }
 }
-
-/// How long a drag stands still before its width is written down. A resize is
-/// a burst of moves, and the file is rewritten whole each time.
-const SETTLE: std::time::Duration = std::time::Duration::from_millis(400);
 
 impl Cydonia {
     /// Write the layout once the drag it came from has settled.

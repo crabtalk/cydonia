@@ -3,14 +3,14 @@
 //! Add `resources/<name>.md` with YAML `name` and `description` fields.
 //! Rebuilding validates and bundles it automatically. Resource Markdown is embedded.
 
+/// What every resource's URI starts with; the name follows.
+pub const PREFIX: &str = "cydonia://resources/";
+
 pub struct Resource {
     pub name: &'static str,
     pub description: &'static str,
     pub content: &'static str,
 }
-
-/// What every resource's URI starts with; the name follows.
-pub const PREFIX: &str = "cydonia://resources/";
 
 impl Resource {
     pub fn uri(&self) -> String {

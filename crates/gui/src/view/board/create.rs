@@ -28,10 +28,10 @@ use bezel::{
 };
 use std::collections::HashSet;
 
-actions!(cydonia_create, [CommitBoard, DismissBoard]);
-
 /// Claimed on the dialog's fields, so `enter` makes the board.
 const CREATE_CONTEXT: &str = "CydoniaNewBoard";
+
+actions!(cydonia_create, [CommitBoard, DismissBoard]);
 
 pub fn bindings() -> Vec<KeyBinding> {
     vec![

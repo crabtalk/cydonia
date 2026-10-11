@@ -62,6 +62,59 @@ use bezel::{
 };
 use std::cell::RefCell;
 
+/// Claimed on the rename field so `enter` files the name and `escape` drops it.
+const RENAME_CONTEXT: &str = "CydoniaSessionName";
+
+const SIDEBAR_WIDTH: f32 = 200.;
+
+const SIDEBAR_WIDTH_MIN: f32 = 180.;
+
+const SIDEBAR_WIDTH_MAX: f32 = 420.;
+
+/// The sidebar's gutter: a row's outer margin, and the padding inside it.
+pub(crate) const SIDEBAR_GUTTER: f32 = 8.;
+
+/// The header strip's height, which the traffic lights centre in: macOS 26's
+/// 14px lights with [`TRAFFIC_LIGHT_INSET`] above and below them.
+pub(crate) const HEADER_HEIGHT: f32 = 32.;
+
+/// The room the pill keeps above and below its content.
+pub(crate) const COMPOSER_INSET: f32 = 4.;
+
+/// How far the floating composer stands off the column's bottom edge.
+pub(crate) const COMPOSER_BOTTOM: f32 = 20.;
+
+/// How wide the composer's column runs before it stops growing, and the air it
+/// keeps either side of itself inside that.
+pub(crate) const COMPOSER_COLUMN: f32 = 720.;
+
+pub(crate) const COMPOSER_MARGIN: f32 = 24.;
+
+/// How far the close button stands in from the window's left edge: AppKit's
+/// own place for it in a transparent, full-size-content titlebar on macOS 26.
+pub(crate) const TRAFFIC_LIGHT_INSET: f32 = 9.;
+
+/// The gap the header keeps at the window's edges.
+pub(crate) const HEADER_INSET: f32 = 16.;
+
+/// How far the glyph of a control at the end of a row stands from its
+/// column's edge: the lights' own inset, mirrored. Measured to the glyph, not
+/// the button around it.
+pub(crate) const EDGE: f32 = TRAFFIC_LIGHT_INSET;
+
+/// What an icon button leaves on each side of its glyph.
+const BUTTON_SLACK: f32 = (Theme::BUTTON_HEIGHT - ICON_GLYPH) / 2.;
+
+/// The glyph size of `Buttons::icon_button`, which bezel does not export.
+const ICON_GLYPH: f32 = 14.;
+
+/// The trailing padding that puts an icon button's glyph at [`EDGE`].
+pub(crate) const BUTTON_EDGE: f32 = EDGE - BUTTON_SLACK;
+
+/// The gap between the green light and the glyph of the first control past
+/// it.
+const LIGHTS_GAP: f32 = 16.;
+
 actions!(
     cydonia,
     [
@@ -113,42 +166,17 @@ pub struct SwitchSpace {
     pub index: Option<usize>,
 }
 
-/// Claimed on the rename field so `enter` files the name and `escape` drops it.
-const RENAME_CONTEXT: &str = "CydoniaSessionName";
-
-const SIDEBAR_WIDTH: f32 = 200.;
-const SIDEBAR_WIDTH_MIN: f32 = 180.;
-const SIDEBAR_WIDTH_MAX: f32 = 420.;
-
-/// The sidebar's gutter: a row's outer margin, and the padding inside it.
-pub(crate) const SIDEBAR_GUTTER: f32 = 8.;
-
-/// The header strip's height, which the traffic lights centre in: macOS 26's
-/// 14px lights with [`TRAFFIC_LIGHT_INSET`] above and below them.
-pub(crate) const HEADER_HEIGHT: f32 = 32.;
-
 /// The pill at rest, and the agent mark beside it. Half of it is the stadium's
 /// radius.
 pub(crate) fn composer_height() -> f32 {
     composer_disc() + 2. * COMPOSER_INSET
 }
 
-/// The room the pill keeps above and below its content.
-pub(crate) const COMPOSER_INSET: f32 = 4.;
-
 /// Keep the send target comfortable at small text sizes, and grow with the
 /// line box when the text-size setting needs more room.
 pub(crate) fn composer_disc() -> f32 {
     TextStyle::Body.painted_line_height().max(24.)
 }
-
-/// How far the floating composer stands off the column's bottom edge.
-pub(crate) const COMPOSER_BOTTOM: f32 = 20.;
-
-/// How wide the composer's column runs before it stops growing, and the air it
-/// keeps either side of itself inside that.
-pub(crate) const COMPOSER_COLUMN: f32 = 720.;
-pub(crate) const COMPOSER_MARGIN: f32 = 24.;
 
 /// What the composer itself is at its widest — the column, less its own air.
 ///
@@ -169,37 +197,11 @@ pub(crate) fn sidebar_bg(theme: &Theme) -> Hsla {
     }
 }
 
-/// The content column's fill: bezel's frost tint, or opaque `bg`.
-pub(crate) fn content_bg(theme: &Theme) -> Hsla {
-    theme.window_bg()
-}
-
-/// How far the close button stands in from the window's left edge: AppKit's
-/// own place for it in a transparent, full-size-content titlebar on macOS 26.
-pub(crate) const TRAFFIC_LIGHT_INSET: f32 = 9.;
-
 /// The lights' origin, for `TitlebarOptions::traffic_light_position`, until
 /// [`lights::fit`] has measured them.
 pub(crate) fn traffic_lights() -> Point<Pixels> {
     point(px(TRAFFIC_LIGHT_INSET), px(TRAFFIC_LIGHT_INSET))
 }
-
-/// The gap the header keeps at the window's edges.
-pub(crate) const HEADER_INSET: f32 = 16.;
-
-/// How far the glyph of a control at the end of a row stands from its
-/// column's edge: the lights' own inset, mirrored. Measured to the glyph, not
-/// the button around it.
-pub(crate) const EDGE: f32 = TRAFFIC_LIGHT_INSET;
-
-/// What an icon button leaves on each side of its glyph.
-const BUTTON_SLACK: f32 = (Theme::BUTTON_HEIGHT - ICON_GLYPH) / 2.;
-
-/// The glyph size of `Buttons::icon_button`, which bezel does not export.
-const ICON_GLYPH: f32 = 14.;
-
-/// The trailing padding that puts an icon button's glyph at [`EDGE`].
-pub(crate) const BUTTON_EDGE: f32 = EDGE - BUTTON_SLACK;
 
 /// The band across the top of a column, and the only place its height and its
 /// inset are written: the header, the sidebar's, a pane's in a space, and the
@@ -218,10 +220,6 @@ pub(crate) fn band() -> Div {
         .pl(px(HEADER_INSET))
         .pr(px(BUTTON_EDGE))
 }
-
-/// The gap between the green light and the glyph of the first control past
-/// it.
-const LIGHTS_GAP: f32 = 16.;
 
 /// Where the toolbar's own controls start at the window's left edge: the
 /// button whose glyph stands [`LIGHTS_GAP`] past the green light, or in full
@@ -403,6 +401,27 @@ pub fn open(settings: Settings, state: State, cx: &mut App) -> Result<WindowHand
             })
         },
     )
+}
+
+/// What a press on a turn's notification — see [`crate::model::notify`] —
+/// does: bring the app back, and open the session that finished.
+///
+/// Registered once, at startup. The window it lands on is whichever one is
+/// showing the project that session is in; a notification whose session has
+/// since gone opens nothing but the app.
+pub fn on_notification(cx: &mut App) {
+    cx.on_system_notification_response(|response, cx| {
+        let Some(id) = crate::model::notify::session_of(&response.tag) else {
+            return;
+        };
+        cx.activate(true);
+        for window in cx.windows() {
+            let Some(window) = window.downcast::<Cydonia>() else {
+                continue;
+            };
+            let _ = window.update(cx, |root, window, cx| root.select_session(id, window, cx));
+        }
+    });
 }
 
 /// One step from `at` through `len` entries, wrapping — a list of none has

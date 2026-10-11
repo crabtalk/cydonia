@@ -7,7 +7,7 @@ use anyhow::Result;
 use bezel::{gpui::App, gpui_platform};
 use gui::{
     agent, boot,
-    model::{media, migrate, notify, settings, state, update, welcome},
+    model::{media, migrate, settings, state, update, welcome},
     view::{keymap::hotkey, window::menubar, window::root},
 };
 
@@ -55,7 +55,7 @@ fn main() -> Result<()> {
         // Before any window or notification: it is the name and identity the
         // system presents this app under — see [`gui::model::notify`].
         cx.set_app_identity(BUNDLE_ID, "Cydonia");
-        notify::on_response(cx);
+        root::on_notification(cx);
         boot::init(&settings, cx);
         // And the one key the app does not hold itself, which is nothing at
         // all until somebody asks for one — see [`gui::view::keymap::hotkey`].

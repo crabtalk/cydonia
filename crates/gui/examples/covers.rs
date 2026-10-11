@@ -7,7 +7,7 @@
 //!
 //! The content is not this program's business — articles are written by hand,
 //! and this only gives them their pictures. Each one is cut through the app's
-//! own [`cover::seed`] and [`cover::svg`], from the article's own path, so a
+//! own [`cover::Seed::next`] and [`cover::Seed::svg`], from the article's own path, so a
 //! fixture ends up with exactly the picture cydonia would have landed on for
 //! that document.
 //!
@@ -37,7 +37,7 @@ fn main() {
         }
         // The file being there is the whole of the state — the same rule the
         // app reads covers by, so this agrees with it for free.
-        if cover::of(&content).is_some() {
+        if artifact::article::cover::of(&content).is_some() {
             kept += 1;
             continue;
         }
@@ -53,9 +53,9 @@ fn main() {
 }
 
 fn write_one(content: &Path) -> Option<u64> {
-    let seed = cover::seed(content, None);
-    let path = cover::path(content, seed, "svg")?;
-    let svg = cover::svg(seed);
+    let seed = cover::Seed::next(content, None);
+    let path = seed.path(content, "svg")?;
+    let svg = seed.svg();
     std::fs::write(&path, &svg).ok()?;
     Some(svg.len() as u64)
 }

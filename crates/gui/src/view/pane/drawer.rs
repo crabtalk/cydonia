@@ -24,12 +24,12 @@ use bezel::{
 };
 use std::{cell::Cell, rc::Rc};
 
-actions!(cydonia_drawer, [CloseDrawer]);
-
 const DRAWER_CONTEXT: &str = "CydoniaDrawer";
 
 /// The least the drawer is dragged down to, short of the pane itself.
 const MIN_HEIGHT: f32 = 160.;
+
+actions!(cydonia_drawer, [CloseDrawer]);
 
 pub fn bindings() -> Vec<KeyBinding> {
     vec![KeyBinding::new("escape", CloseDrawer, Some(DRAWER_CONTEXT))]

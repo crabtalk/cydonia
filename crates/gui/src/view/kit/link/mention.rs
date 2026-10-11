@@ -9,16 +9,17 @@ use crate::{
         references::{self, Part},
     },
     view::{
-        board::card_title,
-        kit::link::link,
-        kit::{icon::kind_icon, text::untitled},
+        kit::{
+            icon::kind_icon,
+            text::{CardTitle, untitled},
+        },
         sidebar::Row,
     },
 };
 use artifact::{
     board::{Board, Card},
     kind::Kind,
-    reference::{self, Prefix, Reference},
+    reference::{self, Prefix, Reference, Target},
 };
 use bezel::gpui::{App, Global, SharedString};
 use bezel::ui::icons::Icon;
@@ -27,9 +28,6 @@ use markdown::Preview;
 
 /// Rows the menu lists at most.
 const SHOWN: usize = 20;
-
-/// Characters of a card's title a menu row paints at most.
-const CARD_TITLE: usize = 48;
 
 /// The mark every `cydonia://` chip paints. Inline chips paint only a glyph's
 /// SVG, in the text colour — a file icon paints nothing there.
@@ -94,7 +92,7 @@ pub(crate) fn read(workspace: &Workspace) -> Linkables {
                     icon,
                     title,
                     about,
-                    url: link(&reference(number)),
+                    url: Reference::entry(Some(&name), number, None).link(),
                     touched,
                     project: name.to_string(),
                     active,
@@ -178,8 +176,9 @@ pub(crate) fn source(query: &str, cx: &App) -> Vec<Mention> {
         .as_ref()
         .map(|workspace| carded(workspace.read(cx)))
         .unwrap_or_default();
-    let (named, holding) = rank_cards(query, &cards);
-    let entries = rank(query, held).into_iter().map(|ix| {
+    let query = Query::parse(query);
+    let (named, holding) = query.rank_cards(&cards);
+    let entries = query.rank(held).into_iter().map(|ix| {
         let linkable = &held[ix];
         Mention {
             icon: Some(linkable.icon.clone()),
@@ -205,6 +204,8 @@ pub(crate) struct Carded<'a> {
     pub(crate) active: bool,
     pub(crate) board: &'a Board,
     pub(crate) card: &'a Card,
+    /// The `12` in `DEV-12`.
+    pub(crate) number: u64,
     /// `DEV-12`.
     pub(crate) handle: String,
 }
@@ -214,8 +215,14 @@ pub(crate) struct Carded<'a> {
 /// every workspace change, and a project's cards run to hundreds.
 impl Carded<'_> {
     /// `foo#DEV-12`.
-    pub(crate) fn reference(&self) -> String {
-        format!("{}#{}", self.project, self.handle)
+    pub(crate) fn reference(&self) -> Reference<'_> {
+        Reference {
+            project: Some(&self.project),
+            target: Target::Card {
+                key: &self.board.key,
+                handle: self.number,
+            },
+        }
     }
 }
 
@@ -228,7 +235,7 @@ pub(crate) fn carded(workspace: &Workspace) -> Vec<Carded<'_>> {
         };
         for board in &project.boards {
             for card in board.columns.iter().flat_map(|column| &column.cards) {
-                let Some(handle) = board.handle_of(card) else {
+                let (Some(number), Some(handle)) = (card.handle, board.handle_of(card)) else {
                     continue;
                 };
                 cards.push(Carded {
@@ -236,6 +243,7 @@ pub(crate) fn carded(workspace: &Workspace) -> Vec<Carded<'_>> {
                     active: active == Some(&project.path),
                     board,
                     card,
+                    number,
                     handle,
                 });
             }
@@ -251,80 +259,236 @@ pub(crate) fn carded(workspace: &Workspace) -> Vec<Carded<'_>> {
 /// archived boards last. Nothing for an empty query or one with a kind or
 /// label prefix — see [`prefixes`] — and no text matches for a query holding
 /// `#`.
-pub(crate) fn rank_cards(query: &str, cards: &[Carded]) -> (Vec<usize>, Vec<usize>) {
-    let (kind, label, query) = prefixes(query);
-    let query = query.trim();
-    if kind.is_some() || label.is_some() || query.is_empty() {
-        return (Vec::new(), Vec::new());
+/// What `@` or the search palette is asked for: a kind's prefix, `s:`, `a:` or
+/// `b:` in either case, then a label's, `l:` and the label, then the rest.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct Query<'a> {
+    pub(crate) kind: Option<Kind>,
+    pub(crate) label: Option<String>,
+    pub(crate) rest: &'a str,
+}
+
+impl<'a> Query<'a> {
+    pub(crate) fn parse(query: &'a str) -> Self {
+        let (kind, query) = Self::kind_prefix(query);
+        let (label, rest) = Self::label_prefix(query);
+        Self { kind, label, rest }
     }
-    let mut named: Vec<(bool, u64, usize)> = Vec::new();
-    if let Some(reference::Partial {
-        project,
-        target: Prefix::Card { key, handle },
-    }) = reference::partial(query)
-    {
-        for (ix, carded) in cards.iter().enumerate() {
-            let scoped = match project {
-                None => carded.active,
-                Some(name) => carded.project.eq_ignore_ascii_case(name),
-            };
-            let Some(number) = carded.card.handle else {
-                continue;
-            };
-            let digits = number.to_string();
-            if scoped && carded.board.key.eq_ignore_ascii_case(key) && digits.starts_with(handle) {
-                named.push((digits != handle, number, ix));
+
+    /// The kind a query opens with, `s:`, `a:` or `b:` in either case, and the
+    /// query after it.
+    fn kind_prefix(query: &'a str) -> (Option<Kind>, &'a str) {
+        let query = query.trim_start();
+        let kind = match query.get(..2).map(str::to_ascii_lowercase).as_deref() {
+            Some("s:") => Kind::Session,
+            Some("a:") => Kind::Article,
+            Some("b:") => Kind::Board,
+            _ => return (None, query),
+        };
+        (Some(kind), &query[2..])
+    }
+
+    /// The label a query opens with, `l:` in either case and the word after it,
+    /// normalised, and the query after it.
+    fn label_prefix(query: &'a str) -> (Option<String>, &'a str) {
+        let query = query.trim_start();
+        if query.get(..2).map(str::to_ascii_lowercase).as_deref() != Some("l:") {
+            return (None, query);
+        }
+        let rest = &query[2..];
+        let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
+        match artifact::label::normalize(&rest[..end]) {
+            Some(label) => (Some(label), &rest[end..]),
+            None => (None, query),
+        }
+    }
+
+    /// What `query` lists, as positions in `held`, best first. An empty query
+    /// lists the active project, archived entries last. A query opening with a
+    /// kind's prefix — `s:`, `a:` or `b:` — lists that kind alone, and one
+    /// naming a label — `l:` and the label — the entries carrying it alone. A
+    /// label with nothing after it lists every entry carrying it.
+    ///
+    /// Each entry is placed by its best match: an exact reference — see
+    /// [`Query::references`] — then a title starting with the query, then a reference
+    /// prefix or a title holding it, then a session's agent holding it. Titles
+    /// are matched in every project, and not for a query holding `#`. Archived
+    /// entries follow every other match but an exact reference. Within a place
+    /// the active project leads; ties keep the most recently touched first.
+    pub(crate) fn rank(&self, held: &[Linkable]) -> Vec<usize> {
+        let mut rows = match (&self.label, self.rest.trim().is_empty()) {
+            (Some(_), true) => {
+                let mut rows: Vec<usize> = (0..held.len()).collect();
+                rows.sort_by_key(|&ix| held[ix].archived);
+                rows
+            }
+            _ => self.rank_all(held),
+        };
+        if let Some(kind) = self.kind {
+            rows.retain(|&ix| held[ix].kind == kind);
+        }
+        if let Some(label) = &self.label {
+            rows.retain(|&ix| held[ix].labels.contains(label));
+        }
+        rows
+    }
+
+    /// The cards the query names: by handle, best first, then the cards whose
+    /// text holds it. Nothing for a query with a kind or label prefix.
+    pub(crate) fn rank_cards(&self, cards: &[Carded]) -> (Vec<usize>, Vec<usize>) {
+        let query = self.rest.trim();
+        if self.kind.is_some() || self.label.is_some() || query.is_empty() {
+            return (Vec::new(), Vec::new());
+        }
+        let mut named: Vec<(bool, u64, usize)> = Vec::new();
+        if let Some(reference::Partial {
+            project,
+            target: Prefix::Card { key, handle },
+        }) = reference::partial(query)
+        {
+            for (ix, carded) in cards.iter().enumerate() {
+                let scoped = match project {
+                    None => carded.active,
+                    Some(name) => carded.project.eq_ignore_ascii_case(name),
+                };
+                let Some(number) = carded.card.handle else {
+                    continue;
+                };
+                let digits = number.to_string();
+                if scoped
+                    && carded.board.key.eq_ignore_ascii_case(key)
+                    && digits.starts_with(handle)
+                {
+                    named.push((digits != handle, number, ix));
+                }
             }
         }
-    }
-    named.sort_by_key(|&(inexact, number, _)| (inexact, number));
-    let named: Vec<usize> = named.into_iter().map(|(.., ix)| ix).collect();
-    if query.contains('#') {
-        return (named, Vec::new());
-    }
-    let lower = query.to_lowercase();
-    let mut holding: Vec<usize> = (0..cards.len())
-        .filter(|ix| !named.contains(ix))
-        .filter(|&ix| cards[ix].card.text.to_lowercase().contains(&lower))
-        .collect();
-    holding.sort_by_key(|&ix| (cards[ix].board.archived, !cards[ix].active));
-    (named, holding)
-}
-
-/// A card's title cut to [`CARD_TITLE`] characters at a word, `…` marking
-/// the cut. A first word longer than that is cut inside it.
-pub(crate) fn short_card_title(text: &str) -> String {
-    let title = card_title(text);
-    if title.chars().count() <= CARD_TITLE {
-        return title;
-    }
-    let end = title
-        .char_indices()
-        .nth(CARD_TITLE)
-        .map_or(title.len(), |(at, _)| at);
-    let head = &title[..end];
-    let head = match head.rfind(' ') {
-        Some(at) if at > 0 => &head[..at],
-        _ => head,
-    };
-    format!("{}…", head.trim_end_matches([',', ';', ':', '.', ' ']))
-}
-
-/// What a card's chip paints ahead of its handle: the heading the card opens
-/// with, whole, and otherwise its title cut short — see [`short_card_title`].
-pub(crate) fn card_chip_title(text: &str) -> String {
-    let doc = markdown::parse(text);
-    let opening = doc
-        .blocks
-        .iter()
-        .find(|block| !matches!(block.kind, markdown::BlockKind::Rule));
-    match opening.map(|block| &block.kind) {
-        Some(markdown::BlockKind::Heading { text: heading, .. })
-            if !heading.text.trim().is_empty() =>
-        {
-            artifact::text::one_line(&heading.text)
+        named.sort_by_key(|&(inexact, number, _)| (inexact, number));
+        let named: Vec<usize> = named.into_iter().map(|(.., ix)| ix).collect();
+        if query.contains('#') {
+            return (named, Vec::new());
         }
-        _ => short_card_title(text),
+        let lower = query.to_lowercase();
+        let mut holding: Vec<usize> = (0..cards.len())
+            .filter(|ix| !named.contains(ix))
+            .filter(|&ix| cards[ix].card.text.to_lowercase().contains(&lower))
+            .collect();
+        holding.sort_by_key(|&ix| (cards[ix].board.archived, !cards[ix].active));
+        (named, holding)
+    }
+
+    fn rank_all(&self, held: &[Linkable]) -> Vec<usize> {
+        let query = self.rest.trim();
+        if query.is_empty() {
+            let mut rows: Vec<usize> = (0..held.len()).filter(|&ix| held[ix].active).collect();
+            rows.sort_by_key(|&ix| held[ix].archived);
+            return rows;
+        }
+        let mut place: Vec<Option<u8>> = vec![None; held.len()];
+        for ix in Self::references(query, held) {
+            place[ix] = Some(match held[ix].named_by(query) {
+                true => 0,
+                false => 2,
+            });
+        }
+        if !query.contains('#') {
+            let lower = query.to_lowercase();
+            for (ix, linkable) in held.iter().enumerate() {
+                let title = linkable.title.to_lowercase();
+                let found = if title.starts_with(&lower) {
+                    Some(1)
+                } else if title.contains(&lower) {
+                    Some(2)
+                } else if linkable
+                    .agent
+                    .as_ref()
+                    .is_some_and(|agent| agent.to_lowercase().contains(&lower))
+                {
+                    Some(3)
+                } else {
+                    None
+                };
+                place[ix] = match (place[ix], found) {
+                    (Some(a), Some(b)) => Some(a.min(b)),
+                    (a, b) => a.or(b),
+                };
+            }
+        }
+        let mut rows: Vec<(bool, u8, bool, usize)> = place
+            .into_iter()
+            .enumerate()
+            .filter_map(|(ix, place)| {
+                let place = place?;
+                let sunk = place > 0 && held[ix].archived;
+                Some((sunk, place, !held[ix].active, ix))
+            })
+            .collect();
+        rows.sort_by_key(|&(sunk, place, inactive, _)| (sunk, place, inactive));
+        rows.into_iter().map(|(.., ix)| ix).collect()
+    }
+
+    /// The entries `query` starts a reference to, as positions in `held`, best
+    /// first. Nothing for an empty query.
+    ///
+    /// Read as [`reference::partial`]: a number prefix lists the entries whose
+    /// number starts with it, a key prefix the boards whose key does, each in the
+    /// project named before the `#` or the active one. An exact number or key
+    /// leads; ties keep the most recently touched first.
+    fn references(query: &str, held: &[Linkable]) -> Vec<usize> {
+        let query = query.trim();
+        if query.is_empty() {
+            return Vec::new();
+        }
+        let Some(partial) = reference::partial(query) else {
+            return Vec::new();
+        };
+        let scoped: Vec<usize> = (0..held.len())
+            .filter(|&ix| match partial.project {
+                None => held[ix].active,
+                Some(name) => held[ix].project.eq_ignore_ascii_case(name),
+            })
+            .collect();
+        match partial.target {
+            Prefix::Number(number) => Self::by_prefix(&scoped, number, held, |linkable| {
+                Some(linkable.number.to_string())
+            }),
+            Prefix::Key(key) => Self::by_prefix(&scoped, key, held, |linkable| {
+                linkable.key.as_ref().map(|key| key.to_lowercase())
+            }),
+            Prefix::Card { .. } => Vec::new(),
+        }
+    }
+
+    /// The positions in `scoped` whose `field` starts with `prefix`, compared
+    /// lowercase, the exact one first.
+    fn by_prefix(
+        scoped: &[usize],
+        prefix: &str,
+        held: &[Linkable],
+        field: impl Fn(&Linkable) -> Option<String>,
+    ) -> Vec<usize> {
+        let prefix = prefix.to_lowercase();
+        let mut rows: Vec<(bool, usize)> = scoped
+            .iter()
+            .filter_map(|&ix| {
+                let value = field(&held[ix])?;
+                value.starts_with(&prefix).then_some((value != prefix, ix))
+            })
+            .collect();
+        rows.sort_by_key(|&(inexact, _)| inexact);
+        rows.into_iter().map(|(_, ix)| ix).collect()
+    }
+}
+
+impl Linkable {
+    /// Whether `query` names this entry exactly: its number or its key.
+    fn named_by(&self, query: &str) -> bool {
+        let target = query.rsplit_once('#').map_or(query, |(_, rest)| rest);
+        target == self.number.to_string()
+            || self
+                .key
+                .as_ref()
+                .is_some_and(|key| key.eq_ignore_ascii_case(target))
     }
 }
 
@@ -338,189 +502,11 @@ fn card_mention(carded: &Carded) -> Mention {
         label: SharedString::from(shown),
         description: Some(SharedString::from(format!(
             "{} · {}",
-            short_card_title(&carded.card.text),
+            carded.card.short_title(),
             untitled(&carded.board.name, "Untitled board")
         ))),
-        url: link(&carded.reference()),
+        url: carded.reference().link(),
     }
-}
-
-/// What `query` lists, as positions in `held`, best first. An empty query
-/// lists the active project, archived entries last. A query opening with a
-/// kind's prefix — see [`kind_prefix`] — lists that kind alone, and one
-/// naming a label — see [`label_prefix`] — the entries carrying it alone. A
-/// label with nothing after it lists every entry carrying it.
-///
-/// Each entry is placed by its best match: an exact reference — see
-/// [`references`] — then a title starting with the query, then a reference
-/// prefix or a title holding it, then a session's agent holding it. Titles
-/// are matched in every project, and not for a query holding `#`. Archived
-/// entries follow every other match but an exact reference. Within a place
-/// the active project leads; ties keep the most recently touched first.
-pub(crate) fn rank(query: &str, held: &[Linkable]) -> Vec<usize> {
-    let (kind, label, query) = prefixes(query);
-    let mut rows = match (&label, query.trim().is_empty()) {
-        (Some(_), true) => {
-            let mut rows: Vec<usize> = (0..held.len()).collect();
-            rows.sort_by_key(|&ix| held[ix].archived);
-            rows
-        }
-        _ => rank_all(query, held),
-    };
-    if let Some(kind) = kind {
-        rows.retain(|&ix| held[ix].kind == kind);
-    }
-    if let Some(label) = label {
-        rows.retain(|&ix| held[ix].labels.contains(&label));
-    }
-    rows
-}
-
-/// A query's kind prefix, then its label prefix, and the query after both.
-pub(crate) fn prefixes(query: &str) -> (Option<Kind>, Option<String>, &str) {
-    let (kind, query) = kind_prefix(query);
-    let (label, query) = label_prefix(query);
-    (kind, label, query)
-}
-
-/// The label a query opens with, `l:` in either case and the word after it,
-/// normalised, and the query after it.
-pub(crate) fn label_prefix(query: &str) -> (Option<String>, &str) {
-    let query = query.trim_start();
-    if query.get(..2).map(str::to_ascii_lowercase).as_deref() != Some("l:") {
-        return (None, query);
-    }
-    let rest = &query[2..];
-    let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
-    match artifact::label::normalize(&rest[..end]) {
-        Some(label) => (Some(label), &rest[end..]),
-        None => (None, query),
-    }
-}
-
-/// The kind a query opens with, `s:`, `a:` or `b:` in either case, and the
-/// query after it.
-pub(crate) fn kind_prefix(query: &str) -> (Option<Kind>, &str) {
-    let query = query.trim_start();
-    let kind = match query.get(..2).map(str::to_ascii_lowercase).as_deref() {
-        Some("s:") => Kind::Session,
-        Some("a:") => Kind::Article,
-        Some("b:") => Kind::Board,
-        _ => return (None, query),
-    };
-    (Some(kind), &query[2..])
-}
-
-fn rank_all(query: &str, held: &[Linkable]) -> Vec<usize> {
-    let query = query.trim();
-    if query.is_empty() {
-        let mut rows: Vec<usize> = (0..held.len()).filter(|&ix| held[ix].active).collect();
-        rows.sort_by_key(|&ix| held[ix].archived);
-        return rows;
-    }
-    let mut place: Vec<Option<u8>> = vec![None; held.len()];
-    for ix in references(query, held) {
-        place[ix] = Some(match exact(query, &held[ix]) {
-            true => 0,
-            false => 2,
-        });
-    }
-    if !query.contains('#') {
-        let lower = query.to_lowercase();
-        for (ix, linkable) in held.iter().enumerate() {
-            let title = linkable.title.to_lowercase();
-            let found = if title.starts_with(&lower) {
-                Some(1)
-            } else if title.contains(&lower) {
-                Some(2)
-            } else if linkable
-                .agent
-                .as_ref()
-                .is_some_and(|agent| agent.to_lowercase().contains(&lower))
-            {
-                Some(3)
-            } else {
-                None
-            };
-            place[ix] = match (place[ix], found) {
-                (Some(a), Some(b)) => Some(a.min(b)),
-                (a, b) => a.or(b),
-            };
-        }
-    }
-    let mut rows: Vec<(bool, u8, bool, usize)> = place
-        .into_iter()
-        .enumerate()
-        .filter_map(|(ix, place)| {
-            let place = place?;
-            let sunk = place > 0 && held[ix].archived;
-            Some((sunk, place, !held[ix].active, ix))
-        })
-        .collect();
-    rows.sort_by_key(|&(sunk, place, inactive, _)| (sunk, place, inactive));
-    rows.into_iter().map(|(.., ix)| ix).collect()
-}
-
-/// Whether `query` names `linkable` exactly: its number or its key.
-fn exact(query: &str, linkable: &Linkable) -> bool {
-    let target = query.rsplit_once('#').map_or(query, |(_, rest)| rest);
-    target == linkable.number.to_string()
-        || linkable
-            .key
-            .as_ref()
-            .is_some_and(|key| key.eq_ignore_ascii_case(target))
-}
-
-/// The entries `query` starts a reference to, as positions in `held`, best
-/// first. Nothing for an empty query.
-///
-/// Read as [`reference::partial`]: a number prefix lists the entries whose
-/// number starts with it, a key prefix the boards whose key does, each in the
-/// project named before the `#` or the active one. An exact number or key
-/// leads; ties keep the most recently touched first.
-fn references(query: &str, held: &[Linkable]) -> Vec<usize> {
-    let query = query.trim();
-    if query.is_empty() {
-        return Vec::new();
-    }
-    let Some(partial) = reference::partial(query) else {
-        return Vec::new();
-    };
-    let scoped: Vec<usize> = (0..held.len())
-        .filter(|&ix| match partial.project {
-            None => held[ix].active,
-            Some(name) => held[ix].project.eq_ignore_ascii_case(name),
-        })
-        .collect();
-    match partial.target {
-        Prefix::Number(number) => by_prefix(&scoped, number, held, |linkable| {
-            Some(linkable.number.to_string())
-        }),
-        Prefix::Key(key) => by_prefix(&scoped, key, held, |linkable| {
-            linkable.key.as_ref().map(|key| key.to_lowercase())
-        }),
-        Prefix::Card { .. } => Vec::new(),
-    }
-}
-
-/// The positions in `scoped` whose `field` starts with `prefix`, compared
-/// lowercase, the exact one first.
-fn by_prefix(
-    scoped: &[usize],
-    prefix: &str,
-    held: &[Linkable],
-    field: impl Fn(&Linkable) -> Option<String>,
-) -> Vec<usize> {
-    let prefix = prefix.to_lowercase();
-    let mut rows: Vec<(bool, usize)> = scoped
-        .iter()
-        .filter_map(|&ix| {
-            let value = field(&held[ix])?;
-            value.starts_with(&prefix).then_some((value != prefix, ix))
-        })
-        .collect();
-    rows.sort_by_key(|&(inexact, _)| inexact);
-    rows.into_iter().map(|(_, ix)| ix).collect()
 }
 
 /// What a chip linking an entry paints: its title, and its kind's mark. A
@@ -547,7 +533,11 @@ pub(crate) fn preview(url: &str, cx: &App) -> Option<Preview> {
         Some(Part::Turns(turns)) if turns.from == turns.to => format!("{title} · turn {turns}"),
         Some(Part::Turns(turns)) => format!("{title} · turns {turns}"),
         Some(Part::Passage(passage)) => format!("{title} · {}", passage.label),
-        Some(Part::Card(card)) => format!("{} · {}", card_chip_title(&card.text), card.handle),
+        Some(Part::Card(card)) => format!(
+            "{} · {}",
+            markdown::parse(&card.text).chip_title(),
+            card.handle
+        ),
         None => title,
     };
     Some(Preview {

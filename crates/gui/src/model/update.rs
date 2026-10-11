@@ -50,42 +50,20 @@ mod macos;
 #[cfg(windows)]
 mod windows;
 #[cfg(target_os = "linux")]
-use linux as platform;
+type Current = linux::Linux;
 #[cfg(target_os = "macos")]
-use macos as platform;
+type Current = macos::MacOs;
 #[cfg(windows)]
-use windows as platform;
-
-/// Every other platform: no release is cut for it.
+type Current = windows::Windows;
 #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
-mod platform {
-    use anyhow::{Result, bail};
-    use bezel::gpui::App;
-    use std::path::{Path, PathBuf};
-
-    pub(super) const SUPPORTED: bool = false;
-    pub(super) const SUFFIX: &str = "";
-    pub(super) fn remote(_: &str) -> String {
-        String::new()
-    }
-    pub(super) fn bundle(_: &App) -> Option<PathBuf> {
-        None
-    }
-    pub(super) fn stage(_: &str, _: &Path) -> Result<PathBuf> {
-        bail!("no release is cut for this platform")
-    }
-    pub(super) fn swap_on_exit(_: &Path, _: &Path, _: Option<&str>) -> Result<()> {
-        bail!("no release is cut for this platform")
-    }
-}
+type Current = Unsupported;
 
 /// The feed: the same history the changelog page renders, as a file on the CDN
 /// — see `www/src/routes/changelog.json/+server.js`. Built out of the homepage
 /// so the host is named in `Cargo.toml` and nowhere else.
 pub const FEED: &str = concat!(env!("CARGO_PKG_HOMEPAGE"), "/changelog.json");
 
-/// This build, and where its releases are published.
-const VERSION: &str = env!("CARGO_PKG_VERSION");
+/// Where this build's releases are published.
 const REPO: &str = env!("CARGO_PKG_REPOSITORY");
 
 /// What every image is named after, ahead of the version it carries.
@@ -110,6 +88,154 @@ const FEED_TIMEOUT: Duration = Duration::from_secs(10);
 /// The image is not, and a slow line is not a failure — only a line that never
 /// opens is, which is what this bounds.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Wait for this process to be gone, put the staged copy where the running one
+/// is, and run `launch`.
+///
+/// `$0` is the pid, `$1` the app and `$2` the staged copy — the same shape
+/// gpui's own restart script uses. The old copy is moved aside, not deleted,
+/// and `launch` runs whatever the outcome.
+#[cfg(unix)]
+const SWAP: &str = r#"
+    while kill -0 $0 2> /dev/null; do
+        sleep 0.1
+    done
+    if [ -n "$4" ]; then
+        "$3" --restore-backup "$4"
+    fi
+    app="$1"
+    staged="$2"
+    old="$app.old"
+    rm -rf "$old"
+    if mv "$app" "$old"; then
+        if mv "$staged" "$app"; then
+            rm -rf "$old"
+            rmdir "$(dirname "$staged")" 2> /dev/null
+        else
+            mv "$old" "$app"
+        fi
+    fi
+"#;
+
+/// What a release of each platform is made of, and how it is put in place.
+trait Platform {
+    /// Whether an image is cut for this build's architecture.
+    const SUPPORTED: bool;
+    /// What follows the version in the name an image is kept under on disk.
+    const SUFFIX: &'static str;
+    /// The release file's name on the release.
+    fn remote(version: &Version) -> String;
+    /// The installed app this process runs from, where a release can replace
+    /// it.
+    fn bundle(cx: &App) -> Option<PathBuf>;
+    /// Fetch `version` and stage it beside `app`; answer with what the swap
+    /// moves.
+    fn stage(version: &Version, app: &Path) -> Result<PathBuf>;
+    /// Put `staged` in place of `app` once this process is gone, and start it.
+    /// `restore` is a backup to put back first — see [`restore_mode`].
+    fn swap_on_exit(app: &Path, staged: &Path, restore: Option<&str>) -> Result<()>;
+}
+
+/// Every other platform: no release is cut for it.
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+struct Unsupported;
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+impl Platform for Unsupported {
+    const SUPPORTED: bool = false;
+    const SUFFIX: &'static str = "";
+    fn remote(_: &Version) -> String {
+        String::new()
+    }
+    fn bundle(_: &App) -> Option<PathBuf> {
+        None
+    }
+    fn stage(_: &Version, _: &Path) -> Result<PathBuf> {
+        bail!("no release is cut for this platform")
+    }
+    fn swap_on_exit(_: &Path, _: &Path, _: Option<&str>) -> Result<()> {
+        bail!("no release is cut for this platform")
+    }
+}
+
+/// A release's version as the feed and its tag spell it: `0.1.4`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Version(String);
+
+impl Version {
+    pub fn new(text: impl Into<String>) -> Self {
+        Self(text.into())
+    }
+
+    /// This build's.
+    pub fn running() -> Self {
+        Self::new(env!("CARGO_PKG_VERSION"))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// The file this version is kept as on disk, whatever the release calls
+    /// it. [`Version::of_asset`] reads the version back out of it.
+    pub fn asset(&self) -> String {
+        format!("{IMAGE}{}{}", self.0, Current::SUFFIX)
+    }
+
+    /// The version an [`Version::asset`] name carries. `None` for a name this
+    /// did not write, a half-finished download among them, which [`sweep`]
+    /// deletes.
+    pub fn of_asset(image: &Path) -> Option<Self> {
+        let name = image.file_name()?.to_str()?;
+        let version = name.strip_prefix(IMAGE)?.strip_suffix(Current::SUFFIX)?;
+        (!version.is_empty()).then(|| Self::new(version))
+    }
+
+    /// The version a staging directory beside the app holds, by its name.
+    fn of_staging(name: &str) -> Option<Self> {
+        name.strip_prefix(STAGING).map(Self::new)
+    }
+
+    /// The directory this version waits in beside the app it replaces.
+    fn staging(&self, parent: &Path) -> PathBuf {
+        parent.join(format!("{STAGING}{}", self.0))
+    }
+
+    /// Where this release is published: under the tag named after the
+    /// version. The feed carries no addresses.
+    pub fn url(&self) -> String {
+        format!(
+            "{REPO}/releases/download/v{}/{}",
+            self.0,
+            Current::remote(self)
+        )
+    }
+
+    /// Whether this is a release to move to from `running`. Only versions of
+    /// three numbers are ordered; either side being anything else, a
+    /// pre-release tag or a build suffix, is never newer.
+    pub fn newer_than(&self, running: &Self) -> bool {
+        match (self.numbers(), running.numbers()) {
+            (Some(offered), Some(running)) => offered > running,
+            _ => false,
+        }
+    }
+
+    fn numbers(&self) -> Option<[u64; 3]> {
+        let mut parts = self.0.split('.');
+        let mut out = [0; 3];
+        for slot in &mut out {
+            *slot = parts.next()?.parse().ok()?;
+        }
+        parts.next().is_none().then_some(out)
+    }
+}
+
+impl std::fmt::Display for Version {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
 
 /// Where the app has got to. Every state but [`Status::Ready`] is something the
 /// app is doing or has finished doing; that one is a thing to press.
@@ -180,7 +306,7 @@ impl Global for Handle {}
 
 /// Install it, beside the other `init`s. `auto` is `settings.auto_update`.
 pub fn init(auto: bool, cx: &mut App) {
-    let app = platform::SUPPORTED.then(|| platform::bundle(cx)).flatten();
+    let app = Current::SUPPORTED.then(|| Current::bundle(cx)).flatten();
     if let Some(app) = app.as_deref() {
         sweep(app);
     }
@@ -287,7 +413,7 @@ impl Updater {
                     return;
                 }
             };
-            let version = SharedString::from(release.clone());
+            let version = SharedString::from(release.to_string());
             let Some(app) = app else {
                 let _ = this.update(cx, |this, cx| this.settle(Status::Available(version), cx));
                 return;
@@ -302,7 +428,7 @@ impl Updater {
             }
             let staged = cx
                 .background_executor()
-                .spawn(async move { platform::stage(&release, &app) })
+                .spawn(async move { Current::stage(&release, &app) })
                 .await;
             let _ = this.update(cx, |this, cx| {
                 let status = match staged {
@@ -326,7 +452,7 @@ impl Updater {
             let (Status::Ready { staged, .. }, Some(app)) = (&self.status, &self.app) else {
                 return;
             };
-            platform::swap_on_exit(app, staged, None)
+            Current::swap_on_exit(app, staged, None)
         };
         match handed {
             // Not `cx.restart()`: that script re-opens the bundle and nothing
@@ -343,26 +469,26 @@ impl Updater {
     /// Fetch `release`, then quit into it with `backup` put back first — see
     /// [`artifact::backup::restore`]. The restore runs after this process is
     /// gone, so nothing re-migrates the projects in between.
-    pub fn roll_back(&mut self, release: String, backup: String, cx: &mut Context<Self>) {
+    pub fn roll_back(&mut self, release: Version, backup: String, cx: &mut Context<Self>) {
         if matches!(self.rollback, Some(Rollback::Downloading(_))) {
             return;
         }
         let Some(app) = self.app.clone() else {
             return;
         };
-        self.rollback = Some(Rollback::Downloading(release.clone().into()));
+        self.rollback = Some(Rollback::Downloading(release.to_string().into()));
         cx.notify();
         cx.spawn(async move |this, cx| {
             let staged = cx
                 .background_executor()
                 .spawn({
                     let (release, app) = (release.clone(), app.clone());
-                    async move { platform::stage(&release, &app) }
+                    async move { Current::stage(&release, &app) }
                 })
                 .await;
             let _ = this.update(cx, |this, cx| {
                 let handed =
-                    staged.and_then(|staged| platform::swap_on_exit(&app, &staged, Some(&backup)));
+                    staged.and_then(|staged| Current::swap_on_exit(&app, &staged, Some(&backup)));
                 match handed {
                     Ok(()) => cx.quit(),
                     Err(err) => {
@@ -413,36 +539,8 @@ impl Updater {
     }
 }
 
-/// The file a version is kept as on disk, whatever the release calls it:
-/// always named after the version, so [`version_of`] can read it back.
-pub fn asset(version: &str) -> String {
-    format!("{IMAGE}{version}{}", platform::SUFFIX)
-}
-
-/// And the version back out of that name, for a file found on disk rather than
-/// asked for. `None` is a name this did not write — a half-finished download
-/// among them — which [`sweep`] reads as "not worth keeping".
-pub fn version_of(image: &Path) -> Option<String> {
-    let name = image.file_name()?.to_str()?;
-    Some(
-        name.strip_prefix(IMAGE)?
-            .strip_suffix(platform::SUFFIX)?
-            .to_owned(),
-    )
-    .filter(|version| !version.is_empty())
-}
-
-/// And where that release is published: under the tag named after the
-/// version, which is the whole reason the feed carries no addresses.
-pub fn url(version: &str) -> String {
-    format!(
-        "{REPO}/releases/download/v{version}/{}",
-        platform::remote(version)
-    )
-}
-
 /// The version the feed offers, if it is ahead of this build.
-fn latest() -> Result<Option<String>> {
+fn latest() -> Result<Option<Version>> {
     let agent = ureq::Agent::config_builder()
         .timeout_global(Some(FEED_TIMEOUT))
         .build()
@@ -454,7 +552,7 @@ fn latest() -> Result<Option<String>> {
         .body_mut()
         .read_to_string()?;
     let version = head(&body)?;
-    Ok(newer(&version, VERSION).then_some(version))
+    Ok(version.newer_than(&Version::running()).then_some(version))
 }
 
 /// The version at the head of a feed.
@@ -462,7 +560,7 @@ fn latest() -> Result<Option<String>> {
 /// Its own function so that the shape this build depends on can be checked
 /// against the file that actually ships — `changelog.json` is written by hand,
 /// and nothing else here would notice the day its shape moved.
-pub fn head(feed: &str) -> Result<String> {
+pub fn head(feed: &str) -> Result<Version> {
     let entries: Vec<Entry> =
         serde_json::from_str(feed).context("the release feed is not the shape this build reads")?;
     // Newest first, which is what the page rendering this file reads too.
@@ -470,28 +568,7 @@ pub fn head(feed: &str) -> Result<String> {
         .into_iter()
         .next()
         .context("the release feed is empty")?;
-    Ok(newest.version)
-}
-
-/// Whether `offered` is a release to move to from `running`.
-///
-/// Three numbers and nothing else. A version either side cannot be read this
-/// way — a pre-release tag, a build suffix — is not one to offer: the answer to
-/// a string this cannot order is to leave the app where it is.
-pub fn newer(offered: &str, running: &str) -> bool {
-    match (numbers(offered), numbers(running)) {
-        (Some(offered), Some(running)) => offered > running,
-        _ => false,
-    }
-}
-
-fn numbers(version: &str) -> Option<[u64; 3]> {
-    let mut parts = version.split('.');
-    let mut out = [0; 3];
-    for slot in &mut out {
-        *slot = parts.next()?.parse().ok()?;
-    }
-    parts.next().is_none().then_some(out)
+    Ok(Version::new(newest.version))
 }
 
 /// What the preview calls itself: this build with its patch moved on, which is
@@ -499,9 +576,10 @@ fn numbers(version: &str) -> Option<[u64; 3]> {
 /// string rather than a placeholder, because the width of it is half of what
 /// there is to look at.
 fn pretend() -> SharedString {
-    match numbers(VERSION) {
+    let running = Version::running();
+    match running.numbers() {
         Some([major, minor, patch]) => format!("{major}.{minor}.{}", patch + 1).into(),
-        None => VERSION.into(),
+        None => running.to_string().into(),
     }
 }
 
@@ -509,10 +587,10 @@ fn pretend() -> SharedString {
 ///
 /// Written under a name of its own and renamed into place, so an interrupted
 /// download cannot be mistaken for a finished one on the next launch.
-fn download(version: &str) -> Result<PathBuf> {
+fn download(version: &Version) -> Result<PathBuf> {
     let dir = downloads()?;
     std::fs::create_dir_all(&dir)?;
-    let image = dir.join(asset(version));
+    let image = dir.join(version.asset());
     if image.is_file() {
         return Ok(image);
     }
@@ -522,7 +600,7 @@ fn download(version: &str) -> Result<PathBuf> {
             .timeout_connect(Some(CONNECT_TIMEOUT))
             .build()
             .new_agent();
-        let mut body = agent.get(url(version)).call()?;
+        let mut body = agent.get(version.url()).call()?;
         let mut file = std::fs::File::create(&part)?;
         // Streamed rather than read whole: `read_to_vec` stops at ten
         // megabytes, and holding fifty in memory to write them out is no
@@ -555,7 +633,9 @@ fn sweep(app: &Path) {
             // Every file here is an image or the remains of one — see
             // [`downloads`] — so a name this cannot read a version out of is
             // something interrupted rather than something to keep.
-            if version_of(&path).is_none_or(|version| !newer(&version, VERSION)) {
+            if Version::of_asset(&path)
+                .is_none_or(|version| !version.newer_than(&Version::running()))
+            {
                 let _ = std::fs::remove_file(&path);
             }
         }
@@ -583,8 +663,7 @@ fn sweep(app: &Path) {
 /// The predicate a `remove_dir_all` next to `/Applications` runs on, which is
 /// the reason it is out here where it can be read and tested on its own.
 pub fn spent(name: &str) -> bool {
-    name.strip_prefix(STAGING)
-        .is_some_and(|version| !newer(version, VERSION))
+    Version::of_staging(name).is_some_and(|version| !version.newer_than(&Version::running()))
 }
 
 /// The throwaway corner of the config directory [`crate::agent::cache_dir`]
@@ -600,38 +679,8 @@ fn downloads() -> Result<PathBuf> {
     Ok(cache()?.join("updates"))
 }
 
-/// Wait for this process to be gone, put the staged copy where the running one
-/// is, and run `launch`.
-///
-/// `$0` is the pid, `$1` the app and `$2` the staged copy — the same shape
-/// gpui's own restart script uses. The old copy is moved aside rather than
-/// deleted, so a rename that fails part way can be undone; `launch` runs
-/// whatever the outcome, because the one thing this must never do is leave
-/// somebody with no app at all.
-#[cfg(unix)]
-const SWAP: &str = r#"
-    while kill -0 $0 2> /dev/null; do
-        sleep 0.1
-    done
-    if [ -n "$4" ]; then
-        "$3" --restore-backup "$4"
-    fi
-    app="$1"
-    staged="$2"
-    old="$app.old"
-    rm -rf "$old"
-    if mv "$app" "$old"; then
-        if mv "$staged" "$app"; then
-            rm -rf "$old"
-            rmdir "$(dirname "$staged")" 2> /dev/null
-        else
-            mv "$old" "$app"
-        fi
-    fi
-"#;
-
-/// `restore` is a backup to put back once this process is gone, by this
-/// binary's `--restore-backup` mode — see [`restore_mode`].
+/// [`Platform::swap_on_exit`] for unix, which `launch` starts the new copy
+/// for.
 #[cfg(unix)]
 fn swap_on_exit(app: &Path, staged: &Path, launch: &str, restore: Option<&str>) -> Result<()> {
     use std::os::unix::process::CommandExt as _;

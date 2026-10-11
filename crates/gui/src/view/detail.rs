@@ -45,11 +45,6 @@ use cacp::schema::{
 use std::path::{Path, PathBuf};
 use surface::Surfaced as _;
 
-/// Separate from the sidebar's payload so its resize listener stays idle.
-struct ChangesResize;
-
-struct TerminalResize;
-
 /// What the chat keeps for itself while the panel stands beside it.
 const CHAT_MIN: f32 = 240.;
 
@@ -63,6 +58,11 @@ const PANEL_SHARE: f32 = 0.5;
 
 /// The bottom panel's height before anybody drags it.
 const TERMINAL_HEIGHT: f32 = 240.;
+
+/// Separate from the sidebar's payload so its resize listener stays idle.
+struct ChangesResize;
+
+struct TerminalResize;
 
 /// Whether there is room to stand the panel beside the chat.
 ///
@@ -833,7 +833,7 @@ impl Cydonia {
             .min_h_0()
             .min_w_0()
             .relative()
-            .bg(root::content_bg(&theme))
+            .bg(theme.window_bg())
             .flex()
             .flex_col()
             .child(content)

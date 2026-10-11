@@ -322,6 +322,10 @@ pub static TOOLS: [Tool; 16] = [
     },
 ];
 
+/// What a caller says to take a status off. Not a [`Status`] — the absence of
+/// one is what it means.
+const NONE: &str = "none";
+
 // ── the tools ────────────────────────────────────────────────────
 
 fn add(args: Args<'_>) -> Outcome {
@@ -550,10 +554,6 @@ fn statuses() -> Vec<&'static str> {
         .chain(std::iter::once(NONE))
         .collect()
 }
-
-/// What a caller says to take a status off. Not a [`Status`] — the absence of
-/// one is what it means.
-const NONE: &str = "none";
 
 /// One card or a run of them, which may sit on different boards. Every card is
 /// located, tagged and written in turn: a refusal on any of them is the whole

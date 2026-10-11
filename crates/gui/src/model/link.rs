@@ -6,7 +6,6 @@
 //! repaint is asked for. A failed fetch is cached as an empty preview and not
 //! retried until the next launch.
 
-use markdown::AppExt as _;
 use std::{
     collections::HashMap,
     io::Read,
@@ -22,26 +21,25 @@ use url::Url;
 /// The most of a page read looking for its `<head>`.
 const LIMIT: u64 = 512 * 1024;
 
+static CACHE: OnceLock<Mutex<HashMap<String, Entry>>> = OnceLock::new();
+
+static LANDED: OnceLock<mpsc::UnboundedSender<()>> = OnceLock::new();
+
 enum Entry {
     Pending,
     Done(Preview),
 }
 
-static CACHE: OnceLock<Mutex<HashMap<String, Entry>>> = OnceLock::new();
-static LANDED: OnceLock<mpsc::UnboundedSender<()>> = OnceLock::new();
-
 fn cache() -> &'static Mutex<HashMap<String, Entry>> {
     CACHE.get_or_init(Default::default)
 }
 
-/// Installs the preview and the task that repaints when a fetch lands. Once,
-/// at boot.
+/// Starts the task that repaints when a fetch lands. Once, at boot.
 pub fn init(cx: &mut App) {
     let (send, mut landed) = mpsc::unbounded();
     if LANDED.set(send).is_err() {
         return;
     }
-    cx.set_link_preview(preview);
     cx.spawn(async move |cx| {
         while landed.next().await.is_some() {
             cx.update(|cx| cx.refresh_windows());
@@ -50,10 +48,9 @@ pub fn init(cx: &mut App) {
     .detach();
 }
 
-fn preview(url: &str, cx: &App) -> Option<Preview> {
-    if url.starts_with(crate::view::kit::link::SCHEME) {
-        return crate::view::kit::link::mention::preview(url, cx);
-    }
+/// A web page's preview: answered from the cache, or `None` while it is
+/// fetched.
+pub(crate) fn preview(url: &str) -> Option<Preview> {
     let mut entries = cache().lock().ok()?;
     match entries.get(url) {
         Some(Entry::Done(preview)) => return Some(preview.clone()),

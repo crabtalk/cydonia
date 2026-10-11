@@ -69,6 +69,9 @@ const UNTITLED: &str = "Untitled";
 /// And a column.
 const COLUMN: &str = "Column";
 
+/// Commands the palette remembers running.
+const RECENT_COMMANDS: usize = 20;
+
 /// A project was re-read off disk and something a pane was showing has been
 /// replaced — see [`crate::model::watch`].
 ///
@@ -90,9 +93,6 @@ pub struct Resident {
     /// Transcript entries across those sessions.
     pub items: usize,
 }
-
-/// Commands the palette remembers running.
-const RECENT_COMMANDS: usize = 20;
 
 pub struct Workspace {
     pub settings: Settings,
@@ -214,7 +214,10 @@ impl Workspace {
             pinned: state.pinned,
             sort: state.sort,
             window: state.window,
-            spaces: Self::in_order(crate::model::spaces::all(), &state.spaces),
+            spaces: Self::in_order(
+                <crate::model::spaces::Shelf as crate::model::spaces::Store>::all(),
+                &state.spaces,
+            ),
             space: None,
             folded_spaces: state.folded_spaces.iter().cloned().collect(),
             space_order: state.space_order,
@@ -610,10 +613,9 @@ impl Workspace {
     }
 
     pub fn set_mcp_serve(&mut self, on: bool, cx: &mut Context<Self>) {
-        if settings::set_mcp("serve", on).is_err() {
+        if self.settings.mcp.set_serve(on).is_err() {
             return;
         }
-        self.settings.mcp.serve = on;
         self.refresh_door();
         cx.notify();
     }
@@ -621,20 +623,18 @@ impl Workspace {
     /// Offer the tools that change a project, or withhold them. No rebind —
     /// what is offered is read off the switch on every call.
     pub fn set_mcp_write(&mut self, on: bool, cx: &mut Context<Self>) {
-        if settings::set_mcp("write", on).is_err() {
+        if self.settings.mcp.set_write(on).is_err() {
             return;
         }
-        self.settings.mcp.write = on;
         self.refresh_door();
         cx.notify();
     }
 
     /// Offer the tools that delete an entry, or withhold them.
     pub fn set_mcp_delete(&mut self, on: bool, cx: &mut Context<Self>) {
-        if settings::set_mcp("delete", on).is_err() {
+        if self.settings.mcp.set_delete(on).is_err() {
             return;
         }
-        self.settings.mcp.delete = on;
         self.refresh_door();
         cx.notify();
     }
@@ -643,20 +643,18 @@ impl Workspace {
 
     /// What a new browser tab opens on.
     pub fn set_browser_home(&mut self, home: String, cx: &mut Context<Self>) {
-        if settings::set_browser("home", home.as_str()).is_err() {
+        if self.settings.browser.set_home(home).is_err() {
             return;
         }
-        self.settings.browser.home = home;
         cx.set_global(self.settings.browser.clone());
         cx.notify();
     }
 
     /// Offer agents the browser tools that read pages, or withhold them.
     pub fn set_browser_agents_read(&mut self, on: bool, cx: &mut Context<Self>) {
-        if settings::set_browser("agents_read", on).is_err() {
+        if self.settings.browser.set_agents_read(on).is_err() {
             return;
         }
-        self.settings.browser.agents_read = on;
         cx.set_global(self.settings.browser.clone());
         self.refresh_door();
         cx.notify();
@@ -664,10 +662,9 @@ impl Workspace {
 
     /// Offer agents the browser tools that click and type, or withhold them.
     pub fn set_browser_agents_act(&mut self, on: bool, cx: &mut Context<Self>) {
-        if settings::set_browser("agents_act", on).is_err() {
+        if self.settings.browser.set_agents_act(on).is_err() {
             return;
         }
-        self.settings.browser.agents_act = on;
         cx.set_global(self.settings.browser.clone());
         self.refresh_door();
         cx.notify();
@@ -675,31 +672,27 @@ impl Workspace {
 
     /// The hosts agents may not read or act on.
     pub fn set_browser_agents_blocked(&mut self, hosts: Vec<String>, cx: &mut Context<Self>) {
-        let list: toml_edit::Array = hosts.iter().map(String::as_str).collect();
-        if settings::set_browser("agents_blocked", list).is_err() {
+        if self.settings.browser.set_agents_blocked(hosts).is_err() {
             return;
         }
-        self.settings.browser.agents_blocked = hosts;
         cx.set_global(self.settings.browser.clone());
         cx.notify();
     }
 
     /// Whether pages built from now on keep what they store across restarts.
     pub fn set_browser_keep_signed_in(&mut self, on: bool, cx: &mut Context<Self>) {
-        if settings::set_browser("keep_signed_in", on).is_err() {
+        if self.settings.browser.set_keep_signed_in(on).is_err() {
             return;
         }
-        self.settings.browser.keep_signed_in = on;
         cx.set_global(self.settings.browser.clone());
         cx.notify();
     }
 
     /// Where the address field's searches go, as a `%s` template.
     pub fn set_browser_search(&mut self, search: String, cx: &mut Context<Self>) {
-        if settings::set_browser("search", search.as_str()).is_err() {
+        if self.settings.browser.set_search(search).is_err() {
             return;
         }
-        self.settings.browser.search = search;
         cx.set_global(self.settings.browser.clone());
         cx.notify();
     }
@@ -940,7 +933,7 @@ impl Workspace {
 
     pub fn set_highlight(&mut self, value: settings::Paint, cx: &mut Context<Self>) {
         self.settings.appearance.highlight = value;
-        crate::view::article::set_highlight(value);
+        crate::model::palette::Washes::of(&self.settings.appearance).install();
         self.save_appearance();
         cx.refresh_windows();
         cx.notify();
@@ -962,7 +955,7 @@ impl Workspace {
 
     pub fn set_search(&mut self, value: Option<settings::Paint>, cx: &mut Context<Self>) {
         self.settings.appearance.search = value;
-        crate::view::article::set_search(value);
+        crate::model::palette::Washes::of(&self.settings.appearance).install();
         self.save_appearance();
         cx.refresh_windows();
         cx.notify();

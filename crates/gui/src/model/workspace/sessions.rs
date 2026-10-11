@@ -28,16 +28,16 @@ impl Workspace {
     /// first so it has the number the link names.
     pub fn turn_link(&mut self, id: u64, from: usize, to: usize) -> Option<String> {
         self.mint_record(id)?;
-        crate::view::component::transcript::turn_link(self.session(id)?, from, to)
+        self.session(id)?.turn_link(from, to)
     }
 
     /// How a session is written as a reference, `project#43`: its project's
     /// directory name and its entry number. Nothing before it has a number.
-    pub fn reference_of_session(&self, id: u64) -> Option<String> {
+    pub fn link_of_session(&self, id: u64) -> Option<String> {
         let project = &self.projects[self.project_of(id)?];
         let number = project.session(id)?.number?;
         let name = artifact::reference::project_name(&project.path)?;
-        Some(artifact::reference::Reference::entry(Some(&name), number, None).to_string())
+        Some(artifact::reference::Reference::entry(Some(&name), number, None).link())
     }
 
     /// [`Self::new_session`] behind whatever the window shows.

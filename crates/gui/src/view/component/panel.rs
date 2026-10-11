@@ -752,7 +752,7 @@ impl Render for Panel {
             .size_full()
             .flex()
             .flex_col()
-            .bg(crate::view::window::root::content_bg(&theme))
+            .bg(theme.window_bg())
             .key_context("SessionPanel")
             .track_focus(&self.focus)
             .on_mouse_down(

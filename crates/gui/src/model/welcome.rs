@@ -66,11 +66,6 @@ const SEED: &[&[File]] = &[
     ],
 ];
 
-/// Every file of the welcome project, named under `.cydonia/`.
-pub fn files() -> impl Iterator<Item = File> {
-    SEED.iter().flat_map(|entry| entry.iter().copied())
-}
-
 /// The document of the entry a first run lands on, under `.cydonia/`. It is
 /// the newest entry, so it is also the top of the sidebar.
 const LANDING: &str = "articles/1789958219063/content.md";
@@ -78,6 +73,11 @@ const LANDING: &str = "articles/1789958219063/content.md";
 /// A second between entries: far coarser than the millisecond the sort reads,
 /// and coarse enough that a filesystem storing whole seconds still orders them.
 const APART: Duration = Duration::from_secs(1);
+
+/// Every file of the welcome project, named under `.cydonia/`.
+pub fn files() -> impl Iterator<Item = File> {
+    SEED.iter().flat_map(|entry| entry.iter().copied())
+}
 
 /// `~/.local/share/cydonia/welcome`, beside the agents and the grammars.
 ///

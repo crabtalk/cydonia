@@ -50,14 +50,14 @@ fn markdown_is_painted_without_installing_a_grammar() {
 
 #[test]
 fn opening_a_supported_file_does_not_start_a_download() {
-    use cydonia_gui::model::language::{Status, available, status};
+    use cydonia_gui::model::language::{Spec, Status};
     for path in [
         "main.rs", "a.py", "a.go", "a.json", "a.toml", "a.sh", "a.ts", "a.tsx", "app.js",
     ] {
         let Some(Language::Missing(name)) = of(Path::new(path)) else {
             panic!("{path} should offer installation");
         };
-        assert!(available(name));
-        assert_eq!(status(name), Status::Missing);
+        let spec = Spec::named(name).expect("in the catalogue");
+        assert_eq!(spec.status(), Status::Missing);
     }
 }

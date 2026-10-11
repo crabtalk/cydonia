@@ -9,7 +9,7 @@
 //! the label, after it or alone, lists the entries carrying that label.
 //!
 //! A query lists the cards and entries `@` would name for it first — see
-//! [`crate::view::kit::link::mention::rank_cards`] and [`crate::view::kit::link::mention::rank`] —
+//! [`crate::view::kit::link::mention::Query::rank_cards`] and [`crate::view::kit::link::mention::Query::rank`] —
 //! then the ones it is found in. A card opens in the drawer, as its chip does.
 //!
 //! An empty query lists what was touched last. A query is searched off disk on
@@ -17,7 +17,7 @@
 //! are as of its last write. Opening a hit in an entry's body puts the query in
 //! its pane's find bar — see [`crate::view::pane::find`].
 
-use crate::view::kit::icon::kind_icon;
+use crate::view::kit::{icon::kind_icon, text::CardTitle};
 use crate::{
     model::workspace::Showing,
     view::{
@@ -49,20 +49,6 @@ use bezel::{
 };
 use std::{collections::HashMap, ops::Range, path::PathBuf, rc::Rc, sync::mpsc, time::Duration};
 
-actions!(
-    cydonia_search,
-    [
-        ToggleSearch,
-        ApplySearch,
-        DismissSearch,
-        SelectNext,
-        SelectPrev,
-        OpenHit,
-        NextFilter,
-        PrevFilter
-    ]
-);
-
 const CONTEXT: &str = "CydoniaSearch";
 
 /// Rows an empty query lists.
@@ -83,6 +69,33 @@ const SETTLE: Duration = Duration::from_millis(80);
 /// Characters of a snippet kept ahead of the match.
 const LEAD: usize = 32;
 
+const PLACEHOLDER: &str = "Search articles, boards, sessions and commands…";
+
+const LINK_PLACEHOLDER: &str = "Link a session…";
+
+/// The filters in the order the chips show and `tab` steps them.
+const FILTERS: [(Option<Filter>, &str); 5] = [
+    (None, "All"),
+    (Some(Filter::Commands), "Commands"),
+    (Some(Filter::Kind(Kind::Session)), "Sessions"),
+    (Some(Filter::Kind(Kind::Board)), "Boards"),
+    (Some(Filter::Kind(Kind::Article)), "Articles"),
+];
+
+actions!(
+    cydonia_search,
+    [
+        ToggleSearch,
+        ApplySearch,
+        DismissSearch,
+        SelectNext,
+        SelectPrev,
+        OpenHit,
+        NextFilter,
+        PrevFilter
+    ]
+);
+
 pub fn bindings() -> Vec<KeyBinding> {
     let ctx = Some(CONTEXT);
     vec![
@@ -98,17 +111,14 @@ pub fn bindings() -> Vec<KeyBinding> {
     ]
 }
 
-/// A session the palette handed back while it was linking, as its reference,
-/// `project#43`.
+/// A session the palette handed back while it was linking, as its link,
+/// `cydonia://project#43`.
 pub(crate) struct Linked {
-    pub reference: String,
+    pub url: String,
 }
 
 /// What picking an entry does while the palette links rather than opens.
 pub(crate) type OnLink = Rc<dyn Fn(&mut Cydonia, Linked, &mut Window, &mut Context<Cydonia>)>;
-
-const PLACEHOLDER: &str = "Search articles, boards, sessions and commands…";
-const LINK_PLACEHOLDER: &str = "Link a session…";
 
 /// One row of the palette.
 #[derive(Clone)]
@@ -300,23 +310,23 @@ impl Search {
         let content = self.field.read(cx).content();
         match content.trim_start().starts_with(COMMAND_PREFIX) {
             true => None,
-            false => Query::literal(mention::prefixes(content).2),
+            false => Query::literal(mention::Query::parse(content).rest),
         }
     }
 
     /// The one kind listed: the filter's, else the query's prefix's — see
-    /// [`mention::kind_prefix`].
+    /// [`mention::Query`].
     fn kind(&self, cx: &App) -> Option<Kind> {
         match self.filter {
             Some(Filter::Kind(kind)) => Some(kind),
             Some(Filter::Commands) => None,
-            None => mention::kind_prefix(self.field.read(cx).content()).0,
+            None => mention::Query::parse(self.field.read(cx).content()).kind,
         }
     }
 
-    /// The label the query's prefix names — see [`mention::label_prefix`].
+    /// The label the query's prefix names — see [`mention::Query`].
     fn label(&self, cx: &App) -> Option<String> {
-        mention::prefixes(self.field.read(cx).content()).1
+        mention::Query::parse(self.field.read(cx).content()).label
     }
 }
 
@@ -389,7 +399,7 @@ impl Cydonia {
             return None;
         };
         Some(Linked {
-            reference: self.workspace.read(cx).reference_of_session(*id)?,
+            url: self.workspace.read(cx).link_of_session(*id)?,
         })
     }
 
@@ -565,12 +575,13 @@ impl Cydonia {
             .is_some_and(|labels| labels.iter().any(|held| held == label))
     }
 
-    /// The entries the field's query names — see [`mention::rank`].
+    /// The entries the field's query names — see [`mention::Query::rank`].
     fn named_hits(&self, cx: &App) -> Vec<Hit> {
         let Some(Linkables(held)) = cx.try_global::<Linkables>() else {
             return Vec::new();
         };
-        let entries = mention::rank(self.search.field.read(cx).content(), held)
+        let entries = mention::Query::parse(self.search.field.read(cx).content())
+            .rank(held)
             .into_iter()
             .map(|ix| Hit {
                 row: held[ix].row.clone(),
@@ -581,11 +592,12 @@ impl Cydonia {
     }
 
     /// The cards the field's query names by handle — see
-    /// [`mention::rank_cards`].
+    /// [`mention::Query::rank_cards`].
     fn card_hits(&self, cx: &App) -> Vec<Hit> {
         let workspace = self.workspace.read(cx);
         let cards = mention::carded(workspace);
-        let (named, _) = mention::rank_cards(self.search.field.read(cx).content(), &cards);
+        let (named, _) =
+            mention::Query::parse(self.search.field.read(cx).content()).rank_cards(&cards);
         named
             .into_iter()
             .filter_map(|ix| {
@@ -601,9 +613,9 @@ impl Cydonia {
                     },
                     snippet: None,
                     card: Some(HitCard {
-                        reference: carded.reference(),
+                        reference: carded.reference().to_string(),
                         handle: carded.handle.clone(),
-                        title: crate::view::board::card_title(&carded.card.text),
+                        title: carded.card.title(),
                     }),
                 })
             })
@@ -1325,15 +1337,6 @@ fn search_all(roots: &[PathBuf], query: &Query) -> Vec<Found> {
     }
     found
 }
-
-/// The filters in the order the chips show and `tab` steps them.
-const FILTERS: [(Option<Filter>, &str); 5] = [
-    (None, "All"),
-    (Some(Filter::Commands), "Commands"),
-    (Some(Filter::Kind(Kind::Session)), "Sessions"),
-    (Some(Filter::Kind(Kind::Board)), "Boards"),
-    (Some(Filter::Kind(Kind::Article)), "Articles"),
-];
 
 fn kind_of(row: &Row) -> Option<Kind> {
     match row {

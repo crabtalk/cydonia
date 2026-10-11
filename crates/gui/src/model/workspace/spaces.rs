@@ -12,7 +12,7 @@
 //! There is no `new_space` a menu calls: a space is made by dragging a
 //! second entry onto the one already open — see [`Workspace::arrange`].
 use super::*;
-use crate::model::spaces as store;
+use crate::model::spaces::{Shelf, Store as _};
 use artifact::{
     kind::Kind,
     space::{Member, Side, Space},
@@ -55,7 +55,7 @@ impl Workspace {
     /// Put `spaces` in the order `ids` names them, with anything that list
     /// does not name in front, newest first.
     ///
-    /// A space's file carries no place in the list: [`store::all`] reads them
+    /// A space's file carries no place in the list: [`Shelf::all`] reads them
     /// back by the time they were written, and the hand order is kept beside
     /// the rest of the window's bookkeeping — see
     /// [`crate::model::state::State::spaces`].
@@ -145,7 +145,7 @@ impl Workspace {
     pub fn reload_spaces(&mut self, cx: &mut Context<Self>) {
         let open = self.active_space().map(|space| space.id.clone());
         let order: Vec<String> = self.spaces.iter().map(|at| at.id.clone()).collect();
-        self.spaces = Self::in_order(store::all(), &order);
+        self.spaces = Self::in_order(Shelf::all(), &order);
         self.space = open.and_then(|id| self.spaces.iter().position(|at| at.id == id));
         cx.notify();
     }
@@ -196,7 +196,7 @@ impl Workspace {
             // The first drag. The space starts as the pane that was there,
             // which is what the arrival is being put beside.
             _ => {
-                let space = store::create("", target.clone())?;
+                let space = Shelf::create("", target.clone())?;
                 self.spaces.insert(0, space);
                 0
             }
@@ -212,7 +212,7 @@ impl Workspace {
         if !space.insert(target, arriving, side) {
             return None;
         }
-        store::save(space);
+        Shelf::save(space);
         self.space = Some(at);
         self.save();
         cx.notify();
@@ -232,7 +232,7 @@ impl Workspace {
         let keep = match space {
             Some(id) => id.to_owned(),
             None => {
-                let made = store::create("", members.first()?.clone())?;
+                let made = Shelf::create("", members.first()?.clone())?;
                 let id = made.id.clone();
                 self.spaces.insert(0, made);
                 self.space = self.space.map(|open| open + 1);
@@ -246,7 +246,7 @@ impl Workspace {
             let space = &mut self.spaces[at];
             let target = space.entries().into_iter().next()?;
             if target != *member && space.stack(&target, member) {
-                store::save(space);
+                Shelf::save(space);
             }
         }
         self.save();
@@ -269,7 +269,7 @@ impl Workspace {
         let at = match self.space {
             Some(at) if at < self.spaces.len() => at,
             _ => {
-                let Some(space) = store::create("", target.clone()) else {
+                let Some(space) = Shelf::create("", target.clone()) else {
                     return;
                 };
                 self.spaces.insert(0, space);
@@ -312,7 +312,7 @@ impl Workspace {
             if !self.spaces[ix].remove(member) {
                 return;
             }
-            store::save(&mut self.spaces[ix]);
+            Shelf::save(&mut self.spaces[ix]);
             cx.notify();
         }
     }
@@ -415,7 +415,7 @@ impl Workspace {
             return;
         }
         if space.remove(member) {
-            store::save(space);
+            Shelf::save(space);
             cx.notify();
         }
     }
@@ -478,7 +478,7 @@ impl Workspace {
         if ix >= self.spaces.len() {
             return;
         }
-        store::remove(&self.spaces.remove(ix).id);
+        Shelf::remove(&self.spaces.remove(ix).id);
         self.space = self
             .space
             .filter(|open| *open != ix)
@@ -502,7 +502,7 @@ impl Workspace {
     pub fn rename_space(&mut self, id: &str, name: String, cx: &mut Context<Self>) {
         if let Some(space) = self.spaces.iter_mut().find(|space| space.id == id) {
             space.name = name.trim().to_owned();
-            store::save(space);
+            Shelf::save(space);
             cx.notify();
         }
     }
@@ -547,7 +547,7 @@ impl Workspace {
                 .filter(|member| open.contains(&member.project) && !live.contains(member))
                 .collect();
             if !gone.is_empty() && space.prune(&gone) {
-                store::save(space);
+                Shelf::save(space);
             }
         }
         cx.notify();
@@ -783,7 +783,7 @@ impl Workspace {
             return;
         };
         if edit(space) {
-            store::save(space);
+            Shelf::save(space);
             cx.notify();
         }
     }

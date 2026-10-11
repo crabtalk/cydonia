@@ -18,14 +18,25 @@ use std::sync::{
 /// door is emptying this and nothing else.
 static DOOR: OnceLock<Mutex<Option<Door>>> = OnceLock::new();
 
-fn held() -> &'static Mutex<Option<Door>> {
-    DOOR.get_or_init(Mutex::default)
-}
-
 /// Whether an agent may change a project, shared with the server that answers
 /// them. A flag rather than a rebuild: the door hands out one URL, and moving
 /// this must not be what takes it away.
 static WRITE: OnceLock<Arc<AtomicBool>> = OnceLock::new();
+
+static DELETE: OnceLock<Arc<AtomicBool>> = OnceLock::new();
+
+/// Whether the browser tools that read pages, and the browser resource, are
+/// offered.
+static BROWSER: OnceLock<Arc<AtomicBool>> = OnceLock::new();
+
+/// Whether the browser tools that click and type are offered.
+static BROWSER_ACT: OnceLock<Arc<AtomicBool>> = OnceLock::new();
+
+const BROWSER_RESOURCE: &str = "browser";
+
+fn held() -> &'static Mutex<Option<Door>> {
+    DOOR.get_or_init(Mutex::default)
+}
 
 fn write() -> &'static Arc<AtomicBool> {
     WRITE.get_or_init(|| Arc::new(AtomicBool::new(false)))
@@ -36,8 +47,6 @@ fn write() -> &'static Arc<AtomicBool> {
 pub fn set_write(on: bool) {
     write().store(on, Ordering::Relaxed);
 }
-
-static DELETE: OnceLock<Arc<AtomicBool>> = OnceLock::new();
 
 fn delete() -> &'static Arc<AtomicBool> {
     DELETE.get_or_init(|| Arc::new(AtomicBool::new(false)))
@@ -50,16 +59,9 @@ pub fn set_delete(on: bool) {
     delete().store(on, Ordering::Relaxed);
 }
 
-/// Whether the browser tools that read pages, and the browser resource, are
-/// offered.
-static BROWSER: OnceLock<Arc<AtomicBool>> = OnceLock::new();
-
 fn browser() -> &'static Arc<AtomicBool> {
     BROWSER.get_or_init(|| Arc::new(AtomicBool::new(false)))
 }
-
-/// Whether the browser tools that click and type are offered.
-static BROWSER_ACT: OnceLock<Arc<AtomicBool>> = OnceLock::new();
 
 fn browser_act() -> &'static Arc<AtomicBool> {
     BROWSER_ACT.get_or_init(|| Arc::new(AtomicBool::new(false)))
@@ -81,8 +83,6 @@ pub fn hidden_resources() -> Vec<&'static str> {
         false => vec![BROWSER_RESOURCE],
     }
 }
-
-const BROWSER_RESOURCE: &str = "browser";
 
 /// Open the door, or close it. Idempotent, because the switches that reach it
 /// move for their own reasons and most moves are not about this.

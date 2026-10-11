@@ -17,7 +17,7 @@ use syntax::registry::Known;
 #[cfg(feature = "desktop")]
 mod provider;
 #[cfg(feature = "desktop")]
-pub use provider::{available, start_install, status};
+pub use provider::Spec;
 
 /// The registry names markdown and carries no grammar for it; `markdown`
 /// paints it from its own parser.
@@ -99,11 +99,11 @@ pub fn ensure(labels: impl IntoIterator<Item = String>, cx: &mut App) {
     installed();
     let mut started = false;
     for label in labels {
-        let Some(name) = provider::resolve(&label) else {
+        let Some(spec) = Spec::resolve(&label) else {
             continue;
         };
-        if provider::status(name) == Status::Missing {
-            provider::start_install(name);
+        if spec.status() == Status::Missing {
+            spec.start_install();
             started = true;
         }
     }
@@ -220,23 +220,29 @@ mod none {
         )
     }
 
-    pub fn status(name: &str) -> Status {
-        let _ = name;
-        Status::Missing
-    }
+    /// No grammar is in the catalogue without the `desktop` feature.
+    pub enum Spec {}
 
-    pub fn available(name: &str) -> bool {
-        let _ = name;
-        false
-    }
+    impl Spec {
+        pub fn named(name: &str) -> Option<&'static Self> {
+            let _ = name;
+            None
+        }
 
-    pub fn start_install(name: &str) {
-        let _ = name;
+        pub fn resolve(label: &str) -> Option<&'static Self> {
+            let _ = label;
+            None
+        }
+
+        pub fn status(&self) -> Status {
+            match *self {}
+        }
+
+        pub fn start_install(&'static self) {
+            match *self {}
+        }
     }
 }
 
 #[cfg(not(feature = "desktop"))]
-pub use none::{
-    Prepared, available, ensure, highlight, of, offerable, paintable, prepare, start_install,
-    status,
-};
+pub use none::{Prepared, Spec, ensure, highlight, of, offerable, paintable, prepare};

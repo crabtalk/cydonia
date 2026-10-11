@@ -1,21 +1,21 @@
 //! What the updater decides before it touches anything: which version is worth
 //! fetching, and where the image for it is.
 
-use cydonia_gui::model::update;
+use cydonia_gui::model::update::{self, Version};
 
 /// The ordering, which is the whole of what decides that an app replaces
 /// itself.
 #[test]
 fn a_later_release_is_the_only_one_offered() {
-    assert!(update::newer("0.1.4", "0.1.3"));
-    assert!(update::newer("0.2.0", "0.1.9"));
-    assert!(update::newer("1.0.0", "0.9.9"));
+    assert!(Version::new("0.1.4").newer_than(&Version::new("0.1.3")));
+    assert!(Version::new("0.2.0").newer_than(&Version::new("0.1.9")));
+    assert!(Version::new("1.0.0").newer_than(&Version::new("0.9.9")));
 
     // The version that is running is not a release to move to, and neither is
     // one behind it — a feed rolled back must not walk an install backwards.
-    assert!(!update::newer("0.1.3", "0.1.3"));
-    assert!(!update::newer("0.1.2", "0.1.3"));
-    assert!(!update::newer("0.9.9", "1.0.0"));
+    assert!(!Version::new("0.1.3").newer_than(&Version::new("0.1.3")));
+    assert!(!Version::new("0.1.2").newer_than(&Version::new("0.1.3")));
+    assert!(!Version::new("0.9.9").newer_than(&Version::new("1.0.0")));
 }
 
 /// Three numbers is the whole grammar. Anything else is a string this cannot
@@ -23,12 +23,12 @@ fn a_later_release_is_the_only_one_offered() {
 /// to guess at it.
 #[test]
 fn a_version_this_cannot_order_is_not_offered() {
-    assert!(!update::newer("0.1.4-rc1", "0.1.3"));
-    assert!(!update::newer("0.1.4", "0.1.3-rc1"));
-    assert!(!update::newer("0.2", "0.1.3"));
-    assert!(!update::newer("0.1.4.1", "0.1.3"));
-    assert!(!update::newer("", "0.1.3"));
-    assert!(!update::newer("latest", "0.1.3"));
+    assert!(!Version::new("0.1.4-rc1").newer_than(&Version::new("0.1.3")));
+    assert!(!Version::new("0.1.4").newer_than(&Version::new("0.1.3-rc1")));
+    assert!(!Version::new("0.2").newer_than(&Version::new("0.1.3")));
+    assert!(!Version::new("0.1.4.1").newer_than(&Version::new("0.1.3")));
+    assert!(!Version::new("").newer_than(&Version::new("0.1.3")));
+    assert!(!Version::new("latest").newer_than(&Version::new("0.1.3")));
 }
 
 /// The image's name, which the Makefile writes and nothing checks at runtime:
@@ -37,7 +37,7 @@ fn a_version_this_cannot_order_is_not_offered() {
 #[cfg(target_os = "macos")]
 #[test]
 fn the_image_is_named_as_the_makefile_names_it() {
-    assert_eq!(update::asset("0.1.4"), "cydonia-0.1.4-arm64.dmg");
+    assert_eq!(Version::new("0.1.4").asset(), "cydonia-0.1.4-arm64.dmg");
 }
 
 /// And the address it is published at, which has to be the same one the
@@ -46,7 +46,7 @@ fn the_image_is_named_as_the_makefile_names_it() {
 #[test]
 fn the_release_is_where_the_site_says_it_is() {
     assert_eq!(
-        update::url("0.1.4"),
+        Version::new("0.1.4").url(),
         "https://github.com/crabtalk/cydonia/releases/download/v0.1.4/cydonia-0.1.4-arm64.dmg"
     );
 }
@@ -57,7 +57,7 @@ fn the_release_is_where_the_site_says_it_is() {
 #[test]
 fn the_tarball_is_under_the_versions_tag() {
     assert_eq!(
-        update::url("0.1.4"),
+        Version::new("0.1.4").url(),
         "https://github.com/crabtalk/cydonia/releases/download/v0.1.4/cydonia-linux-x86_64.tar.xz"
     );
 }
@@ -67,7 +67,7 @@ fn the_tarball_is_under_the_versions_tag() {
 #[test]
 fn the_installer_is_under_the_versions_tag() {
     assert_eq!(
-        update::url("0.1.4"),
+        Version::new("0.1.4").url(),
         "https://github.com/crabtalk/cydonia/releases/download/v0.1.4/cydonia-windows-x86_64-setup.exe"
     );
 }
@@ -84,11 +84,11 @@ fn the_feed_is_a_file_at_the_site_root() {
 /// no version out of is one it deletes.
 #[test]
 fn an_image_names_its_own_version() {
-    let image = std::path::PathBuf::from(update::asset("0.1.4"));
-    assert_eq!(update::version_of(&image).as_deref(), Some("0.1.4"));
+    let image = std::path::PathBuf::from(Version::new("0.1.4").asset());
+    assert_eq!(Version::of_asset(&image), Some(Version::new("0.1.4")));
 
     // Not ours, or not finished. Either way not an image to keep.
-    let part = std::path::PathBuf::from(update::asset("0.1.4")).with_extension("part");
+    let part = std::path::PathBuf::from(Version::new("0.1.4").asset()).with_extension("part");
     for name in [
         "cydonia-0.1.4-x86_64.dmg",
         part.to_str().unwrap(),
@@ -96,7 +96,7 @@ fn an_image_names_its_own_version() {
         "mnt",
     ] {
         let path = std::path::PathBuf::from(name);
-        assert_eq!(update::version_of(&path), None, "{name}");
+        assert_eq!(Version::of_asset(&path), None, "{name}");
     }
 }
 
@@ -106,7 +106,7 @@ fn an_image_names_its_own_version() {
 fn the_shipped_changelog_is_a_feed_this_build_can_read() {
     let feed = include_str!("../../../changelog.json");
     let head = update::head(feed).expect("changelog.json is the feed's shape");
-    assert_eq!(head, env!("CARGO_PKG_VERSION"));
+    assert_eq!(head, Version::running());
 }
 
 /// The predicate that deletes directories beside the app, which is the one

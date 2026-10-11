@@ -217,6 +217,20 @@ pub struct ChatSession {
 }
 
 impl ChatSession {
+    /// The link to turns `from..=to` of this session, from 1:
+    /// `cydonia://<project>#43:5-7`. Nothing for a session without a number
+    /// yet.
+    pub(crate) fn turn_link(&self, from: usize, to: usize) -> Option<String> {
+        use artifact::reference::{self, Reference, Span, Within};
+        let number = self.number?;
+        let name = reference::project_name(&self.cwd)?;
+        let turns = Span {
+            from: from.min(to) as u64,
+            to: from.max(to) as u64,
+        };
+        Some(Reference::entry(Some(&name), number, Some(Within::Span(turns))).link())
+    }
+
     /// Where this session is filed — its project's backend.
     fn store(&self) -> Store {
         store::open(&self.cwd)

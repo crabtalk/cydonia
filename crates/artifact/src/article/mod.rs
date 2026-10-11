@@ -26,6 +26,10 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use url::Url;
 
+/// Where a project's articles live, and what the document is called inside the
+/// directory that is one.
+pub(crate) const DIR: &str = "articles";
+
 /// An article as a reader gets one: what it is called, whether it is put away,
 /// when it last changed, and where its picture is.
 ///
@@ -56,10 +60,6 @@ pub struct Article {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub labels: Vec<String>,
 }
-
-/// Where a project's articles live, and what the document is called inside the
-/// directory that is one.
-pub(crate) const DIR: &str = "articles";
 
 pub use crate::document::{assets, content, touched};
 use crate::document::{carry, carry_assets, repoint};

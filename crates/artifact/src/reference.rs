@@ -17,6 +17,9 @@
 //! Parsing only. Which directory `foo` is, what kind of entry `#43` is, and
 //! whether a span or an anchor fits that kind, are the caller's to settle.
 
+/// The scheme an entry link is written behind.
+pub const SCHEME: &str = "cydonia://";
+
 /// A parsed reference.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Reference<'a> {
@@ -63,9 +66,6 @@ impl std::fmt::Display for Span {
         }
     }
 }
-
-/// The scheme an entry link is written behind.
-pub const SCHEME: &str = "cydonia://";
 
 impl<'a> Reference<'a> {
     /// Entry `number` of `project`, or of the project it is written in.

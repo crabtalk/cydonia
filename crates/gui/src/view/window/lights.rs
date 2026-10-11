@@ -6,6 +6,13 @@
 use crate::view::window::root::TRAFFIC_LIGHT_INSET;
 use bezel::gpui::{App, Global, Window};
 
+/// What macOS 26 draws, for a window not measured yet and off macOS.
+const MACOS_26: Lights = Lights {
+    size: 14.,
+    height: 14.,
+    pitch: 23.,
+};
+
 /// One light's frame and the distance between two lights' left edges.
 #[derive(Clone, Copy)]
 pub struct Lights {
@@ -15,13 +22,6 @@ pub struct Lights {
 }
 
 impl Global for Lights {}
-
-/// What macOS 26 draws, for a window not measured yet and off macOS.
-const MACOS_26: Lights = Lights {
-    size: 14.,
-    height: 14.,
-    pitch: 23.,
-};
 
 impl Lights {
     /// The lights measured so far, or macOS 26's.
