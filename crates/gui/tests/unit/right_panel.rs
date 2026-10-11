@@ -16,15 +16,15 @@ fn agent_browser_reveals_a_closed_panel_and_activates_its_tab(cx: &mut gpui::Tes
         Cydonia::new(Settings::default(), state::State::default(), window, cx)
     });
     window
-        .update(cx, |root, _, cx| {
+        .update(cx, |root, window, cx| {
             root.workspace.update(cx, |workspace, cx| {
                 workspace.open_project(path.clone(), cx);
                 workspace.settings.features.panel.browser = true;
             });
             root.set_changes_open(false, cx);
-            root.sync_changes(cx);
+            root.sync_changes(window, cx);
             assert!(root.changes.is_none());
-            let panel = root.right_panel(path.clone(), cx);
+            let panel = root.right_panel(path.clone(), window, cx);
             panel.update(cx, |panel, cx| {
                 let first = panel.open_browser("about:blank".into(), cx).unwrap();
                 panel.open_browser("about:blank".into(), cx).unwrap();
@@ -37,7 +37,7 @@ fn agent_browser_reveals_a_closed_panel_and_activates_its_tab(cx: &mut gpui::Tes
                 );
             });
             root.reveal_browser_panel(&panel, cx);
-            root.sync_changes(cx);
+            root.sync_changes(window, cx);
             assert!(root.changes_open);
             assert_eq!(root.changes.as_ref(), Some(&panel));
             assert_eq!(root.changes_shown.get(&path), Some(&true));
@@ -110,7 +110,7 @@ fn an_article_and_a_board_in_one_project_share_its_panel(cx: &mut gpui::TestAppC
                 .update(cx, |workspace, cx| workspace.open_board(0, 0, cx));
             root.leaf_mut().pane = Kind::Board;
             assert_eq!(root.showing(cx), Some(Kind::Board));
-            root.sync_changes(cx);
+            root.sync_changes(window, cx);
 
             assert!(root.changes_open, "and stays up across the two");
             assert_eq!(
@@ -160,7 +160,7 @@ fn a_second_project_gets_a_panel_of_its_own(cx: &mut gpui::TestAppContext) {
             root.workspace
                 .update(cx, |workspace, cx| workspace.open_article(project, 0, cx));
             root.leaf_mut().pane = Kind::Article;
-            root.sync_changes(cx);
+            root.sync_changes(window, cx);
 
             assert!(
                 root.changes_open,
@@ -178,7 +178,7 @@ fn a_second_project_gets_a_panel_of_its_own(cx: &mut gpui::TestAppContext) {
             root.workspace
                 .update(cx, |workspace, cx| workspace.open_article(0, 0, cx));
             root.leaf_mut().pane = Kind::Article;
-            root.sync_changes(cx);
+            root.sync_changes(window, cx);
             assert!(root.changes_open, "left up, so it comes back up");
             assert_eq!(root.changes.as_ref(), Some(&first));
         })

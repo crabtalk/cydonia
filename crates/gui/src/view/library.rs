@@ -11,7 +11,7 @@ use crate::{
     view::{
         component::menu::{self, Menu},
         kit::{icon::kind_icon, stamp},
-        pane::confirm::Doomed,
+        modals::confirm::Doomed,
         sidebar::{self, Row},
         window::root::Cydonia,
     },
@@ -640,13 +640,13 @@ impl Cydonia {
     }
 
     /// Ask before deleting everything selected.
-    fn delete_selected(&mut self, cx: &mut Context<Self>) {
+    fn delete_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let doomed = self
             .take_selected()
             .into_iter()
             .map(Doomed::Entry)
             .collect();
-        self.ask_delete_many(doomed, cx);
+        self.ask_delete_many(doomed, window, cx);
     }
 
     /// Open a listing's entry in the drawer over the library. A session before
@@ -919,7 +919,7 @@ impl Cydonia {
                 theme
                     .button("Delete", ButtonStyle::Ghost, None)
                     .id("library-delete")
-                    .on_click(cx.listener(|this, _, _, cx| this.delete_selected(cx))),
+                    .on_click(cx.listener(|this, _, window, cx| this.delete_selected(window, cx))),
             )
             .child(div().flex_1())
             .child(

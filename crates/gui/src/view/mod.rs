@@ -9,6 +9,7 @@ pub mod detail;
 pub mod keymap;
 pub mod kit;
 pub mod library;
+pub mod modals;
 pub mod pane;
 pub mod search;
 pub mod settings;

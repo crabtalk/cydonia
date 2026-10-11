@@ -1,8 +1,6 @@
 //! Root view: the window's grid, the state the chrome owns, and the frame
 //! the sidebar and the chat column are hung in.
 
-#[cfg(not(feature = "desktop"))]
-use crate::view::settings::{self, SettingsWindow};
 use crate::view::window::lights::{self, Lights};
 #[cfg(feature = "desktop")]
 use crate::{
@@ -21,7 +19,6 @@ use crate::{
     },
     view::{
         board,
-        board::create,
         board::info,
         component::{
             composer::{Composer, ComposerEvent},
@@ -29,11 +26,11 @@ use crate::{
             meter,
             ribbon::Ribbon,
         },
-        pane::confirm,
         pane::leaf::Leaf,
         sidebar::{Dragged, Renaming, Row},
         table,
         window::menubar::CloseWindow,
+        window::modal::ModalLayer,
         window::section::Section,
     },
 };
@@ -525,16 +522,8 @@ pub struct Cydonia {
     pub(crate) boards: board::Scrolls,
     #[cfg(feature = "desktop")]
     settings_window: Option<WindowHandle<SettingsWindow>>,
-    /// Settings drawn over the window, while they are up.
-    #[cfg(not(feature = "desktop"))]
-    settings_sheet: Option<Entity<SettingsWindow>>,
-    /// The delete waiting to be agreed to, and the name to ask about. Held
-    /// with its label rather than looked up when the dialog draws: what is
-    /// being asked about must not change wording under the question.
-    pub(crate) confirming: Option<confirm::Confirming>,
-    /// What [`Cydonia::desktop_only`] was last asked about, while its notice
-    /// is up.
-    pub(crate) desktop_only: Option<&'static str>,
+    /// The modal over the window, while one is up.
+    pub(crate) modals: Entity<ModalLayer>,
     /// Where a sidebar row or a pane's tab lands on a pane. The panes are its
     /// targets, by the member in front of each; the window is its surface.
     pub(crate) dock: docking::Dock<Member, Dragged>,
@@ -561,9 +550,6 @@ pub struct Cydonia {
     pub(crate) picker: Option<crate::view::kit::labels::Picker>,
     /// The board identity panel, while it is open — see [`header::BoardInfo`].
     pub(crate) info: Option<info::BoardInfo>,
-    /// The board that has been asked for and not yet made — see
-    /// [`create::Making`].
-    pub(crate) making: Option<create::Making>,
     /// Whether the press now being handled landed on the name of the board
     /// whose panel is open — read by [`Cydonia::toggle_info`] and nothing else,
     /// the way [`Cydonia::menu_pressed`] is read by `toggle_menu`.
@@ -1057,8 +1043,6 @@ impl Cydonia {
             pressed_pane: None,
             #[cfg(feature = "desktop")]
             settings_window: None,
-            #[cfg(not(feature = "desktop"))]
-            settings_sheet: None,
             dock: docking::Dock::new(Painter::of(cx), {
                 let this = cx.entity().downgrade();
                 move |item, _, cx| {
@@ -1083,12 +1067,10 @@ impl Cydonia {
             strips: RefCell::default(),
             fronts: Default::default(),
             tab_history: Vec::new(),
-            confirming: None,
-            desktop_only: None,
+            modals: cx.new(|_| ModalLayer::default()),
             library: None,
             picker: None,
             info: None,
-            making: None,
             info_pressed: false,
             menu: None,
             menu_point: None,
@@ -1100,7 +1082,7 @@ impl Cydonia {
             outline_hovered: false,
             renaming: None,
             name_field,
-            search: crate::view::search::Search::new(cx),
+            search: crate::view::search::Search::default(),
             rail: UniformListScrollHandle::new(),
             focus: cx.focus_handle(),
         };
@@ -1412,10 +1394,10 @@ impl Cydonia {
     pub(crate) fn open_settings_action(
         &mut self,
         _: &OpenSettings,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_settings(Section::General, cx);
+        self.open_settings(Section::General, window, cx);
     }
 
     pub(crate) fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
@@ -1446,92 +1428,30 @@ impl Cydonia {
         self.close_project(ix, cx);
     }
 
-    pub(crate) fn open_settings(&mut self, section: Section, cx: &mut Context<Self>) {
+    pub(crate) fn open_settings(
+        &mut self,
+        section: Section,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         #[cfg(feature = "desktop")]
         {
+            let _ = window;
             let workspace = self.workspace.clone();
             self.settings_window = settings::open(workspace, self.settings_window, section, cx);
         }
         #[cfg(not(feature = "desktop"))]
-        {
-            self.menu = None;
-            self.settings_sheet = Some(settings::embed(self.workspace.clone(), section, cx));
-            cx.notify();
-        }
-    }
-
-    /// The settings page over a scrim that takes the press putting it away.
-    #[cfg(not(feature = "desktop"))]
-    fn settings_sheet(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let sheet = self.settings_sheet.clone()?;
-        let theme = Theme::of(cx).clone();
-        Some(
-            div()
-                .id("settings-scrim")
-                .absolute()
-                .inset_0()
-                .flex()
-                .items_center()
-                .justify_center()
-                .p(px(24.))
-                .bg(theme.scrim())
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.settings_sheet = None;
-                    cx.notify();
-                }))
-                .child(
-                    div()
-                        .id("settings-sheet")
-                        .w_full()
-                        .h_full()
-                        .max_w(px(900.))
-                        .max_h(px(620.))
-                        .overflow_hidden()
-                        .rounded(px(Theme::panel_radius()))
-                        .border_1()
-                        .border_color(theme.border)
-                        .relative()
-                        .on_click(|_, _, cx| cx.stop_propagation())
-                        .child(sheet)
-                        .child(
-                            theme
-                                .ghost("settings-close")
-                                .absolute()
-                                .top(px(10.))
-                                .right(px(10.))
-                                .p(px(6.))
-                                .tooltip(|window, cx| {
-                                    bezel::ui::tooltip::Tooltip::text("Close", window, cx)
-                                })
-                                .child(
-                                    icons::icon(icons::notifications::X)
-                                        .size(px(14.))
-                                        .text_color(theme.text_muted),
-                                )
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.settings_sheet = None;
-                                    cx.notify();
-                                })),
-                        ),
-                )
-                .into_any_element(),
-        )
-    }
-
-    #[cfg(feature = "desktop")]
-    fn settings_sheet(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let _ = cx;
-        None
+        self.settings_sheet(section, window, cx);
     }
 
     pub(crate) fn open_project_action(
         &mut self,
         _: &OpenProject,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if cfg!(not(feature = "desktop")) {
-            self.desktop_only("Opening a project", cx);
+            self.desktop_only("Opening a project", window, cx);
             return;
         }
         let picked = cx.prompt_for_paths(PathPromptOptions {
@@ -1634,7 +1554,7 @@ impl Render for Cydonia {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.track_history(cx);
         self.sync_leaves(window, cx);
-        self.sync_changes(cx);
+        self.sync_changes(window, cx);
         self.publish_shown(cx);
         self.hold_drawn_tables(cx);
         let theme = Theme::of(cx).clone();
@@ -1694,8 +1614,6 @@ impl Render for Cydonia {
             .on_action(cx.listener(Self::commit_name))
             .on_action(cx.listener(Self::commit_info))
             .on_action(cx.listener(Self::dismiss_info))
-            .on_action(cx.listener(Self::make_board))
-            .on_action(cx.listener(Self::dismiss_new_board))
             .on_action(cx.listener(Self::dismiss_name))
             // Everything the menu bar names, and only under the conditions
             // that keep its items honest.
@@ -1737,11 +1655,7 @@ impl Render for Cydonia {
             )
             // Over every column and every floating control: nothing behind it
             // is answerable while it is asking.
-            .children(self.confirm_delete(window, cx))
-            .children(self.search_palette(window, cx))
-            .children(self.settings_sheet(cx))
-            .children(self.desktop_only_notice(window, cx))
-            .children(self.new_board_dialog(window, cx));
+            .child(self.modals.clone());
         let surface = self.dock.surface("dock", root).on_drop({
             let this = cx.entity().downgrade();
             move |event, window, cx| {

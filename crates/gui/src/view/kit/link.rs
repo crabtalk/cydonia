@@ -25,7 +25,7 @@ use crate::{
         },
         detail::{Pointing, composer_agents},
         kit::{icon::kind_icon, text::untitled},
-        search::Linked,
+        modals::palette::Linked,
         sidebar::Row,
         window::root::Cydonia,
     },
@@ -202,7 +202,7 @@ pub fn open_link(url: &str, base: Option<&Path>, window: &mut Window, cx: &mut A
                 root.open_file_in_panel(path.clone(), line, window, cx)
             });
         if !opened {
-            root.update(cx, |root, cx| root.reveal_path(path, cx));
+            root.update(cx, |root, cx| root.reveal_path(path, window, cx));
         }
         return;
     }

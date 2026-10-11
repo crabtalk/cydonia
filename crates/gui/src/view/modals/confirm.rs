@@ -10,7 +10,10 @@ use crate::{
     },
 };
 use bezel::{
-    gpui::{AnyElement, App, Context, Focusable as _, Window, div, prelude::*, px},
+    gpui::{
+        App, Context, DismissEvent, EventEmitter, FocusHandle, Focusable, WeakEntity, Window, div,
+        prelude::*, px,
+    },
     theme::{TextStyle, Theme, Typeset},
     ui::popover,
 };
@@ -33,38 +36,103 @@ pub(crate) enum Doomed {
     Label(String),
 }
 
-/// A delete that has been asked for and not yet agreed to.
-pub(crate) struct Confirming {
-    pub doomed: Doomed,
-    /// What to call it. Taken when the question is asked: a dialog that
-    /// changed its mind mid-question would be worse than a stale name.
-    pub label: String,
-    /// Where it lives, on its own line in the mono face — a path is read
-    /// character by character, and forty of them wrap badly mid-clause.
-    /// Nothing for what has no place on disk to point at.
-    pub goes: Option<String>,
+/// A delete that has been asked for and not yet agreed to, as a modal.
+pub(crate) struct Confirm {
+    doomed: Doomed,
+    /// What to call it. Taken when the question is asked, not when it draws.
+    label: String,
+    /// Where it lives, on its own line in the mono face. Nothing for what has
+    /// no place on disk to point at.
+    goes: Option<String>,
     /// The sentence under it.
-    pub note: String,
+    note: String,
+    root: WeakEntity<Cydonia>,
+    focus: FocusHandle,
+}
+
+impl EventEmitter<DismissEvent> for Confirm {}
+
+impl Focusable for Confirm {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus.clone()
+    }
+}
+
+impl Render for Confirm {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = Theme::of(cx).clone();
+        let dialog = dialog(
+            "delete-dialog",
+            &theme,
+            window,
+            [popover::dialog_title(&theme, format!("Delete {}?", self.label)).into_any_element()]
+                .into_iter()
+                // Quoted rather than spoken: the mono face says this is a
+                // thing on disk, not a turn of phrase.
+                .chain(self.goes.clone().map(|goes| {
+                    div()
+                        .px(px(8.))
+                        .py(px(5.))
+                        .rounded(px(Theme::control_radius()))
+                        .border_1()
+                        .border_color(theme.border)
+                        .bg(theme.surface_raised)
+                        .text_style(TextStyle::Subheadline)
+                        .font_family(theme.font_mono.clone())
+                        .text_color(theme.text_muted)
+                        .child(goes)
+                        .into_any_element()
+                }))
+                .chain([
+                    popover::dialog_body(&theme, self.note.clone()).into_any_element(),
+                    answers(
+                        &theme,
+                        "delete",
+                        Some(Box::new(cx.listener(|_, _, _, cx| cx.emit(DismissEvent)))),
+                        "Delete",
+                        Box::new(cx.listener(|this, _, window, cx| {
+                            let doomed = this.doomed.clone();
+                            let _ = this
+                                .root
+                                .update(cx, |root, cx| root.delete_doomed(&doomed, window, cx));
+                            cx.emit(DismissEvent);
+                        })),
+                    )
+                    .into_any_element(),
+                ]),
+            cx.listener(|_, _, _, cx| cx.emit(DismissEvent)),
+        );
+        div().track_focus(&self.focus).child(dialog)
+    }
 }
 
 impl Cydonia {
     /// Raise the question. Delete is the one thing here that cannot be taken
     /// back — Archive, right above it, is the reversible answer.
-    pub(crate) fn ask_delete(&mut self, entry: &Row, cx: &mut Context<Self>) {
+    pub(crate) fn ask_delete(&mut self, entry: &Row, window: &mut Window, cx: &mut Context<Self>) {
         let label = self.label_of_row(entry, cx);
         let (goes, note) = self.goes_with(entry, cx);
-        self.menu = None;
-        self.confirming = Some(Confirming {
-            doomed: Doomed::Entry(entry.clone()),
-            label,
-            goes,
-            note,
-        });
-        cx.notify();
+        self.ask(
+            Confirm {
+                doomed: Doomed::Entry(entry.clone()),
+                label,
+                goes,
+                note,
+                root: cx.entity().downgrade(),
+                focus: cx.focus_handle(),
+            },
+            window,
+            cx,
+        );
     }
 
     /// The same for several entries and cards at once.
-    pub(crate) fn ask_delete_many(&mut self, doomed: Vec<Doomed>, cx: &mut Context<Self>) {
+    pub(crate) fn ask_delete_many(
+        &mut self,
+        doomed: Vec<Doomed>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if doomed.is_empty() {
             return;
         }
@@ -72,14 +140,24 @@ impl Cydonia {
             1 => "1 item".to_owned(),
             n => format!("{n} items"),
         };
+        self.ask(
+            Confirm {
+                doomed: Doomed::Many(doomed),
+                label,
+                goes: None,
+                note: "Every file goes with them. This cannot be undone.".to_owned(),
+                root: cx.entity().downgrade(),
+                focus: cx.focus_handle(),
+            },
+            window,
+            cx,
+        );
+    }
+
+    /// Put `confirm` up, closing any menu it was asked from.
+    fn ask(&mut self, confirm: Confirm, window: &mut Window, cx: &mut Context<Self>) {
         self.menu = None;
-        self.confirming = Some(Confirming {
-            doomed: Doomed::Many(doomed),
-            label,
-            goes: None,
-            note: "Every file goes with them. This cannot be undone.".to_owned(),
-        });
-        cx.notify();
+        self.toggle_modal(window, cx, |_, _| confirm);
     }
 
     /// Carry out a delete that has been agreed to.
@@ -105,23 +183,41 @@ impl Cydonia {
     }
 
     /// The same for a label, carried by `count` entries.
-    pub(crate) fn ask_delete_label(&mut self, name: String, count: usize, cx: &mut Context<Self>) {
-        self.menu = None;
-        self.confirming = Some(Confirming {
-            label: format!("the label \u{201c}{name}\u{201d}"),
-            doomed: Doomed::Label(name),
-            goes: None,
-            note: match count {
-                1 => "It comes off the 1 entry carrying it. This cannot be undone.".to_owned(),
-                n => format!("It comes off the {n} entries carrying it. This cannot be undone."),
+    pub(crate) fn ask_delete_label(
+        &mut self,
+        name: String,
+        count: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.ask(
+            Confirm {
+                label: format!("the label \u{201c}{name}\u{201d}"),
+                doomed: Doomed::Label(name),
+                goes: None,
+                note: match count {
+                    1 => "It comes off the 1 entry carrying it. This cannot be undone.".to_owned(),
+                    n => {
+                        format!("It comes off the {n} entries carrying it. This cannot be undone.")
+                    }
+                },
+                root: cx.entity().downgrade(),
+                focus: cx.focus_handle(),
             },
-        });
-        cx.notify();
+            window,
+            cx,
+        );
     }
 
     /// The same for one card, which has no file of its own to quote — it lives
     /// inside the board's.
-    pub(crate) fn ask_delete_card(&mut self, on: &str, card: &str, cx: &mut Context<Self>) {
+    pub(crate) fn ask_delete_card(
+        &mut self,
+        on: &str,
+        card: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let label = self
             .workspace
             .read(cx)
@@ -129,20 +225,30 @@ impl Cydonia {
             .and_then(|board| Some((board, board.card(card)?)))
             .map(|(board, found)| board.handle_of(found).unwrap_or_else(|| found.text.clone()))
             .unwrap_or_default();
-        self.menu = None;
-        self.confirming = Some(Confirming {
-            doomed: Doomed::Card(on.to_owned(), card.to_owned()),
-            label,
-            goes: None,
-            note: "This cannot be undone.".to_owned(),
-        });
-        cx.notify();
+        self.ask(
+            Confirm {
+                doomed: Doomed::Card(on.to_owned(), card.to_owned()),
+                label,
+                goes: None,
+                note: "This cannot be undone.".to_owned(),
+                root: cx.entity().downgrade(),
+                focus: cx.focus_handle(),
+            },
+            window,
+            cx,
+        );
     }
 
     /// The same for one lane. A lane is only droppable while
     /// it is empty — see [`artifact::board::Board::remove_column`] — so nothing
     /// in here speaks for the cards.
-    pub(crate) fn ask_delete_column(&mut self, on: &str, column: &str, cx: &mut Context<Self>) {
+    pub(crate) fn ask_delete_column(
+        &mut self,
+        on: &str,
+        column: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let label = self
             .workspace
             .read(cx)
@@ -150,14 +256,18 @@ impl Cydonia {
             .and_then(|board| board.column(column))
             .map(|column| column.name.clone())
             .unwrap_or_default();
-        self.menu = None;
-        self.confirming = Some(Confirming {
-            doomed: Doomed::Column(on.to_owned(), column.to_owned()),
-            label,
-            goes: None,
-            note: "This cannot be undone.".to_owned(),
-        });
-        cx.notify();
+        self.ask(
+            Confirm {
+                doomed: Doomed::Column(on.to_owned(), column.to_owned()),
+                label,
+                goes: None,
+                note: "This cannot be undone.".to_owned(),
+                root: cx.entity().downgrade(),
+                focus: cx.focus_handle(),
+            },
+            window,
+            cx,
+        );
     }
 
     /// Take a session's last message back into its composer. Asked first when
@@ -178,15 +288,15 @@ impl Cydonia {
             self.rewind(id, at, window, cx);
             return;
         }
-        self.menu = None;
-        self.confirming = Some(Confirming {
+        self.ask(Confirm {
             doomed: Doomed::Turn(id, at),
             label: "the last turn".to_owned(),
             goes: None,
             note: "The reply goes with it, and the agent restarts without it. Files it changed stay changed."
                 .to_owned(),
-        });
-        cx.notify();
+            root: cx.entity().downgrade(),
+            focus: cx.focus_handle(),
+        }, window, cx);
     }
 
     fn rewind(&mut self, id: u64, at: usize, window: &mut Window, cx: &mut Context<Self>) {
@@ -287,64 +397,5 @@ impl Cydonia {
                 (None, UNDONE.to_owned())
             }
         }
-    }
-
-    /// The question, over a scrim that takes the press dismissing it.
-    pub(crate) fn confirm_delete(
-        &self,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        let confirming = self.confirming.as_ref()?;
-        let theme = Theme::of(cx).clone();
-        let doomed = confirming.doomed.clone();
-        Some(dialog(
-            "delete-dialog",
-            &theme,
-            window,
-            [
-                popover::dialog_title(&theme, format!("Delete {}?", confirming.label))
-                    .into_any_element(),
-            ]
-            .into_iter()
-            // Quoted rather than spoken: the mono face says this is a thing on
-            // disk, not a turn of phrase.
-            .chain(confirming.goes.clone().map(|goes| {
-                div()
-                    .px(px(8.))
-                    .py(px(5.))
-                    .rounded(px(Theme::control_radius()))
-                    .border_1()
-                    .border_color(theme.border)
-                    .bg(theme.surface_raised)
-                    .text_style(TextStyle::Subheadline)
-                    .font_family(theme.font_mono.clone())
-                    .text_color(theme.text_muted)
-                    .child(goes)
-                    .into_any_element()
-            }))
-            .chain([
-                popover::dialog_body(&theme, confirming.note.clone()).into_any_element(),
-                answers(
-                    &theme,
-                    "delete",
-                    Some(Box::new(
-                        cx.listener(|this, _, _, cx| this.dismiss_delete(cx)),
-                    )),
-                    "Delete",
-                    Box::new(cx.listener(move |this, _, window, cx| {
-                        this.confirming = None;
-                        this.delete_doomed(&doomed, window, cx);
-                    })),
-                )
-                .into_any_element(),
-            ]),
-            cx.listener(|this, _, _, cx| this.dismiss_delete(cx)),
-        ))
-    }
-
-    pub(crate) fn dismiss_delete(&mut self, cx: &mut Context<Self>) {
-        self.confirming = None;
-        cx.notify();
     }
 }

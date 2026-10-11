@@ -62,9 +62,11 @@ impl Cydonia {
             }
         });
         select.update(cx, |select, cx| select.reset(window, cx));
-        let events = cx.subscribe(&select, |this, _, event: &MultiSelectEvent, cx| {
-            this.label_event(event, cx)
-        });
+        let events = cx.subscribe_in(
+            &select,
+            window,
+            |this, _, event: &MultiSelectEvent, window, cx| this.label_event(event, window, cx),
+        );
         self.picker = Some(Picker {
             target,
             select,
@@ -126,7 +128,12 @@ impl Cydonia {
         })
     }
 
-    fn label_event(&mut self, event: &MultiSelectEvent, cx: &mut Context<Self>) {
+    fn label_event(
+        &mut self,
+        event: &MultiSelectEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(target) = self.picker.as_ref().map(|picker| picker.target.clone()) else {
             return;
         };
@@ -153,7 +160,7 @@ impl Cydonia {
                     .get(name.as_ref())
                     .copied()
                     .unwrap_or_default();
-                self.ask_delete_label(name.to_string(), count, cx);
+                self.ask_delete_label(name.to_string(), count, window, cx);
                 return;
             }
             MultiSelectEvent::Dismissed => {

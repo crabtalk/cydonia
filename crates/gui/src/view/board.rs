@@ -1,7 +1,6 @@
 //! The board pane: lanes of cards or a list of them, and the one field that
 //! writes them.
 
-pub mod create;
 pub mod info;
 
 use crate::{
@@ -1128,7 +1127,7 @@ impl Cydonia {
 
     /// Drop a lane. Offered only while it is empty — see
     /// [`artifact::board::Board::remove_column`] — and asked about first, in
-    /// [`crate::view::pane::confirm`].
+    /// [`crate::view::modals::confirm`].
     pub(crate) fn drop_column(&mut self, board: &str, id: &str, cx: &mut Context<Self>) {
         self.commit(cx);
         let (board, id) = (board.to_owned(), id.to_owned());
@@ -1240,7 +1239,7 @@ impl Cydonia {
         }
         rows.push(menu::row(
             Item::action("Delete").with_icon(icons::files::Trash),
-            move |this, _, cx| this.ask_delete_card(&held, &doomed, cx),
+            move |this, window, cx| this.ask_delete_card(&held, &doomed, window, cx),
         ));
         Some(self.menu_below(
             SharedString::from(format!("card-menu-card-{card}")),
@@ -3441,8 +3440,8 @@ impl Cydonia {
                 .with_tooltip("A column is only where work sits — move the cards out first."),
         };
         let dropped = id.to_owned();
-        rows.push(menu::row(drop, move |this, _, cx| {
-            this.ask_delete_column(&on_board, &dropped, cx)
+        rows.push(menu::row(drop, move |this, window, cx| {
+            this.ask_delete_column(&on_board, &dropped, window, cx)
         }));
         Some(self.menu_below(
             SharedString::from(format!("lane-menu-{id}")),

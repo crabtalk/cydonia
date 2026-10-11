@@ -4,9 +4,11 @@
 //! `use super::*`: these methods work on the same struct and reach the same
 //! names as the rest of it.
 use super::*;
+use artifact::board::{self, key};
 use artifact::error::{Act, Error};
 use artifact::kind::Kind;
 use artifact::project::Project as _;
+use std::collections::HashSet;
 
 impl Workspace {
     /// Save a draft against the latest disk contents, preserving other card fields.
@@ -53,6 +55,21 @@ impl Workspace {
         }
         cx.notify();
         Ok(())
+    }
+
+    /// The key a board called `name` would take in `project`, clear of the
+    /// keys its boards hold. A blank name is keyed as [`board::NAMED`].
+    pub fn free_key(&self, project: usize, name: &str) -> String {
+        let taken: HashSet<String> = self
+            .projects
+            .get(project)
+            .map(|open| open.boards.iter().map(|board| board.key.clone()).collect())
+            .unwrap_or_default();
+        let name = match name.trim() {
+            "" => board::NAMED,
+            typed => typed,
+        };
+        key::derive(name, &taken)
     }
 
     /// A board in `project`, called and keyed as the dialog that asked for it

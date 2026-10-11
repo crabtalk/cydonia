@@ -9,7 +9,7 @@ use super::terminal::{DirectoryChanged, Exited, Terminal};
 use super::{changes::Changes, file::FileView, files::Files};
 use crate::model::{settings::PanelTabs, workspace::Workspace};
 use crate::view::window::root::{Cydonia, ToggleChanges};
-use crate::view::{window::chrome, window::desktop::DesktopOnly};
+use crate::view::{modals::desktop::DesktopOnly, window::chrome};
 use bezel::{
     gpui::{
         self, AnyElement, Axis, Context, DragMoveEvent, Empty, Entity, Focusable, Render,
@@ -1056,7 +1056,7 @@ impl Cydonia {
             return false;
         }
         self.set_changes_open(true, cx);
-        self.sync_changes(cx);
+        self.sync_changes(window, cx);
         let Some(panel) = self.changes.clone() else {
             return false;
         };
@@ -1087,7 +1087,7 @@ impl Cydonia {
 
     pub(crate) fn show_files(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.set_changes_open(true, cx);
-        self.sync_changes(cx);
+        self.sync_changes(window, cx);
         if let Some(panel) = self.changes.clone() {
             panel.update(cx, |panel, cx| panel.files(window, cx));
         }
@@ -1096,7 +1096,7 @@ impl Cydonia {
 
     pub(crate) fn show_changes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.set_changes_open(true, cx);
-        self.sync_changes(cx);
+        self.sync_changes(window, cx);
         if let Some(panel) = self.changes.clone() {
             panel.update(cx, |panel, cx| {
                 panel.restore_tabs(window, cx);
@@ -1117,7 +1117,7 @@ impl Cydonia {
         if !self.changes_open {
             window.focus(&self.composer_focus_handle(cx), cx);
         } else {
-            self.sync_changes(cx);
+            self.sync_changes(window, cx);
             if let Some(panel) = self.changes.clone() {
                 panel.update(cx, |panel, cx| panel.focus(window, cx));
             }
@@ -1175,7 +1175,7 @@ impl Cydonia {
         self.changes_for = active;
     }
 
-    pub(crate) fn sync_changes(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn sync_changes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.follow_changes(cx);
         let here = self.shell_cwd(cx);
         // A panel outlives the directory going out of front, and is dropped
@@ -1191,8 +1191,8 @@ impl Cydonia {
         self.changes = here
             .filter(|_| self.changes_open)
             .map(|cwd| match self.library.is_some() {
-                true => self.library_panel(cwd, cx),
-                false => self.right_panel(cwd, cx),
+                true => self.library_panel(cwd, window, cx),
+                false => self.right_panel(cwd, window, cx),
             });
         let tabs = self.workspace.read(cx).settings.features.panel;
         if let Some(panel) = &self.changes {
@@ -1214,7 +1214,7 @@ impl Cydonia {
             return false;
         }
         self.set_changes_open(true, cx);
-        self.sync_changes(cx);
+        self.sync_changes(window, cx);
         let Some(panel) = self.changes.clone() else {
             return false;
         };
@@ -1227,12 +1227,17 @@ impl Cydonia {
     }
 
     /// The right panel for `cwd`, made the first time it is asked for.
-    pub(crate) fn right_panel(&mut self, cwd: PathBuf, cx: &mut Context<Self>) -> Entity<Panel> {
+    pub(crate) fn right_panel(
+        &mut self,
+        cwd: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<Panel> {
         if let Some(panel) = self.right_panels.get(&cwd) {
             return panel.clone();
         }
         let restore = persistence::saved_panel(&cwd);
-        let panel = self.new_panel(cwd.clone(), restore, PanelTabs::default(), cx);
+        let panel = self.new_panel(cwd.clone(), restore, PanelTabs::default(), window, cx);
         self.right_panels.insert(cwd, panel.clone());
         panel
     }
@@ -1242,7 +1247,12 @@ impl Cydonia {
     /// directory in front when they are opened.
     ///
     /// Not saved across launches.
-    fn library_panel(&mut self, cwd: PathBuf, cx: &mut Context<Self>) -> Entity<Panel> {
+    fn library_panel(
+        &mut self,
+        cwd: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<Panel> {
         let panel = match &self.library_panel {
             Some(panel) => panel.clone(),
             None => {
@@ -1251,7 +1261,7 @@ impl Cydonia {
                     files: false,
                     browser: true,
                 };
-                let panel = self.new_panel(cwd.clone(), None, offers, cx);
+                let panel = self.new_panel(cwd.clone(), None, offers, window, cx);
                 self.library_panel = Some(panel.clone());
                 panel
             }
@@ -1265,6 +1275,7 @@ impl Cydonia {
         cwd: PathBuf,
         restore: Option<persistence::SavedPanel>,
         offers: PanelTabs,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<Panel> {
         let toggle = Painter::of(cx);
@@ -1277,12 +1288,14 @@ impl Cydonia {
             panel.offers = offers;
             panel
         });
-        cx.subscribe(&panel, |this, _, event: &DesktopOnly, cx| {
-            this.desktop_only(event.0, cx)
-        })
+        cx.subscribe_in(
+            &panel,
+            window,
+            |this, _, event: &DesktopOnly, window, cx| this.desktop_only(event.0, window, cx),
+        )
         .detach();
-        cx.subscribe(&panel, |this, _, _: &OpenFeatures, cx| {
-            this.open_settings(crate::view::window::section::Section::Features, cx)
+        cx.subscribe_in(&panel, window, |this, _, _: &OpenFeatures, window, cx| {
+            this.open_settings(crate::view::window::section::Section::Features, window, cx)
         })
         .detach();
         let tabs = self.workspace.read(cx).settings.features.panel;

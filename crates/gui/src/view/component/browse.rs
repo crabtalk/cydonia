@@ -163,7 +163,12 @@ impl Cydonia {
     }
 
     /// The right panel of the open project at `path`.
-    fn project_panel(&mut self, path: &Path, cx: &mut Context<Self>) -> Option<Entity<Panel>> {
+    fn project_panel(
+        &mut self,
+        path: &Path,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<Panel>> {
         let workspace = self.workspace.read(cx);
         let project = workspace.projects[workspace.project_at(path)?].path.clone();
         let cwd = if self
@@ -176,7 +181,7 @@ impl Cydonia {
         } else {
             project
         };
-        Some(self.right_panel(cwd, cx))
+        Some(self.right_panel(cwd, window, cx))
     }
 }
 
@@ -188,9 +193,12 @@ async fn serve(
     act: Act,
     cx: &mut AsyncApp,
 ) -> Result<String, String> {
-    let panel = this
-        .update(cx, |this, cx| this.project_panel(project, cx))
+    let panel = window
+        .update(cx, |_, window, cx| {
+            this.update(cx, |this, cx| this.project_panel(project, window, cx))
+        })
         .ok()
+        .and_then(Result::ok)
         .flatten()
         .ok_or_else(|| format!("cydonia does not have {} open", project.display()))?;
     let browsing = cx.update(|cx| cx.try_global::<Browsing>().cloned().unwrap_or_default());

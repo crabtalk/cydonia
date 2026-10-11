@@ -114,6 +114,16 @@ pub(crate) enum Row {
     Entry { project: PathBuf, showing: Showing },
 }
 
+impl Row {
+    /// The kind of entry it is. Nothing for a row that is not an entry.
+    pub(crate) fn kind(&self) -> Option<Kind> {
+        match self {
+            Row::Entry { showing, .. } => Some(showing.kind()),
+            _ => None,
+        }
+    }
+}
+
 /// The two sections of the list.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub(crate) enum Heading {
@@ -188,7 +198,7 @@ fn on_disk(path: PathBuf) -> [(Item, menu::Act); 2] {
         menu::row(
             Item::action(crate::view::component::file::external::REVEAL)
                 .with_icon(icons::files::FolderOpen),
-            move |this, _, cx| this.reveal_path(path.clone(), cx),
+            move |this, window, cx| this.reveal_path(path.clone(), window, cx),
         ),
         menu::row(
             Item::action("Copy Path").with_icon(icons::text::Copy),
@@ -570,7 +580,9 @@ impl Cydonia {
                         .size(px(13.))
                         .text_color(theme.text_faint),
                 )
-                .on_click(cx.listener(|this, _, _, cx| this.open_settings(Section::General, cx))),
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.open_settings(Section::General, window, cx)
+                })),
         )
     }
 
@@ -2024,9 +2036,14 @@ impl Cydonia {
     /// Show `path` in the file manager. Best effort and off the main thread:
     /// opening it is a process, and a file manager that will not come to the
     /// front is not worth blocking a frame over.
-    pub(crate) fn reveal_path(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+    pub(crate) fn reveal_path(
+        &mut self,
+        path: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if cfg!(not(feature = "desktop")) {
-            self.desktop_only("Showing it in the file manager", cx);
+            self.desktop_only("Showing it in the file manager", window, cx);
             return;
         }
         crate::view::component::file::external::reveal(path, cx);
@@ -2511,7 +2528,7 @@ impl Cydonia {
             Item::action("Delete").with_icon(icons::files::Trash),
             {
                 let entry = entry.clone();
-                move |this, _, cx| this.ask_delete(&entry, cx)
+                move |this, window, cx| this.ask_delete(&entry, window, cx)
             },
         )];
         let rows = menu::sections([shown, held, disk, tab_rows, delete]);

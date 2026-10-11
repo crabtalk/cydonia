@@ -318,8 +318,7 @@ impl Cydonia {
     /// Nothing without the `desktop` feature: there is no shell to run.
     #[cfg(not(feature = "desktop"))]
     pub(crate) fn show_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let _ = window;
-        self.desktop_only("The terminal", cx);
+        self.desktop_only("The terminal", window, cx);
     }
 
     #[cfg(not(feature = "desktop"))]
@@ -1456,9 +1455,9 @@ impl Cydonia {
                         Some(Fade::new(painter, "install-agent-empty")),
                     )
                     .id("install-agent-empty")
-                    .on_click(
-                        cx.listener(|this, _, _, cx| this.open_settings(Section::Agents, cx)),
-                    ),
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.open_settings(Section::Agents, window, cx)
+                    })),
             )
             .into_any_element()
     }
@@ -1480,7 +1479,9 @@ impl Cydonia {
                 .id("adrift")
                 .mt(px(0.))
                 .cursor_pointer()
-                .on_click(cx.listener(|this, _, _, cx| this.open_settings(Section::Agents, cx)))
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.open_settings(Section::Agents, window, cx)
+                }))
                 .into_any_element(),
         )
     }

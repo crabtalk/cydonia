@@ -224,7 +224,7 @@ fn menus(cx: &App) -> Vec<Menu> {
             MenuItem::action("Find", crate::view::board::FindCard),
             MenuItem::action("Find Next", crate::view::pane::find::FindNext),
             MenuItem::action("Find Previous", crate::view::pane::find::FindPrev),
-            MenuItem::action("Search", crate::view::search::ToggleSearch),
+            MenuItem::action("Search", crate::view::modals::palette::ToggleSearch),
             MenuItem::separator(),
             MenuItem::action("Enter Full Screen", ToggleFullScreen),
         ]),

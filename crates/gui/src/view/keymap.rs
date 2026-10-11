@@ -24,7 +24,6 @@ use crate::{
     view::{
         article::{self, ToggleOutline, TogglePlainText},
         board,
-        board::create,
         board::info,
         component::{composer, ribbon},
         pane::find::{FindNext, FindPrev},
@@ -294,7 +293,7 @@ impl Command {
             // filter — see [`bind_all`]. Scoped rather than left app-wide
             // because commands are bound last and would take the chord from
             // it.
-            Self::Search => KeyBinding::new(chord, super::search::ToggleSearch, context),
+            Self::Search => KeyBinding::new(chord, super::modals::palette::ToggleSearch, context),
             Self::FindCard => KeyBinding::new(
                 chord,
                 board::FindCard,
@@ -458,9 +457,10 @@ pub fn bind_all(shortcuts: &Shortcuts, cx: &mut App) {
     #[cfg(not(target_os = "linux"))]
     cx.bind_keys(super::component::browser::bindings());
     cx.bind_keys(super::pane::find::bindings());
-    cx.bind_keys(super::search::bindings());
+    cx.bind_keys(super::modals::palette::bindings());
     cx.bind_keys(composer::bindings());
-    cx.bind_keys(create::bindings());
+    cx.bind_keys(super::modals::new_board::bindings());
+    cx.bind_keys(super::window::modal::bindings());
     cx.bind_keys(info::bindings());
     cx.bind_keys(ribbon::bindings());
     cx.bind_keys(table::bindings());

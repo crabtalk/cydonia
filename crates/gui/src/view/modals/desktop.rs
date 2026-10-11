@@ -7,7 +7,9 @@ use crate::view::{
     window::root::Cydonia,
 };
 use bezel::{
-    gpui::{AnyElement, Context, Window, prelude::*},
+    gpui::{
+        App, Context, DismissEvent, EventEmitter, FocusHandle, Focusable, Window, div, prelude::*,
+    },
     theme::Theme,
     ui::popover,
 };
@@ -16,33 +18,46 @@ use bezel::{
 /// called — raised by a view that cannot reach the window.
 pub struct DesktopOnly(pub &'static str);
 
+/// The notice for a [`DesktopOnly`].
+pub(crate) struct Notice {
+    /// What was asked for. Opens the sentence.
+    what: &'static str,
+    focus: FocusHandle,
+}
+
 impl Cydonia {
     /// Say that `what` needs the desktop app. `what` opens the sentence.
-    pub(crate) fn desktop_only(&mut self, what: &'static str, cx: &mut Context<Self>) {
-        self.menu = None;
-        self.desktop_only = Some(what);
-        cx.notify();
-    }
-
-    fn dismiss_desktop_only(&mut self, cx: &mut Context<Self>) {
-        self.desktop_only = None;
-        cx.notify();
-    }
-
-    /// The notice, over a scrim that takes the press dismissing it.
-    pub(crate) fn desktop_only_notice(
-        &self,
-        window: &Window,
+    pub(crate) fn desktop_only(
+        &mut self,
+        what: &'static str,
+        window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        let what = self.desktop_only?;
+    ) {
+        self.menu = None;
+        self.toggle_modal(window, cx, |_, cx| Notice {
+            what,
+            focus: cx.focus_handle(),
+        });
+    }
+}
+
+impl EventEmitter<DismissEvent> for Notice {}
+
+impl Focusable for Notice {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus.clone()
+    }
+}
+
+impl Render for Notice {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::of(cx).clone();
-        Some(dialog(
+        let dialog = dialog(
             "desktop-only-dialog",
             &theme,
             window,
             [
-                popover::dialog_title(&theme, format!("{what} works in the desktop app"))
+                popover::dialog_title(&theme, format!("{} works in the desktop app", self.what))
                     .into_any_element(),
                 popover::dialog_body(
                     &theme,
@@ -55,11 +70,12 @@ impl Cydonia {
                     "desktop-only",
                     None,
                     "OK",
-                    Box::new(cx.listener(|this, _, _, cx| this.dismiss_desktop_only(cx))),
+                    Box::new(cx.listener(|_, _, _, cx| cx.emit(DismissEvent))),
                 )
                 .into_any_element(),
             ],
-            cx.listener(|this, _, _, cx| this.dismiss_desktop_only(cx)),
-        ))
+            cx.listener(|_, _, _, cx| cx.emit(DismissEvent)),
+        );
+        div().track_focus(&self.focus).child(dialog)
     }
 }
