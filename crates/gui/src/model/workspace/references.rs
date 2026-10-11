@@ -250,8 +250,12 @@ fn passage(disk: Rc<Disk>, within: Within<'_>, text: &str) -> Result<Passage, St
 
 /// [`Workspace::resolve`] on the installed workspace.
 pub fn resolve_in(text: &str, cx: &App) -> Option<Resolved> {
-    let workspace = cx.try_global::<Current>()?.0.upgrade()?;
-    workspace.read(cx).resolve(text).ok()
+    current(cx)?.read(cx).resolve(text).ok()
+}
+
+/// The workspace [`Workspace::install`] made current.
+pub fn current(cx: &App) -> Option<Entity<Workspace>> {
+    cx.try_global::<Current>()?.0.upgrade()
 }
 
 #[cfg(test)]

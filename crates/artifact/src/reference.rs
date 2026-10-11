@@ -120,11 +120,14 @@ pub enum Prefix<'a> {
     Number(&'a str),
     /// The leading letters and digits of a board's key, before any `-`.
     Key(&'a str),
+    /// A board's whole key and the leading digits of a card's number on it,
+    /// empty right after the `-`. The key is as written.
+    Card { key: &'a str, handle: &'a str },
 }
 
-/// Read the start of a reference: `#`, `#4`, `foo#`, `foo#4`, `4`, `DE`.
-/// Nothing for text no reference starts with. A bare key prefix carries no
-/// project; a bare number is an entry's.
+/// Read the start of a reference: `#`, `#4`, `foo#`, `foo#4`, `4`, `DE`,
+/// `DEV-`, `DEV-1`. Nothing for text no reference starts with. A bare key or
+/// card prefix carries no project; a bare number is an entry's.
 pub fn partial(text: &str) -> Option<Partial<'_>> {
     let text = text.strip_prefix(SCHEME).unwrap_or(text);
     let (project, rest) = match text.split_once('#') {
@@ -137,6 +140,12 @@ pub fn partial(text: &str) -> Option<Partial<'_>> {
         Prefix::Number(rest)
     } else if rest.chars().all(|c| c.is_ascii_alphanumeric()) {
         Prefix::Key(rest)
+    } else if let Some((key, handle)) = rest.rsplit_once('-')
+        && !key.is_empty()
+        && key.chars().all(|c| c.is_ascii_alphanumeric())
+        && handle.bytes().all(|b| b.is_ascii_digit())
+    {
+        Prefix::Card { key, handle }
     } else {
         return None;
     };

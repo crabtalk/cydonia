@@ -130,10 +130,24 @@ fn the_start_of_a_reference_reads_as_far_as_it_is_written() {
 }
 
 #[test]
+fn a_key_and_a_dash_start_a_card() {
+    let card = |key, handle| Prefix::Card { key, handle };
+    assert_eq!(partial("DEV-"), typed(None, card("DEV", "")));
+    assert_eq!(partial("dev-12"), typed(None, card("dev", "12")));
+    assert_eq!(
+        partial("bezel#DEV-1"),
+        typed(Some("bezel"), card("DEV", "1"))
+    );
+    assert_eq!(partial("V2-3"), typed(None, card("V2", "3")));
+}
+
+#[test]
 fn text_no_reference_starts_with_is_none() {
     for text in [
         "#4:",
-        "DEV-",
+        "-1",
+        "DEV-1a",
+        "DEV--1",
         "my notes#4",
         "a:b#4",
         "a#b#4",

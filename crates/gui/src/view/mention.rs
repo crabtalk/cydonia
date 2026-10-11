@@ -1,12 +1,17 @@
 //! What `@` in an article lists: the open projects' sessions, boards and
-//! articles, linked as `cydonia://<project>#<number>` chips — and the title a
-//! chip of one paints: cydonia's mark and the title.
+//! articles, linked as `cydonia://<project>#<number>` chips, and their boards'
+//! cards, as `cydonia://<project>#<handle>` — and the title a chip of one
+//! paints: cydonia's mark and the title.
 
 use crate::{
-    model::workspace::{Showing, Workspace, references::Part},
-    view::{entry_link::link, search::kind_icon, sidebar::Row},
+    model::workspace::{
+        Showing, Workspace,
+        references::{self, Part},
+    },
+    view::{board::card_title, entry_link::link, search::kind_icon, sidebar::Row},
 };
 use artifact::{
+    board::{Board, Card},
     reference::{self, Prefix},
     search::Kind,
 };
@@ -17,6 +22,9 @@ use markdown::Preview;
 
 /// Rows the menu lists at most.
 const SHOWN: usize = 20;
+
+/// Characters of a card's title a menu row paints at most.
+const CARD_TITLE: usize = 48;
 
 /// The mark every `cydonia://` chip paints. Inline chips paint only a glyph's
 /// SVG, in the text colour — a file icon paints nothing there.
@@ -160,24 +168,158 @@ fn untitled(title: &str, fallback: &str) -> String {
     }
 }
 
-/// The mention source cydonia installs — see [`rank`].
+/// The mention source cydonia installs: the cards a handle names, then the
+/// entries — see [`rank`] — then the cards whose text holds the query — see
+/// [`rank_cards`].
 pub(crate) fn source(query: &str, cx: &App) -> Vec<Mention> {
-    let Some(Linkables(held)) = cx.try_global::<Linkables>() else {
-        return Vec::new();
-    };
-    rank(query, held)
+    let held = cx
+        .try_global::<Linkables>()
+        .map_or(&[][..], |Linkables(held)| held.as_slice());
+    let workspace = references::current(cx);
+    let cards = workspace
+        .as_ref()
+        .map(|workspace| carded(workspace.read(cx)))
+        .unwrap_or_default();
+    let (named, holding) = rank_cards(query, &cards);
+    let entries = rank(query, held).into_iter().map(|ix| {
+        let linkable = &held[ix];
+        Mention {
+            icon: Some(linkable.icon.clone()),
+            label: SharedString::from(linkable.title.clone()),
+            description: Some(SharedString::from(linkable.about.clone())),
+            url: linkable.url.clone(),
+        }
+    });
+    named
         .into_iter()
+        .map(|ix| card_mention(&cards[ix]))
+        .chain(entries)
+        .chain(holding.into_iter().map(|ix| card_mention(&cards[ix])))
         .take(SHOWN)
-        .map(|ix| {
-            let linkable = &held[ix];
-            Mention {
-                icon: Some(linkable.icon.clone()),
-                label: SharedString::from(linkable.title.clone()),
-                description: Some(SharedString::from(linkable.about.clone())),
-                url: linkable.url.clone(),
-            }
-        })
         .collect()
+}
+
+/// A card `@` can link: one with a handle, on a board with a key.
+pub(crate) struct Carded<'a> {
+    /// The directory name of the project it is in.
+    pub(crate) project: String,
+    /// In the active project, the one a bare `DEV-12` means.
+    pub(crate) active: bool,
+    pub(crate) board: &'a Board,
+    pub(crate) card: &'a Card,
+    /// `DEV-12`.
+    pub(crate) handle: String,
+}
+
+/// Every open project's cards `@` can link, in board and column order.
+/// Read per query rather than kept in [`Linkables`]: that is rebuilt on
+/// every workspace change, and a project's cards run to hundreds.
+fn carded(workspace: &Workspace) -> Vec<Carded<'_>> {
+    let active = workspace.active_project().map(|project| &project.path);
+    let mut cards = Vec::new();
+    for project in &workspace.projects {
+        let Some(name) = project.path.file_name().map(|name| name.to_string_lossy()) else {
+            continue;
+        };
+        for board in &project.boards {
+            for card in board.columns.iter().flat_map(|column| &column.cards) {
+                let Some(handle) = board.handle_of(card) else {
+                    continue;
+                };
+                cards.push(Carded {
+                    project: name.to_string(),
+                    active: active == Some(&project.path),
+                    board,
+                    card,
+                    handle,
+                });
+            }
+        }
+    }
+    cards
+}
+
+/// What `query` lists of `cards`, as positions in it: the cards a card
+/// prefix names — see [`reference::partial`] — in the project named before
+/// the `#` or the active one, the exact one first, then by number; and apart,
+/// the others whose text holds the query, the active project first and
+/// archived boards last. Nothing for an empty query or one with a kind or
+/// label prefix — see [`prefixes`] — and no text matches for a query holding
+/// `#`.
+pub(crate) fn rank_cards(query: &str, cards: &[Carded]) -> (Vec<usize>, Vec<usize>) {
+    let (kind, label, query) = prefixes(query);
+    let query = query.trim();
+    if kind.is_some() || label.is_some() || query.is_empty() {
+        return (Vec::new(), Vec::new());
+    }
+    let mut named: Vec<(bool, u64, usize)> = Vec::new();
+    if let Some(reference::Partial {
+        project,
+        target: Prefix::Card { key, handle },
+    }) = reference::partial(query)
+    {
+        for (ix, carded) in cards.iter().enumerate() {
+            let scoped = match project {
+                None => carded.active,
+                Some(name) => carded.project.eq_ignore_ascii_case(name),
+            };
+            let Some(number) = carded.card.handle else {
+                continue;
+            };
+            let digits = number.to_string();
+            if scoped && carded.board.key.eq_ignore_ascii_case(key) && digits.starts_with(handle) {
+                named.push((digits != handle, number, ix));
+            }
+        }
+    }
+    named.sort_by_key(|&(inexact, number, _)| (inexact, number));
+    let named: Vec<usize> = named.into_iter().map(|(.., ix)| ix).collect();
+    if query.contains('#') {
+        return (named, Vec::new());
+    }
+    let lower = query.to_lowercase();
+    let mut holding: Vec<usize> = (0..cards.len())
+        .filter(|ix| !named.contains(ix))
+        .filter(|&ix| cards[ix].card.text.to_lowercase().contains(&lower))
+        .collect();
+    holding.sort_by_key(|&ix| (cards[ix].board.archived, !cards[ix].active));
+    (named, holding)
+}
+
+/// A card's title cut to [`CARD_TITLE`] characters at a word, `…` marking
+/// the cut. A first word longer than that is cut inside it.
+pub(crate) fn short_card_title(text: &str) -> String {
+    let title = card_title(text);
+    if title.chars().count() <= CARD_TITLE {
+        return title;
+    }
+    let end = title
+        .char_indices()
+        .nth(CARD_TITLE)
+        .map_or(title.len(), |(at, _)| at);
+    let head = &title[..end];
+    let head = match head.rfind(' ') {
+        Some(at) if at > 0 => &head[..at],
+        _ => head,
+    };
+    format!("{}…", head.trim_end_matches([',', ';', ':', '.', ' ']))
+}
+
+fn card_mention(carded: &Carded) -> Mention {
+    let shown = match carded.active {
+        true => carded.handle.clone(),
+        false => format!("{}#{}", carded.project, carded.handle),
+    };
+    Mention {
+        icon: Some(kind_icon(Kind::Board)),
+        label: SharedString::from(shown),
+        description: Some(SharedString::from(format!(
+            "{} · {}",
+            short_card_title(&carded.card.text),
+            untitled(&carded.board.name, "Untitled board")
+        ))),
+        url: link(&format!("{}#{}", carded.project, carded.handle)),
+    }
 }
 
 /// What `query` lists, as positions in `held`, best first. An empty query
@@ -334,6 +476,7 @@ fn references(query: &str, held: &[Linkable]) -> Vec<usize> {
         Prefix::Key(key) => by_prefix(&scoped, key, held, |linkable| {
             linkable.key.as_ref().map(|key| key.to_lowercase())
         }),
+        Prefix::Card { .. } => Vec::new(),
     }
 }
 
@@ -359,7 +502,7 @@ fn by_prefix(
 
 /// What a chip linking an entry paints: its title, and its kind's mark. A
 /// run of a session's turns adds the run, and part of an article the lines or
-/// the heading. A card paints its own title and handle. A link naming no entry
+/// the heading. A card paints its handle alone. A link naming no entry
 /// paints the reference and the app's mark.
 pub(crate) fn preview(url: &str, cx: &App) -> Option<Preview> {
     let reference = url.strip_prefix(crate::view::entry_link::SCHEME)?;
@@ -381,11 +524,7 @@ pub(crate) fn preview(url: &str, cx: &App) -> Option<Preview> {
         Some(Part::Turns(turns)) if turns.from == turns.to => format!("{title} · turn {turns}"),
         Some(Part::Turns(turns)) => format!("{title} · turns {turns}"),
         Some(Part::Passage(passage)) => format!("{title} · {}", passage.label),
-        Some(Part::Card(card)) => format!(
-            "{} · {}",
-            crate::view::board::card_title(&card.text),
-            card.handle
-        ),
+        Some(Part::Card(card)) => card.handle,
         None => title,
     };
     Some(Preview {
@@ -398,3 +537,7 @@ pub(crate) fn preview(url: &str, cx: &App) -> Option<Preview> {
 #[cfg(test)]
 #[path = "../../tests/unit/mention_rank.rs"]
 mod rank_tests;
+
+#[cfg(test)]
+#[path = "../../tests/unit/mention_cards.rs"]
+mod card_tests;
