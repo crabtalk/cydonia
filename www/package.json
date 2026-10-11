@@ -5,6 +5,7 @@
 	"scripts": {
 		"og": "node scripts/generate-og.mjs",
 		"figures": "node scripts/generate-figures.mjs",
+		"terrain": "node scripts/generate-terrain.mjs",
 		"dev": "vite dev",
 		"build": "vite build",
 		"preview": "vite preview",

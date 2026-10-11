@@ -5,7 +5,7 @@
 	import Brand from '$lib/Brand.svelte';
 	import Logo from '$lib/Logo.svelte';
 	import Crab from '$lib/Crab.svelte';
-	import Glyphs from '$lib/Glyphs.svelte';
+	import Terrain from '$lib/Terrain.svelte';
 	import Signature from '$lib/Signature.svelte';
 	import { crabtalk, discord, repo } from '$lib/meta.js';
 	import { page } from '$app/state';
@@ -17,7 +17,7 @@
 	// The docs are as wide as the bar, 1400px; the home page 1200px, the other
 	// pages 1080px. The foot follows the page's width.
 	const docs = $derived(page.url.pathname.startsWith('/docs'));
-	const home = $derived(page.url.pathname === `${base}/` || page.url.pathname === base);
+	const home = $derived(page.route.id === '/');
 	const shell = $derived(docs ? '1400px' : home ? '1200px' : '1080px');
 
 	// One delegated handler for the whole site: every `.code-block` gets a working
@@ -69,7 +69,7 @@
 
 {#if home}
 	<Signature />
-	<Glyphs />
+	<Terrain />
 {/if}
 
 <div class="page">

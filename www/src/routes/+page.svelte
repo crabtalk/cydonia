@@ -5,6 +5,7 @@
 	import Brand from '$lib/Brand.svelte';
 	import Files from '$lib/Files.svelte';
 	import Figure from '$lib/Figure.svelte';
+	import Plate from '$lib/Plate.svelte';
 	import { base } from '$app/paths';
 	import { releasePath, day, latest, media, releases } from '$lib/changelog.js';
 	import { agents, repo, site, tagline as description } from '$lib/meta.js';
@@ -156,6 +157,10 @@
 	<div class="release-content">
 		<DownloadPanel version={latest.version} />
 	</div>
+</section>
+
+<section class="ground">
+	<Plate />
 </section>
 
 <style>
@@ -393,6 +398,9 @@
 
 	.get {
 		scroll-margin-top: calc(var(--header) + 24px);
+	}
+
+	.ground {
 		padding-bottom: 96px;
 	}
 
