@@ -114,7 +114,7 @@ impl Cydonia {
     pub(crate) fn applied_rows(&self, cx: &App) -> Option<Vec<Row>> {
         let applied = self.search.applied.as_ref()?;
         Some(
-            Hit::ranked(applied.found.clone(), self.workspace.read(cx))
+            Hit::ranked(applied.found.clone(), self.workspace.read(cx), cx)
                 .into_iter()
                 .filter(|hit| {
                     applied

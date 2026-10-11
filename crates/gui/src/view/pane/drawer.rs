@@ -1,14 +1,15 @@
 //! The drawer a pane pulls up from its foot, holding one thing at a time: a
 //! board's card, or an entry a link names.
 //!
-//! The drawer is the pane's, held on its [`Pane`]; what it
+//! The drawer is the pane's, held on its [`Tab`]; what it
 //! holds is a [`Peek`].
 
-use super::Pane;
+use super::Tab;
 use crate::{
     model::workspace::{Showing, references::Part},
     view::{
         board::{BoardView, DrawerAt, PaneState},
+        kit::watch::Watch,
         sidebar::Row,
         window::root::Cydonia,
     },
@@ -74,6 +75,8 @@ pub struct Drawer {
     pub(crate) reveal: Rc<Cell<bool>>,
     /// The box the drawer is laid out against.
     pane_bounds: Rc<Cell<gpui::Bounds<Pixels>>>,
+    /// The board an entry drawer peeks.
+    board: Watch,
 }
 
 impl Drawer {
@@ -87,6 +90,7 @@ impl Drawer {
             resize_grab: None,
             reveal: Rc::new(Cell::new(true)),
             pane_bounds: Default::default(),
+            board: Watch::default(),
         }
     }
 
@@ -192,7 +196,7 @@ pub(crate) struct Face {
     pub(crate) open: Option<OpenIn>,
 }
 
-impl Pane {
+impl Tab {
     /// The drawer the pane shows. A card drawer shows while its card is on its
     /// board or still being written.
     pub(crate) fn drawer_shown(&self, cx: &App) -> Option<&Drawer> {
@@ -259,6 +263,14 @@ impl Pane {
         if let Some(size) = size {
             drawer.size = size;
         }
+        let board = drawer.entry().and_then(|entry| {
+            let workspace = self.workspace.read(cx);
+            match workspace.resolve(&entry.reference, cx).ok()?.showing {
+                Showing::Board(id) => workspace.board_entity(&id).cloned(),
+                _ => None,
+            }
+        });
+        drawer.board.set(board.as_ref(), cx);
         let focus = drawer.focus.clone();
         self.drawer = Some(drawer);
         window.focus(&focus, cx);
@@ -603,7 +615,7 @@ impl Cydonia {
                 .iter()
                 .filter_map(|pane| pane.read(cx).drawer.as_ref()?.entry().cloned())
                 .filter_map(|entry| {
-                    let resolved = workspace.resolve(&entry.reference).ok()?;
+                    let resolved = workspace.resolve(&entry.reference, cx).ok()?;
                     match resolved.showing {
                         Showing::Table(key) => Some((resolved.project, key)),
                         _ => None,
@@ -701,7 +713,7 @@ impl Cydonia {
         cx.notify();
     }
 
-    /// `on`'s drawer, over the pane it is drawn in — see [`Pane::drawer_layer`].
+    /// `on`'s drawer, over the pane it is drawn in — see [`Tab::drawer_layer`].
     pub(crate) fn drawer_layer(
         &mut self,
         on: Option<&Member>,

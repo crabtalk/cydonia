@@ -70,7 +70,7 @@ impl Workspace {
             self.select_project(ix, cx);
             return;
         }
-        self.projects.push(Project::new(path));
+        self.projects.push(Project::new(path, cx));
         let ix = self.projects.len() - 1;
         self.restore_sessions(ix);
         self.watch_project(ix, cx);
@@ -297,11 +297,14 @@ impl Workspace {
                     article.unload(cx);
                 }
             }
-            project.unload_boards(if active && kind == Some(Kind::Board) {
-                project.board
-            } else {
-                None
-            });
+            project.unload_boards(
+                if active && kind == Some(Kind::Board) {
+                    project.board
+                } else {
+                    None
+                },
+                cx,
+            );
             if !(active && kind == Some(Kind::Table))
                 && project
                     .table

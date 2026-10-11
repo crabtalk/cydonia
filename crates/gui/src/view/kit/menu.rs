@@ -61,14 +61,8 @@ pub(crate) enum Menu {
     /// the header is showing: that entry has a row in the sidebar too, and a
     /// key naming the entry would have one click open both of them.
     Header,
-    /// The `···` in one pane's bar, by the entry the pane is on. A space has
-    /// several bars on screen at once, so `Header` alone would open every one
-    /// of them together.
-    Pane(gpui::SharedString),
     /// A pane's tab, right-pressed, by the entry the tab is on.
     Tab(artifact::space::Member),
-    /// The `+` in one pane's bar, by the same key as [`Menu::Pane`].
-    PaneAdd(gpui::SharedString),
     /// The agents on offer under `New session`, on the screen a project with
     /// nothing open shows — see [`crate::view::window::root::Cydonia::launch`].
     Launch,
@@ -190,9 +184,6 @@ impl Cydonia {
             // The project's head reports its hover as its `···`.
             (Some(_), Menu::Add(ix)) => {
                 Reveal::Shown(matches!(&self.sidebar_hovered, Some(Menu::Project(at)) if at == ix))
-            }
-            (Some(_), Menu::Pane(pane) | Menu::PaneAdd(pane)) => {
-                Reveal::Shown(self.pane_hovered.as_ref() == Some(pane))
             }
             (Some(group), _) => Reveal::Group(group),
         };

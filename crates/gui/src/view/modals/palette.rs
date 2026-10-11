@@ -189,7 +189,7 @@ impl Filter {
 impl Hit {
     /// What a search found, as rows: title matches first, then the rest, each
     /// most recently touched first.
-    pub(crate) fn ranked(found: Vec<Found>, workspace: &Workspace) -> Vec<Hit> {
+    pub(crate) fn ranked(found: Vec<Found>, workspace: &Workspace, cx: &App) -> Vec<Hit> {
         let mut hits: Vec<(bool, u128, Hit)> = found
             .into_iter()
             .filter_map(|found| {
@@ -198,7 +198,7 @@ impl Hit {
                     .iter()
                     .find(|open| open.path == found.root)?;
                 let showing = open.stored(found.kind, &found.id)?;
-                let touched = open.facts(&showing)?.touched;
+                let touched = open.facts(&showing, cx)?.touched;
                 let row = Row::Entry {
                     project: open.path.clone(),
                     showing,
@@ -456,7 +456,7 @@ impl Palette {
                 .await;
             let _ = this.update(cx, |this, cx| {
                 let mut hits = this.named_hits(cx);
-                let ranked: Vec<Hit> = Hit::ranked(found, this.workspace.read(cx))
+                let ranked: Vec<Hit> = Hit::ranked(found, this.workspace.read(cx), cx)
                     .into_iter()
                     .filter(|hit| {
                         !hits
@@ -488,7 +488,7 @@ impl Palette {
         let workspace = self.workspace.read(cx);
         workspace
             .project_at(project)
-            .and_then(|at| workspace.labels_of(at, showing))
+            .and_then(|at| workspace.labels_of(at, showing, cx))
             .is_some_and(|labels| labels.iter().any(|held| held == label))
     }
 
@@ -512,7 +512,7 @@ impl Palette {
     /// [`mention::Query::rank_cards`].
     fn card_hits(&self, cx: &App) -> Vec<Hit> {
         let workspace = self.workspace.read(cx);
-        let cards = mention::carded(workspace);
+        let cards = mention::carded(workspace, cx);
         let (named, _) = mention::Query::parse(self.field.read(cx).content()).rank_cards(&cards);
         named
             .into_iter()

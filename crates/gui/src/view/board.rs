@@ -1,6 +1,7 @@
 //! The board pane: lanes of cards or a list of them, and the one field that
 //! writes them.
 
+pub mod embed;
 pub mod info;
 
 use crate::model::language::Grammars as _;
@@ -12,6 +13,7 @@ use crate::{
         kit::{
             rename::{NameEvent, NameField},
             text::CardTitle,
+            watch::Watch,
         },
         pane::{
             drawer::{Drawer, Face},
@@ -46,7 +48,7 @@ use bezel::{
     },
 };
 use editor::{Editor, EditorEvent};
-use markdown::{AppExt as _, render::fence_band};
+use markdown::AppExt as _;
 use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
@@ -676,7 +678,7 @@ pub(crate) fn ghost(
     let held = root.upgrade().and_then(|root| {
         let root = root.read(cx);
         let (project, board_at) = root.board_at(item.key(), cx)?;
-        let board = root.workspace.read(cx).board_in(project, board_at)?;
+        let board = root.workspace.read(cx).board_in(project, board_at, cx)?;
         Some(match item {
             BoardItem::Card(_, card) => {
                 let text = board.card(card)?.text.clone();
@@ -840,6 +842,7 @@ pub(crate) struct BoardView {
     find: Find,
     /// The pane's drawer as of the last render.
     shown: PaneState,
+    watch: Watch,
     _name: gpui::Subscription,
 }
 
@@ -935,8 +938,9 @@ fn lane_cards(
     board_at: usize,
     id: &str,
     query: &str,
+    cx: &App,
 ) -> Option<(String, usize, Vec<String>)> {
-    let board = workspace.board_in(project, board_at)?;
+    let board = workspace.board_in(project, board_at, cx)?;
     let column = board.column(id)?;
     let cards: Vec<String> = column
         .cards
@@ -1109,7 +1113,7 @@ impl Cydonia {
     }
 
     /// A press on a board the drawer and the cards did not take — see
-    /// [`Pane::board_pressed`].
+    /// [`Tab::board_pressed`].
     fn board_pressed(&mut self, on: Option<&Member>, window: &mut Window, cx: &mut Context<Self>) {
         self.leaf_of(on, cx)
             .clone()
@@ -1173,8 +1177,7 @@ impl Cydonia {
         self.commit(cx);
         let (board, card) = (board.to_owned(), card.to_owned());
         self.workspace.update(cx, |workspace, cx| {
-            workspace.write_board(&board, |board| board.remove_card(&card));
-            cx.notify();
+            workspace.write_board(&board, cx, |board| board.remove_card(&card));
         });
         cx.notify();
     }
@@ -1223,61 +1226,19 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        let theme = Theme::of(cx).clone();
-        let board = self.workspace.read(cx).board_in(project, board_at)?;
-        let card = board.card(id)?;
-        let handle = board.handle_of(card).unwrap_or_default();
-        let (name, board_id) = (board.name.clone(), board.id.clone());
-        let (text, status) = (card.text.clone(), card.status);
-        let (doc, shortened) = self.card_docs.preview(&text);
-        let base = card_base(self.workspace.read(cx), project, &board_id, id);
-        let overflow = window.use_keyed_state(
-            SharedString::from(format!("card-embed-overflow-{reference}")),
-            cx,
-            |_, _| false,
-        );
-        let reference = reference.to_owned();
+        let workspace = self.workspace.read(cx);
+        let board = workspace.projects.get(project)?.boards.get(board_at)?;
+        board.board.read(cx).card(id)?;
+        let board = board.board.clone();
+        let base = card_base(workspace, project, &board.read(cx).id, id);
+        let (card, reference) = (id.to_owned(), reference.to_owned());
+        let (docs, root) = (self.card_docs.clone(), cx.entity().downgrade());
+        let key = format!("card-embed-{reference}-{}", board.entity_id());
         Some(
-            div()
-                .id(SharedString::from(format!("card-embed-{reference}")))
-                .flex()
-                .flex_col()
-                .cursor_pointer()
-                .hover(|el| el.bg(theme.element_hover))
-                .child(
-                    fence_band(&theme)
-                        .gap(px(8.))
-                        .child(
-                            div()
-                                .flex_none()
-                                .text_style(TextStyle::Caption)
-                                .font_family(theme.font_mono.clone())
-                                .text_color(theme.text_muted)
-                                .child(handle),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .text_ellipsis()
-                                .text_style(TextStyle::Caption)
-                                .text_color(theme.text_faint)
-                                .child(name),
-                        )
-                        .children(resting(status).map(|status| status_chip(status, &theme))),
-                )
-                .child(div().p(px(12.)).child(card_preview(
-                    &doc,
-                    base.as_deref(),
-                    None,
-                    shortened,
-                    overflow,
-                    window,
-                    cx,
-                )))
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    this.open_reference(&reference, window, cx)
-                }))
+            window
+                .use_keyed_state(SharedString::from(key), cx, move |_, cx| {
+                    embed::CardEmbed::new(board, card, reference, base, docs, root, cx)
+                })
                 .into_any_element(),
         )
     }
@@ -1295,7 +1256,7 @@ impl Cydonia {
     ) -> Option<AnyElement> {
         let theme = Theme::of(cx).clone();
         let member = self.workspace.read(cx).board_member(project, board_at)?;
-        let board = self.workspace.read(cx).board_in(project, board_at)?;
+        let board = self.workspace.read(cx).board_in(project, board_at, cx)?;
         let lanes: Vec<(String, bool)> = board
             .columns
             .iter()
@@ -1306,7 +1267,7 @@ impl Cydonia {
         let mut rows = Vec::new();
         for (lane, folded) in lanes {
             let Some((name, held, cards)) =
-                lane_cards(self.workspace.read(cx), project, board_at, &lane, "")
+                lane_cards(self.workspace.read(cx), project, board_at, &lane, "", cx)
             else {
                 continue;
             };
@@ -1330,7 +1291,7 @@ impl Cydonia {
                 let Some((handle, text, status, working)) = self
                     .workspace
                     .read(cx)
-                    .board_in(project, board_at)
+                    .board_in(project, board_at, cx)
                     .and_then(|board| {
                         let card = board.card(&id)?;
                         let chat = card_session(card, self.workspace.read(cx));
@@ -1438,6 +1399,7 @@ impl BoardView {
             drafts: Vec::new(),
             find: Find::default(),
             shown: PaneState::default(),
+            watch: Watch::default(),
             _name: name,
         }
     }
@@ -1463,7 +1425,7 @@ impl BoardView {
         };
         let held = self
             .located(cx)
-            .and_then(|(project, at)| self.workspace.read(cx).board_in(project, at))
+            .and_then(|(project, at)| self.workspace.read(cx).board_in(project, at, cx))
             .is_some_and(|board| board.card(&opened.card).is_some());
         held || self.draft().is_some()
     }
@@ -1523,7 +1485,7 @@ impl BoardView {
         let workspace = self.workspace.read(cx);
         let Some(text) = self
             .located(cx)
-            .and_then(|(project, at)| workspace.board_in(project, at))
+            .and_then(|(project, at)| workspace.board_in(project, at, cx))
             .and_then(|board| board.card(&card))
             .map(|held| held.text.clone())
         else {
@@ -1628,7 +1590,7 @@ impl BoardView {
         }
         let opened = self.opened.as_ref()?;
         let (project, board_at) = self.located(cx)?;
-        let board = self.workspace.read(cx).board_in(project, board_at)?;
+        let board = self.workspace.read(cx).board_in(project, board_at, cx)?;
         let card = board.card(&opened.card).cloned();
         let card = card.as_ref();
         let handle = card
@@ -1770,7 +1732,7 @@ impl BoardView {
             Editing::Card(id) => self
                 .workspace
                 .read(cx)
-                .board_at(&self.board.id)
+                .board_at(&self.board.id, cx)
                 .and_then(|board| board.card(id))
                 .map(|card| card.text.clone())
                 .unwrap_or_default(),
@@ -1797,7 +1759,7 @@ impl BoardView {
         self.card_field.update(cx, |field, cx| field.clear(cx));
         let id = self.board.id.clone();
         self.workspace.update(cx, |workspace, cx| {
-            workspace.write_board(&id, |board| match &at {
+            workspace.write_board(&id, cx, |board| match &at {
                 Editing::New(place, column) => {
                     if !text.is_empty() {
                         match place {
@@ -1814,7 +1776,6 @@ impl BoardView {
                     }
                 }
             });
-            cx.notify();
         });
         cx.notify();
     }
@@ -1827,7 +1788,7 @@ impl BoardView {
             return;
         };
         let workspace = self.workspace.read(cx);
-        let board = workspace.board_at(&self.board.id);
+        let board = workspace.board_at(&self.board.id, cx);
         let alive = match &at {
             Editing::New(_, column) => board.is_some_and(|board| board.column(column).is_some()),
             Editing::Card(card) => board.is_some_and(|board| board.card(card).is_some()),
@@ -1854,7 +1815,7 @@ impl BoardView {
         let name = self
             .workspace
             .read(cx)
-            .board_at(&self.board.id)
+            .board_at(&self.board.id, cx)
             .and_then(|board| board.column(&id))
             .map(|column| column.name.clone())
             .unwrap_or_default();
@@ -1890,7 +1851,7 @@ impl BoardView {
 
     /// Scroll to the first lane holding a card `query` finds.
     fn reveal_match(&mut self, query: &artifact::search::Query, cx: &mut Context<Self>) {
-        let Some(board) = self.workspace.read(cx).board_at(&self.board.id) else {
+        let Some(board) = self.workspace.read(cx).board_at(&self.board.id, cx) else {
             return;
         };
         let Some((ix, column)) = board.columns.iter().enumerate().find(|(_, column)| {
@@ -1959,7 +1920,7 @@ impl BoardView {
 
     fn board_key(&self, project: usize, board_at: usize, cx: &App) -> Option<BoardKey> {
         let workspace = self.workspace.read(cx);
-        let board = workspace.board_in(project, board_at)?;
+        let board = workspace.board_in(project, board_at, cx)?;
         Some(BoardKey {
             project: workspace.projects.get(project)?.path.clone(),
             board: board.id.clone(),
@@ -1983,7 +1944,7 @@ impl BoardView {
         else {
             return;
         };
-        let Some(board) = self.workspace.read(cx).board_in(at.0, at.1) else {
+        let Some(board) = self.workspace.read(cx).board_in(at.0, at.1, cx) else {
             return;
         };
         let column_of = |item: &Option<BoardItem>| match item {
@@ -2047,13 +2008,13 @@ impl BoardView {
                 self.workspace.update(cx, |workspace, cx| {
                     match from == at {
                         true => {
-                            workspace.move_card_within(at, &card, &column, before.as_deref());
+                            workspace.move_card_within(at, &card, &column, before.as_deref(), cx);
                         }
                         // A card that came off another board arrives under a
                         // handle of this one's, at the end of the lane it was
                         // dropped on: it is a new card here.
                         false => {
-                            workspace.carry_card(from, at, &card, Some(&column));
+                            workspace.carry_card(from, at, &card, Some(&column), cx);
                         }
                     }
                     cx.notify();
@@ -2067,8 +2028,9 @@ impl BoardView {
     fn move_card_to(&mut self, board: &str, card: &str, column: &str, cx: &mut Context<Self>) {
         self.commit_edit(cx);
         self.workspace.update(cx, |workspace, cx| {
-            workspace.write_board(board, |board| board.move_card_before(card, column, None));
-            cx.notify();
+            workspace.write_board(board, cx, |board| {
+                board.move_card_before(card, column, None)
+            });
         });
         cx.notify();
     }
@@ -2113,7 +2075,7 @@ impl BoardView {
         let Some(text) = self
             .workspace
             .read(cx)
-            .board_at(board)
+            .board_at(board, cx)
             .and_then(|board| board.card(card))
             .map(|card| card.text.clone())
         else {
@@ -2134,7 +2096,7 @@ impl BoardView {
         let (board, card) = (board.to_owned(), card.to_owned());
         self.workspace.update(cx, |workspace, cx| {
             let text = workspace
-                .board_at(&board)
+                .board_at(&board, cx)
                 .and_then(|board| board.card(&card))
                 .map(|card| card.text.clone());
             let (Some(text), Some(entry)) = (text, workspace.preferred_agent()) else {
@@ -2150,7 +2112,7 @@ impl BoardView {
             };
             // The link lands on the board, so the board is written — it is what
             // the ▶ reads after a quit.
-            workspace.write_board(&board, |held| held.dispatch_card(&card, record.clone()));
+            workspace.write_board(&board, cx, |held| held.dispatch_card(&card, record.clone()));
         });
         cx.notify();
     }
@@ -2167,7 +2129,7 @@ impl BoardView {
         let lanes: Vec<(String, String)> = self
             .workspace
             .read(cx)
-            .board_at(on)
+            .board_at(on, cx)
             .map(|board| {
                 let at = board.column_of(card).map(|column| column.id.clone());
                 board
@@ -2361,7 +2323,7 @@ impl BoardView {
         let Some(key) = self.board_key(project, board_at, cx) else {
             return div().flex_1().into_any_element();
         };
-        let Some(board) = self.workspace.read(cx).board_in(project, board_at) else {
+        let Some(board) = self.workspace.read(cx).board_in(project, board_at, cx) else {
             return div().flex_1().into_any_element();
         };
         // Read out before drawing: each column borrows the board again.
@@ -2541,7 +2503,7 @@ impl BoardView {
         let Some(key) = self.board_key(project, board_at, cx) else {
             return div().flex_1().into_any_element();
         };
-        let Some(board) = self.workspace.read(cx).board_in(project, board_at) else {
+        let Some(board) = self.workspace.read(cx).board_in(project, board_at, cx) else {
             return div().flex_1().into_any_element();
         };
         // Read out before drawing: each group borrows the board again.
@@ -2685,14 +2647,14 @@ impl BoardView {
         let id = id.to_owned();
         let query = self.find.text();
         let Some((name, held, cards)) =
-            lane_cards(self.workspace.read(cx), project, board_at, &id, &query)
+            lane_cards(self.workspace.read(cx), project, board_at, &id, &query, cx)
         else {
             return Vec::new();
         };
         let Some((board_id, folded)) = self
             .workspace
             .read(cx)
-            .board_in(project, board_at)
+            .board_in(project, board_at, cx)
             .and_then(|board| {
                 let column = board.column(&id)?;
                 Some((board.id.clone(), column.collapsed))
@@ -2954,7 +2916,7 @@ impl BoardView {
         let Some((card, handle)) = self
             .workspace
             .read(cx)
-            .board_in(project, board_at)
+            .board_in(project, board_at, cx)
             .and_then(|board| board.card(id).map(|card| (card, board.handle_of(card))))
         else {
             return div().into_any_element();
@@ -2969,7 +2931,7 @@ impl BoardView {
         let on_board = self
             .workspace
             .read(cx)
-            .board_in(project, board_at)
+            .board_in(project, board_at, cx)
             .map(|board| board.id.clone())
             .unwrap_or_default();
         let chat = card_session(card, self.workspace.read(cx));
@@ -3149,18 +3111,18 @@ impl BoardView {
         let on_board = self
             .workspace
             .read(cx)
-            .board_in(project, board_at)
+            .board_in(project, board_at, cx)
             .map(|board| board.id.clone())
             .unwrap_or_default();
         let query = self.find.text();
         let Some((name, held, cards)) =
-            lane_cards(self.workspace.read(cx), project, board_at, &id, &query)
+            lane_cards(self.workspace.read(cx), project, board_at, &id, &query, cx)
         else {
             return div().into_any_element();
         };
         let editing = self.editing.clone();
         let mut rows: Vec<LaneRow> = {
-            let board = self.workspace.read(cx).board_in(project, board_at);
+            let board = self.workspace.read(cx).board_in(project, board_at, cx);
             cards
                 .iter()
                 .map(|card| match &editing {
@@ -3547,7 +3509,7 @@ impl BoardView {
         let Some((card, handle)) = self
             .workspace
             .read(cx)
-            .board_in(project, board_at)
+            .board_in(project, board_at, cx)
             .and_then(|board| board.card(id).map(|card| (card, board.handle_of(card))))
         else {
             return div().into_any_element();
@@ -3562,7 +3524,7 @@ impl BoardView {
         let on_board = self
             .workspace
             .read(cx)
-            .board_in(project, board_at)
+            .board_in(project, board_at, cx)
             .map(|board| board.id.clone())
             .unwrap_or_default();
         let chat = card_session(card, self.workspace.read(cx));
@@ -3763,7 +3725,7 @@ impl Searchable for BoardView {
         let workspace = self.workspace.read(cx);
         let Some(board) = self
             .located(cx)
-            .and_then(|(project, at)| workspace.board_in(project, at))
+            .and_then(|(project, at)| workspace.board_in(project, at, cx))
         else {
             return 0;
         };
@@ -3789,6 +3751,12 @@ impl Searchable for BoardView {
 
 impl Render for BoardView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let board = self
+            .workspace
+            .read(cx)
+            .board_entity(&self.board.id)
+            .cloned();
+        self.watch.set(board.as_ref(), cx);
         let me = cx.entity_id();
         self.shown = self
             .root
@@ -3804,7 +3772,7 @@ impl Render for BoardView {
         let Some(view) = self
             .workspace
             .read(cx)
-            .board_in(project, board_at)
+            .board_in(project, board_at, cx)
             .map(|board| board.view)
         else {
             return div().flex_1().into_any_element();

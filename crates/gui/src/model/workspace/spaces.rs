@@ -427,7 +427,7 @@ impl Workspace {
             .spaces
             .iter()
             .flat_map(Space::entries)
-            .filter(|member| self.archived(member))
+            .filter(|member| self.archived(member, cx))
             .collect();
         for member in archived {
             self.drop_from_spaces(&member, cx);
@@ -436,7 +436,7 @@ impl Workspace {
 
     /// Whether the entry a member names is archived. One no open project lists
     /// is not.
-    fn archived(&self, member: &Member) -> bool {
+    fn archived(&self, member: &Member, cx: &App) -> bool {
         let Some(open) = self
             .projects
             .iter()
@@ -452,7 +452,7 @@ impl Workspace {
             Kind::Board => open
                 .boards
                 .iter()
-                .any(|board| board.archived && board.id == member.id),
+                .any(|held| held.id == member.id && held.board.read(cx).archived),
             Kind::Article => open
                 .articles
                 .iter()
@@ -614,11 +614,11 @@ impl Workspace {
 
     /// The board a pane is on, by its place in its project. Named apart from
     /// [`Self::board_at`], which finds one by file wherever it is open.
-    pub fn board_in(&self, project: usize, ix: usize) -> Option<&Board> {
+    pub fn board_in<'a>(&self, project: usize, ix: usize, cx: &'a App) -> Option<&'a Board> {
         if !self.settings.features.boards {
             return None;
         }
-        self.projects.get(project)?.boards.get(ix)
+        self.projects.get(project)?.board(ix, cx)
     }
 
     /// The board one pane is showing.
@@ -627,13 +627,13 @@ impl Workspace {
     /// answers for at most one of the boards a space can have on screen. No
     /// member is a window showing one entry, where the selection is the whole
     /// truth.
-    pub fn board_of(&self, member: Option<&Member>) -> Option<&Board> {
+    pub fn board_of<'a>(&self, member: Option<&Member>, cx: &'a App) -> Option<&'a Board> {
         let Some(member) = member else {
-            return self.active_board();
+            return self.active_board(cx);
         };
         match self.showing_of(member)? {
             (project, Showing::Board(id)) => {
-                self.board_in(project, self.projects.get(project)?.board_ix(&id)?)
+                self.board_in(project, self.projects.get(project)?.board_ix(&id)?, cx)
             }
             _ => None,
         }
@@ -746,7 +746,7 @@ impl Workspace {
             return false;
         };
         match showing {
-            Showing::Board(id) => open.board_ix(id).is_some() && open.load_board(id),
+            Showing::Board(id) => open.board_ix(id).is_some() && open.load_board(id, cx),
             Showing::Article(id) => {
                 if let Some(ix) = open.article_ix(id) {
                     open.articles[ix].open(cx);

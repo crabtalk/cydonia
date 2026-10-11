@@ -3,7 +3,7 @@
 //! and the composer — the queue of prompts waiting for a turn, and the bar
 //! over a run picked out of the transcript.
 
-use super::Pane;
+use super::Tab;
 use crate::{
     model::workspace::Workspace,
     view::{
@@ -243,7 +243,7 @@ impl Band {
     }
 }
 
-impl Pane {
+impl Tab {
     /// A press on the pane's band: the focus comes to the pane.
     fn press(&self) -> Option<Press> {
         let on = self.entry.clone()?;
@@ -327,7 +327,7 @@ impl Pane {
         let workspace = self.workspace.read(cx);
         let Some(chat) = id.and_then(|id| workspace.session(id)) else {
             // No session, and the pane showing regardless: one was asked for
-            // with no agent to open it on — see [`Pane::asked_session`].
+            // with no agent to open it on — see [`Tab::asked_session`].
             return match self.asked_session {
                 true => self.no_agent(None, false, cx),
                 false => div().flex_1().into_any_element(),

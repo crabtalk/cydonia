@@ -73,7 +73,7 @@ impl Cydonia {
             project: open.path.clone(),
             showing: showing.clone(),
         };
-        let facts = open.facts(&showing)?;
+        let facts = open.facts(&showing, cx)?;
         let naming = match showing {
             Showing::Session(id) => Naming::Inline(Renaming::Session(id)),
             Showing::Board(id) => Naming::Panel(id),

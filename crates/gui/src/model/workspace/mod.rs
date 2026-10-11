@@ -176,7 +176,7 @@ impl Workspace {
             .into_iter()
             .map(|path| {
                 let expanded = !state.collapsed.contains(&path);
-                let mut project = Project::new(path);
+                let mut project = Project::new(path, cx);
                 project.expanded = expanded;
                 project
             })

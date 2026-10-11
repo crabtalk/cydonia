@@ -17,7 +17,7 @@
 use crate::view::kit::menu;
 use crate::view::{
     component::composer,
-    pane::{Pane, PaneMenu},
+    pane::{Tab, TabMenu},
     window::root::Cydonia,
 };
 use artifact::reference;
@@ -79,7 +79,7 @@ pub fn bindings() -> Vec<KeyBinding> {
     ]
 }
 
-/// The ribbon's own state, hung on its [`Pane`].
+/// The ribbon's own state, hung on its [`Tab`].
 pub(crate) struct Ribbon {
     /// The pointer is dragging a run out. The bar waits for the release: one
     /// that followed the pointer would sit over the very words being chosen,
@@ -221,7 +221,7 @@ pub fn perch(view: Bounds<Pixels>, head: Bounds<Pixels>) -> Option<Point<Pixels>
         .then(|| point(head.origin.x, top - px(GAP)))
 }
 
-impl Pane {
+impl Tab {
     // ── mutations ────────────────────────────────────────────────
 
     /// Note that the pointer is choosing a run, and that it has stopped. The
@@ -674,7 +674,7 @@ impl Pane {
                     ContextMenu::toggle(
                         this,
                         |this| &mut this.menu,
-                        PaneMenu::Turn,
+                        TabMenu::Turn,
                         Place::Below,
                         move |_, _, _| menu::chooser(Self::turn_rows(current)),
                         window,
@@ -683,13 +683,13 @@ impl Pane {
                 }
             }))
             .children(self.menu.render_for(
-                &PaneMenu::Turn,
+                &TabMenu::Turn,
                 "ribbon-turn-card",
                 |this| &mut this.menu,
                 window,
                 cx,
             ));
-        ContextMenu::trigger(button, |this: &mut Self| &mut this.menu, PaneMenu::Turn, cx)
+        ContextMenu::trigger(button, |this: &mut Self| &mut this.menu, TabMenu::Turn, cx)
     }
 
     /// Every block the run could be turned into — the editor's own vocabulary,
@@ -709,14 +709,14 @@ impl Pane {
 
 impl Cydonia {
     /// Note on the focused pane that the pointer is choosing a run — see
-    /// [`Pane::set_selecting`].
+    /// [`Tab::set_selecting`].
     pub(crate) fn set_selecting(&mut self, selecting: bool, cx: &mut Context<Self>) {
         self.leaf()
             .clone()
             .update(cx, |pane, cx| pane.set_selecting(selecting, cx));
     }
 
-    /// Put the focused pane's bar back to rest — see [`Pane::rest_ribbon`].
+    /// Put the focused pane's bar back to rest — see [`Tab::rest_ribbon`].
     pub(crate) fn rest_ribbon(&mut self, cx: &mut Context<Self>) {
         self.leaf()
             .clone()

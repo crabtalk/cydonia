@@ -63,9 +63,9 @@ fn a_clicked_session_link_reaches_the_handler_with_the_session_folder(
     });
     let window = cx.add_window(|window, cx| {
         let workspace = cx.new(|cx| Workspace::new(Settings::default(), State::default(), cx));
-        workspace.update(cx, |workspace, _| {
+        workspace.update(cx, |workspace, cx| {
             let cwd = PathBuf::from("/work/project");
-            let mut project = Project::new(cwd.clone());
+            let mut project = Project::new(cwd.clone(), cx);
             let record = serde_json::from_value(serde_json::json!({
                 "id": "test", "agent": "test", "title": "", "name": null,
                 "updated": 1, "items": []

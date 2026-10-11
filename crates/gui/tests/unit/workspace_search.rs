@@ -35,8 +35,8 @@ fn workspace_search_keeps_results_beyond_the_palette_limit(cx: &mut gpui::TestAp
         .add_window(|window, cx| Cydonia::new(Default::default(), Default::default(), window, cx));
     window
         .update(cx, |this, _, cx| {
-            this.workspace.update(cx, |workspace, _| {
-                let mut project = crate::model::project::Project::new(root.clone());
+            this.workspace.update(cx, |workspace, cx| {
+                let mut project = crate::model::project::Project::new(root.clone(), cx);
                 project.expanded = false;
                 workspace.projects.push(project);
             });

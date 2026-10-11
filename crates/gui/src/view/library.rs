@@ -406,7 +406,7 @@ impl Cydonia {
             }
             let project = SharedString::from(open.name());
             let kind = library.tab.kind();
-            for (ix, facts) in open.every(kind).enumerate() {
+            for (ix, facts) in open.every(kind, cx).enumerate() {
                 let row = Row::Entry {
                     project: open.path.clone(),
                     showing: facts.showing,
@@ -417,7 +417,10 @@ impl Cydonia {
                 // A board is referred to by its key, which is what its handles
                 // carry; everything else by its number.
                 let (reference, number) = match kind {
-                    Kind::Board => (Some(open.boards[ix].key.clone().into()), None),
+                    Kind::Board => (
+                        Some(open.boards[ix].board.read(cx).key.clone().into()),
+                        None,
+                    ),
                     _ => (
                         facts.number.map(|n| SharedString::from(format!("#{n}"))),
                         facts.number,
@@ -668,7 +671,7 @@ impl Cydonia {
         };
         let workspace = self.workspace.read(cx);
         let open = &workspace.projects[workspace.project_at(project)?];
-        let number = open.facts(showing)?.number?;
+        let number = open.facts(showing, cx)?.number?;
         let name = artifact::reference::project_name(project)?;
         Some(artifact::reference::Reference::entry(Some(&name), number, None).to_string())
     }

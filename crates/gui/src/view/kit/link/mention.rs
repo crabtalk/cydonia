@@ -67,7 +67,7 @@ impl Global for Linkables {}
 
 /// Every open project's entries, as what `@` lists. Installed with
 /// `cx.set_global`.
-pub(crate) fn read(workspace: &Workspace) -> Linkables {
+pub(crate) fn read(workspace: &Workspace, cx: &App) -> Linkables {
     let active = workspace.active_project().map(|project| &project.path);
     let mut held = Vec::new();
     for project in &workspace.projects {
@@ -137,7 +137,8 @@ pub(crate) fn read(workspace: &Workspace) -> Linkables {
                 )
             })
         }));
-        held.extend(project.boards.iter().filter_map(|board| {
+        held.extend(project.boards.iter().filter_map(|held| {
+            let board = held.board.read(cx);
             let number = board.number?;
             let key = (!board.key.is_empty()).then(|| board.key.clone());
             let about = match &key {
@@ -174,7 +175,7 @@ pub(crate) fn source(query: &str, cx: &App) -> Vec<Mention> {
     let workspace = references::current(cx);
     let cards = workspace
         .as_ref()
-        .map(|workspace| carded(workspace.read(cx)))
+        .map(|workspace| carded(workspace.read(cx), cx))
         .unwrap_or_default();
     let query = Query::parse(query);
     let (named, holding) = query.rank_cards(&cards);
@@ -226,14 +227,14 @@ impl Carded<'_> {
     }
 }
 
-pub(crate) fn carded(workspace: &Workspace) -> Vec<Carded<'_>> {
+pub(crate) fn carded<'a>(workspace: &'a Workspace, cx: &'a App) -> Vec<Carded<'a>> {
     let active = workspace.active_project().map(|project| &project.path);
     let mut cards = Vec::new();
     for project in &workspace.projects {
         let Some(name) = reference::project_name(&project.path) else {
             continue;
         };
-        for board in &project.boards {
+        for board in project.boards.iter().map(|held| held.board.read(cx)) {
             for card in board.columns.iter().flat_map(|column| &column.cards) {
                 let (Some(number), Some(handle)) = (card.handle, board.handle_of(card)) else {
                     continue;

@@ -17,7 +17,7 @@ use crate::{
 use artifact::board::Board;
 use artifact::kind::Kind;
 use artifact::project::Project as _;
-use bezel::gpui::Context;
+use bezel::gpui::{App, AppContext as _, Context, Entity};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -41,11 +41,28 @@ pub struct Facts {
     pub agent: Option<String>,
 }
 
+/// A board a project holds: its id, which never changes, and the board, which
+/// every view drawing any of it observes.
+#[derive(Clone)]
+pub struct HeldBoard {
+    pub id: String,
+    pub board: Entity<Board>,
+}
+
+impl HeldBoard {
+    pub fn new(board: Board, cx: &mut App) -> Self {
+        Self {
+            id: board.id.clone(),
+            board: cx.new(|_| board),
+        }
+    }
+}
+
 pub struct Project {
     pub path: PathBuf,
     pub sessions: Vec<ChatSession>,
     pub active: Option<u64>,
-    pub boards: Vec<Board>,
+    pub boards: Vec<HeldBoard>,
     unloaded_boards: std::collections::HashSet<String>,
     /// Which board the board pane shows.
     pub board: Option<usize>,
@@ -92,9 +109,13 @@ impl Project {
         })
     }
 
-    pub fn new(path: PathBuf) -> Self {
+    pub fn new(path: PathBuf, cx: &mut App) -> Self {
         let mut this = Self {
-            boards: store::open(&path).boards(),
+            boards: store::open(&path)
+                .boards()
+                .into_iter()
+                .map(|board| HeldBoard::new(board, cx))
+                .collect(),
             unloaded_boards: Default::default(),
             articles: article::list(&path),
             data: Data::attach(&path),
@@ -113,40 +134,49 @@ impl Project {
             watch: None,
         };
         this.reload_tables();
-        this.unload_boards(None);
+        this.unload_boards(None, cx);
         this
     }
 
-    pub fn load_board(&mut self, id: &str) -> bool {
+    pub fn load_board(&mut self, id: &str, cx: &mut App) -> bool {
         if !self.unloaded_boards.contains(id) {
             return true;
         }
         let Some(fresh) = self.store().board(id) else {
             return false;
         };
-        let Some(board) = self.boards.iter_mut().find(|board| board.id == id) else {
+        let Some(held) = self.boards.iter().find(|held| held.id == id) else {
             return false;
         };
-        *board = fresh;
+        held.board.update(cx, |board, cx| {
+            *board = fresh;
+            cx.notify();
+        });
         self.unloaded_boards.remove(id);
         true
     }
 
-    pub fn unload_boards(&mut self, visible: Option<usize>) {
+    pub fn unload_boards(&mut self, visible: Option<usize>, cx: &mut App) {
         let store = self.store();
-        for (ix, board) in self.boards.iter_mut().enumerate() {
-            if !board.archived || visible == Some(ix) || self.unloaded_boards.contains(&board.id) {
+        for (ix, held) in self.boards.iter().enumerate() {
+            let board = held.board.read(cx);
+            if !board.archived || visible == Some(ix) || self.unloaded_boards.contains(&held.id) {
                 continue;
             }
-            let Some(saved) = store.board(&board.id) else {
+            let Some(saved) = store.board(&held.id) else {
                 continue;
             };
-            if serde_json::to_value(&saved).ok() != serde_json::to_value(&*board).ok() {
+            if serde_json::to_value(&saved).ok() != serde_json::to_value(board).ok() {
                 continue;
             }
-            board.columns = Vec::new();
-            self.unloaded_boards.insert(board.id.clone());
+            held.board.update(cx, |board, _| board.columns = Vec::new());
+            self.unloaded_boards.insert(held.id.clone());
         }
+    }
+
+    /// The board listed at `ix`.
+    pub fn board<'a>(&self, ix: usize, cx: &'a App) -> Option<&'a Board> {
+        Some(self.boards.get(ix)?.board.read(cx))
     }
 
     /// Re-read everything on disk and reconcile it with what is held. The
@@ -165,7 +195,7 @@ impl Project {
             self.data = Data::attach(&self.path);
         }
         self.reload_articles(cx);
-        let boards = self.reload_boards();
+        let boards = self.reload_boards(cx);
         let before = self.shape();
         self.reload_tables();
         boards || before != self.shape()
@@ -218,32 +248,36 @@ impl Project {
     /// The same, for boards. Nothing here is a live surface, so the merge is
     /// only about not disturbing a board the re-read did not change — see
     /// [`Board::adopt`], whose answer is carried out of here.
-    fn reload_boards(&mut self) -> bool {
+    fn reload_boards(&mut self, cx: &mut App) -> bool {
         let open = self
             .board
             .and_then(|ix| self.boards.get(ix))
-            .map(|board| board.id.clone());
-        let mut held: HashMap<String, Board> = self
+            .map(|held| held.id.clone());
+        let mut held: HashMap<String, HeldBoard> = self
             .boards
             .drain(..)
-            .map(|board| (board.id.clone(), board))
+            .map(|held| (held.id.clone(), held))
             .collect();
         self.unloaded_boards.clear();
         let mut moved = false;
-        self.boards = self
-            .store()
-            .boards()
+        let fresh = self.store().boards();
+        self.boards = fresh
             .into_iter()
             .map(|fresh| match held.remove(&fresh.id) {
-                Some(mut board) => {
-                    moved |= board.adopt(fresh);
-                    board
+                // The entity stays, so every view drawing the board keeps
+                // drawing it: what changes is what it holds.
+                Some(kept) => {
+                    kept.board.update(cx, |board, cx| {
+                        moved |= board.adopt(fresh);
+                        cx.notify();
+                    });
+                    kept
                 }
-                None => fresh,
+                None => HeldBoard::new(fresh, cx),
             })
             .collect();
         self.board = open.and_then(|id| self.boards.iter().position(|at| at.id == id));
-        self.unload_boards(self.board);
+        self.unload_boards(self.board, cx);
         moved
     }
 
@@ -347,23 +381,23 @@ impl Project {
     }
 
     /// What the entry `showing` names carries, whatever its kind.
-    pub fn facts(&self, showing: &Showing) -> Option<Facts> {
-        Some(self.facts_at(showing.kind(), self.ix_of(showing)?))
+    pub fn facts(&self, showing: &Showing, cx: &App) -> Option<Facts> {
+        Some(self.facts_at(showing.kind(), self.ix_of(showing)?, cx))
     }
 
     /// Every entry of `kind`, in list order.
-    pub fn every(&self, kind: Kind) -> impl Iterator<Item = Facts> + '_ {
+    pub fn every<'a>(&'a self, kind: Kind, cx: &'a App) -> impl Iterator<Item = Facts> + 'a {
         let len = match kind {
             Kind::Session => self.sessions.len(),
             Kind::Board => self.boards.len(),
             Kind::Article => self.articles.len(),
             Kind::Table => self.tables.len(),
         };
-        (0..len).map(move |ix| self.facts_at(kind, ix))
+        (0..len).map(move |ix| self.facts_at(kind, ix, cx))
     }
 
     /// The facts of the `ix`th entry of `kind`. Panics past the end.
-    pub fn facts_at(&self, kind: Kind, ix: usize) -> Facts {
+    pub fn facts_at(&self, kind: Kind, ix: usize, cx: &App) -> Facts {
         match kind {
             Kind::Session => {
                 let chat = &self.sessions[ix];
@@ -379,7 +413,7 @@ impl Project {
                 }
             }
             Kind::Board => {
-                let board = &self.boards[ix];
+                let board = self.boards[ix].board.read(cx);
                 Facts {
                     showing: Showing::Board(board.id.clone()),
                     label: board.label().to_owned(),

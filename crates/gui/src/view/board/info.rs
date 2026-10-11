@@ -69,7 +69,7 @@ impl Cydonia {
         let Some((name, key)) = self
             .workspace
             .read(cx)
-            .board_at(board)
+            .board_at(board, cx)
             .map(|board| (board.name.clone(), board.key.clone()))
         else {
             cx.notify();

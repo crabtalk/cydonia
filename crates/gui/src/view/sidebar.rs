@@ -1087,7 +1087,7 @@ impl Cydonia {
         };
         let mut entries: Vec<Ranked> = Kind::ALL
             .into_iter()
-            .flat_map(|kind| open.every(kind))
+            .flat_map(|kind| open.every(kind, cx))
             // An article's thread is reached from its article.
             .filter(|facts| match facts.showing {
                 Showing::Session(id) => open.session(id).is_none_or(|chat| chat.article.is_none()),
@@ -1202,7 +1202,7 @@ impl Cydonia {
             return false;
         };
         !workspace
-            .labels_of(at, showing)
+            .labels_of(at, showing, cx)
             .is_some_and(|labels| labels.contains(label))
     }
 
@@ -1496,7 +1496,11 @@ impl Cydonia {
                 },
                 Some((project, ix)),
             ) => {
-                let name = workspace.projects[project].boards[ix].label().to_owned();
+                let name = workspace.projects[project].boards[ix]
+                    .board
+                    .read(cx)
+                    .label()
+                    .to_owned();
                 self.board_row(row, project, ix, name, lifted, window, cx)
             }
             (
@@ -1588,7 +1592,7 @@ impl Cydonia {
                 Row::Entry { showing, .. } => {
                     let (project, ix) = self.located(row, cx)?;
                     workspace.projects[project]
-                        .facts_at(showing.kind(), ix)
+                        .facts_at(showing.kind(), ix, cx)
                         .label
                 }
             })
@@ -1973,7 +1977,7 @@ impl Cydonia {
     /// one at a time. Nothing for a project with none.
     fn label_filter_menu(&self, ix: usize, cx: &App) -> Option<(Item, menu::Act)> {
         let workspace = self.workspace.read(cx);
-        let counts = workspace.project_label_counts(ix);
+        let counts = workspace.project_label_counts(ix, cx);
         let picked = workspace.projects.get(ix)?.label.clone();
         if counts.is_empty() && picked.is_none() {
             return None;
@@ -2184,7 +2188,7 @@ impl Cydonia {
             .projects
             .get(project)
             .and_then(|open| open.boards.get(ix));
-        let archived = board.is_some_and(|board| board.archived);
+        let archived = board.is_some_and(|held| held.board.read(cx).archived);
         let tint = light.tint(archived, &theme);
         // No inline field on a board's row, ever: a board is named by its panel
         // — see [`Self::rename_entry`].
@@ -2337,7 +2341,7 @@ impl Cydonia {
             return false;
         };
         self.workspace.read(cx).projects[project]
-            .facts_at(showing.kind(), ix)
+            .facts_at(showing.kind(), ix, cx)
             .archived
     }
 
@@ -2455,7 +2459,7 @@ impl Cydonia {
             && let Some((id, view)) = self
                 .workspace
                 .read(cx)
-                .board_in(project, ix)
+                .board_in(project, ix, cx)
                 .map(|board| (board.id.clone(), board.view))
         {
             let views = [View::Lanes, View::List];

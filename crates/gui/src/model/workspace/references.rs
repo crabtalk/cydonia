@@ -73,7 +73,7 @@ impl Workspace {
 
     /// The entry a reference names, or why it names none. A reference with
     /// no project is read in the active one.
-    pub fn resolve(&self, text: &str) -> Result<Resolved, String> {
+    pub fn resolve(&self, text: &str, cx: &App) -> Result<Resolved, String> {
         let Some(reference) = reference::parse(text) else {
             return Err(format!("{text} is not a reference"));
         };
@@ -86,9 +86,9 @@ impl Workspace {
         };
         let (number, within) = match reference.target {
             Target::Entry { number, within } => (number, within),
-            Target::Card { key, handle } => return card(project, key, handle, text),
+            Target::Card { key, handle } => return card(project, key, handle, text, cx),
         };
-        let Some((kind, showing, title)) = entry(project, number) else {
+        let Some((kind, showing, title)) = entry(project, number, cx) else {
             return Err(Error::NotFound {
                 what: "entry",
                 named: text.to_owned(),
@@ -129,7 +129,7 @@ impl Workspace {
 
 /// The entry `number` names in `project`: its kind, what shows it, and its
 /// own title.
-fn entry(project: &Project, number: u64) -> Option<(Kind, Showing, String)> {
+fn entry(project: &Project, number: u64, cx: &App) -> Option<(Kind, Showing, String)> {
     project
         .sessions
         .iter()
@@ -152,6 +152,7 @@ fn entry(project: &Project, number: u64) -> Option<(Kind, Showing, String)> {
             project
                 .boards
                 .iter()
+                .map(|held| held.board.read(cx))
                 .find(|board| board.number == Some(number))
                 .map(|board| {
                     (
@@ -178,8 +179,19 @@ fn entry(project: &Project, number: u64) -> Option<(Kind, Showing, String)> {
 
 /// The card `key-handle` names in `project`, as a part of its board. `text`
 /// is the reference, for the refusal.
-fn card(project: &Project, key: &str, handle: u64, text: &str) -> Result<Resolved, String> {
-    let Some(board) = project.boards.iter().find(|board| board.keyed(key)) else {
+fn card(
+    project: &Project,
+    key: &str,
+    handle: u64,
+    text: &str,
+    cx: &App,
+) -> Result<Resolved, String> {
+    let Some(board) = project
+        .boards
+        .iter()
+        .map(|held| held.board.read(cx))
+        .find(|board| board.keyed(key))
+    else {
         return Err(Error::NotFound {
             what: "board",
             named: key.to_owned(),
@@ -243,7 +255,7 @@ fn passage(disk: Rc<Disk>, within: Within<'_>, text: &str) -> Result<Passage, St
 
 /// [`Workspace::resolve`] on the installed workspace.
 pub fn resolve_in(text: &str, cx: &App) -> Option<Resolved> {
-    current(cx)?.read(cx).resolve(text).ok()
+    current(cx)?.read(cx).resolve(text, cx).ok()
 }
 
 /// The workspace [`Workspace::install`] made current.

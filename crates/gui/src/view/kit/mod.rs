@@ -11,3 +11,4 @@ pub mod new;
 pub mod rename;
 pub mod stamp;
 pub mod text;
+pub mod watch;

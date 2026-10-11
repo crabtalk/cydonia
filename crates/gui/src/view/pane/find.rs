@@ -2,12 +2,12 @@
 //!
 //! The board's find narrows its cards instead — see
 //! [`crate::view::board::FindCard`]. Both share the pane's find field and
-//! [`crate::view::pane::Pane::finding`].
+//! [`crate::view::pane::Tab::finding`].
 //!
 //! Hits are looked for in the rendered text of each block, the text a reader
 //! sees, not in the markdown source.
 
-use super::Pane;
+use super::Tab;
 use crate::view::{
     board::{self, DismissFind, FindCard},
     window::root::Cydonia,
@@ -126,7 +126,7 @@ pub(crate) trait Searchable: Sized + 'static {
     fn reveal_hit(&mut self, cx: &mut Context<Self>);
 }
 
-impl Pane {
+impl Tab {
     /// What the pane's find bar and the applied search say now.
     pub(crate) fn find(&self, cx: &App) -> Find {
         Find {

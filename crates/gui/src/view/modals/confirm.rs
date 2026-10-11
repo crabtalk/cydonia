@@ -221,7 +221,7 @@ impl Cydonia {
         let label = self
             .workspace
             .read(cx)
-            .board_at(on)
+            .board_at(on, cx)
             .and_then(|board| Some((board, board.card(card)?)))
             .map(|(board, found)| board.handle_of(found).unwrap_or_else(|| found.text.clone()))
             .unwrap_or_default();
@@ -252,7 +252,7 @@ impl Cydonia {
         let label = self
             .workspace
             .read(cx)
-            .board_at(on)
+            .board_at(on, cx)
             .and_then(|board| board.column(column))
             .map(|column| column.name.clone())
             .unwrap_or_default();

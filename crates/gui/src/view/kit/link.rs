@@ -261,7 +261,7 @@ pub(crate) struct Named {
 impl Cydonia {
     /// The entry a reference names, or why it names none.
     pub(crate) fn named(&self, text: &str, cx: &App) -> Result<Named, String> {
-        let resolved = self.workspace.read(cx).resolve(text)?;
+        let resolved = self.workspace.read(cx).resolve(text, cx)?;
         Ok(Named {
             row: Row::Entry {
                 project: resolved.project,
@@ -377,8 +377,9 @@ impl Cydonia {
                 .iter()
                 .find(|open| &open.path == project)
                 .and_then(|open| open.boards.get(open.board_ix(id)?))
-                .map(|board| {
-                    board
+                .map(|held| {
+                    held.board
+                        .read(cx)
                         .columns
                         .iter()
                         .map(|column| format!("{} {}", column.name, column.cards.len()))
@@ -962,7 +963,7 @@ impl Cydonia {
     pub(crate) fn sync_session_cards(&mut self, cx: &mut Context<Self>) {
         let workspace = self.workspace.read(cx);
         let items = slash_items();
-        let linkables = crate::view::kit::link::mention::read(workspace);
+        let linkables = crate::view::kit::link::mention::read(workspace, cx);
         let agents = composer_agents(workspace);
         let pointed: Vec<_> = self
             .session_cards

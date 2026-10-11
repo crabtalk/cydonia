@@ -101,7 +101,7 @@ impl NewBoard {
         root: WeakEntity<Cydonia>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let derived: SharedString = workspace.read(cx).free_key(project, "").into();
+        let derived: SharedString = workspace.read(cx).free_key(project, "", cx).into();
         let name = form::field(
             CREATE_CONTEXT,
             SharedString::default(),
@@ -136,7 +136,11 @@ impl NewBoard {
         if self.key.read(cx).content() != &self.derived {
             return;
         }
-        let derived: SharedString = self.workspace.read(cx).free_key(self.project, name).into();
+        let derived: SharedString = self
+            .workspace
+            .read(cx)
+            .free_key(self.project, name, cx)
+            .into();
         self.key
             .update(cx, |field, cx| field.set_content(derived.clone(), cx));
         self.derived = derived;

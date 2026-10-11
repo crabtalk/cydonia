@@ -177,7 +177,7 @@ impl Cydonia {
                 let count = self
                     .workspace
                     .read(cx)
-                    .label_counts()
+                    .label_counts(cx)
                     .get(name.as_ref())
                     .copied()
                     .unwrap_or_default();
@@ -230,7 +230,7 @@ impl Cydonia {
     /// Every label in every open project, as `target` sees it.
     fn label_choices(&self, target: &Target, cx: &App) -> Vec<Choice> {
         let workspace = self.workspace.read(cx);
-        let counts = workspace.label_counts();
+        let counts = workspace.label_counts(cx);
         let held: Vec<Vec<String>> = match target {
             Target::Cell(row) | Target::Page(row) => vec![row.clone()],
             Target::Selection => self.selected_rows(),
@@ -242,7 +242,9 @@ impl Cydonia {
                 return None;
             };
             let at = workspace.project_at(&project)?;
-            workspace.labels_of(at, &showing).map(<[String]>::to_vec)
+            workspace
+                .labels_of(at, &showing, cx)
+                .map(<[String]>::to_vec)
         })
         .collect();
         let filter = self

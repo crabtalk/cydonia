@@ -2,7 +2,7 @@
 //! shown, made the first time it shows each and kept so that showing one again
 //! finds it where the pane left it.
 
-use super::{Pane, find::Searchable as _};
+use super::{Tab, find::Searchable as _};
 use crate::view::{
     article::ArticleView,
     board::BoardView,
@@ -12,7 +12,7 @@ use crate::view::{
 use artifact::{kind::Kind, space::Member};
 use bezel::gpui::{App, AppContext as _, Context, Entity};
 
-impl Pane {
+impl Tab {
     /// The entry of `kind` the pane shows: its own, or for the pane a window
     /// with no space open shows, what the project in front is pointed at.
     fn shown_of(&self, kind: Kind, cx: &App) -> Option<Member> {

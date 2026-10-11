@@ -1189,7 +1189,7 @@ impl Cydonia {
     }
 
     /// The queue under session `id`'s transcript in `on`'s pane — see
-    /// [`Pane::queue`].
+    /// [`Tab::queue`].
     pub(crate) fn queue(
         &mut self,
         id: u64,

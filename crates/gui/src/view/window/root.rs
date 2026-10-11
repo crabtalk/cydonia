@@ -26,7 +26,7 @@ use crate::{
             composer::{Composer, ComposerEvent},
             meter,
         },
-        pane::Pane,
+        pane::{Pane, Tab},
         sidebar::{Dragged, Renaming, Row},
         window::menubar::CloseWindow,
         window::modal::ModalLayer,
@@ -40,7 +40,7 @@ use bezel::{
     gpui::{
         self, AnyElement, App, Axis, Bounds, Context, Div, DragMoveEvent, Empty, Entity,
         FocusHandle, Focusable, Hsla, KeyBinding, PathPromptOptions, Pixels, Point, Render,
-        SharedString, TitlebarOptions, UniformListScrollHandle, Window, WindowBounds, WindowHandle,
+        TitlebarOptions, UniformListScrollHandle, Window, WindowBounds, WindowHandle,
         WindowOptions, actions, div, point, prelude::*, px, size,
     },
     motion::{Fade, Painter},
@@ -51,11 +51,10 @@ use bezel::{
         floating::Floating,
         icons,
         stats::Stats,
-        tabs,
         widgets::{ButtonStyle, Buttons, Content, SplitDrag},
     },
 };
-use std::{cell::RefCell, rc::Rc};
+use std::rc::Rc;
 
 const SIDEBAR_WIDTH: f32 = 200.;
 
@@ -437,15 +436,17 @@ struct Listed {
 /// wide the sidebar is, which menu is open, and what a dialog is asking about.
 ///
 /// What is being shown, and everything the showing of it needs, is the
-/// [`Pane`]'s.
+/// [`Tab`]'s.
 pub struct Cydonia {
     pub(crate) workspace: Entity<Workspace>,
     /// The panes on screen, and which of them has the focus.
     ///
-    /// One unless a space is open — see [`Pane`]. The order is the order the
+    /// One unless a space is open — see [`Tab`]. The order is the order the
     /// arrangement lays them out, so stepping through them is stepping across
     /// the window.
-    pub(crate) leaves: Vec<Entity<Pane>>,
+    pub(crate) leaves: Vec<Entity<Tab>>,
+    /// The panes of the open space, each holding its tabs — see [`Pane`].
+    pub(crate) panes: Vec<Entity<Pane>>,
     /// What the sidebar showed of each session when it was last drawn — see
     /// [`Self::session_listed_changed`].
     listed: std::collections::HashMap<u64, Listed>,
@@ -534,12 +535,6 @@ pub struct Cydonia {
     /// Every board on screen: cards between lanes and boards, lanes and list
     /// groups along their own board.
     pub(crate) board_sort: drag::Domain<board::BoardRegion, board::BoardItem>,
-    /// Each pane's strip, by the pane's own name.
-    pub(crate) strips: RefCell<std::collections::HashMap<SharedString, tabs::Reorder<Dragged>>>,
-    /// Which of each pane's tabs is in front, by the pane's own name — see
-    /// [`Cydonia::front_of`]. Runtime only: where the panes are is the
-    /// space's, and which tab you happen to be looking at is not.
-    pub(crate) fronts: std::collections::HashMap<SharedString, Member>,
     /// The tabs that have been brought to the front, most recent last, across
     /// every pane. Read when a tab closes, to land on the one that was in
     /// front before it rather than on a neighbour in the strip — see
@@ -559,9 +554,6 @@ pub struct Cydonia {
     /// [`crate::view::kit::menu`].
     pub(crate) menu: ContextMenu<Cydonia, Menu>,
     pub(crate) sidebar_hovered: Option<Menu>,
-    /// The space pane whose bar the pointer is over, by its key: its `+` and
-    /// `···` take room in the bar only there. See [`Self::sidebar_hovered`].
-    pub(crate) pane_hovered: Option<gpui::SharedString>,
     /// What the name field is attached to, and the field itself.
     pub(crate) renaming: Option<Renaming>,
     pub(crate) name_field: Entity<NameField>,
@@ -583,7 +575,7 @@ impl Cydonia {
     ///
     /// Never empty: a window always draws at least one pane, and closing the
     /// last one is closing the space, not the pane.
-    pub(crate) fn leaf(&self) -> &Entity<Pane> {
+    pub(crate) fn leaf(&self) -> &Entity<Tab> {
         let at = self.focused.min(self.leaves.len().saturating_sub(1));
         &self.leaves[at]
     }
@@ -643,13 +635,13 @@ impl Cydonia {
         entry: Option<Member>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Entity<Pane> {
+    ) -> Entity<Tab> {
         let composer = Self::pane_parts(entry.clone(), window, cx);
         let (workspace, root) = (self.workspace.clone(), cx.entity().downgrade());
         let (docs, sort) = (self.card_docs.clone(), self.board_sort.clone());
         let applied = self.applied_query().cloned();
         cx.new(|cx| {
-            let mut pane = Pane::new(entry, workspace, root, docs, sort, composer, cx);
+            let mut pane = Tab::new(entry, workspace, root, docs, sort, composer, cx);
             pane.applied = applied;
             pane
         })
@@ -768,7 +760,7 @@ impl Cydonia {
             return;
         };
         let focused = self.leaf().read(cx).entry.clone();
-        let mut kept: Vec<Entity<Pane>> = Vec::with_capacity(members.len());
+        let mut kept: Vec<Entity<Tab>> = Vec::with_capacity(members.len());
         for entry in &members {
             match self
                 .leaves
@@ -788,6 +780,7 @@ impl Cydonia {
             })
             .unwrap_or(0);
         self.sync_focus(cx);
+        self.sync_panes(cx);
     }
 
     /// Arrive at an entry, wherever the sidebar lists it.
@@ -944,7 +937,7 @@ impl Cydonia {
     /// [`Self::leaf`]: every pane drawn against the focused leaf shares one
     /// scroll and one editor between them, so moving the focus
     /// moves what the other panes are showing.
-    pub(crate) fn leaf_of(&self, on: Option<&Member>, cx: &App) -> &Entity<Pane> {
+    pub(crate) fn leaf_of(&self, on: Option<&Member>, cx: &App) -> &Entity<Tab> {
         on.and_then(|on| {
             self.leaves
                 .iter()
@@ -1012,6 +1005,7 @@ impl Cydonia {
             meter_at: Floating::new(Painter::of(cx)),
             workspace,
             leaves: Vec::new(),
+            panes: Vec::new(),
             listed: Default::default(),
             focused: 0,
             sidebar_open: true,
@@ -1059,8 +1053,6 @@ impl Cydonia {
                 let this = cx.entity().downgrade();
                 move |item, window, cx| board::ghost(&this, item, window, cx)
             }),
-            strips: RefCell::default(),
-            fronts: Default::default(),
             tab_history: Vec::new(),
             modals: cx.new(|_| ModalLayer::default()),
             library: None,
@@ -1069,7 +1061,6 @@ impl Cydonia {
             info_pressed: false,
             menu: ContextMenu::default(),
             sidebar_hovered: None,
-            pane_hovered: None,
             renaming: None,
             name_field,
             search: crate::view::search::Search::default(),
@@ -1510,7 +1501,7 @@ impl Cydonia {
                 workspace.active_session().is_some()
                     || (self.leaf().read(cx).asked_session && workspace.preferred_agent().is_none())
             }
-            Kind::Board => workspace.active_board().is_some(),
+            Kind::Board => workspace.active_board(cx).is_some(),
             Kind::Article => workspace.active_article().is_some(),
             Kind::Table => workspace.active_table().is_some(),
         }
@@ -1551,6 +1542,7 @@ impl Render for Cydonia {
         self.sync_changes(window, cx);
         self.sync_items(cx);
         self.sync_focus(cx);
+        self.sync_panes(cx);
         self.publish_shown(cx);
         self.hold_drawn_tables(cx);
         let theme = Theme::of(cx).clone();

@@ -862,7 +862,7 @@ fn a_pane_holding_one_tab_closes(cx: &mut gpui::TestAppContext) {
         workspace.close_pane(&b, cx);
         assert!(workspace.active_space().is_none(), "the space goes too");
         assert!(
-            workspace.active_board().is_some(),
+            workspace.active_board(cx).is_some(),
             "landing on the survivor"
         );
     });
@@ -982,34 +982,42 @@ fn a_pane_answers_for_its_own_board(cx: &mut gpui::TestAppContext) {
         workspace.arrange(&a, &b, Side::Right, cx);
 
         // Whatever the project is pointed at, each pane answers for itself.
-        let on_a = workspace.board_of(Some(&a)).expect("a board").id.clone();
-        let on_b = workspace.board_of(Some(&b)).expect("a board").id.clone();
+        let on_a = workspace
+            .board_of(Some(&a), cx)
+            .expect("a board")
+            .id
+            .clone();
+        let on_b = workspace
+            .board_of(Some(&b), cx)
+            .expect("a board")
+            .id
+            .clone();
         assert_ne!(on_a, on_b, "two panes, two boards");
         assert_eq!(
-            workspace.board_of(None).map(|board| board.id.clone()),
-            workspace.active_board().map(|board| board.id.clone()),
+            workspace.board_of(None, cx).map(|board| board.id.clone()),
+            workspace.active_board(cx).map(|board| board.id.clone()),
             "and no pane falls back to the project's own",
         );
 
         let column = workspace
-            .write_board(&on_a, |board| board.add_column("Todo").id.clone())
+            .write_board(&on_a, cx, |board| board.add_column("Todo").id.clone())
             .expect("the pane's board");
         workspace
-            .write_board(&on_a, |board| {
+            .write_board(&on_a, cx, |board| {
                 board.add_card(&column, "written in the left pane".into());
             })
             .expect("the pane's board");
 
         assert_eq!(
             workspace
-                .board_at(&on_a)
+                .board_at(&on_a, cx)
                 .and_then(|board| board.column(&column))
                 .map(|column| column.cards.len()),
             Some(1),
         );
         assert!(
             workspace
-                .board_at(&on_b)
+                .board_at(&on_b, cx)
                 .expect("still there")
                 .columns
                 .is_empty(),
@@ -1032,9 +1040,9 @@ fn a_stale_board_write_lands_on_the_other_writers_board(cx: &mut gpui::TestAppCo
         let path = scratch.project("one");
         workspace.open_project(path.clone(), cx);
         workspace.new_board(0, "Plans".into(), "PLAN", cx).ok();
-        let id = workspace.active_board().expect("a board").id.clone();
+        let id = workspace.active_board(cx).expect("a board").id.clone();
         let column = workspace
-            .write_board(&id, |board| board.add_column("Todo").id.clone())
+            .write_board(&id, cx, |board| board.add_column("Todo").id.clone())
             .expect("the board");
 
         // The other writer, straight through the backend, unseen by the window.
@@ -1044,7 +1052,7 @@ fn a_stale_board_write_lands_on_the_other_writers_board(cx: &mut gpui::TestAppCo
         other.save_board(&mut theirs).expect("their save");
 
         workspace
-            .write_board(&id, |board| {
+            .write_board(&id, cx, |board| {
                 board.add_card(&column, "mine".into());
             })
             .expect("the board");
@@ -1061,7 +1069,7 @@ fn a_stale_board_write_lands_on_the_other_writers_board(cx: &mut gpui::TestAppCo
         let saved = other.board(&id).expect("on disk");
         assert_eq!(texts(&saved), ["theirs", "mine"]);
         assert_eq!(
-            texts(workspace.active_board().expect("held")),
+            texts(workspace.active_board(cx).expect("held")),
             ["theirs", "mine"]
         );
     });
