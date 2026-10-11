@@ -15,14 +15,11 @@
 use crate::agent::acp::{self, Event, Launch, Reply, Session};
 #[cfg(feature = "desktop")]
 use crate::model::notify;
-use crate::{
-    model::{
-        session_preferences::{self, Choices},
-        settings,
-        store::{self, Store},
-        workspace::Workspace,
-    },
-    view::component::transcript,
+use crate::model::{
+    session_preferences::{self, Choices},
+    settings,
+    store::{self, Store},
+    workspace::Workspace,
 };
 #[cfg(feature = "desktop")]
 use anyhow::anyhow;
@@ -34,6 +31,7 @@ use artifact::session::{
     chat::{ChatItem, PlanStatus},
     record::{ForkOrigin, Record},
 };
+use bezel::agent::orbs::engine::Frame;
 use bezel::gpui::{Context, Task};
 #[cfg(feature = "desktop")]
 use cacp::schema::{
@@ -45,8 +43,10 @@ use cacp::schema::{
     PermissionOptionKind, SessionConfigOption, SessionConfigOptionValue, SessionModeState,
 };
 use std::{
+    cell::RefCell,
     collections::{BTreeMap, VecDeque},
     path::PathBuf,
+    rc::Rc,
     time::Duration,
 };
 use web_time::{Instant, SystemTime, UNIX_EPOCH};
@@ -212,7 +212,13 @@ pub struct ChatSession {
     /// Prompts waiting for an agent to send them to: what was typed while a
     /// turn was in flight, and what a dispatched card opened the session with.
     pub queue: VecDeque<String>,
-    pub transcript: transcript::State,
+    /// The geometry of the sidebar's orb for this session, reused tick to
+    /// tick. Its own buffer: each orb on screen is filled where it is built
+    /// and read back in the paint phase.
+    pub mark: Rc<RefCell<Frame>>,
+    /// Moved whenever the items are replaced rather than added to, so a view
+    /// holding state keyed by item index lets it go.
+    pub epoch: u64,
     _pump: Task<()>,
 }
 
@@ -301,7 +307,8 @@ impl ChatSession {
             turn_started: None,
             tool_started: BTreeMap::new(),
             queue: seed.into_iter().collect(),
-            transcript: transcript::State::default(),
+            mark: Rc::default(),
+            epoch: 0,
             _pump: pump,
         }
     }
@@ -361,7 +368,8 @@ impl ChatSession {
             turn_started: None,
             tool_started: BTreeMap::new(),
             queue: VecDeque::new(),
-            transcript: transcript::State::default(),
+            mark: Rc::default(),
+            epoch: 0,
             _pump: Task::ready(()),
         }
     }
@@ -411,7 +419,7 @@ impl ChatSession {
         self.fork = None;
         self.replay = None;
         self.draft = String::new();
-        self.transcript = transcript::State::default();
+        self.epoch += 1;
         self.plan = Vec::new();
         self.commands = Vec::new();
         self.config = Vec::new();
@@ -516,7 +524,7 @@ impl ChatSession {
         self.sent_at.retain(|ix, _| *ix < at);
         self.agent_session = None;
         self.replay = Some(at);
-        self.transcript = transcript::State::default();
+        self.epoch += 1;
         self.streaming = false;
         self.queue.clear();
         self.plan = Vec::new();

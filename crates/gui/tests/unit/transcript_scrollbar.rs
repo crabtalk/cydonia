@@ -10,25 +10,17 @@ use bezel::gpui::{self, Render};
 use bezel::ui::AppExt as _;
 
 struct ChatView {
-    workspace: gpui::Entity<Workspace>,
-    _watch: gpui::Subscription,
+    view: gpui::Entity<SessionView>,
 }
 
 impl Render for ChatView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let body = self.workspace.update(cx, |workspace, cx| {
-            super::render(
-                workspace.session(1).unwrap(),
-                None,
-                800.,
-                |_, _| None,
-                |_, _, _| {},
-                super::Drawn::Pane,
-                window,
-                cx,
-            )
-        });
-        div().w(px(800.)).h(px(500.)).flex().flex_col().child(body)
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .w(px(800.))
+            .h(px(500.))
+            .flex()
+            .flex_col()
+            .child(self.view.clone())
     }
 }
 
@@ -75,8 +67,17 @@ fn a_settled_transcript_hides_its_thumb(cx: &mut gpui::TestAppContext) {
         workspace.projects.push(project);
     });
     let window = cx.add_window(|_, cx| ChatView {
-        _watch: cx.observe(&workspace, |_, _, cx| cx.notify()),
-        workspace: workspace.clone(),
+        view: cx.new(|cx| {
+            SessionView::new(
+                1,
+                None,
+                Drawn::Pane,
+                0.,
+                workspace.clone(),
+                gpui::WeakEntity::new_invalid(),
+                cx,
+            )
+        }),
     });
     let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
     visual.run_until_parked();

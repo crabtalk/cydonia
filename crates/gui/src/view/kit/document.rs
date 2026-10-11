@@ -7,15 +7,15 @@ use crate::{
     view::component::file::pictures::{Assets, Pictures},
 };
 use bezel::gpui::{App, AppContext as _, Entity, WeakEntity};
-use editor::Editor;
+use editor::{Document, Editor};
 use std::path::Path;
 
-/// An editor over `text`, the document in `dir`, and the pictures beside it.
-/// `configure` sets what differs between hosts — text size, scroll, mode.
+/// An editor over `document`, the one in `dir`, and the pictures beside it.
+/// `configure` sets what differs between hosts — text size, scroll.
 /// The pictures must be held as long as the editor is.
 pub(crate) fn editor(
     dir: &Path,
-    text: &str,
+    document: Entity<Document>,
     workspace: WeakEntity<Workspace>,
     configure: impl FnOnce(Editor) -> Editor,
     cx: &mut App,
@@ -27,7 +27,7 @@ pub(crate) fn editor(
     let overlay = Pictures::overlay(&pictures);
     let editor = cx.new(|cx| {
         configure(
-            Editor::new(text, cx)
+            Editor::for_document(document, cx)
                 .with_image_overlay(overlay)
                 .with_chrome(editor::Chrome {
                     mention: true,

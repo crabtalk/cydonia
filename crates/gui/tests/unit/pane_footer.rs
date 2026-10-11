@@ -11,7 +11,10 @@ struct PaneView(Entity<Cydonia>, Member);
 
 impl Render for PaneView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let pane = self.0.update(cx, |root, cx| root.pane(&self.1, window, cx));
+        let pane = self.0.update(cx, |root, cx| {
+            root.sync_items(cx);
+            root.pane(&self.1, window, cx)
+        });
         div().w(px(600.)).h(px(500.)).child(pane)
     }
 }
@@ -38,8 +41,10 @@ fn arranged_session_measures_its_own_composer(cx: &mut gpui::TestAppContext) {
                 workspace.active = Some(0);
                 workspace.member_of(0, Showing::Session(2)).unwrap()
             });
-            root.leaves[0].entry = Some(member.clone());
-            root.leaves[0].composer.update(cx, |composer, cx| {
+            let pane = root.leaves[0].clone();
+            pane.update(cx, |pane, _| pane.entry = Some(member.clone()));
+            let composer = pane.read(cx).composer.clone();
+            composer.update(cx, |composer, cx| {
                 composer.set_session(Some(2), "line\nline\nline\nline\nline\nline", cx);
             });
             member
@@ -56,15 +61,14 @@ fn arranged_session_measures_its_own_composer(cx: &mut gpui::TestAppContext) {
     }
     window
         .update(&mut visual, |view, _, cx| {
-            let workspace = view.0.read(cx).workspace.read(cx);
-            assert!(
-                workspace.session(2).unwrap().transcript.footer_height.get()
-                    > px(crate::view::window::root::composer_height())
-            );
-            assert_eq!(
-                workspace.session(1).unwrap().transcript.footer_height.get(),
-                px(0.)
-            );
+            let root = view.0.read(cx);
+            let height = |id| {
+                root.session_views(id, cx)
+                    .first()
+                    .map_or(px(0.), |view| view.read(cx).state.footer_height.get())
+            };
+            assert!(height(2) > px(crate::view::window::root::composer_height()));
+            assert_eq!(height(1), px(0.));
         })
         .unwrap();
 }

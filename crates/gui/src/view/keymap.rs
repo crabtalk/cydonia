@@ -459,6 +459,7 @@ pub fn bind_all(shortcuts: &Shortcuts, cx: &mut App) {
     cx.bind_keys(super::modals::palette::bindings());
     cx.bind_keys(composer::bindings());
     cx.bind_keys(super::modals::new_board::bindings());
+    cx.bind_keys(super::kit::rename::bindings());
     cx.bind_keys(super::window::modal::bindings());
     cx.bind_keys(info::bindings());
     cx.bind_keys(ribbon::bindings());

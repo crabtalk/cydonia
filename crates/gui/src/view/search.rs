@@ -74,10 +74,7 @@ impl Cydonia {
             found: Vec::new(),
             ready: false,
         });
-        for leaf in &mut self.leaves {
-            leaf.finding = false;
-            leaf.find_at = 0;
-        }
+        self.push_finds(cx);
         self.refresh_applied_search(cx);
         cx.notify();
     }
@@ -132,6 +129,7 @@ impl Cydonia {
     pub(crate) fn clear_applied_search(&mut self, cx: &mut Context<Self>) {
         self.search.applied = None;
         self.search.applied_task = None;
+        self.push_finds(cx);
         cx.notify();
     }
 

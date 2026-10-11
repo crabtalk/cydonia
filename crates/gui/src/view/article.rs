@@ -2,18 +2,23 @@
 
 pub mod thread;
 
-use crate::view::kit::menu::{self, Menu};
+use crate::view::kit::menu;
 use crate::{
     model::palette::Washes,
-    model::{article, workspace::Showing},
+    model::{
+        article,
+        workspace::{Showing, Workspace},
+    },
     view::{
         component::{
-            margin::{self, MARK_GUTTER, Margin, NOTE_INSET, NOTE_WIDTH, Slot},
+            file::pictures::Pictures,
+            margin::{self, Glide, MARK_GUTTER, Margin, NOTE_INSET, NOTE_WIDTH, Slot},
             transcript::{MARK_AWAY, MARK_READING, MARK_VISIBLE},
         },
         kit::labels::Target,
         kit::link::SCHEME,
         kit::{stamp, text::grouped},
+        pane::find::{self, Find, Searchable},
         sidebar::{self, Row},
         window::root::{Cydonia, NewArticle},
     },
@@ -25,13 +30,13 @@ use bezel::ui::surface::Surfaced as _;
 use bezel::{
     gpui::{
         self, AnyElement, App, Context, CursorStyle, Div, Entity, Focusable as _, KeyBinding,
-        MouseButton, ObjectFit, PathPromptOptions, SharedString, Window, actions, canvas, div,
-        image_cache, img, prelude::*, px, retain_all,
+        MouseButton, ObjectFit, PathPromptOptions, Pixels, SharedString, Subscription, WeakEntity,
+        Window, actions, canvas, div, image_cache, img, prelude::*, px, retain_all,
     },
     motion::{AppExt as _, Fade, Painter},
     theme::{ControlSize, Sizing as _, TextStyle, Theme, Typeset, ink},
     ui::{
-        context_menu::Place,
+        context_menu::{ContextMenu, Place},
         icons,
         input::TextField,
         menu::{Item, Segment},
@@ -41,10 +46,10 @@ use bezel::{
     },
 };
 use editor::AppExt as _;
-use editor::Mode;
+use editor::{EditorEvent, Mode};
 use markdown::AppExt as _;
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     path::{Path, PathBuf},
     rc::Rc,
 };
@@ -141,7 +146,7 @@ fn reading_of(
     starts: &[usize],
     blocks: usize,
     scroll: &gpui::ScrollHandle,
-) -> Option<article::Reading> {
+) -> Option<Reading> {
     let view = scroll.bounds();
     let mut on = (0..blocks).filter(|&ix| {
         layouts
@@ -153,7 +158,7 @@ fn reading_of(
     // Headings at or before a block: the last of them owns its section.
     let upto = |block: usize| starts.partition_point(|&start| start <= block);
     let at = upto(first).checked_sub(1);
-    Some(article::Reading {
+    Some(Reading {
         at,
         shown: at.unwrap_or(0)..upto(last),
     })
@@ -193,14 +198,17 @@ fn outline_items(headings: &[(usize, u8, String)]) -> Vec<Item> {
 
 /// The outline menu's rows with what each does: put the caret at the start
 /// of its heading.
-fn outline_rows(editor: &Entity<editor::Editor>, cx: &App) -> Vec<(Item, menu::Act)> {
+fn outline_rows<V: 'static>(
+    editor: &Entity<editor::Editor>,
+    cx: &App,
+) -> Vec<(Item, menu::Act<V>)> {
     let headings = headings(editor.read(cx));
     headings
         .iter()
         .zip(outline_items(&headings))
         .map(|(&(ix, _, _), item)| {
             let editor = editor.clone();
-            menu::row(item, move |_, window, cx| {
+            menu::row::<V>(item, move |_, window, cx| {
                 let at =
                     markdown::Selection::at(markdown::Cursor::new(ix, markdown::Part::Body, 0));
                 editor.update(cx, |editor, cx| editor.select_to_top(at, cx));
@@ -454,18 +462,22 @@ impl Cydonia {
     ) {
         self.commit(cx);
         let member = self.workspace.read(cx).article_member(project, ix);
-        if self.enter_member(member, window, cx) {
+        if self.enter_member(member.clone(), window, cx) {
             return;
         }
         self.workspace
             .update(cx, |workspace, cx| workspace.open_article(project, ix, cx));
-        self.leaf_mut().pane = Kind::Article;
-
-        let (field, editor, unnamed) = {
+        let pane = self.leaf().clone();
+        pane.update(cx, |pane, _| pane.kind = Kind::Article);
+        let editor = member.and_then(|member| {
+            let view = pane.update(cx, |pane, cx| pane.article_view(member, cx));
+            view.update(cx, |view, cx| view.ensure_editor(cx));
+            view.read(cx).editor().cloned()
+        });
+        let (field, unnamed) = {
             let article = self.pane_doc(cx);
             (
                 article.and_then(|article| article.field.clone()),
-                article.and_then(|article| article.editor.clone()),
                 article.is_some_and(|article| article.title.is_empty()),
             )
         };
@@ -485,7 +497,7 @@ impl Cydonia {
     pub(crate) fn pane_doc<'a>(&self, cx: &'a App) -> Option<&'a crate::model::article::Article> {
         self.workspace
             .read(cx)
-            .article_of(self.leaf().entry.as_ref())
+            .article_of(self.leaf().read(cx).entry.as_ref())
     }
 
     /// The same by its file — the one address every write to an article is
@@ -494,12 +506,24 @@ impl Cydonia {
         self.pane_doc(cx).map(|article| article.path.clone())
     }
 
-    /// Out of the title and into the document under it.
-    fn leave_title(&mut self, _: &LeaveTitle, window: &mut Window, cx: &mut Context<Self>) {
-        let editor = self.pane_doc(cx).and_then(|article| article.editor.clone());
-        if let Some(editor) = editor {
-            window.focus(&editor.focus_handle(cx), cx);
-        }
+    /// Where the view of `article` in the pane showing it is scrolled to.
+    pub(crate) fn article_scroll(&self, article: &Member, cx: &App) -> Option<gpui::ScrollHandle> {
+        self.leaves
+            .iter()
+            .flat_map(|pane| pane.read(cx).articles.iter())
+            .map(|view| view.read(cx))
+            .find(|view| view.article == *article)
+            .map(|view| view.scroll.clone())
+    }
+
+    /// The editor of the article the focused pane shows.
+    pub(crate) fn pane_editor(&self, cx: &App) -> Option<Entity<editor::Editor>> {
+        self.leaf()
+            .read(cx)
+            .article_shown(cx)?
+            .read(cx)
+            .editor()
+            .cloned()
     }
 
     /// Swap the document for the markdown it spells, and back — the header
@@ -512,28 +536,13 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(mode) = self.plain_text(cx) else {
+        let Some(editor) = self.pane_editor(cx) else {
             return;
         };
-        let mode = match mode {
-            true => Mode::Blocks,
-            false => Mode::Source,
-        };
-        let Some(on) = self.pane_article(cx) else {
-            return;
-        };
-        self.workspace.update(cx, |workspace, cx| {
-            workspace.set_article_mode(&on, mode, cx)
-        });
-        let finding = self.leaf().finding
-            && self
-                .leaf()
-                .find_field
-                .read(cx)
-                .focus_handle(cx)
-                .is_focused(window);
-        let editor = self.pane_doc(cx).and_then(|article| article.editor.clone());
-        if let Some(editor) = editor.filter(|_| !finding) {
+        editor.update(cx, |editor, cx| editor.toggle_source(cx));
+        let pane = self.leaf().read(cx);
+        let finding = pane.finding && pane.find_field.read(cx).focus_handle(cx).is_focused(window);
+        if !finding {
             window.focus(&editor.focus_handle(cx), cx);
         }
         cx.notify();
@@ -546,44 +555,8 @@ impl Cydonia {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(article) = self.pane_doc(cx) else {
-            return;
-        };
-        let Some(editor) = article.editor.clone() else {
-            return;
-        };
-        let path = article.path.clone();
-        let at = article.reading.borrow().at;
-        self.toggle_outline_menu(path, editor, at, window, cx);
-    }
-
-    /// Open or shut an outline's menu, opening it lit on the heading being
-    /// read.
-    fn toggle_outline_menu(
-        &mut self,
-        path: PathBuf,
-        editor: Entity<editor::Editor>,
-        at: Option<usize>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let menu = Menu::Outline(path);
-        self.outline_hovered = false;
-        let rows =
-            move |_: &mut Self, _: &mut Window, cx: &mut Context<Self>| outline_rows(&editor, cx);
-        self.toggle_menu(menu.clone(), Place::AboveEnd, rows, window, cx);
-        if self.menu_open(&menu) {
-            self.light_outline(at);
-        }
-    }
-
-    /// Light the outline menu's row for the heading at `at`, or none.
-    fn light_outline(&mut self, at: Option<usize>) {
-        match at {
-            Some(at) => {
-                self.menu.point_at(&[at]);
-            }
-            None => self.menu.clear_cursor(),
+        if let Some(view) = self.leaf().read(cx).article_shown(cx) {
+            view.update(cx, |view, cx| view.toggle_outline_menu(window, cx));
         }
     }
 
@@ -617,12 +590,269 @@ impl Cydonia {
         cx.notify();
     }
 
+    // ── chrome ───────────────────────────────────────────────────
+
+    /// The article listed at `at` in `project`, as `on`'s drawer draws it: the
+    /// document alone, scrolling in the box it is put in. The title is the
+    /// drawer's head row.
+    pub(crate) fn article_peek(
+        &mut self,
+        project: usize,
+        at: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let member = self.workspace.read(cx).article_member(project, at)?;
+        let (workspace, root) = (self.workspace.clone(), cx.entity().downgrade());
+        let view = window.use_keyed_state(
+            SharedString::from(format!("article-peek-{}", member.id)),
+            cx,
+            move |_, cx| ArticleView::new(member, workspace, root, cx),
+        );
+        view.update(cx, |view, cx| view.peek(cx))
+    }
+
+    /// One article in the sidebar, under the project that holds it.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn article_row(
+        &self,
+        entry: &Row,
+        project: usize,
+        ix: usize,
+        title: String,
+        lifted: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
+        let theme = Theme::of(cx).clone();
+        let workspace = self.workspace.read(cx);
+        let light = self.light_of(entry, cx);
+        let selected = light.selected();
+        let article = workspace
+            .projects
+            .get(project)
+            .and_then(|open| open.articles.get(ix));
+        let archived = article.is_some_and(|article| article.archived);
+        let tint = light.tint(archived, &theme);
+        let id = SharedString::from(sidebar::key_of(entry));
+
+        sidebar::row(
+            id,
+            "article-row",
+            selected,
+            lifted,
+            self.indent_of(entry, cx),
+            &theme,
+        )
+        .child(
+            icons::icon(icons::files::FileText)
+                .size(px(14.))
+                .flex_none()
+                .text_color(tint),
+        )
+        // Display-only: the title is written at the head of the page, and
+        // this row is never a second field for it.
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .truncate()
+                .text_style(TextStyle::Body)
+                .text_color(tint)
+                .child(title),
+        )
+        .child(self.archive_button(
+            format!("archive-{}", sidebar::key_of(entry)),
+            "article-row",
+            entry,
+            archived,
+            window,
+            cx,
+        ))
+        .on_click(cx.listener(move |this, _, window, cx| {
+            this.open_article(project, ix, window, cx);
+        }))
+    }
+}
+
+/// Which of an article view's menus is up.
+#[derive(Clone, PartialEq, Eq)]
+enum ArticleMenu {
+    Outline,
+    Comments,
+}
+
+/// Which of an article's headings the view is on, counted among the headings
+/// from 0: the one whose section holds the first block on screen, and every
+/// one whose section has a block on screen.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Reading {
+    pub(crate) at: Option<usize>,
+    pub(crate) shown: std::ops::Range<usize>,
+}
+
+/// One pane's view of one article: its own editor over the article's shared
+/// document, scrolled where this pane left it, with the outline, the margin of
+/// comments and the menus it opens.
+pub(crate) struct ArticleView {
+    /// The article, as the space names it.
+    pub(crate) article: Member,
+    workspace: Entity<Workspace>,
+    root: WeakEntity<Cydonia>,
+    /// Set while the article holds a document — see [`Self::ensure_editor`].
+    editor: Option<Entity<editor::Editor>>,
+    /// The `Open with` button over the editor's pictures, held for as long as
+    /// the editor is.
+    pictures: Option<Entity<Pictures>>,
+    /// The scroll box the page scrolls in, shared with the editor so typing
+    /// follows the caret down.
+    pub(crate) scroll: gpui::ScrollHandle,
+    /// Where the outline says the reader is, taken from the last frame.
+    reading: Rc<RefCell<Reading>>,
+    /// Where the margin's notes are gliding, held across frames.
+    margin: Rc<RefCell<Glide>>,
+    /// How tall the composer under the page stood last frame — see
+    /// [`crate::view::detail::footer`].
+    pub(crate) composer: Rc<Cell<Pixels>>,
+    menu: ContextMenu<Self, ArticleMenu>,
+    /// Whether the pointer is over the outline's menu, which then keeps the
+    /// row it is on lit rather than following the reader.
+    outline_hovered: bool,
+    /// What the pane's find looks for in the document.
+    find: Find,
+    _editor: Option<Subscription>,
+}
+
+impl ArticleView {
+    pub(crate) fn new(
+        article: Member,
+        workspace: Entity<Workspace>,
+        root: WeakEntity<Cydonia>,
+        _: &mut Context<Self>,
+    ) -> Self {
+        Self {
+            article,
+            workspace,
+            root,
+            editor: None,
+            pictures: None,
+            scroll: gpui::ScrollHandle::new(),
+            reading: Rc::default(),
+            margin: Rc::default(),
+            composer: Rc::default(),
+            menu: ContextMenu::default(),
+            outline_hovered: false,
+            find: Find::default(),
+            _editor: None,
+        }
+    }
+
+    pub(crate) fn editor(&self) -> Option<&Entity<editor::Editor>> {
+        self.editor.as_ref()
+    }
+
+    /// Where the article is listed, as `(project, index)`, while it is open.
+    fn located(&self, cx: &App) -> Option<(usize, usize)> {
+        let workspace = self.workspace.read(cx);
+        let project = workspace.project_at(&self.article.project)?;
+        let at = workspace.projects[project].article_ix(&self.article.id)?;
+        Some((project, at))
+    }
+
+    fn model<'a>(&self, cx: &'a App) -> Option<&'a article::Article> {
+        let (project, at) = self.located(cx)?;
+        self.workspace.read(cx).article_in(project, at)
+    }
+
+    /// Put an editor over the article's document, or take it away while the
+    /// article holds none; and keep it at the article text size.
+    pub(crate) fn ensure_editor(&mut self, cx: &mut Context<Self>) {
+        let Some((document, path)) = self
+            .model(cx)
+            .and_then(|article| Some((article.document.clone()?, article.path.clone())))
+        else {
+            self.editor = None;
+            self.pictures = None;
+            self._editor = None;
+            return;
+        };
+        let size = self.workspace.read(cx).article_font_size();
+        if let Some(editor) = &self.editor
+            && editor.read(cx).document() == &document
+        {
+            if editor.read(cx).text_size() != Some(size) {
+                editor.update(cx, |editor, cx| editor.set_text_size(size, cx));
+            }
+            return;
+        }
+        let dir = path.parent().map(Path::to_path_buf).unwrap_or_default();
+        let scroll = self.scroll.clone();
+        let (editor, pictures) = crate::view::kit::document::editor(
+            &dir,
+            document,
+            self.workspace.downgrade(),
+            |editor| editor.with_text_size(size).with_scroll(scroll),
+            cx,
+        );
+        let subscription = cx.subscribe(&editor, move |this, _, event: &EditorEvent, cx| {
+            match event {
+                EditorEvent::AnchorHovered(over) => {
+                    let id = over.map(|id| id.0);
+                    this.workspace
+                        .update(cx, |workspace, cx| workspace.hover_comment(&path, id, cx));
+                }
+                // The source gutter is as wide as the line count is long.
+                EditorEvent::Changed => cx.notify(),
+                _ => {}
+            }
+        });
+        self.editor = Some(editor);
+        self.pictures = Some(pictures);
+        self._editor = Some(subscription);
+    }
+
+    /// Out of the title and into the document under it.
+    fn leave_title(&mut self, _: &LeaveTitle, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(editor) = &self.editor {
+            window.focus(&editor.focus_handle(cx), cx);
+        }
+    }
+
+    /// Open or shut the outline's menu, opening it lit on the heading being
+    /// read.
+    pub(crate) fn toggle_outline_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(editor) = self.editor.clone() else {
+            return;
+        };
+        self.outline_hovered = false;
+        ContextMenu::toggle(
+            self,
+            |this| &mut this.menu,
+            ArticleMenu::Outline,
+            Place::AboveEnd,
+            move |_, _, cx| menu::chooser(outline_rows(&editor, cx)),
+            window,
+            cx,
+        );
+        if self.menu.showing(&ArticleMenu::Outline) {
+            let at = self.reading.borrow().at;
+            self.light_outline(at);
+        }
+    }
+
+    /// Light the outline menu's row for the heading at `at`, or none.
+    fn light_outline(&mut self, at: Option<usize>) {
+        match at {
+            Some(at) => {
+                self.menu.point_at(&[at]);
+            }
+            None => self.menu.clear_cursor(),
+        }
+    }
+
     /// Swap the generated picture for one of the person's own.
     fn pick_cover(&mut self, cx: &mut Context<Self>) {
-        // Taken before the dialog goes up: the page the cover was asked for is
-        // the page it lands on, whatever the window is showing by the time a
-        // file comes back.
-        let Some(on) = self.pane_article(cx) else {
+        let Some(on) = self.model(cx).map(|article| article.path.clone()) else {
             return;
         };
         let picked = cx.prompt_for_paths(PathPromptOptions {
@@ -642,96 +872,96 @@ impl Cydonia {
                 this.workspace.update(cx, |workspace, cx| {
                     workspace.set_cover(&on, Some(&path), cx)
                 });
-                cx.notify();
             });
         })
         .detach();
     }
 
+    fn shuffle_cover(&mut self, cx: &mut Context<Self>) {
+        let Some(on) = self.model(cx).map(|article| article.path.clone()) else {
+            return;
+        };
+        self.workspace
+            .update(cx, |workspace, cx| workspace.shuffle_cover(&on, cx));
+    }
+
     fn remove_cover(&mut self, cx: &mut Context<Self>) {
-        let Some(on) = self.pane_article(cx) else {
+        let Some(on) = self.model(cx).map(|article| article.path.clone()) else {
             return;
         };
         self.workspace
             .update(cx, |workspace, cx| workspace.set_cover(&on, None, cx));
-        cx.notify();
     }
 
-    /// Take the file over the buffer — the notice's Reload.
-    fn revert_article(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
-        self.workspace
-            .update(cx, |workspace, cx| workspace.revert_article(path, cx));
-        self.follow_article(window, cx);
-        cx.notify();
+    /// The article as a drawer draws it: the document alone, scrolling in the
+    /// box it is put in.
+    fn peek(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        self.ensure_editor(cx);
+        let editor = self.editor.clone()?;
+        let wide = self.model(cx)?.wide(self.workspace.read(cx).wide_pages);
+        let source_offset = source_offset(editor.read(cx), cx);
+        Some(
+            div()
+                .relative()
+                .flex_1()
+                .min_h_0()
+                .flex()
+                .flex_col()
+                .child(
+                    div()
+                        .id("article-peek")
+                        .flex_1()
+                        .min_h_0()
+                        .w_full()
+                        .map(|el| scrollbars::scrolls(el, scrollbars::Axes::Vertical))
+                        .track_scroll(&self.scroll)
+                        .flex()
+                        .flex_col()
+                        .child(page(
+                            &editor,
+                            Band::new(wide, source_offset),
+                            source_offset,
+                            None,
+                            None,
+                        )),
+                )
+                .child(scrollbars::Overlay::new(
+                    "article-peek-bar",
+                    &self.scroll,
+                    bezel::gpui::Axis::Vertical,
+                ))
+                .into_any_element(),
+        )
     }
 
-    /// Put the caret back in the open document after a re-read replaced it.
-    /// The editor is a new entity, so whatever focus the old one held went with
-    /// it — and focus on an element no frame draws is focus nowhere.
-    ///
-    /// Only when the focus is nowhere, or already back on the window: a re-read
-    /// that rebuilt nothing leaves the title, a card's composer or whatever
-    /// else holds the focus where it is.
-    pub(crate) fn follow_article(&self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.showing(cx) != Some(Kind::Article) {
-            return;
-        }
-        let lost = window
-            .focused(cx)
-            .is_none_or(|focused| focused == self.focus);
-        let editor = self.pane_doc(cx).and_then(|article| article.editor.clone());
-        if let Some(editor) = editor.filter(|_| lost) {
-            window.focus(&editor.focus_handle(cx), cx);
-        }
-    }
-
-    /// Keep the buffer and write it over the file — the notice's other answer.
-    fn keep_article(&mut self, path: &Path, cx: &mut Context<Self>) {
-        self.workspace
-            .update(cx, |workspace, cx| workspace.keep_article(path, cx));
-        cx.notify();
-    }
-
-    // ── chrome ───────────────────────────────────────────────────
-
-    /// The document. Same frame as [`Cydonia::board`]: the body of the content
-    /// card, with the composer stack still pinned under it.
-    pub(crate) fn article(
-        &self,
+    /// The page: its cover, title, the line under it and the document, with
+    /// the margin of comments, the comments button and the outline over it.
+    fn body(
+        &mut self,
         project: usize,
         at: usize,
-        on: Option<&Member>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        let editor = self
-            .workspace
-            .read(cx)
-            .article_in(project, at)?
-            .editor
-            .clone()?;
-        self.paint_article_find(&editor, on, cx);
-        let article = self.workspace.read(cx).article_in(project, at)?;
+        let editor = self.editor.clone()?;
+        let workspace = self.workspace.read(cx);
+        let article = workspace.article_in(project, at)?;
         let field = article.field.clone()?;
-        let editor = article.editor.clone()?;
         let cover = article.cover.clone();
-        let wide = article.wide(self.workspace.read(cx).wide_pages);
-        let source_offset = source_offset(editor.read(cx), cx);
+        let wide = article.wide(workspace.wide_pages);
         let stale = article.stale.then(|| article.path.clone());
         let path = article.path.clone();
-        let reading = article.reading.clone();
-        let scroll = article.scroll.clone();
         // What the composer under the article covers of the pane's foot.
-        let covered = match self
-            .thread_article(on, cx)
-            .is_some_and(|path| self.workspace.read(cx).thread_reachable(&path))
-        {
-            true => f32::from(article.composer.get()) + crate::view::window::root::COMPOSER_BOTTOM,
-            false => 0.,
-        };
+        let covered =
+            match workspace.settings.features.threads() && workspace.thread_reachable(&path) {
+                true => f32::from(self.composer.get()) + crate::view::window::root::COMPOSER_BOTTOM,
+                false => 0.,
+            };
+        let notes =
+            workspace.settings.appearance.comments == crate::model::settings::Comments::Full;
+        let source_offset = source_offset(editor.read(cx), cx);
+        let scroll = self.scroll.clone();
         let margin = self.margin(project, at, &editor, cx);
-        let notes = self.workspace.read(cx).settings.appearance.comments
-            == crate::model::settings::Comments::Full;
         let band = Band::new(wide, source_offset);
         let band = match margin.is_some() {
             true => band.commented(notes, f32::from(scroll.bounds().size.width)),
@@ -746,31 +976,40 @@ impl Cydonia {
                 move |_, window, _| {
                     let width = f32::from(scroll.bounds().size.width);
                     if band.commented(notes, width).margin != band.margin {
-                        window.refresh();
+                        window.request_animation_frame();
                     }
                 },
                 |_, _, _, _| {},
             )
             .absolute()
         });
+        // What the ribbon reads to keep out of a drag — see
+        // [`crate::view::component::ribbon`]. Taken in the capture phase and on
+        // the way out as well as in, so a release past the pane's edge still
+        // ends the gesture.
+        let selecting = |selecting: bool, root: WeakEntity<Cydonia>| {
+            move |_: &gpui::MouseUpEvent, _: &mut Window, cx: &mut App| {
+                root.update(cx, |root, cx| root.set_selecting(selecting, cx))
+                    .ok();
+            }
+        };
         let document = div()
             .id("article")
             .on_action(cx.listener(Self::leave_title))
-            // What the ribbon reads to keep out of a drag — see
-            // [`crate::view::component::ribbon`]. Taken in the capture phase
-            // and on the way out as well as in, so a release past the pane's
-            // edge still ends the gesture.
-            .capture_any_mouse_down(cx.listener(|this, _, _, cx| this.set_selecting(true, cx)))
-            .capture_any_mouse_up(cx.listener(|this, _, _, cx| this.set_selecting(false, cx)))
-            .on_mouse_up_out(
-                MouseButton::Left,
-                cx.listener(|this, _, _, cx| this.set_selecting(false, cx)),
-            )
+            .capture_any_mouse_down({
+                let root = self.root.clone();
+                move |_, _, cx| {
+                    root.update(cx, |root, cx| root.set_selecting(true, cx))
+                        .ok();
+                }
+            })
+            .capture_any_mouse_up(selecting(false, self.root.clone()))
+            .on_mouse_up_out(MouseButton::Left, selecting(false, self.root.clone()))
             .flex_1()
             .min_h_0()
             .w_full()
             .map(|el| scrollbars::scrolls(el, scrollbars::Axes::Vertical))
-            .track_scroll(&article.scroll)
+            .track_scroll(&scroll)
             .flex()
             .flex_col()
             .children(watch)
@@ -818,13 +1057,12 @@ impl Cydonia {
                         .child(document)
                         .child(scrollbars::Overlay::new(
                             "article-bar",
-                            &article.scroll,
+                            &scroll,
                             bezel::gpui::Axis::Vertical,
                         ))
-                        .children(self.search_pill(on, cx))
                         .children(self.comments_list(project, at, &editor, &path, window, cx))
                         .children(
-                            self.outline(&editor, &path, reading, scroll, window, cx)
+                            self.outline(&editor, &path, window, cx)
                                 // Held over the composer under the article.
                                 .map(|outline| {
                                     div()
@@ -837,9 +1075,6 @@ impl Cydonia {
                                 }),
                         ),
                 )
-                // Last, and floated over the document from where the
-                // selection ends — the bar is chrome the page runs under.
-                .children(self.ribbon(on, window, cx))
                 .into_any_element(),
         )
     }
@@ -906,7 +1141,7 @@ impl Cydonia {
             open: article.active_comment,
             hovered: article.hovered_comment,
             path: article.path.clone(),
-            root: cx.entity().downgrade(),
+            root: self.root.clone(),
         };
         let build: margin::Build = Rc::new(move |slot, window, cx| note.build(slot, window, cx));
         Some(
@@ -915,7 +1150,7 @@ impl Cydonia {
                 article.active_comment,
                 notes_wanted,
                 build,
-                article.margin.clone(),
+                self.margin.clone(),
                 cx.reduced_motion(),
             )
             .into_any_element(),
@@ -931,7 +1166,7 @@ impl Cydonia {
         editor: &Entity<editor::Editor>,
         path: &Path,
         cx: &App,
-    ) -> Vec<(Item, menu::Act)> {
+    ) -> Vec<(Item, menu::Act<Self>)> {
         use crate::model::settings::Comments;
         let workspace = self.workspace.read(cx);
         let Some(article) = workspace.article_in(project, at) else {
@@ -940,7 +1175,7 @@ impl Cydonia {
         let comments = &article.comments.comments;
         let shown = workspace.settings.appearance.comments;
         let modes = Comments::ALL;
-        let switch: (Item, menu::Act) = (
+        let switch: (Item, menu::Act<Self>) = (
             Item::segmented(
                 [
                     Segment::new(icons::layout::PanelRight, Comments::Full.label()),
@@ -971,7 +1206,7 @@ impl Cydonia {
                 path.to_owned(),
                 editor.clone(),
             );
-            menu::row(
+            menu::row::<Self>(
                 Item::action(format!("“{quote}”"))
                     .with_description(note)
                     .with_icon(icon),
@@ -983,6 +1218,8 @@ impl Cydonia {
                         workspace.activate_comment(&path, Some(id), cx);
                     });
                     let start = editor
+                        .read(cx)
+                        .document()
                         .read(cx)
                         .anchors()
                         .iter()
@@ -1000,7 +1237,7 @@ impl Cydonia {
         let open: Vec<_> = comments.iter().filter(|c| !c.resolved).map(row).collect();
         let mut resolved: Vec<_> = comments.iter().filter(|c| c.resolved).map(row).collect();
         if !resolved.is_empty() {
-            let heading: menu::Act = Box::new(|_, _, _, _| {});
+            let heading: menu::Act<Self> = Box::new(|_, _, _, _| {});
             resolved.insert(0, (Item::Heading("Resolved".into()), heading));
         }
         menu::sections([vec![switch], open, resolved])
@@ -1024,11 +1261,10 @@ impl Cydonia {
             return None;
         }
         let theme = Theme::of(cx).clone();
-        let menu = Menu::Comments(path.to_owned());
         let id = SharedString::from(format!("comments-card-{}", path.display()));
         let card = self
             .menu
-            .showing(&menu)
+            .showing(&ArticleMenu::Comments)
             .then(|| {
                 self.menu
                     .card(id.clone(), |this| &mut this.menu, window, cx)
@@ -1063,14 +1299,21 @@ impl Cydonia {
             })
             .tooltip(|window, cx| Tooltip::text("Comments", window, cx))
             .on_click({
-                let (menu, path, editor) = (menu.clone(), path.to_owned(), editor.clone());
+                let (path, editor) = (path.to_owned(), editor.clone());
                 cx.listener(move |this, _, window, cx| {
                     cx.stop_propagation();
                     let (path, editor) = (path.clone(), editor.clone());
-                    let rows = move |this: &mut Self, _: &mut Window, cx: &mut Context<Self>| {
-                        this.comments_rows(project, at, &editor, &path, cx)
-                    };
-                    this.toggle_menu(menu.clone(), Place::BelowEnd, rows, window, cx);
+                    ContextMenu::toggle(
+                        this,
+                        |this| &mut this.menu,
+                        ArticleMenu::Comments,
+                        Place::BelowEnd,
+                        move |this, _, cx| {
+                            menu::chooser(this.comments_rows(project, at, &editor, &path, cx))
+                        },
+                        window,
+                        cx,
+                    );
                 })
             })
             .children(card);
@@ -1080,54 +1323,11 @@ impl Cydonia {
                 .occlude()
                 .top(px(12.))
                 .right(px(16.))
-                .child(self.menu_trigger(trigger, menu, cx))
-                .into_any_element(),
-        )
-    }
-
-    /// The article listed at `at` in `project`, as a drawer draws it: the
-    /// document alone, scrolling in the box it is put in. The title is the
-    /// drawer's head row.
-    pub(crate) fn article_peek(
-        &self,
-        project: usize,
-        at: usize,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        let article = self.workspace.read(cx).article_in(project, at)?;
-        let editor = article.editor.clone()?;
-        let wide = article.wide(self.workspace.read(cx).wide_pages);
-        let scroll = article.scroll.clone();
-        let source_offset = source_offset(editor.read(cx), cx);
-        Some(
-            div()
-                .relative()
-                .flex_1()
-                .min_h_0()
-                .flex()
-                .flex_col()
-                .child(
-                    div()
-                        .id("article-peek")
-                        .flex_1()
-                        .min_h_0()
-                        .w_full()
-                        .map(|el| scrollbars::scrolls(el, scrollbars::Axes::Vertical))
-                        .track_scroll(&scroll)
-                        .flex()
-                        .flex_col()
-                        .child(page(
-                            &editor,
-                            Band::new(wide, source_offset),
-                            source_offset,
-                            None,
-                            None,
-                        )),
-                )
-                .child(scrollbars::Overlay::new(
-                    "article-peek-bar",
-                    &scroll,
-                    bezel::gpui::Axis::Vertical,
+                .child(ContextMenu::trigger(
+                    trigger,
+                    |this: &mut Self| &mut this.menu,
+                    ArticleMenu::Comments,
+                    cx,
                 ))
                 .into_any_element(),
         )
@@ -1143,8 +1343,6 @@ impl Cydonia {
         &self,
         editor: &Entity<editor::Editor>,
         path: &Path,
-        reading: Rc<RefCell<article::Reading>>,
-        scroll: gpui::ScrollHandle,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
@@ -1158,7 +1356,7 @@ impl Cydonia {
         let headings = headings(read);
         let top = headings.iter().map(|(_, level, _)| *level).min()?;
         let theme = Theme::of(cx).clone();
-        let menu = Menu::Outline(path.to_owned());
+        let reading = self.reading.clone();
         let now = reading.borrow().clone();
         let tone = |ordinal: usize| {
             ink(if now.at == Some(ordinal) {
@@ -1173,12 +1371,12 @@ impl Cydonia {
         // the frame after — the transcript's rail reads its run the same way.
         let starts: Vec<usize> = headings.iter().map(|(ix, _, _)| *ix).collect();
         let blocks = read.doc().blocks.len();
-        let root = cx.entity().downgrade();
+        let view = cx.entity().downgrade();
+        let scroll = self.scroll.clone();
         let watch = canvas(
             {
                 let editor = editor.clone();
                 let reading = reading.clone();
-                let menu = menu.clone();
                 move |_, window, cx| {
                     let next = reading_of(editor.read(cx).layouts(), &starts, blocks, &scroll);
                     let Some(next) = next else {
@@ -1189,18 +1387,18 @@ impl Cydonia {
                     }
                     let at = next.at;
                     *reading.borrow_mut() = next;
-                    // After the frame: the root is not to be updated while it
+                    // After the frame: the view is not to be updated while it
                     // is being painted.
-                    let (root, menu) = (root.clone(), menu.clone());
+                    let view = view.clone();
                     window.defer(cx, move |_, cx| {
-                        let _ = root.update(cx, |this, cx| {
-                            if this.menu_open(&menu) && !this.outline_hovered {
+                        let _ = view.update(cx, |this, cx| {
+                            if this.menu.showing(&ArticleMenu::Outline) && !this.outline_hovered {
                                 this.light_outline(at);
                                 cx.notify();
                             }
                         });
                     });
-                    window.refresh();
+                    window.request_animation_frame();
                 }
             },
             |_, _, _, _| {},
@@ -1229,7 +1427,7 @@ impl Cydonia {
         let id = SharedString::from(format!("outline-card-{}", path.display()));
         let card = self
             .menu
-            .showing(&menu)
+            .showing(&ArticleMenu::Outline)
             .then(|| {
                 self.menu
                     .card(id.clone(), |this| &mut this.menu, window, cx)
@@ -1256,14 +1454,10 @@ impl Cydonia {
             .p(px(8.))
             .rounded_md()
             .child(dashes)
-            .on_click({
-                let (path, editor) = (path.to_owned(), editor.clone());
-                let at = now.at;
-                cx.listener(move |this, _, window, cx| {
-                    cx.stop_propagation();
-                    this.toggle_outline_menu(path.clone(), editor.clone(), at, window, cx);
-                })
-            })
+            .on_click(cx.listener(move |this, _, window, cx| {
+                cx.stop_propagation();
+                this.toggle_outline_menu(window, cx);
+            }))
             .children(card);
         Some(
             div()
@@ -1272,7 +1466,12 @@ impl Cydonia {
                 .bottom(px(16.))
                 .right(px(16.))
                 .child(watch)
-                .child(self.menu_trigger(trigger, menu, cx))
+                .child(ContextMenu::trigger(
+                    trigger,
+                    |this: &mut Self| &mut this.menu,
+                    ArticleMenu::Outline,
+                    cx,
+                ))
                 .into_any_element(),
         )
     }
@@ -1301,13 +1500,17 @@ impl Cydonia {
                     .ml_auto()
                     .flex_none()
                     .child(chip("article-revert", "Reload").on_click(cx.listener(
-                        move |this, _, window, cx| this.revert_article(&path, window, cx),
+                        move |this, _, _, cx| {
+                            this.workspace
+                                .update(cx, |workspace, cx| workspace.revert_article(&path, cx));
+                        },
                     )))
-                    .child(
-                        chip("article-keep", "Keep mine").on_click(
-                            cx.listener(move |this, _, _, cx| this.keep_article(&keep, cx)),
-                        ),
-                    ),
+                    .child(chip("article-keep", "Keep mine").on_click(cx.listener(
+                        move |this, _, _, cx| {
+                            this.workspace
+                                .update(cx, |workspace, cx| workspace.keep_article(&keep, cx));
+                        },
+                    ))),
             )
     }
 
@@ -1379,7 +1582,14 @@ impl Cydonia {
             .flex_wrap()
             .items_center()
             .gap(px(4.));
-        let chips = self.label_chips(chips, target, &labels, META_GROUP, cx);
+        let chips = self.root.upgrade()?.read(cx).label_chips(
+            chips,
+            target,
+            &labels,
+            META_GROUP,
+            self.root.clone(),
+            cx,
+        );
         let about = div()
             .id("article-about")
             .flex_none()
@@ -1470,67 +1680,57 @@ impl Cydonia {
                     .on_click(cx.listener(|this, _, _, cx| this.remove_cover(cx))),
             )
     }
+}
 
-    /// One article in the sidebar, under the project that holds it.
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn article_row(
-        &self,
-        entry: &Row,
-        project: usize,
-        ix: usize,
-        title: String,
-        lifted: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement + use<> {
-        let theme = Theme::of(cx).clone();
-        let workspace = self.workspace.read(cx);
-        let light = self.light_of(entry, cx);
-        let selected = light.selected();
-        let article = workspace
-            .projects
-            .get(project)
-            .and_then(|open| open.articles.get(ix));
-        let archived = article.is_some_and(|article| article.archived);
-        let tint = light.tint(archived, &theme);
-        let id = SharedString::from(sidebar::key_of(entry));
+impl ArticleView {
+    /// Every hit of the find in the document, in document order.
+    fn find_hits(&self, cx: &App) -> Vec<markdown::Selection> {
+        match (&self.editor, self.find.query()) {
+            (Some(editor), Some(query)) => find::hits(editor.read(cx).doc(), &query),
+            _ => Vec::new(),
+        }
+    }
 
-        sidebar::row(
-            id,
-            "article-row",
-            selected,
-            lifted,
-            self.indent_of(entry, cx),
-            &theme,
-        )
-        .child(
-            icons::icon(icons::files::FileText)
-                .size(px(14.))
-                .flex_none()
-                .text_color(tint),
-        )
-        // Display-only: the title is written at the head of the page, and
-        // this row is never a second field for it.
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .truncate()
-                .text_style(TextStyle::Body)
-                .text_color(tint)
-                .child(title),
-        )
-        .child(self.archive_button(
-            format!("archive-{}", sidebar::key_of(entry)),
-            "article-row",
-            entry,
-            archived,
-            window,
-            cx,
-        ))
-        .on_click(cx.listener(move |this, _, window, cx| {
-            this.open_article(project, ix, window, cx);
-        }))
+    /// Wash the find's hits, the current one set apart.
+    fn paint_find(&self, cx: &mut Context<Self>) {
+        let Some(editor) = &self.editor else {
+            return;
+        };
+        let hits = self.find_hits(cx);
+        let current = self.find.current(hits.len()).map(|ix| hits[ix]);
+        let washes = find::annotations(&hits, current);
+        if editor.read(cx).washes() != washes.as_slice() {
+            editor.update(cx, |editor, cx| editor.set_washes(washes, cx));
+        }
+    }
+}
+
+impl Searchable for ArticleView {
+    fn set_find(&mut self, find: Find, cx: &mut Context<Self>) {
+        self.find = find;
+        cx.notify();
+    }
+
+    fn hits(&self, cx: &App) -> usize {
+        self.find_hits(cx).len()
+    }
+
+    fn reveal_hit(&mut self, cx: &mut Context<Self>) {
+        let hits = self.find_hits(cx);
+        let hit = self.find.current(hits.len()).map(|ix| hits[ix]);
+        if let (Some(editor), Some(hit)) = (&self.editor, hit) {
+            editor.update(cx, |editor, cx| editor.select(hit, cx));
+        }
+    }
+}
+
+impl Render for ArticleView {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.ensure_editor(cx);
+        self.paint_find(cx);
+        self.located(cx)
+            .and_then(|(project, at)| self.body(project, at, window, cx))
+            .unwrap_or_else(|| div().flex_1().into_any_element())
     }
 }
 

@@ -154,8 +154,7 @@ impl Project {
     /// why the event itself is never read for more than where it landed.
     ///
     /// Answers whether anything a view holds *about* an entry moved: a card's
-    /// place on a board, a column's place in a table, the editor a document was
-    /// being read in. Everything else is drawn off the model each frame and
+    /// place on a board, a column's place in a table. Everything else is drawn off the model each frame and
     /// nobody keeps a handle on it, so a re-read that only changed those has
     /// nothing to announce — and announcing it would drop the edit somebody has
     /// open over the echo of their own save.
@@ -165,11 +164,11 @@ impl Project {
         if self.data.is_none() {
             self.data = Data::attach(&self.path);
         }
-        let articles = self.reload_articles(cx);
+        self.reload_articles(cx);
         let boards = self.reload_boards();
         let before = self.shape();
         self.reload_tables();
-        articles || boards || before != self.shape()
+        boards || before != self.shape()
     }
 
     /// What the table pane addresses by position: which tables there are, and
@@ -188,31 +187,26 @@ impl Project {
     /// Held by path across the merge, not by index, and for the reason
     /// [`Self::reload_tables`] holds by key: the list is ordered by when each
     /// was last written, so one article changing can move every other one.
-    ///
-    /// Carries out [`Article::adopt`]'s answer — an open document rebuilt over
-    /// what the file now says has taken the caret with it.
-    fn reload_articles(&mut self, cx: &mut Context<Workspace>) -> bool {
+    fn reload_articles(&mut self, cx: &mut Context<Workspace>) {
         let open = self.open_article().map(Path::to_path_buf);
         let mut held: HashMap<PathBuf, Article> = self
             .articles
             .drain(..)
             .map(|article| (article.path.clone(), article))
             .collect();
-        let mut rebuilt = false;
         self.articles = article::list(&self.path)
             .into_iter()
             .map(|fresh| match held.remove(&fresh.path) {
-                // Already on screen — the editor over it, its scroll and its
-                // undo history stay where they are.
+                // Already on screen — the document under it and its undo
+                // history stay where they are.
                 Some(mut article) => {
-                    rebuilt |= article.adopt(&fresh, cx);
+                    article.adopt(&fresh, cx);
                     article
                 }
                 None => fresh,
             })
             .collect();
         self.article = open.and_then(|path| self.articles.iter().position(|at| at.path == path));
-        rebuilt
     }
 
     /// The file the article pane is showing, if it is showing one.

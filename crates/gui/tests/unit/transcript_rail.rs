@@ -21,7 +21,15 @@ fn rail_requires_clear_space_in_the_conversation_pane() {
 use super::*;
 use bezel::gpui::{self, Render};
 
-struct RailView(ChatSession, f32);
+struct RailView(ChatSession, f32, State);
+
+impl RailView {
+    fn new(chat: ChatSession, height: f32) -> Self {
+        let state = State::default();
+        state.list.sync((0..8).collect());
+        Self(chat, height, state)
+    }
+}
 
 impl Render for RailView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -29,16 +37,16 @@ impl Render for RailView {
         // screen goes back to unmeasured, so a rail that reads the list's
         // measurements during render reads nothing.
         let keys: Vec<usize> = (0..8).collect();
-        for ix in self.0.transcript.list.visible_range() {
+        for ix in self.2.list.visible_range() {
             if let Some(key) = keys.get(ix) {
-                self.0.transcript.list.invalidate(key);
+                self.2.list.invalidate(key);
             }
         }
         div()
             .relative()
             .w(px(100.))
             .h(px(self.1))
-            .child(self.0.transcript.list.render(
+            .child(self.2.list.render(
                 |ix, _, _| {
                     div()
                         .h(if ix == 7 {
@@ -52,6 +60,10 @@ impl Render for RailView {
             ))
             .child(rail(
                 &self.0,
+                &Hold {
+                    state: &self.2,
+                    view: gpui::WeakEntity::new_invalid(),
+                },
                 &turns(&self.0.items),
                 px(100.),
                 None,
@@ -126,17 +138,13 @@ fn only_the_reading_tick_is_brightest_during_hover_and_navigation(cx: &mut gpui:
             chat.items.push(ChatItem::User(format!("Question {ix}")));
             chat.items.push(ChatItem::Agent(format!("Answer {ix}")));
         }
-        chat.transcript.list.sync((0..8).collect());
-        RailView(chat, 300.)
+        RailView::new(chat, 300.)
     });
     let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
     visual.run_until_parked();
     window
         .update(&mut visual, |view, _, _| {
-            assert_eq!(
-                view.0.transcript.list.state.viewport_bounds().size.height,
-                px(300.)
-            );
+            assert_eq!(view.2.list.state.viewport_bounds().size.height, px(300.));
         })
         .unwrap();
     let initial = ticks(&mut visual);
@@ -183,7 +191,7 @@ fn only_the_reading_tick_is_brightest_during_hover_and_navigation(cx: &mut gpui:
     assert_eq!(brightest(&ticks(&mut visual)).len(), 1);
     let max = window
         .update(&mut visual, |view, _, _| {
-            view.0.transcript.list.state.max_offset_for_scrollbar().y
+            view.2.list.state.max_offset_for_scrollbar().y
         })
         .unwrap();
     assert!(max > px(0.));
@@ -191,8 +199,7 @@ fn only_the_reading_tick_is_brightest_during_hover_and_navigation(cx: &mut gpui:
     for step in 0..=100 {
         window
             .update(&mut visual, |view, window, _| {
-                view.0
-                    .transcript
+                view.2
                     .list
                     .state
                     .set_offset_from_scrollbar(gpui::point(px(0.), -max * (step as f32 / 100.)));
@@ -279,19 +286,18 @@ fn session() -> ChatSession {
         chat.items.push(ChatItem::User(format!("Question {ix}")));
         chat.items.push(ChatItem::Agent(format!("Answer {ix}")));
     }
-    chat.transcript.list.sync((0..8).collect());
     chat
 }
 
 #[gpui::test]
 fn every_turn_on_screen_is_lit_and_the_first_of_them_reads(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| Theme::install(bezel::theme::Appearance::Dark, cx));
-    let window = cx.add_window(|_, _| RailView(session(), 300.));
+    let window = cx.add_window(|_, _| RailView::new(session(), 300.));
     let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
     visual.run_until_parked();
     let max = window
         .update(&mut visual, |view, _, _| {
-            view.0.transcript.list.state.max_offset_for_scrollbar().y
+            view.2.list.state.max_offset_for_scrollbar().y
         })
         .unwrap();
     assert!(max > px(0.));
@@ -301,8 +307,7 @@ fn every_turn_on_screen_is_lit_and_the_first_of_them_reads(cx: &mut gpui::TestAp
     for step in [0, 25, 50, 75, 90, 95, 100] {
         window
             .update(&mut visual, |view, window, _| {
-                view.0
-                    .transcript
+                view.2
                     .list
                     .state
                     .set_offset_from_scrollbar(gpui::point(px(0.), -max * (step as f32 / 100.)));
@@ -334,8 +339,7 @@ fn every_turn_on_screen_is_lit_and_the_first_of_them_reads(cx: &mut gpui::TestAp
     assert!(
         window
             .update(&mut visual, |view, _, _| view
-                .0
-                .transcript
+                .2
                 .list
                 .state
                 .is_following_tail())

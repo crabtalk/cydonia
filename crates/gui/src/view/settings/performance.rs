@@ -110,7 +110,7 @@ impl SettingsWindow {
         let Resident {
             projects,
             articles,
-            editors,
+            documents,
             sessions,
             items,
         } = self.workspace.read(cx).resident();
@@ -128,8 +128,8 @@ impl SettingsWindow {
                     .child(self.stat_row(
                         false,
                         "Articles",
-                        "Holding an editor, of those listed.",
-                        format!("{editors} of {articles}"),
+                        "Holding a document, of those listed.",
+                        format!("{documents} of {articles}"),
                         cx,
                     ))
                     .child(self.stat_row(

@@ -55,7 +55,6 @@ impl Workspace {
     /// Every project's articles are on show, so picking one brings its project
     /// forward with it.
     pub fn open_article(&mut self, project: usize, ix: usize, cx: &mut Context<Self>) {
-        let text_size = self.article_font_size();
         let Some(article) = self
             .projects
             .get_mut(project)
@@ -63,7 +62,7 @@ impl Workspace {
         else {
             return;
         };
-        article.open(text_size, cx);
+        article.open(cx);
         self.projects[project].article = Some(ix);
         let id = self.projects[project].articles[ix].id.clone();
         self.active = Some(project);
@@ -74,13 +73,12 @@ impl Workspace {
     /// Give an article its editor without picking it, for a drawer that shows
     /// it over another entry's pane.
     pub fn load_article(&mut self, project: usize, ix: usize, cx: &mut Context<Self>) {
-        let text_size = self.article_font_size();
         if let Some(article) = self
             .projects
             .get_mut(project)
             .and_then(|open| open.articles.get_mut(ix))
         {
-            article.open(text_size, cx);
+            article.open(cx);
         }
     }
 
@@ -210,28 +208,6 @@ impl Workspace {
         }
     }
 
-    /// The pointer came over one comment's text in the editor `editor`, or
-    /// left them all.
-    pub fn hover_comment_under(
-        &mut self,
-        editor: EntityId,
-        id: Option<u64>,
-        cx: &mut Context<Self>,
-    ) {
-        let found = self.projects.iter_mut().find_map(|project| {
-            project.articles.iter_mut().find(|article| {
-                article
-                    .editor
-                    .as_ref()
-                    .is_some_and(|held| held.entity_id() == editor)
-            })
-        });
-        if let Some(article) = found {
-            article.hover_comment(id, cx);
-            cx.notify();
-        }
-    }
-
     /// Resolve one comment, or open it again.
     pub fn resolve_comment(&mut self, on: &Path, id: u64, resolved: bool, cx: &mut Context<Self>) {
         if let Some(article) = self.article_at_mut(on) {
@@ -243,14 +219,6 @@ impl Workspace {
     pub fn delete_comment(&mut self, on: &Path, id: u64, cx: &mut Context<Self>) {
         if let Some(article) = self.article_at_mut(on) {
             article.delete_comment(id, cx);
-            cx.notify();
-        }
-    }
-
-    /// Put one document into the other form — see [`Article::set_mode`].
-    pub fn set_article_mode(&mut self, on: &Path, mode: Mode, cx: &mut Context<Self>) {
-        if let Some(article) = self.article_at_mut(on) {
-            article.set_mode(mode, cx);
             cx.notify();
         }
     }
@@ -273,9 +241,9 @@ impl Workspace {
                     .as_ref()
                     .is_some_and(|field| field.entity_id() == changed)
                     || article
-                        .editor
+                        .document
                         .as_ref()
-                        .is_some_and(|editor| editor.entity_id() == changed)
+                        .is_some_and(|document| document.entity_id() == changed)
             })
         });
         if found.is_some_and(|article| article.write(cx)) {

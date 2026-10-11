@@ -697,7 +697,7 @@ impl FileView {
                             scroll.set_offset(gpui::point(offset.x, y));
                             target_line.set(None);
                             reveal.set(false);
-                            window.refresh();
+                            window.request_animation_frame();
                         }
                         if reveal.replace(false)
                             && field.focus_handle(cx).is_focused(window)

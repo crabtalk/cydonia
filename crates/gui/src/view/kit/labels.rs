@@ -4,8 +4,8 @@
 use crate::view::{sidebar::Row, window::root::Cydonia};
 use bezel::{
     gpui::{
-        AnyElement, App, Context, Div, Entity, Stateful, StatefulInteractiveElement, Subscription,
-        Window, div, prelude::*, px,
+        AnyElement, App, Context, Div, Entity, InteractiveElement, Stateful, Subscription,
+        WeakEntity, Window, div, prelude::*, px,
     },
     theme::{TextStyle, Theme, Typeset},
     ui::{
@@ -76,18 +76,22 @@ impl Cydonia {
 
     /// `el`, noting each press for `target`'s picker, so a press on the
     /// trigger of the picker that is open shuts it rather than reopening it.
-    pub(crate) fn labels_trigger<E: StatefulInteractiveElement>(
-        &self,
+    /// Through `root`, so a view other than the window can hang a trigger.
+    pub(crate) fn labels_trigger<E: InteractiveElement>(
         el: E,
         target: Target,
-        cx: &Context<Self>,
+        root: WeakEntity<Cydonia>,
     ) -> E {
-        popover::trigger_press_matching(
-            el,
-            |this: &mut Self| &mut this.picker,
-            move |picker| picker.target == target,
-            cx,
-        )
+        // Capture, as [`popover::trigger_press_matching`] does, so the note
+        // lands before any dismissal in the frame reads it.
+        el.capture_any_mouse_down(move |_, _, cx| {
+            let target = target.clone();
+            root.update(cx, |root, _| {
+                root.picker
+                    .note_trigger_press_matching(|picker| picker.target == target)
+            })
+            .ok();
+        })
     }
 
     /// `labels` as chips in `trigger`, which a press opens the picker from.
@@ -98,18 +102,22 @@ impl Cydonia {
         target: Target,
         labels: &[String],
         group: &'static str,
-        cx: &Context<Self>,
+        root: WeakEntity<Cydonia>,
+        cx: &App,
     ) -> Stateful<Div> {
         let theme = Theme::of(cx).clone();
         let chips = trigger
             .cursor_pointer()
-            .on_click(cx.listener({
-                let target = target.clone();
-                move |this, _, window, cx| {
+            .on_click({
+                let (target, root) = (target.clone(), root.clone());
+                move |_, window, cx| {
                     cx.stop_propagation();
-                    this.toggle_labels(target.clone(), window, cx);
+                    root.update(cx, |root, cx| {
+                        root.toggle_labels(target.clone(), window, cx)
+                    })
+                    .ok();
                 }
-            }))
+            })
             .children(
                 labels
                     .iter()
@@ -126,7 +134,7 @@ impl Cydonia {
                 )
             })
             .children(self.label_picker(&target));
-        self.labels_trigger(chips, target, cx)
+        Self::labels_trigger(chips, target, root)
     }
 
     /// The picker, anchored under its trigger, while `target`'s is open.

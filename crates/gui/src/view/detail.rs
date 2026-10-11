@@ -7,33 +7,29 @@ use crate::{
         workspace::{Showing, Workspace},
     },
     view::{
-        component::{composer, ribbon, transcript},
+        component::{composer, transcript},
         kit::new::{self, New},
         window::root::{self, Cydonia, NewArticle, NewBoard, NewSession, NewTable},
-        window::section::Section,
     },
 };
 use artifact::kind::Kind;
-use artifact::{
-    session::chat::{ChatItem, PlanStatus},
-    space::Member,
-};
+use artifact::{session::chat::ChatItem, space::Member};
 use bezel::{
     gpui::{
         self, AnyElement, App, Axis, Context, Div, DragMoveEvent, Empty, FocusHandle,
-        Focusable as _, Pixels, Point, SharedString, Stateful, Window, div, prelude::*, px,
+        Focusable as _, Pixels, Point, SharedString, Stateful, StyleRefinement, Window, div,
+        prelude::*, px,
     },
     motion::{Fade, Painter},
-    theme::{TextStyle, Theme, Typeset},
+    theme::Theme,
     ui::{
         context_menu::Place,
         floating,
         icons::{self, Icon},
         keys,
         menu::Item,
-        popover, surface,
-        tooltip::Tooltip,
-        widgets::{ButtonStyle, Buttons, Content, Controls, Status},
+        popover,
+        widgets::Content,
     },
 };
 use cacp::schema::{
@@ -41,7 +37,6 @@ use cacp::schema::{
     SessionConfigSelectOption, SessionConfigSelectOptions, SessionModeState,
 };
 use std::path::{Path, PathBuf};
-use surface::Surfaced as _;
 
 /// What the chat keeps for itself while the panel stands beside it.
 const CHAT_MIN: f32 = 240.;
@@ -181,7 +176,7 @@ fn select_options(options: &SessionConfigSelectOptions) -> Vec<composer::SwitchO
 }
 
 /// A path as it is shown: `~` for a home directory nobody needs spelled out.
-fn shown_path(path: &Path) -> String {
+pub(crate) fn shown_path(path: &Path) -> String {
     let full = path.display().to_string();
     dirs::home_dir()
         .and_then(|home| {
@@ -197,9 +192,9 @@ pub struct Verdict<'a> {
     /// What the button says: the once-form's own label, whatever the checkbox
     /// is set to. Agents word the always-form as a sentence — "Yes, and allow
     /// access to repos/ and ls commands" — and a sentence is not a button.
-    label: &'a str,
+    pub(crate) label: &'a str,
     once: &'a str,
-    always: Option<&'a str>,
+    pub(crate) always: Option<&'a str>,
 }
 
 impl Verdict<'_> {
@@ -398,7 +393,7 @@ impl Cydonia {
     }
 
     pub fn composer_focus_handle(&self, cx: &App) -> FocusHandle {
-        self.leaf().composer.focus_handle(cx)
+        self.leaf().read(cx).composer.focus_handle(cx)
     }
 
     fn submit(
@@ -415,117 +410,9 @@ impl Cydonia {
             });
         // On the newest line, whatever was being read a moment ago — see
         // [`transcript::State::follow_tail`].
-        if let Some(chat) = self.workspace.read(cx).session(id) {
-            chat.transcript.follow_tail();
+        for view in self.session_views(id, cx) {
+            view.read(cx).state.follow_tail();
         }
-    }
-
-    /// The bar over a run picked out of the transcript: what to do with it,
-    /// where it was picked.
-    ///
-    /// The article's ribbon in a second place — same perch, same layer, and
-    /// the same rule that a bar belongs to a run rather than to a pointer, so
-    /// it arrives when the drag ends and goes when the run does. Two words
-    /// rather than glyphs: there is room for them, and neither has a mark
-    /// anybody reads without being told.
-    fn selection_bar(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let (view, head) = self
-            .workspace
-            .read(cx)
-            .active_session()?
-            .transcript
-            .selection_perch()?;
-        let at = ribbon::perch(view, head)?;
-        let theme = Theme::of(cx).clone();
-        let card = popover::popover_card(&theme)
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(2.))
-            .child(
-                self.selection_action("Copy", icons::text::Copy, &theme, cx, |this, _, cx| {
-                    this.workspace.update(cx, |workspace, cx| {
-                        workspace.copy_selection(cx);
-                        workspace.clear_selection(cx);
-                    });
-                }),
-            )
-            .child(self.selection_action(
-                "Quote",
-                icons::text::TextQuote,
-                &theme,
-                cx,
-                |this, window, cx| this.quote_selection(window, cx),
-            ))
-            .child(
-                self.selection_action("Link", icons::text::Link, &theme, cx, |this, _, cx| {
-                    let link = this.workspace.update(cx, |workspace, _| {
-                        let chat = workspace.active_session()?;
-                        let (id, turn) = (chat.id, chat.transcript.selected_turn(chat)? + 1);
-                        workspace.turn_link(id, turn, turn)
-                    });
-                    if let Some(link) = link {
-                        cx.write_to_clipboard(bezel::gpui::ClipboardItem::new_string(link));
-                    }
-                    this.workspace
-                        .update(cx, |workspace, cx| workspace.clear_selection(cx));
-                }),
-            );
-        Some(ribbon::floated(
-            "transcript-selection",
-            at,
-            card.into_any_element(),
-        ))
-    }
-
-    /// One of the bar's actions, as a word beside its mark.
-    pub(crate) fn selection_action(
-        &self,
-        label: &'static str,
-        glyph: &'static [u8],
-        theme: &Theme,
-        cx: &Context<Self>,
-        act: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
-    ) -> AnyElement {
-        theme
-            .ghost(SharedString::from(format!("selection-{label}")))
-            .px(px(8.))
-            .py(px(4.))
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(6.))
-            .text_style(TextStyle::Callout)
-            .text_color(theme.text)
-            .child(
-                icons::icon(glyph)
-                    .size(px(13.))
-                    .flex_none()
-                    .text_color(theme.text_muted),
-            )
-            .child(label)
-            .on_click(cx.listener(move |this, _, window, cx| act(this, window, cx)))
-            .into_any_element()
-    }
-
-    /// Answer the run: the composer takes it, and the caret goes where the
-    /// reply is written. The run is dropped with it — the bar has done what it
-    /// was for, and a highlight with nothing over it reads as half a state.
-    fn quote_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let text = self
-            .workspace
-            .read(cx)
-            .active_session()
-            .and_then(|chat| chat.transcript.copied(chat));
-        let Some(text) = text else {
-            return;
-        };
-        self.leaf()
-            .composer
-            .update(cx, |composer, cx| composer.quote(text, cx));
-        self.workspace
-            .update(cx, |workspace, cx| workspace.clear_selection(cx));
-        window.focus(&self.composer_focus_handle(cx), cx);
     }
 
     /// What a press in a composer pointed at `session` asks for — the pane's
@@ -601,7 +488,7 @@ impl Cydonia {
         let articles: Vec<Option<PathBuf>> = self
             .leaves
             .iter()
-            .map(|leaf| self.thread_article(leaf.entry.as_ref(), cx))
+            .map(|pane| pane.read(cx).thread_article(cx))
             .collect();
         // The session each pane is on: its own where a space put it there,
         // and whatever the project is on for the single pane. A pane showing
@@ -610,13 +497,13 @@ impl Cydonia {
             .leaves
             .iter()
             .zip(&articles)
-            .map(|(leaf, article)| {
+            .map(|(pane, article)| {
                 if let Some(path) = article {
                     let id = workspace.article_thread(path);
                     return Pointing::of(id.and_then(|id| workspace.session(id)), &agents)
                         .under_article(first);
                 }
-                let id = match &leaf.entry {
+                let id = match &pane.read(cx).entry {
                     Some(entry) => {
                         workspace
                             .showing_of(entry)
@@ -637,8 +524,9 @@ impl Cydonia {
             .into_iter()
             .map(|article| article.map(|path| self.thread_view(path, cx).into()))
             .collect();
-        for ((leaf, point), thread) in self.leaves.iter().zip(pointed).zip(threads) {
-            leaf.composer.update(cx, |composer, cx| {
+        for ((pane, point), thread) in self.leaves.clone().iter().zip(pointed).zip(threads) {
+            let composer = pane.read(cx).composer.clone();
+            composer.update(cx, |composer, cx| {
                 composer.set_tools(!arranged, cx);
                 composer.set_panel_tabs(tabs, cx);
                 composer.set_thread(thread, cx);
@@ -710,30 +598,24 @@ impl Cydonia {
         });
     }
 
-    /// The composer under the article the pane `on` shows, pointed at the
-    /// article's session. Nothing while article threads are off, or with
-    /// nowhere to send.
-    pub(crate) fn thread_footer(
-        &self,
-        on: Option<&Member>,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        let path = self.thread_article(on, cx)?;
+    /// Whether the single pane has something of `kind` to show.
+    fn lone_ready(&self, kind: Kind, cx: &App) -> bool {
         let workspace = self.workspace.read(cx);
-        if !workspace.thread_reachable(&path) {
-            return None;
+        let Some(open) = workspace.active_project() else {
+            return kind == Kind::Session;
+        };
+        match kind {
+            Kind::Session => true,
+            Kind::Board => open.board.is_some(),
+            Kind::Article => open
+                .article
+                .and_then(|at| open.articles.get(at))
+                .is_some_and(|article| article.document.is_some()),
+            Kind::Table => open
+                .table
+                .and_then(|at| workspace.page_in(workspace.active?, at))
+                .is_some(),
         }
-        let session = workspace.article_thread(&path);
-        // The article's own measure, not the session's: the article's page and
-        // outline keep clear of it.
-        let height = workspace
-            .article_at(&path)
-            .map(|(_, article)| article.composer.clone());
-        let composer = self.leaf_of(on).composer.clone();
-        Some(
-            self.footer_band(session, composer, on.cloned(), height, cx)
-                .into_any_element(),
-        )
     }
 
     pub(crate) fn detail(
@@ -742,15 +624,11 @@ impl Cydonia {
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
         let theme = Theme::of(cx).clone();
-        // Nothing to send to: no session at all, or one whose agent has gone
-        // from settings.toml, leaving nothing to reconnect it to.
-        let live = self.workspace.read(cx).reachable();
         // The library stands in for every pane, and is framed as a lone one:
         // the band over it, the drawer a card opens in, and no composer.
         let library = self.library.is_some();
         let showing = self.showing(cx).filter(|_| !library);
         let arranged = self.workspace.read(cx).active_space().is_some() && !library;
-        let active = self.workspace.read(cx).active_id();
         // A space arranges several entries, so it draws its own panes. One
         // entry open on its own is the single pane below.
         let panes = match library {
@@ -759,47 +637,16 @@ impl Cydonia {
         };
         let body = match panes {
             Some(panes) => panes,
-            None => match showing {
+            // An entry can be named and not yet loaded — an article holds no
+            // document until it is opened. The front door stands in for the
+            // moment in between.
+            None => match showing.filter(|kind| self.lone_ready(*kind, cx)) {
                 None => self.launch(window, cx),
-                Some(Kind::Session) => {
-                    self.conversation(self.workspace.read(cx).active_id(), None, window, cx)
-                }
-                Some(Kind::Board) => match self.workspace.read(cx).active.zip(
-                    self.workspace
-                        .read(cx)
-                        .active_project()
-                        .and_then(|open| open.board),
-                ) {
-                    Some((project, at)) => self.board(project, at, None, window, cx),
-                    None => self.launch(window, cx),
-                },
-                // An entry can be named and not yet loaded — an article holds
-                // no editor until it is opened. The front door stands in for
-                // the moment in between.
-                Some(Kind::Article) => self
-                    .workspace
-                    .read(cx)
-                    .active
-                    .zip(
-                        self.workspace
-                            .read(cx)
-                            .active_project()
-                            .and_then(|open| open.article),
-                    )
-                    .and_then(|(project, at)| self.article(project, at, None, window, cx))
-                    .unwrap_or_else(|| self.launch(window, cx)),
-                Some(Kind::Table) => self
-                    .workspace
-                    .read(cx)
-                    .active
-                    .zip(
-                        self.workspace
-                            .read(cx)
-                            .active_project()
-                            .and_then(|open| open.table),
-                    )
-                    .and_then(|(project, at)| self.table(project, at, None, window, cx))
-                    .unwrap_or_else(|| self.launch(window, cx)),
+                Some(_) => self
+                    .leaf()
+                    .clone()
+                    .cached(StyleRefinement::default().flex().flex_col().size_full())
+                    .into_any_element(),
             },
         };
 
@@ -820,11 +667,6 @@ impl Cydonia {
             .when(!arranged, |el| el.pt(px(root::HEADER_HEIGHT)))
             .child(body);
 
-        let footer_height = self
-            .workspace
-            .read(cx)
-            .active_session()
-            .map(|chat| chat.transcript.footer_height.clone());
         let main = div()
             .flex_1()
             .min_h_0()
@@ -837,44 +679,12 @@ impl Cydonia {
             // After the content, so it draws over it. A space has no band of
             // its own: one title over several panes would name whichever is in
             // front and say nothing about the rest.
-            .children((!arranged).then(|| self.pane_header(window, cx)))
-            .children(match showing == Some(Kind::Session) {
-                true => self.selection_bar(cx),
-                false => None,
-            })
-            // Scroll content beneath the glass; bottom padding clears the last message.
-            //
-            // A chat with nowhere to send stands the reason there in its place
-            // — the slot is what the eye goes to for what happens next, and a
-            // composer simply withheld leaves it answering nothing.
-            .when(
-                showing == Some(Kind::Session) && !arranged,
-                |column| match live {
-                    // The whole pane takes a dropped picture for the composer.
-                    true => column
-                        .on_drop(
-                            cx.listener(|this, paths: &bezel::gpui::ExternalPaths, _, cx| {
-                                this.leaf()
-                                    .composer
-                                    .update(cx, |composer, cx| composer.drop_paths(paths, cx));
-                            }),
-                        )
-                        .child(self.session_footer(active, self.leaf().composer.clone(), None, cx))
-                        .child(drop_wash(&theme)),
-                    false => column.children(
-                        self.adrift_strip(cx)
-                            .map(|strip| footer(strip, footer_height.clone())),
-                    ),
-                },
-            );
-        let main = main.children(match showing == Some(Kind::Article) && !arranged {
-            true => self.thread_footer(None, cx),
-            false => None,
-        });
-        // The lone pane's drawer, under the band like the pane's body.
-        let drawer = match arranged {
-            true => Vec::new(),
-            false => self.drawer_layer(None, window, cx),
+            .children((!arranged).then(|| self.pane_header(window, cx)));
+        // The library's drawer, under the band like the pane's body. A pane
+        // draws its own.
+        let drawer = match library {
+            true => self.drawer_layer(None, window, cx),
+            false => Vec::new(),
         };
         let main = main
             .when(!arranged, |main| {
@@ -1191,7 +1001,7 @@ impl Cydonia {
             .into_iter()
             .enumerate()
             .map(|(at, (name, icon))| {
-                menu::row(
+                menu::row::<Self>(
                     Item::action(name).with_icon(icon),
                     move |this, window, cx| this.pick_agent(at, window, cx),
                 )
@@ -1320,390 +1130,77 @@ impl Cydonia {
             )
     }
 
-    /// The session a chat pane is on. Nothing where one was asked for with no
-    /// agent to open it on — see [`Cydonia::asked_session`].
-    pub(crate) fn conversation(
+    /// The session view `on`'s pane draws, where it shows a session.
+    pub(crate) fn session_view_of(
         &self,
-        on: Option<u64>,
-        entry: Option<&Member>,
+        on: Option<&Member>,
+        cx: &App,
+    ) -> Option<gpui::Entity<transcript::SessionView>> {
+        self.leaf_of(on, cx).read(cx).session_shown(cx)
+    }
+
+    /// The view of the session `member` names in the pane showing it.
+    pub(crate) fn session_scroll(
+        &self,
+        member: &Member,
+        cx: &App,
+    ) -> Option<gpui::Entity<transcript::SessionView>> {
+        let id = self.workspace.read(cx).session_id_of(Some(member))?;
+        self.leaves
+            .iter()
+            .map(|pane| pane.read(cx))
+            .filter(|pane| pane.entry.as_ref() == Some(member))
+            .flat_map(|pane| pane.sessions.iter())
+            .find(|view| view.read(cx).session == id)
+            .cloned()
+    }
+
+    /// Every pane's view of session `id`.
+    pub(crate) fn session_views(
+        &self,
+        id: u64,
+        cx: &App,
+    ) -> Vec<gpui::Entity<transcript::SessionView>> {
+        self.leaves
+            .iter()
+            .flat_map(|pane| pane.read(cx).sessions.iter())
+            .filter(|view| view.read(cx).session == id)
+            .cloned()
+            .collect()
+    }
+
+    /// Scroll the focused pane's view of session `id` to turn `turn`, from 0.
+    pub(crate) fn reveal_session_turn(&mut self, id: u64, turn: usize, cx: &mut Context<Self>) {
+        self.sync_items(cx);
+        if let Some(view) = self
+            .session_view_of(self.leaf().read(cx).entry.clone().as_ref(), cx)
+            .filter(|view| view.read(cx).session == id)
+        {
+            view.read(cx).state.reveal_turn(turn);
+        }
+    }
+
+    /// Put what the focused pane's transcript has selected on the clipboard.
+    /// Answers whether there was anything.
+    pub(crate) fn copy_transcript_selection(&mut self, cx: &mut Context<Self>) -> bool {
+        self.leaf()
+            .clone()
+            .update(cx, |pane, cx| pane.copy_transcript_selection(cx))
+    }
+
+    /// The queue under session `id`'s transcript in `on`'s pane — see
+    /// [`Pane::queue`].
+    pub(crate) fn queue(
+        &mut self,
+        id: u64,
+        on: Option<&Member>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let theme = Theme::of(cx).clone();
-        let workspace = self.workspace.read(cx);
-        let Some(chat) = on.and_then(|on| workspace.session(on)) else {
-            // No session, and the pane showing regardless: one was asked for
-            // with no agent to open it on — see [`Cydonia::asked_session`].
-            return match self.leaf_of(entry).asked_session {
-                true => self.no_agent(None, false, cx),
-                false => div().flex_1().into_any_element(),
-            };
-        };
-        // Nothing has been said yet, so what the session has to show for
-        // itself is the directory the agent was started in.
-        if chat.unsaid() && chat.fork.is_none() && chat.queue.is_empty() {
-            let agent = chat.entry.name.clone();
-            let cwd = workspace
-                .active_project()
-                .map(|project| shown_path(&project.path))
-                .unwrap_or_default();
-            // Except where the agent is not here to be started in it. A
-            // transcript that has nothing to show *and* nowhere to send is the
-            // whole pane, so the way out goes here rather than under it.
-            let others = !workspace.settings.agents.is_empty();
-            if !workspace.reachable() {
-                return self.no_agent(Some(&agent), others, cx);
-            }
-            return theme
-                .empty_state(icons::files::Folder, cwd, format!("{agent} runs here"))
-                .flex_1()
-                .into_any_element();
-        }
-        let id = chat.id;
-        let available = (f32::from(window.viewport_size().width)
-            - if self.sidebar_open {
-                self.sidebar_width
-            } else {
-                0.
-            })
-        .max(0.);
-        // A panel covering the column takes none of it away — the chat is
-        // still laid out at full width underneath.
-        let beside = self.changes.is_some() && panel_beside(available);
-        let column = available
-            - match beside {
-                true => panel_width(self.changes_share, available),
-                false => 0.,
-            };
-        // The column, less what a space gives the panes beside this one. The
-        // transcript sizes its margins off this and drops the rail when they
-        // are too narrow to hold it — measured against the window, a pane in a
-        // split would keep a rail there is no room for and draw it over the
-        // prose.
-        let pane_width = column * self.width_share(entry, cx);
-        let root = cx.entity().downgrade();
-        // The pane's own session and the pane's own leaf, not the window's:
-        // every pane of a space draws this, and the focused one's queue drawn
-        // under all of them reads as the message having gone to each.
-        let on = entry.cloned();
-        let queued = move |window: &mut Window, cx: &mut bezel::gpui::App| {
-            let on = on.clone();
-            root.update(cx, |root, cx| {
-                root.queue(id, on.as_ref(), window, cx)
-                    .map(IntoElement::into_any_element)
-            })
-            .ok()
-            .flatten()
-        };
-        let rewind = {
-            let root = cx.entity().downgrade();
-            move |at, window: &mut Window, cx: &mut bezel::gpui::App| {
-                let _ = root.update(cx, |root, cx| root.ask_rewind(id, at, window, cx));
-            }
-        };
-        let find = self.transcript_query(entry, cx);
-        let transcript = self
-            .workspace
-            .update(cx, |workspace, cx| match workspace.session(id) {
-                Some(chat) => transcript::render(
-                    chat,
-                    find,
-                    pane_width,
-                    queued,
-                    rewind,
-                    transcript::Drawn::Pane,
-                    window,
-                    cx,
-                ),
-                None => div().flex_1().into_any_element(),
-            });
-        div()
-            .relative()
-            .flex_1()
-            .min_h_0()
-            .flex()
-            .flex_col()
-            .child(transcript)
-            .children(self.search_pill(entry, cx))
-            .into_any_element()
-    }
-
-    /// No agent to say anything to: what is missing, and the way to put it
-    /// there. The whole pane, because there is nothing else in it.
-    ///
-    /// Two ways in. A session with nothing said in it whose agent has gone —
-    /// uninstalled while it was still on the rail — which before this drew
-    /// blank: a transcript with no messages, under a composer withheld for
-    /// having nowhere to send, which together are nothing at all. And a
-    /// session asked for on a machine with no agent on it, which has no
-    /// transcript of its own to stand over and names none.
-    fn no_agent(&self, agent: Option<&str>, others: bool, cx: &mut Context<Self>) -> AnyElement {
-        let theme = Theme::of(cx).clone();
-        let painter = Painter::of(cx);
-        theme
-            .empty_state(
-                icons::files::Download,
-                agent_missing(agent),
-                adrift(agent, others),
-            )
-            .flex_1()
-            .child(
-                theme
-                    .button(
-                        "Install an agent…",
-                        ButtonStyle::Prominent,
-                        Some(Fade::new(painter, "install-agent-empty")),
-                    )
-                    .id("install-agent-empty")
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.open_settings(Section::Agents, window, cx)
-                    })),
-            )
-            .into_any_element()
-    }
-
-    /// What stands where the composer would be over a transcript there is no
-    /// longer anywhere to answer into. The strip is the click: it names where
-    /// the agent is installed, and going there is all it has to offer.
-    ///
-    /// Nothing at all where the session has said nothing — [`Self::no_agent`]
-    /// is the whole pane then, and this under it would say it twice.
-    fn adrift_strip(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let theme = Theme::of(cx).clone();
-        let workspace = self.workspace.read(cx);
-        let chat = workspace.active_session().filter(|chat| !chat.unsaid())?;
-        let message = adrift_line(&chat.entry.name, !workspace.settings.agents.is_empty());
-        Some(
-            theme
-                .warning_strip(message)
-                .id("adrift")
-                .mt(px(0.))
-                .cursor_pointer()
-                .on_click(cx.listener(|this, _, window, cx| {
-                    this.open_settings(Section::Agents, window, cx)
-                }))
-                .into_any_element(),
-        )
-    }
-
-    /// What floats at the foot of a session's transcript: the agent's plan, any
-    /// permission it is asking for, and `composer`. A press on it focuses
-    /// `press`, the pane it stands in, where one is given.
-    pub(crate) fn session_footer(
-        &self,
-        session: Option<u64>,
-        composer: gpui::Entity<composer::Composer>,
-        press: Option<Member>,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement + use<> {
-        let height = session
-            .and_then(|id| self.workspace.read(cx).session(id))
-            .map(|chat| chat.transcript.footer_height.clone());
-        self.footer_band(session, composer, press, height, cx)
-    }
-
-    /// [`Self::session_footer`], measured into `height`.
-    pub(crate) fn footer_band(
-        &self,
-        session: Option<u64>,
-        composer: gpui::Entity<composer::Composer>,
-        press: Option<Member>,
-        height: Option<std::rc::Rc<std::cell::Cell<Pixels>>>,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement + use<> {
-        footer(
-            div()
-                .flex()
-                .flex_col()
-                .gap(px(8.))
-                .when_some(press, |band, on| {
-                    band.on_mouse_down(
-                        gpui::MouseButton::Left,
-                        cx.listener(move |this, _, window, cx| this.focus_pane(&on, window, cx)),
-                    )
-                })
-                .children(self.plan(session, cx))
-                .children(self.permission(session, cx))
-                .child(composer),
-            height,
-        )
-    }
-
-    /// The agent's plan, while it still has something left to do.
-    pub(crate) fn plan(
-        &self,
-        session: Option<u64>,
-        cx: &Context<Self>,
-    ) -> Option<impl IntoElement + use<>> {
-        let theme = Theme::of(cx).clone();
-        let chat = self.workspace.read(cx).session(session?)?;
-        if chat.plan.is_empty() || chat.plan.iter().all(|(_, s)| *s == PlanStatus::Done) {
-            return None;
-        }
-        Some(
-            div()
-                .rounded(px(Theme::surface_radius()))
-                .px(px(12.))
-                .py(px(8.))
-                .flex()
-                .flex_col()
-                .gap(px(4.))
-                .text_style(TextStyle::Callout)
-                .children(chat.plan.iter().map(|(text, status)| {
-                    let (icon, tone) = match status {
-                        PlanStatus::Done => (icons::notifications::Check, theme.success),
-                        PlanStatus::Active => (icons::arrows::ChevronRight, theme.accent),
-                        PlanStatus::Pending => (icons::text::ListChecks, theme.text_faint),
-                    };
-                    div()
-                        .flex()
-                        .flex_row()
-                        .items_start()
-                        .gap(px(8.))
-                        .text_color(theme.text_muted)
-                        .child(icons::icon(icon).size(px(12.)).text_color(tone))
-                        .child(text.clone())
-                }))
-                .surface(&theme, composer::SURFACE),
-        )
-    }
-
-    /// The agent's tool-authorization request.
-    ///
-    /// A macOS permission alert: what is being asked for, the two answers, and
-    /// a checkbox saying how long the answer holds. See [`alert`] for why two
-    /// buttons carry four options, and for what an agent has to ask to get the
-    /// stack of rows instead.
-    pub(crate) fn permission(
-        &self,
-        session: Option<u64>,
-        cx: &Context<Self>,
-    ) -> Option<impl IntoElement + use<>> {
-        let theme = Theme::of(cx).clone();
-        let chat = self.workspace.read(cx).session(session?)?;
-        let prompt = chat.permission.as_ref()?;
-        let id = chat.id;
-        let painter = Painter::of(cx);
-        // One button, whichever space it lands in. `key` is the element's and
-        // the hover wash's both — the wash store is one map for the whole app,
-        // so the session is in it too.
-        let answer = |key: &str, option_id: String, label: &str, style| {
-            let fade = Fade::new(painter, format!("permission-{id}-{key}"));
-            theme
-                .button(label.to_owned(), style, Some(fade))
-                .id(SharedString::from(key.to_owned()))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    let option_id = option_id.clone();
-                    this.workspace.update(cx, |workspace, cx| {
-                        workspace.with_session(id, cx, |chat| chat.respond_permission(option_id));
-                    });
-                }))
-        };
-        let body = match alert(&prompt.options) {
-            // How long the answer holds, then the answers — the affirmative
-            // last, where macOS puts the default.
-            Some((deny, allow)) => div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(px(8.))
-                // An agent offering neither *always* form has no second
-                // question to ask, and the row is just the two buttons.
-                .children((deny.always.is_some() || allow.always.is_some()).then(|| {
-                    div()
-                        .id("permission-always")
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap(px(8.))
-                        .cursor_pointer()
-                        .child(theme.checkbox(prompt.always))
-                        .child(
-                            div()
-                                .text_style(TextStyle::Callout)
-                                .text_color(theme.text_muted)
-                                .child("Always allow"),
-                        )
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.workspace.update(cx, |workspace, cx| {
-                                workspace
-                                    .with_session(id, cx, |chat| chat.toggle_permission_always());
-                            });
-                        }))
-                }))
-                // Whatever is on the left is on the left: the answers hold the
-                // trailing edge whether or not the checkbox is there.
-                .child(div().flex_1())
-                .child(answer(
-                    "deny",
-                    deny.id(prompt.always),
-                    deny.label,
-                    ButtonStyle::Ghost,
-                ))
-                .child(answer(
-                    "allow",
-                    allow.id(prompt.always),
-                    allow.label,
-                    ButtonStyle::Prominent,
-                ))
-                .into_any_element(),
-            // Every option the agent sent, one full-width row each. A label of
-            // any length reads here, which is the whole point of stacking them.
-            None => div()
-                .flex()
-                .flex_col()
-                .gap(px(6.))
-                .children(prompt.options.iter().enumerate().map(|(ix, option)| {
-                    let style = match option.kind {
-                        PermissionOptionKind::AllowOnce => ButtonStyle::Prominent,
-                        _ => ButtonStyle::Ghost,
-                    };
-                    answer(
-                        &format!("option-{ix}"),
-                        option.id.clone(),
-                        &option.name,
-                        style,
-                    )
-                    .w_full()
-                    .justify_center()
-                }))
-                .into_any_element(),
-        };
-        Some(
-            div()
-                .rounded(px(Theme::surface_radius()))
-                .px(px(14.))
-                .py(px(12.))
-                .flex()
-                .flex_col()
-                .gap(px(12.))
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .items_start()
-                        .gap(px(8.))
-                        .child(
-                            icons::icon(icons::security::Key)
-                                .size(px(14.))
-                                .flex_none()
-                                // A glyph's box is its size and the line beside
-                                // it is taller, so it drops to meet the text.
-                                .mt(px(3.))
-                                .text_color(theme.text_muted),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .text_style(TextStyle::Body)
-                                .text_color(theme.text)
-                                .child(prompt.title.clone()),
-                        ),
-                )
-                .child(body)
-                .surface(&theme, composer::SURFACE),
-        )
+    ) -> Option<AnyElement> {
+        self.leaf_of(on, cx).clone().update(cx, |pane, cx| {
+            pane.queue(id, window, cx)
+                .map(IntoElement::into_any_element)
+        })
     }
 
     /// A pick from one of the composer's switches — the session's mode, or a
@@ -1728,164 +1225,6 @@ impl Cydonia {
             ),
         });
         cx.notify();
-    }
-
-    fn take_queued(
-        &mut self,
-        id: u64,
-        ix: usize,
-        expected: &str,
-        cx: &mut Context<Self>,
-    ) -> Option<String> {
-        let mut text = None;
-        self.workspace.update(cx, |workspace, cx| {
-            if workspace.active_id() != Some(id) {
-                return;
-            }
-            workspace.with_session(id, cx, |chat| {
-                if chat.queue.get(ix).is_some_and(|queued| queued == expected) {
-                    text = chat.queue.remove(ix);
-                }
-            });
-        });
-        text
-    }
-
-    /// Prompts waiting for the current turn, with edit and cancel actions.
-    fn queue(
-        &mut self,
-        id: u64,
-        on: Option<&Member>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<impl IntoElement + use<>> {
-        let theme = Theme::of(cx).clone();
-        let chat = self.workspace.read(cx).session(id)?;
-        let cwd = chat.cwd.clone();
-        let queue = chat.queue.clone();
-        let pane = on.cloned();
-        self.leaf_of_mut(pane.as_ref())
-            .queued_galleries
-            .retain(|(session, ix, text), _| *session == id && queue.get(*ix) == Some(text));
-        if queue.is_empty() {
-            return None;
-        }
-        Some(
-            div()
-                .flex_none()
-                .flex()
-                .flex_col()
-                .items_end()
-                .gap(px(6.))
-                .children(queue.iter().enumerate().map(|(ix, text)| {
-                    let edit_text = text.clone();
-                    let cancel_text = text.clone();
-                    let (doc, images) = transcript::gallery::document(text);
-                    let gallery = (!images.is_empty()).then(|| {
-                        self.leaf_of_mut(pane.as_ref())
-                            .queued_galleries
-                            .entry((id, ix, text.clone()))
-                            .or_insert_with(|| {
-                                cx.new(|cx| transcript::gallery::Gallery::new(images, &cwd, cx))
-                            })
-                            .clone()
-                    });
-                    div()
-                        .max_w(px(440.))
-                        .when(gallery.is_some(), |row| row.w(px(440.)).max_w_full())
-                        .flex()
-                        .flex_col()
-                        .items_end()
-                        .gap(px(4.))
-                        .child(
-                            div()
-                                .min_w_0()
-                                .when(gallery.is_some(), |bubble| bubble.w_full())
-                                .px(px(14.))
-                                .py(px(9.))
-                                .rounded(px(Theme::surface_radius()))
-                                .bg(theme.surface_raised.opacity(0.6))
-                                .text_style(TextStyle::Body)
-                                .text_color(theme.text_muted)
-                                .flex()
-                                .flex_col()
-                                .gap(px(8.))
-                                .when(!doc.blocks.is_empty(), |bubble| {
-                                    bubble.child(markdown::render(
-                                        &doc,
-                                        Default::default(),
-                                        window,
-                                        cx,
-                                    ))
-                                })
-                                .children(gallery),
-                        )
-                        .child(
-                            div()
-                                .flex_none()
-                                .flex()
-                                .gap(px(2.))
-                                .text_style(TextStyle::Caption)
-                                .text_color(theme.text_muted)
-                                .child(
-                                    theme
-                                        .ghost(("edit-queued", ix))
-                                        .size(px(24.))
-                                        .flex()
-                                        .items_center()
-                                        .justify_center()
-                                        .child(
-                                            icons::icon(icons::text::Pencil)
-                                                .size(px(12.))
-                                                .text_color(theme.text_muted),
-                                        )
-                                        .tooltip(|window, cx| {
-                                            Tooltip::text("Edit queued message", window, cx)
-                                        })
-                                        .on_click({
-                                            let pane = pane.clone();
-                                            cx.listener(move |this, _, window, cx| {
-                                                let Some(text) =
-                                                    this.take_queued(id, ix, &edit_text, cx)
-                                                else {
-                                                    return;
-                                                };
-                                                // Back into the composer it was
-                                                // typed in, which is the one
-                                                // under this pane.
-                                                this.leaf_of(pane.as_ref())
-                                                    .composer
-                                                    .clone()
-                                                    .update(cx, |composer, cx| {
-                                                        composer.restore(text, cx);
-                                                        window
-                                                            .focus(&composer.focus_handle(cx), cx);
-                                                    });
-                                            })
-                                        }),
-                                )
-                                .child(
-                                    theme
-                                        .ghost(("cancel-queued", ix))
-                                        .size(px(24.))
-                                        .flex()
-                                        .items_center()
-                                        .justify_center()
-                                        .child(
-                                            icons::icon(icons::notifications::X)
-                                                .size(px(12.))
-                                                .text_color(theme.text_muted),
-                                        )
-                                        .tooltip(|window, cx| {
-                                            Tooltip::text("Cancel queued message", window, cx)
-                                        })
-                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                            this.take_queued(id, ix, &cancel_text, cx);
-                                        })),
-                                ),
-                        )
-                })),
-        )
     }
 }
 

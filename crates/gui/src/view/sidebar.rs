@@ -16,7 +16,7 @@ use crate::{
         keymap::{self, Command},
         kit::new::{self, New},
         window::chrome,
-        window::root::{self, CommitName, Cydonia, DismissName, NewSession, OpenProject},
+        window::root::{self, Cydonia, NewSession, OpenProject},
     },
 };
 use artifact::board::View;
@@ -28,9 +28,9 @@ use bezel::ui::widgets::Content;
 use bezel::{
     agent::orbs::{OrbState, engine::Frame},
     gpui::{
-        self, AnyElement, App, Bounds, Context, Div, Empty, Entity, Focusable as _, FontWeight,
-        Hsla, MouseButton, Pixels, Point, ScrollStrategy, SharedString, Stateful,
-        UniformListDecoration, Window, div, prelude::*, px, uniform_list,
+        self, AnyElement, App, Bounds, Context, Div, Empty, Entity, FontWeight, Hsla, MouseButton,
+        Pixels, Point, ScrollStrategy, SharedString, Stateful, UniformListDecoration, Window, div,
+        prelude::*, px, uniform_list,
     },
     motion::{Fade, Painter},
     theme::{self, TextStyle, Theme, Typeset},
@@ -193,12 +193,12 @@ fn showing_of(row: &Row) -> Option<&Showing> {
 fn on_disk(path: PathBuf) -> [(Item, menu::Act); 2] {
     let copied = path.to_string_lossy().into_owned();
     [
-        menu::row(
+        menu::row::<Cydonia>(
             Item::action(crate::view::component::file::external::REVEAL)
                 .with_icon(icons::files::FolderOpen),
             move |this, window, cx| this.reveal_path(path.clone(), window, cx),
         ),
-        menu::row(
+        menu::row::<Cydonia>(
             Item::action("Copy Path").with_icon(icons::text::Copy),
             move |_, _, cx| cx.write_to_clipboard(gpui::ClipboardItem::new_string(copied.clone())),
         ),
@@ -242,11 +242,6 @@ pub(crate) enum Renaming {
     /// A space, by its id — auto-named `space-1` until someone gives it a
     /// name of their own.
     Space(String),
-    /// A lane, by the board it is on and its own id. The one entry here that
-    /// no row in the sidebar stands for — the field is drawn in the column's
-    /// own header instead, which works because only one thing is ever being
-    /// named.
-    Column(String, String),
 }
 
 /// What an entry's row is written in: the one on screen at full strength, one
@@ -1624,7 +1619,7 @@ impl Cydonia {
         let Some(member) = self.member_of_row(row, cx) else {
             return Light::Off;
         };
-        if self.leaf().entry.as_ref() == Some(&member) {
+        if self.leaf().read(cx).entry.clone().as_ref() == Some(&member) {
             Light::Focused
         } else if space.entries().contains(&member) {
             Light::Shown
@@ -1802,7 +1797,7 @@ impl Cydonia {
             working: chat.streaming.then(|| Working {
                 state: transcript::orb_of(chat),
                 since: chat.elapsed().unwrap_or_default(),
-                frame: chat.transcript.mark.clone(),
+                frame: chat.mark.clone(),
             }),
             archived: chat.closed,
         })
@@ -1984,7 +1979,7 @@ impl Cydonia {
             return None;
         }
         let pick = |label: Option<String>, item: Item| {
-            menu::row(item, move |this, _, cx| {
+            menu::row::<Cydonia>(item, move |this, _, cx| {
                 let label = label.clone();
                 this.workspace.update(cx, |workspace, cx| {
                     workspace.set_project_label(ix, label, cx)
@@ -2016,7 +2011,7 @@ impl Cydonia {
         };
         let sort = self.workspace.read(cx).sort_of(ix);
         let by = |label: &'static str, mode: state::Sort| {
-            menu::row(
+            menu::row::<Cydonia>(
                 Item::action(label).checked(sort == mode),
                 move |this, _, cx| {
                     this.workspace
@@ -2037,7 +2032,7 @@ impl Cydonia {
         )];
         rows.extend(self.label_filter_menu(ix, cx));
         rows.extend(on_disk(path.to_path_buf()));
-        rows.push(menu::row(
+        rows.push(menu::row::<Cydonia>(
             Item::action("Remove project").with_icon(icons::files::FolderMinus),
             move |this, _, cx| this.close_project(ix, cx),
         ));
@@ -2400,7 +2395,7 @@ impl Cydonia {
         // A tab's menu has them only while its tab is the one focused.
         let page = match at {
             Menu::Entry(_) | Menu::Library(_) => false,
-            Menu::Tab(tab) => self.leaf().entry.as_ref() == Some(tab),
+            Menu::Tab(tab) => self.leaf().read(cx).entry.clone().as_ref() == Some(tab),
             _ => true,
         };
 
@@ -2415,7 +2410,7 @@ impl Cydonia {
             // The markdown itself, for the times the document is in the way of
             // it. Above the width, which is about the page rather than what is
             // being edited on it.
-            shown.push(menu::row(
+            shown.push(menu::row::<Cydonia>(
                 Item::action("Plain text")
                     .with_icon(icons::text::Code)
                     .with_keystroke(plain_chord)
@@ -2426,7 +2421,7 @@ impl Cydonia {
             // — see [`Cydonia::pane_doc`].
             let held = self.pane_doc(cx).and_then(|article| article.full_width);
             let wide = held.unwrap_or(self.workspace.read(cx).wide_pages);
-            shown.push(menu::row(
+            shown.push(menu::row::<Cydonia>(
                 Item::action("Full width")
                     .with_icon(icons::layout::UnfoldHorizontal)
                     .checked(wide),
@@ -2436,7 +2431,7 @@ impl Cydonia {
             // page it is already what is happening, and a row that undoes
             // nothing is a row nobody can read the point of.
             if held.is_some() {
-                shown.push(menu::row(
+                shown.push(menu::row::<Cydonia>(
                     Item::action("Use default width").with_icon(icons::layout::Columns2),
                     move |this, _, cx| this.set_full_width(None, cx),
                 ));
@@ -2448,7 +2443,7 @@ impl Cydonia {
                 .pane_doc(cx)
                 .is_some_and(|article| article.cover.is_none())
             {
-                shown.push(menu::row(
+                shown.push(menu::row::<Cydonia>(
                     Item::action("Add cover").with_icon(icons::files::ImagePlus),
                     move |this, _, cx| this.shuffle_cover(cx),
                 ));
@@ -2482,7 +2477,7 @@ impl Cydonia {
         // ── the entry itself ──
         let mut held: Vec<(Item, menu::Act)> = Vec::new();
         if named {
-            held.push(menu::row(
+            held.push(menu::row::<Cydonia>(
                 Item::action("Rename").with_icon(icons::text::SquarePen),
                 {
                     let entry = entry.clone();
@@ -2499,7 +2494,7 @@ impl Cydonia {
                 false => Item::action("Pin to top").with_icon(icons::navigation::Pin),
             };
             let entry = entry.clone();
-            held.push(menu::row(pin, move |this, _, cx| {
+            held.push(menu::row::<Cydonia>(pin, move |this, _, cx| {
                 this.pin_entry(&entry, !pinned, cx)
             }));
         }
@@ -2507,7 +2502,7 @@ impl Cydonia {
             true => Item::action("Unarchive").with_icon(icons::files::ArchiveRestore),
             false => Item::action("Archive").with_icon(icons::files::Archive),
         };
-        held.push(menu::row(put, {
+        held.push(menu::row::<Cydonia>(put, {
             let entry = entry.clone();
             move |this, window, cx| this.archive_entry(&entry, !archived, window, cx)
         }));
@@ -2523,7 +2518,7 @@ impl Cydonia {
                 .enumerate()
                 .filter(|(at, _)| *at != project)
                 .map(|(to, open)| {
-                    menu::row(
+                    menu::row::<Cydonia>(
                         Item::action(open.name()).with_icon(icons::files::Folder),
                         move |this, _, cx| {
                             this.workspace.update(cx, |workspace, cx| {
@@ -2552,14 +2547,14 @@ impl Cydonia {
         let mut tab_rows: Vec<(Item, menu::Act)> = Vec::new();
         if let Menu::Tab(tab) = at {
             let tab = tab.clone();
-            tab_rows.push(menu::row(
+            tab_rows.push(menu::row::<Cydonia>(
                 Item::action("Close tab").with_icon(icons::notifications::X),
                 move |this, window, cx| this.close_pane(&tab, window, cx),
             ));
         }
 
         // Alone, so it is never the row beside the one meant.
-        let delete = vec![menu::row(
+        let delete = vec![menu::row::<Cydonia>(
             Item::action("Delete").with_icon(icons::files::Trash),
             {
                 let entry = entry.clone();
@@ -2825,27 +2820,9 @@ impl Cydonia {
         self.open_row(&top, window, cx);
     }
 
-    /// The field, in the row's place. It carries its own press: `TextField`
-    /// does not focus itself, and a press that reached the row would open what
-    /// is being named out from under the name.
-    pub(crate) fn name_field(&self, cx: &mut Context<Self>) -> AnyElement {
-        div()
-            .flex_1()
-            .min_w_0()
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, window, cx| {
-                    cx.stop_propagation();
-                    window.focus(&this.name_field.read(cx).focus_handle(cx), cx);
-                }),
-            )
-            // Pressing anywhere else is finishing, not abandoning — the name
-            // typed is the name meant. `escape` is what discards.
-            .on_mouse_down_out(cx.listener(|this, _, window, cx| {
-                this.commit_name(&CommitName, window, cx);
-            }))
-            .child(self.name_field.clone())
-            .into_any_element()
+    /// The field, in the row's place.
+    pub(crate) fn name_field(&self, _: &mut Context<Self>) -> AnyElement {
+        self.name_field.clone().into_any_element()
     }
 
     pub(crate) fn start_rename(
@@ -2867,11 +2844,6 @@ impl Cydonia {
                 .find(|table| table.key == *key)
                 .map(|table| table.name.clone())
                 .unwrap_or_default(),
-            Renaming::Column(board, id) => workspace
-                .board_at(board)
-                .and_then(|board| board.column(id))
-                .map(|column| column.name.clone())
-                .unwrap_or_default(),
             Renaming::Space(id) => workspace
                 .spaces
                 .iter()
@@ -2879,39 +2851,28 @@ impl Cydonia {
                 .map(|space| space.name.clone())
                 .unwrap_or_default(),
         };
-        // A lane is named in one case — see [`artifact::board::column::heading`]
-        // — and the field is put in it before the name lands, so what is typed
-        // and what is stored are the same string.
-        let case = match &what {
-            Renaming::Column(..) => Case::Upper,
-            _ => Case::Mixed,
-        };
-        self.name_field.update(cx, |field, cx| {
-            field.set_case(case);
-            field.set_content(label, cx);
-        });
+        let case = Case::Mixed;
+        self.name_field
+            .update(cx, |field, cx| field.start(label, case, window, cx));
         // See [`Cydonia::open_info`] — the other way round.
         self.info = None;
         self.renaming = Some(what);
-        window.focus(&self.name_field.read(cx).focus_handle(cx), cx);
         cx.notify();
     }
 
-    pub(crate) fn commit_name(&mut self, _: &CommitName, _: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn commit_name(&mut self, name: String, cx: &mut Context<Self>) {
         let Some(what) = self.renaming.take() else {
             return;
         };
-        let name = self.name_field.read(cx).content().to_string();
         self.workspace.update(cx, |workspace, cx| match what {
             Renaming::Session(id) => workspace.rename_session(id, name, cx),
             Renaming::Table(key) => workspace.rename_table(&key, name, cx),
-            Renaming::Column(board, id) => workspace.rename_column(&board, &id, name, cx),
             Renaming::Space(id) => workspace.rename_space(&id, name, cx),
         });
         cx.notify();
     }
 
-    pub(crate) fn dismiss_name(&mut self, _: &DismissName, _: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn dismiss_name(&mut self, cx: &mut Context<Self>) {
         self.renaming = None;
         cx.notify();
     }

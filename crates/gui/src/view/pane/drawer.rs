@@ -1,18 +1,23 @@
 //! The drawer a pane pulls up from its foot, holding one thing at a time: a
 //! board's card, or an entry a link names.
 //!
-//! The drawer is the pane's, held on its [`crate::view::pane::leaf::Leaf`]; what it
+//! The drawer is the pane's, held on its [`Pane`]; what it
 //! holds is a [`Peek`].
 
+use super::Pane;
 use crate::{
     model::workspace::{Showing, references::Part},
-    view::{board::OpenCard, sidebar::Row, window::root::Cydonia},
+    view::{
+        board::{BoardView, DrawerAt, PaneState},
+        sidebar::Row,
+        window::root::Cydonia,
+    },
 };
 use artifact::space::Member;
 use bezel::{
     gpui::{
-        self, AnyElement, App, Context, Div, FocusHandle, KeyBinding, Pixels, ScrollHandle,
-        SharedString, Stateful, Window, actions, div, prelude::*, px,
+        self, AnyElement, App, Context, Div, Entity, EntityId, FocusHandle, KeyBinding, Pixels,
+        ScrollHandle, SharedString, Stateful, Window, actions, div, prelude::*, px,
     },
     theme::{TextStyle, Theme, Typeset},
     ui::{
@@ -36,8 +41,10 @@ pub fn bindings() -> Vec<KeyBinding> {
 }
 
 /// What a pane's drawer holds.
-pub enum Peek {
-    Card(OpenCard),
+pub(crate) enum Peek {
+    /// The card open in one of the pane's board views — see
+    /// [`BoardView::open`].
+    Card(Entity<BoardView>),
     Entry(Entry),
 }
 
@@ -46,9 +53,9 @@ pub enum Peek {
 pub struct Entry {
     /// The reference as the link wrote it, `project#12` or `project#12:5-7`.
     pub(crate) reference: String,
-    /// The transcript's scroll for a session drawn live. Its own, never the
-    /// session's: the session's pane keeps where it was scrolled to.
-    pub(crate) list: bezel::ui::list::VariableList<usize>,
+    /// The drawer's own view of a session drawn live: its scroll and its
+    /// selection are not the session's pane's.
+    pub(crate) session: Option<Entity<crate::view::component::transcript::SessionView>>,
 }
 
 /// One pane's drawer.
@@ -62,6 +69,9 @@ pub struct Drawer {
     /// How far below the drawer's top edge the resize grip was pressed, while
     /// it is held.
     pub(crate) resize_grab: Option<Pixels>,
+    /// Set when the card a drawer holds is to be scrolled clear of it; the
+    /// board view taking the reveal clears it.
+    pub(crate) reveal: Rc<Cell<bool>>,
     /// The box the drawer is laid out against.
     pane_bounds: Rc<Cell<gpui::Bounds<Pixels>>>,
 }
@@ -75,20 +85,43 @@ impl Drawer {
             bounds: Default::default(),
             size: Size::default(),
             resize_grab: None,
+            reveal: Rc::new(Cell::new(true)),
             pane_bounds: Default::default(),
         }
     }
 
-    pub(crate) fn card(&self) -> Option<&OpenCard> {
-        match &self.peek {
-            Peek::Card(card) => Some(card),
-            Peek::Entry(_) => None,
-        }
+    /// A button in the drawer's head row.
+    pub(crate) fn action(
+        id: &'static str,
+        glyph: &'static [u8],
+        label: impl Into<SharedString>,
+        cx: &App,
+    ) -> Stateful<Div> {
+        let theme = Theme::of(cx);
+        theme
+            .ghost(id)
+            .debug_selector(move || id.to_owned())
+            .flex_none()
+            .size(px(24.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(px(Theme::control_radius()))
+            .child(
+                icons::icon(glyph)
+                    .size(px(14.))
+                    .text_color(theme.text_muted),
+            )
+            .tooltip({
+                let label = label.into();
+                move |window, cx| Tooltip::text(label.clone(), window, cx)
+            })
     }
 
-    pub(crate) fn card_mut(&mut self) -> Option<&mut OpenCard> {
-        match &mut self.peek {
-            Peek::Card(card) => Some(card),
+    /// The board view whose open card the drawer holds.
+    pub(crate) fn card(&self) -> Option<&Entity<BoardView>> {
+        match &self.peek {
+            Peek::Card(view) => Some(view),
             Peek::Entry(_) => None,
         }
     }
@@ -159,214 +192,137 @@ pub(crate) struct Face {
     pub(crate) open: Option<OpenIn>,
 }
 
-impl Cydonia {
-    /// The drawer `on` shows. A card drawer shows while its card is on its
+impl Pane {
+    /// The drawer the pane shows. A card drawer shows while its card is on its
     /// board or still being written.
-    pub(crate) fn drawer_shown(&self, on: Option<&Member>, cx: &App) -> Option<&Drawer> {
-        let drawer = self.leaf_of(on).drawer.as_ref()?;
+    pub(crate) fn drawer_shown(&self, cx: &App) -> Option<&Drawer> {
+        let drawer = self.drawer.as_ref()?;
         match &drawer.peek {
             Peek::Entry(_) => Some(drawer),
-            Peek::Card(card) => {
-                let (project, at) = self.card_board(card, cx)?;
-                self.drawer_for(project, at, on, cx)
-            }
-        }
-    }
-
-    /// Where the board a drawer's card is on is listed, as `(project, index)`.
-    fn card_board(&self, card: &OpenCard, cx: &App) -> Option<(usize, usize)> {
-        let workspace = self.workspace.read(cx);
-        match workspace.showing_of(&card.board)? {
-            (project, Showing::Board(id)) => {
-                Some((project, workspace.projects[project].board_ix(&id)?))
-            }
-            _ => None,
+            Peek::Card(view) => view.read(cx).card_live(cx).then_some(drawer),
         }
     }
 
     /// Put the drawer away and give the focus back to the pane.
-    pub(crate) fn close_drawer(
-        &mut self,
-        on: Option<&Member>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.drop_drawer(on, cx);
-        window.focus(&self.leaf_of(on).focus, cx);
+    pub(crate) fn close_drawer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.drop_drawer(cx);
+        window.focus(&self.focus, cx);
         cx.notify();
     }
 
     /// Put the drawer away, saving the card it had open.
-    pub(crate) fn drop_drawer(&mut self, on: Option<&Member>, cx: &mut Context<Self>) {
-        if let Some(drawer) = self.leaf_of_mut(on).drawer.take()
-            && let Peek::Card(card) = &drawer.peek
+    pub(crate) fn drop_drawer(&mut self, cx: &mut Context<Self>) {
+        if let Some(drawer) = self.drawer.take()
+            && let Peek::Card(view) = &drawer.peek
         {
-            self.settle_card_draft(on, &card.board, &card.card, cx);
+            view.update(cx, |view, cx| view.close(cx));
         }
+        cx.notify();
     }
 
-    /// Hold the rows of every table a drawer shows, so its preview has a page
-    /// to draw — see [`crate::model::project::Project::hold_pages`].
-    pub(crate) fn hold_drawn_tables(&mut self, cx: &mut Context<Self>) {
-        let held: Vec<(std::path::PathBuf, String)> = {
-            let workspace = self.workspace.read(cx);
-            self.leaves
-                .iter()
-                .filter_map(|leaf| leaf.drawer.as_ref()?.entry())
-                .filter_map(|entry| {
-                    let resolved = workspace.resolve(&entry.reference).ok()?;
-                    match resolved.showing {
-                        Showing::Table(key) => Some((resolved.project, key)),
-                        _ => None,
-                    }
-                })
-                .collect()
-        };
-        self.workspace
-            .update(cx, |workspace, _| workspace.hold_pages(&held));
-    }
-
-    /// Open the entry `reference` names in `on`'s drawer, or put the drawer
-    /// away where it already shows it. A card opens as its board opens it.
-    pub(crate) fn peek(
+    /// Open `card` of `board` in the drawer, or put the drawer away where it
+    /// already shows it.
+    pub(crate) fn open_card(
         &mut self,
-        on: Option<&Member>,
-        reference: &str,
+        board: Member,
+        card: String,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Ok(named) = self.named(reference, cx) else {
-            return;
-        };
-        if let Some(Part::Card(card)) = &named.part {
-            let board = self
-                .located(&named.row, cx)
-                .and_then(|(project, at)| self.workspace.read(cx).board_member(project, at));
-            if let Some(board) = board {
-                self.open_card(on, board, card.id.clone(), window, cx);
+        let view = self.board_view(board, cx);
+        let peeked = self.drawer.as_ref().and_then(Drawer::card) == Some(&view);
+        if peeked && view.read(cx).opened_card() == Some(card.as_str()) {
+            return self.close_drawer(window, cx);
+        }
+        match self.drawer.as_mut().filter(|_| peeked) {
+            Some(drawer) => {
+                drawer.scroll = ScrollHandle::new();
+                drawer.reveal.set(true);
             }
-            return;
-        }
-        if self
-            .leaf_of(on)
-            .drawer
-            .as_ref()
-            .and_then(Drawer::entry)
-            .is_some_and(|entry| entry.reference == reference)
-        {
-            return self.close_drawer(on, window, cx);
-        }
-        // An article or a board a pane already shows opens in that pane.
-        let paned = matches!(
-            &named.row,
-            Row::Entry {
-                showing: Showing::Article(_) | Showing::Board(_),
-                ..
+            None => {
+                self.drop_drawer(cx);
+                self.drawer = Some(Drawer::new(Peek::Card(view.clone()), cx.focus_handle()));
             }
-        );
-        if paned && self.on_screen(&named.row, cx) {
-            return self.open_row(&named.row, window, cx);
         }
-        match &named.row {
-            Row::Entry {
-                showing: Showing::Session(id),
-                ..
-            } => {
-                let id = *id;
-                self.workspace
-                    .update(cx, |workspace, _| workspace.load_history(id));
-            }
-            Row::Entry {
-                showing: Showing::Article(_),
-                ..
-            } => {
-                let Some((project, ix)) = self.located(&named.row, cx) else {
-                    return;
-                };
-                self.workspace
-                    .update(cx, |workspace, cx| workspace.load_article(project, ix, cx));
-            }
-            _ => {}
-        }
-        let size = self.leaf_of(on).drawer.as_ref().map(|drawer| drawer.size);
-        self.drop_drawer(on, cx);
-        let list = bezel::ui::list::VariableList::default();
-        list.state.set_follow_mode(gpui::FollowMode::Tail);
-        let mut drawer = Drawer::new(
-            Peek::Entry(Entry {
-                reference: reference.to_owned(),
-                list,
-            }),
-            cx.focus_handle(),
-        );
-        if let Some(size) = size {
-            drawer.size = size;
-        }
-        let focus = drawer.focus.clone();
-        self.leaf_of_mut(on).drawer = Some(drawer);
+        let drawer = self.drawer.as_ref().unwrap();
+        let (focus, scroll) = (drawer.focus.clone(), drawer.scroll.clone());
+        view.update(cx, |view, cx| view.open(card, scroll, cx));
         window.focus(&focus, cx);
         cx.notify();
     }
 
-    /// A button in the drawer's head row.
-    pub(crate) fn drawer_action(
-        &self,
-        id: &'static str,
-        glyph: &'static [u8],
-        label: impl Into<SharedString>,
-        cx: &Context<Self>,
-    ) -> Stateful<Div> {
-        let theme = Theme::of(cx);
-        theme
-            .ghost(id)
-            .debug_selector(move || id.to_owned())
-            .flex_none()
-            .size(px(24.))
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded(px(Theme::control_radius()))
-            .child(
-                icons::icon(glyph)
-                    .size(px(14.))
-                    .text_color(theme.text_muted),
-            )
-            .tooltip({
-                let label = label.into();
-                move |window, cx| Tooltip::text(label.clone(), window, cx)
-            })
+    /// Open `entry` in the drawer, at the size the drawer up now stands at.
+    pub(crate) fn open_entry(&mut self, entry: Entry, window: &mut Window, cx: &mut Context<Self>) {
+        let size = self.drawer.as_ref().map(|drawer| drawer.size);
+        self.drop_drawer(cx);
+        let mut drawer = Drawer::new(Peek::Entry(entry), cx.focus_handle());
+        if let Some(size) = size {
+            drawer.size = size;
+        }
+        let focus = drawer.focus.clone();
+        self.drawer = Some(drawer);
+        window.focus(&focus, cx);
+        cx.notify();
     }
 
-    /// `on`'s drawer, over the pane it is drawn in: everything that goes in a
-    /// `relative` box covering the pane's body, after the body.
-    pub(crate) fn drawer_layer(
-        &mut self,
-        on: Option<&Member>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Vec<AnyElement> {
-        let Some(drawer) = self.drawer_shown(on, cx) else {
+    /// Whether the drawer shows the entry `reference` names.
+    pub(crate) fn peeks(&self, reference: &str) -> bool {
+        self.drawer
+            .as_ref()
+            .and_then(Drawer::entry)
+            .is_some_and(|entry| entry.reference == reference)
+    }
+
+    /// A press on a board the drawer and the cards did not take: the drawer
+    /// goes, and the focus with it back to the pane if it was in the drawer.
+    pub(crate) fn board_pressed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(opened) = self.drawer.as_ref() else {
+            return;
+        };
+        // The focus goes back to the board only from the drawer: the click may
+        // have put it in a field of its own.
+        let inside = opened.focus.contains_focused(window, cx)
+            || opened
+                .card()
+                .is_some_and(|view| view.read(cx).draft_focused(window, cx));
+        self.drop_drawer(cx);
+        if inside {
+            window.focus(&self.focus, cx);
+        }
+    }
+
+    /// What the pane holds that its board view `view` draws by — see
+    /// [`PaneState`]. A drawer peeking `view` itself is handed over whether its
+    /// card shows or not: `view` is drawing, and only it can tell.
+    pub(crate) fn pane_state(&self, view: EntityId, cx: &App) -> PaneState {
+        let drawer = self.drawer.as_ref().and_then(|drawer| {
+            let own = drawer.card().is_some_and(|card| card.entity_id() == view);
+            let shown = own || self.drawer_shown(cx).is_some();
+            shown.then(|| DrawerAt {
+                own,
+                top: drawer.bounds.get().top(),
+                height: drawer.bounds.get().size.height,
+                expanded: drawer.size.expanded,
+                grabbed: drawer.resize_grab.is_some(),
+                reveal: drawer.reveal.clone(),
+            })
+        });
+        PaneState { drawer }
+    }
+
+    /// The drawer, over the pane it is drawn in, drawing `face`: everything
+    /// that goes in a `relative` box covering the pane's body, after the body.
+    pub(crate) fn drawer_layer(&self, face: Face, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let Some(drawer) = self.drawer_shown(cx) else {
             return Vec::new();
         };
         let pane_bounds = drawer.pane_bounds.clone();
         let grab = drawer.resize_grab;
-        let face = match &drawer.peek {
-            Peek::Card(card) => self
-                .card_board(card, cx)
-                .and_then(|(project, at)| self.card_face(project, at, on, window, cx)),
-            Peek::Entry(entry) => {
-                let (entry, scroll) = (entry.clone(), drawer.scroll.clone());
-                Some(self.entry_face(&entry, on, &scroll, window, cx))
-            }
-        };
-        let Some(face) = face else {
-            return Vec::new();
-        };
         let mut layer = vec![
             gpui::canvas(
                 move |measured, window, _| {
                     if pane_bounds.replace(measured) != measured {
-                        window.on_next_frame(|window, _| window.refresh());
+                        window.request_animation_frame();
                     }
                 },
                 |_, _, _, _| {},
@@ -375,15 +331,13 @@ impl Cydonia {
             .size_full()
             .into_any_element(),
         ];
-        layer.extend(self.drawer(on, face, cx));
+        layer.extend(self.drawer_chrome(face, cx));
         layer.extend(grab.map(|grab| {
-            let move_on = on.cloned();
-            let release_on = on.cloned();
             let release = move |this: &mut Self,
                                 _: &gpui::MouseUpEvent,
                                 _: &mut Window,
                                 cx: &mut Context<Self>| {
-                if let Some(drawer) = &mut this.leaf_of_mut(release_on.as_ref()).drawer {
+                if let Some(drawer) = &mut this.drawer {
                     drawer.resize_grab = None;
                     cx.notify();
                 }
@@ -394,7 +348,7 @@ impl Cydonia {
                 .cursor_row_resize()
                 .on_mouse_move(
                     cx.listener(move |this, event: &gpui::MouseMoveEvent, _, cx| {
-                        if let Some(drawer) = &mut this.leaf_of_mut(move_on.as_ref()).drawer {
+                        if let Some(drawer) = &mut this.drawer {
                             if event.pressed_button == Some(gpui::MouseButton::Left) {
                                 drawer
                                     .size
@@ -407,34 +361,22 @@ impl Cydonia {
                         cx.stop_propagation();
                     }),
                 )
-                .on_mouse_up(gpui::MouseButton::Left, cx.listener(release.clone()))
+                .on_mouse_up(gpui::MouseButton::Left, cx.listener(release))
                 .on_mouse_up_out(gpui::MouseButton::Left, cx.listener(release))
                 .into_any_element()
         }));
         layer
     }
 
-    fn drawer(
-        &self,
-        on: Option<&Member>,
-        face: Face,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        let drawer = self.leaf_of(on).drawer.as_ref()?;
+    fn drawer_chrome(&self, face: Face, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let drawer = self.drawer.as_ref()?;
         let theme = Theme::of(cx).clone();
         let expanded = drawer.size.expanded;
         let scroll = drawer.scroll.clone();
         let focus = drawer.focus.clone();
         let bounds = drawer.bounds.clone();
-        let reveal = drawer.card().map(|card| card.reveal.clone());
-        let (resize_on, close_on, escape_on, focus_on, expand_on, open_on) = (
-            on.cloned(),
-            on.cloned(),
-            on.cloned(),
-            on.cloned(),
-            on.cloned(),
-            on.cloned(),
-        );
+        let reveal = drawer.card().map(|_| drawer.reveal.clone());
+        let focus_on = self.entry.clone();
         let body = match face.scrolls {
             true => div()
                 .flex_1()
@@ -467,11 +409,15 @@ impl Cydonia {
                 .track_focus(&drawer.focus)
                 // Before the editor takes its own press, which the pane's
                 // focus would otherwise take back off it.
-                .capture_any_mouse_down(cx.listener(move |this, _, window, cx| {
-                    if let Some(on) = &focus_on {
-                        this.focus_pane(on, window, cx);
+                .capture_any_mouse_down({
+                    let root = self.root.clone();
+                    move |_, window, cx| {
+                        if let Some(on) = &focus_on {
+                            root.update(cx, |root, cx| root.focus_pane(on, window, cx))
+                                .ok();
+                        }
                     }
-                }))
+                })
                 .on_mouse_down(gpui::MouseButton::Left, {
                     move |_, window, cx| {
                         if !focus.contains_focused(window, cx) {
@@ -481,7 +427,7 @@ impl Cydonia {
                     }
                 })
                 .on_action(cx.listener(move |this, _: &CloseDrawer, window, cx| {
-                    this.close_drawer(escape_on.as_ref(), window, cx);
+                    this.close_drawer(window, cx);
                 }))
                 .bottom_0()
                 .left_0()
@@ -534,9 +480,7 @@ impl Cydonia {
                         .on_mouse_down(
                             gpui::MouseButton::Left,
                             cx.listener(move |this, event: &gpui::MouseDownEvent, _, cx| {
-                                if let Some(drawer) =
-                                    &mut this.leaf_of_mut(resize_on.as_ref()).drawer
-                                {
+                                if let Some(drawer) = &mut this.drawer {
                                     drawer.resize_grab =
                                         Some(event.position.y - drawer.bounds.get().top());
                                     cx.notify();
@@ -560,7 +504,7 @@ impl Cydonia {
                         .child(div().flex_1())
                         .children(face.actions)
                         .child(
-                            self.drawer_action(
+                            Drawer::action(
                                 "drawer-expand",
                                 if expanded {
                                     icons::arrows::Shrink
@@ -577,13 +521,11 @@ impl Cydonia {
                             .on_click(cx.listener(
                                 move |this, _, _, cx| {
                                     cx.stop_propagation();
-                                    if let Some(drawer) =
-                                        &mut this.leaf_of_mut(expand_on.as_ref()).drawer
-                                    {
+                                    if let Some(drawer) = &mut this.drawer {
                                         drawer.size.expanded = !drawer.size.expanded;
                                         let expanded = drawer.size.expanded;
-                                        if let Some(card) = drawer.card() {
-                                            card.reveal.set(!expanded);
+                                        if drawer.card().is_some() {
+                                            drawer.reveal.set(!expanded);
                                         }
                                     }
                                     cx.notify();
@@ -591,7 +533,7 @@ impl Cydonia {
                             )),
                         )
                         .children(face.open.map(|open| {
-                            self.drawer_action(
+                            Drawer::action(
                                 "drawer-open",
                                 icons::layout::Maximize,
                                 "Open in pane",
@@ -600,24 +542,20 @@ impl Cydonia {
                             .on_click(cx.listener(
                                 move |this, _, window, cx| {
                                     cx.stop_propagation();
-                                    this.drop_drawer(open_on.as_ref(), cx);
-                                    open(this, window, cx);
+                                    this.drop_drawer(cx);
+                                    let open = open.clone();
+                                    this.defer_window(window, cx, move |root, window, cx| {
+                                        open(root, window, cx)
+                                    });
                                 },
                             ))
                         }))
                         .child(
-                            self.drawer_action(
-                                "drawer-close",
-                                icons::notifications::X,
-                                "Close",
-                                cx,
-                            )
-                            .on_click(cx.listener(
-                                move |this, _, window, cx| {
+                            Drawer::action("drawer-close", icons::notifications::X, "Close", cx)
+                                .on_click(cx.listener(move |this, _, window, cx| {
                                     cx.stop_propagation();
-                                    this.close_drawer(close_on.as_ref(), window, cx);
-                                },
-                            )),
+                                    this.close_drawer(window, cx);
+                                })),
                         ),
                 )
                 .children(face.notice)
@@ -630,7 +568,7 @@ impl Cydonia {
                                 if !expanded && let Some(reveal) = &reveal {
                                     reveal.set(true);
                                 }
-                                window.on_next_frame(|window, _| window.refresh());
+                                window.request_animation_frame();
                             }
                         },
                         |_, _, _, _| {},
@@ -641,11 +579,158 @@ impl Cydonia {
                 .into_any_element(),
         )
     }
+}
+
+impl Cydonia {
+    /// Put `on`'s drawer away and give the focus back to its pane.
+    pub(crate) fn close_drawer(
+        &mut self,
+        on: Option<&Member>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.leaf_of(on, cx)
+            .clone()
+            .update(cx, |pane, cx| pane.close_drawer(window, cx));
+    }
+
+    /// Hold the rows of every table a drawer shows, so its preview has a page
+    /// to draw — see [`crate::model::project::Project::hold_pages`].
+    pub(crate) fn hold_drawn_tables(&mut self, cx: &mut Context<Self>) {
+        let held: Vec<(std::path::PathBuf, String)> = {
+            let workspace = self.workspace.read(cx);
+            self.leaves
+                .iter()
+                .filter_map(|pane| pane.read(cx).drawer.as_ref()?.entry().cloned())
+                .filter_map(|entry| {
+                    let resolved = workspace.resolve(&entry.reference).ok()?;
+                    match resolved.showing {
+                        Showing::Table(key) => Some((resolved.project, key)),
+                        _ => None,
+                    }
+                })
+                .collect()
+        };
+        self.workspace
+            .update(cx, |workspace, _| workspace.hold_pages(&held));
+    }
+
+    /// Open the entry `reference` names in `on`'s drawer, or put the drawer
+    /// away where it already shows it. A card opens as its board opens it.
+    pub(crate) fn peek(
+        &mut self,
+        on: Option<&Member>,
+        reference: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Ok(named) = self.named(reference, cx) else {
+            return;
+        };
+        if let Some(Part::Card(card)) = &named.part {
+            let board = self
+                .located(&named.row, cx)
+                .and_then(|(project, at)| self.workspace.read(cx).board_member(project, at));
+            if let Some(board) = board {
+                self.open_card(on, board, card.id.clone(), window, cx);
+            }
+            return;
+        }
+        if self.leaf_of(on, cx).read(cx).peeks(reference) {
+            return self.close_drawer(on, window, cx);
+        }
+        // An article or a board a pane already shows opens in that pane.
+        let paned = matches!(
+            &named.row,
+            Row::Entry {
+                showing: Showing::Article(_) | Showing::Board(_),
+                ..
+            }
+        );
+        if paned && self.on_screen(&named.row, cx) {
+            return self.open_row(&named.row, window, cx);
+        }
+        match &named.row {
+            Row::Entry {
+                showing: Showing::Session(id),
+                ..
+            } => {
+                let id = *id;
+                self.workspace
+                    .update(cx, |workspace, _| workspace.load_history(id));
+            }
+            Row::Entry {
+                showing: Showing::Article(_),
+                ..
+            } => {
+                let Some((project, ix)) = self.located(&named.row, cx) else {
+                    return;
+                };
+                self.workspace
+                    .update(cx, |workspace, cx| workspace.load_article(project, ix, cx));
+            }
+            _ => {}
+        }
+        let session = match &named.row {
+            Row::Entry {
+                showing: Showing::Session(id),
+                ..
+            } => {
+                let (id, workspace, root) = (*id, self.workspace.clone(), cx.entity().downgrade());
+                Some(cx.new(|cx| {
+                    crate::view::component::transcript::SessionView::new(
+                        id,
+                        None,
+                        crate::view::component::transcript::Drawn::Nested,
+                        crate::view::kit::link::CARD_WIDTH,
+                        workspace,
+                        root,
+                        cx,
+                    )
+                }))
+            }
+            _ => None,
+        };
+        let entry = Entry {
+            reference: reference.to_owned(),
+            session,
+        };
+        self.leaf_of(on, cx)
+            .clone()
+            .update(cx, |pane, cx| pane.open_entry(entry, window, cx));
+        cx.notify();
+    }
+
+    /// `on`'s drawer, over the pane it is drawn in — see [`Pane::drawer_layer`].
+    pub(crate) fn drawer_layer(
+        &mut self,
+        on: Option<&Member>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        let pane = self.leaf_of(on, cx).clone();
+        let peek = pane
+            .read(cx)
+            .drawer_shown(cx)
+            .map(|drawer| match &drawer.peek {
+                Peek::Card(view) => Err(view.clone()),
+                Peek::Entry(entry) => Ok((entry.clone(), drawer.scroll.clone())),
+            });
+        let face = match peek {
+            None => None,
+            Some(Err(view)) => view.update(cx, |view, cx| view.card_face(window, cx)),
+            Some(Ok((entry, scroll))) => Some(self.entry_face(&entry, on, &scroll, window, cx)),
+        };
+        let Some(face) = face else {
+            return Vec::new();
+        };
+        pane.update(cx, |pane, cx| pane.drawer_layer(face, cx))
+    }
 
     /// What the drawer draws for an entry a link names: a session live or a
     /// run of its turns, an article's document or part of it, or a board's
     /// cards. An article or a board a pane shows is its row.
-    fn entry_face(
+    pub(crate) fn entry_face(
         &mut self,
         entry: &Entry,
         on: Option<&Member>,
@@ -699,13 +784,15 @@ impl Cydonia {
         ];
         let (body, open): (AnyElement, OpenIn) = match (session, named.part.clone()) {
             (Some(id), None | Some(Part::Passage(_) | Part::Card(_))) => (
-                self.session_transcript(
-                    id,
-                    Some(&entry.list),
-                    self.workspace.read(cx).settings.drawer_composer,
-                    window,
-                    cx,
-                ),
+                match entry.session.clone() {
+                    Some(view) => self.session_transcript(
+                        view,
+                        self.workspace.read(cx).settings.drawer_composer,
+                        window,
+                        cx,
+                    ),
+                    None => div().into_any_element(),
+                },
                 Rc::new(
                     move |this: &mut Self, window: &mut Window, cx: &mut Context<Self>| {
                         this.select_session(id, window, cx)
@@ -719,9 +806,7 @@ impl Cydonia {
                     Rc::new(
                         move |this: &mut Self, window: &mut Window, cx: &mut Context<Self>| {
                             this.select_session(id, window, cx);
-                            if let Some(chat) = this.workspace.read(cx).session(id) {
-                                chat.transcript.reveal_turn(from);
-                            }
+                            this.reveal_session_turn(id, from, cx);
                         },
                     ),
                 )
@@ -757,7 +842,7 @@ impl Cydonia {
                             showing: Showing::Table(_),
                             ..
                         } => self.table_peek(project, at, cx),
-                        _ => self.article_peek(project, at, cx),
+                        _ => self.article_peek(project, at, window, cx),
                     })
                     .unwrap_or_else(|| self.entry_row(named, cx));
                 (

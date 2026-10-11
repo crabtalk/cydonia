@@ -52,7 +52,7 @@ pub(crate) use artifact::reference::SCHEME;
 /// the conversation.
 const TRANSCRIPT_HEIGHT: f32 = 320.;
 /// What the transcript lays its column out against.
-const CARD_WIDTH: f32 = 720.;
+pub(crate) const CARD_WIDTH: f32 = 720.;
 /// How many of a session's last turns the link picker previews.
 pub(crate) const PREVIEW_TURNS: usize = 3;
 /// How many of an article's first blocks its hover card shows.
@@ -451,10 +451,7 @@ impl Cydonia {
         cx: &mut Context<Self>,
     ) {
         self.open_row(row, window, cx);
-        let editor = self
-            .located(row, cx)
-            .and_then(|(project, at)| self.workspace.read(cx).article_in(project, at))
-            .and_then(|article| article.editor.clone());
+        let editor = self.pane_editor(cx);
         if let Some(editor) = editor {
             let at = markdown::Selection::at(markdown::Cursor::new(block, markdown::Part::Body, 0));
             editor.update(cx, |editor, cx| editor.select_to_top(at, cx));
@@ -742,21 +739,19 @@ impl Cydonia {
             .into_any_element()
     }
 
-    /// Session `id`'s transcript over its footer, filling the box it is put
-    /// in. Without `reply` the composer has no field, and shows the turn's
-    /// activity alone. Scrolled by `list` where one is given, else by the
-    /// session's own.
+    /// The transcript `view` draws over its session's footer, filling the box
+    /// it is put in. Without `reply` the composer has no field, and shows the
+    /// turn's activity alone.
     pub(crate) fn session_transcript(
         &mut self,
-        id: u64,
-        list: Option<&bezel::ui::list::VariableList<usize>>,
+        view: gpui::Entity<transcript::SessionView>,
         reply: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let id = view.read(cx).session;
         let composer = self.session_composer(id, window, cx);
         composer.update(cx, |composer, cx| composer.set_input(reply, cx));
-        let transcript = self.live_transcript(id, list, window, cx);
         div()
             .relative()
             .flex_1()
@@ -769,29 +764,17 @@ impl Cydonia {
             })
             .flex()
             .flex_col()
-            .child(transcript)
-            .child(self.session_footer(Some(id), composer, None, cx))
+            .child(view.clone())
+            .child({
+                let height = view.read(cx).state.footer_height.clone();
+                crate::view::pane::footer::Band::new(self.workspace.clone(), Some(id)).render(
+                    composer,
+                    None,
+                    Some(height),
+                    cx,
+                )
+            })
             .into_any_element()
-    }
-
-    /// [`live`] in a drawer's card.
-    pub(crate) fn live_transcript(
-        &mut self,
-        id: u64,
-        list: Option<&bezel::ui::list::VariableList<usize>>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let (workspace, root) = (self.workspace.clone(), cx.entity().downgrade());
-        live(
-            &workspace,
-            root,
-            id,
-            CARD_WIDTH,
-            transcript::Drawn::Nested(list),
-            window,
-            cx,
-        )
     }
 
     /// A run of a session's turns, read only, the way GitHub embeds a range of
@@ -859,9 +842,7 @@ impl Cydonia {
             ))
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.select_session(id, window, cx);
-                if let Some(chat) = this.workspace.read(cx).session(id) {
-                    chat.transcript.reveal_turn(from);
-                }
+                this.reveal_session_turn(id, from, cx);
             }));
         div()
             .flex()
@@ -884,14 +865,7 @@ impl Cydonia {
     ) -> AnyElement {
         let from = turns.from.saturating_sub(1) as usize;
         let to = turns.to as usize;
-        let body = self.workspace.update(cx, |workspace, cx| {
-            workspace.load_history(id);
-            let chat = workspace.session(id)?;
-            Some(transcript::excerpt(chat, from, to, window, cx))
-        });
-        let Some(body) = body else {
-            return div().into_any_element();
-        };
+        let body = self.session_excerpt_view(id, from, to, window, cx);
         let rows = div()
             .id(SharedString::from(format!("session-excerpt-rows-{id}")))
             .child(body);
@@ -915,6 +889,38 @@ impl Cydonia {
             .when(max_height.is_none(), |el| {
                 el.flex_1().min_h_0().flex().flex_col()
             })
+            .into_any_element()
+    }
+
+    /// Turns `from..to` of session `id` as a read-only view of their own, kept
+    /// across frames by where they are drawn.
+    pub(crate) fn session_excerpt_view(
+        &mut self,
+        id: u64,
+        from: usize,
+        to: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        self.workspace
+            .update(cx, |workspace, _| workspace.load_history(id));
+        let (workspace, root) = (self.workspace.clone(), cx.entity().downgrade());
+        window
+            .use_keyed_state(
+                SharedString::from(format!("session-excerpt-view-{id}-{from}-{to}")),
+                cx,
+                move |_, cx| {
+                    transcript::SessionView::new(
+                        id,
+                        None,
+                        transcript::Drawn::Excerpt { from, to },
+                        CARD_WIDTH,
+                        workspace,
+                        root,
+                        cx,
+                    )
+                },
+            )
             .into_any_element()
     }
 
@@ -974,47 +980,6 @@ impl Cydonia {
             composer.update(cx, |composer, cx| point.apply(composer, cx));
         }
     }
-}
-
-/// Session `id`'s transcript drawn live in a box of its own, with nothing at
-/// its foot. A rewind asked from it goes to `root`.
-pub(crate) fn live(
-    workspace: &gpui::Entity<crate::model::workspace::Workspace>,
-    root: gpui::WeakEntity<Cydonia>,
-    id: u64,
-    width: f32,
-    drawn: transcript::Drawn,
-    window: &mut Window,
-    cx: &mut gpui::App,
-) -> AnyElement {
-    let transcript = workspace.update(cx, |workspace, cx| {
-        workspace.session(id).map(|chat| {
-            transcript::render(
-                chat,
-                None,
-                width,
-                |_, _| None,
-                move |at, window, cx| {
-                    let _ = root.update(cx, |root, cx| root.ask_rewind(id, at, window, cx));
-                },
-                drawn,
-                window,
-                cx,
-            )
-        })
-    });
-    div()
-        .id(SharedString::from(format!("session-card-transcript-{id}")))
-        .relative()
-        .flex_1()
-        .min_h_0()
-        // The transcript's wheel stops here, at its ends too, so what is
-        // under it does not scroll with it.
-        .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
-        .flex()
-        .flex_col()
-        .children(transcript)
-        .into_any_element()
 }
 
 /// A session band's title, then its `agent · #n` caption.

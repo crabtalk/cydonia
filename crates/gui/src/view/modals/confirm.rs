@@ -309,7 +309,7 @@ impl Cydonia {
         let composers: Vec<_> = self
             .leaves
             .iter()
-            .map(|leaf| leaf.composer.clone())
+            .map(|pane| pane.read(cx).composer.clone())
             .chain(self.session_cards.get(&id).cloned())
             .filter(|composer| composer.read(cx).session() == Some(id))
             .collect();

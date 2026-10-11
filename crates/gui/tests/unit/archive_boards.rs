@@ -32,16 +32,16 @@ fn archived_article_releases_its_editor_and_reopens_from_disk(cx: &mut gpui::Tes
     workspace.update(cx, |_, cx| {
         let mut article = article::create(&path).unwrap();
         std::fs::write(&article.path, "Durable article text").unwrap();
-        article.open(14., cx);
+        article.open(cx);
         article.archive(true);
-        assert!(article.editor.is_some());
+        assert!(article.document.is_some());
         article.unload(cx);
-        assert!(article.editor.is_none());
+        assert!(article.document.is_none());
         assert!(article.field.is_none());
-        article.open(14., cx);
+        article.open(cx);
         assert!(
             article
-                .editor
+                .document
                 .as_ref()
                 .unwrap()
                 .read(cx)

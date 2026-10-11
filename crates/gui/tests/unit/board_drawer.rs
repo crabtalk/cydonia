@@ -21,16 +21,11 @@ impl Drop for Scratch {
     }
 }
 
-struct BoardView(Entity<Cydonia>);
-impl Render for BoardView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // As a pane hosts it: the board, and its drawer over it.
-        let (board, drawer) = self.0.update(cx, |root, cx| {
-            (
-                root.board(0, 0, None, window, cx),
-                root.drawer_layer(None, window, cx),
-            )
-        });
+struct Host(Entity<Cydonia>);
+impl Render for Host {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // As a window hosts it: the pane, its board and its drawer over it.
+        let pane = self.0.read(cx).leaf().clone();
         div().size_full().flex().flex_col().child(
             div()
                 .relative()
@@ -38,10 +33,14 @@ impl Render for BoardView {
                 .min_h_0()
                 .flex()
                 .flex_col()
-                .child(board)
-                .children(drawer),
+                .child(pane),
         )
     }
+}
+
+/// The pane's view of the board.
+fn view(root: &Entity<Cydonia>, cx: &App) -> Entity<BoardView> {
+    root.read(cx).board_views(cx).into_iter().next().unwrap()
 }
 
 fn open(
@@ -90,10 +89,13 @@ fn open(
                 workspace.projects.push(project);
                 workspace.active = Some(0);
             });
+            root.leaf()
+                .clone()
+                .update(cx, |pane, _| pane.kind = Kind::Board);
             root.open_card(None, member.clone(), cards[0].clone(), window, cx);
         });
         cx.observe(&root, |_, _, cx| cx.notify()).detach();
-        BoardView(root)
+        Host(root)
     });
     let root = window
         .root(cx)
@@ -119,7 +121,7 @@ fn settle(cx: &mut VisualTestContext) {
 /// Replace the open card's text the way a person would: select all, type.
 fn type_card(root: &Entity<Cydonia>, text: &str, cx: &mut VisualTestContext) {
     cx.update(|window, cx| {
-        let editor = root.read(cx).draft_for(None).unwrap().editor.clone();
+        let editor = view(root, cx).read(cx).draft().unwrap().editor.clone();
         window.focus(&editor.focus_handle(cx), cx);
     });
     cx.simulate_keystrokes("cmd-a");
@@ -132,8 +134,9 @@ fn type_card(root: &Entity<Cydonia>, text: &str, cx: &mut VisualTestContext) {
 
 fn draft_text(root: &Entity<Cydonia>, cx: &mut VisualTestContext) -> String {
     cx.update(|_, cx| {
-        root.read(cx)
-            .draft_for(None)
+        view(root, cx)
+            .read(cx)
+            .draft()
             .unwrap()
             .editor
             .read(cx)
@@ -172,6 +175,7 @@ fn resizing_expanding_and_restoring_use_the_board_pane(cx: &mut TestAppContext) 
     assert!(cx.update(|_, cx| {
         root.read(cx)
             .leaf()
+            .read(cx)
             .drawer
             .as_ref()
             .unwrap()
@@ -198,7 +202,16 @@ fn resizing_expanding_and_restoring_use_the_board_pane(cx: &mut TestAppContext) 
     cx.simulate_resize(size(px(700.), px(120.)));
     settle(&mut cx);
     assert!(cx.debug_bounds("drawer").unwrap().size.height <= px(120.));
-    assert!(!cx.update(|_, cx| { root.read(cx).leaf().drawer.as_ref().unwrap().size.expanded }));
+    assert!(!cx.update(|_, cx| {
+        root.read(cx)
+            .leaf()
+            .read(cx)
+            .drawer
+            .as_ref()
+            .unwrap()
+            .size
+            .expanded
+    }));
     cx.simulate_resize(size(px(240.), px(400.)));
     settle(&mut cx);
     for selector in ["drawer-expand", "drawer-close"] {
@@ -256,7 +269,7 @@ fn switching_and_closing_save_at_once(cx: &mut TestAppContext) {
     type_card(&root, "Closed", &mut cx);
     click("drawer-close", &mut cx);
     assert_eq!(saved_text(&scratch, &member, &cards[1]).unwrap(), "Closed");
-    assert!(cx.update(|_, cx| root.read(cx).leaf().card_drafts.is_empty()));
+    assert!(cx.update(|_, cx| view(&root, cx).read(cx).drafts.is_empty()));
 }
 
 #[gpui::test]
@@ -281,7 +294,7 @@ fn save_preserves_agent_metadata_and_rejects_conflicting_text(cx: &mut TestAppCo
     board.rewrite_card(&cards[0], "Agent rewrite");
     store.save_board(&mut board).unwrap();
     type_card(&root, "New draft", &mut cx);
-    assert!(cx.update(|_, cx| root.read(cx).draft_for(None).unwrap().error.is_some()));
+    assert!(cx.update(|_, cx| view(&root, cx).read(cx).draft().unwrap().error.is_some()));
     assert_eq!(draft_text(&root, &mut cx), "New draft");
     assert_eq!(
         saved_text(&scratch, &member, &cards[0]).unwrap(),
@@ -289,7 +302,7 @@ fn save_preserves_agent_metadata_and_rejects_conflicting_text(cx: &mut TestAppCo
     );
     click("card-draft-discard", &mut cx);
     assert_eq!(draft_text(&root, &mut cx), "Agent rewrite");
-    assert!(cx.update(|_, cx| root.read(cx).draft_for(None).unwrap().error.is_none()));
+    assert!(cx.update(|_, cx| view(&root, cx).read(cx).draft().unwrap().error.is_none()));
 }
 
 #[gpui::test]
@@ -312,7 +325,7 @@ fn an_agent_rewrite_reloads_an_untouched_card(cx: &mut TestAppContext) {
 fn emptied_cards_are_kept_and_never_saved(cx: &mut TestAppContext) {
     let (scratch, root, member, cards, mut cx) = open("empty", cx);
     type_card(&root, "", &mut cx);
-    assert!(cx.update(|_, cx| root.read(cx).draft_for(None).unwrap().error.is_some()));
+    assert!(cx.update(|_, cx| view(&root, cx).read(cx).draft().unwrap().error.is_some()));
     assert_eq!(
         saved_text(&scratch, &member, &cards[0]).unwrap(),
         "First card"
@@ -320,7 +333,7 @@ fn emptied_cards_are_kept_and_never_saved(cx: &mut TestAppContext) {
     click("drawer-close", &mut cx);
     cx.update(|window, cx| {
         root.update(cx, |root, cx| {
-            assert!(root.leaf().drawer.is_none());
+            assert!(root.leaf().read(cx).drawer.is_none());
             root.open_card(None, member.clone(), cards[0].clone(), window, cx);
         })
     });
@@ -361,7 +374,13 @@ fn horizontal_scroll_keeps_offsets_and_lane_geometry_stable(cx: &mut TestAppCont
         });
     });
     settle(&mut cx);
-    let scroll = cx.update(|_, cx| root.read(cx).boards.of(&member.id).across.clone());
+    let scroll = cx.update(|_, cx| {
+        root.read(cx)
+            .board_scroll(&member, cx)
+            .unwrap()
+            .across
+            .clone()
+    });
     let max = scroll.max_offset();
     for y in (60..160).step_by(10) {
         scroll.set_offset(point(px(0.), px(0.)));
@@ -380,7 +399,11 @@ fn horizontal_scroll_keeps_offsets_and_lane_geometry_stable(cx: &mut TestAppCont
     let lane = cx.update(|_, cx| {
         let root = root.read(cx);
         let id = &root.workspace.read(cx).projects[0].boards[0].columns[1].id;
-        root.boards.of(&member.id).lanes.of(id).scroller()
+        root.board_scroll(&member, cx)
+            .unwrap()
+            .lanes
+            .of(id)
+            .scroller()
     });
     let horizontal = scroll.offset();
     cx.simulate_event(gpui::ScrollWheelEvent {
@@ -454,7 +477,13 @@ fn offscreen_lanes_do_not_build_markdown(cx: &mut TestAppContext) {
         })
     });
     settle(&mut cx);
-    let scroll = cx.update(|_, cx| root.read(cx).boards.of(&member.id).across.clone());
+    let scroll = cx.update(|_, cx| {
+        root.read(cx)
+            .board_scroll(&member, cx)
+            .unwrap()
+            .across
+            .clone()
+    });
     let max = scroll.max_offset();
     let parsed = cx.update(|_, cx| root.read(cx).card_docs.0.borrow().len());
     assert!(
@@ -464,7 +493,11 @@ fn offscreen_lanes_do_not_build_markdown(cx: &mut TestAppContext) {
     let lane = cx.update(|_, cx| {
         let root = root.read(cx);
         let id = &root.workspace.read(cx).projects[0].boards[0].columns[1].id;
-        root.boards.of(&member.id).lanes.of(id).scroller()
+        root.board_scroll(&member, cx)
+            .unwrap()
+            .lanes
+            .of(id)
+            .scroller()
     });
     lane.set_offset(point(px(0.), px(-120.)));
     cx.update(|window, _| window.refresh());
@@ -531,7 +564,13 @@ fn list_scroll_builds_visible_rows_and_keeps_its_extent(cx: &mut TestAppContext)
         })
     });
     settle(&mut cx);
-    let scroll = cx.update(|_, cx| root.read(cx).boards.of(&member.id).down.clone());
+    let scroll = cx.update(|_, cx| {
+        root.read(cx)
+            .board_scroll(&member, cx)
+            .unwrap()
+            .down
+            .clone()
+    });
     let max = scroll.max_offset();
     assert!(max.y > px(10000.));
     let parsed = cx.update(|_, cx| root.read(cx).card_docs.0.borrow().len());
@@ -566,15 +605,15 @@ fn list_scroll_builds_visible_rows_and_keeps_its_extent(cx: &mut TestAppContext)
         assert_eq!(scroll.max_offset(), max);
     }
     cx.update(|window, cx| {
-        root.update(cx, |root, cx| {
-            root.edit(None, Editing::Card(cards[0].clone()), window, cx);
+        view(&root, cx).update(cx, |view, cx| {
+            view.start_edit(Editing::Card(cards[0].clone()), window, cx);
         })
     });
     settle(&mut cx);
     cx.simulate_input("Editing still works");
     assert!(cx.update(|_, cx| {
-        root.read(cx)
-            .leaf()
+        view(&root, cx)
+            .read(cx)
             .card_field
             .read(cx)
             .content()
@@ -605,7 +644,13 @@ fn list_window_tracks_group_folding_and_search(cx: &mut TestAppContext) {
         })
     });
     settle(&mut cx);
-    let scroll = cx.update(|_, cx| root.read(cx).boards.of(&member.id).down.clone());
+    let scroll = cx.update(|_, cx| {
+        root.read(cx)
+            .board_scroll(&member, cx)
+            .unwrap()
+            .down
+            .clone()
+    });
     let max = scroll.max_offset().y;
     assert!(!cx.update(|_, cx| {
         root.read(cx)
@@ -633,10 +678,11 @@ fn list_window_tracks_group_folding_and_search(cx: &mut TestAppContext) {
     }));
     cx.update(|_, cx| {
         root.update(cx, |root, cx| {
-            root.leaf_mut().finding = true;
-            root.leaf()
-                .find_field
-                .update(cx, |field, cx| field.set_content("Hidden row 42", cx));
+            root.leaf().clone().update(cx, |pane, cx| {
+                pane.finding = true;
+                pane.find_field
+                    .update(cx, |field, cx| field.set_content("Hidden row 42", cx));
+            });
             cx.notify();
         })
     });
@@ -674,19 +720,10 @@ fn list_rows_open_drawer_and_group_controls_stay_independent(cx: &mut TestAppCon
     cx.simulate_mouse_up(first, MouseButton::Left, Modifiers::default());
     settle(&mut cx);
     assert!(cx.debug_bounds("drawer").is_some());
-    assert!(cx.update(|_, cx| root.read(cx).leaf().editing.is_none()));
+    assert!(cx.update(|_, cx| view(&root, cx).read(cx).editing.is_none()));
     assert_eq!(
-        cx.update(|_, cx| root
-            .read(cx)
-            .leaf()
-            .drawer
-            .as_ref()
-            .unwrap()
-            .card()
-            .unwrap()
-            .card
-            .clone()),
-        cards[0]
+        cx.update(|_, cx| view(&root, cx).read(cx).opened_card().map(str::to_owned)),
+        Some(cards[0].clone())
     );
     type_card(&root, "List text", &mut cx);
     click("drawer-close", &mut cx);
@@ -708,7 +745,7 @@ fn list_rows_open_drawer_and_group_controls_stay_independent(cx: &mut TestAppCon
     assert!(cx.update(|_, cx| root.read(cx).renaming.is_none()));
     click("list-group-add", &mut cx);
     assert!(cx.update(|_, cx| matches!(
-        root.read(cx).leaf().editing,
+        view(&root, cx).read(cx).editing,
         Some(Editing::New(Place::Top, _))
     )));
 }
@@ -731,7 +768,13 @@ fn list_drawer_reveals_lower_rows_and_restores_scroll(cx: &mut TestAppContext) {
         })
     });
     settle(&mut cx);
-    let scroll = cx.update(|_, cx| root.read(cx).boards.of(&member.id).down.clone());
+    let scroll = cx.update(|_, cx| {
+        root.read(cx)
+            .board_scroll(&member, cx)
+            .unwrap()
+            .down
+            .clone()
+    });
     let before = scroll.offset();
     let position = point(px(180.), px(530.));
     cx.simulate_mouse_down(position, MouseButton::Left, Modifiers::default());
@@ -778,18 +821,24 @@ fn busy_orb_opens_its_session_without_opening_the_card(cx: &mut TestAppContext) 
             });
             // Linked and not busy: the session's number, not the orb.
             let card = &root.workspace.read(cx).projects[0].boards[0].columns[0].cards[0];
-            let idle = root
-                .card_working(card, root.card_session(card, cx))
-                .unwrap();
+            let idle = card_working(
+                card,
+                card_session(card, root.workspace.read(cx)),
+                &root.card_marks,
+            )
+            .unwrap();
             assert!(!idle.busy);
             assert_eq!(idle.session, Some((77, "Polish boards".into())));
             root.workspace.update(cx, |workspace, _| {
                 workspace.projects[0].boards[0].set_card_status(&cards[0], Some(Status::Busy));
             });
             let card = &root.workspace.read(cx).projects[0].boards[0].columns[0].cards[0];
-            let working = root
-                .card_working(card, root.card_session(card, cx))
-                .unwrap();
+            let working = card_working(
+                card,
+                card_session(card, root.workspace.read(cx)),
+                &root.card_marks,
+            )
+            .unwrap();
             assert!(working.busy);
             assert_eq!(working.session, Some((77, "Polish boards".into())));
             cx.notify();
@@ -800,8 +849,8 @@ fn busy_orb_opens_its_session_without_opening_the_card(cx: &mut TestAppContext) 
     cx.update(|_, cx| {
         let root = root.read(cx);
         assert_eq!(root.workspace.read(cx).projects[0].active, Some(77));
-        assert!(matches!(root.leaf().pane, Kind::Session));
-        assert!(root.leaf().drawer.is_none());
+        assert!(matches!(root.leaf().read(cx).kind, Kind::Session));
+        assert!(root.leaf().read(cx).drawer.is_none());
     });
 }
 
@@ -895,7 +944,7 @@ fn a_long_lane_builds_only_the_cards_on_screen(cx: &mut TestAppContext) {
     let lane = cx.update(|_, cx| {
         let root = root.read(cx);
         let id = &root.workspace.read(cx).projects[0].boards[0].columns[0].id;
-        root.boards.of(&member.id).lanes.of(id)
+        root.board_scroll(&member, cx).unwrap().lanes.of(id)
     });
     // Both seeded cards, the 150, `Add a card` and the foot.
     assert_eq!(lane.list.item_count(), 154);

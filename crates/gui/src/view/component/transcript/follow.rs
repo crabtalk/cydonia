@@ -19,7 +19,7 @@ pub(super) fn viewport(state: &ListState, content: Div) -> impl IntoElement {
                 move |_, window, _| {
                     if drag.is_scrollbar_dragging() && at_end(&drag) && !drag.is_following_tail() {
                         drag.set_follow_mode(FollowMode::Tail);
-                        window.refresh();
+                        window.request_animation_frame();
                     }
                 },
                 |_, _, _, _| {},

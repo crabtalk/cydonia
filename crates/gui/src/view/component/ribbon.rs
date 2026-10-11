@@ -14,19 +14,22 @@
 //! then bold, italic, strikethrough, code, a highlight (`==text==`,
 //! [`editor::HIGHLIGHT_MARK`]) and a link.
 
-use crate::view::kit::menu::{self, Menu};
-use crate::view::{component::composer, window::root::Cydonia};
+use crate::view::kit::menu;
+use crate::view::{
+    component::composer,
+    pane::{Pane, PaneMenu},
+    window::root::Cydonia,
+};
 use artifact::reference;
-use artifact::space::Member;
 use bezel::{
     gpui::{
-        self, Anchor, AnyElement, Bounds, Context, Entity, Focusable as _, KeyBinding, Pixels,
+        self, Anchor, AnyElement, App, Bounds, Context, Entity, Focusable as _, KeyBinding, Pixels,
         Point, SharedString, Window, actions, div, point, prelude::*, px,
     },
     motion,
     theme::{TextStyle, Theme, Typeset},
     ui::{
-        context_menu::Place,
+        context_menu::{ContextMenu, Place},
         icons::{self, Icon},
         input::TextField,
         menu::Item,
@@ -76,7 +79,7 @@ pub fn bindings() -> Vec<KeyBinding> {
     ]
 }
 
-/// The ribbon's own state, hung on [`Cydonia`].
+/// The ribbon's own state, hung on its [`Pane`].
 pub(crate) struct Ribbon {
     /// The pointer is dragging a run out. The bar waits for the release: one
     /// that followed the pointer would sit over the very words being chosen,
@@ -95,7 +98,7 @@ pub(crate) struct Ribbon {
 }
 
 impl Ribbon {
-    pub(crate) fn new(cx: &mut Context<Cydonia>) -> Self {
+    pub(crate) fn new(cx: &mut bezel::gpui::App) -> Self {
         let field = cx.new(|cx| {
             TextField::new(cx)
                 .with_frame(false)
@@ -218,15 +221,15 @@ pub fn perch(view: Bounds<Pixels>, head: Bounds<Pixels>) -> Option<Point<Pixels>
         .then(|| point(head.origin.x, top - px(GAP)))
 }
 
-impl Cydonia {
+impl Pane {
     // ── mutations ────────────────────────────────────────────────
 
     /// Note that the pointer is choosing a run, and that it has stopped. The
     /// document's own press is what the editor hears; this is only the bar
     /// getting out of the way of it.
     pub(crate) fn set_selecting(&mut self, selecting: bool, cx: &mut Context<Self>) {
-        if self.leaf().ribbon.selecting != selecting {
-            self.leaf_mut().ribbon.selecting = selecting;
+        if self.ribbon.selecting != selecting {
+            self.ribbon.selecting = selecting;
             cx.notify();
         }
     }
@@ -238,14 +241,11 @@ impl Cydonia {
     /// whichever document is open by the time this runs, and by the time this
     /// runs that is no longer the one the run was in.
     pub(crate) fn rest_ribbon(&mut self, cx: &mut Context<Self>) {
-        if self.leaf_mut().ribbon.linking.take().is_some() {
-            self.leaf()
-                .ribbon
-                .field
-                .update(cx, |field, cx| field.clear(cx));
+        if self.ribbon.linking.take().is_some() {
+            self.ribbon.field.update(cx, |field, cx| field.clear(cx));
             cx.notify();
         }
-        if std::mem::take(&mut self.leaf_mut().ribbon.asking) {
+        if std::mem::take(&mut self.ribbon.asking) {
             cx.notify();
         }
         self.set_selecting(false, cx);
@@ -278,12 +278,11 @@ impl Cydonia {
         cx: &mut Context<Self>,
     ) {
         let held = replacing.clone().unwrap_or_default();
-        self.leaf()
-            .ribbon
+        self.ribbon
             .field
             .update(cx, |field, cx| field.set_content(held, cx));
-        self.leaf_mut().ribbon.linking = Some(Linking { replacing });
-        window.focus(&self.leaf().ribbon.field.read(cx).focus_handle(cx), cx);
+        self.ribbon.linking = Some(Linking { replacing });
+        window.focus(&self.ribbon.field.read(cx).focus_handle(cx), cx);
         cx.notify();
     }
 
@@ -292,17 +291,10 @@ impl Cydonia {
     /// An empty field takes the link off. It is the only thing emptying one
     /// could mean, and it saves a second button for the removal.
     fn confirm_link(&mut self, _: &ConfirmLink, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(linking) = self.leaf_mut().ribbon.linking.take() else {
+        let Some(linking) = self.ribbon.linking.take() else {
             return;
         };
-        let url = self
-            .leaf()
-            .ribbon
-            .field
-            .read(cx)
-            .content()
-            .trim()
-            .to_string();
+        let url = self.ribbon.field.read(cx).content().trim().to_string();
         if let Some(editor) = self.open_editor(cx) {
             let url = typed_link(&url, editor.read(cx).base());
             editor.update(cx, |editor, cx| {
@@ -320,7 +312,7 @@ impl Cydonia {
 
     /// Drop the field and leave the run as it was.
     fn dismiss_link(&mut self, _: &DismissLink, window: &mut Window, cx: &mut Context<Self>) {
-        if self.leaf_mut().ribbon.linking.take().is_none() {
+        if self.ribbon.linking.take().is_none() {
             return;
         }
         if let Some(editor) = self.open_editor(cx) {
@@ -333,8 +325,8 @@ impl Cydonia {
     /// the lines it is on under it, where the article has a number; and the
     /// passage alone.
     fn quoted_selection(&self, cx: &Context<Self>) -> Option<(String, String)> {
-        let article = self.pane_doc(cx)?;
-        let editor = article.editor.as_ref()?.read(cx);
+        let editor = self.open_editor(cx)?;
+        let editor = editor.read(cx);
         let (start, end) = editor.selection().ordered();
         let (source, at) = markdown::serialize_at_many(
             editor.doc(),
@@ -352,6 +344,7 @@ impl Cydonia {
             start..from + source[from..to].trim_end().len(),
         );
         let workspace = self.workspace.read(cx);
+        let article = workspace.article_of(self.entry.as_ref())?;
         let chip = article.number.and_then(|number| {
             let project = &workspace.projects[workspace.article_at(&article.path)?.0];
             let name = reference::project_name(&project.path)?;
@@ -371,11 +364,8 @@ impl Cydonia {
     /// Send the selection to the article's session with `question` under it.
     /// The selection collapses: the bar over it has done its work.
     fn send_about(&mut self, question: &str, cx: &mut Context<Self>) {
-        let on = self.leaf().entry.clone();
-        let (Some(path), Some((quoted, _))) = (
-            self.thread_article(on.as_ref(), cx),
-            self.quoted_selection(cx),
-        ) else {
+        let (Some(path), Some((quoted, _))) = (self.thread_article(cx), self.quoted_selection(cx))
+        else {
             return;
         };
         let text = format!("{}\n\n{question}", composer::blockquote(&quoted));
@@ -408,29 +398,19 @@ impl Cydonia {
 
     /// Put the question field up in the bar's place.
     fn open_ask(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.leaf()
-            .ribbon
-            .question
-            .update(cx, |field, cx| field.clear(cx));
-        self.leaf_mut().ribbon.asking = true;
-        window.focus(&self.leaf().ribbon.question.read(cx).focus_handle(cx), cx);
+        self.ribbon.question.update(cx, |field, cx| field.clear(cx));
+        self.ribbon.asking = true;
+        window.focus(&self.ribbon.question.read(cx).focus_handle(cx), cx);
         cx.notify();
     }
 
     /// Send what was typed about the selection, and give the caret back to
     /// the document. An empty field sends nothing.
     fn confirm_ask(&mut self, _: &ConfirmAsk, window: &mut Window, cx: &mut Context<Self>) {
-        if !std::mem::take(&mut self.leaf_mut().ribbon.asking) {
+        if !std::mem::take(&mut self.ribbon.asking) {
             return;
         }
-        let question = self
-            .leaf()
-            .ribbon
-            .question
-            .read(cx)
-            .content()
-            .trim()
-            .to_string();
+        let question = self.ribbon.question.read(cx).content().trim().to_string();
         if !question.is_empty() {
             self.send_about(&question, cx);
         }
@@ -442,7 +422,7 @@ impl Cydonia {
 
     /// Drop the question field and leave the run as it was.
     fn dismiss_ask(&mut self, _: &DismissAsk, window: &mut Window, cx: &mut Context<Self>) {
-        if !std::mem::take(&mut self.leaf_mut().ribbon.asking) {
+        if !std::mem::take(&mut self.ribbon.asking) {
             return;
         }
         if let Some(editor) = self.open_editor(cx) {
@@ -453,33 +433,44 @@ impl Cydonia {
 
     /// The open document's editing surface, or nothing where no article is
     /// open — every one of the bar's acts asks for it.
-    fn open_editor(&self, cx: &Context<Self>) -> Option<Entity<Editor>> {
-        self.pane_doc(cx).and_then(|article| article.editor.clone())
+    fn open_editor(&self, cx: &App) -> Option<Entity<Editor>> {
+        self.article_shown(cx)
+            .and_then(|view| view.read(cx).editor().cloned())
+    }
+
+    /// The article the pane shows, while article threads are on: what its
+    /// composer sends to.
+    pub(crate) fn thread_article(&self, cx: &App) -> Option<std::path::PathBuf> {
+        let workspace = self.workspace.read(cx);
+        if !workspace.settings.features.threads() {
+            return None;
+        }
+        if self.entry.is_none() && self.kind != artifact::kind::Kind::Article {
+            return None;
+        }
+        Some(workspace.article_of(self.entry.as_ref())?.path.clone())
     }
 
     // ── chrome ───────────────────────────────────────────────────
 
-    /// The bar, when there is a run of text for it to be about.
-    /// `on` is the pane drawing it. The bar is built from the selection in the
-    /// focused pane's editor, so a pane that is not the focused one draws none
-    /// — otherwise every article pane on screen carries a copy of it, perched
-    /// where another pane's document put its selection.
-    pub(crate) fn ribbon(
+    /// The bar, when there is a run of text for it to be about. Only the
+    /// focused pane draws one: the run is the focused editor's.
+    pub(crate) fn ribbon_bar(
         &self,
-        on: Option<&Member>,
+        focused: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        if on.is_some() && self.leaf().entry.as_ref() != on {
+        if !focused {
             return None;
         }
         // Held down: the run is still being chosen.
-        if self.leaf().ribbon.selecting {
+        if self.ribbon.selecting {
             return None;
         }
-        let article = self.pane_doc(cx)?;
-        let editor = article.editor.clone()?;
-        let port = article.scroll.bounds();
+        let view = self.article_shown(cx)?;
+        let editor = view.read(cx).editor()?.clone();
+        let port = view.read(cx).scroll.bounds();
         let (formatting, head) = {
             let held = editor.read(cx);
             (held.formatting(), held.selection_bounds()?)
@@ -491,15 +482,15 @@ impl Cydonia {
         }
         // Writing a link takes the focus off the document, and the bar is what
         // is holding the field it went to.
-        let linking = self.leaf().ribbon.linking.is_some();
-        let asking = self.leaf().ribbon.asking;
+        let linking = self.ribbon.linking.is_some();
+        let asking = self.ribbon.asking;
         if !linking && !asking && !editor.focus_handle(cx).contains_focused(window, cx) {
             return None;
         }
         let at = perch(port, head)?;
 
         let threads = self
-            .thread_article(on, cx)
+            .thread_article(cx)
             .is_some_and(|path| self.workspace.read(cx).thread_reachable(&path));
         let theme = Theme::of(cx).clone();
         let card = popover::popover_card(&theme)
@@ -515,32 +506,32 @@ impl Cydonia {
             // A press elsewhere files the URL typed, the way the rename field
             // has it, and drops a question.
             (true, _) => card.child(self.inline_field(
-                self.leaf().ribbon.field.clone(),
+                self.ribbon.field.clone(),
                 &theme,
                 cx,
                 |this, window, cx| this.confirm_link(&ConfirmLink, window, cx),
             )),
             (false, true) => card.child(self.inline_field(
-                self.leaf().ribbon.question.clone(),
+                self.ribbon.question.clone(),
                 &theme,
                 cx,
                 |this, window, cx| this.dismiss_ask(&DismissAsk, window, cx),
             )),
             (false, false) => card
                 .when(threads, |card| {
-                    card.child(self.selection_action(
+                    card.child(action(
                         "Ask",
                         icons::glyph::MessageCircleQuestionMark,
                         &theme,
                         cx,
-                        |this, window, cx| this.open_ask(window, cx),
+                        |this: &mut Self, window, cx| this.open_ask(window, cx),
                     ))
-                    .child(self.selection_action(
+                    .child(action(
                         "Explain",
                         icons::glyph::Lightbulb,
                         &theme,
                         cx,
-                        |this, _, cx| this.explain(cx),
+                        |this: &mut Self, _, cx| this.explain(cx),
                     ))
                     .child(divider(&theme))
                 })
@@ -680,29 +671,87 @@ impl Cydonia {
                 move |this, _, window, cx| {
                     cx.stop_propagation();
                     let current = current.clone();
-                    let rows = move |_: &mut Self, _: &mut Window, _: &mut Context<Self>| {
-                        Self::turn_rows(current)
-                    };
-                    this.toggle_menu(Menu::Turn, Place::Below, rows, window, cx);
+                    ContextMenu::toggle(
+                        this,
+                        |this| &mut this.menu,
+                        PaneMenu::Turn,
+                        Place::Below,
+                        move |_, _, _| menu::chooser(Self::turn_rows(current)),
+                        window,
+                        cx,
+                    );
                 }
             }))
-            .children(self.menu_here(&Menu::Turn, "ribbon-turn-card", window, cx));
-        self.menu_trigger(button, Menu::Turn, cx)
+            .children(self.menu.render_for(
+                &PaneMenu::Turn,
+                "ribbon-turn-card",
+                |this| &mut this.menu,
+                window,
+                cx,
+            ));
+        ContextMenu::trigger(button, |this: &mut Self| &mut this.menu, PaneMenu::Turn, cx)
     }
 
     /// Every block the run could be turned into — the editor's own vocabulary,
     /// which is what the slash menu and the gutter handle both offer.
-    fn turn_rows(current: Option<SharedString>) -> Vec<(Item, menu::Act)> {
+    fn turn_rows(current: Option<SharedString>) -> Vec<(Item, menu::Act<Self>)> {
         editor::turns()
             .into_iter()
             .map(|(label, kind)| {
                 let checked = current.as_ref() == Some(&label);
-                menu::row(Item::action(label).checked(checked), move |this, _, cx| {
+                menu::row::<Self>(Item::action(label).checked(checked), move |this, _, cx| {
                     this.turn_blocks(kind.clone(), cx);
                 })
             })
             .collect()
     }
+}
+
+impl Cydonia {
+    /// Note on the focused pane that the pointer is choosing a run — see
+    /// [`Pane::set_selecting`].
+    pub(crate) fn set_selecting(&mut self, selecting: bool, cx: &mut Context<Self>) {
+        self.leaf()
+            .clone()
+            .update(cx, |pane, cx| pane.set_selecting(selecting, cx));
+    }
+
+    /// Put the focused pane's bar back to rest — see [`Pane::rest_ribbon`].
+    pub(crate) fn rest_ribbon(&mut self, cx: &mut Context<Self>) {
+        self.leaf()
+            .clone()
+            .update(cx, |pane, cx| pane.rest_ribbon(cx));
+    }
+}
+
+/// One of a selection bar's actions, as a word beside its mark — the
+/// ribbon's and the transcript's selection bar's.
+pub(crate) fn action<V: 'static>(
+    label: &'static str,
+    glyph: &'static [u8],
+    theme: &Theme,
+    cx: &Context<V>,
+    act: impl Fn(&mut V, &mut Window, &mut Context<V>) + 'static,
+) -> AnyElement {
+    theme
+        .ghost(SharedString::from(format!("selection-{label}")))
+        .px(px(8.))
+        .py(px(4.))
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(6.))
+        .text_style(TextStyle::Callout)
+        .text_color(theme.text)
+        .child(
+            icons::icon(glyph)
+                .size(px(13.))
+                .flex_none()
+                .text_color(theme.text_muted),
+        )
+        .child(label)
+        .on_click(cx.listener(move |this, _, window, cx| act(this, window, cx)))
+        .into_any_element()
 }
 
 /// The rule between the block's name and the marks. Notion breaks the two

@@ -36,7 +36,7 @@ impl Cydonia {
             .items_center()
             .gap(px(4.))
             .overflow_hidden();
-        self.label_chips(cell, target, labels, ROW_GROUP, cx)
+        self.label_chips(cell, target, labels, ROW_GROUP, cx.entity().downgrade(), cx)
             .into_any_element()
     }
 
@@ -60,8 +60,7 @@ impl Cydonia {
                 this.toggle_labels(Target::Heading, window, cx);
             }))
             .children(self.label_picker(&Target::Heading));
-        self.labels_trigger(cell, Target::Heading, cx)
-            .into_any_element()
+        Self::labels_trigger(cell, Target::Heading, cx.entity().downgrade()).into_any_element()
     }
 
     /// The selection bar's Label button.
@@ -76,7 +75,7 @@ impl Cydonia {
                 this.toggle_labels(Target::Selection, window, cx);
             }))
             .children(self.label_picker(&Target::Selection));
-        self.labels_trigger(button, Target::Selection, cx)
+        Self::labels_trigger(button, Target::Selection, cx.entity().downgrade())
     }
 
     /// The filters on, each a pill that takes it off. Nothing while none is.

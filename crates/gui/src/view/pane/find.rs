@@ -2,24 +2,24 @@
 //!
 //! The board's find narrows its cards instead — see
 //! [`crate::view::board::FindCard`]. Both share the pane's find field and
-//! [`crate::view::pane::leaf::Leaf::finding`].
+//! [`crate::view::pane::Pane::finding`].
 //!
 //! Hits are looked for in the rendered text of each block, the text a reader
 //! sees, not in the markdown source.
 
+use super::Pane;
 use crate::view::{
-    board::{self, DismissFind},
-    component::transcript,
+    board::{self, DismissFind, FindCard},
     window::root::Cydonia,
 };
-use artifact::{kind::Kind, search::Query, space::Member};
+use artifact::{kind::Kind, search::Query};
 use bezel::{
     gpui::{
-        self, AnyElement, App, Context, Entity, KeyBinding, SharedString, Window, actions, div,
-        prelude::*, px,
+        self, AnyElement, App, Context, Focusable as _, KeyBinding, SharedString, Window, actions,
+        div, prelude::*, px,
     },
     theme::{TextStyle, Theme, Typeset as _},
-    ui::{icons, input::TextField, tooltip::Tooltip, widgets::Buttons as _},
+    ui::{icons, tooltip::Tooltip, widgets::Buttons as _},
 };
 use markdown::{Annotation, Cursor, Doc, Selection};
 
@@ -71,234 +71,225 @@ pub(crate) fn annotations(
         .collect()
 }
 
-/// Where a pane's find points: every hit, and which of them is current.
-enum Found {
-    Article {
-        editor: Entity<editor::Editor>,
-        hits: Vec<Selection>,
-    },
-    Transcript {
-        session: u64,
-        hits: Vec<(usize, Selection)>,
-    },
+/// What a pane's find bar and the workspace search hand each thing the pane
+/// holds — see [`Searchable`].
+#[derive(Clone, Default)]
+pub(crate) struct Find {
+    /// The bar's text, while the bar is up.
+    pub(crate) bar: Option<String>,
+    /// Whether the bar reads its text as a regular expression.
+    pub(crate) pattern: bool,
+    /// The workspace search applied.
+    pub(crate) applied: Option<Query>,
+    /// Which hit is current, counted from the first.
+    pub(crate) at: usize,
 }
 
-impl Found {
-    fn len(&self) -> usize {
-        match self {
-            Self::Article { hits, .. } => hits.len(),
-            Self::Transcript { hits, .. } => hits.len(),
-        }
-    }
-}
-
-impl Cydonia {
-    /// The query a pane finds by, while its bar is up and holds one.
-    fn text_query(&self, on: Option<&Member>, cx: &App) -> Option<Query> {
-        let leaf = self.leaf_of(on);
-        if leaf.finding {
-            let text = leaf.find_field.read(cx).content();
-            match leaf.find_pattern {
+impl Find {
+    /// What a text find looks for: the bar's query while the bar is up, the
+    /// applied search otherwise.
+    pub(crate) fn query(&self) -> Option<Query> {
+        match &self.bar {
+            Some(text) => match self.pattern {
                 true => Query::pattern(text).ok().flatten(),
                 false => Query::literal(text),
-            }
-        } else {
-            self.applied_query().cloned()
+            },
+            None => self.applied.clone(),
         }
     }
 
-    fn found(&self, on: Option<&Member>, cx: &App) -> Option<Found> {
-        let query = self.text_query(on, cx)?;
-        let workspace = self.workspace.read(cx);
-        // A pane in a space says what it shows by its member; a window
-        // showing one entry, by its leaf.
-        let pane = match on.map(|member| member.kind) {
-            Some(Kind::Session) => Kind::Session,
-            Some(Kind::Board) => Kind::Board,
-            Some(Kind::Article) => Kind::Article,
-            Some(Kind::Table) => Kind::Table,
-            None => self.leaf_of(on).pane,
-        };
-        match pane {
-            Kind::Article => {
-                let editor = workspace.article_of(on)?.editor.clone()?;
-                let hits = hits(editor.read(cx).doc(), &query);
-                Some(Found::Article { editor, hits })
-            }
-            Kind::Session => {
-                let session = workspace.session_id_of(on)?;
-                let chat = workspace.session(session)?;
-                let hits = transcript::hits(&chat.items, &query);
-                Some(Found::Transcript { session, hits })
-            }
-            Kind::Board | Kind::Table => None,
+    /// What a board is narrowed by, as text: the bar's while it is up, the
+    /// applied search's otherwise, and empty for none.
+    pub(crate) fn text(&self) -> String {
+        match &self.bar {
+            Some(text) => text.clone(),
+            None => self
+                .applied
+                .as_ref()
+                .map(|query| query.text().to_owned())
+                .unwrap_or_default(),
         }
     }
 
-    /// Wash the article's hits in its editor. Run on every paint of the pane,
-    /// so hits follow edits; the washes are written only when they differ.
-    pub(crate) fn paint_article_find(
-        &self,
-        editor: &Entity<editor::Editor>,
-        on: Option<&Member>,
-        cx: &mut App,
-    ) {
-        let washes = match self.text_query(on, cx) {
-            Some(query) => {
-                let hits = hits(editor.read(cx).doc(), &query);
-                let current = current(self.leaf_of(on).find_at, hits.len());
-                annotations(&hits, current.map(|ix| hits[ix]))
-            }
-            None => Vec::new(),
-        };
-        if editor.read(cx).washes() != washes.as_slice() {
-            editor.update(cx, |editor, cx| editor.set_washes(washes, cx));
+    /// Which of `len` hits is current, wrapping; nothing when there are none.
+    pub(crate) fn current(&self, len: usize) -> Option<usize> {
+        current(self.at, len)
+    }
+}
+
+/// A thing a pane shows that the pane's find reaches: told the find whenever
+/// it changes, asked how many hits it finds, and asked to bring the current
+/// one into view.
+pub(crate) trait Searchable: Sized + 'static {
+    fn set_find(&mut self, find: Find, cx: &mut Context<Self>);
+    fn hits(&self, cx: &App) -> usize;
+    fn reveal_hit(&mut self, cx: &mut Context<Self>);
+}
+
+impl Pane {
+    /// What the pane's find bar and the applied search say now.
+    pub(crate) fn find(&self, cx: &App) -> Find {
+        Find {
+            bar: self
+                .finding
+                .then(|| self.find_field.read(cx).content().to_string()),
+            pattern: self.find_pattern,
+            applied: self.applied.clone(),
+            at: self.find_at,
         }
+    }
+
+    /// Hand the pane's find to everything it holds.
+    pub(crate) fn push_find(&mut self, cx: &mut Context<Self>) {
+        let find = self.find(cx);
+        for view in self.boards.clone() {
+            view.update(cx, |view, cx| view.set_find(find.clone(), cx));
+        }
+        for view in self.articles.clone() {
+            view.update(cx, |view, cx| view.set_find(find.clone(), cx));
+        }
+        for view in self.sessions.clone() {
+            view.update(cx, |view, cx| view.set_find(find.clone(), cx));
+        }
+        cx.notify();
+    }
+
+    /// The workspace search applied moved.
+    pub(crate) fn set_applied(&mut self, applied: Option<Query>, cx: &mut Context<Self>) {
+        if applied.is_some() {
+            self.finding = false;
+            self.find_at = 0;
+        }
+        self.applied = applied;
+        self.push_find(cx);
+    }
+
+    /// What the pane shows, as its find reaches it.
+    fn shown_kind(&self) -> Kind {
+        self.entry.as_ref().map_or(self.kind, |member| member.kind)
+    }
+
+    /// How many hits the find finds in what the pane shows.
+    fn hit_count(&self, cx: &App) -> Option<usize> {
+        match self.shown_kind() {
+            Kind::Article => Some(self.article_shown(cx)?.read(cx).hits(cx)),
+            Kind::Board => Some(self.board_shown(cx)?.read(cx).hits(cx)),
+            Kind::Session => Some(self.session_shown(cx)?.read(cx).hits(cx)),
+            Kind::Table => None,
+        }
+    }
+
+    /// Put the find bar up, take the caret back to a field already up, or —
+    /// where the caret is in it already — put it away. The chord that raises a
+    /// bar is the one a reader reaches for to be rid of it, and the bar is the
+    /// query: dismissing it clears what the board is narrowed by.
+    pub(crate) fn find_card(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let field = self.find_field.clone();
+        if self.finding && field.read(cx).focus_handle(cx).is_focused(window) {
+            self.dismiss_find(cx);
+            return;
+        }
+        self.finding = true;
+        let placeholder = match self.kind {
+            Kind::Board => "find a card…",
+            _ => "find…",
+        };
+        field.update(cx, |field, cx| field.set_placeholder(placeholder, cx));
+        window.focus(&field.read(cx).focus_handle(cx), cx);
+        self.push_find(cx);
+    }
+
+    /// Done finding: the field goes and takes its query with it.
+    pub(crate) fn dismiss_find(&mut self, cx: &mut Context<Self>) {
+        self.finding = false;
+        self.find_field.update(cx, |field, cx| field.clear(cx));
+        self.push_find(cx);
     }
 
     /// The query changed: back to the first hit, and show it.
-    pub(crate) fn find_changed(&mut self, field: &Entity<TextField>, cx: &mut Context<Self>) {
-        let Some(leaf) = self
-            .leaves
-            .iter()
-            .position(|leaf| &leaf.find_field == field)
-        else {
-            return;
-        };
-        let on = self.leaves[leaf].entry.clone();
-        self.leaves[leaf].find_at = 0;
-        self.reveal_find(on.as_ref(), cx);
-        cx.notify();
+    pub(crate) fn find_changed(&mut self, cx: &mut Context<Self>) {
+        self.find_at = 0;
+        self.push_find(cx);
+        self.reveal_find(cx);
     }
 
     /// Whether the bar is up in pattern mode over a field that does not parse.
-    fn bad_pattern(&self, on: Option<&Member>, cx: &App) -> bool {
-        let leaf = self.leaf_of(on);
-        leaf.finding
-            && leaf.find_pattern
-            && Query::pattern(leaf.find_field.read(cx).content()).is_err()
+    fn bad_pattern(&self, cx: &App) -> bool {
+        self.finding
+            && self.find_pattern
+            && Query::pattern(self.find_field.read(cx).content()).is_err()
     }
 
     fn toggle_find_pattern(&mut self, cx: &mut Context<Self>) {
-        let on = self.leaf().entry.clone();
-        let leaf = self.leaf_mut();
-        leaf.find_pattern = !leaf.find_pattern;
-        leaf.find_at = 0;
-        self.reveal_find(on.as_ref(), cx);
-        cx.notify();
+        self.find_pattern = !self.find_pattern;
+        self.find_at = 0;
+        self.push_find(cx);
+        self.reveal_find(cx);
     }
 
-    pub(crate) fn find_next(&mut self, _: &FindNext, _: &mut Window, cx: &mut Context<Self>) {
-        self.step_find(1, cx);
-    }
-
-    pub(crate) fn find_prev(&mut self, _: &FindPrev, _: &mut Window, cx: &mut Context<Self>) {
-        self.step_find(-1, cx);
-    }
-
-    fn step_find(&mut self, by: isize, cx: &mut Context<Self>) {
-        let on = self.leaf().entry.clone();
-        let Some(len) = self.found(on.as_ref(), cx).map(|found| found.len()) else {
+    pub(crate) fn step_find(&mut self, by: isize, cx: &mut Context<Self>) {
+        let Some(len) = self.hit_count(cx) else {
             return;
         };
         if len == 0 {
             return;
         }
-        let at = current(self.leaf().find_at, len).unwrap_or(0) as isize;
-        self.leaf_mut().find_at = (at + by).rem_euclid(len as isize) as usize;
-        self.reveal_find(on.as_ref(), cx);
-        cx.notify();
+        let at = current(self.find_at, len).unwrap_or(0) as isize;
+        self.find_at = (at + by).rem_euclid(len as isize) as usize;
+        self.push_find(cx);
+        self.reveal_find(cx);
     }
 
     /// Opening a filtered entry starts at its first match, not its saved viewport.
     pub(crate) fn reveal_applied_match(&mut self, cx: &mut Context<Self>) {
-        if self.applied_query().is_none() {
+        if self.applied.is_none() {
             return;
         }
-        self.leaf_mut().finding = false;
-        self.leaf_mut().find_at = 0;
-        let on = self.leaf().entry.clone();
-        if self.leaf().pane == Kind::Board {
-            self.reveal_board_match(on.as_ref(), cx);
-        } else {
-            self.reveal_find(on.as_ref(), cx);
-        }
-        cx.notify();
+        self.finding = false;
+        self.find_at = 0;
+        self.push_find(cx);
+        self.reveal_find(cx);
     }
 
     /// Bring the current hit into view and mark it.
-    fn reveal_find(&mut self, on: Option<&Member>, cx: &mut Context<Self>) {
-        let at = self.leaf_of(on).find_at;
-        match self.found(on, cx) {
-            Some(Found::Article { editor, hits }) => {
-                if let Some(hit) = current(at, hits.len()).map(|ix| hits[ix]) {
-                    editor.update(cx, |editor, cx| editor.select(hit, cx));
+    fn reveal_find(&mut self, cx: &mut Context<Self>) {
+        match self.shown_kind() {
+            Kind::Article => {
+                if let Some(view) = self.article_shown(cx) {
+                    view.update(cx, |view, cx| view.reveal_hit(cx));
                 }
             }
-            Some(Found::Transcript { session, hits }) => {
-                let hit = current(at, hits.len()).map(|ix| hits[ix]);
-                self.workspace.update(cx, |workspace, cx| {
-                    workspace.with_session(session, cx, |chat| {
-                        chat.transcript.show_find(&chat.items, hit);
-                    });
-                });
+            Kind::Board => {
+                if let Some(view) = self.board_shown(cx) {
+                    view.update(cx, |view, cx| view.reveal_hit(cx));
+                }
             }
-            None => {}
+            Kind::Session => {
+                if let Some(view) = self.session_shown(cx) {
+                    view.update(cx, |view, cx| view.reveal_hit(cx));
+                }
+            }
+            Kind::Table => {}
         }
-    }
-
-    /// Take a transcript's find off with the bar.
-    pub(crate) fn clear_text_find(&mut self, on: Option<&Member>, cx: &mut Context<Self>) {
-        let session = self.workspace.read(cx).session_id_of(on);
-        if let Some(session) = session {
-            self.workspace.update(cx, |workspace, cx| {
-                workspace.with_session(session, cx, |chat| {
-                    chat.transcript.show_find(&chat.items, None)
-                });
-            });
-        }
-    }
-
-    /// The query a transcript washes its hits with, handed over on every
-    /// paint of the pane.
-    pub(crate) fn transcript_query(&self, on: Option<&Member>, cx: &App) -> Option<Query> {
-        self.text_query(on, cx)
     }
 
     /// The bar over an article or a transcript: the field, how many hits and
     /// which, and the ways between them.
-    pub(crate) fn search_pill(
-        &self,
-        on: Option<&Member>,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        let leaf = self.leaf_of(on);
-        if !leaf.finding && self.applied_query().is_none() {
+    pub(crate) fn search_pill(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if !self.finding && self.applied.is_none() {
             return None;
         }
         let theme = Theme::of(cx).clone();
-        let board = on.map_or(leaf.pane == Kind::Board, |member| {
-            member.kind == Kind::Board
-        });
+        let board = self.shown_kind() == Kind::Board;
         let count: Option<SharedString> = if board {
-            let query = self.board_query(on, cx);
-            self.workspace.read(cx).board_of(on).map(|board| {
-                let count = board
-                    .columns
-                    .iter()
-                    .flat_map(|column| &column.cards)
-                    .filter(|card| {
-                        board::card_matches(card, board.handle_of(card).as_deref(), &query)
-                    })
-                    .count();
-                format!("{count} cards").into()
-            })
-        } else if self.bad_pattern(on, cx) {
+            self.hit_count(cx)
+                .map(|count| format!("{count} cards").into())
+        } else if self.bad_pattern(cx) {
             Some("bad pattern".into())
         } else {
-            self.found(on, cx)
-                .map(|found| match current(leaf.find_at, found.len()) {
-                    Some(at) => format!("{} of {}", at + 1, found.len()).into(),
+            self.hit_count(cx)
+                .map(|len| match current(self.find_at, len) {
+                    Some(at) => format!("{} of {}", at + 1, len).into(),
                     None => "no results".into(),
                 })
         };
@@ -348,10 +339,11 @@ impl Cydonia {
                     div()
                         .flex_1()
                         .min_w_0()
-                        .when(leaf.finding, |el| el.child(leaf.find_field.clone()))
-                        .when(!leaf.finding, |el| {
+                        .when(self.finding, |el| el.child(self.find_field.clone()))
+                        .when(!self.finding, |el| {
                             el.truncate().child(
-                                self.applied_query()
+                                self.applied
+                                    .as_ref()
                                     .map(|q| q.text().to_owned())
                                     .unwrap_or_default(),
                             )
@@ -364,8 +356,8 @@ impl Cydonia {
                         .text_color(theme.text_faint)
                         .child(count)
                 }))
-                .children((leaf.finding && !board).then(|| {
-                    let on = leaf.find_pattern;
+                .children((self.finding && !board).then(|| {
+                    let on = self.find_pattern;
                     theme
                         .ghost("find-pattern")
                         .flex_none()
@@ -422,15 +414,49 @@ impl Cydonia {
     }
 
     fn dismiss_text_find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.leaf().finding && self.applied_query().is_some() {
-            self.clear_applied_search(cx);
-            window.focus(&self.leaf().focus, cx);
+        if !self.finding && self.applied.is_some() {
+            self.defer_window(window, cx, |root, _, cx| root.clear_applied_search(cx));
+            window.focus(&self.focus, cx);
             return;
         }
-        let on = self.leaf().entry.clone();
-        self.clear_text_find(on.as_ref(), cx);
-        self.dismiss_find(&DismissFind, window, cx);
-        window.focus(&self.leaf().focus, cx);
+        self.dismiss_find(cx);
+        window.focus(&self.focus, cx);
+    }
+}
+
+impl Cydonia {
+    /// Hand every pane the workspace search applied.
+    pub(crate) fn push_finds(&mut self, cx: &mut Context<Self>) {
+        let applied = self.applied_query().cloned();
+        for pane in self.leaves.clone() {
+            pane.update(cx, |pane, cx| pane.set_applied(applied.clone(), cx));
+        }
+    }
+
+    /// Opening a filtered entry starts at its first match, not its saved
+    /// viewport.
+    pub(crate) fn reveal_applied_match(&mut self, cx: &mut Context<Self>) {
+        self.leaf()
+            .clone()
+            .update(cx, |pane, cx| pane.reveal_applied_match(cx));
+    }
+
+    pub(crate) fn find_card(&mut self, _: &FindCard, window: &mut Window, cx: &mut Context<Self>) {
+        self.leaf()
+            .clone()
+            .update(cx, |pane, cx| pane.find_card(window, cx));
+    }
+
+    pub(crate) fn find_next(&mut self, _: &FindNext, _: &mut Window, cx: &mut Context<Self>) {
+        self.leaf()
+            .clone()
+            .update(cx, |pane, cx| pane.step_find(1, cx));
+    }
+
+    pub(crate) fn find_prev(&mut self, _: &FindPrev, _: &mut Window, cx: &mut Context<Self>) {
+        self.leaf()
+            .clone()
+            .update(cx, |pane, cx| pane.step_find(-1, cx));
     }
 }
 

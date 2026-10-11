@@ -85,6 +85,7 @@ impl Cydonia {
             return Some(Place::Library);
         }
         self.leaf()
+            .read(cx)
             .entry
             .clone()
             .or_else(|| self.lone_member(cx))
@@ -131,27 +132,24 @@ impl Cydonia {
             }
         };
         let workspace = self.workspace.read(cx);
-        let at = workspace
-            .showing_of(&member)
-            .and_then(|(project, showing)| {
-                let open = workspace.projects.get(project)?;
-                Some(match showing {
-                    Showing::Session(id) => {
-                        Position::Transcript(open.session(id)?.transcript.top())
+        let at = workspace.showing_of(&member).and_then(|(_, showing)| {
+            Some(match showing {
+                Showing::Session(_) => {
+                    Position::Transcript(self.session_scroll(&member, cx)?.read(cx).state.top())
+                }
+                Showing::Article(_) => {
+                    Position::Article(self.article_scroll(&member, cx)?.offset())
+                }
+                Showing::Board(_) => {
+                    let scroll = self.board_scroll(&member, cx)?;
+                    Position::Board {
+                        across: scroll.across.offset(),
+                        down: scroll.down.offset(),
                     }
-                    Showing::Article(id) => {
-                        Position::Article(open.articles[open.article_ix(&id)?].scroll.offset())
-                    }
-                    Showing::Board(id) => {
-                        let scroll = self.boards.of(&id);
-                        Position::Board {
-                            across: scroll.across.offset(),
-                            down: scroll.down.offset(),
-                        }
-                    }
-                    Showing::Table(_) => return None,
-                })
-            });
+                }
+                Showing::Table(_) => return None,
+            })
+        });
         Stop {
             place: Place::Entry(member),
             at,
@@ -164,27 +162,25 @@ impl Cydonia {
             return;
         };
         let workspace = self.workspace.read(cx);
-        let Some((project, showing)) = workspace.showing_of(member) else {
-            return;
-        };
-        let Some(open) = workspace.projects.get(project) else {
+        let Some((_, showing)) = workspace.showing_of(member) else {
             return;
         };
         match (showing, at) {
-            (Showing::Session(id), Position::Transcript(top)) => {
-                if let Some(chat) = open.session(id) {
-                    chat.transcript.scroll_to_top(*top);
+            (Showing::Session(_), Position::Transcript(top)) => {
+                if let Some(view) = self.session_scroll(member, cx) {
+                    view.read(cx).state.scroll_to_top(*top);
                 }
             }
-            (Showing::Article(id), Position::Article(offset)) => {
-                if let Some(ix) = open.article_ix(&id) {
-                    open.articles[ix].scroll.set_offset(*offset);
+            (Showing::Article(_), Position::Article(offset)) => {
+                if let Some(scroll) = self.article_scroll(member, cx) {
+                    scroll.set_offset(*offset);
                 }
             }
-            (Showing::Board(id), Position::Board { across, down }) => {
-                let scroll = self.boards.of(&id);
-                scroll.across.set_offset(*across);
-                scroll.down.set_offset(*down);
+            (Showing::Board(_), Position::Board { across, down }) => {
+                if let Some(scroll) = self.board_scroll(member, cx) {
+                    scroll.across.set_offset(*across);
+                    scroll.down.set_offset(*down);
+                }
             }
             _ => {}
         }

@@ -26,13 +26,12 @@ use artifact::board::Board;
 use bezel::theme::AppExt as _;
 use bezel::ui::AppExt as _;
 use bezel::{
-    gpui::{App, ClipboardItem, Context, EntityId, EventEmitter},
+    gpui::{App, Context, EntityId, EventEmitter},
     theme::{Brand, Tint, Vibrancy, appearance::AppearanceMode},
     ui::icons::Icon,
 };
 use cacp::schema::SessionConfigOptionValue;
 use editor::AppExt as _;
-use editor::Mode;
 use futures::{StreamExt as _, channel::mpsc};
 use markdown::AppExt as _;
 use mcp::rail::{self, Change};
@@ -80,13 +79,17 @@ const RECENT_COMMANDS: usize = 20;
 /// editor that had the caret is a different entity.
 pub struct Reloaded;
 
+/// What one session holds changed — its transcript, its plan, whether it is
+/// streaming — without the workspace changing what it lists. Emitted in place
+/// of a notification, so only what draws that session draws again.
+pub struct SessionChanged(pub u64);
+
 /// The performance section's figures: what is in memory right now.
 pub struct Resident {
     pub projects: usize,
     pub articles: usize,
-    /// Articles holding an open [`editor::Editor`]. Built on first open and
-    /// never dropped, so this only climbs.
-    pub editors: usize,
+    /// Articles holding an open [`editor::Document`].
+    pub documents: usize,
     /// Sessions whose transcript is in memory. A closed one's is dropped once
     /// its file matches, and read back when it is opened.
     pub sessions: usize,
@@ -829,9 +832,6 @@ impl Workspace {
     pub fn set_text_size(&mut self, points: f32, cx: &mut Context<Self>) {
         self.text_size = points;
         cx.set_base_text_size(points);
-        if self.article_font_size.is_none() {
-            self.apply_article_font_size(cx);
-        }
         self.save_appearance();
         cx.notify();
     }
@@ -840,21 +840,8 @@ impl Workspace {
         self.article_font_size.unwrap_or(self.text_size)
     }
 
-    fn apply_article_font_size(&self, cx: &mut Context<Self>) {
-        let points = self.article_font_size();
-        for editor in self
-            .projects
-            .iter()
-            .flat_map(|project| &project.articles)
-            .filter_map(|article| article.editor.as_ref())
-        {
-            editor.update(cx, |editor, cx| editor.set_text_size(points, cx));
-        }
-    }
-
     pub fn set_article_font_size(&mut self, points: f32, cx: &mut Context<Self>) {
         self.article_font_size = Some(settings::clamp_content_text_size(points));
-        self.apply_article_font_size(cx);
         self.save_appearance();
         cx.notify();
     }
@@ -991,8 +978,8 @@ impl Workspace {
         Resident {
             projects: self.projects.len(),
             articles: articles().count(),
-            editors: articles()
-                .filter(|article| article.editor.is_some())
+            documents: articles()
+                .filter(|article| article.document.is_some())
                 .count(),
             sessions: sessions().count(),
             items: sessions().map(|chat| chat.items.len()).sum(),
@@ -1001,6 +988,7 @@ impl Workspace {
 }
 
 impl EventEmitter<Reloaded> for Workspace {}
+impl EventEmitter<SessionChanged> for Workspace {}
 
 /// Point one session's entry at the file's copy of the agent it names.
 ///

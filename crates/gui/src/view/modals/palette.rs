@@ -625,9 +625,13 @@ impl Palette {
             }
             root.open_row(&hit.row, window, cx);
             if hit.snippet.is_some() {
-                let field = root.leaf().find_field.clone();
-                root.leaf_mut().finding = true;
-                field.update(cx, |field, cx| field.set_content(query, cx));
+                let pane = root.leaf().clone();
+                pane.update(cx, |pane, cx| {
+                    pane.finding = true;
+                    pane.find_field
+                        .update(cx, |field, cx| field.set_content(query, cx));
+                    pane.push_find(cx);
+                });
             }
             cx.notify();
         });
@@ -649,14 +653,31 @@ impl Palette {
         };
         let id = *id;
         let theme = Theme::of(cx).clone();
-        let body = self.workspace.update(cx, |workspace, cx| {
+        let count = self.workspace.update(cx, |workspace, _| {
             workspace.load_history(id);
             let chat = workspace.session(id)?;
-            let count = artifact::session::chat::turns(&chat.items).len();
+            Some(artifact::session::chat::turns(&chat.items).len())
+        });
+        let body = count.map(|count| {
             let from = count.saturating_sub(crate::view::kit::link::PREVIEW_TURNS);
-            Some(crate::view::component::transcript::excerpt(
-                chat, from, count, window, cx,
-            ))
+            let (workspace, root) = (self.workspace.clone(), self.root.clone());
+            window
+                .use_keyed_state(
+                    SharedString::from(format!("search-preview-{id}-{from}-{count}")),
+                    cx,
+                    move |_, cx| {
+                        crate::view::component::transcript::SessionView::new(
+                            id,
+                            None,
+                            crate::view::component::transcript::Drawn::Excerpt { from, to: count },
+                            crate::view::kit::link::CARD_WIDTH,
+                            workspace,
+                            root,
+                            cx,
+                        )
+                    },
+                )
+                .into_any_element()
         });
         Some(
             div()

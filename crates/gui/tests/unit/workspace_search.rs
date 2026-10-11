@@ -47,6 +47,7 @@ fn workspace_search_keeps_results_beyond_the_palette_limit(cx: &mut gpui::TestAp
                 found,
                 ready: true,
             });
+            this.push_finds(cx);
             assert_eq!(
                 this.rows(cx)
                     .iter()
@@ -67,21 +68,24 @@ fn workspace_search_keeps_results_beyond_the_palette_limit(cx: &mut gpui::TestAp
                 this.applied_rows(cx).unwrap().len(),
                 crate::view::modals::palette::SHOWN + 1
             );
-            let editor = this.workspace.update(cx, |workspace, cx| {
+            this.workspace.update(cx, |workspace, cx| {
                 workspace.active = Some(0);
                 workspace.projects[0].article = Some(0);
-                workspace.projects[0].articles[0].open(14., cx);
-                workspace.projects[0].articles[0].editor.clone().unwrap()
+                workspace.projects[0].articles[0].open(cx);
             });
-            this.leaf_mut().pane = artifact::kind::Kind::Article;
+            this.leaf()
+                .clone()
+                .update(cx, |pane, _| pane.kind = artifact::kind::Kind::Article);
+            this.sync_items(cx);
+            let editor = this.pane_editor(cx).unwrap();
             let matches =
                 crate::view::pane::find::hits(editor.read(cx).doc(), this.applied_query().unwrap());
             assert_eq!(matches.len(), 2);
             editor.update(cx, |editor, cx| editor.select(matches[1], cx));
-            this.leaf_mut().find_at = 1;
+            this.leaf().clone().update(cx, |pane, _| pane.find_at = 1);
             this.reveal_applied_match(cx);
             assert_eq!(editor.read(cx).selection(), matches[0]);
-            assert_eq!(this.leaf().find_at, 0);
+            assert_eq!(this.leaf().read(cx).find_at, 0);
             this.search.applied.as_mut().unwrap().filter = Some(Kind::Board);
             assert!(this.rows(cx).is_empty());
             this.clear_applied_search(cx);
@@ -104,11 +108,11 @@ impl gpui::Render for SearchControls {
                 .flex()
                 .child(div().w(px(240.)).flex_none().child(root.search_row(cx)))
                 .child(
-                    div()
-                        .relative()
-                        .flex_1()
-                        .h(px(200.))
-                        .children(root.search_pill(None, cx)),
+                    div().relative().flex_1().h(px(200.)).children(
+                        root.leaf()
+                            .clone()
+                            .update(cx, |pane, cx| pane.search_pill(cx)),
+                    ),
                 )
         })
     }
@@ -120,8 +124,10 @@ fn applied_board_search_has_visible_working_exit_controls(cx: &mut gpui::TestApp
     cx.update(|cx| Theme::install(bezel::theme::Appearance::Dark, cx));
     let window = cx.add_window(|window, cx| {
         let root = cx.new(|cx| Cydonia::new(Default::default(), Default::default(), window, cx));
-        root.update(cx, |root, _| {
-            root.leaf_mut().pane = artifact::kind::Kind::Board
+        root.update(cx, |root, cx| {
+            root.leaf()
+                .clone()
+                .update(cx, |pane, _| pane.kind = artifact::kind::Kind::Board)
         });
         cx.observe(&root, |_, _, cx| cx.notify()).detach();
         SearchControls(root)
@@ -138,7 +144,7 @@ fn applied_board_search_has_visible_working_exit_controls(cx: &mut gpui::TestApp
                 let query =
                     Query::literal("a very long query that must leave room for the close button");
                 root.apply_search(query.unwrap(), None, cx);
-                assert!(!root.board_query(None, cx).is_empty());
+                assert!(!root.leaf().read(cx).find(cx).text().is_empty());
             })
         });
         cx.run_until_parked();
@@ -149,19 +155,22 @@ fn applied_board_search_has_visible_working_exit_controls(cx: &mut gpui::TestApp
         assert_eq!(applied_bounds.size, size(px(240.), px(26.)));
         cx.update(|_, cx| {
             root.update(cx, |root, cx| {
-                root.leaf_mut().finding = true;
-                root.leaf()
-                    .find_field
-                    .update(cx, |field, cx| field.set_content("local query", cx));
-                cx.notify();
+                root.leaf().clone().update(cx, |pane, cx| {
+                    pane.finding = true;
+                    pane.find_field
+                        .update(cx, |field, cx| field.set_content("local query", cx));
+                    cx.notify();
+                });
             })
         });
         cx.run_until_parked();
         assert_eq!(cx.debug_bounds("search-pill").unwrap(), applied_bounds);
         cx.update(|_, cx| {
             root.update(cx, |root, cx| {
-                root.leaf_mut().finding = false;
-                cx.notify();
+                root.leaf().clone().update(cx, |pane, cx| {
+                    pane.finding = false;
+                    cx.notify();
+                });
             })
         });
         cx.run_until_parked();
@@ -171,7 +180,7 @@ fn applied_board_search_has_visible_working_exit_controls(cx: &mut gpui::TestApp
         cx.run_until_parked();
         cx.update(|_, cx| {
             assert!(root.read(cx).applied_query().is_none());
-            assert!(root.read(cx).board_query(None, cx).is_empty());
+            assert!(root.read(cx).leaf().read(cx).find(cx).text().is_empty());
         });
         assert!(cx.debug_bounds("search-pill").is_none());
     }

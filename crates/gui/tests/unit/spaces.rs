@@ -666,7 +666,7 @@ fn a_pane_put_on_an_article_opens_it(cx: &mut gpui::TestAppContext) {
             workspace
                 .article_in(0, 0)
                 .expect("an article")
-                .editor
+                .document
                 .is_none(),
             "listed, never opened",
         );
@@ -680,7 +680,7 @@ fn a_pane_put_on_an_article_opens_it(cx: &mut gpui::TestAppContext) {
             workspace
                 .article_in(0, 0)
                 .expect("an article")
-                .editor
+                .document
                 .is_some(),
             "the pane opened it",
         );

@@ -507,32 +507,8 @@ impl Workspace {
         let found = self.session_mut(id);
         if let Some(chat) = found {
             f(chat);
-            cx.notify();
+            cx.emit(super::SessionChanged(id));
         }
-    }
-
-    /// Put what the transcript has selected on the clipboard — see
-    /// [`crate::view::component::transcript::State::copied`].
-    ///
-    /// Answers whether there was anything, so a `cmd-c` that finds no selection
-    /// can be left to whatever else wanted it.
-    pub fn copy_selection(&mut self, cx: &mut Context<Self>) -> bool {
-        let Some(text) = self
-            .active_session()
-            .and_then(|chat| chat.transcript.copied(chat))
-        else {
-            return false;
-        };
-        cx.write_to_clipboard(ClipboardItem::new_string(text));
-        true
-    }
-
-    /// Drop the run the transcript is holding, and the bar over it.
-    pub fn clear_selection(&mut self, cx: &mut Context<Self>) {
-        let Some(id) = self.active_id() else {
-            return;
-        };
-        self.with_session(id, cx, |chat| chat.transcript.clear_selection());
     }
 
     /// Switch a session's mode — what the composer's mode picker reports.

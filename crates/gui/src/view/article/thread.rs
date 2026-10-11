@@ -2,20 +2,17 @@
 //! of the article's newest session under a head row naming it.
 
 use crate::{
-    model::workspace::Workspace,
+    model::workspace::{SessionChanged, Workspace},
     view::{component::transcript, window::root::Cydonia},
 };
 use bezel::motion::{Fade, Painter};
 use bezel::{
     gpui::{
-        self, Context, Entity, IntoElement, Render, SharedString, WeakEntity, Window, div,
-        prelude::*, px,
+        Context, Entity, IntoElement, Render, SharedString, WeakEntity, Window, div, prelude::*, px,
     },
     theme::{TextStyle, Theme, Typeset},
     ui::{
-        icons,
-        list::VariableList,
-        stack,
+        icons, stack,
         tooltip::Tooltip,
         widgets::{ButtonStyle, Buttons as _},
     },
@@ -30,8 +27,8 @@ pub(crate) struct ThreadView {
     workspace: Entity<Workspace>,
     root: WeakEntity<Cydonia>,
     article: PathBuf,
-    /// The transcript's scroll. Its own, never the session's.
-    list: VariableList<usize>,
+    /// The thread's own view of the session it shows.
+    transcript: Option<Entity<transcript::SessionView>>,
 }
 
 impl ThreadView {
@@ -42,13 +39,17 @@ impl ThreadView {
         cx: &mut Context<Self>,
     ) -> Self {
         cx.observe(&workspace, |_, _, cx| cx.notify()).detach();
-        let list = VariableList::default();
-        list.state.set_follow_mode(gpui::FollowMode::Tail);
+        cx.subscribe(&workspace, |this, workspace, event: &SessionChanged, cx| {
+            if workspace.read(cx).article_thread(&this.article) == Some(event.0) {
+                cx.notify();
+            }
+        })
+        .detach();
         Self {
             workspace,
             root,
             article,
-            list,
+            transcript: None,
         }
     }
 }
@@ -90,16 +91,24 @@ impl Render for ThreadView {
                         let _ = root.update(cx, |root, cx| root.new_thread(&article, cx));
                     }),
             );
-        let body = match id {
-            Some(id) => crate::view::kit::link::live(
-                &self.workspace,
-                self.root.clone(),
-                id,
-                crate::view::window::root::COMPOSER_COLUMN,
-                transcript::Drawn::Attached(&self.list),
-                window,
-                cx,
-            ),
+        if self.transcript.as_ref().map(|view| view.read(cx).session) != id {
+            self.transcript = id.map(|id| {
+                let (workspace, root) = (self.workspace.clone(), self.root.clone());
+                cx.new(|cx| {
+                    transcript::SessionView::new(
+                        id,
+                        None,
+                        transcript::Drawn::Attached,
+                        crate::view::window::root::COMPOSER_COLUMN,
+                        workspace,
+                        root,
+                        cx,
+                    )
+                })
+            });
+        }
+        let body = match &self.transcript {
+            Some(view) => view.clone().into_any_element(),
             None => div()
                 .text_style(TextStyle::Callout)
                 .text_color(theme.text_faint)

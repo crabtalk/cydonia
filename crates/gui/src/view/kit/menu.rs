@@ -16,17 +16,25 @@ use bezel::{
 
 /// What a row does when it is picked, handed the rest of the path — which of a
 /// submenu's rows it was, and empty for a row that opens nothing.
-pub(crate) type Act = Box<dyn Fn(&mut Cydonia, &[usize], &mut Window, &mut Context<Cydonia>)>;
+pub(crate) type Act<V = Cydonia> = Box<dyn Fn(&mut V, &[usize], &mut Window, &mut Context<V>)>;
 
 /// The rows a menu opens with, built when it opens.
-pub(crate) type Rows =
-    Box<dyn Fn(&mut Cydonia, &mut Window, &mut Context<Cydonia>) -> Vec<(Item, Act)>>;
+pub(crate) type Rows<V = Cydonia> =
+    Box<dyn Fn(&mut V, &mut Window, &mut Context<V>) -> Vec<(Item, Act<V>)>>;
+
+/// How a menu's trigger is revealed.
+pub(crate) enum Reveal {
+    /// Always on show.
+    Always,
+    /// While the hover group of this name is hovered.
+    Group(&'static str),
+    /// On show or not, as the caller decided.
+    Shown(bool),
+}
 
 /// Which menu is open.
 ///
-/// Cloned rather than copied since [`Menu::Card`] names its card, which is a
-/// string — a card is addressed by id everywhere else and a menu key that used
-/// its position would open the wrong one the moment a card moved.
+/// Cloned rather than copied since several name a row or a pane.
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) enum Menu {
     /// The `+` on a project heading, by the project's path: what to start
@@ -61,31 +69,16 @@ pub(crate) enum Menu {
     Tab(artifact::space::Member),
     /// The `+` in one pane's bar, by the same key as [`Menu::Pane`].
     PaneAdd(gpui::SharedString),
-    /// The `···` on a table's column heading.
-    Column(usize),
-    /// The `···` on a board's lane, by column id. An id and not a position: a
-    /// lane's whole menu is about moving it, and a key that moved with it would
-    /// shut the menu on every press.
-    Lane(String),
     /// The agents on offer under `New session`, on the screen a project with
     /// nothing open shows — see [`crate::view::window::root::Cydonia::launch`].
     Launch,
-    /// The block picker on the article ribbon — see
-    /// [`crate::view::component::ribbon`].
-    Turn,
-    /// The `···` on a card, by card id.
-    Card(String),
-    /// An article's outline, by the article's file — a space can show several.
-    Outline(std::path::PathBuf),
-    /// An article's comments, by the article's file.
-    Comments(std::path::PathBuf),
 }
 
 /// One row of a menu, and what picking it does.
-pub(crate) fn row(
+pub(crate) fn row<V: 'static>(
     item: Item,
-    act: impl Fn(&mut Cydonia, &mut Window, &mut Context<Cydonia>) + 'static,
-) -> (Item, Act) {
+    act: impl Fn(&mut V, &mut Window, &mut Context<V>) + 'static,
+) -> (Item, Act<V>) {
     (
         item,
         Box::new(move |this, _, window, cx| act(this, window, cx)),
@@ -94,14 +87,14 @@ pub(crate) fn row(
 
 /// A row that drops a panel of rows of its own. Picking one of those is what
 /// acts; the submenu row itself only opens.
-pub(crate) fn submenu(
+pub(crate) fn submenu<V: 'static>(
     label: impl Into<SharedString>,
     icon: impl Into<Icon>,
-    rows: Vec<(Item, Act)>,
-) -> (Item, Act) {
-    let (items, acts): (Vec<Item>, Vec<Act>) = rows.into_iter().unzip();
+    rows: Vec<(Item, Act<V>)>,
+) -> (Item, Act<V>) {
+    let (items, acts): (Vec<Item>, Vec<Act<V>>) = rows.into_iter().unzip();
     let item = Item::submenu(label, items).with_icon(icon);
-    let act: Act = Box::new(move |this, path, window, cx| {
+    let act: Act<V> = Box::new(move |this, path, window, cx| {
         if let Some((&at, rest)) = path.split_first()
             && let Some(act) = acts.get(at)
         {
@@ -113,13 +106,15 @@ pub(crate) fn submenu(
 
 /// Groups of rows, one after another with a separator between each two. Empty
 /// groups are dropped, so no separator stands at an end or beside another.
-pub(crate) fn sections(groups: impl IntoIterator<Item = Vec<(Item, Act)>>) -> Vec<(Item, Act)> {
+pub(crate) fn sections<V: 'static>(
+    groups: impl IntoIterator<Item = Vec<(Item, Act<V>)>>,
+) -> Vec<(Item, Act<V>)> {
     let mut rows = Vec::new();
     for group in groups.into_iter().filter(|group| !group.is_empty()) {
         if !rows.is_empty() {
             // A hit names a row by its position, so the separator holds one
             // too, with nothing behind it.
-            let nothing: Act = Box::new(|_, _, _, _| {});
+            let nothing: Act<V> = Box::new(|_, _, _, _| {});
             rows.push((Item::Separator, nothing));
         }
         rows.extend(group);
@@ -185,55 +180,37 @@ impl Cydonia {
         rows: Rows,
         cx: &Context<Self>,
     ) -> Stateful<Div> {
-        let id = id.into();
-        let open = self.menu_open(&menu);
-        // The glyph is built here rather than taken, the way
-        // `Buttons::icon_button` builds its own: a trigger's mark is the
-        // trigger's metric, not the caller's.
-        let button = Theme::of(cx)
-            .icon_button(
-                mark,
-                ButtonStyle::Ghost,
-                Some(Fade::new(Painter::of(cx), id.clone())),
-            )
-            .id(id)
-            .flex_none()
-            .relative()
-            // An open menu keeps its trigger on show — by then the pointer is
-            // over the menu, not the row that opened it.
-            .when_some(group.filter(|_| !open), |el, group| {
-                // Resolve space during render, never in a hover style:
-                // GPUI can resolve hover differently in prepaint and paint.
-                match &menu {
-                    Menu::Entry(_) => el.when(self.sidebar_hovered.as_ref() != Some(&menu), |el| {
-                        el.hidden()
-                    }),
-                    // The project's head reports its hover as its `···`.
-                    Menu::Add(ix) => el.when(
-                        !matches!(&self.sidebar_hovered, Some(Menu::Project(at)) if at == ix),
-                        |el| el.hidden(),
-                    ),
-                    Menu::Pane(pane) | Menu::PaneAdd(pane) => {
-                        el.when(self.pane_hovered.as_ref() != Some(pane), |el| el.hidden())
-                    }
-                    _ => el.invisible().group_hover(group, |el| el.visible()),
-                }
+        // Resolved during render, never in a hover style: GPUI can resolve
+        // hover differently in prepaint and paint.
+        let reveal = match (group, &menu) {
+            (None, _) => Reveal::Always,
+            (Some(_), Menu::Entry(_)) => {
+                Reveal::Shown(self.sidebar_hovered.as_ref() == Some(&menu))
+            }
+            // The project's head reports its hover as its `···`.
+            (Some(_), Menu::Add(ix)) => {
+                Reveal::Shown(matches!(&self.sidebar_hovered, Some(Menu::Project(at)) if at == ix))
+            }
+            (Some(_), Menu::Pane(pane) | Menu::PaneAdd(pane)) => {
+                Reveal::Shown(self.pane_hovered.as_ref() == Some(pane))
+            }
+            (Some(group), _) => Reveal::Group(group),
+        };
+        let button = button(id, mark, reveal, self.menu_open(&menu), cx).on_click({
+            let menu = menu.clone();
+            let rows: std::rc::Rc<Rows> = std::rc::Rc::new(rows);
+            cx.listener(move |this, _, window, cx| {
+                cx.stop_propagation();
+                let rows = rows.clone();
+                this.toggle_menu(
+                    menu.clone(),
+                    place,
+                    move |this, window, cx| rows(this, window, cx),
+                    window,
+                    cx,
+                );
             })
-            .on_click({
-                let menu = menu.clone();
-                let rows: std::rc::Rc<Rows> = std::rc::Rc::new(rows);
-                cx.listener(move |this, _, window, cx| {
-                    cx.stop_propagation();
-                    let rows = rows.clone();
-                    this.toggle_menu(
-                        menu.clone(),
-                        place,
-                        move |this, window, cx| rows(this, window, cx),
-                        window,
-                        cx,
-                    );
-                })
-            });
+        });
         self.menu_trigger(button, menu, cx)
     }
 
@@ -253,9 +230,9 @@ impl Cydonia {
 
 /// `rows` as a [`ContextMenu`] takes them: the items, and what choosing the
 /// one at a path runs.
-fn chooser(rows: Vec<(Item, Act)>) -> (Vec<Item>, Act) {
-    let (items, acts): (Vec<Item>, Vec<Act>) = rows.into_iter().unzip();
-    let choose: Act = Box::new(move |this, path, window, cx| {
+pub(crate) fn chooser<V: 'static>(rows: Vec<(Item, Act<V>)>) -> (Vec<Item>, Act<V>) {
+    let (items, acts): (Vec<Item>, Vec<Act<V>>) = rows.into_iter().unzip();
+    let choose: Act<V> = Box::new(move |this, path, window, cx| {
         if let Some((&row, rest)) = path.split_first()
             && let Some(act) = acts.get(row)
         {
@@ -264,4 +241,35 @@ fn chooser(rows: Vec<(Item, Act)>) -> (Vec<Item>, Act) {
         cx.notify();
     });
     (items, choose)
+}
+
+/// A `···` or `+` that opens a menu, as `reveal` says. `open` keeps it on
+/// show whatever `reveal` says: by then the pointer is over the menu, not the
+/// row that opened it.
+pub(crate) fn button<V: 'static>(
+    id: impl Into<SharedString>,
+    mark: impl Into<Icon>,
+    reveal: Reveal,
+    open: bool,
+    cx: &Context<V>,
+) -> Stateful<Div> {
+    let id = id.into();
+    // The glyph is built here rather than taken, the way
+    // `Buttons::icon_button` builds its own: a trigger's mark is the
+    // trigger's metric, not the caller's.
+    let button = Theme::of(cx)
+        .icon_button(
+            mark,
+            ButtonStyle::Ghost,
+            Some(Fade::new(Painter::of(cx), id.clone())),
+        )
+        .id(id)
+        .flex_none()
+        .relative();
+    match reveal {
+        _ if open => button,
+        Reveal::Always => button,
+        Reveal::Group(group) => button.invisible().group_hover(group, |el| el.visible()),
+        Reveal::Shown(shown) => button.when(!shown, |el| el.hidden()),
+    }
 }

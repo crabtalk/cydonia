@@ -851,7 +851,7 @@ impl Cydonia {
                         shown
                             .into_iter()
                             .map(|at| {
-                                menu::row(
+                                menu::row::<Self>(
                                     MenuItem::action(at.label()).checked(at == tab),
                                     move |this, _, cx| this.library_tab(at, cx),
                                 )
@@ -1023,19 +1023,19 @@ impl Cydonia {
             .filter(|library| library.order.field == field)
             .map(|library| library.order.ascending);
         vec![
-            menu::row(
+            menu::row::<Self>(
                 MenuItem::action("Sort A → Z")
                     .with_icon(icons::arrows::ArrowDownAZ)
                     .checked(sorted == Some(true)),
                 move |this, _, cx| this.library_sort_by(field, true, cx),
             ),
-            menu::row(
+            menu::row::<Self>(
                 MenuItem::action("Sort Z → A")
                     .with_icon(icons::arrows::ArrowDownZA)
                     .checked(sorted == Some(false)),
                 move |this, _, cx| this.library_sort_by(field, false, cx),
             ),
-            menu::row(MenuItem::Separator, |_, _, _| {}),
+            menu::row::<Self>(MenuItem::Separator, |_, _, _| {}),
         ]
     }
 
@@ -1045,7 +1045,7 @@ impl Cydonia {
         };
         let picked = library.project.clone();
         let mut rows = self.sorts(Field::Project);
-        rows.push(menu::row(
+        rows.push(menu::row::<Self>(
             MenuItem::action("All projects")
                 .with_icon(icons::files::Folders)
                 .checked(picked.is_none()),
@@ -1053,7 +1053,7 @@ impl Cydonia {
         ));
         rows.extend(self.workspace.read(cx).projects.iter().map(|open| {
             let path = open.path.clone();
-            menu::row(
+            menu::row::<Self>(
                 MenuItem::action(open.name())
                     .with_icon(icons::files::Folder)
                     .checked(picked.as_ref() == Some(&path)),
@@ -1071,7 +1071,7 @@ impl Cydonia {
             .iter()
             .enumerate()
             .map(|(to, open)| {
-                menu::row(
+                menu::row::<Self>(
                     MenuItem::action(open.name()).with_icon(icons::files::Folder),
                     move |this, _, cx| this.move_selected(to, cx),
                 )
@@ -1096,13 +1096,13 @@ impl Cydonia {
         names.sort();
         names.dedup();
         let mut rows = self.sorts(Field::Agent);
-        rows.push(menu::row(
+        rows.push(menu::row::<Self>(
             MenuItem::action("All agents").checked(picked.is_none()),
             |this, _, cx| this.library_agent(None, cx),
         ));
         rows.extend(names.into_iter().map(|name| {
             let checked = picked.as_ref() == Some(&name);
-            menu::row(
+            menu::row::<Self>(
                 MenuItem::action(name.clone()).checked(checked),
                 move |this, _, cx| this.library_agent(Some(name.clone()), cx),
             )
@@ -1118,7 +1118,7 @@ impl Cydonia {
         Status::ALL
             .into_iter()
             .map(|status| {
-                menu::row(
+                menu::row::<Self>(
                     MenuItem::action(status.label()).checked(status == picked),
                     move |this, _, cx| this.library_status(status, cx),
                 )
@@ -1368,7 +1368,7 @@ fn measure(into: Rc<Cell<Pixels>>) -> impl IntoElement {
     gpui::canvas(
         move |bounds, window, _| {
             if into.replace(bounds.size.width) != bounds.size.width {
-                window.on_next_frame(|window, _| window.refresh());
+                window.request_animation_frame();
             }
         },
         |_, _, _, _| {},

@@ -167,8 +167,10 @@ fn article_emacs_shortcuts_work_in_both_editor_modes(cx: &mut TestAppContext) {
         keymap::bind_all(&shortcuts, cx);
     });
     for mode in [editor::Mode::Blocks, editor::Mode::Source] {
-        let window =
-            cx.add_window(|_, cx| editor::Editor::new("one two three", cx).with_mode(mode));
+        let window = cx.add_window(|_, cx| {
+            let document = cx.new(|cx| editor::Document::new("one two three", cx).with_mode(mode));
+            editor::Editor::for_document(document, cx)
+        });
         let editor = window.root(cx).unwrap();
         let mut visual = VisualTestContext::from_window(window.into(), cx);
         visual.simulate_resize(size(px(400.), px(300.)));

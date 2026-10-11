@@ -4,15 +4,19 @@
 pub mod info;
 
 use crate::model::language::Grammars as _;
-use crate::view::kit::menu::{self, Menu};
+use crate::view::kit::menu;
 use crate::{
-    model::session::ChatSession,
+    model::{session::ChatSession, workspace::Workspace},
     view::{
         component::transcript,
-        kit::text::CardTitle,
-        pane::drawer::{Drawer, Face, Peek},
-        pane::leaf::Leaf,
-        sidebar::Renaming,
+        kit::{
+            rename::{NameEvent, NameField},
+            text::CardTitle,
+        },
+        pane::{
+            drawer::{Drawer, Face},
+            find::{Find, Searchable},
+        },
         window::root::{Cydonia, NewBoard},
     },
 };
@@ -25,13 +29,13 @@ use bezel::agent::orbs::engine::Frame;
 use bezel::ui::scroll as scrollbars;
 use bezel::{
     gpui::{
-        self, AnyElement, App, ClipboardItem, Context, Div, Entity, Focusable as _, FontWeight,
-        KeyBinding, Pixels, ScrollHandle, SharedString, Stateful, WeakEntity, Window, actions, div,
-        prelude::*, px,
+        self, AnyElement, App, ClipboardItem, Context, Div, Entity, EntityId, Focusable as _,
+        FontWeight, KeyBinding, Pixels, ScrollHandle, SharedString, Stateful, WeakEntity, Window,
+        actions, div, prelude::*, px,
     },
     theme::{TextStyle, Theme, Typeset},
     ui::{
-        context_menu,
+        context_menu::{ContextMenu, Place as ContextPlace},
         drag::{self, Carried},
         icons,
         input::{self, Shape, TextField},
@@ -221,6 +225,17 @@ struct Tally {
     shown: usize,
 }
 
+/// Where a card's relative picture paths resolve: its own directory.
+fn card_base(
+    workspace: &Workspace,
+    project: usize,
+    board: &str,
+    card: &str,
+) -> Option<std::path::PathBuf> {
+    let open = workspace.projects.get(project)?;
+    Some(artifact::project::fs::Project::new(&open.path).card_dir(board, card))
+}
+
 /// Render Markdown at the lane's text scale. Full reading uses the drawer.
 /// `base` is where a card's relative picture paths resolve: its own
 /// directory.
@@ -300,11 +315,12 @@ pub enum Editing {
     Card(String),
 }
 
-/// The rendered card open in this pane, scoped to its board.
-pub struct OpenCard {
-    pub(crate) board: Member,
-    pub(crate) card: String,
-    pub(crate) reveal: Rc<Cell<bool>>,
+/// The card of a board view open in its pane's drawer. Set exactly while the
+/// pane's drawer peeks the view — see [`Peek::Card`].
+struct OpenCard {
+    card: String,
+    /// The drawer's scroll, which the card's editor scrolls by.
+    scroll: ScrollHandle,
     adjustments: Rc<RefCell<HashMap<String, LaneAdjustment>>>,
 }
 
@@ -312,7 +328,6 @@ pub struct OpenCard {
 /// Kept past the drawer only while its last save failed, so closing and
 /// switching cards never discard text.
 pub struct CardDraft {
-    board: Member,
     card: String,
     /// The card's text as last read from the board or written to it — what a
     /// save checks the board against.
@@ -409,17 +424,8 @@ impl BoardItem {
     }
 }
 
-/// Where one board sits, wherever it is drawn.
-///
-/// Keyed by board id on the window rather than held by the pane: the same board
-/// arranged in a space and opened on its own is one board, and a handle per
-/// pane leaves the two disagreeing about where it is scrolled to.
-#[derive(Default)]
-pub struct Scrolls(RefCell<HashMap<String, Scroll>>);
-
-/// Everything the panes showing one board scroll by. Cheap to clone — every
-/// field is a handle onto shared state, which is what makes two panes on one
-/// board move together.
+/// Everything a board view scrolls by. Cheap to clone: every field is a handle
+/// onto the view's own state.
 #[derive(Clone, Default)]
 pub struct Scroll {
     /// The lanes across.
@@ -431,18 +437,6 @@ pub struct Scroll {
     pub down: ScrollHandle,
     /// The same, per lane — see [`Lanes`].
     pub lanes: Rc<Lanes>,
-}
-
-impl Scrolls {
-    /// What `board` is scrolled to, minted the first time it is drawn. Kept for
-    /// as long as the window is open, on the same terms as [`Lanes`].
-    pub fn of(&self, board: &str) -> Scroll {
-        self.0
-            .borrow_mut()
-            .entry(board.to_owned())
-            .or_default()
-            .clone()
-    }
 }
 
 /// The buffer each card's orb paints into, by card id — the same shape as
@@ -687,7 +681,10 @@ pub(crate) fn ghost(
             BoardItem::Card(_, card) => {
                 let text = board.card(card)?.text.clone();
                 match board.view {
-                    View::Lanes => Held::Card(text, root.card_base(project, &board.id, card, cx)),
+                    View::Lanes => Held::Card(
+                        text,
+                        card_base(root.workspace.read(cx), project, &board.id, card),
+                    ),
                     View::List => Held::Row(
                         board.card(card).and_then(|card| board.handle_of(card)),
                         root.card_docs.title(&text),
@@ -741,8 +738,8 @@ pub(crate) fn ghost(
     }
 }
 
-/// Where a lane sits, as the board draws it: which board it is on, its place
-/// among that board's lanes, and the pane drawing it.
+/// Where a lane sits, as the board draws it: which board it is on and its place
+/// among that board's lanes.
 struct Lane<'a> {
     project: usize,
     board: usize,
@@ -750,7 +747,6 @@ struct Lane<'a> {
     id: &'a str,
     at: usize,
     lanes: usize,
-    on: Option<&'a Member>,
 }
 
 /// Where a card sits, as the lane draws it: which board it is on and which
@@ -763,12 +759,280 @@ struct Slot<'a> {
     column: &'a str,
 }
 
-impl Cydonia {
-    // ── mutations ────────────────────────────────────────────────
+/// Which of a board view's menus is up.
+#[derive(Clone, PartialEq, Eq)]
+enum BoardMenu {
+    /// A lane's `···`, by column id.
+    Lane(String),
+    /// A card's `···`, by card id.
+    Card(String),
+}
 
+/// Where the pane's drawer stands around a board view, read from the window
+/// as the view renders.
+#[derive(Default)]
+pub(crate) struct PaneState {
+    /// The pane's drawer, while it shows.
+    pub(crate) drawer: Option<DrawerAt>,
+}
+
+/// Where a pane's drawer stands, as a board view under it draws by.
+pub(crate) struct DrawerAt {
+    /// Whether the drawer peeks this view's open card.
+    pub(crate) own: bool,
+    /// The drawer's top edge.
+    pub(crate) top: Pixels,
+    /// How tall the drawer stands over the pane.
+    pub(crate) height: Pixels,
+    pub(crate) expanded: bool,
+    /// Whether the drawer's resize grip is held.
+    pub(crate) grabbed: bool,
+    /// Set when the open card is to be scrolled clear of the drawer.
+    pub(crate) reveal: Rc<Cell<bool>>,
+}
+
+impl PaneState {
+    fn clearance(&self) -> Pixels {
+        self.drawer
+            .as_ref()
+            .map(|drawer| drawer.height)
+            .unwrap_or_default()
+    }
+
+    fn grabbed(&self) -> bool {
+        self.drawer.as_ref().is_some_and(|drawer| drawer.grabbed)
+    }
+}
+
+/// A reveal waiting on the card open in the drawer.
+struct Reveal {
+    pending: Rc<Cell<bool>>,
+    adjustments: Rc<RefCell<HashMap<String, LaneAdjustment>>>,
+    /// The drawer's top edge, which the revealed card is to clear.
+    top: Pixels,
+}
+
+/// One pane's view of one board: its lanes or its list, scrolled where this
+/// pane left them, with the card field, the column rename and the menus it
+/// opens.
+pub(crate) struct BoardView {
+    /// The board, as the space names it.
+    pub(crate) board: Member,
+    /// The pane drawing it, as [`Leaf::entry`] names it.
+    pane: Option<Member>,
+    workspace: Entity<Workspace>,
+    root: WeakEntity<Cydonia>,
+    pub(crate) scroll: Scroll,
+    marks: Marks,
+    docs: Rc<Docs>,
+    sort: drag::Domain<BoardRegion, BoardItem>,
+    /// The list row under the pointer, by card id.
+    list_hovered: Option<String>,
+    pub(crate) editing: Option<Editing>,
+    pub(crate) card_field: Entity<TextField>,
+    /// The lane being renamed, by column id.
+    renaming: Option<String>,
+    name_field: Entity<NameField>,
+    menu: ContextMenu<Self, BoardMenu>,
+    opened: Option<OpenCard>,
+    drafts: Vec<CardDraft>,
+    /// What the pane's find narrows the board by.
+    find: Find,
+    /// The pane's drawer as of the last render.
+    shown: PaneState,
+    _name: gpui::Subscription,
+}
+
+/// The session a card was dispatched to, while it is still open — a card
+/// whose session has been closed is a card you can run again.
+fn card_session<'a>(card: &Card, workspace: &'a Workspace) -> Option<&'a ChatSession> {
+    let record = card.session.as_deref()?;
+    workspace.session_by_record(record)
+}
+/// A card's mark: the orb while it is busy, the linked session's `#number`
+/// while it is not, and nothing when no session is linked. A session stays
+/// linked after the tag is taken off, and one session tags many cards.
+///
+/// Read out of the model before the card is built — the sidebar's
+/// [`SessionRow`] rule, and for the same reason: the orb leases the frame
+/// clock, which wants the app mutably.
+fn card_working(card: &Card, chat: Option<&ChatSession>, marks: &Marks) -> Option<Working> {
+    let session = chat.map(|chat| (chat.id, chat.label()));
+    let number = chat.and_then(|chat| chat.number);
+    if card.status != Some(Status::Busy) {
+        return chat.map(|chat| Working {
+            busy: false,
+            number,
+            session,
+            state: transcript::orb_for(&card.text),
+            since: SINCE.elapsed(),
+            frame: chat.mark.clone(),
+        });
+    }
+    match chat.filter(|chat| chat.streaming) {
+        Some(chat) => Some(Working {
+            busy: true,
+            number,
+            session,
+            state: transcript::orb_of(chat),
+            since: chat.elapsed().unwrap_or_default(),
+            frame: chat.mark.clone(),
+        }),
+        // Busy without a streaming session uses the board’s animation clock.
+        None => Some(Working {
+            busy: true,
+            number,
+            session,
+            state: transcript::orb_for(&card.text),
+            since: SINCE.elapsed(),
+            frame: marks.of(&card.id),
+        }),
+    }
+}
+fn card_orb<V: 'static>(
+    at: Working,
+    root: WeakEntity<Cydonia>,
+    sessions: bool,
+    cx: &mut Context<V>,
+) -> AnyElement {
+    let theme = Theme::of(cx).clone();
+    let orb = match at.busy {
+        true => transcript::orb(at.state, at.since, &at.frame, cx),
+        false => div()
+            .text_style(TextStyle::Caption)
+            .font_family(theme.font_mono.clone())
+            .text_color(theme.text_faint)
+            .child(match at.number {
+                Some(number) => format!("#{number}"),
+                None => "#".into(),
+            })
+            .into_any_element(),
+    };
+    let session = at.session.filter(|_| sessions);
+    div()
+        .id("card-busy-orb")
+        .debug_selector(|| "card-busy-orb".into())
+        .flex_none()
+        .child(orb)
+        .when_some(session, |el, (session, title)| {
+            el.cursor_pointer()
+                .tooltip(move |window, cx| Tooltip::text(title.clone(), window, cx))
+                .on_click(move |_, window, cx| {
+                    cx.stop_propagation();
+                    let _ = root.update(cx, |root, cx| {
+                        root.select_session(session, window, cx);
+                        root.show_pane(Kind::Session, cx);
+                    });
+                })
+        })
+        .into_any_element()
+}
+/// A lane's name, how many cards it holds, and the ids of the ones the query
+/// leaves standing — in the lane's own order.
+fn lane_cards(
+    workspace: &Workspace,
+    project: usize,
+    board_at: usize,
+    id: &str,
+    query: &str,
+) -> Option<(String, usize, Vec<String>)> {
+    let board = workspace.board_in(project, board_at)?;
+    let column = board.column(id)?;
+    let cards: Vec<String> = column
+        .cards
+        .iter()
+        .filter(|card| {
+            query.trim().is_empty() || card_matches(card, board.handle_of(card).as_deref(), query)
+        })
+        .map(|card| card.id.clone())
+        .collect();
+    Some((column.name.clone(), column.cards.len(), cards))
+}
+/// What a list row says about its card: its handle, its title, its status
+/// and its run.
+#[allow(clippy::too_many_arguments)]
+fn list_row_cells<V: 'static>(
+    handle: Option<String>,
+    text: &str,
+    status: Option<Status>,
+    working: Option<Working>,
+    docs: &Docs,
+    root: &WeakEntity<Cydonia>,
+    sessions: bool,
+    cx: &mut Context<V>,
+) -> Vec<AnyElement> {
+    let theme = Theme::of(cx).clone();
+    let mut cells = vec![
+        // What to call this card out loud, in the mono face for the reason
+        // the delete dialog sets a path there. Ahead of the text and at a
+        // width of its own, so the lines under one another start together.
+        div()
+            .flex_none()
+            .w(px(LIST_HANDLE_WIDTH))
+            .text_style(TextStyle::Caption)
+            .font_family(theme.font_mono.clone())
+            .text_color(theme.text_faint)
+            .child(handle.unwrap_or_default())
+            .into_any_element(),
+        div()
+            .flex_1()
+            .min_w_0()
+            .text_style(TextStyle::Callout)
+            .text_color(theme.text)
+            .text_ellipsis()
+            .child(docs.title(text))
+            .into_any_element(),
+    ];
+    cells.extend(resting(status).map(|status| status_chip(status, &theme)));
+    // On show, not behind a hover — a card's run is what you look at the
+    // board to see, and hiding it would mean hunting for the one that is
+    // working.
+    cells.extend(working.map(|at| card_orb(at, root.clone(), sessions, cx)));
+    cells
+}
+/// A lane's heading in the list: the chevron saying whether it is folded,
+/// its name and its count.
+fn lane_title(folded: bool, name: String, count: String, theme: &Theme) -> [AnyElement; 3] {
+    [
+        icons::icon(if folded {
+            icons::arrows::ChevronRight
+        } else {
+            icons::arrows::ChevronDown
+        })
+        .size(px(12.))
+        .text_color(theme.text_faint)
+        .into_any_element(),
+        div()
+            .min_w_0()
+            .text_ellipsis()
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(theme.text_muted)
+            .child(name)
+            .into_any_element(),
+        div()
+            .flex_none()
+            .text_color(theme.text_faint)
+            .child(count)
+            .into_any_element(),
+    ]
+}
+/// One glyph on a card's hover row.
+fn card_action(name: &'static str, id: &str, glyph: &'static [u8], cx: &App) -> Stateful<Div> {
+    let theme = Theme::of(cx).clone();
+    theme
+        .ghost(SharedString::from(format!("card-{name}-{id}")))
+        .p(px(3.))
+        .child(
+            icons::icon(glyph)
+                .size(px(12.))
+                .text_color(theme.text_faint),
+        )
+}
+
+impl Cydonia {
     pub fn show_pane(&mut self, pane: Kind, cx: &mut Context<Self>) {
         self.commit(cx);
-        self.leaf_mut().pane = pane;
+        self.leaf().update(cx, |leaf, _| leaf.kind = pane);
         cx.notify();
     }
 
@@ -801,7 +1065,7 @@ impl Cydonia {
         }
         self.workspace
             .update(cx, |workspace, cx| workspace.open_board(project, ix, cx));
-        self.leaf_mut().pane = Kind::Board;
+        self.leaf().update(cx, |pane, _| pane.kind = Kind::Board);
         self.reveal_applied_match(cx);
         cx.notify();
     }
@@ -814,27 +1078,49 @@ impl Cydonia {
         cx.notify();
     }
 
-    /// The board a pane is showing, by its file — the one address every write
-    /// to a board is made through. Nothing for a pane on anything else.
-    pub(crate) fn pane_board(&self, on: Option<&Member>, cx: &App) -> Option<String> {
-        self.workspace
-            .read(cx)
-            .board_of(on)
-            .map(|board| board.id.clone())
+    /// Where the view of `board` in the pane showing it is scrolled to.
+    pub(crate) fn board_scroll(&self, board: &Member, cx: &App) -> Option<Scroll> {
+        self.board_views(cx)
+            .into_iter()
+            .find(|view| view.read(cx).board == *board)
+            .map(|view| view.read(cx).scroll.clone())
     }
 
-    /// Point the field of the pane on `on` at `at`, filing whatever was already
-    /// open first — so clicking straight from one card to another never drops
-    /// an edit.
-    ///
-    /// The pane is entered on the way, the same as a press anywhere else in
-    /// one: the field, what it commits into and the caret all answer for the
-    /// focused pane, and a card opened in a pane the window is not on would be
-    /// drawn in one board and filed into another.
-    fn edit(
+    /// Every board view the panes hold.
+    pub(crate) fn board_views(&self, cx: &App) -> Vec<Entity<BoardView>> {
+        self.leaves
+            .iter()
+            .flat_map(|pane| pane.read(cx).boards.clone())
+            .collect()
+    }
+
+    /// Make every view the panes are about to draw, before the frame borrows
+    /// the window to draw them.
+    pub(crate) fn sync_items(&mut self, cx: &mut Context<Self>) {
+        for pane in self.leaves.clone() {
+            pane.update(cx, |pane, cx| pane.sync_items(cx));
+        }
+    }
+
+    /// What `on`'s pane holds that its board view `view` draws by — see
+    /// [`PaneState`].
+    pub(crate) fn pane_state(&self, on: Option<&Member>, view: EntityId, cx: &App) -> PaneState {
+        self.leaf_of(on, cx).read(cx).pane_state(view, cx)
+    }
+
+    /// A press on a board the drawer and the cards did not take — see
+    /// [`Pane::board_pressed`].
+    fn board_pressed(&mut self, on: Option<&Member>, window: &mut Window, cx: &mut Context<Self>) {
+        self.leaf_of(on, cx)
+            .clone()
+            .update(cx, |pane, cx| pane.board_pressed(window, cx));
+    }
+
+    /// File every pane's open card, then enter `on`'s pane and put its drawer
+    /// away: what a board view asks of the window before its field opens.
+    fn enter_board_pane(
         &mut self,
         on: Option<&Member>,
-        at: Editing,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -842,28 +1128,9 @@ impl Cydonia {
         if let Some(on) = on {
             self.focus_pane(&on.clone(), window, cx);
         }
-        self.drop_drawer(on, cx);
-        let board = self.workspace.read(cx).board_of(on);
-        let text = match &at {
-            Editing::New(..) => String::new(),
-            Editing::Card(id) => board
-                .and_then(|board| board.card(id))
-                .map(|card| card.text.clone())
-                .unwrap_or_default(),
-        };
-        let id = board.map(|board| board.id.clone());
-        let leaf = self.leaf_of(on);
-        leaf.card_field
-            .update(cx, |field, cx| field.set_content(text, cx));
-        // A lane scrolled away from earlier stays where it was left; opening a
-        // card at its foot is asking to be taken back there.
-        if let (Editing::New(Place::End, column), Some(id)) = (&at, &id) {
-            self.boards.of(id).lanes.follow(column);
-        }
-        let field = self.leaf_of(on).card_field.clone();
-        self.leaf_of_mut(on).editing = Some(at);
-        window.focus(&field.read(cx).focus_handle(cx), cx);
-        cx.notify();
+        self.leaf_of(on, cx)
+            .clone()
+            .update(cx, |pane, cx| pane.drop_drawer(cx));
     }
 
     /// File whatever is open before leaving it. Every way out of a pane goes
@@ -877,90 +1144,18 @@ impl Cydonia {
         // Every pane with a field open, not only the focused one: the press
         // that leaves a card behind is often a press into another pane, and by
         // the time this runs the focus has already moved there.
-        for at in 0..self.leaves.len() {
-            self.commit_leaf(at, cx);
+        for view in self.board_views(cx) {
+            view.update(cx, |view, cx| view.commit_edit(cx));
         }
-    }
-
-    /// File the card one pane has open, into that pane's own board.
-    fn commit_leaf(&mut self, leaf: usize, cx: &mut Context<Self>) {
-        let Some(at) = self
-            .leaves
-            .get_mut(leaf)
-            .and_then(|leaf| leaf.editing.take())
-        else {
-            return;
-        };
-        let (field, on) = {
-            let leaf = &self.leaves[leaf];
-            (leaf.card_field.clone(), leaf.entry.clone())
-        };
-        let text = field.read(cx).content().trim().to_owned();
-        field.update(cx, |field, cx| field.clear(cx));
-        // The board of the pane the field was open in, which is the one it was
-        // drawn over — see [`Self::pane_board`].
-        let Some(id) = self.pane_board(on.as_ref(), cx) else {
-            return;
-        };
-        self.workspace.update(cx, |workspace, cx| {
-            workspace.write_board(&id, |board| match &at {
-                Editing::New(place, column) => {
-                    if !text.is_empty() {
-                        match place {
-                            Place::Top => board.prepend_card(column, text.clone()),
-                            Place::End => board.add_card(column, text.clone()),
-                        };
-                    }
-                }
-                Editing::Card(id) => {
-                    if text.is_empty() {
-                        board.remove_card(id);
-                    } else {
-                        board.rewrite_card(id, &text);
-                    }
-                }
-            });
-            cx.notify();
-        });
     }
 
     /// Let go of an edit a re-read made meaningless, and keep one it did not.
     /// Held by id, so a card that merely moved keeps its open field; only one
     /// that has gone leaves the field pointing at nothing.
     pub(crate) fn drop_stale_edit(&mut self, cx: &mut Context<Self>) {
-        for leaf in 0..self.leaves.len() {
-            let Some(at) = self.leaves[leaf].editing.clone() else {
-                continue;
-            };
-            let on = self.leaves[leaf].entry.clone();
-            let board = self.workspace.read(cx).board_of(on.as_ref());
-            let alive = match &at {
-                Editing::New(_, column) => {
-                    board.is_some_and(|board| board.column(column).is_some())
-                }
-                Editing::Card(card) => board.is_some_and(|board| board.card(card).is_some()),
-            };
-            if !alive {
-                self.leaves[leaf].editing = None;
-                self.leaves[leaf]
-                    .card_field
-                    .update(cx, |field, cx| field.clear(cx));
-            }
+        for view in self.board_views(cx) {
+            view.update(cx, |view, cx| view.drop_stale_edit(cx));
         }
-    }
-
-    fn commit_card(&mut self, _: &CommitCard, _: &mut Window, cx: &mut Context<Self>) {
-        self.commit(cx);
-        cx.notify();
-    }
-
-    /// Escape abandons the edit — the one way to leave a card as it was.
-    fn dismiss_card(&mut self, _: &DismissCard, _: &mut Window, cx: &mut Context<Self>) {
-        self.leaf_mut().editing = None;
-        self.leaf()
-            .card_field
-            .update(cx, |field, cx| field.clear(cx));
-        cx.notify();
     }
 
     /// The project and board indices of `key`, where both are still open.
@@ -974,114 +1169,6 @@ impl Cydonia {
         Some((project, board))
     }
 
-    fn board_key(&self, project: usize, board_at: usize, cx: &App) -> Option<BoardKey> {
-        let workspace = self.workspace.read(cx);
-        let board = workspace.board_in(project, board_at)?;
-        Some(BoardKey {
-            project: workspace.projects.get(project)?.path.clone(),
-            board: board.id.clone(),
-            view: board.view,
-        })
-    }
-
-    /// Commit a released card or lane where its neighbours name.
-    fn board_moved(&mut self, event: &drag::Drop<BoardRegion, BoardItem>, cx: &mut Context<Self>) {
-        let (BoardRegion::Lanes(to) | BoardRegion::Cards(to, _) | BoardRegion::List(to)) =
-            &event.region;
-        let (Some(from), Some(at)) = (self.board_at(event.item.key(), cx), self.board_at(to, cx))
-        else {
-            return;
-        };
-        let Some(board) = self.workspace.read(cx).board_in(at.0, at.1) else {
-            return;
-        };
-        let column_of = |item: &Option<BoardItem>| match item {
-            Some(BoardItem::Lane(_, column)) => Some(column.clone()),
-            Some(BoardItem::Card(_, card)) => board
-                .columns
-                .iter()
-                .find(|column| column.cards.iter().any(|held| &held.id == card))
-                .map(|column| column.id.clone()),
-            None => None,
-        };
-        match &event.item {
-            BoardItem::Lane(_, column) => {
-                let before = match &event.before {
-                    Some(BoardItem::Lane(_, before)) => Some(before.clone()),
-                    _ => {
-                        let mut rest = board.columns.iter().filter(|at| &at.id != column);
-                        match column_of(&event.after) {
-                            Some(after) => {
-                                rest.find(|at| at.id == after);
-                                rest.next()
-                            }
-                            None => rest.next(),
-                        }
-                        .map(|at| at.id.clone())
-                    }
-                };
-                let (board, column) = (board.id.clone(), column.clone());
-                self.commit(cx);
-                self.workspace.update(cx, |workspace, cx| {
-                    workspace.move_column_before(&board, &column, before.as_deref(), cx)
-                });
-            }
-            BoardItem::Card(_, card) => {
-                let Some(column) = (match &event.region {
-                    BoardRegion::Cards(_, column) => Some(column.clone()),
-                    _ => column_of(&event.after),
-                }) else {
-                    return;
-                };
-                let before = match &event.before {
-                    Some(BoardItem::Card(_, before)) => Some(before.clone()),
-                    _ => match &event.after {
-                        Some(BoardItem::Card(_, after)) => board.column(&column).and_then(|at| {
-                            let mut rest = at.cards.iter().filter(|held| &held.id != card);
-                            rest.find(|held| &held.id == after);
-                            rest.next().map(|held| held.id.clone())
-                        }),
-                        // Under a heading whose cards were not painted.
-                        Some(BoardItem::Lane(..)) => board.column(&column).and_then(|at| {
-                            at.cards
-                                .iter()
-                                .find(|held| &held.id != card)
-                                .map(|held| held.id.clone())
-                        }),
-                        None => None,
-                    },
-                };
-                let card = card.clone();
-                self.commit(cx);
-                self.workspace.update(cx, |workspace, cx| {
-                    match from == at {
-                        true => {
-                            workspace.move_card_within(at, &card, &column, before.as_deref());
-                        }
-                        // A card that came off another board arrives under a
-                        // handle of this one's, at the end of the lane it was
-                        // dropped on: it is a new card here.
-                        false => {
-                            workspace.carry_card(from, at, &card, Some(&column));
-                        }
-                    }
-                    cx.notify();
-                });
-            }
-        }
-        cx.notify();
-    }
-
-    /// Put a card at the foot of another lane of its board.
-    fn move_card_to(&mut self, board: &str, card: &str, column: &str, cx: &mut Context<Self>) {
-        self.commit(cx);
-        self.workspace.update(cx, |workspace, cx| {
-            workspace.write_board(board, |board| board.move_card_before(card, column, None));
-            cx.notify();
-        });
-        cx.notify();
-    }
-
     pub(crate) fn delete_card(&mut self, board: &str, card: &str, cx: &mut Context<Self>) {
         self.commit(cx);
         let (board, card) = (board.to_owned(), card.to_owned());
@@ -1090,39 +1177,6 @@ impl Cydonia {
             cx.notify();
         });
         cx.notify();
-    }
-
-    /// A lane at the right-hand end of one board, opened straight into its
-    /// name.
-    fn new_column(&mut self, board: &str, window: &mut Window, cx: &mut Context<Self>) {
-        self.commit(cx);
-        let board = board.to_owned();
-        let id = self
-            .workspace
-            .update(cx, |workspace, cx| workspace.new_column(&board, cx));
-        if let Some(id) = id {
-            self.start_rename(Renaming::Column(board, id), window, cx);
-        }
-    }
-
-    /// A lane beside the one the menu is on, opened straight into its name —
-    /// the same as [`Self::new_column`], which only ever writes at the end.
-    fn new_column_beside(
-        &mut self,
-        board: &str,
-        id: &str,
-        after: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.commit(cx);
-        let (board, id) = (board.to_owned(), id.to_owned());
-        let minted = self.workspace.update(cx, |workspace, cx| {
-            workspace.new_column_beside(&board, &id, after, cx)
-        });
-        if let Some(minted) = minted {
-            self.start_rename(Renaming::Column(board, minted), window, cx);
-        }
     }
 
     /// Drop a lane. Offered only while it is empty — see
@@ -1136,320 +1190,9 @@ impl Cydonia {
         cx.notify();
     }
 
-    /// The card's markdown, as it was written. The source and not what the lane
-    /// paints: a card is a document, and the text is what somebody would paste
-    /// into the next one.
-    fn copy_card(&mut self, board: &str, card: &str, cx: &mut Context<Self>) {
-        let Some(text) = self
-            .workspace
-            .read(cx)
-            .board_at(board)
-            .and_then(|board| board.card(card))
-            .map(|card| card.text.clone())
-        else {
-            return;
-        };
-        cx.write_to_clipboard(ClipboardItem::new_string(text));
-    }
-
-    /// Hand the card to an agent: a session of its own, opened in the project
-    /// with the card's text as its first prompt.
-    ///
-    /// A session of its own rather than the one in front, so the card's dot
-    /// reports its own run — and so dispatching a second card doesn't queue
-    /// behind the first. The board stays up: the card goes live where you are
-    /// looking, and clicking it is what follows the work into the transcript.
-    fn dispatch_card(&mut self, board: &str, card: &str, cx: &mut Context<Self>) {
-        self.commit(cx);
-        let (board, card) = (board.to_owned(), card.to_owned());
-        self.workspace.update(cx, |workspace, cx| {
-            let text = workspace
-                .board_at(&board)
-                .and_then(|board| board.card(&card))
-                .map(|card| card.text.clone());
-            let (Some(text), Some(entry)) = (text, workspace.preferred_agent()) else {
-                return;
-            };
-            // Nothing to link to is nothing to write: clearing the field on a
-            // refused dispatch would take the card's last session off it.
-            let Some(record) = workspace
-                .new_session(entry, Some(text), cx)
-                .and_then(|id| workspace.mint_record(id))
-            else {
-                return;
-            };
-            // The link lands on the board, so the board is written — it is what
-            // the ▶ reads after a quit.
-            workspace.write_board(&board, |held| held.dispatch_card(&card, record.clone()));
-        });
-        cx.notify();
-    }
-
-    /// The `···` on a card: what the row of glyphs underneath should not carry,
-    /// because it cannot be undone.
-    fn card_rows(&self, on: &str, card: &str, cx: &App) -> Vec<(Item, menu::Act)> {
-        let (copied, doomed) = (card.to_owned(), card.to_owned());
-        let (from, held) = (on.to_owned(), on.to_owned());
-        // The card at rest is a rendered document, not a run of text somebody
-        // can drag over — so without this there is no way to get a card's words
-        // back out of it short of opening the editor and selecting them.
-        // Every lane but the one the card is in, in board order.
-        let lanes: Vec<(String, String)> = self
-            .workspace
-            .read(cx)
-            .board_at(on)
-            .map(|board| {
-                let at = board.column_of(card).map(|column| column.id.clone());
-                board
-                    .columns
-                    .iter()
-                    .filter(|column| Some(&column.id) != at.as_ref())
-                    .map(|column| (column.id.clone(), column.name.clone()))
-                    .collect()
-            })
-            .unwrap_or_default();
-        let mut rows = vec![menu::row(
-            Item::action("Copy text").with_icon(icons::text::Copy),
-            move |this, _, cx| this.copy_card(&from, &copied, cx),
-        )];
-        if !lanes.is_empty() {
-            let moves = lanes
-                .into_iter()
-                .map(|(column, name)| {
-                    let (board, card) = (on.to_owned(), card.to_owned());
-                    menu::row(Item::action(name), move |this, _, cx| {
-                        this.move_card_to(&board, &card, &column, cx)
-                    })
-                })
-                .collect();
-            rows.push(menu::submenu(
-                "Move to",
-                icons::arrows::ArrowLeftRight,
-                moves,
-            ));
-        }
-        rows.push(menu::row(
-            Item::action("Delete").with_icon(icons::files::Trash),
-            move |this, window, cx| this.ask_delete_card(&held, &doomed, window, cx),
-        ));
-        rows
-    }
-
-    /// What [`Self::menu_button`] builds a card's menu with.
-    fn card_menu_rows(on: String, card: String) -> menu::Rows {
-        Box::new(move |this, _, cx| this.card_rows(&on, &card, cx))
-    }
-
-    /// The card's menu, while it is up.
-    pub(crate) fn card_menu(
-        &self,
-        card: &str,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        let id = SharedString::from(format!("card-menu-card-{card}"));
-        self.menu_here(&Menu::Card(card.to_owned()), id, window, cx)
-    }
-
-    /// The session a card was dispatched to, while it is still open — a card
-    /// whose session has been closed is a card you can run again.
-    fn card_session<'a>(&self, card: &Card, cx: &'a App) -> Option<&'a ChatSession> {
-        let record = card.session.as_deref()?;
-        self.workspace.read(cx).session_by_record(record)
-    }
-
-    /// A card's mark: the orb while it is busy, the linked session's `#number`
-    /// while it is not, and nothing when no session is linked. A session stays
-    /// linked after the tag is taken off, and one session tags many cards.
-    ///
-    /// Read out of the model before the card is built — the sidebar's
-    /// [`SessionRow`] rule, and for the same reason: the orb leases the frame
-    /// clock, which wants the app mutably.
-    fn card_working(&self, card: &Card, chat: Option<&ChatSession>) -> Option<Working> {
-        let session = chat.map(|chat| (chat.id, chat.label()));
-        let number = chat.and_then(|chat| chat.number);
-        if card.status != Some(Status::Busy) {
-            return chat.map(|chat| Working {
-                busy: false,
-                number,
-                session,
-                state: transcript::orb_for(&card.text),
-                since: SINCE.elapsed(),
-                frame: chat.transcript.mark.clone(),
-            });
-        }
-        match chat.filter(|chat| chat.streaming) {
-            Some(chat) => Some(Working {
-                busy: true,
-                number,
-                session,
-                state: transcript::orb_of(chat),
-                since: chat.elapsed().unwrap_or_default(),
-                frame: chat.transcript.mark.clone(),
-            }),
-            // Busy without a streaming session uses the board’s animation clock.
-            None => Some(Working {
-                busy: true,
-                number,
-                session,
-                state: transcript::orb_for(&card.text),
-                since: SINCE.elapsed(),
-                frame: self.card_marks.of(&card.id),
-            }),
-        }
-    }
-
-    fn card_orb(&self, at: Working, cx: &mut Context<Self>) -> AnyElement {
-        let theme = Theme::of(cx).clone();
-        let orb = match at.busy {
-            true => transcript::orb(at.state, at.since, &at.frame, cx),
-            false => div()
-                .text_style(TextStyle::Caption)
-                .font_family(theme.font_mono.clone())
-                .text_color(theme.text_faint)
-                .child(match at.number {
-                    Some(number) => format!("#{number}"),
-                    None => "#".into(),
-                })
-                .into_any_element(),
-        };
-        let session = at
-            .session
-            .filter(|_| self.workspace.read(cx).settings.features.sessions);
-        div()
-            .id("card-busy-orb")
-            .debug_selector(|| "card-busy-orb".into())
-            .flex_none()
-            .child(orb)
-            .when_some(session, |el, (session, title)| {
-                el.cursor_pointer()
-                    .tooltip(move |window, cx| Tooltip::text(title.clone(), window, cx))
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        cx.stop_propagation();
-                        this.select_session(session, window, cx);
-                        this.show_pane(Kind::Session, cx);
-                    }))
-            })
-            .into_any_element()
-    }
-
-    /// Where the board at `board_at` sits — see [`Scrolls`].
-    fn scrolls(&self, project: usize, board_at: usize, cx: &App) -> Scroll {
-        let id = self
-            .workspace
-            .read(cx)
-            .board_in(project, board_at)
-            .map(|board| board.id.clone())
-            .unwrap_or_default();
-        self.boards.of(&id)
-    }
-
-    // ── finding ──────────────────────────────────────────────────
-
-    /// What the board is narrowed by right now, and the empty string when it is
-    /// not narrowed at all. Empty while the bar is down whatever the field
-    /// still holds, so a query never outlives the thing on screen saying so.
-    pub(crate) fn board_query(&self, on: Option<&Member>, cx: &App) -> String {
-        let leaf = self.leaf_of(on);
-        match leaf.finding {
-            true => leaf.find_field.read(cx).content().to_string(),
-            false => self
-                .applied_query()
-                .map(|q| q.text().to_owned())
-                .unwrap_or_default(),
-        }
-    }
-
-    pub(crate) fn reveal_board_match(&self, on: Option<&Member>, cx: &App) {
-        let Some(query) = self.applied_query() else {
-            return;
-        };
-        let Some(board) = self.workspace.read(cx).board_of(on) else {
-            return;
-        };
-        let Some((ix, column)) = board.columns.iter().enumerate().find(|(_, column)| {
-            column
-                .cards
-                .iter()
-                .any(|card| card_matches(card, board.handle_of(card).as_deref(), query.text()))
-        }) else {
-            return;
-        };
-        let scroll = self.boards.of(&board.id);
-        scroll
-            .across
-            .set_offset(gpui::point(px(-(ix as f32) * COLUMN_WIDTH), px(0.)));
-        scroll
-            .down
-            .set_offset(gpui::point(px(0.), px(-(ix as f32) * LIST_HEADING_HEIGHT)));
-        scroll
-            .lanes
-            .of(&column.id)
-            .scroller()
-            .set_offset(gpui::point(px(0.), px(0.)));
-    }
-
-    /// A lane's name, how many cards it holds, and the ids of the ones the query
-    /// leaves standing — in the lane's own order.
-    fn lane_cards(
-        &self,
-        project: usize,
-        board_at: usize,
-        id: &str,
-        query: &str,
-        cx: &App,
-    ) -> Option<(String, usize, Vec<String>)> {
-        let board = self.workspace.read(cx).board_in(project, board_at)?;
-        let column = board.column(id)?;
-        let cards: Vec<String> = column
-            .cards
-            .iter()
-            .filter(|card| {
-                query.trim().is_empty()
-                    || card_matches(card, board.handle_of(card).as_deref(), query)
-            })
-            .map(|card| card.id.clone())
-            .collect();
-        Some((column.name.clone(), column.cards.len(), cards))
-    }
-
-    /// Put the find bar up, take the caret back to a field already up, or —
-    /// where the caret is in it already — put it away. The chord that raises a
-    /// bar is the one a reader reaches for to be rid of it, and the bar is the
-    /// query: dismissing it clears what the board is narrowed by.
-    pub(crate) fn find_card(&mut self, _: &FindCard, window: &mut Window, cx: &mut Context<Self>) {
-        let field = self.leaf().find_field.clone();
-        if self.leaf().finding && field.read(cx).focus_handle(cx).is_focused(window) {
-            self.dismiss_find(&DismissFind, window, cx);
-            return;
-        }
-        self.leaf_mut().finding = true;
-        let placeholder = match self.leaf().pane {
-            Kind::Board => "find a card…",
-            _ => "find…",
-        };
-        field.update(cx, |field, cx| field.set_placeholder(placeholder, cx));
-        window.focus(&field.read(cx).focus_handle(cx), cx);
-        cx.notify();
-    }
-
-    /// Done finding: the field goes and takes its query with it.
-    pub(crate) fn dismiss_find(&mut self, _: &DismissFind, _: &mut Window, cx: &mut Context<Self>) {
-        let field = self.leaf().find_field.clone();
-        self.leaf_mut().finding = false;
-        field.update(cx, |field, cx| field.clear(cx));
-        cx.notify();
-    }
-
-    fn find_bar(&self, on: Option<&Member>, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if cx.has_active_drag() {
-            return None;
-        }
-        self.search_pill(on, cx)
-    }
-
-    // ── chrome ───────────────────────────────────────────────────
-
+    /// Open `card` of `board` in `on`'s drawer, or put the drawer away where
+    /// it already shows it: every pane's open field filed and `on`'s pane
+    /// entered first.
     pub(crate) fn open_card(
         &mut self,
         on: Option<&Member>,
@@ -1462,340 +1205,10 @@ impl Cydonia {
         if let Some(on) = on {
             self.focus_pane(on, window, cx);
         }
-        fn opened(leaf: &Leaf) -> Option<&OpenCard> {
-            leaf.drawer.as_ref().and_then(Drawer::card)
-        }
-        if opened(self.leaf_of(on))
-            .is_some_and(|opened| opened.board == board && opened.card == card)
-        {
-            return self.close_drawer(on, window, cx);
-        }
-        if let Some(opened) = opened(self.leaf_of(on))
-            && (opened.board != board || opened.card != card)
-        {
-            let (was_board, was_card) = (opened.board.clone(), opened.card.clone());
-            self.settle_card_draft(on, &was_board, &was_card, cx);
-        }
-        let leaf = self.leaf_of_mut(on);
-        if let Some(drawer) = &mut leaf.drawer
-            && drawer.card().is_some_and(|opened| opened.board == board)
-        {
-            let opened = drawer.card_mut().unwrap();
-            if opened.card != card {
-                opened.card = card;
-                drawer.scroll = ScrollHandle::new();
-            }
-            drawer.card().unwrap().reveal.set(true);
-        } else {
-            self.drop_drawer(on, cx);
-            let drawer = Drawer::new(
-                Peek::Card(OpenCard {
-                    board,
-                    card,
-                    reveal: Rc::new(Cell::new(true)),
-                    adjustments: Default::default(),
-                }),
-                cx.focus_handle(),
-            );
-            self.leaf_of_mut(on).drawer = Some(drawer);
-        }
-        let focus = self.leaf_of(on).drawer.as_ref().unwrap().focus.clone();
-        self.ensure_card_draft(on, cx);
-        window.focus(&focus, cx);
+        self.leaf_of(on, cx)
+            .clone()
+            .update(cx, |pane, cx| pane.open_card(board, card, window, cx));
         cx.notify();
-    }
-
-    /// The drawer `on` holds, where it holds a card of the board at `board_at`
-    /// that is still there or still being written.
-    pub(crate) fn drawer_for(
-        &self,
-        project: usize,
-        board_at: usize,
-        on: Option<&Member>,
-        cx: &App,
-    ) -> Option<&Drawer> {
-        let drawer = self.leaf_of(on).drawer.as_ref()?;
-        let opened = drawer.card()?;
-        let workspace = self.workspace.read(cx);
-        if workspace.board_member(project, board_at).as_ref() != Some(&opened.board) {
-            return None;
-        }
-        if workspace
-            .board_in(project, board_at)?
-            .card(&opened.card)
-            .is_none()
-            && self.draft_for(on).is_none()
-        {
-            return None;
-        }
-        Some(drawer)
-    }
-
-    fn draft_for(&self, on: Option<&Member>) -> Option<&CardDraft> {
-        let leaf = self.leaf_of(on);
-        let opened = leaf.drawer.as_ref().and_then(Drawer::card)?;
-        leaf.card_drafts
-            .iter()
-            .find(|draft| draft.board == opened.board && draft.card == opened.card)
-    }
-
-    /// Where a card's relative picture paths resolve: its own directory.
-    fn card_base(
-        &self,
-        project: usize,
-        board: &str,
-        card: &str,
-        cx: &App,
-    ) -> Option<std::path::PathBuf> {
-        let open = self.workspace.read(cx).projects.get(project)?;
-        Some(artifact::project::fs::Project::new(&open.path).card_dir(board, card))
-    }
-
-    fn draft_mut(
-        &mut self,
-        on: Option<&Member>,
-        board: &Member,
-        card: &str,
-    ) -> Option<&mut CardDraft> {
-        self.leaf_of_mut(on)
-            .card_drafts
-            .iter_mut()
-            .find(|draft| draft.board == *board && draft.card == card)
-    }
-
-    /// Put an editor over the card open in the drawer, unless one is there.
-    fn ensure_card_draft(&mut self, on: Option<&Member>, cx: &mut Context<Self>) {
-        let Some(drawer) = self.leaf_of(on).drawer.as_ref() else {
-            return;
-        };
-        let Some(opened) = drawer.card() else {
-            return;
-        };
-        if self.draft_for(on).is_some() {
-            return;
-        }
-        let (board, card) = (opened.board.clone(), opened.card.clone());
-        let scroll = drawer.scroll.clone();
-        let workspace = self.workspace.read(cx);
-        let Some(text) = workspace
-            .board_of(Some(&board))
-            .and_then(|held| held.card(&card))
-            .map(|held| held.text.clone())
-        else {
-            return;
-        };
-        let text_size = workspace.text_size;
-        let dir = artifact::project::fs::Project::new(&board.project).card_dir(&board.id, &card);
-        let (editor, pictures) = crate::model::document::editor(
-            &dir,
-            &text,
-            self.workspace.downgrade(),
-            |editor| editor.with_text_size(text_size).with_scroll(scroll),
-            cx,
-        );
-        crate::model::language::Here::ensure(crate::model::article::fences(editor.read(cx)), cx);
-        let shown = editor.read(cx).source();
-        let (held_on, held_board, held_card) = (on.cloned(), board.clone(), card.clone());
-        let subscription = cx.subscribe(&editor, move |this, editor, event: &EditorEvent, cx| {
-            if let EditorEvent::Changed = event {
-                crate::model::language::Here::ensure(
-                    crate::model::article::fences(editor.read(cx)),
-                    cx,
-                );
-                this.save_card(held_on.as_ref(), &held_board, &held_card, cx);
-            }
-        });
-        self.leaf_of_mut(on).card_drafts.push(CardDraft {
-            board,
-            card,
-            base: text,
-            shown,
-            editor,
-            error: None,
-            _pictures: pictures,
-            _subscription: subscription,
-        });
-    }
-
-    /// Write the card's editor to the board, keeping on the draft why the
-    /// board refused it.
-    fn save_card(
-        &mut self,
-        on: Option<&Member>,
-        board: &Member,
-        card: &str,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(draft) = self.draft_mut(on, board, card) else {
-            return;
-        };
-        let (base, shown, editor) = (
-            draft.base.clone(),
-            draft.shown.clone(),
-            draft.editor.clone(),
-        );
-        let text = editor.read(cx).source();
-        let result = match text == shown {
-            true => Ok(()),
-            false => self.workspace.update(cx, |workspace, cx| {
-                workspace.save_card_draft(board, card, &base, &text, cx)
-            }),
-        };
-        if let Some(draft) = self.draft_mut(on, board, card) {
-            match result {
-                Ok(()) => {
-                    if text != draft.shown {
-                        draft.base = text.clone();
-                        draft.shown = text;
-                    }
-                    draft.error = None;
-                }
-                Err(error) => draft.error = Some(error),
-            }
-        }
-        cx.notify();
-    }
-
-    /// Let a card's editor go with its drawer, unless its last save failed.
-    pub(crate) fn settle_card_draft(
-        &mut self,
-        on: Option<&Member>,
-        board: &Member,
-        card: &str,
-        _: &mut Context<Self>,
-    ) {
-        self.leaf_of_mut(on)
-            .card_drafts
-            .retain(|draft| draft.board != *board || draft.card != card || draft.error.is_some());
-    }
-
-    /// Drop the editor's text and read the card back off the board.
-    fn reload_card_draft(&mut self, on: Option<&Member>, cx: &mut Context<Self>) {
-        let Some(opened) = self.leaf_of(on).drawer.as_ref().and_then(Drawer::card) else {
-            return;
-        };
-        let (board, card) = (opened.board.clone(), opened.card.clone());
-        self.leaf_of_mut(on)
-            .card_drafts
-            .retain(|draft| draft.board != board || draft.card != card);
-        self.ensure_card_draft(on, cx);
-        cx.notify();
-    }
-
-    /// What the drawer draws for the card it holds over the board at
-    /// `board_at`.
-    pub(crate) fn card_face(
-        &self,
-        project: usize,
-        board_at: usize,
-        on: Option<&Member>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<Face> {
-        let opened = self.drawer_for(project, board_at, on, cx)?.card()?;
-        let board = self.workspace.read(cx).board_in(project, board_at)?;
-        let card = board.card(&opened.card).cloned();
-        let card = card.as_ref();
-        let handle = card
-            .and_then(|card| board.handle_of(card))
-            .unwrap_or_else(|| "Missing card".into());
-        let status = card.and_then(|card| card.status);
-        let draft = self.draft_for(on);
-        let error = draft.and_then(|draft| draft.error.clone()).or_else(|| {
-            card.is_none().then(|| {
-                "This card was removed or moved. Copy your text before discarding it.".into()
-            })
-        });
-        // The board moved under an editor with nothing of its own to keep —
-        // an agent's rewrite, most often — so the editor takes the board's.
-        if let (Some(card), Some(draft)) = (card, draft)
-            && card.text != draft.base
-            && draft.editor.read(cx).source() == draft.shown
-        {
-            let reload_on = on.cloned();
-            let this = cx.entity();
-            cx.defer(move |cx| {
-                this.update(cx, |this, cx| {
-                    this.reload_card_draft(reload_on.as_ref(), cx)
-                })
-            });
-        }
-        let editor = draft.map(|draft| draft.editor.clone());
-        let working = card.and_then(|card| self.card_working(card, self.card_session(card, cx)));
-        let theme = Theme::of(cx).clone();
-        let discard_on = on.cloned();
-        let body = match &editor {
-            Some(editor) => div()
-                .min_h_full()
-                .cursor(gpui::CursorStyle::IBeam)
-                // Below and beside the text is still the card: a press there
-                // lands the caret, as it does on an article's page.
-                .on_mouse_down(gpui::MouseButton::Left, {
-                    let editor = editor.clone();
-                    move |event, window, cx| {
-                        editor.update(cx, |editor, cx| {
-                            editor.press(
-                                event.position,
-                                event.click_count,
-                                event.modifiers,
-                                window,
-                                cx,
-                            )
-                        })
-                    }
-                })
-                .child(editor.clone())
-                .into_any_element(),
-            None => markdown::render_with(
-                &self
-                    .card_docs
-                    .of(&card.map(|card| card.text.clone()).unwrap_or_default()),
-                markdown::Editing::default(),
-                window,
-                cx,
-            )
-            .into_any_element(),
-        };
-        Some(Face {
-            lead: std::iter::once(
-                div()
-                    .font_family(theme.font_mono.clone())
-                    .child(handle)
-                    .into_any_element(),
-            )
-            .chain(resting(status).map(|status| status_chip(status, &theme).into_any_element()))
-            .chain(working.map(|at| self.card_orb(at, cx).into_any_element()))
-            .collect(),
-            actions: (error.is_some() && editor.is_some())
-                .then(|| {
-                    self.drawer_action(
-                        "card-draft-discard",
-                        icons::glyph::Undo2,
-                        "Discard your text and reload the card",
-                        cx,
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        cx.stop_propagation();
-                        this.reload_card_draft(discard_on.as_ref(), cx);
-                    }))
-                    .into_any_element()
-                })
-                .into_iter()
-                .collect(),
-            notice: error.map(|error| {
-                div()
-                    .flex_none()
-                    .px(px(16.))
-                    .pb(px(8.))
-                    .text_style(TextStyle::Caption)
-                    .text_color(theme.danger)
-                    .child(error)
-                    .into_any_element()
-            }),
-            body,
-            scrolls: true,
-            open: None,
-        })
     }
 
     /// Card `id` of the board at `board_at`, as a link embeds it: its handle,
@@ -1817,7 +1230,7 @@ impl Cydonia {
         let (name, board_id) = (board.name.clone(), board.id.clone());
         let (text, status) = (card.text.clone(), card.status);
         let (doc, shortened) = self.card_docs.preview(&text);
-        let base = self.card_base(project, &board_id, id, cx);
+        let base = card_base(self.workspace.read(cx), project, &board_id, id);
         let overflow = window.use_keyed_state(
             SharedString::from(format!("card-embed-overflow-{reference}")),
             cx,
@@ -1869,58 +1282,1070 @@ impl Cydonia {
         )
     }
 
-    /// The board, laid out the way the board says — see
-    /// [`artifact::board::View`]. Everything either layout shares sits here:
-    /// the pane's actions, and the aim a drag leaving every lane clears.
-    pub fn board(
+    /// The board listed at `board_at` in `project` as a drawer draws it: its
+    /// lanes as the list's groups, read only, scrolled by `scroll`. Pressing a
+    /// card opens it in `on`'s drawer.
+    pub(crate) fn board_peek(
         &self,
         project: usize,
         board_at: usize,
         on: Option<&Member>,
+        scroll: &ScrollHandle,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let theme = Theme::of(cx).clone();
+        let member = self.workspace.read(cx).board_member(project, board_at)?;
+        let board = self.workspace.read(cx).board_in(project, board_at)?;
+        let lanes: Vec<(String, bool)> = board
+            .columns
+            .iter()
+            .map(|column| (column.id.clone(), column.collapsed))
+            .collect();
+        let root = cx.entity().downgrade();
+        let sessions = self.workspace.read(cx).settings.features.sessions;
+        let mut rows = Vec::new();
+        for (lane, folded) in lanes {
+            let Some((name, held, cards)) =
+                lane_cards(self.workspace.read(cx), project, board_at, &lane, "")
+            else {
+                continue;
+            };
+            rows.push(
+                div()
+                    .flex_none()
+                    .h(px(LIST_HEADING_HEIGHT))
+                    .px(px(BOARD_INSET))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(6.))
+                    .text_style(TextStyle::Subheadline)
+                    .children(lane_title(folded, name, held.to_string(), &theme))
+                    .into_any_element(),
+            );
+            if folded {
+                continue;
+            }
+            for id in cards {
+                let Some((handle, text, status, working)) = self
+                    .workspace
+                    .read(cx)
+                    .board_in(project, board_at)
+                    .and_then(|board| {
+                        let card = board.card(&id)?;
+                        let chat = card_session(card, self.workspace.read(cx));
+                        Some((
+                            board.handle_of(card),
+                            card.text.clone(),
+                            card.status,
+                            card_working(card, chat, &self.card_marks),
+                        ))
+                    })
+                else {
+                    continue;
+                };
+                let (pane, board) = (on.cloned(), member.clone());
+                rows.push(
+                    theme
+                        .ghost(SharedString::from(format!("board-peek-row-{id}")))
+                        .flex_none()
+                        .h(px(LIST_ROW_HEIGHT))
+                        .px(px(BOARD_INSET))
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(8.))
+                        .border_b_1()
+                        .border_color(theme.border.opacity(0.3))
+                        .children(list_row_cells(
+                            handle,
+                            &text,
+                            status,
+                            working,
+                            &self.card_docs,
+                            &root,
+                            sessions,
+                            cx,
+                        ))
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            cx.stop_propagation();
+                            this.open_card(pane.as_ref(), board.clone(), id.clone(), window, cx);
+                        }))
+                        .into_any_element(),
+                );
+            }
+        }
+        Some(
+            div()
+                .relative()
+                .flex_1()
+                .min_h_0()
+                .flex()
+                .flex_col()
+                .child(
+                    scroll::pane("board-peek", Axes::Vertical)
+                        .size_full()
+                        .flex()
+                        .flex_col()
+                        .pb(px(BOARD_INSET))
+                        .track_scroll(scroll)
+                        .children(rows),
+                )
+                .child(scrollbars::Overlay::new(
+                    "board-peek-bar",
+                    scroll,
+                    bezel::gpui::Axis::Vertical,
+                ))
+                .into_any_element(),
+        )
+    }
+}
+
+impl BoardView {
+    pub(crate) fn new(
+        board: Member,
+        pane: Option<Member>,
+        workspace: Entity<Workspace>,
+        root: WeakEntity<Cydonia>,
+        docs: Rc<Docs>,
+        sort: drag::Domain<BoardRegion, BoardItem>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let name_field = cx.new(NameField::new);
+        let name = cx.subscribe(&name_field, |this, _, event: &NameEvent, cx| {
+            match event {
+                NameEvent::Named(name) => this.commit_rename(name.clone(), cx),
+                NameEvent::Dismissed => this.renaming = None,
+            }
+            cx.notify();
+        });
+        Self {
+            board,
+            pane,
+            workspace,
+            root,
+            scroll: Scroll::default(),
+            marks: Marks::default(),
+            docs,
+            sort,
+            list_hovered: None,
+            editing: None,
+            card_field: field(cx),
+            renaming: None,
+            name_field,
+            menu: ContextMenu::default(),
+            opened: None,
+            drafts: Vec::new(),
+            find: Find::default(),
+            shown: PaneState::default(),
+            _name: name,
+        }
+    }
+
+    /// Where the board is listed, as `(project, index)`, while it is open.
+    fn located(&self, cx: &App) -> Option<(usize, usize)> {
+        let workspace = self.workspace.read(cx);
+        let project = workspace.project_at(&self.board.project)?;
+        let at = workspace.projects[project].board_ix(&self.board.id)?;
+        Some((project, at))
+    }
+
+    /// The card open in the pane's drawer, by id.
+    pub(crate) fn opened_card(&self) -> Option<&str> {
+        self.opened.as_ref().map(|opened| opened.card.as_str())
+    }
+
+    /// Whether the open card shows: it is still on the board, or still being
+    /// written.
+    pub(crate) fn card_live(&self, cx: &App) -> bool {
+        let Some(opened) = &self.opened else {
+            return false;
+        };
+        let held = self
+            .located(cx)
+            .and_then(|(project, at)| self.workspace.read(cx).board_in(project, at))
+            .is_some_and(|board| board.card(&opened.card).is_some());
+        held || self.draft().is_some()
+    }
+
+    /// Open `card` in the pane's drawer, its editor scrolled by `scroll`.
+    pub(crate) fn open(&mut self, card: String, scroll: ScrollHandle, cx: &mut Context<Self>) {
+        match &mut self.opened {
+            Some(opened) => {
+                let was = std::mem::replace(&mut opened.card, card);
+                opened.scroll = scroll;
+                self.settle_draft(&was);
+            }
+            None => {
+                self.opened = Some(OpenCard {
+                    card,
+                    scroll,
+                    adjustments: Default::default(),
+                })
+            }
+        }
+        self.ensure_draft(cx);
+        cx.notify();
+    }
+
+    /// The pane's drawer let the card go.
+    pub(crate) fn close(&mut self, cx: &mut Context<Self>) {
+        if let Some(opened) = self.opened.take() {
+            self.settle_draft(&opened.card);
+        }
+        cx.notify();
+    }
+
+    /// Whether the caret is in the open card's editor.
+    pub(crate) fn draft_focused(&self, window: &Window, cx: &App) -> bool {
+        self.draft()
+            .is_some_and(|draft| draft.editor.focus_handle(cx).is_focused(window))
+    }
+
+    pub(crate) fn draft(&self) -> Option<&CardDraft> {
+        let opened = self.opened.as_ref()?;
+        self.drafts.iter().find(|draft| draft.card == opened.card)
+    }
+
+    fn draft_mut(&mut self, card: &str) -> Option<&mut CardDraft> {
+        self.drafts.iter_mut().find(|draft| draft.card == card)
+    }
+
+    /// Put an editor over the open card, unless one is there.
+    fn ensure_draft(&mut self, cx: &mut Context<Self>) {
+        let Some(opened) = &self.opened else {
+            return;
+        };
+        if self.draft().is_some() {
+            return;
+        }
+        let (card, scroll) = (opened.card.clone(), opened.scroll.clone());
+        let workspace = self.workspace.read(cx);
+        let Some(text) = self
+            .located(cx)
+            .and_then(|(project, at)| workspace.board_in(project, at))
+            .and_then(|board| board.card(&card))
+            .map(|held| held.text.clone())
+        else {
+            return;
+        };
+        let text_size = workspace.text_size;
+        let dir = artifact::project::fs::Project::new(&self.board.project)
+            .card_dir(&self.board.id, &card);
+        let document = cx.new(|cx| editor::Document::new(&text, cx));
+        let (editor, pictures) = crate::view::kit::document::editor(
+            &dir,
+            document,
+            self.workspace.downgrade(),
+            |editor| editor.with_text_size(text_size).with_scroll(scroll),
+            cx,
+        );
+        crate::model::language::Here::ensure(
+            crate::model::article::fences(editor.read(cx).doc()),
+            cx,
+        );
+        let shown = editor.read(cx).source();
+        let held = card.clone();
+        let subscription = cx.subscribe(&editor, move |this, editor, event: &EditorEvent, cx| {
+            if let EditorEvent::Changed = event {
+                crate::model::language::Here::ensure(
+                    crate::model::article::fences(editor.read(cx).doc()),
+                    cx,
+                );
+                this.save_card(&held, cx);
+            }
+        });
+        self.drafts.push(CardDraft {
+            card,
+            base: text,
+            shown,
+            editor,
+            error: None,
+            _pictures: pictures,
+            _subscription: subscription,
+        });
+    }
+
+    /// Write the card's editor to the board, keeping on the draft why the
+    /// board refused it.
+    fn save_card(&mut self, card: &str, cx: &mut Context<Self>) {
+        let Some(draft) = self.draft_mut(card) else {
+            return;
+        };
+        let (base, shown, editor) = (
+            draft.base.clone(),
+            draft.shown.clone(),
+            draft.editor.clone(),
+        );
+        let text = editor.read(cx).source();
+        let board = self.board.clone();
+        let result = match text == shown {
+            true => Ok(()),
+            false => self.workspace.update(cx, |workspace, cx| {
+                workspace.save_card_draft(&board, card, &base, &text, cx)
+            }),
+        };
+        if let Some(draft) = self.draft_mut(card) {
+            match result {
+                Ok(()) => {
+                    if text != draft.shown {
+                        draft.base = text.clone();
+                        draft.shown = text;
+                    }
+                    draft.error = None;
+                }
+                Err(error) => draft.error = Some(error),
+            }
+        }
+        cx.notify();
+    }
+
+    /// Let a card's editor go with its drawer, unless its last save failed.
+    fn settle_draft(&mut self, card: &str) {
+        self.drafts
+            .retain(|draft| draft.card != card || draft.error.is_some());
+    }
+
+    /// Drop the editor's text and read the open card back off the board.
+    fn reload_draft(&mut self, cx: &mut Context<Self>) {
+        let Some(opened) = &self.opened else {
+            return;
+        };
+        let card = opened.card.clone();
+        self.drafts.retain(|draft| draft.card != card);
+        self.ensure_draft(cx);
+        cx.notify();
+    }
+
+    /// What the pane's drawer draws for the open card, while it shows.
+    pub(crate) fn card_face(
+        &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let Some(view) = self
+    ) -> Option<Face> {
+        if !self.card_live(cx) {
+            return None;
+        }
+        let opened = self.opened.as_ref()?;
+        let (project, board_at) = self.located(cx)?;
+        let board = self.workspace.read(cx).board_in(project, board_at)?;
+        let card = board.card(&opened.card).cloned();
+        let card = card.as_ref();
+        let handle = card
+            .and_then(|card| board.handle_of(card))
+            .unwrap_or_else(|| "Missing card".into());
+        let status = card.and_then(|card| card.status);
+        let draft = self.draft();
+        let error = draft.and_then(|draft| draft.error.clone()).or_else(|| {
+            card.is_none().then(|| {
+                "This card was removed or moved. Copy your text before discarding it.".into()
+            })
+        });
+        // The board moved under an editor with nothing of its own to keep —
+        // an agent's rewrite, most often — so the editor takes the board's.
+        if let (Some(card), Some(draft)) = (card, draft)
+            && card.text != draft.base
+            && draft.editor.read(cx).source() == draft.shown
+        {
+            let this = cx.entity();
+            cx.defer(move |cx| this.update(cx, |this, cx| this.reload_draft(cx)));
+        }
+        let editor = draft.map(|draft| draft.editor.clone());
+        let working = card.and_then(|card| {
+            card_working(
+                card,
+                card_session(card, self.workspace.read(cx)),
+                &self.marks,
+            )
+        });
+        let sessions = self.workspace.read(cx).settings.features.sessions;
+        let theme = Theme::of(cx).clone();
+        let body = match &editor {
+            Some(editor) => div()
+                .min_h_full()
+                .cursor(gpui::CursorStyle::IBeam)
+                // Below and beside the text is still the card: a press there
+                // lands the caret, as it does on an article's page.
+                .on_mouse_down(gpui::MouseButton::Left, {
+                    let editor = editor.clone();
+                    move |event, window, cx| {
+                        editor.update(cx, |editor, cx| {
+                            editor.press(
+                                event.position,
+                                event.click_count,
+                                event.modifiers,
+                                window,
+                                cx,
+                            )
+                        })
+                    }
+                })
+                .child(editor.clone())
+                .into_any_element(),
+            None => markdown::render_with(
+                &self
+                    .docs
+                    .of(&card.map(|card| card.text.clone()).unwrap_or_default()),
+                markdown::Editing::default(),
+                window,
+                cx,
+            )
+            .into_any_element(),
+        };
+        Some(Face {
+            lead: std::iter::once(
+                div()
+                    .font_family(theme.font_mono.clone())
+                    .child(handle)
+                    .into_any_element(),
+            )
+            .chain(resting(status).map(|status| status_chip(status, &theme).into_any_element()))
+            .chain(working.map(|at| card_orb(at, self.root.clone(), sessions, cx)))
+            .collect(),
+            actions: (error.is_some() && editor.is_some())
+                .then(|| {
+                    Drawer::action(
+                        "card-draft-discard",
+                        icons::glyph::Undo2,
+                        "Discard your text and reload the card",
+                        cx,
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.reload_draft(cx);
+                    }))
+                    .into_any_element()
+                })
+                .into_iter()
+                .collect(),
+            notice: error.map(|error| {
+                div()
+                    .flex_none()
+                    .px(px(16.))
+                    .pb(px(8.))
+                    .text_style(TextStyle::Caption)
+                    .text_color(theme.danger)
+                    .child(error)
+                    .into_any_element()
+            }),
+            body,
+            scrolls: true,
+            open: None,
+        })
+    }
+
+    /// The open card's pending reveal, while the drawer peeking it is laid out
+    /// and not expanded.
+    fn reveal(&self) -> Option<Reveal> {
+        let drawer = self.shown.drawer.as_ref()?;
+        let opened = self.opened.as_ref()?;
+        (drawer.own && !drawer.expanded && drawer.reveal.get() && drawer.height > px(0.)).then(
+            || Reveal {
+                pending: drawer.reveal.clone(),
+                adjustments: opened.adjustments.clone(),
+                top: drawer.top,
+            },
+        )
+    }
+
+    /// Point the field at `at`, filing whatever any pane had open first — so
+    /// clicking straight from one card to another never drops an edit.
+    ///
+    /// The pane is entered on the way, the same as a press anywhere else in
+    /// one: the field, what it commits into and the caret all answer for the
+    /// focused pane.
+    fn edit(&mut self, at: Editing, window: &mut Window, cx: &mut Context<Self>) {
+        let (root, pane, view) = (self.root.clone(), self.pane.clone(), cx.entity());
+        window.defer(cx, move |window, cx| {
+            let _ = root.update(cx, |root, cx| {
+                root.enter_board_pane(pane.as_ref(), window, cx)
+            });
+            view.update(cx, |view, cx| view.start_edit(at, window, cx));
+        });
+    }
+
+    fn start_edit(&mut self, at: Editing, window: &mut Window, cx: &mut Context<Self>) {
+        let text = match &at {
+            Editing::New(..) => String::new(),
+            Editing::Card(id) => self
+                .workspace
+                .read(cx)
+                .board_at(&self.board.id)
+                .and_then(|board| board.card(id))
+                .map(|card| card.text.clone())
+                .unwrap_or_default(),
+        };
+        self.card_field
+            .update(cx, |field, cx| field.set_content(text, cx));
+        // A lane scrolled away from earlier stays where it was left; opening a
+        // card at its foot is asking to be taken back there.
+        if let Editing::New(Place::End, column) = &at {
+            self.scroll.lanes.follow(column);
+        }
+        self.editing = Some(at);
+        window.focus(&self.card_field.read(cx).focus_handle(cx), cx);
+        cx.notify();
+    }
+
+    /// File the card the field has open into this board. An empty card is not
+    /// a card — committing nothing drops it rather than leaving a blank.
+    pub(crate) fn commit_edit(&mut self, cx: &mut Context<Self>) {
+        let Some(at) = self.editing.take() else {
+            return;
+        };
+        let text = self.card_field.read(cx).content().trim().to_owned();
+        self.card_field.update(cx, |field, cx| field.clear(cx));
+        let id = self.board.id.clone();
+        self.workspace.update(cx, |workspace, cx| {
+            workspace.write_board(&id, |board| match &at {
+                Editing::New(place, column) => {
+                    if !text.is_empty() {
+                        match place {
+                            Place::Top => board.prepend_card(column, text.clone()),
+                            Place::End => board.add_card(column, text.clone()),
+                        };
+                    }
+                }
+                Editing::Card(id) => {
+                    if text.is_empty() {
+                        board.remove_card(id);
+                    } else {
+                        board.rewrite_card(id, &text);
+                    }
+                }
+            });
+            cx.notify();
+        });
+        cx.notify();
+    }
+
+    /// Let go of an edit a re-read made meaningless, and keep one it did not.
+    /// Held by id, so a card that merely moved keeps its open field; only one
+    /// that has gone leaves the field pointing at nothing.
+    fn drop_stale_edit(&mut self, cx: &mut Context<Self>) {
+        let Some(at) = self.editing.clone() else {
+            return;
+        };
+        let workspace = self.workspace.read(cx);
+        let board = workspace.board_at(&self.board.id);
+        let alive = match &at {
+            Editing::New(_, column) => board.is_some_and(|board| board.column(column).is_some()),
+            Editing::Card(card) => board.is_some_and(|board| board.card(card).is_some()),
+        };
+        if !alive {
+            self.editing = None;
+            self.card_field.update(cx, |field, cx| field.clear(cx));
+        }
+    }
+
+    fn commit_card(&mut self, _: &CommitCard, _: &mut Window, cx: &mut Context<Self>) {
+        self.commit_edit(cx);
+    }
+
+    /// Escape abandons the edit — the one way to leave a card as it was.
+    fn dismiss_card(&mut self, _: &DismissCard, _: &mut Window, cx: &mut Context<Self>) {
+        self.editing = None;
+        self.card_field.update(cx, |field, cx| field.clear(cx));
+        cx.notify();
+    }
+
+    /// Put lane `id`'s name in the field.
+    fn start_rename(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        let name = self
             .workspace
             .read(cx)
-            .board_in(project, board_at)
-            .map(|board| board.view)
+            .board_at(&self.board.id)
+            .and_then(|board| board.column(&id))
+            .map(|column| column.name.clone())
+            .unwrap_or_default();
+        // A lane is named in one case — see [`artifact::board::column::heading`]
+        // — and the field is put in it before the name lands, so what is typed
+        // and what is stored are the same string.
+        self.name_field.update(cx, |field, cx| {
+            field.start(name, input::Case::Upper, window, cx)
+        });
+        self.renaming = Some(id);
+        cx.notify();
+    }
+
+    fn commit_rename(&mut self, name: String, cx: &mut Context<Self>) {
+        let Some(id) = self.renaming.take() else {
+            return;
+        };
+        let board = self.board.id.clone();
+        self.workspace.update(cx, |workspace, cx| {
+            workspace.rename_column(&board, &id, name, cx)
+        });
+    }
+
+    /// Open `card` in the pane's drawer.
+    fn open_card(&mut self, card: String, window: &mut Window, cx: &mut Context<Self>) {
+        let (root, pane, board) = (self.root.clone(), self.pane.clone(), self.board.clone());
+        window.defer(cx, move |window, cx| {
+            let _ = root.update(cx, |root, cx| {
+                root.open_card(pane.as_ref(), board, card, window, cx)
+            });
+        });
+    }
+
+    /// Scroll to the first lane holding a card `query` finds.
+    fn reveal_match(&mut self, query: &artifact::search::Query, cx: &mut Context<Self>) {
+        let Some(board) = self.workspace.read(cx).board_at(&self.board.id) else {
+            return;
+        };
+        let Some((ix, column)) = board.columns.iter().enumerate().find(|(_, column)| {
+            column
+                .cards
+                .iter()
+                .any(|card| card_matches(card, board.handle_of(card).as_deref(), query.text()))
+        }) else {
+            return;
+        };
+        self.scroll
+            .across
+            .set_offset(gpui::point(px(-(ix as f32) * COLUMN_WIDTH), px(0.)));
+        self.scroll
+            .down
+            .set_offset(gpui::point(px(0.), px(-(ix as f32) * LIST_HEADING_HEIGHT)));
+        self.scroll
+            .lanes
+            .of(&column.id)
+            .scroller()
+            .set_offset(gpui::point(px(0.), px(0.)));
+        cx.notify();
+    }
+
+    /// The `···` for `menu`, opening it below itself with what `rows` builds.
+    fn menu_button(
+        &self,
+        id: impl Into<SharedString>,
+        reveal: menu::Reveal,
+        menu: BoardMenu,
+        rows: menu::Rows<Self>,
+        cx: &Context<Self>,
+    ) -> Stateful<Div> {
+        let open = self.menu.key() == Some(&menu);
+        let rows = Rc::new(rows);
+        let button = menu::button(id, icons::layout::Ellipsis, reveal, open, cx).on_click({
+            let menu = menu.clone();
+            cx.listener(move |this, _, window, cx| {
+                cx.stop_propagation();
+                let rows = rows.clone();
+                ContextMenu::toggle(
+                    this,
+                    |this| &mut this.menu,
+                    menu.clone(),
+                    ContextPlace::Below,
+                    move |this, window, cx| menu::chooser(rows(this, window, cx)),
+                    window,
+                    cx,
+                );
+            })
+        });
+        ContextMenu::trigger(button, |this: &mut Self| &mut this.menu, menu, cx)
+    }
+
+    /// `menu`, placed, while it is on screen.
+    fn menu_here(
+        &self,
+        menu: &BoardMenu,
+        id: impl Into<SharedString>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        self.menu
+            .render_for(menu, id, |this| &mut this.menu, window, cx)
+    }
+
+    fn board_key(&self, project: usize, board_at: usize, cx: &App) -> Option<BoardKey> {
+        let workspace = self.workspace.read(cx);
+        let board = workspace.board_in(project, board_at)?;
+        Some(BoardKey {
+            project: workspace.projects.get(project)?.path.clone(),
+            board: board.id.clone(),
+            view: board.view,
+        })
+    }
+
+    /// The project and board indices of `key`, where both are still open.
+    fn board_at(&self, key: &BoardKey, cx: &App) -> Option<(usize, usize)> {
+        let workspace = self.workspace.read(cx);
+        let project = workspace.project_at(&key.project)?;
+        let board = workspace.projects[project].board_ix(&key.board)?;
+        Some((project, board))
+    }
+
+    /// Commit a released card or lane where its neighbours name.
+    fn board_moved(&mut self, event: &drag::Drop<BoardRegion, BoardItem>, cx: &mut Context<Self>) {
+        let (BoardRegion::Lanes(to) | BoardRegion::Cards(to, _) | BoardRegion::List(to)) =
+            &event.region;
+        let (Some(from), Some(at)) = (self.board_at(event.item.key(), cx), self.board_at(to, cx))
         else {
-            return div().flex_1().into_any_element();
+            return;
         };
-        let body = match view {
-            View::Lanes => self.lanes(project, board_at, on, window, cx),
-            View::List => self.list(project, board_at, on, window, cx),
+        let Some(board) = self.workspace.read(cx).board_in(at.0, at.1) else {
+            return;
         };
-        let close_on = on.cloned();
-        div()
-            .id("board-surface")
-            .flex_1()
-            .min_h_0()
-            .relative()
-            // A click the drawer and the cards did not take closes the drawer.
-            .on_click(cx.listener(move |this, _, window, cx| {
-                let Some(opened) = this.leaf_of(close_on.as_ref()).drawer.as_ref() else {
+        let column_of = |item: &Option<BoardItem>| match item {
+            Some(BoardItem::Lane(_, column)) => Some(column.clone()),
+            Some(BoardItem::Card(_, card)) => board
+                .columns
+                .iter()
+                .find(|column| column.cards.iter().any(|held| &held.id == card))
+                .map(|column| column.id.clone()),
+            None => None,
+        };
+        match &event.item {
+            BoardItem::Lane(_, column) => {
+                let before = match &event.before {
+                    Some(BoardItem::Lane(_, before)) => Some(before.clone()),
+                    _ => {
+                        let mut rest = board.columns.iter().filter(|at| &at.id != column);
+                        match column_of(&event.after) {
+                            Some(after) => {
+                                rest.find(|at| at.id == after);
+                                rest.next()
+                            }
+                            None => rest.next(),
+                        }
+                        .map(|at| at.id.clone())
+                    }
+                };
+                let (board, column) = (board.id.clone(), column.clone());
+                self.commit_edit(cx);
+                self.workspace.update(cx, |workspace, cx| {
+                    workspace.move_column_before(&board, &column, before.as_deref(), cx)
+                });
+            }
+            BoardItem::Card(_, card) => {
+                let Some(column) = (match &event.region {
+                    BoardRegion::Cards(_, column) => Some(column.clone()),
+                    _ => column_of(&event.after),
+                }) else {
                     return;
                 };
-                // The focus goes back to the board only from the drawer: the
-                // click may have put it in a field of its own.
-                let inside = opened.focus.contains_focused(window, cx)
-                    || this
-                        .draft_for(close_on.as_ref())
-                        .is_some_and(|draft| draft.editor.focus_handle(cx).is_focused(window));
-                this.drop_drawer(close_on.as_ref(), cx);
-                if inside {
-                    window.focus(&this.leaf_of(close_on.as_ref()).focus, cx);
-                }
-                cx.notify();
-            }))
-            .on_action(cx.listener(Self::commit_card))
-            .on_action(cx.listener(Self::dismiss_card))
-            .on_action(cx.listener(Self::dismiss_find))
-            .child(body)
-            .children(self.find_bar(on, cx))
-            .into_any_element()
+                let before = match &event.before {
+                    Some(BoardItem::Card(_, before)) => Some(before.clone()),
+                    _ => match &event.after {
+                        Some(BoardItem::Card(_, after)) => board.column(&column).and_then(|at| {
+                            let mut rest = at.cards.iter().filter(|held| &held.id != card);
+                            rest.find(|held| &held.id == after);
+                            rest.next().map(|held| held.id.clone())
+                        }),
+                        // Under a heading whose cards were not painted.
+                        Some(BoardItem::Lane(..)) => board.column(&column).and_then(|at| {
+                            at.cards
+                                .iter()
+                                .find(|held| &held.id != card)
+                                .map(|held| held.id.clone())
+                        }),
+                        None => None,
+                    },
+                };
+                let card = card.clone();
+                self.commit_edit(cx);
+                self.workspace.update(cx, |workspace, cx| {
+                    match from == at {
+                        true => {
+                            workspace.move_card_within(at, &card, &column, before.as_deref());
+                        }
+                        // A card that came off another board arrives under a
+                        // handle of this one's, at the end of the lane it was
+                        // dropped on: it is a new card here.
+                        false => {
+                            workspace.carry_card(from, at, &card, Some(&column));
+                        }
+                    }
+                    cx.notify();
+                });
+            }
+        }
+        cx.notify();
+    }
+
+    /// Put a card at the foot of another lane of its board.
+    fn move_card_to(&mut self, board: &str, card: &str, column: &str, cx: &mut Context<Self>) {
+        self.commit_edit(cx);
+        self.workspace.update(cx, |workspace, cx| {
+            workspace.write_board(board, |board| board.move_card_before(card, column, None));
+            cx.notify();
+        });
+        cx.notify();
+    }
+
+    /// A lane at the right-hand end of one board, opened straight into its
+    /// name.
+    fn new_column(&mut self, board: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.commit_edit(cx);
+        let board = board.to_owned();
+        let id = self
+            .workspace
+            .update(cx, |workspace, cx| workspace.new_column(&board, cx));
+        if let Some(id) = id {
+            self.start_rename(id, window, cx);
+        }
+    }
+
+    /// A lane beside the one the menu is on, opened straight into its name —
+    /// the same as [`Self::new_column`], which only ever writes at the end.
+    fn new_column_beside(
+        &mut self,
+        board: &str,
+        id: &str,
+        after: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.commit_edit(cx);
+        let (board, id) = (board.to_owned(), id.to_owned());
+        let minted = self.workspace.update(cx, |workspace, cx| {
+            workspace.new_column_beside(&board, &id, after, cx)
+        });
+        if let Some(minted) = minted {
+            self.start_rename(minted, window, cx);
+        }
+    }
+
+    /// The card's markdown, as it was written. The source and not what the lane
+    /// paints: a card is a document, and the text is what somebody would paste
+    /// into the next one.
+    fn copy_card(&mut self, board: &str, card: &str, cx: &mut Context<Self>) {
+        let Some(text) = self
+            .workspace
+            .read(cx)
+            .board_at(board)
+            .and_then(|board| board.card(card))
+            .map(|card| card.text.clone())
+        else {
+            return;
+        };
+        cx.write_to_clipboard(ClipboardItem::new_string(text));
+    }
+
+    /// Hand the card to an agent: a session of its own, opened in the project
+    /// with the card's text as its first prompt.
+    ///
+    /// A session of its own rather than the one in front, so the card's dot
+    /// reports its own run — and so dispatching a second card doesn't queue
+    /// behind the first. The board stays up: the card goes live where you are
+    /// looking, and clicking it is what follows the work into the transcript.
+    fn dispatch_card(&mut self, board: &str, card: &str, cx: &mut Context<Self>) {
+        self.commit_edit(cx);
+        let (board, card) = (board.to_owned(), card.to_owned());
+        self.workspace.update(cx, |workspace, cx| {
+            let text = workspace
+                .board_at(&board)
+                .and_then(|board| board.card(&card))
+                .map(|card| card.text.clone());
+            let (Some(text), Some(entry)) = (text, workspace.preferred_agent()) else {
+                return;
+            };
+            // Nothing to link to is nothing to write: clearing the field on a
+            // refused dispatch would take the card's last session off it.
+            let Some(record) = workspace
+                .new_session(entry, Some(text), cx)
+                .and_then(|id| workspace.mint_record(id))
+            else {
+                return;
+            };
+            // The link lands on the board, so the board is written — it is what
+            // the ▶ reads after a quit.
+            workspace.write_board(&board, |held| held.dispatch_card(&card, record.clone()));
+        });
+        cx.notify();
+    }
+
+    /// The `···` on a card: what the row of glyphs underneath should not carry,
+    /// because it cannot be undone.
+    fn card_rows(&self, on: &str, card: &str, cx: &App) -> Vec<(Item, menu::Act<Self>)> {
+        let (copied, doomed) = (card.to_owned(), card.to_owned());
+        let (from, held) = (on.to_owned(), on.to_owned());
+        // The card at rest is a rendered document, not a run of text somebody
+        // can drag over — so without this there is no way to get a card's words
+        // back out of it short of opening the editor and selecting them.
+        // Every lane but the one the card is in, in board order.
+        let lanes: Vec<(String, String)> = self
+            .workspace
+            .read(cx)
+            .board_at(on)
+            .map(|board| {
+                let at = board.column_of(card).map(|column| column.id.clone());
+                board
+                    .columns
+                    .iter()
+                    .filter(|column| Some(&column.id) != at.as_ref())
+                    .map(|column| (column.id.clone(), column.name.clone()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut rows = vec![menu::row::<Self>(
+            Item::action("Copy text").with_icon(icons::text::Copy),
+            move |this, _, cx| this.copy_card(&from, &copied, cx),
+        )];
+        if !lanes.is_empty() {
+            let moves = lanes
+                .into_iter()
+                .map(|(column, name)| {
+                    let (board, card) = (on.to_owned(), card.to_owned());
+                    menu::row::<Self>(Item::action(name), move |this, _, cx| {
+                        this.move_card_to(&board, &card, &column, cx)
+                    })
+                })
+                .collect();
+            rows.push(menu::submenu(
+                "Move to",
+                icons::arrows::ArrowLeftRight,
+                moves,
+            ));
+        }
+        rows.push(menu::row::<Self>(
+            Item::action("Delete").with_icon(icons::files::Trash),
+            move |this: &mut Self, window, cx| {
+                let _ = this.root.update(cx, |root, cx| {
+                    root.ask_delete_card(&held, &doomed, window, cx)
+                });
+            },
+        ));
+        rows
+    }
+
+    /// The card's menu, while it is up.
+    fn card_menu(
+        &self,
+        card: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let id = SharedString::from(format!("card-menu-card-{card}"));
+        self.menu_here(&BoardMenu::Card(card.to_owned()), id, window, cx)
+    }
+
+    /// The `···` on card `id` of the board `on`.
+    fn card_menu_button(
+        &self,
+        name: String,
+        reveal: menu::Reveal,
+        on: &str,
+        id: &str,
+        cx: &Context<Self>,
+    ) -> Stateful<Div> {
+        let (on, card) = (on.to_owned(), id.to_owned());
+        self.menu_button(
+            name,
+            reveal,
+            BoardMenu::Card(id.to_owned()),
+            Box::new(move |this, _, cx| this.card_rows(&on, &card, cx)),
+            cx,
+        )
+    }
+
+    /// What the `···` does to a lane: which way it moves, and whether it stays.
+    ///
+    /// A lane at an end is not offered the step it cannot take, and one still
+    /// holding cards carries Delete as a row it cannot choose — the refusal is
+    /// worth saying, and a button simply withheld says nothing.
+    ///
+    /// The step is one place along the board's own order of its columns, which
+    /// is the order the tools speak in — see `mcp::tools::board`. What `view`
+    /// decides is only what to call it: that order runs across the lanes and
+    /// down the list, so the same step is left in one and up in the other.
+    #[allow(clippy::too_many_arguments)]
+    fn lane_rows(
+        &self,
+        id: &str,
+        count: usize,
+        at: usize,
+        lanes: usize,
+        view: View,
+        board: &str,
+    ) -> Vec<(Item, menu::Act<Self>)> {
+        // What each direction is called, and the arrow that stands for it. The
+        // step and the new lane are the same two directions, said the way the
+        // space reads.
+        let (back, on, both) = match view {
+            View::Lanes => (
+                ("Left", icons::arrows::ArrowLeft),
+                ("Right", icons::arrows::ArrowRight),
+                icons::arrows::ArrowLeftRight,
+            ),
+            View::List => (
+                ("Above", icons::arrows::ArrowUp),
+                ("Below", icons::arrows::ArrowDown),
+                icons::arrows::ArrowUpDown,
+            ),
+        };
+        // First, and the only row here that makes something: the `Add a card`
+        // at the lane's foot is a long way down a full lane, and what is
+        // written from the head of one belongs at the head of it.
+        let written = id.to_owned();
+        let on_board = board.to_owned();
+        let mut rows = vec![menu::row::<Self>(
+            Item::action("Add card").with_icon(icons::math::Plus),
+            move |this: &mut Self, window, cx| {
+                this.edit(Editing::New(Place::Top, written.clone()), window, cx)
+            },
+        )];
+        let renamed = id.to_owned();
+        rows.push(menu::row::<Self>(
+            Item::action("Rename").with_icon(icons::design::Pencil),
+            move |this: &mut Self, window, cx| this.start_rename(renamed.clone(), window, cx),
+        ));
+        // Then the two that write a lane either side of this one, so a board
+        // is not only ever grown at its right-hand end.
+        let beside = [(false, back), (true, on)]
+            .map(|(after, (label, icon))| {
+                let (beside, made_on) = (id.to_owned(), on_board.clone());
+                menu::row::<Self>(
+                    Item::action(label).with_icon(icon),
+                    move |this, window, cx| {
+                        this.new_column_beside(&made_on, &beside, after, window, cx)
+                    },
+                )
+            })
+            .into_iter()
+            .collect();
+        rows.push(menu::submenu("Add column", icons::math::Plus, beside));
+        // The step is offered only the way the lane can take it, so a lane at
+        // an end carries the one direction and a board of one carries neither.
+        let steps: Vec<_> = [(at > 0, -1, back), (at + 1 < lanes, 1, on)]
+            .into_iter()
+            .filter(|(can, ..)| *can)
+            .map(|(_, step, (label, icon))| {
+                let (moved, moved_on) = (id.to_owned(), on_board.clone());
+                menu::row::<Self>(Item::action(label).with_icon(icon), move |this, _, cx| {
+                    this.shift_column(&moved_on, &moved, step, cx)
+                })
+            })
+            .collect();
+        if !steps.is_empty() {
+            rows.push(menu::submenu("Move column", both, steps));
+        }
+        let drop = Item::action("Delete column").with_icon(icons::files::Trash);
+        let drop = match count {
+            0 => drop,
+            _ => drop
+                .disabled()
+                .with_tooltip("A column is only where work sits — move the cards out first."),
+        };
+        let dropped = id.to_owned();
+        rows.push(menu::row::<Self>(
+            drop,
+            move |this: &mut Self, window, cx| {
+                let _ = this.root.update(cx, |root, cx| {
+                    root.ask_delete_column(&on_board, &dropped, window, cx)
+                });
+            },
+        ));
+        rows
+    }
+
+    /// Step a lane one place, and keep the menu on it: moving twice is two
+    /// presses on the same row, not a menu reopened between them.
+    fn shift_column(&mut self, board: &str, id: &str, step: isize, cx: &mut Context<Self>) {
+        self.workspace.update(cx, |workspace, cx| {
+            workspace.move_column(board, id, step, cx)
+        });
+        cx.notify();
     }
 
     /// The lanes across. A board opens with none, so the lane that makes one is
@@ -1929,11 +2354,10 @@ impl Cydonia {
         &self,
         project: usize,
         board_at: usize,
-        on: Option<&Member>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let scroll = self.scrolls(project, board_at, cx);
+        let scroll = self.scroll.clone();
         let Some(key) = self.board_key(project, board_at, cx) else {
             return div().flex_1().into_any_element();
         };
@@ -1948,7 +2372,7 @@ impl Cydonia {
             .map(|column| column.id.clone())
             .collect();
         let lanes = ids.len();
-        let editing_lane = match &self.leaf_of(on).editing {
+        let editing_lane = match &self.editing {
             Some(Editing::New(_, column)) => Some(column.clone()),
             Some(Editing::Card(card)) => board
                 .columns
@@ -1959,7 +2383,7 @@ impl Cydonia {
         };
         let measured_width = window
             .use_keyed_state(
-                SharedString::from(format!("board-lane-width-{held}-{on:?}")),
+                SharedString::from(format!("board-lane-width-{held}-{}", cx.entity_id())),
                 cx,
                 |_, _| Rc::new(Cell::new(px(0.))),
             )
@@ -1991,7 +2415,6 @@ impl Cydonia {
                         id,
                         at,
                         lanes,
-                        on,
                     },
                     window,
                     cx,
@@ -2002,7 +2425,7 @@ impl Cydonia {
             .size_full()
             .relative()
             .child(
-                self.board_sort
+                self.sort
                     .region(
                         SharedString::from(format!("board-lanes-{held}")),
                         BoardRegion::Lanes(key.clone()),
@@ -2042,11 +2465,9 @@ impl Cydonia {
                     &scroll.across,
                     bezel::gpui::Axis::Horizontal,
                 )
-                .when(
-                    self.drawer_shown(on, cx)
-                        .is_some_and(|drawer| drawer.resize_grab.is_some()),
-                    |bar| bar.visibility(scrollbars::Visibility::Never),
-                ),
+                .when(self.shown.grabbed(), |bar| {
+                    bar.visibility(scrollbars::Visibility::Never)
+                }),
             )
             // Preview code and tables must not take a sideways swipe from the board.
             .child(
@@ -2102,8 +2523,6 @@ impl Cydonia {
             .into_any_element()
     }
 
-    // ── the list ─────────────────────────────────────────────────
-
     /// The list down: every card of the board in one scroller, under the
     /// heading of the lane it sits in.
     ///
@@ -2115,11 +2534,10 @@ impl Cydonia {
         &self,
         project: usize,
         board_at: usize,
-        on: Option<&Member>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let scroll = self.scrolls(project, board_at, cx);
+        let scroll = self.scroll.clone();
         let Some(key) = self.board_key(project, board_at, cx) else {
             return div().flex_1().into_any_element();
         };
@@ -2136,7 +2554,7 @@ impl Cydonia {
         let lanes = ids.len();
         let measured_height = window
             .use_keyed_state(
-                SharedString::from(format!("board-list-height-{held}-{on:?}")),
+                SharedString::from(format!("board-list-height-{held}-{}", cx.entity_id())),
                 cx,
                 |_, _| Rc::new(Cell::new(px(0.))),
             )
@@ -2148,7 +2566,7 @@ impl Cydonia {
         } else {
             window.viewport_size().height
         };
-        let viewport = (self.leaf_of(on).editing.is_none() && !cx.has_active_drag())
+        let viewport = (self.editing.is_none() && !cx.has_active_drag())
             .then_some((-scroll.down.offset().y, height));
         let mut group_top = px(0.);
         let mut carried = HashMap::new();
@@ -2164,7 +2582,6 @@ impl Cydonia {
                         id,
                         at,
                         lanes,
-                        on,
                     },
                     &mut group_top,
                     viewport,
@@ -2178,7 +2595,7 @@ impl Cydonia {
             .size_full()
             .relative()
             .child(
-                self.board_sort
+                self.sort
                     .region(
                         SharedString::from(format!("board-list-{held}")),
                         BoardRegion::List(key.clone()),
@@ -2187,11 +2604,7 @@ impl Cydonia {
                             .size_full()
                             .flex()
                             .flex_col()
-                            .pb(px(BOARD_INSET)
-                                + self
-                                    .drawer_shown(on, cx)
-                                    .map(|drawer| drawer.bounds.get().size.height)
-                                    .unwrap_or_default())
+                            .pb(px(BOARD_INSET) + self.shown.clearance())
                             .track_scroll(&scroll.down)
                             .children(groups)
                             .child(self.new_column_row(&held, cx)),
@@ -2229,11 +2642,9 @@ impl Cydonia {
                     &scroll.down,
                     bezel::gpui::Axis::Vertical,
                 )
-                .when(
-                    self.drawer_shown(on, cx)
-                        .is_some_and(|drawer| drawer.resize_grab.is_some()),
-                    |bar| bar.visibility(scrollbars::Visibility::Never),
-                ),
+                .when(self.shown.grabbed(), |bar| {
+                    bar.visibility(scrollbars::Visibility::Never)
+                }),
             )
             .child(
                 gpui::canvas(
@@ -2269,16 +2680,13 @@ impl Cydonia {
             id,
             at,
             lanes,
-            on,
         } = lane;
         let theme = Theme::of(cx).clone();
         let id = id.to_owned();
-        // The pane's own member, carried into every listener below: what a
-        // press opens belongs to the pane it was drawn in, not to whichever
-        // one the window is on.
-        let pane = on.cloned();
-        let query = self.board_query(on, cx);
-        let Some((name, held, cards)) = self.lane_cards(project, board_at, &id, &query, cx) else {
+        let query = self.find.text();
+        let Some((name, held, cards)) =
+            lane_cards(self.workspace.read(cx), project, board_at, &id, &query)
+        else {
             return Vec::new();
         };
         let Some((board_id, folded)) = self
@@ -2295,7 +2703,7 @@ impl Cydonia {
         // A lane folded shut still opens for the two things that would
         // otherwise happen out of sight: a query narrowing the board, and the
         // field writing a card into this lane.
-        let writing = matches!(&self.leaf_of(on).editing, Some(Editing::New(_, at)) if *at == id);
+        let writing = matches!(&self.editing, Some(Editing::New(_, at)) if *at == id);
         let folded = folded && query.trim().is_empty() && !writing;
         let count = if folded { 0 } else { cards.len() };
         let visible = viewport
@@ -2324,7 +2732,6 @@ impl Cydonia {
                         id: card,
                         column: &id,
                     },
-                    on,
                     window,
                     cx,
                 )
@@ -2349,13 +2756,13 @@ impl Cydonia {
         }
         // At the end the field is written into is drawn at: what is being
         // typed sits where the card will.
-        if let Some(Editing::New(place, at)) = &self.leaf_of(on).editing
+        if let Some(Editing::New(place, at)) = &self.editing
             && *at == id
         {
             let editor = div()
                 .px(px(BOARD_INSET))
                 .py(px(6.))
-                .child(self.card_editor(on, cx))
+                .child(self.card_editor(cx))
                 .into_any_element();
             match place {
                 Place::Top => rows.insert(0, editor),
@@ -2383,7 +2790,6 @@ impl Cydonia {
             lanes,
             folded,
             &board_id,
-            on,
             window,
             cx,
         );
@@ -2411,12 +2817,7 @@ impl Cydonia {
                         .child("Add a card"),
                 )
                 .on_click(cx.listener(move |this, _, window, cx| {
-                    this.edit(
-                        pane.as_ref(),
-                        Editing::New(Place::End, written.clone()),
-                        window,
-                        cx,
-                    );
+                    this.edit(Editing::New(Place::End, written.clone()), window, cx);
                 }))
                 .into_any_element()
         });
@@ -2428,7 +2829,7 @@ impl Cydonia {
             .child(heading)
             .children(add);
         std::iter::once(
-            self.board_sort
+            self.sort
                 .handle(BoardItem::Lane(key.clone(), id.clone()), heading)
                 .into_any_element(),
         )
@@ -2453,7 +2854,6 @@ impl Cydonia {
         lanes: usize,
         folded: bool,
         board: &str,
-        on: Option<&Member>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
@@ -2470,13 +2870,12 @@ impl Cydonia {
             .items_center()
             .gap(px(6.))
             .text_style(TextStyle::Subheadline);
-        if matches!(&self.renaming, Some(Renaming::Column(_, at)) if at == id) {
-            return row.child(self.name_field(cx));
+        if self.renaming.as_deref() == Some(id) {
+            return row.child(self.name_field.clone());
         }
         let folding = (board.to_owned(), id.to_owned());
-        let add_on = on.cloned();
         let add_column = id.to_owned();
-        let can_add = self.board_query(on, cx).trim().is_empty();
+        let can_add = self.find.text().trim().is_empty();
         row.group("list-group")
             .child(
                 div()
@@ -2489,7 +2888,7 @@ impl Cydonia {
                     .items_center()
                     .gap(px(6.))
                     .cursor_pointer()
-                    .children(Self::lane_title(
+                    .children(lane_title(
                         folded,
                         name,
                         if shown == held {
@@ -2507,36 +2906,27 @@ impl Cydonia {
                     })),
             )
             .children(can_add.then(|| {
-                self.drawer_action("list-group-add", icons::math::Plus, "Add card", cx)
+                Drawer::action("list-group-add", icons::math::Plus, "Add card", cx)
                     .invisible()
                     .group_hover("list-group", |el| el.visible())
                     .on_click(cx.listener(move |this, _, window, cx| {
                         cx.stop_propagation();
-                        this.edit(
-                            add_on.as_ref(),
-                            Editing::New(Place::Top, add_column.clone()),
-                            window,
-                            cx,
-                        );
+                        this.edit(Editing::New(Place::Top, add_column.clone()), window, cx);
                     }))
             }))
             .child(
                 self.menu_button(
                     SharedString::from(format!("list-group-menu-{id}")),
-                    Some("list-group"),
-                    icons::layout::Ellipsis,
-                    Menu::Lane(id.to_owned()),
-                    context_menu::Place::Below,
+                    menu::Reveal::Group("list-group"),
+                    BoardMenu::Lane(id.to_owned()),
                     Box::new({
-                        let (id, board, on) = (id.to_owned(), board.to_owned(), on.cloned());
-                        move |this, _, _| {
-                            this.lane_rows(&id, held, at, lanes, View::List, &board, on.as_ref())
-                        }
+                        let (id, board) = (id.to_owned(), board.to_owned());
+                        move |this, _, _| this.lane_rows(&id, held, at, lanes, View::List, &board)
                     }),
                     cx,
                 )
                 .children(self.menu_here(
-                    &Menu::Lane(id.to_owned()),
+                    &BoardMenu::Lane(id.to_owned()),
                     SharedString::from(format!("lane-menu-{id}")),
                     window,
                     cx,
@@ -2544,187 +2934,8 @@ impl Cydonia {
             )
     }
 
-    /// What a list row says about its card: its handle, its title, its status
-    /// and its run.
-    fn list_row_cells(
-        &self,
-        handle: Option<String>,
-        text: &str,
-        status: Option<Status>,
-        working: Option<Working>,
-        cx: &mut Context<Self>,
-    ) -> Vec<AnyElement> {
-        let theme = Theme::of(cx).clone();
-        let mut cells = vec![
-            // What to call this card out loud, in the mono face for the reason
-            // the delete dialog sets a path there. Ahead of the text and at a
-            // width of its own, so the lines under one another start together.
-            div()
-                .flex_none()
-                .w(px(LIST_HANDLE_WIDTH))
-                .text_style(TextStyle::Caption)
-                .font_family(theme.font_mono.clone())
-                .text_color(theme.text_faint)
-                .child(handle.unwrap_or_default())
-                .into_any_element(),
-            div()
-                .flex_1()
-                .min_w_0()
-                .text_style(TextStyle::Callout)
-                .text_color(theme.text)
-                .text_ellipsis()
-                .child(self.card_docs.title(text))
-                .into_any_element(),
-        ];
-        cells.extend(resting(status).map(|status| status_chip(status, &theme)));
-        // On show, not behind a hover — a card's run is what you look at the
-        // board to see, and hiding it would mean hunting for the one that is
-        // working.
-        cells.extend(working.map(|at| self.card_orb(at, cx)));
-        cells
-    }
-
-    /// A lane's heading in the list: the chevron saying whether it is folded,
-    /// its name and its count.
-    fn lane_title(folded: bool, name: String, count: String, theme: &Theme) -> [AnyElement; 3] {
-        [
-            icons::icon(if folded {
-                icons::arrows::ChevronRight
-            } else {
-                icons::arrows::ChevronDown
-            })
-            .size(px(12.))
-            .text_color(theme.text_faint)
-            .into_any_element(),
-            div()
-                .min_w_0()
-                .text_ellipsis()
-                .font_weight(FontWeight::MEDIUM)
-                .text_color(theme.text_muted)
-                .child(name)
-                .into_any_element(),
-            div()
-                .flex_none()
-                .text_color(theme.text_faint)
-                .child(count)
-                .into_any_element(),
-        ]
-    }
-
-    /// The board listed at `board_at` in `project` as a drawer draws it: its
-    /// lanes as the list's groups, read only, scrolled by `scroll`. Pressing a
-    /// card opens it in `on`'s drawer.
-    pub(crate) fn board_peek(
-        &self,
-        project: usize,
-        board_at: usize,
-        on: Option<&Member>,
-        scroll: &ScrollHandle,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        let theme = Theme::of(cx).clone();
-        let member = self.workspace.read(cx).board_member(project, board_at)?;
-        let board = self.workspace.read(cx).board_in(project, board_at)?;
-        let lanes: Vec<(String, bool)> = board
-            .columns
-            .iter()
-            .map(|column| (column.id.clone(), column.collapsed))
-            .collect();
-        let mut rows = Vec::new();
-        for (lane, folded) in lanes {
-            let Some((name, held, cards)) = self.lane_cards(project, board_at, &lane, "", cx)
-            else {
-                continue;
-            };
-            rows.push(
-                div()
-                    .flex_none()
-                    .h(px(LIST_HEADING_HEIGHT))
-                    .px(px(BOARD_INSET))
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(6.))
-                    .text_style(TextStyle::Subheadline)
-                    .children(Self::lane_title(folded, name, held.to_string(), &theme))
-                    .into_any_element(),
-            );
-            if folded {
-                continue;
-            }
-            for id in cards {
-                let Some((handle, text, status, working)) = self
-                    .workspace
-                    .read(cx)
-                    .board_in(project, board_at)
-                    .and_then(|board| {
-                        let card = board.card(&id)?;
-                        let chat = self.card_session(card, cx);
-                        Some((
-                            board.handle_of(card),
-                            card.text.clone(),
-                            card.status,
-                            self.card_working(card, chat),
-                        ))
-                    })
-                else {
-                    continue;
-                };
-                let (pane, board) = (on.cloned(), member.clone());
-                rows.push(
-                    theme
-                        .ghost(SharedString::from(format!("board-peek-row-{id}")))
-                        .flex_none()
-                        .h(px(LIST_ROW_HEIGHT))
-                        .px(px(BOARD_INSET))
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap(px(8.))
-                        .border_b_1()
-                        .border_color(theme.border.opacity(0.3))
-                        .children(self.list_row_cells(handle, &text, status, working, cx))
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            cx.stop_propagation();
-                            this.open_card(pane.as_ref(), board.clone(), id.clone(), window, cx);
-                        }))
-                        .into_any_element(),
-                );
-            }
-        }
-        Some(
-            div()
-                .relative()
-                .flex_1()
-                .min_h_0()
-                .flex()
-                .flex_col()
-                .child(
-                    scroll::pane("board-peek", Axes::Vertical)
-                        .size_full()
-                        .flex()
-                        .flex_col()
-                        .pb(px(BOARD_INSET))
-                        .track_scroll(scroll)
-                        .children(rows),
-                )
-                .child(scrollbars::Overlay::new(
-                    "board-peek-bar",
-                    scroll,
-                    bezel::gpui::Axis::Vertical,
-                ))
-                .into_any_element(),
-        )
-    }
-
     /// A fixed-height title row; the drawer holds the full card.
-    fn list_row(
-        &self,
-        at: Slot<'_>,
-        on: Option<&Member>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
+    fn list_row(&self, at: Slot<'_>, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let Slot {
             project,
             board: board_at,
@@ -2732,11 +2943,11 @@ impl Cydonia {
             id,
             ..
         } = at;
-        if matches!(&self.leaf_of(on).editing, Some(Editing::Card(at)) if at == id) {
+        if matches!(&self.editing, Some(Editing::Card(at)) if at == id) {
             return div()
                 .px(px(BOARD_INSET))
                 .py(px(6.))
-                .child(self.card_editor(on, cx))
+                .child(self.card_editor(cx))
                 .into_any_element();
         }
         let theme = Theme::of(cx).clone();
@@ -2749,7 +2960,9 @@ impl Cydonia {
             return div().into_any_element();
         };
         let matched = self
-            .applied_query()
+            .find
+            .applied
+            .as_ref()
             .is_some_and(|query| card_matches(card, handle.as_deref(), query.text()));
         let text = card.text.clone();
         let status = card.status;
@@ -2759,78 +2972,64 @@ impl Cydonia {
             .board_in(project, board_at)
             .map(|board| board.id.clone())
             .unwrap_or_default();
-        let chat = self.card_session(card, cx);
+        let chat = card_session(card, self.workspace.read(cx));
         let live = chat.map(|chat| chat.id);
         let sessions = self.workspace.read(cx).settings.features.sessions;
-        let working = self.card_working(card, chat);
+        let working = card_working(card, chat, &self.marks);
         let (opened, run) = (id.to_owned(), id.to_owned());
         let sent = on_board.clone();
-        let pane = on.cloned();
-        let member = self.workspace.read(cx).board_member(project, board_at);
-        let selected = self
-            .drawer_for(project, board_at, on, cx)
-            .and_then(Drawer::card)
-            .is_some_and(|opened| opened.card == id);
+        let selected = self.opened_card() == Some(id);
 
-        let viewport = self.scrolls(project, board_at, cx).down;
-        let reveal = self
-            .drawer_for(project, board_at, on, cx)
-            .filter(|drawer| {
-                selected
-                    && !drawer.size.expanded
-                    && drawer.card().is_some_and(|card| card.reveal.get())
-                    && drawer.bounds.get().size.height > px(0.)
-            })
-            .and_then(|drawer| Some((drawer, drawer.card()?)))
-            .map(|(drawer, opened)| {
-                let pending = opened.reveal.clone();
-                let drawer_top = drawer.bounds.get().top();
-                let adjustments = opened.adjustments.clone();
-                let scroll = viewport.clone();
-                let column = "list".to_owned();
-                gpui::canvas(
-                    move |bounds, window, _| {
-                        if !pending.replace(false) {
-                            return;
-                        }
-                        let delta = reveal_delta(
-                            bounds.top(),
-                            bounds.bottom(),
-                            scroll.bounds().top(),
-                            drawer_top - px(8.),
-                        );
-                        if delta == px(0.) {
-                            return;
-                        }
-                        let before = scroll.offset();
-                        let after = gpui::point(before.x, (before.y + delta).min(px(0.)));
-                        let mut adjustments = adjustments.borrow_mut();
-                        let adjustment =
-                            adjustments
-                                .entry(column.clone())
-                                .or_insert_with(|| LaneAdjustment {
-                                    scroll: scroll.clone().into(),
-                                    before,
-                                    after: before,
-                                });
-                        if adjustment.after != before {
-                            adjustment.before = before;
-                        }
-                        adjustment.after = after;
-                        scroll.set_offset(after);
-                        window.on_next_frame(|window, _| window.refresh());
-                    },
-                    |_, _, _, _| {},
-                )
-                .absolute()
-                .size_full()
-            });
+        let viewport = self.scroll.down.clone();
+        let reveal = self.reveal().filter(|_| selected).map(|reveal| {
+            let pending = reveal.pending.clone();
+            let drawer_top = reveal.top;
+            let adjustments = reveal.adjustments.clone();
+            let scroll = viewport.clone();
+            let column = "list".to_owned();
+            gpui::canvas(
+                move |bounds, window, _| {
+                    if !pending.replace(false) {
+                        return;
+                    }
+                    let delta = reveal_delta(
+                        bounds.top(),
+                        bounds.bottom(),
+                        scroll.bounds().top(),
+                        drawer_top - px(8.),
+                    );
+                    if delta == px(0.) {
+                        return;
+                    }
+                    let before = scroll.offset();
+                    let after = gpui::point(before.x, (before.y + delta).min(px(0.)));
+                    let mut adjustments = adjustments.borrow_mut();
+                    let adjustment =
+                        adjustments
+                            .entry(column.clone())
+                            .or_insert_with(|| LaneAdjustment {
+                                scroll: scroll.clone().into(),
+                                before,
+                                after: before,
+                            });
+                    if adjustment.after != before {
+                        adjustment.before = before;
+                    }
+                    adjustment.after = after;
+                    scroll.set_offset(after);
+                    window.request_animation_frame();
+                },
+                |_, _, _, _| {},
+            )
+            .absolute()
+            .size_full()
+        });
         // Drawn only on the row the pointer is over, taking no room elsewhere,
         // and decided here rather than in a hover style: gpui can resolve hover
         // differently in prepaint and paint.
         let actions = selected
             || self.list_hovered.as_deref() == Some(id)
-            || self.menu_open(&Menu::Card(id.to_owned()));
+            || self.menu.key() == Some(&BoardMenu::Card(id.to_owned()));
         let hovered_id = id.to_owned();
         let row = div()
             .id(SharedString::from(format!("list-row-{id}")))
@@ -2866,7 +3065,9 @@ impl Cydonia {
                 })
             })
             .children(reveal)
-            .children(self.list_row_cells(handle, &text, status, working, cx))
+            .children(list_row_cells(
+                handle, &text, status, working, &self.docs, &self.root, sessions, cx,
+            ))
             .when(actions, |row| {
                 row.child(
                     div()
@@ -2879,21 +3080,20 @@ impl Cydonia {
                         // it, and a second agent at one task is work done twice.
                         // Opening the session it has stays — reading is not doing.
                         .children((sessions && live.is_none() && status.is_none()).then(|| {
-                            self.card_action("list-run", id, icons::multimedia::Play, cx)
-                                .on_click(cx.listener(move |this, _, _, cx| {
+                            card_action("list-run", id, icons::multimedia::Play, cx).on_click(
+                                cx.listener(move |this, _, _, cx| {
                                     cx.stop_propagation();
                                     this.dispatch_card(&sent, &run, cx);
-                                }))
+                                }),
+                            )
                         })),
                 )
                 .child(
-                    self.menu_button(
-                        SharedString::from(format!("list-card-menu-{id}")),
-                        None,
-                        icons::layout::Ellipsis,
-                        Menu::Card(id.to_owned()),
-                        context_menu::Place::Below,
-                        Self::card_menu_rows(on_board.clone(), id.to_owned()),
+                    self.card_menu_button(
+                        format!("list-card-menu-{id}"),
+                        menu::Reveal::Always,
+                        &on_board,
+                        id,
                         cx,
                     )
                     .children(self.card_menu(id, window, cx)),
@@ -2901,11 +3101,9 @@ impl Cydonia {
             })
             .on_click(cx.listener(move |this, _, window, cx| {
                 cx.stop_propagation();
-                if let Some(member) = &member {
-                    this.open_card(pane.as_ref(), member.clone(), opened.clone(), window, cx);
-                }
+                this.open_card(opened.clone(), window, cx);
             }));
-        self.board_sort
+        self.sort
             .handle(BoardItem::Card(key.clone(), id.to_owned()), row)
             .into_any_element()
     }
@@ -2938,8 +3136,6 @@ impl Cydonia {
             .into_any_element()
     }
 
-    // ── the lanes ────────────────────────────────────────────────
-
     fn column(&self, lane: Lane<'_>, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let Lane {
             project,
@@ -2948,7 +3144,6 @@ impl Cydonia {
             id,
             at,
             lanes,
-            on,
         } = lane;
         let id = id.to_owned();
         let on_board = self
@@ -2957,11 +3152,13 @@ impl Cydonia {
             .board_in(project, board_at)
             .map(|board| board.id.clone())
             .unwrap_or_default();
-        let query = self.board_query(on, cx);
-        let Some((name, held, cards)) = self.lane_cards(project, board_at, &id, &query, cx) else {
+        let query = self.find.text();
+        let Some((name, held, cards)) =
+            lane_cards(self.workspace.read(cx), project, board_at, &id, &query)
+        else {
             return div().into_any_element();
         };
-        let editing = self.leaf_of(on).editing.clone();
+        let editing = self.editing.clone();
         let mut rows: Vec<LaneRow> = {
             let board = self.workspace.read(cx).board_in(project, board_at);
             cards
@@ -2993,10 +3190,7 @@ impl Cydonia {
         if query.trim().is_empty() {
             rows.push(LaneRow::Add);
         }
-        let clearance = self
-            .drawer_shown(on, cx)
-            .map(|drawer| drawer.bounds.get().size.height)
-            .unwrap_or_default();
+        let clearance = self.shown.clearance();
         // The foot of the scroll, where `Add a card` sits: each row carries
         // the gap under it, and without this the last lands on the lane's
         // edge. `../desktop` pads the same place, by enough to clear the
@@ -3005,8 +3199,8 @@ impl Cydonia {
             true => clearance + px(8.),
             false => clearance,
         }));
-        let scroll = self.scrolls(project, board_at, cx).lanes.of(&id);
-        let field = self.leaf_of(on).card_field.read(cx).focus_handle(cx);
+        let scroll = self.scroll.lanes.of(&id);
+        let field = self.card_field.read(cx).focus_handle(cx);
         scroll.sync(rows, |row| {
             matches!(row, LaneRow::Editor(_)).then(|| field.clone())
         });
@@ -3019,7 +3213,7 @@ impl Cydonia {
         let list = {
             let view = cx.entity().downgrade();
             let rows = scroll.rows.clone();
-            let (key, column, member) = (key.clone(), id.clone(), on.cloned());
+            let (key, column) = (key.clone(), id.clone());
             gpui::list(scroll.list.clone(), move |ix, window, cx| {
                 let Some(row) = rows.borrow().get(ix).cloned() else {
                     return div().into_any_element();
@@ -3032,7 +3226,7 @@ impl Cydonia {
                         id: "",
                         column: &column,
                     };
-                    this.lane_row(row, at, member.as_ref(), window, cx)
+                    this.lane_row(row, at, window, cx)
                 })
                 .unwrap_or_else(|_| div().into_any_element())
             })
@@ -3053,7 +3247,6 @@ impl Cydonia {
                 at,
                 lanes,
                 &on_board,
-                on,
                 window,
                 cx,
             ))
@@ -3063,7 +3256,7 @@ impl Cydonia {
                     .flex_1()
                     .min_h_0()
                     .child(list)
-                    .children(self.lane_reveal(project, board_at, &id, on, cx))
+                    .children(self.lane_reveal(&id))
                     // A new card is written at the lane's end, and grows as it
                     // is typed into: the lane stays at that end for as long as
                     // it is left there, and lets go the moment it is scrolled
@@ -3078,15 +3271,13 @@ impl Cydonia {
                         .end_inset(px(BOARD_INSET))
                         // Centres bezel's 4px thumb in the lane's channel.
                         .margin((LANE_CHANNEL - px(4.)) * 0.5)
-                        .when(
-                            self.drawer_shown(on, cx)
-                                .is_some_and(|drawer| drawer.resize_grab.is_some()),
-                            |bar| bar.visibility(scrollbars::Visibility::Never),
-                        ),
+                        .when(self.shown.grabbed(), |bar| {
+                            bar.visibility(scrollbars::Visibility::Never)
+                        }),
                     ),
             );
         let region = self
-            .board_sort
+            .sort
             .region(
                 SharedString::from(format!("lane-cards-{id}")),
                 BoardRegion::Cards(key.clone(), id.clone()),
@@ -3103,7 +3294,7 @@ impl Cydonia {
             );
         // The whole lane is the grip: the cards in it are handles of their
         // own and take their presses first.
-        self.board_sort
+        self.sort
             .handle(
                 BoardItem::Lane(key.clone(), lane),
                 div()
@@ -3119,26 +3310,12 @@ impl Cydonia {
     /// Scroll the lane so the card its list last laid out for the drawer
     /// clears the drawer. Drawn after the list, which holds its state while
     /// laying out its rows.
-    fn lane_reveal(
-        &self,
-        project: usize,
-        board_at: usize,
-        column: &str,
-        on: Option<&Member>,
-        cx: &App,
-    ) -> Option<AnyElement> {
-        let drawer = self
-            .drawer_for(project, board_at, on, cx)
-            .filter(|drawer| {
-                !drawer.size.expanded
-                    && drawer.card().is_some_and(|card| card.reveal.get())
-                    && drawer.bounds.get().size.height > px(0.)
-            })?;
-        let lane = self.scrolls(project, board_at, cx).lanes.of(column);
-        let opened = drawer.card()?;
-        let pending = opened.reveal.clone();
-        let drawer_top = drawer.bounds.get().top();
-        let adjustments = opened.adjustments.clone();
+    fn lane_reveal(&self, column: &str) -> Option<AnyElement> {
+        let reveal = self.reveal()?;
+        let lane = self.scroll.lanes.of(column);
+        let pending = reveal.pending.clone();
+        let drawer_top = reveal.top;
+        let adjustments = reveal.adjustments.clone();
         let scroll = lane.scroller();
         let column = column.to_owned();
         Some(
@@ -3175,7 +3352,7 @@ impl Cydonia {
                     }
                     adjustment.after = after;
                     scroll.set_offset(after);
-                    window.on_next_frame(|window, _| window.refresh());
+                    window.request_animation_frame();
                 },
                 |_, _, _, _| {},
             )
@@ -3191,19 +3368,17 @@ impl Cydonia {
         &self,
         row: LaneRow,
         at: Slot<'_>,
-        on: Option<&Member>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let el = match &row {
             LaneRow::Foot(height) => return div().h(*height).into_any_element(),
             LaneRow::Card(id, _) | LaneRow::Editor(Some(id)) => {
-                self.card(Slot { id, ..at }, on, window, cx)
+                self.card(Slot { id, ..at }, window, cx)
             }
-            LaneRow::Editor(None) => self.card_editor(on, cx),
+            LaneRow::Editor(None) => self.card_editor(cx),
             LaneRow::Add => {
                 let theme = Theme::of(cx).clone();
-                let pane = on.cloned();
                 let written = at.column.to_owned();
                 theme
                     .ghost(SharedString::from(format!("add-card-{}", at.column)))
@@ -3223,12 +3398,7 @@ impl Cydonia {
                             .child("Add a card"),
                     )
                     .on_click(cx.listener(move |this, _, window, cx| {
-                        this.edit(
-                            pane.as_ref(),
-                            Editing::New(Place::End, written.clone()),
-                            window,
-                            cx,
-                        );
+                        this.edit(Editing::New(Place::End, written.clone()), window, cx);
                     }))
                     .into_any_element()
             }
@@ -3265,7 +3435,6 @@ impl Cydonia {
         at: usize,
         lanes: usize,
         board: &str,
-        on: Option<&Member>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -3284,11 +3453,10 @@ impl Cydonia {
             .items_center()
             .gap(px(6.))
             .text_style(TextStyle::Subheadline);
-        if matches!(&self.renaming, Some(Renaming::Column(_, at)) if at == id) {
-            return row.child(self.name_field(cx)).into_any_element();
+        if self.renaming.as_deref() == Some(id) {
+            return row.child(self.name_field.clone()).into_any_element();
         }
         let named = id.to_owned();
-        let on_board = board.to_owned();
         row.group("column")
             .child(
                 div()
@@ -3298,11 +3466,7 @@ impl Cydonia {
                     .cursor_pointer()
                     .child(name)
                     .on_click(cx.listener(move |this, _, window, cx| {
-                        this.start_rename(
-                            Renaming::Column(on_board.clone(), named.clone()),
-                            window,
-                            cx,
-                        );
+                        this.start_rename(named.clone(), window, cx);
                     })),
             )
             .child(
@@ -3317,148 +3481,22 @@ impl Cydonia {
             .child(
                 self.menu_button(
                     SharedString::from(format!("column-menu-{id}")),
-                    Some("column"),
-                    icons::layout::Ellipsis,
-                    Menu::Lane(id.to_owned()),
-                    context_menu::Place::Below,
+                    menu::Reveal::Group("column"),
+                    BoardMenu::Lane(id.to_owned()),
                     Box::new({
-                        let (id, board, on) = (id.to_owned(), board.to_owned(), on.cloned());
-                        move |this, _, _| {
-                            this.lane_rows(&id, held, at, lanes, View::Lanes, &board, on.as_ref())
-                        }
+                        let (id, board) = (id.to_owned(), board.to_owned());
+                        move |this, _, _| this.lane_rows(&id, held, at, lanes, View::Lanes, &board)
                     }),
                     cx,
                 )
                 .children(self.menu_here(
-                    &Menu::Lane(id.to_owned()),
+                    &BoardMenu::Lane(id.to_owned()),
                     SharedString::from(format!("lane-menu-{id}")),
                     window,
                     cx,
                 )),
             )
             .into_any_element()
-    }
-
-    /// What the `···` does to a lane: which way it moves, and whether it stays.
-    ///
-    /// A lane at an end is not offered the step it cannot take, and one still
-    /// holding cards carries Delete as a row it cannot choose — the refusal is
-    /// worth saying, and a button simply withheld says nothing.
-    ///
-    /// The step is one place along the board's own order of its columns, which
-    /// is the order the tools speak in — see `mcp::tools::board`. What `view`
-    /// decides is only what to call it: that order runs across the lanes and
-    /// down the list, so the same step is left in one and up in the other.
-    #[allow(clippy::too_many_arguments)]
-    fn lane_rows(
-        &self,
-        id: &str,
-        count: usize,
-        at: usize,
-        lanes: usize,
-        view: View,
-        board: &str,
-        pane: Option<&Member>,
-    ) -> Vec<(Item, menu::Act)> {
-        // What each direction is called, and the arrow that stands for it. The
-        // step and the new lane are the same two directions, said the way the
-        // space reads.
-        let (back, on, both) = match view {
-            View::Lanes => (
-                ("Left", icons::arrows::ArrowLeft),
-                ("Right", icons::arrows::ArrowRight),
-                icons::arrows::ArrowLeftRight,
-            ),
-            View::List => (
-                ("Above", icons::arrows::ArrowUp),
-                ("Below", icons::arrows::ArrowDown),
-                icons::arrows::ArrowUpDown,
-            ),
-        };
-        // First, and the only row here that makes something: the `Add a card`
-        // at the lane's foot is a long way down a full lane, and what is
-        // written from the head of one belongs at the head of it.
-        let written = id.to_owned();
-        let pane = pane.cloned();
-        let rename_pane = pane.clone();
-        let on_board = board.to_owned();
-        let mut rows = vec![menu::row(
-            Item::action("Add card").with_icon(icons::math::Plus),
-            move |this, window, cx| {
-                this.edit(
-                    pane.as_ref(),
-                    Editing::New(Place::Top, written.clone()),
-                    window,
-                    cx,
-                )
-            },
-        )];
-        let renamed = id.to_owned();
-        let rename_board = board.to_owned();
-        rows.push(menu::row(
-            Item::action("Rename").with_icon(icons::design::Pencil),
-            move |this, window, cx| {
-                if let Some(pane) = &rename_pane {
-                    this.focus_pane(pane, window, cx);
-                }
-                this.start_rename(
-                    Renaming::Column(rename_board.clone(), renamed.clone()),
-                    window,
-                    cx,
-                );
-            },
-        ));
-        // Then the two that write a lane either side of this one, so a board
-        // is not only ever grown at its right-hand end.
-        let beside = [(false, back), (true, on)]
-            .map(|(after, (label, icon))| {
-                let (beside, made_on) = (id.to_owned(), on_board.clone());
-                menu::row(
-                    Item::action(label).with_icon(icon),
-                    move |this, window, cx| {
-                        this.new_column_beside(&made_on, &beside, after, window, cx)
-                    },
-                )
-            })
-            .into_iter()
-            .collect();
-        rows.push(menu::submenu("Add column", icons::math::Plus, beside));
-        // The step is offered only the way the lane can take it, so a lane at
-        // an end carries the one direction and a board of one carries neither.
-        let steps: Vec<_> = [(at > 0, -1, back), (at + 1 < lanes, 1, on)]
-            .into_iter()
-            .filter(|(can, ..)| *can)
-            .map(|(_, step, (label, icon))| {
-                let (moved, moved_on) = (id.to_owned(), on_board.clone());
-                menu::row(Item::action(label).with_icon(icon), move |this, _, cx| {
-                    this.shift_column(&moved_on, &moved, step, cx)
-                })
-            })
-            .collect();
-        if !steps.is_empty() {
-            rows.push(menu::submenu("Move column", both, steps));
-        }
-        let drop = Item::action("Delete column").with_icon(icons::files::Trash);
-        let drop = match count {
-            0 => drop,
-            _ => drop
-                .disabled()
-                .with_tooltip("A column is only where work sits — move the cards out first."),
-        };
-        let dropped = id.to_owned();
-        rows.push(menu::row(drop, move |this, window, cx| {
-            this.ask_delete_column(&on_board, &dropped, window, cx)
-        }));
-        rows
-    }
-
-    /// Step a lane one place, and keep the menu on it: moving twice is two
-    /// presses on the same row, not a menu reopened between them.
-    fn shift_column(&mut self, board: &str, id: &str, step: isize, cx: &mut Context<Self>) {
-        self.workspace.update(cx, |workspace, cx| {
-            workspace.move_column(board, id, step, cx)
-        });
-        cx.notify();
     }
 
     /// The lane that makes a lane, always at the right-hand end.
@@ -3494,13 +3532,7 @@ impl Cydonia {
             .into_any_element()
     }
 
-    fn card(
-        &self,
-        at: Slot<'_>,
-        on: Option<&Member>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
+    fn card(&self, at: Slot<'_>, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let Slot {
             project,
             board: board_at,
@@ -3508,8 +3540,8 @@ impl Cydonia {
             id,
             column,
         } = at;
-        if matches!(&self.leaf_of(on).editing, Some(Editing::Card(at)) if at == id) {
-            return self.card_editor(on, cx);
+        if matches!(&self.editing, Some(Editing::Card(at)) if at == id) {
+            return self.card_editor(cx);
         }
         let theme = Theme::of(cx).clone();
         let Some((card, handle)) = self
@@ -3521,7 +3553,9 @@ impl Cydonia {
             return div().into_any_element();
         };
         let matched = self
-            .applied_query()
+            .find
+            .applied
+            .as_ref()
             .is_some_and(|query| card_matches(card, handle.as_deref(), query.text()));
         let text = card.text.clone();
         let status = card.status;
@@ -3531,44 +3565,30 @@ impl Cydonia {
             .board_in(project, board_at)
             .map(|board| board.id.clone())
             .unwrap_or_default();
-        let chat = self.card_session(card, cx);
+        let chat = card_session(card, self.workspace.read(cx));
         let live = chat.map(|chat| chat.id);
         let sessions = self.workspace.read(cx).settings.features.sessions;
-        let working = self.card_working(card, chat);
+        let working = card_working(card, chat, &self.marks);
         let (opened, run) = (id.to_owned(), id.to_owned());
         let sent = on_board.clone();
-        let pane = on.cloned();
-        let member = self.workspace.read(cx).board_member(project, board_at);
-        let selected = self
-            .leaf_of(on)
-            .drawer
-            .as_ref()
-            .and_then(Drawer::card)
-            .is_some_and(|opened| Some(&opened.board) == member.as_ref() && opened.card == id);
+        let selected = self.opened_card() == Some(id);
         let overflow = window.use_keyed_state(
-            SharedString::from(format!("card-overflow-{on:?}-{id}")),
+            SharedString::from(format!("card-overflow-{}-{id}", cx.entity_id())),
             cx,
             |_, _| false,
         );
         let truncated = *overflow.read(cx);
         // Where the card was laid out, for the lane to scroll it into view
         // once the list is done laying out.
-        let reveal = self
-            .drawer_for(project, board_at, on, cx)
-            .filter(|drawer| selected && drawer.card().is_some_and(|card| card.reveal.get()))
-            .map(|_| {
-                let revealed = self
-                    .scrolls(project, board_at, cx)
-                    .lanes
-                    .of(column)
-                    .revealed;
-                gpui::canvas(
-                    move |bounds, _, _| revealed.set(Some(bounds)),
-                    |_, _, _, _| {},
-                )
-                .absolute()
-                .size_full()
-            });
+        let reveal = self.reveal().filter(|_| selected).map(|_| {
+            let revealed = self.scroll.lanes.of(column).revealed;
+            gpui::canvas(
+                move |bounds, _, _| revealed.set(Some(bounds)),
+                |_, _, _, _| {},
+            )
+            .absolute()
+            .size_full()
+        });
         let card = div()
             .id(SharedString::from(format!("card-{id}")))
             .group("card")
@@ -3601,12 +3621,12 @@ impl Cydonia {
                     .items_start()
                     .gap(px(6.))
                     .child(div().flex_1().min_w_0().child({
-                        let (doc, shortened) = self.card_docs.preview(&text);
-                        let base = self.card_base(project, &on_board, id, cx);
+                        let (doc, shortened) = self.docs.preview(&text);
+                        let base = card_base(self.workspace.read(cx), project, &on_board, id);
                         card_preview(
                             &doc,
                             base.as_deref(),
-                            self.applied_query(),
+                            self.find.applied.as_ref(),
                             shortened,
                             overflow,
                             window,
@@ -3616,13 +3636,11 @@ impl Cydonia {
                     // What is done *to* the card. The row underneath carries
                     // the run; where the card sits is the drag.
                     .child(
-                        self.menu_button(
-                            SharedString::from(format!("card-menu-{id}")),
-                            Some("card"),
-                            icons::layout::Ellipsis,
-                            Menu::Card(id.to_owned()),
-                            context_menu::Place::Below,
-                            Self::card_menu_rows(on_board.clone(), id.to_owned()),
+                        self.card_menu_button(
+                            format!("card-menu-{id}"),
+                            menu::Reveal::Group("card"),
+                            &on_board,
+                            id,
                             cx,
                         )
                         .children(self.card_menu(id, window, cx)),
@@ -3664,7 +3682,7 @@ impl Cydonia {
                     // two belong in one slot. On show rather than behind the
                     // hover the actions sit behind — a card's run is what you
                     // look at the board to see.
-                    .children(working.map(|at| self.card_orb(at, cx)))
+                    .children(working.map(|at| card_orb(at, self.root.clone(), sessions, cx)))
                     .child(
                         div()
                             .invisible()
@@ -3684,51 +3702,31 @@ impl Cydonia {
                             // stays — reading is not doing.
                             .children((sessions && live.is_none() && status.is_none()).then(
                                 || {
-                                    self.card_action("run", id, icons::multimedia::Play, cx)
-                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                    card_action("run", id, icons::multimedia::Play, cx).on_click(
+                                        cx.listener(move |this, _, _, cx| {
                                             cx.stop_propagation();
                                             this.dispatch_card(&sent, &run, cx);
-                                        }))
+                                        }),
+                                    )
                                 },
                             )),
                     ),
             )
             .on_click(cx.listener(move |this, _, window, cx| {
                 cx.stop_propagation();
-                if let Some(member) = &member {
-                    this.open_card(pane.as_ref(), member.clone(), opened.clone(), window, cx);
-                }
+                this.open_card(opened.clone(), window, cx);
             }))
             .children(reveal);
         // Below the drag threshold nothing is picked up, so a press is still
         // the click that opens the card — and gpui drops the click outright
         // once a drag does start, so a card that was carried somewhere does
         // not also open where it landed.
-        self.board_sort
+        self.sort
             .handle(BoardItem::Card(key.clone(), id.to_owned()), card)
             .into_any_element()
     }
 
-    /// One glyph on a card's hover row.
-    fn card_action(
-        &self,
-        name: &'static str,
-        id: &str,
-        glyph: &'static [u8],
-        cx: &Context<Self>,
-    ) -> Stateful<Div> {
-        let theme = Theme::of(cx).clone();
-        theme
-            .ghost(SharedString::from(format!("card-{name}-{id}")))
-            .p(px(3.))
-            .child(
-                icons::icon(glyph)
-                    .size(px(12.))
-                    .text_color(theme.text_faint),
-            )
-    }
-
-    fn card_editor(&self, on: Option<&Member>, cx: &Context<Self>) -> AnyElement {
+    fn card_editor(&self, cx: &Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         div()
             .flex_none()
@@ -3740,7 +3738,7 @@ impl Cydonia {
             .flex()
             .flex_col()
             .gap(px(4.))
-            .child(self.leaf_of(on).card_field.clone())
+            .child(self.card_field.clone())
             .child(
                 div()
                     .text_style(TextStyle::Subheadline)
@@ -3748,7 +3746,86 @@ impl Cydonia {
                     .text_color(theme.text_faint)
                     .child("enter file · esc cancel"),
             )
-            .on_mouse_down_out(cx.listener(|this, _, _, cx| this.commit(cx)))
+            .on_mouse_down_out(cx.listener(|this, _, _, cx| this.commit_edit(cx)))
+            .into_any_element()
+    }
+}
+
+impl Searchable for BoardView {
+    fn set_find(&mut self, find: Find, cx: &mut Context<Self>) {
+        self.find = find;
+        cx.notify();
+    }
+
+    /// The cards the find leaves standing.
+    fn hits(&self, cx: &App) -> usize {
+        let text = self.find.text();
+        let workspace = self.workspace.read(cx);
+        let Some(board) = self
+            .located(cx)
+            .and_then(|(project, at)| workspace.board_in(project, at))
+        else {
+            return 0;
+        };
+        board
+            .columns
+            .iter()
+            .flat_map(|column| &column.cards)
+            .filter(|card| card_matches(card, board.handle_of(card).as_deref(), &text))
+            .count()
+    }
+
+    /// Scroll to the first lane holding a card the applied search finds. The
+    /// bar narrows the board in place and moves nothing.
+    fn reveal_hit(&mut self, cx: &mut Context<Self>) {
+        if self.find.bar.is_some() {
+            return;
+        }
+        if let Some(query) = self.find.applied.clone() {
+            self.reveal_match(&query, cx);
+        }
+    }
+}
+
+impl Render for BoardView {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let me = cx.entity_id();
+        self.shown = self
+            .root
+            .upgrade()
+            .map(|root| root.read(cx).pane_state(self.pane.as_ref(), me, cx))
+            .unwrap_or_default();
+        if self.shown.drawer.as_ref().is_some_and(|drawer| drawer.own) && !self.card_live(cx) {
+            self.shown.drawer = None;
+        }
+        let Some((project, board_at)) = self.located(cx) else {
+            return div().flex_1().into_any_element();
+        };
+        let Some(view) = self
+            .workspace
+            .read(cx)
+            .board_in(project, board_at)
+            .map(|board| board.view)
+        else {
+            return div().flex_1().into_any_element();
+        };
+        let body = match view {
+            View::Lanes => self.lanes(project, board_at, window, cx),
+            View::List => self.list(project, board_at, window, cx),
+        };
+        let (root, pane) = (self.root.clone(), self.pane.clone());
+        div()
+            .id("board-surface")
+            .flex_1()
+            .min_h_0()
+            .relative()
+            // A click the drawer and the cards did not take closes the drawer.
+            .on_click(move |_, window, cx| {
+                let _ = root.update(cx, |root, cx| root.board_pressed(pane.as_ref(), window, cx));
+            })
+            .on_action(cx.listener(Self::commit_card))
+            .on_action(cx.listener(Self::dismiss_card))
+            .child(body)
             .into_any_element()
     }
 }

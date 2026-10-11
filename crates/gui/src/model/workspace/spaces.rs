@@ -742,8 +742,6 @@ impl Workspace {
     /// board draws as an empty one. `false` where the entry is not there to
     /// draw: no such project, or a board that would not load.
     fn bring_up(&mut self, project: usize, showing: &Showing, cx: &mut Context<Self>) -> bool {
-        // Read before the project is borrowed for the rest of this.
-        let text_size = self.article_font_size();
         let Some(open) = self.projects.get_mut(project) else {
             return false;
         };
@@ -751,7 +749,7 @@ impl Workspace {
             Showing::Board(id) => open.board_ix(id).is_some() && open.load_board(id),
             Showing::Article(id) => {
                 if let Some(ix) = open.article_ix(id) {
-                    open.articles[ix].open(text_size, cx);
+                    open.articles[ix].open(cx);
                 }
                 true
             }
