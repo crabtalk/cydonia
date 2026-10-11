@@ -43,10 +43,10 @@ pub fn touched(content: &Path) -> u128 {
 /// through the change — see [`crate::article::comments`].
 pub fn write(content: &Path, text: &str) -> std::io::Result<()> {
     let Ok(held) = std::fs::read_to_string(comments::path(content)) else {
-        return std::fs::write(content, text);
+        return crate::fs::save(content, text);
     };
     let old = std::fs::read_to_string(content).ok();
-    std::fs::write(content, text)?;
+    crate::fs::save(content, text)?;
     let mut held = comments::parse(&held);
     held.carry(old.as_deref(), text);
     comments::save(content, text, &held)
@@ -82,7 +82,7 @@ pub fn save(content: &Path, fields: &[(&str, Option<toml_edit::Item>)]) -> std::
     let path = properties(content);
     let text = std::fs::read_to_string(&path).unwrap_or_default();
     match apply(&text, fields) {
-        Some(text) => std::fs::write(&path, text),
+        Some(text) => crate::fs::save(&path, text),
         None => match std::fs::remove_file(&path) {
             Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
             _ => Ok(()),

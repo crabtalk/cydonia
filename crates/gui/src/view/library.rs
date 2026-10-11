@@ -404,87 +404,38 @@ impl Cydonia {
                 continue;
             }
             let project = SharedString::from(open.name());
-            let number = |number: Option<u64>| number.map(|n| SharedString::from(format!("#{n}")));
-            let entry = |showing: Showing, title: String, reference, touched, archived| {
+            let kind = library.tab.kind();
+            for (ix, facts) in open.every(kind).enumerate() {
                 let row = Row::Entry {
                     project: open.path.clone(),
-                    showing,
+                    showing: facts.showing,
                 };
                 if !sidebar::shown(&row, features) {
-                    return None;
+                    continue;
                 }
-                Some(Listing {
+                // A board is referred to by its key, which is what its handles
+                // carry; everything else by its number.
+                let (reference, number) = match kind {
+                    Kind::Board => (Some(open.boards[ix].key.clone().into()), None),
+                    _ => (
+                        facts.number.map(|n| SharedString::from(format!("#{n}"))),
+                        facts.number,
+                    ),
+                };
+                out.push(Listing {
                     row,
-                    title: title.into(),
+                    title: facts.label.into(),
                     reference,
-                    number: None,
+                    number,
                     project: project.clone(),
-                    agent: None,
-                    touched,
-                    created: None,
-                    archived,
-                    labels: None,
-                })
-            };
-            match library.tab {
-                Tab::Articles => {
-                    for article in &open.articles {
-                        if let Some(mut listing) = entry(
-                            Showing::Article(article.id.clone()),
-                            article.label().to_owned(),
-                            number(article.number),
-                            article.touched,
-                            article.archived,
-                        ) {
-                            listing.number = article.number;
-                            listing.created = article.created;
-                            listing.labels = Some(article.labels.clone());
-                            out.push(listing);
-                        }
-                    }
-                }
-                Tab::Boards => {
-                    for board in &open.boards {
-                        out.extend(entry(
-                            Showing::Board(board.id.clone()),
-                            board.label().to_owned(),
-                            Some(board.key.clone().into()),
-                            board.touched,
-                            board.archived,
-                        ));
-                    }
-                }
-                Tab::Tables => {
-                    for table in &open.tables {
-                        if let Some(mut listing) = entry(
-                            Showing::Table(table.key.clone()),
-                            table.name.clone(),
-                            number(table.number),
-                            table.touched_ms(),
-                            table.archived,
-                        ) {
-                            listing.number = table.number;
-                            listing.created = Some(table.created_ms());
-                            out.push(listing);
-                        }
-                    }
-                }
-                Tab::Sessions => {
-                    for chat in &open.sessions {
-                        if let Some(mut listing) = entry(
-                            Showing::Session(chat.id),
-                            chat.label(),
-                            number(chat.number),
-                            chat.touched(),
-                            chat.closed,
-                        ) {
-                            listing.number = chat.number;
-                            listing.agent = Some(chat.entry.name.clone().into());
-                            listing.labels = Some(chat.labels.clone());
-                            out.push(listing);
-                        }
-                    }
-                }
+                    agent: facts.agent.map(Into::into),
+                    touched: facts.touched,
+                    created: facts
+                        .created
+                        .filter(|_| library.tab.fields().contains(&Field::Created)),
+                    archived: facts.archived,
+                    labels: library.tab.labelled().then_some(facts.labels),
+                });
             }
         }
         out

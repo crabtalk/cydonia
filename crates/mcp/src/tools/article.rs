@@ -173,11 +173,7 @@ pub static TOOLS: [Tool; 13] = [
         description: "Edit an article's markdown by exact string replacement. Read it first. Missing or ambiguous matches leave it unchanged; include more context to target one occurrence, or set replace_all to change all. The title is left alone.",
         schema: |bound| {
             let mut schema = fields(bound, &[PROJECT, ARTICLE, OLD_STRING, NEW_STRING]);
-            schema["properties"][REPLACE_ALL.name] = json!({
-                "type": "boolean",
-                "description": REPLACE_ALL.about,
-                "default": false,
-            });
+            super::defaulted(&mut schema, REPLACE_ALL, "boolean", json!(false));
             schema["properties"][OLD_STRING.name]["minLength"] = json!(1);
             schema
         },
@@ -230,11 +226,7 @@ pub static TOOLS: [Tool; 13] = [
         schema: |bound| {
             let mut schema = fields(bound, &[PROJECT, ARTICLES]);
             many(&mut schema, ARTICLES);
-            schema["properties"][ARCHIVED.name] = json!({
-                "type": "boolean",
-                "description": ARCHIVED.about,
-                "default": true,
-            });
+            super::defaulted(&mut schema, ARCHIVED, "boolean", json!(true));
             schema
         },
         writes: true,

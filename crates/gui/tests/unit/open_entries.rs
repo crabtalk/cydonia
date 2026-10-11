@@ -8,6 +8,7 @@
 
 use super::*;
 use crate::model::{settings::Settings, state};
+use artifact::kind::Kind;
 use artifact::space::Side;
 use bezel::gpui;
 
@@ -82,7 +83,7 @@ fn opening_an_entry_outside_the_space_lands_on_it(cx: &mut gpui::TestAppContext)
             // And the frame after it.
             root.sync_leaves(window, cx);
             assert_eq!(root.leaves.len(), 1, "one pane");
-            assert_eq!(root.leaf().pane, Pane::Board);
+            assert_eq!(root.leaf().pane, Kind::Board);
             assert_eq!(
                 root.workspace
                     .read(cx)
@@ -132,7 +133,7 @@ fn making_an_entry_inside_a_space_lands_on_it(cx: &mut gpui::TestAppContext) {
                 "the space is left"
             );
             root.sync_leaves(window, cx);
-            assert_eq!(root.leaf().pane, Pane::Article);
+            assert_eq!(root.leaf().pane, Kind::Article);
         })
         .unwrap();
 }
@@ -181,7 +182,7 @@ fn starting_a_session_inside_a_space_lands_on_it(cx: &mut gpui::TestAppContext) 
                 "the space is left"
             );
             root.sync_leaves(window, cx);
-            assert_eq!(root.leaf().pane, Pane::Chat);
+            assert_eq!(root.leaf().pane, Kind::Session);
             assert!(
                 root.workspace.read(cx).active_id().is_some(),
                 "on a session"

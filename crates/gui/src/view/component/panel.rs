@@ -8,7 +8,6 @@ use super::browser::Browser;
 use super::terminal::{DirectoryChanged, Exited, Terminal};
 use super::{changes::Changes, file::FileView, files::Files};
 use crate::model::{settings::PanelTabs, workspace::Workspace};
-use crate::view::leaf::Pane;
 use crate::view::root::{Cydonia, ToggleChanges};
 use crate::view::{chrome, desktop::DesktopOnly};
 use bezel::{

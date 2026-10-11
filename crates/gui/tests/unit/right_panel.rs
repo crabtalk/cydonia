@@ -3,7 +3,7 @@
 
 use super::*;
 use crate::model::{settings::Settings, state};
-use crate::view::leaf::Pane;
+use artifact::kind::Kind;
 use bezel::gpui;
 
 #[cfg(not(target_os = "linux"))]
@@ -91,8 +91,8 @@ fn an_article_and_a_board_in_one_project_share_its_panel(cx: &mut gpui::TestAppC
             });
             root.workspace
                 .update(cx, |workspace, cx| workspace.open_article(0, 0, cx));
-            root.leaf_mut().pane = Pane::Article;
-            assert_eq!(root.showing(cx), Some(Pane::Article));
+            root.leaf_mut().pane = Kind::Article;
+            assert_eq!(root.showing(cx), Some(Kind::Article));
 
             // The panel opens on an article, which up to 0.1.11 it would not.
             root.show_changes(window, cx);
@@ -108,8 +108,8 @@ fn an_article_and_a_board_in_one_project_share_its_panel(cx: &mut gpui::TestAppC
             // the same panel rather than a second one.
             root.workspace
                 .update(cx, |workspace, cx| workspace.open_board(0, 0, cx));
-            root.leaf_mut().pane = Pane::Board;
-            assert_eq!(root.showing(cx), Some(Pane::Board));
+            root.leaf_mut().pane = Kind::Board;
+            assert_eq!(root.showing(cx), Some(Kind::Board));
             root.sync_changes(cx);
 
             assert!(root.changes_open, "and stays up across the two");
@@ -142,7 +142,7 @@ fn a_second_project_gets_a_panel_of_its_own(cx: &mut gpui::TestAppContext) {
             });
             root.workspace
                 .update(cx, |workspace, cx| workspace.open_article(0, 0, cx));
-            root.leaf_mut().pane = Pane::Article;
+            root.leaf_mut().pane = Kind::Article;
             root.show_changes(window, cx);
             let first = root.changes.clone().expect("a panel");
 
@@ -159,7 +159,7 @@ fn a_second_project_gets_a_panel_of_its_own(cx: &mut gpui::TestAppContext) {
                 .expect("the second project");
             root.workspace
                 .update(cx, |workspace, cx| workspace.open_article(project, 0, cx));
-            root.leaf_mut().pane = Pane::Article;
+            root.leaf_mut().pane = Kind::Article;
             root.sync_changes(cx);
 
             assert!(
@@ -177,7 +177,7 @@ fn a_second_project_gets_a_panel_of_its_own(cx: &mut gpui::TestAppContext) {
             // Back to the first, which comes up as it was left.
             root.workspace
                 .update(cx, |workspace, cx| workspace.open_article(0, 0, cx));
-            root.leaf_mut().pane = Pane::Article;
+            root.leaf_mut().pane = Kind::Article;
             root.sync_changes(cx);
             assert!(root.changes_open, "left up, so it comes back up");
             assert_eq!(root.changes.as_ref(), Some(&first));

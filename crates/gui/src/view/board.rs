@@ -9,11 +9,12 @@ use crate::{
             transcript,
         },
         drawer::{Drawer, Face, Peek},
-        leaf::{Leaf, Pane},
+        leaf::Leaf,
         root::{Cydonia, NewBoard},
         sidebar::Renaming,
     },
 };
+use artifact::kind::Kind;
 use artifact::{
     board::{Card, Status, View},
     space::Member,
@@ -823,7 +824,7 @@ struct Slot<'a> {
 impl Cydonia {
     // ── mutations ────────────────────────────────────────────────
 
-    pub fn show_pane(&mut self, pane: Pane, cx: &mut Context<Self>) {
+    pub fn show_pane(&mut self, pane: Kind, cx: &mut Context<Self>) {
         self.commit(cx);
         self.leaf_mut().pane = pane;
         cx.notify();
@@ -858,7 +859,7 @@ impl Cydonia {
         }
         self.workspace
             .update(cx, |workspace, cx| workspace.open_board(project, ix, cx));
-        self.leaf_mut().pane = Pane::Board;
+        self.leaf_mut().pane = Kind::Board;
         self.reveal_applied_match(cx);
         cx.notify();
     }
@@ -1382,7 +1383,7 @@ impl Cydonia {
                     .on_click(cx.listener(move |this, _, window, cx| {
                         cx.stop_propagation();
                         this.select_session(session, window, cx);
-                        this.show_pane(Pane::Chat, cx);
+                        this.show_pane(Kind::Session, cx);
                     }))
             })
             .into_any_element()
@@ -1480,7 +1481,7 @@ impl Cydonia {
         }
         self.leaf_mut().finding = true;
         let placeholder = match self.leaf().pane {
-            Pane::Board => "find a card…",
+            Kind::Board => "find a card…",
             _ => "find…",
         };
         field.update(cx, |field, cx| field.set_placeholder(placeholder, cx));

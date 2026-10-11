@@ -183,7 +183,7 @@ pub fn save(content: &Path, text: &str, comments: &Comments) -> std::io::Result<
     }
     let mut comments = comments.clone();
     comments.stamp(text);
-    std::fs::write(path, serialize(&comments))
+    crate::fs::save(&path, serialize(&comments))
 }
 
 pub fn parse(text: &str) -> Comments {

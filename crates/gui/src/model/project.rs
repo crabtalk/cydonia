@@ -33,7 +33,12 @@ pub struct Facts {
     pub label: String,
     pub number: Option<u64>,
     pub touched: u128,
+    pub created: Option<u128>,
     pub archived: bool,
+    /// Empty for a table, which carries none.
+    pub labels: Vec<String>,
+    /// The agent a session runs on; `None` for every other kind.
+    pub agent: Option<String>,
 }
 
 pub struct Project {
@@ -357,7 +362,10 @@ impl Project {
                     label: chat.label(),
                     number: chat.number,
                     touched: chat.touched(),
+                    created: None,
                     archived: chat.closed,
+                    labels: chat.labels.clone(),
+                    agent: Some(chat.entry.name.clone()),
                 }
             }
             Kind::Board => {
@@ -367,7 +375,10 @@ impl Project {
                     label: board.label().to_owned(),
                     number: board.number,
                     touched: board.touched,
+                    created: board.created,
                     archived: board.archived,
+                    labels: board.labels.clone(),
+                    agent: None,
                 }
             }
             Kind::Article => {
@@ -377,7 +388,10 @@ impl Project {
                     label: article.label().to_owned(),
                     number: article.number,
                     touched: article.touched,
+                    created: article.created,
                     archived: article.archived,
+                    labels: article.labels.clone(),
+                    agent: None,
                 }
             }
             Kind::Table => {
@@ -387,7 +401,10 @@ impl Project {
                     label: table.name.clone(),
                     number: table.number,
                     touched: table.touched_ms(),
+                    created: Some(table.created_ms()),
                     archived: table.archived,
+                    labels: Vec::new(),
+                    agent: None,
                 }
             }
         }

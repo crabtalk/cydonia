@@ -28,7 +28,7 @@ use crate::{
             ribbon::Ribbon,
         },
         confirm, create, info,
-        leaf::{Leaf, Pane},
+        leaf::Leaf,
         menubar::CloseWindow,
         section::Section,
         sidebar::{Dragged, Renaming, Row},
@@ -848,7 +848,7 @@ impl Cydonia {
             return;
         };
         if moved {
-            self.leaf_mut().pane = Pane::of(showing.kind());
+            self.leaf_mut().pane = showing.kind();
             self.workspace.update(cx, |workspace, cx| {
                 workspace.select_showing(project, showing.clone(), cx);
             });
@@ -1144,7 +1144,7 @@ impl Cydonia {
         // under. The window jumping to Settings on its own answered a question
         // it had not been asked yet.
         self.leaf_mut().asked_session = asked.is_none();
-        self.show_pane(Pane::Chat, cx);
+        self.show_pane(Kind::Session, cx);
         if let Some(entry) = asked {
             self.workspace
                 .update(cx, |workspace, cx| workspace.new_session(entry, None, cx));
@@ -1200,7 +1200,7 @@ impl Cydonia {
     /// a board copies a run out of a chat nobody is looking at — which reads as
     /// the chord doing nothing, right up until it is pasted.
     fn copy_selection(&mut self, _: &CopySelection, _: &mut Window, cx: &mut Context<Self>) {
-        if self.showing(cx) != Some(Pane::Chat) {
+        if self.showing(cx) != Some(Kind::Session) {
             return;
         }
         self.workspace
@@ -1255,14 +1255,14 @@ impl Cydonia {
             return;
         };
         let showing = match pane {
-            Pane::Chat => open.active.map(Showing::Session),
-            Pane::Board => open
+            Kind::Session => open.active.map(Showing::Session),
+            Kind::Board => open
                 .board
                 .and_then(|ix| Some(Showing::Board(open.boards.get(ix)?.id.clone()))),
-            Pane::Article => open
+            Kind::Article => open
                 .article
                 .and_then(|ix| Some(Showing::Article(open.articles.get(ix)?.id.clone()))),
-            Pane::Table => open
+            Kind::Table => open
                 .table
                 .and_then(|ix| Some(Showing::Table(open.tables.get(ix)?.key.clone()))),
         }
@@ -1356,7 +1356,7 @@ impl Cydonia {
     /// board however recently the article beside it was read.
     fn land(&mut self, cx: &mut Context<Self>) {
         if let Some(kind) = self.workspace.read(cx).landing() {
-            self.leaf_mut().pane = Pane::of(kind);
+            self.leaf_mut().pane = kind;
         }
     }
 
@@ -1376,7 +1376,7 @@ impl Cydonia {
         if self.enter_member(member, window, cx) {
             return;
         }
-        self.show_pane(Pane::Chat, cx);
+        self.show_pane(Kind::Session, cx);
         self.workspace
             .update(cx, |workspace, cx| workspace.select_session(id, cx));
         self.sync_composer(cx);
@@ -1548,39 +1548,39 @@ impl Cydonia {
     /// `None` is the launch view. A pane exists only where something is open in
     /// it, so with nothing open there is no pane to name — least of all the
     /// chat, which under the shipped defaults is itself switched off.
-    pub(crate) fn showing(&self, cx: &App) -> Option<Pane> {
+    pub(crate) fn showing(&self, cx: &App) -> Option<Kind> {
         // A pane in a space is whatever its entry is, whether or not it has
         // been focused yet: `leaf.pane` is only written by the focus. A leaf
         // is one tab, so its entry is what it shows.
         if let Some(entry) = &self.leaf().entry
             && let Some((_, showing)) = self.workspace.read(cx).showing_of(entry)
         {
-            return Some(Pane::of(showing.kind()));
+            return Some(showing.kind());
         }
         if self.has_pane(self.leaf().pane, cx) {
             return Some(self.leaf().pane);
         }
-        [Pane::Chat, Pane::Board, Pane::Article, Pane::Table]
+        [Kind::Session, Kind::Board, Kind::Article, Kind::Table]
             .into_iter()
             .find(|&pane| self.has_pane(pane, cx))
     }
 
     /// Whether the active project has anything open in `pane` — what makes it
     /// a pane there is to show, as against one asked for.
-    pub(crate) fn has_pane(&self, pane: Pane, cx: &App) -> bool {
+    pub(crate) fn has_pane(&self, pane: Kind, cx: &App) -> bool {
         let workspace = self.workspace.read(cx);
         match pane {
             // A pane with no session in it, where one was asked for and there
             // is no agent to open it on — [`Self::asked_session`]. Conditioned
             // on the agent as well as on the flag, so an install is all it
             // takes to put the pane back to what it is for.
-            Pane::Chat => {
+            Kind::Session => {
                 workspace.active_session().is_some()
                     || (self.leaf().asked_session && workspace.preferred_agent().is_none())
             }
-            Pane::Board => workspace.active_board().is_some(),
-            Pane::Article => workspace.active_article().is_some(),
-            Pane::Table => workspace.active_table().is_some(),
+            Kind::Board => workspace.active_board().is_some(),
+            Kind::Article => workspace.active_article().is_some(),
+            Kind::Table => workspace.active_table().is_some(),
         }
     }
 

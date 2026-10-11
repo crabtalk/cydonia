@@ -7,11 +7,11 @@ use crate::{
     data::ColType,
     view::{
         component::menu::{self, Menu},
-        leaf::Pane,
         root::{Cydonia, NewTable},
         sidebar::{self, Renaming, Row},
     },
 };
+use artifact::kind::Kind;
 use artifact::space::Member;
 use bezel::ui::scroll as scrollbars;
 use bezel::{
@@ -121,7 +121,7 @@ impl Cydonia {
         }
         self.workspace
             .update(cx, |workspace, cx| workspace.open_table(project, ix, cx));
-        self.leaf_mut().pane = Pane::Table;
+        self.leaf_mut().pane = Kind::Table;
         cx.notify();
     }
 

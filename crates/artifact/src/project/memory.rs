@@ -15,6 +15,7 @@ use crate::{
     },
     board::{Board, key},
     id,
+    project::layout,
     session::record::Record,
     stamp,
 };
@@ -24,6 +25,10 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet},
     sync::{Mutex, MutexGuard},
 };
+
+/// A seeded board directory: its `board.toml`, and each card's `content.md`
+/// and `properties.toml` by the card's id.
+type Seeded = (String, BTreeMap<String, (String, String)>);
 
 #[derive(Default)]
 pub struct Project(Mutex<State>);
@@ -65,6 +70,9 @@ impl Project {
         let this = Self::new();
         {
             let mut state = this.state();
+            // A board directory's `board.toml` and its cards' files, assembled
+            // once every file is in.
+            let mut dirs: BTreeMap<String, Seeded> = BTreeMap::new();
             for (path, bytes) in files {
                 let parts: Vec<&str> = path.split('/').collect();
                 let text = || String::from_utf8_lossy(bytes).into_owned();
@@ -81,6 +89,27 @@ impl Project {
                         }
                         board.created = stamp::named(stem);
                         state.boards.insert(board.id.clone(), board);
+                    }
+                    ["boards", id, "board.toml"] => {
+                        dirs.entry((*id).to_owned()).or_default().0 = text();
+                    }
+                    [
+                        "boards",
+                        id,
+                        "cards",
+                        card,
+                        file @ ("content.md" | "properties.toml"),
+                    ] => {
+                        let held = dirs
+                            .entry((*id).to_owned())
+                            .or_default()
+                            .1
+                            .entry((*card).to_owned())
+                            .or_default();
+                        match *file {
+                            "content.md" => held.0 = text(),
+                            _ => held.1 = text(),
+                        }
                     }
                     ["sessions", file] => {
                         let Some(stem) = file.strip_suffix(".json") else {
@@ -118,6 +147,22 @@ impl Project {
                     }
                     _ => {}
                 }
+            }
+            for (id, (body, cards)) in dirs {
+                let cards = cards
+                    .iter()
+                    .map(|(card, (content, properties))| {
+                        layout::parse_card(card, content, properties)
+                    })
+                    .collect();
+                let Some(mut board) = layout::assemble(&body, cards) else {
+                    continue;
+                };
+                if board.id.is_empty() {
+                    board.id = id.clone();
+                }
+                board.created = stamp::named(&id);
+                state.boards.insert(board.id.clone(), board);
             }
             let now = stamp::now();
             for held in state.articles.values_mut() {

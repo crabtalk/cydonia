@@ -221,6 +221,12 @@ pub(crate) fn optional(schema: &mut Value, arg: Arg, kind: &str) {
     schema["properties"][arg.name] = json!({ "type": kind, "description": arg.about });
 }
 
+/// [`optional`], with the value a call that leaves it out gets.
+pub(crate) fn defaulted(schema: &mut Value, arg: Arg, kind: &str, default: Value) {
+    optional(schema, arg, kind);
+    schema["properties"][arg.name]["default"] = default;
+}
+
 /// An object schema over required strings. Tools can add optional fields.
 ///
 /// `bound` is whether the caller already has a project, in which case the

@@ -12,11 +12,11 @@ use crate::{
             ribbon, transcript,
         },
         kit::new::{self, New},
-        leaf::Pane,
         root::{self, Cydonia, NewArticle, NewBoard, NewSession, NewTable},
         section::Section,
     },
 };
+use artifact::kind::Kind;
 use artifact::{
     session::chat::{ChatItem, PlanStatus},
     space::Member,
@@ -307,7 +307,7 @@ impl Cydonia {
         if let Some(space) = workspace.active_space() {
             return space.panes().into_iter().next().map(|pane| pane.project);
         }
-        if self.showing(cx) == Some(Pane::Chat)
+        if self.showing(cx) == Some(Kind::Session)
             && let Some(chat) = workspace.active_session()
         {
             return Some(chat.cwd.clone());
@@ -394,7 +394,7 @@ impl Cydonia {
     /// it on the shut panel is leaving it nowhere.
     #[cfg(feature = "desktop")]
     fn focus_after_terminal(&self, window: &mut Window, cx: &mut Context<Self>) {
-        match self.showing(cx) == Some(Pane::Chat) {
+        match self.showing(cx) == Some(Kind::Session) {
             true => window.focus(&self.composer_focus_handle(cx), cx),
             false => window.focus(&self.focus, cx),
         }
@@ -582,7 +582,7 @@ impl Cydonia {
             // said plainly, and leaving the space is what puts the window
             // where the new session is about to be.
             self.enter_member(None, window, cx);
-            self.show_pane(Pane::Chat, cx);
+            self.show_pane(Kind::Session, cx);
             self.workspace
                 .update(cx, |workspace, cx| workspace.new_session(entry, None, cx));
         }
@@ -674,7 +674,7 @@ impl Cydonia {
         if !workspace.settings.features.threads() {
             return None;
         }
-        if on.is_none() && self.showing(cx) != Some(Pane::Article) {
+        if on.is_none() && self.showing(cx) != Some(Kind::Article) {
             return None;
         }
         Some(workspace.article_of(on)?.path.clone())
@@ -763,10 +763,10 @@ impl Cydonia {
             Some(panes) => panes,
             None => match showing {
                 None => self.launch(window, cx),
-                Some(Pane::Chat) => {
+                Some(Kind::Session) => {
                     self.conversation(self.workspace.read(cx).active_id(), None, window, cx)
                 }
-                Some(Pane::Board) => match self.workspace.read(cx).active.zip(
+                Some(Kind::Board) => match self.workspace.read(cx).active.zip(
                     self.workspace
                         .read(cx)
                         .active_project()
@@ -778,7 +778,7 @@ impl Cydonia {
                 // An entry can be named and not yet loaded — an article holds
                 // no editor until it is opened. The front door stands in for
                 // the moment in between.
-                Some(Pane::Article) => self
+                Some(Kind::Article) => self
                     .workspace
                     .read(cx)
                     .active
@@ -790,7 +790,7 @@ impl Cydonia {
                     )
                     .and_then(|(project, at)| self.article(project, at, None, window, cx))
                     .unwrap_or_else(|| self.launch(window, cx)),
-                Some(Pane::Table) => self
+                Some(Kind::Table) => self
                     .workspace
                     .read(cx)
                     .active
@@ -840,7 +840,7 @@ impl Cydonia {
             // its own: one title over several panes would name whichever is in
             // front and say nothing about the rest.
             .children((!arranged).then(|| self.pane_header(window, cx)))
-            .children(match showing == Some(Pane::Chat) {
+            .children(match showing == Some(Kind::Session) {
                 true => self.selection_bar(cx),
                 false => None,
             })
@@ -850,7 +850,7 @@ impl Cydonia {
             // — the slot is what the eye goes to for what happens next, and a
             // composer simply withheld leaves it answering nothing.
             .when(
-                showing == Some(Pane::Chat) && !arranged,
+                showing == Some(Kind::Session) && !arranged,
                 |column| match live {
                     // The whole pane takes a dropped picture for the composer.
                     true => column
@@ -869,7 +869,7 @@ impl Cydonia {
                     ),
                 },
             );
-        let main = main.children(match showing == Some(Pane::Article) && !arranged {
+        let main = main.children(match showing == Some(Kind::Article) && !arranged {
             true => self.thread_footer(None, cx),
             false => None,
         });

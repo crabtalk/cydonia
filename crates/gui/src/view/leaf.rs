@@ -22,40 +22,6 @@ use bezel::{
     ui::input::TextField,
 };
 
-/// Which pane the detail column shows. A property of the pane, not of a
-/// project — switching projects must not teleport you to another pane.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Pane {
-    Chat,
-    Board,
-    Article,
-    Table,
-}
-
-impl Pane {
-    /// The kind of entry this pane reads.
-    pub(crate) fn kind(self) -> Kind {
-        match self {
-            Self::Chat => Kind::Session,
-            Self::Board => Kind::Board,
-            Self::Article => Kind::Article,
-            Self::Table => Kind::Table,
-        }
-    }
-
-    /// The pane a remembered entry is read in — see
-    /// [`crate::model::workspace::Workspace::landing`].
-    ///
-    pub(crate) fn of(kind: Kind) -> Self {
-        match kind {
-            Kind::Session => Self::Chat,
-            Kind::Board => Self::Board,
-            Kind::Article => Self::Article,
-            Kind::Table => Self::Table,
-        }
-    }
-}
-
 /// What one pane shows and holds while it shows it.
 pub struct Leaf {
     /// The entry this pane is on, named the way a space names its members —
@@ -71,7 +37,7 @@ pub struct Leaf {
     /// for a pane holding nothing to type into; a session's composer and a
     /// document's editor are inside the pane already.
     pub(crate) focus: FocusHandle,
-    pub(crate) pane: Pane,
+    pub(crate) pane: Kind,
     pub(crate) composer: Entity<Composer>,
     pub(crate) queued_galleries: std::collections::HashMap<
         (u64, usize, String),
@@ -127,7 +93,7 @@ impl Leaf {
         Self {
             entry: None,
             focus,
-            pane: Pane::Chat,
+            pane: Kind::Session,
             composer,
             queued_galleries: Default::default(),
             asked_session: false,

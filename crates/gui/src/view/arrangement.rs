@@ -14,11 +14,11 @@ use crate::{
             panel::changes_toggle,
         },
         kit::new::{self, New},
-        leaf::Pane,
         root::{Cydonia, NewSession},
         sidebar::{Dragged, Row},
     },
 };
+use artifact::kind::Kind;
 use artifact::space::{Axis as Split, Member, Node, Side, Space};
 use bezel::{
     gpui::{
@@ -377,8 +377,8 @@ impl Cydonia {
             return false;
         };
         match (self.showing(cx), showing) {
-            (Some(Pane::Article), Showing::Article(_)) => open.article == Some(ix),
-            (Some(Pane::Board), Showing::Board(_)) => open.board == Some(ix),
+            (Some(Kind::Article), Showing::Article(_)) => open.article == Some(ix),
+            (Some(Kind::Board), Showing::Board(_)) => open.board == Some(ix),
             _ => false,
         }
     }
@@ -538,14 +538,9 @@ impl Cydonia {
     }
 
     /// The member that names what a single pane is on.
-    fn member_showing(
-        &self,
-        project: usize,
-        pane: crate::view::leaf::Pane,
-        cx: &App,
-    ) -> Option<Member> {
+    fn member_showing(&self, project: usize, pane: Kind, cx: &App) -> Option<Member> {
         let workspace = self.workspace.read(cx);
-        let showing = workspace.projects.get(project)?.selected(pane.kind())?;
+        let showing = workspace.projects.get(project)?.selected(pane)?;
         workspace.member_of(project, showing)
     }
 
@@ -978,7 +973,7 @@ impl Cydonia {
         }
         self.sync_leaves(window, cx);
         if let Some((_, showing)) = alone {
-            self.show_pane(Pane::of(showing.kind()), cx);
+            self.show_pane(showing.kind(), cx);
         }
         if let Some(entry) = kept.or_else(|| self.leaf().entry.clone()) {
             self.focused = usize::MAX;

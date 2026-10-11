@@ -124,7 +124,7 @@ fn workspace_search_keeps_results_beyond_the_palette_limit(cx: &mut gpui::TestAp
                 workspace.projects[0].articles[0].open(14., cx);
                 workspace.projects[0].articles[0].editor.clone().unwrap()
             });
-            this.leaf_mut().pane = crate::view::leaf::Pane::Article;
+            this.leaf_mut().pane = artifact::kind::Kind::Article;
             let matches =
                 crate::view::find::hits(editor.read(cx).doc(), this.applied_query().unwrap());
             assert_eq!(matches.len(), 2);
@@ -172,7 +172,7 @@ fn applied_board_search_has_visible_working_exit_controls(cx: &mut gpui::TestApp
     let window = cx.add_window(|window, cx| {
         let root = cx.new(|cx| Cydonia::new(Default::default(), Default::default(), window, cx));
         root.update(cx, |root, _| {
-            root.leaf_mut().pane = crate::view::leaf::Pane::Board
+            root.leaf_mut().pane = artifact::kind::Kind::Board
         });
         cx.observe(&root, |_, _, cx| cx.notify()).detach();
         SearchControls(root)

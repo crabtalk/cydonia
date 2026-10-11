@@ -18,7 +18,6 @@ use crate::{
         },
         keymap::{self, Command},
         kit::new::{self, New},
-        leaf::Pane,
         root::{self, CommitName, Cydonia, DismissName, NewSession, OpenProject},
     },
 };
@@ -26,7 +25,6 @@ use artifact::board::View;
 use artifact::kind::Kind;
 use artifact::space::Member;
 use bezel::ui::scroll as scrollbars;
-#[cfg(feature = "desktop")]
 use bezel::ui::widgets::Content;
 use bezel::{
     agent::orbs::{OrbState, engine::Frame},
@@ -2754,10 +2752,10 @@ impl Cydonia {
         let open = &workspace.projects[project];
         let pane = self.showing(cx);
         match showing {
-            Showing::Session(id) => pane == Some(Pane::Chat) && open.active == Some(*id),
-            Showing::Board(_) => pane == Some(Pane::Board) && open.board == Some(ix),
-            Showing::Article(_) => pane == Some(Pane::Article) && open.article == Some(ix),
-            Showing::Table(_) => pane == Some(Pane::Table) && open.table == Some(ix),
+            Showing::Session(id) => pane == Some(Kind::Session) && open.active == Some(*id),
+            Showing::Board(_) => pane == Some(Kind::Board) && open.board == Some(ix),
+            Showing::Article(_) => pane == Some(Kind::Article) && open.article == Some(ix),
+            Showing::Table(_) => pane == Some(Kind::Table) && open.table == Some(ix),
         }
     }
 

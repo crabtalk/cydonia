@@ -337,13 +337,10 @@ impl Project {
             ));
         }
         for (_, path, text, properties, _) in &writes {
-            if let Some(dir) = path.parent() {
-                std::fs::create_dir_all(dir)?;
-            }
-            std::fs::write(path, text)?;
+            crate::fs::save(path, text)?;
             let beside = document::properties(path);
             match properties {
-                Some(properties) => std::fs::write(&beside, properties)?,
+                Some(properties) => crate::fs::save(&beside, properties)?,
                 None => {
                     let _ = std::fs::remove_file(&beside);
                 }
@@ -605,7 +602,7 @@ impl super::Project for Project {
 
     fn save_session(&self, record: &Record) -> Result<()> {
         let body = serde_json::to_string_pretty(record)?;
-        std::fs::write(self.session_file(&record.id), body)?;
+        crate::fs::save(&self.session_file(&record.id), body)?;
         Ok(())
     }
 
@@ -637,9 +634,8 @@ impl super::Project for Project {
     fn create_article(&self, markdown: &str) -> Result<Article> {
         let dir = article::init(&self.root)?;
         let landing = article::free(&dir, stamp::now());
-        std::fs::create_dir_all(&landing)?;
         let content = article::content(&landing);
-        std::fs::write(&content, markdown)?;
+        crate::fs::save(&content, markdown)?;
         let article = self.describe(&content);
         Ok(article)
     }
@@ -691,8 +687,7 @@ impl super::Project for Project {
 
     fn put_asset(&self, id: &str, name: &str, bytes: &[u8]) -> Result<()> {
         let dir = article::assets(&self.article_file(id)?);
-        std::fs::create_dir_all(&dir)?;
-        std::fs::write(dir.join(component(name)?), bytes)?;
+        crate::fs::save(&dir.join(component(name)?), bytes)?;
         Ok(())
     }
 
@@ -773,6 +768,9 @@ pub fn ours(dir: &Path, path: &Path) -> bool {
     let Some(head) = rest.components().next() else {
         return true;
     };
+    if crate::fs::is_temporary(path) {
+        return false;
+    }
     let head = head.as_os_str().to_string_lossy();
     if head == article::DIR || head == BOARDS {
         return true;

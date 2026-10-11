@@ -40,7 +40,21 @@ macro_rules! file {
 /// — every file of one seed is created inside the same millisecond, which is
 /// the resolution the sort reads.
 const SEED: &[&[File]] = &[
-    &[file!("boards/1789958240578.toml")],
+    &[
+        file!("boards/1789958240578/board.toml"),
+        file!("boards/1789958240578/cards/1789958255848/content.md"),
+        file!("boards/1789958240578/cards/1789958255848/properties.toml"),
+        file!("boards/1789958240578/cards/1789958255848-2/content.md"),
+        file!("boards/1789958240578/cards/1789958255848-2/properties.toml"),
+        file!("boards/1789958240578/cards/1789958255848-3/content.md"),
+        file!("boards/1789958240578/cards/1789958255848-3/properties.toml"),
+        file!("boards/1789958240578/cards/1789958255848-4/content.md"),
+        file!("boards/1789958240578/cards/1789958255848-4/properties.toml"),
+        file!("boards/1789958240578/cards/1789958255848-5/content.md"),
+        file!("boards/1789958240578/cards/1789958255848-5/properties.toml"),
+        file!("boards/1789958240578/cards/1789958255848-6/content.md"),
+        file!("boards/1789958240578/cards/1789958255848-6/properties.toml"),
+    ],
     &[
         file!("articles/1789958235652/content.md"),
         file!("articles/1789958235652/properties.toml"),

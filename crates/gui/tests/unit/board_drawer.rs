@@ -800,7 +800,7 @@ fn busy_orb_opens_its_session_without_opening_the_card(cx: &mut TestAppContext) 
     cx.update(|_, cx| {
         let root = root.read(cx);
         assert_eq!(root.workspace.read(cx).projects[0].active, Some(77));
-        assert!(matches!(root.leaf().pane, Pane::Chat));
+        assert!(matches!(root.leaf().pane, Kind::Session));
         assert!(root.leaf().drawer.is_none());
     });
 }

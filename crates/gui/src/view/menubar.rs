@@ -29,7 +29,6 @@ use crate::{
     view::{
         article::{ToggleOutline, TogglePlainText},
         keymap,
-        leaf::Pane,
         root::{
             CloseProject, Cydonia, NewArticle, NewBoard, NewSession, NewSessionNext,
             NewSessionWith, NewTable, NextEntry, OpenProject, OpenSettings, PrevEntry,
@@ -37,6 +36,7 @@ use crate::{
         },
     },
 };
+use artifact::kind::Kind;
 use bezel::{
     gpui::{
         self, App, Context, Div, KeyBinding, Menu, MenuItem, OsAction, OwnedMenu, OwnedMenuItem,
@@ -364,16 +364,16 @@ impl Cydonia {
                 )
             })
             // Pane-specific commands grey themselves everywhere else.
-            .when(showing == Some(Pane::Article), |root| {
+            .when(showing == Some(Kind::Article), |root| {
                 root.on_action(cx.listener(Self::toggle_plain_text))
                     .on_action(cx.listener(Self::toggle_outline))
             })
             .when(
-                matches!(showing, Some(Pane::Board | Pane::Article | Pane::Chat)),
+                matches!(showing, Some(Kind::Board | Kind::Article | Kind::Session)),
                 |root| root.on_action(cx.listener(Self::find_card)),
             )
             .when(
-                matches!(showing, Some(Pane::Article | Pane::Chat)),
+                matches!(showing, Some(Kind::Article | Kind::Session)),
                 |root| {
                     root.on_action(cx.listener(Self::find_next))
                         .on_action(cx.listener(Self::find_prev))

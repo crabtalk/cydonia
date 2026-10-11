@@ -1,0 +1,1 @@
+Read "Writing in Cydonia", then make an article of your own

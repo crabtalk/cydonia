@@ -6,6 +6,16 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
+/// What a temporary file of [`save`]'s ends in.
+const PART: &str = ".part";
+
+/// Whether `path` is a temporary file [`save`] writes before renaming it.
+pub fn is_temporary(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.starts_with('.') && name.ends_with(PART))
+}
+
 /// The temporary files [`save`] has made in this process.
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 
@@ -19,7 +29,7 @@ pub fn save(path: &Path, contents: impl AsRef<[u8]>) -> io::Result<()> {
     std::fs::create_dir_all(dir)?;
     let name = path.file_name().unwrap_or_default().to_string_lossy();
     let temporary = dir.join(format!(
-        ".{name}.{}-{}.part",
+        ".{name}.{}-{}{PART}",
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
     ));

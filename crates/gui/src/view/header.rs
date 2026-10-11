@@ -10,10 +10,10 @@ use crate::model::workspace::Showing;
 use crate::view::{
     chrome,
     component::{menu::Menu, panel::changes_toggle},
-    leaf::Pane,
     root::{self, Cydonia},
     sidebar::{Renaming, Row},
 };
+use artifact::kind::Kind;
 use bezel::{
     gpui::{AnyElement, App, Context, FontWeight, SharedString, Window, div, prelude::*, px},
     motion::Painter,
@@ -55,10 +55,10 @@ pub(crate) enum Naming {
 impl Cydonia {
     /// What the pane showing in `pane` puts in the band. Takes the pane rather
     /// than reading [`Cydonia::showing`], so a second panel is a second call.
-    pub(crate) fn toolbar(&self, pane: Pane, cx: &App) -> Option<Toolbar> {
+    pub(crate) fn toolbar(&self, pane: Kind, cx: &App) -> Option<Toolbar> {
         let workspace = self.workspace.read(cx);
         let project = workspace.active?;
-        let showing = workspace.projects.get(project)?.selected(pane.kind())?;
+        let showing = workspace.projects.get(project)?.selected(pane)?;
         self.toolbar_of(project, showing, cx)
     }
 

@@ -1,6 +1,7 @@
 //! Window-independent right-panel tabs and unsaved file buffers.
 
 use super::*;
+use artifact::kind::Kind;
 use bezel::gpui::App;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -233,7 +234,7 @@ impl Cydonia {
         // The session in front is kept on disk and remembered as its
         // project's last entry here, which is the one write that still happens
         // per session rather than per directory.
-        if self.showing(cx) == Some(Pane::Chat)
+        if self.showing(cx) == Some(Kind::Session)
             && let Some(id) = self.workspace.read(cx).active_id()
         {
             self.workspace

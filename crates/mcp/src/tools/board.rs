@@ -194,11 +194,7 @@ pub static TOOLS: [Tool; 16] = [
         schema: |bound| {
             let mut schema = fields(bound, &[PROJECT, BOARDS]);
             many(&mut schema, BOARDS);
-            schema["properties"][ARCHIVED.name] = json!({
-                "type": "boolean",
-                "description": ARCHIVED.about,
-                "default": true,
-            });
+            super::defaulted(&mut schema, ARCHIVED, "boolean", json!(true));
             schema
         },
         writes: true,

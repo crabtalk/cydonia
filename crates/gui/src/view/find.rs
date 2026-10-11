@@ -10,7 +10,6 @@
 use crate::view::{
     board::{self, DismissFind},
     component::transcript,
-    leaf::Pane,
     root::Cydonia,
 };
 use artifact::{kind::Kind, search::Query, space::Member};
@@ -114,25 +113,25 @@ impl Cydonia {
         // A pane in a space says what it shows by its member; a window
         // showing one entry, by its leaf.
         let pane = match on.map(|member| member.kind) {
-            Some(Kind::Session) => Pane::Chat,
-            Some(Kind::Board) => Pane::Board,
-            Some(Kind::Article) => Pane::Article,
-            Some(Kind::Table) => Pane::Table,
+            Some(Kind::Session) => Kind::Session,
+            Some(Kind::Board) => Kind::Board,
+            Some(Kind::Article) => Kind::Article,
+            Some(Kind::Table) => Kind::Table,
             None => self.leaf_of(on).pane,
         };
         match pane {
-            Pane::Article => {
+            Kind::Article => {
                 let editor = workspace.article_of(on)?.editor.clone()?;
                 let hits = hits(editor.read(cx).doc(), &query);
                 Some(Found::Article { editor, hits })
             }
-            Pane::Chat => {
+            Kind::Session => {
                 let session = workspace.session_id_of(on)?;
                 let chat = workspace.session(session)?;
                 let hits = transcript::hits(&chat.items, &query);
                 Some(Found::Transcript { session, hits })
             }
-            Pane::Board | Pane::Table => None,
+            Kind::Board | Kind::Table => None,
         }
     }
 
@@ -219,7 +218,7 @@ impl Cydonia {
         self.leaf_mut().finding = false;
         self.leaf_mut().find_at = 0;
         let on = self.leaf().entry.clone();
-        if self.leaf().pane == Pane::Board {
+        if self.leaf().pane == Kind::Board {
             self.reveal_board_match(on.as_ref(), cx);
         } else {
             self.reveal_find(on.as_ref(), cx);
@@ -278,7 +277,7 @@ impl Cydonia {
             return None;
         }
         let theme = Theme::of(cx).clone();
-        let board = on.map_or(leaf.pane == Pane::Board, |member| {
+        let board = on.map_or(leaf.pane == Kind::Board, |member| {
             member.kind == Kind::Board
         });
         let count: Option<SharedString> = if board {

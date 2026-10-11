@@ -11,11 +11,11 @@ use crate::{
         entry_link::SCHEME,
         kit::{stamp, text::grouped},
         labels::Target,
-        leaf::Pane,
         root::{Cydonia, NewArticle},
         sidebar::{self, Row},
     },
 };
+use artifact::kind::Kind;
 use artifact::space::Member;
 use bezel::ui::scroll as scrollbars;
 use bezel::ui::surface::Surfaced as _;
@@ -425,7 +425,7 @@ impl Cydonia {
         }
         self.workspace
             .update(cx, |workspace, cx| workspace.open_article(project, ix, cx));
-        self.leaf_mut().pane = Pane::Article;
+        self.leaf_mut().pane = Kind::Article;
 
         let (field, editor, unnamed) = {
             let article = self.pane_doc(cx);
@@ -637,7 +637,7 @@ impl Cydonia {
     /// that rebuilt nothing leaves the title, a card's composer or whatever
     /// else holds the focus where it is.
     pub(crate) fn follow_article(&self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.showing(cx) != Some(Pane::Article) {
+        if self.showing(cx) != Some(Kind::Article) {
             return;
         }
         let lost = window

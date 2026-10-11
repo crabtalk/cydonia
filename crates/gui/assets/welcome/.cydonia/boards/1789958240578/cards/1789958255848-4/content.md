@@ -1,0 +1,1 @@
+Start a session with ⌘N and ask it to add a card to this board
